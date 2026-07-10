@@ -69,7 +69,7 @@ export default function Page() {
           <ol className="grid gap-10 sm:grid-cols-2">
             {STEPS.map((step, index) => (
               <li key={step.title} className="flex flex-col gap-3">
-                <span className="font-mono text-2xl font-semibold text-accent-strong">
+                <span aria-hidden="true" className="font-mono text-2xl font-semibold text-accent-strong">
                   {String(index + 1).padStart(2, "0")}
                 </span>
                 <h2 className="text-xl font-semibold text-ink">{step.title}</h2>
@@ -79,7 +79,7 @@ export default function Page() {
                     href={step.link.href}
                     className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
                   >
-                    {step.link.label} →
+                    {step.link.label} <span aria-hidden="true">→</span>
                   </Link>
                 ) : null}
               </li>
@@ -118,7 +118,7 @@ export default function Page() {
               href="/pricing"
               className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
             >
-              See pricing →
+              See pricing <span aria-hidden="true">→</span>
             </Link>
           </div>
         </div>

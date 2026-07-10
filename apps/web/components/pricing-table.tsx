@@ -6,7 +6,6 @@ type Plan = {
   period: string;
   credits: string;
   blurb: string;
-  isTrial: boolean;
 };
 
 const PLANS: readonly Plan[] = [
@@ -16,7 +15,6 @@ const PLANS: readonly Plan[] = [
     period: "one-time",
     credits: "200 credits",
     blurb: "No card required. Verify your email and try the tools on a single domain.",
-    isTrial: true,
   },
   {
     name: "Starter",
@@ -24,7 +22,6 @@ const PLANS: readonly Plan[] = [
     period: "per month",
     credits: "1,000 credits",
     blurb: "For one site and a steady rhythm of audits and reports.",
-    isTrial: false,
   },
   {
     name: "Pro",
@@ -32,7 +29,6 @@ const PLANS: readonly Plan[] = [
     period: "per month",
     credits: "3,500 credits",
     blurb: "For growing sites that run research and audits often.",
-    isTrial: false,
   },
   {
     name: "Agency",
@@ -40,7 +36,6 @@ const PLANS: readonly Plan[] = [
     period: "per month",
     credits: "12,000 credits",
     blurb: "For multiple clients and heavier monthly workloads.",
-    isTrial: false,
   },
 ] as const;
 

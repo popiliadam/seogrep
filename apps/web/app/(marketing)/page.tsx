@@ -117,13 +117,13 @@ export default function Page() {
             href="/how-it-works"
             className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
           >
-            See how it works →
+            See how it works <span aria-hidden="true">→</span>
           </Link>
         </div>
         <ol className="mt-10 grid gap-8 sm:grid-cols-3">
           {STEPS.map((step, index) => (
             <li key={step} className="flex flex-col gap-3">
-              <span className="font-mono text-2xl font-semibold text-accent-strong">
+              <span aria-hidden="true" className="font-mono text-2xl font-semibold text-accent-strong">
                 {String(index + 1).padStart(2, "0")}
               </span>
               <span className="text-lg font-medium text-ink">{step}</span>

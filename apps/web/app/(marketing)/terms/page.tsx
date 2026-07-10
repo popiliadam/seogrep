@@ -58,7 +58,7 @@ export default function Page() {
                 href={section.link.href}
                 className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
               >
-                {section.link.label} →
+                {section.link.label} <span aria-hidden="true">→</span>
               </Link>
             ) : null}
           </section>
