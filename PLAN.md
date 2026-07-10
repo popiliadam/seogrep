@@ -10,7 +10,10 @@
   contract.md, verify-change skill, kapı (guardrails/verify.sh — VERIFY: PASS, 16/16 task),
   kalıcı hedefler (repo-clean ✓, no-secrets ✓), Makefile, CI workflow.
   Ledger: `.superpowers/sdd/progress.md` (tüm hakem incelemeleri temiz; commit zinciri 95795c7..b1a3564).
-- Task 8: GitHub private repo (popiliadam/pseo-saas) + push + final whole-branch review + marka shortlist.
+- Task 8: GitHub private repo https://github.com/popiliadam/pseo-saas + push + final whole-branch review
+  (N1 cold-checkout fix'i taze-klon kanıtıyla kapandı) + marka shortlist (7 müsait .app adayı sunuldu).
+- Devreden bulgular (ledger FAZ 0 kapanış satırı): engines>=22, CI `permissions:` bloğu,
+  allowBuilds key teyidi → Faz 1 · /health routing → Faz 3 · test-typecheck uniformity → kozmetik.
 
 ## Sıradaki 3 iş (Faz 1 — vitrin + docs + waitlist)
 1. **Landing + pricing + how-it-works** (marka seçimi sonrası; frontend-design skill ile).
