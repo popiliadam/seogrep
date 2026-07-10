@@ -1,0 +1,33 @@
+---
+title: First site audit
+description: Recipe for the first full audit of a brand-new project — the new-site-audit MCP prompt.
+---
+
+This is the `new-site-audit` prompt in practice: point Ranklens at a domain
+and get a full picture back in one sitting, no Search Console required.
+
+> **Beta note:** Tool names and the exact flow may still shift before
+> launch.
+
+## Goal
+
+Turn a bare domain into a first audit: crawl, technical checks, on-page
+checks, and a shareable report.
+
+## Example dialog
+
+1. **You:** "Set up example.com as a project and run a full audit."
+2. **Ranklens:** runs `setup_project`, then `crawl_site` (returns a
+   `job_id` it polls with `get_job_status`), then `audit_onpage`,
+   `audit_tech`, and `audit_schema` once the crawl finishes.
+3. **You:** "Turn that into a report I can share."
+   **Ranklens:** runs `generate_report` and returns a link.
+
+## What you get
+
+A chat summary of the top issues plus a shareable HTML report link — no GSC
+connection needed for this first pass.
+
+## Credits
+
+Draft costs — see [/pricing](/pricing).

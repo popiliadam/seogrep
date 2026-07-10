@@ -1,0 +1,33 @@
+---
+title: Monthly SEO routine
+description: Recipe for a recurring monthly check-in — the monthly-routine MCP prompt.
+---
+
+This is the `monthly-routine` prompt: a repeatable monthly check that
+compares fresh Search Console data against your last crawl.
+
+> **Beta note:** The exact cadence and tool set may still change before
+> launch.
+
+## Goal
+
+Catch decay and new opportunities every month without re-running a full
+audit.
+
+## Example dialog
+
+1. **You:** "Run my monthly SEO check for example.com."
+2. **Ranklens:** runs `pull_gsc_data`, then `analyze_content_decay` and
+   `find_quick_wins` against the latest numbers.
+3. **You:** "What should I do first?"
+   **Ranklens:** runs `whats_next` to point at the highest-impact item, then
+   offers `generate_report` for a shareable summary.
+
+## What you get
+
+A short list of pages losing clicks, a short list of easy ranking wins, and
+a suggested next action.
+
+## Credits
+
+Draft costs — see [/pricing](/pricing).
