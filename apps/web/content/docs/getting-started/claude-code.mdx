@@ -1,0 +1,32 @@
+---
+title: Claude Code
+description: Connect Ranklens to Claude Code with the built-in MCP CLI.
+---
+
+Claude Code adds remote MCP servers from the command line — no settings menu
+to hunt through.
+
+> **Beta note:** Your personal MCP URL comes from the Ranklens dashboard
+> after your invite lands.
+
+## Steps
+
+1. Open a terminal in any project.
+2. Run:
+
+   ```bash
+   claude mcp add ranklens --transport http YOUR_MCP_URL
+   ```
+
+3. Start (or restart) a Claude Code session and try "Crawl my site."
+
+## Checking the connection
+
+Run `claude mcp list` to confirm `ranklens` shows up and is connected. If it
+doesn't, re-run the `add` command with a freshly copied URL — see
+[Troubleshooting](/docs/troubleshooting).
+
+## Next
+
+[Core concepts](/docs/core-concepts) covers projects, credits, and data
+handling before your first crawl.

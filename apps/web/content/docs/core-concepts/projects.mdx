@@ -1,0 +1,28 @@
+---
+title: Projects
+description: How a domain becomes a Ranklens project, and how tools are scoped to it.
+---
+
+A project is a domain you've pointed Ranklens at. Crawls, audits, and
+reports are all scoped to a project, so results from one site never mix
+with another.
+
+> **Beta note:** Project limits per plan are still being finalized.
+
+## Creating a project
+
+Ask your client to set one up in plain language — "Set up example.com as a
+project" runs `setup_project` behind the scenes. List your existing projects
+any time; Ranklens runs `list_projects` for that.
+
+## What's scoped to a project
+
+- Crawl and job history (`crawl_site`, `get_job_status`)
+- Search Console data, once connected (`pull_gsc_data`)
+- Audit results (`audit_onpage`, `audit_tech`, `audit_schema`)
+- Generated reports (`generate_report`)
+
+## Next
+
+See [Credits](/docs/core-concepts/credits) for how usage inside a project is
+metered.

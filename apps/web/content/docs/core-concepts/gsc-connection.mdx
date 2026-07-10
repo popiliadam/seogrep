@@ -1,0 +1,29 @@
+---
+title: GSC connection
+description: Connecting Google Search Console is optional — what it unlocks and how it stays scoped.
+---
+
+Google Search Console (GSC) connection is optional. Your first crawl and
+audit work fully without it — GSC only unlocks the tools that need real
+search performance data, like decay analysis and the monthly routine.
+
+> **Beta note:** The OAuth screen and scopes below match the current beta
+> plan and may be refined before launch.
+
+## What it unlocks
+
+- `pull_gsc_data` — raw clicks, impressions, and position data.
+- `analyze_content_decay` — needs GSC history to compare against.
+- Fuller results from `find_quick_wins` and `whats_next`.
+
+## Connecting
+
+Ask "Connect Search Console for example.com" and Ranklens runs
+`connect_gsc`, which hands you a Google OAuth link. Ranklens requests
+**read-only** Search Console access — it never requests write access to
+your property.
+
+## Disconnecting
+
+Revoke access any time from your Google Account's third-party access
+settings; Ranklens stops pulling new data as soon as the token is invalid.
