@@ -24,17 +24,33 @@
 3. **Waitlist** (form + Resend/DB kaydı + PostHog event).
    done_when: (1) verify.sh yeşil, (2) test e-postası kayıt id'siyle doğrulanıyor, (3) PostHog'da waitlist_signup event'i.
 
+## Marka (KARAR — 2026-07-10)
+**Ranklens** · domain: **ranklens.app** (RDAP müsait doğrulandı; satın alma insanda).
+Repo rename edildi: https://github.com/popiliadam/ranklens (eski pseo-saas URL'i redirect).
+Landing konsept çekirdeği: "Point a lens at your site" — analiz çekirdeği (v1) konumlandırmasıyla örtüşür.
+
 ## Blokajlar
-- **Marka seçimi (insan kapısı):** shortlist sunuldu, kullanıcı seçimi bekleniyor. Landing copy + domain buna bağlı.
-- Vercel deploy (Faz 1 sonu insan kapısı): Vercel hesabı bağlama + DNS, marka netleşince.
+- Domain satın alma (insan): ranklens.app — registrar önerisi: Cloudflare Registrar (at-cost) veya Porkbun.
+- Vercel deploy (Faz 1 sonu insan kapısı): Vercel hesabı bağlama + DNS, domain alınınca.
 
 ## İnsan kuyruğu
-- Marka seç (shortlist raporda) → domain satın al.
+- ranklens.app satın al.
+- `git push` gate onayı: `/pseo-approve sess-<session> git_push "origin"` (veya push'u elle at) — son docs commit'leri lokal.
 - Faz 1 canlıya çıkınca: Paddle hesap başvurusu (canlı site ister — en uzun bekleme).
 - Faz 2 başında: Google Cloud projesi + OAuth consent başvurusu (doğrulama haftalar sürer).
 
-## Oturum devir notu (handoff)
-Yeni oturum şunu okusun: bu dosya + CLAUDE.md + contract.md + master spec §7-9.
-Faz 1'i başlatmak için: superpowers:writing-plans ile `docs/plans/*faz1*.md` üret,
-subagent-driven-development ile yürüt (dispatch: CLAUDE.md DISPATCH tablosu).
-Güven kuralı: ilk hafta — her PR insan okur; Faz 1 işleri feature branch + PR ile yürür (Faz 0 istisnaydı: boş repo'da main'e scaffold).
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın)
+```
+Proje: Ranklens — hosted SEO MCP SaaS. Dizin: "/Users/apple/dev/pseo web saas"
+Sırayla oku: PLAN.md → CLAUDE.md → contract.md (+ master spec docs/specs/2026-07-pseo-saas-design.md §7-9).
+Durum: Faz 0 kapalı (kapı taze klonda kanıtlı; repo github.com/popiliadam/ranklens).
+Marka: Ranklens / ranklens.app (satın alma insanda — copy'de domain'i kullan, DNS işine girme).
+Görev: Faz 1'i yürüt — superpowers:writing-plans ile docs/plans/2026-07-XX-faz1-vitrin.md üret
+(kapsam ve done_when'ler bu dosyanın "Sıradaki 3 iş" bölümünde; landing copy İngilizce,
+uydurma metrik YOK), sonra superpowers:subagent-driven-development ile task task yürüt.
+Dispatch: CLAUDE.md DISPATCH tablosu (şef Fable · işçi Opus varsayılan, Sonnet mekanik ·
+hakem taze Opus · kapı guardrails/verify.sh). Faz 1 işleri feature branch + PR (güven kuralı:
+ilk hafta her PR insan okur; merge insan onayıyla). UI işlerinde verify-change skill + Claude
+Browser kanıtı zorunlu. Context %90'a gelince aynı formatta yeni handoff yazıp fresh session'a devret.
+```
+Güven kuralı hatırlatma: Faz 0 istisnaydı (boş repo'da main'e scaffold); Faz 1'den itibaren branch+PR.
