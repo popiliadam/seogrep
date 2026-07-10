@@ -1,0 +1,19 @@
+{
+  "name": "pseo-saas",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "verify": "bash guardrails/verify.sh"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.0",
+    "eslint": "^9.20.0",
+    "typescript-eslint": "^8.20.0"
+  }
+}
