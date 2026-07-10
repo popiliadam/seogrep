@@ -10,6 +10,9 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return Response.json({ ok: false, error: "Invalid request body." }, { status: 400 });
   }
+  if (body === null || typeof body !== "object") {
+    return Response.json({ ok: false, error: "Invalid request body." }, { status: 400 });
+  }
   if (typeof body.website === "string" && body.website.length > 0) {
     return Response.json({ ok: true });
   }
