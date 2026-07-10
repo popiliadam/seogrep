@@ -8,7 +8,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "build": "turbo run build",
-    "verify": "bash guardrails/verify.sh"
+    "verify": "bash guardrails/verify.sh",
+    "waitlist:smoke": "node scripts/waitlist-smoke.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
