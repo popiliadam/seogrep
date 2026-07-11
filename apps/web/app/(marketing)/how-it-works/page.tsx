@@ -16,12 +16,12 @@ const STEPS: readonly Step[] = [
   },
   {
     title: "Paste it into the client you already use",
-    body: "Add the URL once in Claude Desktop, claude.ai, Claude Code, Cursor, or Windsurf, and the Ranklens tools appear in your chat.",
+    body: "Add the URL once in Claude Desktop, claude.ai, Claude Code, Cursor, or Windsurf, and the SeoGrep tools appear in your chat.",
     link: { href: "/docs/getting-started", label: "Read the getting-started guide" },
   },
   {
     title: "Ask in plain language",
-    body: "Ask things like “Audit my site”, “find quick wins”, or “why did clicks drop?”. Ranklens runs the crawl or analysis and answers right in your chat. Your first crawl works without Search Console.",
+    body: "Ask things like “Audit my site”, “find quick wins”, or “why did clicks drop?”. SeoGrep runs the crawl or analysis and answers right in your chat. Your first crawl works without Search Console.",
   },
   {
     title: "Pay in credits, not seats",
@@ -33,15 +33,15 @@ const STEPS: readonly Step[] = [
 const CARDS = [
   {
     title: "Long jobs never block your chat",
-    body: "Crawls and audits run as background jobs. Ranklens hands back a job you can check with get_job_status while you keep working.",
+    body: "Crawls and audits run as background jobs. SeoGrep hands back a job you can check with get_job_status while you keep working.",
   },
   {
     title: "Expensive runs ask first",
-    body: "Before a large run, Ranklens estimates the cost. Anything over 200 credits waits for your go-ahead before it starts.",
+    body: "Before a large run, SeoGrep estimates the cost. Anything over 200 credits waits for your go-ahead before it starts.",
   },
   {
     title: "Reports you can share",
-    body: "Any analysis can become an HTML report with a public link for clients and teammates — each one carries a small “powered by Ranklens” footer.",
+    body: "Any analysis can become an HTML report with a public link for clients and teammates — each one carries a small “powered by SeoGrep” footer.",
   },
 ] as const;
 
@@ -58,7 +58,7 @@ export default function Page() {
             One URL turns your assistant into an SEO analyst
           </h1>
           <p className="max-w-2xl text-lg text-ink/70">
-            Ranklens follows the same model as connecting an app to Zapier: paste one URL into the AI client you already
+            SeoGrep follows the same model as connecting an app to Zapier: paste one URL into the AI client you already
             use, then ask for the analysis you need in plain language.
           </p>
         </div>
@@ -103,9 +103,9 @@ export default function Page() {
 
       <section className="border-t border-ink/10 bg-white/40">
         <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center sm:py-20">
-          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Ready to point a lens at your site?</h2>
+          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Ready to grep your site?</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-ink/70">
-            Join the waitlist and we&apos;ll send your invite as we open Ranklens in small batches.
+            Join the waitlist and we&apos;ll send your invite as we open SeoGrep in small batches.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link

@@ -41,7 +41,7 @@ export default function Page() {
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Privacy Policy</h1>
       <p className="mt-4 text-base text-ink/60">
-        A plain-language summary of what Ranklens collects and how it is handled during beta. This draft covers the
+        A plain-language summary of what SeoGrep collects and how it is handled during beta. This draft covers the
         essentials while the full policy is being prepared.
       </p>
       <div className="mt-12 flex flex-col gap-10">

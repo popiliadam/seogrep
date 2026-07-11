@@ -12,11 +12,11 @@ type Section = {
 const SECTIONS: readonly Section[] = [
   {
     heading: "Beta service",
-    body: "Ranklens is an SEO analysis service in beta. It runs crawls, audits, and Search Console analysis for websites through AI assistants, and it is billed with a credit system. Because it is in beta, features and limits may change.",
+    body: "SeoGrep is an SEO analysis service in beta. It runs crawls, audits, and Search Console analysis for websites through AI assistants, and it is billed with a credit system. Because it is in beta, features and limits may change.",
   },
   {
     heading: "Accepting these terms",
-    body: "By joining the waitlist or using Ranklens, you agree to these terms. If you do not agree, please do not use the service.",
+    body: "By joining the waitlist or using SeoGrep, you agree to these terms. If you do not agree, please do not use the service.",
   },
   {
     heading: "Credits and payment",
@@ -25,15 +25,15 @@ const SECTIONS: readonly Section[] = [
   },
   {
     heading: "Acceptable use",
-    body: "Only analyze websites you own or are authorized to analyze. Do not use Ranklens to access sites or data you have no right to.",
+    body: "Only analyze websites you own or are authorized to analyze. Do not use SeoGrep to access sites or data you have no right to.",
   },
   {
     heading: "Disclaimer",
-    body: "Ranklens is provided “as is” during beta, without warranties. Analysis results are informational and may be incomplete or change as the service evolves.",
+    body: "SeoGrep is provided “as is” during beta, without warranties. Analysis results are informational and may be incomplete or change as the service evolves.",
   },
   {
     heading: "Termination",
-    body: "You may stop using Ranklens at any time. We may suspend or end access if these terms are broken or to protect the service during beta.",
+    body: "You may stop using SeoGrep at any time. We may suspend or end access if these terms are broken or to protect the service during beta.",
   },
 ] as const;
 
@@ -45,7 +45,7 @@ export default function Page() {
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Terms of Service</h1>
       <p className="mt-4 text-base text-ink/60">
-        A plain-language summary of how Ranklens works during beta. This draft covers the essentials while the full
+        A plain-language summary of how SeoGrep works during beta. This draft covers the essentials while the full
         terms are being prepared.
       </p>
       <div className="mt-12 flex flex-col gap-10">
