@@ -1,12 +1,12 @@
 ---
 title: Cursor
-description: Connect Ranklens to Cursor with a project or global mcp.json file.
+description: Connect SeoGrep to Cursor with a project or global mcp.json file.
 ---
 
 Cursor reads MCP servers from an `mcp.json` file — either per-project or
 global to your user account.
 
-> **Beta note:** Your personal MCP URL comes from the Ranklens dashboard
+> **Beta note:** Your personal MCP URL comes from the SeoGrep dashboard
 > after your invite lands.
 
 ## Steps
@@ -16,14 +16,14 @@ global to your user account.
 2. Add:
 
    ```json
-   { "mcpServers": { "ranklens": { "url": "YOUR_MCP_URL" } } }
+   { "mcpServers": { "seogrep": { "url": "YOUR_MCP_URL" } } }
    ```
 
 3. Save, then reload Cursor's MCP settings and try "Crawl my site" in chat.
 
 ## If it doesn't connect
 
-Open Cursor's MCP settings panel and confirm "ranklens" shows a connected
+Open Cursor's MCP settings panel and confirm "seogrep" shows a connected
 status. If the field name above doesn't match what your version of Cursor
 expects, check Cursor's own MCP documentation — this has changed before.
 See [Troubleshooting](/docs/troubleshooting).

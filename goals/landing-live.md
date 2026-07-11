@@ -4,7 +4,7 @@ kaynak: Faz 1 İş A — canlı site markayı servis ediyor. Deploy öncesi SKIP
 
 ## predicate
 ```predicate
-[ -z "${PROD_URL:-}" ] && exit 0; curl -sf --max-time 15 "$PROD_URL" | grep -q Ranklens
+[ -z "${PROD_URL:-}" ] && exit 0; curl -sf --max-time 15 "$PROD_URL" | grep -q SeoGrep
 ```
 
 ## on-violation
