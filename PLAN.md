@@ -7,7 +7,7 @@
 
 ## Biten (Faz 1 — tümü hakem onaylı + kapı yeşil; ledger: `.superpowers/sdd/progress.md`)
 - **İş A — Landing + /pricing + /how-it-works (+ /terms /privacy taslak):** Lighthouse (lokal prod, Next 16, port 4517)
-  / 0.99/1.0/1.0 · /pricing 0.99/1.0/1.0 · /how-it-works 0.99/1.0/1.0. Copy İngilizce, Ranklens markalı, uydurma metrik yok
+  / 0.99/1.0/1.0 · /pricing 0.99/1.0/1.0 · /how-it-works 0.99/1.0/1.0 (rebrand sonrası yeniden koşuldu, aynı skorlar). Copy İngilizce, SeoGrep markalı, uydurma metrik yok
   (chat demo "Illustrative example" etiketli); spec §3 rakamları bayt-bayt + testle pinli (top-up + kredi maliyetleri dahil).
 - **İş B — Docs hub v1 (Fumadocs v16):** 20 /docs route'u build'de statik (prerender-manifest kanıtlı); nav spec §4 birebir
   (Tools Reference bilinçli yok — Faz 3'te zod şemadan otomatik); 5 client kurulum sayfası + 4 concept + 3 recipe + 4 üst sayfa;
@@ -33,11 +33,12 @@
 
 ## Blokajlar
 - `git push` outward_action_gate'te — onay: `/pseo-approve sess-21b253e5 git_push "origin <branch>"` (session'a özel) ya da insan elle push'lar.
-- ranklens.app satın alma (insan) → Vercel DNS → landing-live hedefi.
+- seogrep.com satın alma (insan — RDAP boş teyitli; dropcatch hızlı, GECİKTİRME) → Vercel DNS → landing-live hedefi.
 - Resend + PostHog hesap/anahtarları (insan, ücretsiz tier yeter): Resend API key + Audience ID; PostHog project key (EU host seçili).
 
 ## İnsan kuyruğu
-1. ranklens.app satın al (Cloudflare Registrar / Porkbun).
+1. seogrep.com satın al (Cloudflare Registrar / Porkbun) — BUGÜN; dropcatch listelerinde dolaşıyor.
+1b. GitHub repo rename onayı: `gh repo rename seogrep -R popiliadam/ranklens` (eski URL redirect olur; remote otomatik güncellenir — şef de koşabilir, onay ver yeter).
 2. Push onayı ver VEYA elle push:
    `git push origin main && git push -u origin feat/faz1-hygiene feat/faz1-waitlist feat/faz1-landing feat/faz1-pages feat/faz1-docs`
    (main 2 docs commit'i önde — önce main push'u PR diff'lerini temizler.)
@@ -49,12 +50,13 @@
 6. Compost önerisi (imza bekliyor, CLAUDE.md'ye yazılmadı): "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk kontrolünden geçer"
    (Next 16 olayının dersi).
 
-## Marka (KARAR — 2026-07-10)
-**Ranklens** · domain: **ranklens.app** (RDAP müsait; satın alma insanda). Repo: https://github.com/popiliadam/ranklens
+## Marka (KARAR — 2026-07-11, revize)
+**SeoGrep** · domain: **seogrep.com** (RDAP boş teyitli; satın alma insanda). Konsept: `grep` — hero: "grep your site for SEO issues."
+Repo: https://github.com/popiliadam/ranklens → rename kuyruğunda (seogrep). Eski karar (Ranklens/ranklens.app, 2026-07-10) insan kararıyla iptal; kod tabanı tamamen SeoGrep'e taşındı (hakem onaylı, sıfır kalıntı).
 
 ## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın)
 ```
-Proje: Ranklens — hosted SEO MCP SaaS. Dizin: "/Users/apple/dev/pseo web saas"
+Proje: SeoGrep — hosted SEO MCP SaaS. Dizin: "/Users/apple/dev/pseo web saas"
 Sırayla oku: PLAN.md → CLAUDE.md → contract.md (+ master spec docs/specs/2026-07-pseo-saas-design.md §7-9).
 Durum: Faz 1 KOD TAMAM (5'li stacked branch, tip: feat/faz1-docs; final Fable review + fix dalgası + re-review = merge-ready;
 6/6 goal PASS). Push/PR/merge + Vercel deploy + Resend/PostHog anahtarları İNSAN kapısında (PLAN.md insan kuyruğu).
