@@ -23,7 +23,7 @@ export function ChatDemo() {
             }`}
           >
             <span className="sr-only">
-              {turn.role === "user" ? "You:" : turn.role === "tool" ? "Tool call:" : "Ranklens:"}
+              {turn.role === "user" ? "You:" : turn.role === "tool" ? "Tool call:" : "SeoGrep:"}
             </span>
             {turn.text}
           </li>

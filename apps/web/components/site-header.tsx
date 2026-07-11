@@ -11,7 +11,7 @@ export function SiteHeader() {
     <header className="sticky top-0 z-40 border-b border-ink/10 bg-paper/90 backdrop-blur">
       <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
         <Link href="/" className="text-lg font-bold tracking-tight">
-          Ranklens
+          SeoGrep
         </Link>
         <nav aria-label="Main" className="flex items-center gap-5">
           {NAV.map((item) => (

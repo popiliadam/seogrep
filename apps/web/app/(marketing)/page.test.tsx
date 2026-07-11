@@ -5,7 +5,7 @@ import Page from "./page";
 describe("landing page", () => {
   it("renders the brand h1 without placeholder text", () => {
     render(<Page />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Point a lens at your site.");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("grep your site for SEO issues.");
   });
 
   it("labels the chat demo as illustrative", () => {

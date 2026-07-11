@@ -57,9 +57,9 @@ export default function Page() {
               <span aria-hidden="true" className="h-0.5 w-6 rounded-full bg-accent" />
               Private beta — join the waitlist
             </p>
-            <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-6xl">Point a lens at your site.</h1>
+            <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-6xl">grep your site for SEO issues.</h1>
             <p className="max-w-xl text-lg text-ink/70 sm:text-xl">
-              Ranklens turns the AI assistant you already use into an SEO analyst. Add one URL to Claude, Cursor, or
+              SeoGrep turns the AI assistant you already use into an SEO analyst. Add one URL to Claude, Cursor, or
               Windsurf and run real crawls, audits, and Search Console analysis in plain language.
             </p>
             <div className="w-full pt-2">
@@ -134,9 +134,9 @@ export default function Page() {
 
       <section id="waitlist" className="border-t border-ink/10 bg-white/40">
         <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center sm:py-24">
-          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Be first through the lens.</h2>
+          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Be the first match.</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-ink/70">
-            We&apos;re opening Ranklens to the waitlist in small batches. Leave your email and we&apos;ll send your
+            We&apos;re opening SeoGrep to the waitlist in small batches. Leave your email and we&apos;ll send your
             invite.
           </p>
           <div className="mt-8 flex justify-center">
