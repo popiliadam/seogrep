@@ -1,9 +1,13 @@
 {
   "ci": {
     "collect": {
-      "startServerCommand": "pnpm --filter @pseo/web start",
+      "startServerCommand": "pnpm --filter @pseo/web start --port 4517",
       "startServerReadyPattern": "Ready",
-      "url": ["http://localhost:3000/"],
+      "url": [
+        "http://localhost:4517/",
+        "http://localhost:4517/pricing",
+        "http://localhost:4517/how-it-works"
+      ],
       "numberOfRuns": 1,
       "settings": { "chromeFlags": "--headless=new" }
     },
