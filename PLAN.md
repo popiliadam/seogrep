@@ -47,8 +47,9 @@
    Not: PR3/PR4 copy'si Ranklens dönemindendir; SeoGrep rebrand'i PR5'te uygulanır (PR gövdelerinde açıklandı).
 4. Resend + PostHog hesapları → anahtarlar `.env` + Vercel env → `pnpm waitlist:smoke test@adresin.com`.
 5. Waitlist canlanmadan önce karar: /api/waitlist rate-limit (şu an yalnız honeypot; anahtar yokken prod 503 zaten).
-6. Compost önerisi (imza bekliyor, CLAUDE.md'ye yazılmadı): "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk kontrolünden geçer"
-   (Next 16 olayının dersi).
+6. Compost önerileri (imza bekliyor, CLAUDE.md'ye yazılmadı): (a) "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk
+   kontrolünden geçer" (Next 16 dersi); (b) "Paket, import ettiği runtime'ın tip paketini KENDİ devDependencies'ine yazar —
+   hoist şansına güvenilmez" (CI @types/node dersi, 2026-07-14: lokal yeşil/CI kırmızı, turbo fail-fast'in kökü).
 7. **REPO GEÇİCİ PUBLIC (2026-07-14, operatör kararı — CI billing kilidini aşmak için).** Bilinen bedel: master spec
    (marj formülü + yol haritası) bu pencerede klonlanabilir. HATIRLATMA: Faz 1 merge'leri + CI yeşilleri bitince repoyu
    PRIVATE'a GERİ AL (Settings → Danger Zone; görünürlük değişikliği insan işi — şef yapamaz). Kalıcı çözüm: GitHub Billing düzelt.
