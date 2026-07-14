@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "index",
+    "getting-started",
+    "core-concepts",
+    "recipes",
+    "billing-and-credits",
+    "security",
+    "faq",
+    "troubleshooting"
+  ]
+}

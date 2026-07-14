@@ -22,6 +22,9 @@ export function ChatDemo() {
                   : "self-start bg-ink/5"
             }`}
           >
+            <span className="sr-only">
+              {turn.role === "user" ? "You:" : turn.role === "tool" ? "Tool call:" : "SeoGrep:"}
+            </span>
             {turn.text}
           </li>
         ))}

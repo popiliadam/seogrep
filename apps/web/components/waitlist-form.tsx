@@ -42,7 +42,7 @@ export function WaitlistForm({ source }: { source: string }) {
       <p role="status" className="text-base font-medium">
         {state.alreadyExisted
           ? "You're already on the list — we'll be in touch at launch."
-          : "You're on the list. We'll email you when Ranklens opens."}
+          : "You're on the list. We'll email you when SeoGrep opens."}
       </p>
     );
   }

@@ -40,6 +40,7 @@ export default function Page() {
           </p>
         </div>
         <div className="mt-12">
+          <h2 className="sr-only">Plans</h2>
           <PricingTable />
         </div>
       </section>

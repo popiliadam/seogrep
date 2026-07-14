@@ -38,4 +38,10 @@ describe("POST /api/waitlist", () => {
     expect(response.status).toBe(200);
     expect(store.contacts).toHaveLength(0);
   });
+
+  it("returns 400 when the JSON body is literally null", async () => {
+    const response = await POST(jsonRequest(null));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ ok: false });
+  });
 });
