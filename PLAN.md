@@ -49,6 +49,9 @@
 5. Waitlist canlanmadan önce karar: /api/waitlist rate-limit (şu an yalnız honeypot; anahtar yokken prod 503 zaten).
 6. Compost önerisi (imza bekliyor, CLAUDE.md'ye yazılmadı): "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk kontrolünden geçer"
    (Next 16 olayının dersi).
+7. **REPO GEÇİCİ PUBLIC (2026-07-14, operatör kararı — CI billing kilidini aşmak için).** Bilinen bedel: master spec
+   (marj formülü + yol haritası) bu pencerede klonlanabilir. HATIRLATMA: Faz 1 merge'leri + CI yeşilleri bitince repoyu
+   PRIVATE'a GERİ AL (Settings → Danger Zone; görünürlük değişikliği insan işi — şef yapamaz). Kalıcı çözüm: GitHub Billing düzelt.
 
 ## Marka (KARAR — 2026-07-11, revize)
 **SeoGrep** · domain: **seogrep.com** (RDAP boş teyitli; satın alma insanda). Konsept: `grep` — hero: "grep your site for SEO issues."
