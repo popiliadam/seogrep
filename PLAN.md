@@ -38,13 +38,13 @@
 
 ## İnsan kuyruğu
 1. ~~seogrep.com satın al~~ ✅ ALINDI (Turhost, 2026-07-14). DNS yönetimi Turhost panelinde — Vercel adımında kayıtlar oraya girilecek.
-1b. GitHub repo rename onayı: `gh repo rename seogrep -R popiliadam/ranklens` (eski URL redirect olur; remote otomatik güncellenir — şef de koşabilir, onay ver yeter).
-2. Push onayı ver VEYA elle push:
-   `git push origin main && git push -u origin feat/faz1-hygiene feat/faz1-waitlist feat/faz1-landing feat/faz1-pages feat/faz1-docs`
-   (main 2 docs commit'i önde — önce main push'u PR diff'lerini temizler.)
-3. PR'ları aç (push sonrası şef de açabilir) — stacked, merge sırası 1→5:
-   PR1 hygiene→main · PR2 waitlist→hygiene · PR3 landing→waitlist · PR4 pages→landing · PR5 docs→pages.
-   Güven kuralı: ilk hafta her PR insan okur; merge insan onayıyla. Not: CI bu branch'lerde henüz koşmadı (push gate'i) — tüm kanıt lokal+ledger.
+1b. ~~GitHub repo rename~~ ✅ YAPILDI (2026-07-14): repo artık github.com/popiliadam/seogrep (eski URL redirect).
+2. ~~Push~~ ✅ YAPILDI (2026-07-14, operator chat onayı consent defterine kayıtlı, seq 37-38): main + 5 branch origin'de.
+3. **PR'ları OKU ve sırayla MERGE et (şu an senin sıran):**
+   PR1 https://github.com/popiliadam/seogrep/pull/1 (hijyen) → PR2 https://github.com/popiliadam/seogrep/pull/2 (waitlist)
+   → PR3 https://github.com/popiliadam/seogrep/pull/3 (landing) → PR4 https://github.com/popiliadam/seogrep/pull/4
+   (pricing+legal — FİYAT RAKAMLARINA ve hukuk taslaklarına bak) → PR5 https://github.com/popiliadam/seogrep/pull/5 (docs+fix+REBRAND).
+   Not: PR3/PR4 copy'si Ranklens dönemindendir; SeoGrep rebrand'i PR5'te uygulanır (PR gövdelerinde açıklandı).
 4. Resend + PostHog hesapları → anahtarlar `.env` + Vercel env → `pnpm waitlist:smoke test@adresin.com`.
 5. Waitlist canlanmadan önce karar: /api/waitlist rate-limit (şu an yalnız honeypot; anahtar yokken prod 503 zaten).
 6. Compost önerisi (imza bekliyor, CLAUDE.md'ye yazılmadı): "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk kontrolünden geçer"
