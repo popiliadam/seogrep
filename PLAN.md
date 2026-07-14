@@ -23,13 +23,18 @@
   Branch yığını (stacked): `feat/faz1-hygiene` → `feat/faz1-waitlist` → `feat/faz1-landing` → `feat/faz1-pages` → `feat/faz1-docs` (tip).
 
 ## Sıradaki 3 iş
-1. **PR'ları aç + insan merge'i** (push insan onayı gelince — aşağıda komutlar). Merge sırası PR1→PR5.
-2. **Vercel deploy (insan kapısı):** hesap bağla + apps/web deploy + env'e gerçek `RESEND_*`/`POSTHOG_*` anahtarları;
-   sonra `pnpm waitlist:smoke` ile İş C'nin gerçek kanıtı (Resend contact id + PostHog event) + `PROD_URL` set edip
-   `make goals` (landing-live aktifleşir). Deploy sonrası Paddle başvurusu (canlı site ister).
-3. **Faz 2 planı:** superpowers:writing-plans ile `docs/plans/2026-07-XX-faz2-auth-para.md`
+1. ~~PR merge zinciri~~ ✅ TAMAM (2026-07-14): PR #1-#6 merge'lendi (insan bastı). Not: #2-#5'te "Delete branch" atlanınca
+   içerik ara dallara zincirlendi; onarım = PR #6 (main ← birleşik dal; içerik final-incelenen 0b7e593 ile bayt-bayt eşit,
+   git diff boş kanıtlı). main CI (38f554a): SUCCESS. Artık dallar temizlendi (remote+lokal). Ders: stacked merge'de
+   "Delete branch" adımı atlanamaz — bir dahaki insan-merge rehberine kalın harflerle.
+2. **Vercel deploy (insan kapısı — ŞİMDİKİ ADIM, Adım 3 rehberi sohbette):** hesap bağla + apps/web deploy (Root Directory:
+   apps/web!) + env'e gerçek `RESEND_*`/`POSTHOG_*` anahtarları; sonra `pnpm waitlist:smoke` ile İş C'nin gerçek kanıtı +
+   `PROD_URL` set edip `make goals` (landing-live aktifleşir). Deploy sonrası Paddle başvurusu (canlı site ister) +
+   Google Cloud OAuth consent başvurusu (Faz 2 paralel insan işi — doğrulama haftalar sürer, ERKEN başla).
+3. **Faz 2 planı (şefte, başladı):** `docs/plans/2026-07-14-faz2-auth-para.md` → PR olarak insana okutulacak
    (Supabase Auth+RLS, DB şema+migrations, kredi defteri property test, api_keys+kişisel MCP URL, dashboard, Paddle sandbox,
-   Resend transactional, PostHog funnel — spec §9 Faz 2). Dikkat: Next 16 `proxy.ts` konvansiyonu; plan pinlerinde peer-uyum kontrolü.
+   Resend transactional, PostHog funnel — spec §9 Faz 2). Dersler işlenecek: Next 16 `proxy.ts`; pin'lerde peer-uyum kontrolü;
+   tip bağımlılıkları pakete yazılır.
 
 ## Blokajlar
 - `git push` outward_action_gate'te — onay: `/pseo-approve sess-21b253e5 git_push "origin <branch>"` (session'a özel) ya da insan elle push'lar.
@@ -40,11 +45,9 @@
 1. ~~seogrep.com satın al~~ ✅ ALINDI (Turhost, 2026-07-14). DNS yönetimi Turhost panelinde — Vercel adımında kayıtlar oraya girilecek.
 1b. ~~GitHub repo rename~~ ✅ YAPILDI (2026-07-14): repo artık github.com/popiliadam/seogrep (eski URL redirect).
 2. ~~Push~~ ✅ YAPILDI (2026-07-14, operator chat onayı consent defterine kayıtlı, seq 37-38): main + 5 branch origin'de.
-3. **PR'ları OKU ve sırayla MERGE et (şu an senin sıran):**
-   PR1 https://github.com/popiliadam/seogrep/pull/1 (hijyen) → PR2 https://github.com/popiliadam/seogrep/pull/2 (waitlist)
-   → PR3 https://github.com/popiliadam/seogrep/pull/3 (landing) → PR4 https://github.com/popiliadam/seogrep/pull/4
-   (pricing+legal — FİYAT RAKAMLARINA ve hukuk taslaklarına bak) → PR5 https://github.com/popiliadam/seogrep/pull/5 (docs+fix+REBRAND).
-   Not: PR3/PR4 copy'si Ranklens dönemindendir; SeoGrep rebrand'i PR5'te uygulanır (PR gövdelerinde açıklandı).
+3. ~~PR'ları oku + merge~~ ✅ TAMAM (2026-07-14; #1-#6, stack onarımı dahil — detay "Sıradaki 3 iş" #1'de).
+   AÇIK BORÇ (insan, acele yok ama unutma): fiyat sayfası + /terms + /privacy metinlerini site canlıya çıkınca gözle oku
+   ("ilk hafta insan okur" feragatinin telafisi — bunlar senin adına yayınlanıyor).
 4. Resend + PostHog hesapları → anahtarlar `.env` + Vercel env → `pnpm waitlist:smoke test@adresin.com`.
 5. Waitlist canlanmadan önce karar: /api/waitlist rate-limit (şu an yalnız honeypot; anahtar yokken prod 503 zaten).
 6. Compost önerileri (imza bekliyor, CLAUDE.md'ye yazılmadı): (a) "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk
