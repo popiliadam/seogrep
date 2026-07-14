@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+# pnpm >=10.26 anahtarı (onlyBuiltDependencies'in halefi) — pnpm.io/settings, teyit: 2026-07-10
 allowBuilds:
   esbuild: true
   sharp: true
