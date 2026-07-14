@@ -1,0 +1,35 @@
+---
+title: Windsurf
+description: Connect SeoGrep to Windsurf through its MCP config file.
+---
+
+Windsurf reads MCP servers from `mcp_config.json` in its Codeium config
+folder.
+
+> **Beta note:** Your personal MCP URL comes from the SeoGrep dashboard
+> after your invite lands.
+
+## Steps
+
+1. Open `~/.codeium/windsurf/mcp_config.json` (create it if it doesn't
+   exist yet).
+2. Add a `seogrep` entry under `mcpServers`. Windsurf's field name for a
+   remote server URL has varied by version — try `serverUrl` first, and
+   fall back to `url` if the connector doesn't show as connected:
+
+   ```json
+   { "mcpServers": { "seogrep": { "serverUrl": "YOUR_MCP_URL" } } }
+   ```
+
+3. Save, reload Windsurf's MCP panel, then try "Crawl my site" in chat.
+
+## If it doesn't connect
+
+Check Windsurf's own MCP documentation for the field name your version
+expects — that mismatch is a common snag with this client. See
+[Troubleshooting](/docs/troubleshooting).
+
+## Next
+
+[Core concepts](/docs/core-concepts) covers projects, credits, and data
+handling before your first crawl.

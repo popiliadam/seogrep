@@ -1,0 +1,33 @@
+---
+title: Security
+description: How SeoGrep isolates tenant data, protects tokens, and keeps your data out of model training.
+---
+
+Security here means one thing above all: your site's data stays yours, and
+stays separate from everyone else's.
+
+> **Beta note:** These are the guarantees the beta is built to, and they
+> carry forward unchanged at launch.
+
+## Tenant isolation
+
+Every query is scoped to your authenticated account and project. Row-level
+security is enabled on every table that holds customer data — there's no
+code path that can read across accounts by accident.
+
+## Credentials at rest
+
+Google Search Console tokens are encrypted at rest and scoped to read-only
+access. SeoGrep never requests write access to your GSC property.
+
+## Your data and AI training
+
+Your site data is never used to train AI models. SeoGrep doesn't call an
+LLM itself — the analysis tools run deterministic crawls and audits, and any
+AI reasoning happens in the client you already use.
+
+## Reporting a problem
+
+Found a security issue? Reach us via the waitlist email you used — see the
+[FAQ](/docs/faq) for other common questions until a dedicated security
+contact is live.

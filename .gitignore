@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.source/
 dist/
 .turbo/
 *.tsbuildinfo
@@ -8,3 +9,4 @@ dist/
 *.log
 .DS_Store
 coverage/
+.lighthouseci/
