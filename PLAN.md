@@ -33,11 +33,11 @@
 
 ## Blokajlar
 - `git push` outward_action_gate'te — onay: `/pseo-approve sess-21b253e5 git_push "origin <branch>"` (session'a özel) ya da insan elle push'lar.
-- seogrep.com satın alma (insan — RDAP boş teyitli; dropcatch hızlı, GECİKTİRME) → Vercel DNS → landing-live hedefi.
+- ~~seogrep.com satın alma~~ ✅ ALINDI (Turhost, 2026-07-14) → sıradaki: Vercel DNS → landing-live hedefi.
 - Resend + PostHog hesap/anahtarları (insan, ücretsiz tier yeter): Resend API key + Audience ID; PostHog project key (EU host seçili).
 
 ## İnsan kuyruğu
-1. seogrep.com satın al (Cloudflare Registrar / Porkbun) — BUGÜN; dropcatch listelerinde dolaşıyor.
+1. ~~seogrep.com satın al~~ ✅ ALINDI (Turhost, 2026-07-14). DNS yönetimi Turhost panelinde — Vercel adımında kayıtlar oraya girilecek.
 1b. GitHub repo rename onayı: `gh repo rename seogrep -R popiliadam/ranklens` (eski URL redirect olur; remote otomatik güncellenir — şef de koşabilir, onay ver yeter).
 2. Push onayı ver VEYA elle push:
    `git push origin main && git push -u origin feat/faz1-hygiene feat/faz1-waitlist feat/faz1-landing feat/faz1-pages feat/faz1-docs`
