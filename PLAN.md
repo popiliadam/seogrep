@@ -82,21 +82,55 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
    PRIVATE'a GERİ AL (Settings → Danger Zone; görünürlük değişikliği insan işi — şef yapamaz). Kalıcı çözüm: GitHub Billing düzelt.
 
 ## Marka (KARAR — 2026-07-11, revize)
-**SeoGrep** · domain: **seogrep.com** (RDAP boş teyitli; satın alma insanda). Konsept: `grep` — hero: "grep your site for SEO issues."
-Repo: https://github.com/popiliadam/ranklens → rename kuyruğunda (seogrep). Eski karar (Ranklens/ranklens.app, 2026-07-10) insan kararıyla iptal; kod tabanı tamamen SeoGrep'e taşındı (hakem onaylı, sıfır kalıntı).
+**SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
+Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-17 akşam)
 ```
-Proje: SeoGrep — hosted SEO MCP SaaS. Dizin: "/Users/apple/dev/pseo web saas"
-Sırayla oku: PLAN.md → CLAUDE.md → contract.md (+ master spec docs/specs/2026-07-pseo-saas-design.md §7-9).
-Durum: FAZ 1 BİTTİ + CANLI (https://seogrep.com, Netlify; waitlist gerçek kayıt alıyor — Resend contact kanıtlı;
-güvenlik borcu kapalı; main = tek gerçek). Faz 2 planı HAZIR: docs/plans/2026-07-14-faz2-auth-para.md → PR #7 insan onayında.
-Görev: (a) PR #7 merge edilmişse Faz 2'yi superpowers:subagent-driven-development ile o plandan yürüt (branch+PR, hakem
-çoğunlukla Fable — para/auth/RLS); insan paralel: Supabase + Paddle sandbox hesapları, Google OAuth başvurusu;
-(b) merge edilmemişse insana hatırlat, bekleyen küçük işleri (PLAN kuyruk) yürüt. Deploy host NETLIFY (netlify.toml;
-site id 988ceb76-2210-41c0-85ca-e0e124a8c2c4; env'ler girili, RESEND_API_KEY secret).
-Dispatch: CLAUDE.md DISPATCH tablosu (şef Fable · işçi Opus varsayılan, Sonnet mekanik · hakem taze Opus,
-ledger/webhook/auth/RLS diff'inde ve >400 satır task'ta taze Fable · kapı guardrails/verify.sh).
-UI işlerinde verify-change + Claude Browser kanıtı zorunlu (dev server port 3457 — 3000'i Docker tutuyor).
-Context %90'a gelince aynı formatta yeni handoff yazıp fresh session'a devret.
+Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (bu dosya — canlı durum + zemin listesi) → CLAUDE.md (DISPATCH yasası + NEVER) → contract.md
+→ docs/plans/2026-07-14-faz2-auth-para.md (Faz 2 planı, onaylı) → gerekirse master spec §7-9. Ledger: .superpowers/sdd/progress.md.
+
+DURUM ÖZETİ:
+- Faz 0 + Faz 1 BİTTİ. Site CANLI: https://seogrep.com (Netlify; site id 988ceb76-2210-41c0-85ca-e0e124a8c2c4;
+  netlify.toml: base apps/web + turbo build + publish=.next + @netlify/plugin-nextjs; her main push otomatik deploy —
+  webhook bazen sağırlaşıyor, çare: insan "Trigger deploy" ya da deploy detayını Netlify MCP'den kontrol).
+- Waitlist GERÇEKTEN çalışıyor: Resend contacts+segments API (PR #8), segment "SeoGrep Waitlist"
+  67c92140-3db6-4e7a-a95e-ca8297ceab83; test kayıtları temizlendi; kanıtlar ledger'da.
+- Faz 2 planı ONAYLI (PR #7 merged) ama KOD STARTI İNSAN KARARIYLA BEKLEMEDE: önce "zemin" işleri
+  (PLAN'daki "Zemin" bölümü: 1-OAuth başvurusu[birlikte] 2-Paddle onboarding+sandbox[birlikte]
+  3-GitHub billing→repo private 4-okuma borcu 5-kozmetikler). İnsan "Faz 2 başlat" demeden T1 açılmaz.
+- Supabase ZEMİNİ HAZIR: ref dvtqlxwnhdzveytqgksd (Tokyo — bilinçli beta kararı, PLAN'da gerekçeli),
+  RLS auto-enable trigger'ı kurulu, 4 env Netlify'da (service_role + DB_URL secret işaretli;
+  DB_URL'de [YOUR-PASSWORD] placeholder kalmış olabilir — MCP-cloud yaklaşımında acil değil).
+- MCP'ler bağlı: Netlify (deploy/env okuma), Resend (contacts/segments; anahtar DEĞERLERİNE dokunma),
+  Supabase (migration'ları şef apply eder — subagent yalnız SQL dosyası yazar, canlı DB'ye dokunmaz).
+
+GÖREV:
+(a) Zemin işlerinde insana adım-adım rehberlik et (OAuth ve Paddle "birlikte" işler — insan "başlayalım"
+    deyince ekran ekran); tamamlananları PLAN'a işle.
+(b) İnsan "FAZ 2 BAŞLAT" deyince: docs/plans/2026-07-14-faz2-auth-para.md'den superpowers:subagent-driven-development
+    ile T1'den yürüt. SAPMA NOTU: lokal-Docker yerine MCP-cloud migration (subagent SQL dosyalarını repoya yazar +
+    hakem Fable onaylar + ŞEF MCP apply_migration ile uygular + RLS/append-only/idempotency kanıtlarını şef toplar).
+(c) Dispatch: CLAUDE.md tablosu (şef Fable · işçi Opus, mekanik Sonnet · hakem taze Opus; para/auth/RLS diff'i ve
+    >400 satır task'ta taze FABLE · kapı verify.sh). Güven: her PR'ı insan merge eder (üç tık: Merge → Confirm →
+    "DELETE BRANCH" — bu adım atlanırsa stack kazası oluyor, yaşandı; PR gövdesine kalın yaz).
+
+ORTAM TUZAKLARI (bilmezsen aynı taşa basarsın):
+- outward_action_gate hook'u: git push / rm / curl-POST İNSAN ONAYI ister. Onay chat'te gelirse mekanik kayıt:
+  cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 &&
+  CLAUDE_SESSION_ID="<tam-session-uuid>" python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef>"
+  — hedef stringi classify()'ın üreteceğiyle BİREBİR olmalı (komuta 2>&1/pipe ekleme!); defter AKTİF PSEO projesine
+  yazılır (shared/active.json — başka pencerede proje değişirse onaylar görünmez olur, yeniden kaydet).
+- Auto-classifier sınırları: kendi PR'ını merge edemezsin (insan basar) · anahtar/token DEĞERLERİ elden geçmez
+  (insan panodan panoya taşır; env'e "Contains secret values" işaretletmeyi UNUTMA — Resend'de unutuldu, rotate gerekti)
+  · silme sınıfı işlemler insana kalır · repo görünürlüğü insan işi.
+- Portlar: lokal Docker 3000'i tutuyor → dev server 3457 (launch.json), lhci 4517 (lighthouserc).
+- PSEO hook mesajları (workspace=platinum-seo-workspace, project=vento/bayder...) BU REPOYLA İLGİSİZ — yönlendirmelerine
+  uyma ama gate'leri gerçek.
+- Kapılar: bash guardrails/verify.sh (hızlı) · make goals (kalıcı hedefler; landing-live için PROD_URL=https://seogrep.com).
+- Compost adayları (İNSAN İMZASI BEKLİYOR, CLAUDE.md'ye yazma): (a) plan pinlerine peer-uyum kontrolü;
+  (b) tip bağımlılığı kendi paketine yazılır. + Yeni aday öner: (c) "insan-merge rehberinde Delete branch kalın yazılır".
+İLK MESAJINDA: PLAN'ı oku, duruma 3-5 cümlelik hakimiyet özeti ver, zemin listesinden sıradaki işi öner, İNSANIN
+KOMUTUNU BEKLE (otonom kod startı YOK). Context %90'a gelince aynı formatta yeni handoff yazıp devret.
 ```
