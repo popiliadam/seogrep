@@ -49,7 +49,7 @@
 3. ~~PR'ları oku + merge~~ ✅ TAMAM (2026-07-14; #1-#6, stack onarımı dahil — detay "Sıradaki 3 iş" #1'de).
    AÇIK BORÇ (insan, acele yok ama unutma): fiyat sayfası + /terms + /privacy metinlerini site canlıya çıkınca gözle oku
    ("ilk hafta insan okur" feragatinin telafisi — bunlar senin adına yayınlanıyor).
-4. Resend + PostHog hesapları → anahtarlar `.env` + Vercel env → `pnpm waitlist:smoke test@adresin.com`.
+4. ~~Resend + PostHog anahtarları~~ ✅ GİRİLDİ (2026-07-17, Netlify env; Resend yeni contacts+segments API'ye PR #8 ile taşındı, segment: SeoGrep Waitlist). Bu commit env-sonrası redeploy tetikleyicisi. GÜVENLİK BORCU: RESEND_API_KEY secret işaretlenmeden girildi → doğrulama sonrası ROTATE (yeni anahtar + 'Contains secret values' + eskisini sil).
 5. Waitlist canlanmadan önce karar: /api/waitlist rate-limit (şu an yalnız honeypot; anahtar yokken prod 503 zaten).
 6. Compost önerileri (imza bekliyor, CLAUDE.md'ye yazılmadı): (a) "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk
    kontrolünden geçer" (Next 16 dersi); (b) "Paket, import ettiği runtime'ın tip paketini KENDİ devDependencies'ine yazar —
