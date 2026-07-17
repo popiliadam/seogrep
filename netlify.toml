@@ -1,0 +1,10 @@
+# Netlify deploy ayarları — apps/web (Next.js 16, pnpm+Turborepo monorepo)
+# Root Directory/Build ayarlarını UI'da elle girmeye gerek yok; bu dosya yeter.
+
+[build]
+  base = "apps/web"
+  # turbo, @pseo/core'u (workspace bağımlılığı) web'den ÖNCE derler
+  command = "cd ../.. && pnpm turbo run build --filter=@pseo/web"
+
+[build.environment]
+  NODE_VERSION = "22"
