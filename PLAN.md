@@ -66,11 +66,12 @@ Repo: https://github.com/popiliadam/ranklens → rename kuyruğunda (seogrep). E
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS. Dizin: "/Users/apple/dev/pseo web saas"
 Sırayla oku: PLAN.md → CLAUDE.md → contract.md (+ master spec docs/specs/2026-07-pseo-saas-design.md §7-9).
-Durum: Faz 1 KOD TAMAM (5'li stacked branch, tip: feat/faz1-docs; final Fable review + fix dalgası + re-review = merge-ready;
-6/6 goal PASS). Push/PR/merge + Vercel deploy + Resend/PostHog anahtarları İNSAN kapısında (PLAN.md insan kuyruğu).
-Görev: (a) push onayı gelmişse PR'ları aç ve insan merge'ini bekle; (b) deploy sonrası waitlist smoke + landing-live hedefi;
-(c) Faz 2 planını superpowers:writing-plans ile üret (docs/plans/2026-07-XX-faz2-auth-para.md, spec §9 Faz 2;
-Next 16: middleware yerine proxy.ts; plan pinlerine peer-uyum kontrolü ekle), sonra superpowers:subagent-driven-development ile yürüt.
+Durum: FAZ 1 BİTTİ + CANLI (https://seogrep.com, Netlify; waitlist gerçek kayıt alıyor — Resend contact kanıtlı;
+güvenlik borcu kapalı; main = tek gerçek). Faz 2 planı HAZIR: docs/plans/2026-07-14-faz2-auth-para.md → PR #7 insan onayında.
+Görev: (a) PR #7 merge edilmişse Faz 2'yi superpowers:subagent-driven-development ile o plandan yürüt (branch+PR, hakem
+çoğunlukla Fable — para/auth/RLS); insan paralel: Supabase + Paddle sandbox hesapları, Google OAuth başvurusu;
+(b) merge edilmemişse insana hatırlat, bekleyen küçük işleri (PLAN kuyruk) yürüt. Deploy host NETLIFY (netlify.toml;
+site id 988ceb76-2210-41c0-85ca-e0e124a8c2c4; env'ler girili, RESEND_API_KEY secret).
 Dispatch: CLAUDE.md DISPATCH tablosu (şef Fable · işçi Opus varsayılan, Sonnet mekanik · hakem taze Opus,
 ledger/webhook/auth/RLS diff'inde ve >400 satır task'ta taze Fable · kapı guardrails/verify.sh).
 UI işlerinde verify-change + Claude Browser kanıtı zorunlu (dev server port 3457 — 3000'i Docker tutuyor).
