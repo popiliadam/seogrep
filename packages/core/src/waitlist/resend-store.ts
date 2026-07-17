@@ -2,7 +2,7 @@ import type { ContactStore, WaitlistSignup } from "./waitlist.js";
 
 interface ResendConfig {
   apiKey: string;
-  audienceId: string;
+  segmentId: string;
   fetchFn?: typeof fetch;
 }
 
@@ -16,10 +16,9 @@ export function createResendContactStore(config: ResendConfig): ContactStore {
   };
 
   async function getExisting(email: string): Promise<{ id: string }> {
-    const response = await fetchFn(
-      `${BASE_URL}/audiences/${config.audienceId}/contacts/${encodeURIComponent(email)}`,
-      { headers },
-    );
+    const response = await fetchFn(`${BASE_URL}/contacts/${encodeURIComponent(email)}`, {
+      headers,
+    });
     if (!response.ok) throw new Error(`Resend request failed (${response.status})`);
     const data = (await response.json()) as { id: string };
     return { id: data.id };
@@ -27,10 +26,14 @@ export function createResendContactStore(config: ResendConfig): ContactStore {
 
   return {
     async createContact(input: WaitlistSignup) {
-      const response = await fetchFn(`${BASE_URL}/audiences/${config.audienceId}/contacts`, {
+      const response = await fetchFn(`${BASE_URL}/contacts`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ email: input.email, unsubscribed: false }),
+        body: JSON.stringify({
+          email: input.email,
+          unsubscribed: false,
+          segments: [{ id: config.segmentId }],
+        }),
       });
       if (response.status === 409) {
         const existing = await getExisting(input.email);

@@ -13,17 +13,21 @@ function fetchStub(responses: Array<{ status: number; body: unknown }>) {
 }
 
 describe("createResendContactStore", () => {
-  const cfg = { apiKey: "re_test", audienceId: "aud_1" };
+  const cfg = { apiKey: "re_test", segmentId: "seg_1" };
 
-  it("POSTs contact to the audience and returns the id", async () => {
+  it("POSTs contact to /contacts with the segment and returns the id", async () => {
     const { calls, fetchFn } = fetchStub([{ status: 201, body: { id: "cont_123" } }]);
     const store = createResendContactStore({ ...cfg, fetchFn });
     const result = await store.createContact({ email: "ada@example.com", source: "hero" });
     expect(result).toEqual({ id: "cont_123", alreadyExisted: false });
-    expect(calls[0].url).toBe("https://api.resend.com/audiences/aud_1/contacts");
+    expect(calls[0].url).toBe("https://api.resend.com/contacts");
     expect(calls[0].init.method).toBe("POST");
     expect(calls[0].init.headers).toMatchObject({ Authorization: "Bearer re_test" });
-    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ email: "ada@example.com" });
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+      email: "ada@example.com",
+      unsubscribed: false,
+      segments: [{ id: "seg_1" }],
+    });
   });
 
   it("on duplicate (409) falls back to GET by email", async () => {
@@ -34,7 +38,7 @@ describe("createResendContactStore", () => {
     const store = createResendContactStore({ ...cfg, fetchFn });
     const result = await store.createContact({ email: "ada@example.com", source: "hero" });
     expect(result).toEqual({ id: "cont_dup", alreadyExisted: true });
-    expect(calls[1].url).toBe("https://api.resend.com/audiences/aud_1/contacts/ada%40example.com");
+    expect(calls[1].url).toBe("https://api.resend.com/contacts/ada%40example.com");
   });
 
   it("throws a friendly error on 401", async () => {
