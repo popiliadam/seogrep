@@ -3,7 +3,7 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 1 — KOD TAMAM (2026-07-11) → insan kapıları bekliyor (push/PR/merge + deploy)
+## Faz: 1 — CANLI 🚀 (2026-07-17: https://seogrep.com) → kalan: anahtarlar (Adım 4) + Paddle/OAuth başvuruları
 
 ## Biten (Faz 1 — tümü hakem onaylı + kapı yeşil; ledger: `.superpowers/sdd/progress.md`)
 - **İş A — Landing + /pricing + /how-it-works (+ /terms /privacy taslak):** Lighthouse (lokal prod, Next 16, port 4517)
@@ -39,7 +39,7 @@
 
 ## Blokajlar
 - `git push` outward_action_gate'te — onay: `/pseo-approve sess-21b253e5 git_push "origin <branch>"` (session'a özel) ya da insan elle push'lar.
-- ~~seogrep.com satın alma~~ ✅ ALINDI (Turhost, 2026-07-14) → sıradaki: Vercel DNS → landing-live hedefi.
+- ~~Domain + DNS + deploy~~ ✅ CANLI (2026-07-17): seogrep.com → Netlify DNS (p08 nsone) → SSL ✓; tüm route'lar 200; landing-live hedefi gerçek PROD_URL ile PASS.
 - Resend + PostHog hesap/anahtarları (insan, ücretsiz tier yeter): Resend API key + Audience ID; PostHog project key (EU host seçili).
 
 ## İnsan kuyruğu
