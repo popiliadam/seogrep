@@ -27,10 +27,11 @@
    içerik ara dallara zincirlendi; onarım = PR #6 (main ← birleşik dal; içerik final-incelenen 0b7e593 ile bayt-bayt eşit,
    git diff boş kanıtlı). main CI (38f554a): SUCCESS. Artık dallar temizlendi (remote+lokal). Ders: stacked merge'de
    "Delete branch" adımı atlanamaz — bir dahaki insan-merge rehberine kalın harflerle.
-2. **Vercel deploy (insan kapısı — ŞİMDİKİ ADIM, Adım 3 rehberi sohbette):** hesap bağla + apps/web deploy (Root Directory:
-   apps/web!) + env'e gerçek `RESEND_*`/`POSTHOG_*` anahtarları; sonra `pnpm waitlist:smoke` ile İş C'nin gerçek kanıtı +
-   `PROD_URL` set edip `make goals` (landing-live aktifleşir). Deploy sonrası Paddle başvurusu (canlı site ister) +
-   Google Cloud OAuth consent başvurusu (Faz 2 paralel insan işi — doğrulama haftalar sürer, ERKEN başla).
+2. **Deploy (insan kapısı — ŞİMDİKİ ADIM): HOST=NETLIFY** (Vercel eski borç kilidi → geçildi; netlify.toml repoda,
+   Next 16 resmî destekli). Site: willowy-maamoul-21345a (id 988ceb76-2210-41c0-85ca-e0e124a8c2c4). İlk MCP-zip deploy'u
+   build'siz çıktı (tüm route 404) → repo Git'e bağlandı (2026-07-17); bu commit'in push'u webhook+gerçek build testi.
+   Sonra: seogrep.com domain + Turhost DNS → env'e `RESEND_*`/`POSTHOG_*` → `pnpm waitlist:smoke` → `PROD_URL` ile
+   `make goals`. Deploy sonrası Paddle başvurusu + Google Cloud OAuth consent başvurusu (haftalar sürer, ERKEN başla).
 3. **Faz 2 planı (şefte, başladı):** `docs/plans/2026-07-14-faz2-auth-para.md` → PR olarak insana okutulacak
    (Supabase Auth+RLS, DB şema+migrations, kredi defteri property test, api_keys+kişisel MCP URL, dashboard, Paddle sandbox,
    Resend transactional, PostHog funnel — spec §9 Faz 2). Dersler işlenecek: Next 16 `proxy.ts`; pin'lerde peer-uyum kontrolü;
