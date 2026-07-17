@@ -19,10 +19,10 @@ export function resetWaitlistDepsForTest(): void {
 
 export function getWaitlistDeps(): WaitlistDeps | null {
   if (testOverride) return testOverride;
-  const { RESEND_API_KEY, RESEND_AUDIENCE_ID, POSTHOG_API_KEY, POSTHOG_HOST } = process.env;
-  if (RESEND_API_KEY && RESEND_AUDIENCE_ID && POSTHOG_API_KEY) {
+  const { RESEND_API_KEY, RESEND_SEGMENT_ID, POSTHOG_API_KEY, POSTHOG_HOST } = process.env;
+  if (RESEND_API_KEY && RESEND_SEGMENT_ID && POSTHOG_API_KEY) {
     return {
-      store: createResendContactStore({ apiKey: RESEND_API_KEY, audienceId: RESEND_AUDIENCE_ID }),
+      store: createResendContactStore({ apiKey: RESEND_API_KEY, segmentId: RESEND_SEGMENT_ID }),
       analytics: createPostHogAnalytics({ apiKey: POSTHOG_API_KEY, host: POSTHOG_HOST }),
     };
   }
