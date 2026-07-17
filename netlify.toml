@@ -8,3 +8,7 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+# Next.js runtime'ını açıkça sabitle (zero-config algılamaya ek emniyet)
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
