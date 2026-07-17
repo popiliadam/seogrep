@@ -3,7 +3,7 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 1 — CANLI 🚀 (2026-07-17: https://seogrep.com) → kalan: anahtarlar (Adım 4) + Paddle/OAuth başvuruları
+## Faz: 1 — TAMAMLANDI ✅🚀 (2026-07-17: seogrep.com canlı + waitlist GERÇEK kayıt alıyor; kanıt: Resend contact 47b27e97) → sıra: Paddle/OAuth başvuruları + Faz 2 (PR #7)
 
 ## Biten (Faz 1 — tümü hakem onaylı + kapı yeşil; ledger: `.superpowers/sdd/progress.md`)
 - **İş A — Landing + /pricing + /how-it-works (+ /terms /privacy taslak):** Lighthouse (lokal prod, Next 16, port 4517)
@@ -12,9 +12,9 @@
 - **İş B — Docs hub v1 (Fumadocs v16):** 20 /docs route'u build'de statik (prerender-manifest kanıtlı); nav spec §4 birebir
   (Tools Reference bilinçli yok — Faz 3'te zod şemadan otomatik); 5 client kurulum sayfası + 4 concept + 3 recipe + 4 üst sayfa;
   MCP URL daima `YOUR_MCP_URL` placeholder.
-- **İş C — Waitlist:** packages/core port/adapter (Resend contact + PostHog capture, fetch-tabanlı, fixture testli, 15 test);
-  /api/waitlist (honeypot + null-body guard + dev memory fallback); form landing'de 2 yerde; browser kanıtı: submit → success
-  state + server log `POST /api/waitlist 200`. Gerçek anahtar kanıtı için `pnpm waitlist:smoke` hazır (anahtar insanda).
+- **İş C — Waitlist ✅ GERÇEK KANITLI:** canlı formdan Resend contact `47b27e97-131c-49da-b10f-f18601f5e1b7` (faz1-muhur@seogrep.com,
+  SeoGrep Waitlist segmenti; MCP'den bağımsız doğrulandı, 2026-07-17). Altyapı: core port/adapter (contacts+segments API, PR #8),
+  /api/waitlist (honeypot + null-body guard), 15+ fixture test. Canlı Lighthouse (Netlify eklentisi): 99/100/100/97.
 - **Hijyen + sistem:** engines>=22 · CI `permissions: contents: read` · allowBuilds pnpm 11'de doğru anahtar (teyitli).
   goals/: `lighthouse-90`, `landing-live` (deploy öncesi SKIP), `waitlist-works`, `docs-static` eklendi — **6/6 hedef PASS** (2026-07-11).
 - **Sanctioned sapma:** Next.js 15.3 → **16.2.10** (fumadocs-ui@16 hard peer; kod migrasyonu sıfır, hakem doğruladı,
