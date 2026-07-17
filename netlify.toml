@@ -5,6 +5,8 @@
   base = "apps/web"
   # turbo, @pseo/core'u (workspace bağımlılığı) web'den ÖNCE derler
   command = "cd ../.. && pnpm turbo run build --filter=@pseo/web"
+  # base'e GÖRELİ yol; UI'daki katlanmış apps/web/.next ayarını ezer
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "22"
