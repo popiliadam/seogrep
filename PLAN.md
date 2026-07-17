@@ -3,7 +3,15 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 2 — BAŞLADI 🏗️ (PR #7 merge 2026-07-17) — auth + kredi defteri + Paddle. Faz 1 CANLI (seogrep.com).
+## Faz: 2 — PLAN ONAYLI, KOD STARTI BEKLEMEDE (insan kararı 2026-07-17: "önce zemin işleri") · Faz 1 CANLI (seogrep.com)
+
+### Zemin (Faz 2 kod startı öncesi insan+şef işleri — sırayla)
+1. Google Cloud OAuth başvurusu (birlikte; onayı haftalar sürer — EN ÖNCELİKLİ)
+2. Paddle onboarding + sandbox kurulumu (birlikte: doğrulama, API key, webhook secret, 6 price)
+3. GitHub billing düzelt → repo PRIVATE'a al (sıra önemli; iş planı halka açık duruyor)
+4. Okuma borcu: canlı /pricing + /terms + /privacy (insan gözü)
+5. Kozmetik: POSTHOG_API_KEY'i secret işaretle; PostHog Activity'de waitlist_signup kontrolü (ops.)
+Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subagent akışı başlar.
 
 ### Faz 2 kurulum durumu (2026-07-17)
 - **Supabase projesi HAZIR:** ref `dvtqlxwnhdzveytqgksd` · ACTIVE_HEALTHY · Postgres 17 · region **ap-northeast-1 (Tokyo)**.
