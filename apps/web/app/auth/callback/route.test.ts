@@ -20,7 +20,10 @@ import { GET } from "./route";
 const BASE = "http://localhost:3457/auth/callback";
 
 describe("GET /auth/callback", () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks(); // console.error spies must not leak into other tests
+  });
 
   it("redirects a successful ?code= exchange to the fixed /app, grants the trial, and sends the welcome (any ?next= is ignored)", async () => {
     exchangeCodeForSession.mockResolvedValue({

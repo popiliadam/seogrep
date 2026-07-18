@@ -1,12 +1,12 @@
-// Kullanım: RESEND_API_KEY=... RESEND_FROM_EMAIL=... SMOKE_TO=you@example.com \
+// Usage: RESEND_API_KEY=... RESEND_FROM_EMAIL=... SMOKE_TO=you@example.com \
 //   pnpm email:smoke
-// Welcome mailini GERÇEKTEN gönderir (yalnız elle; CI'da koşulmaz — NEVER #5).
-// URL tabanı NEXT_PUBLIC_SITE_URL (yoksa canlı site).
+// REALLY sends the welcome email (manual only; never runs in CI — NEVER #5).
+// URL base comes from NEXT_PUBLIC_SITE_URL (falls back to the live site).
 import { sendEmail, welcomeEmail } from "@pseo/core";
 
 const { RESEND_API_KEY, RESEND_FROM_EMAIL, SMOKE_TO, NEXT_PUBLIC_SITE_URL } = process.env;
 if (!RESEND_API_KEY || !RESEND_FROM_EMAIL || !SMOKE_TO) {
-  console.error("Eksik: RESEND_API_KEY + RESEND_FROM_EMAIL + SMOKE_TO");
+  console.error("Missing: RESEND_API_KEY + RESEND_FROM_EMAIL + SMOKE_TO");
   process.exit(1);
 }
 
@@ -23,5 +23,5 @@ const result = await sendEmail({
   html,
 });
 console.error(
-  `KANIT — Resend email id: ${result.id}; "${subject}" -> ${SMOKE_TO}. Resend arayüzünde Emails'ten doğrula.`,
+  `PROOF — Resend email id: ${result.id ?? "(accepted, no id in response)"}; "${subject}" -> ${SMOKE_TO}. Verify it under Emails in the Resend dashboard.`,
 );

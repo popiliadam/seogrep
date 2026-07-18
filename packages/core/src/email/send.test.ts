@@ -31,6 +31,7 @@ describe("sendEmail", () => {
       Authorization: "Bearer re_test",
       "Content-Type": "application/json",
     });
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal); // hang protection is always armed
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       from: "hello@seogrep.com",
       to: "ada@example.com",
@@ -39,9 +40,26 @@ describe("sendEmail", () => {
     });
   });
 
-  it("throws a friendly error on a 4xx (e.g. 422 invalid from)", async () => {
+  it("returns { id: undefined } when a 2xx body has no usable id (honest typing, no throw)", async () => {
+    const { fetchFn } = fetchStub([{ status: 200, body: {} }]);
+    await expect(sendEmail({ ...message, fetchFn })).resolves.toEqual({ id: undefined });
+  });
+
+  it("throws a friendly error on a 4xx including a truncated response-body snippet", async () => {
     const { fetchFn } = fetchStub([{ status: 422, body: { message: "invalid from" } }]);
-    await expect(sendEmail({ ...message, fetchFn })).rejects.toThrow(/Resend email failed \(422\)/);
+    await expect(sendEmail({ ...message, fetchFn })).rejects.toThrow(
+      /Resend email failed \(422\): .*invalid from/,
+    );
+  });
+
+  it("aborts a hung request after timeoutMs and throws (auth redirect can never hang)", async () => {
+    const fetchFn = ((_url: string | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    await expect(sendEmail({ ...message, fetchFn, timeoutMs: 10 })).rejects.toThrow(
+      /timeout|aborted/i,
+    );
   });
 
   it("propagates a network error (fetch rejects)", async () => {
