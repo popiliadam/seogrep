@@ -5,6 +5,12 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
+    "./ledger-repo": { "types": "./dist/ledger-repo.d.ts", "default": "./dist/ledger-repo.js" },
+    "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" }
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",

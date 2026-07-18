@@ -13,12 +13,16 @@
   },
   "dependencies": {
     "@pseo/core": "workspace:*",
+    "@pseo/db": "workspace:*",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.5",
     "fumadocs-core": "^16.11.2",
     "fumadocs-mdx": "^15.1.0",
     "fumadocs-ui": "^16.11.2",
     "next": "^16.2.10",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@types/mdx": "^2.0.13",
