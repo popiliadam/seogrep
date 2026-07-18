@@ -23,15 +23,14 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
  *   - `?code=...`           -> exchangeCodeForSession (OAuth / PKCE, e.g. future Google).
  *   - `?token_hash=&type=`  -> verifyOtp (email signup confirmation + magic link).
  * On success it establishes the session cookie, fires the one-time trial grant, then
- * redirects into /app. `next` is constrained to a relative path (no open redirect).
+ * redirects to the fixed /app destination; every failure goes to the fixed
+ * /login?error=auth. No redirect target is ever read from the request.
  */
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
-  const nextParam = url.searchParams.get("next");
-  const next = nextParam && nextParam.startsWith("/") ? nextParam : "/app";
 
   const supabase = await createClient();
   let userId: string | null = null;
@@ -53,5 +52,5 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   await grantTrialCredits(userId);
-  return NextResponse.redirect(new URL(next, url.origin));
+  return NextResponse.redirect(new URL("/app", url.origin));
 }

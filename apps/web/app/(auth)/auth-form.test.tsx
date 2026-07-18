@@ -24,9 +24,9 @@ describe("AuthForm", () => {
   it("login mode submits the credentials via signInWithPassword", async () => {
     signInWithPassword.mockResolvedValue({ data: {}, error: null });
     render(<AuthForm mode="login" />);
-    fireEvent.change(screen.getByLabelText(/e-?posta/i), { target: { value: "ada@example.com" } });
-    fireEvent.change(screen.getByLabelText(/parola/i), { target: { value: "s3cret-pass" } });
-    fireEvent.click(screen.getByRole("button", { name: /giriş yap/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+    fireEvent.click(screen.getByRole("button", { name: /log in/i }));
     await waitFor(() =>
       expect(signInWithPassword).toHaveBeenCalledWith({
         email: "ada@example.com",
@@ -38,9 +38,9 @@ describe("AuthForm", () => {
   it("signup mode calls signUp with an emailRedirectTo pointing at /auth/callback", async () => {
     signUp.mockResolvedValue({ data: {}, error: null });
     render(<AuthForm mode="signup" />);
-    fireEvent.change(screen.getByLabelText(/e-?posta/i), { target: { value: "grace@example.com" } });
-    fireEvent.change(screen.getByLabelText(/parola/i), { target: { value: "s3cret-pass" } });
-    fireEvent.click(screen.getByRole("button", { name: /kayıt ol/i }));
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "grace@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
     await waitFor(() =>
       expect(signUp).toHaveBeenCalledWith(
         expect.objectContaining({

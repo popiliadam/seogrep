@@ -39,7 +39,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
         }
         setStatus("confirm");
         setMessage(
-          "E-postana bir doğrulama bağlantısı gönderdik. Hesabını etkinleştirmek için bağlantıya tıkla.",
+          "We sent a confirmation link to your email. Click the link to activate your account.",
         );
         return;
       }
@@ -52,9 +52,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
       }
       router.push("/app");
       router.refresh();
-    } catch {
+    } catch (error) {
+      console.error("auth form submit failed:", error);
       setStatus("error");
-      setMessage("Bir şeyler ters gitti. Lütfen tekrar dene.");
+      setMessage("Something went wrong. Please try again.");
     }
   }
 
@@ -70,7 +71,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="email" className="text-sm font-medium">
-          E-posta
+          Email
         </label>
         <input
           id="email"
@@ -85,7 +86,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="password" className="text-sm font-medium">
-          Parola
+          Password
         </label>
         <input
           id="password"
@@ -109,7 +110,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
         disabled={status === "submitting"}
         className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
-        {mode === "signup" ? "Kayıt ol" : "Giriş yap"}
+        {mode === "signup" ? "Sign up" : "Log in"}
       </button>
     </form>
   );

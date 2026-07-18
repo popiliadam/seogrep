@@ -4,10 +4,10 @@ import type { ReactNode } from "react";
 import { createClient } from "../../lib/supabase/server";
 
 const NAV_ITEMS = [
-  { href: "/app", label: "Genel Bakış" },
-  { href: "/app/connection", label: "Bağlantı" },
-  { href: "/app/usage", label: "Kullanım" },
-  { href: "/app/billing", label: "Faturalama" },
+  { href: "/app", label: "Overview" },
+  { href: "/app/connection", label: "Connection" },
+  { href: "/app/usage", label: "Usage" },
+  { href: "/app/billing", label: "Billing" },
 ] as const;
 
 async function signOut() {
@@ -49,7 +49,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           </div>
           <form action={signOut}>
             <button type="submit" className="text-sm text-neutral-600 hover:text-neutral-900">
-              Çıkış yap
+              Sign out
             </button>
           </form>
         </nav>
