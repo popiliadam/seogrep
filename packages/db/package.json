@@ -9,7 +9,11 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "build": "tsc -p tsconfig.json --noEmit false --declaration --outDir dist"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.5"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
