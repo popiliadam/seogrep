@@ -11,6 +11,7 @@
     "./ledger-repo": { "types": "./dist/ledger-repo.d.ts", "default": "./dist/ledger-repo.js" },
     "./ledger-read": { "types": "./dist/ledger-read.d.ts", "default": "./dist/ledger-read.js" },
     "./api-keys-repo": { "types": "./dist/api-keys-repo.d.ts", "default": "./dist/api-keys-repo.js" },
+    "./paddle-repo": { "types": "./dist/paddle-repo.d.ts", "default": "./dist/paddle-repo.js" },
     "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" }
   },
   "scripts": {
