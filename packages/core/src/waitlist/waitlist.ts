@@ -16,7 +16,8 @@ export interface AnalyticsClient {
   capture(event: {
     name: string;
     distinctId: string;
-    properties?: Record<string, string>;
+    /** String or boolean values only — callers must never put PII / raw amounts here. */
+    properties?: Record<string, string | boolean>;
   }): Promise<void>;
 }
 

@@ -5,6 +5,7 @@ packages:
 allowBuilds:
   esbuild: true
   sharp: true
+  supabase: true
 minimumReleaseAgeExclude:
   - fumadocs-core@16.11.2
   - fumadocs-ui@16.11.2

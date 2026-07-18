@@ -10,3 +10,5 @@ dist/
 .DS_Store
 coverage/
 .lighthouseci/
+**/supabase/.temp/
+**/supabase/.branches/

@@ -28,3 +28,17 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # No setup-cli: the pinned devDependency CLI (lockfile-controlled) is the
+      # single version source, local and CI alike (verify-db.sh resolves it).
+      - run: bash guardrails/verify-db.sh

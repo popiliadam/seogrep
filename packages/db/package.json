@@ -5,13 +5,27 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
+    "./ledger-repo": { "types": "./dist/ledger-repo.d.ts", "default": "./dist/ledger-repo.js" },
+    "./ledger-read": { "types": "./dist/ledger-read.d.ts", "default": "./dist/ledger-read.js" },
+    "./api-keys-repo": { "types": "./dist/api-keys-repo.d.ts", "default": "./dist/api-keys-repo.js" },
+    "./paddle-repo": { "types": "./dist/paddle-repo.d.ts", "default": "./dist/paddle-repo.js" },
+    "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" }
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "build": "tsc -p tsconfig.json --noEmit false --declaration --outDir dist"
   },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.5"
+  },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0",
     "eslint": "^9.20.0",

@@ -1,9 +1,14 @@
 import type { AnalyticsClient } from "./waitlist.js";
 
+/** Hard cap per request so a hung PostHog call can never stall a caller (mirrors email/send.ts). */
+const DEFAULT_TIMEOUT_MS = 3000;
+
 interface PostHogConfig {
   apiKey: string;
   host?: string;
   fetchFn?: typeof fetch;
+  /** Abort the request after this many ms (default 3000). Abort rejects -> callers' existing catch paths handle it. */
+  timeoutMs?: number;
 }
 
 export function createPostHogAnalytics(config: PostHogConfig): AnalyticsClient {
@@ -13,6 +18,7 @@ export function createPostHogAnalytics(config: PostHogConfig): AnalyticsClient {
     async capture(event) {
       const response = await fetchFn(`${host}/capture/`, {
         method: "POST",
+        signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           api_key: config.apiKey,
