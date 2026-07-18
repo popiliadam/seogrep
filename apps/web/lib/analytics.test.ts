@@ -103,6 +103,7 @@ describe("analytics wrapper", () => {
   });
 
   it("skips silently with no adapter construction when POSTHOG_API_KEY is unset", async () => {
+    vi.stubEnv("POSTHOG_API_KEY", ""); // hermetic: a developer shell exporting the key must not flip this test
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(captureSignup("user-1")).resolves.toBeUndefined();
     await expect(captureKeyCreated("user-1", false)).resolves.toBeUndefined();

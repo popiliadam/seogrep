@@ -24,9 +24,9 @@ async function safeCapture(
   userId: string,
   properties: Record<string, string | boolean>,
 ): Promise<void> {
-  const analytics = getAnalytics();
-  if (!analytics) return;
   try {
+    const analytics = getAnalytics();
+    if (!analytics) return;
     await analytics.capture({ name, distinctId: sha256hex(userId), properties });
   } catch (error) {
     console.error(`analytics capture failed (${name}):`, error);
