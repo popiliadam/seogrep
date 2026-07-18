@@ -47,6 +47,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@paddle/paddle-js':
+        specifier: ^1.4.2
+        version: 1.6.4
+      '@paddle/paddle-node-sdk':
+        specifier: ^3.8.0
+        version: 3.8.0
       '@pseo/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -731,6 +737,13 @@ packages:
   '@orama/orama@3.1.18':
     resolution: {integrity: sha512-a61ljmRVVyG5MC/698C8/FfFDw5a8LOIvyOLW5fztgUXqUpc1jOfQzOitSCbge657OgXXThmY3Tk8fpiDb4UcA==}
     engines: {node: '>= 20.0.0'}
+
+  '@paddle/paddle-js@1.6.4':
+    resolution: {integrity: sha512-ncfnS6I8mCX6krZ3Sgz2iAYivGmhdI81yt9mT6prtPj4Ipd9J3M12LCJRUFL4FB7BYeeuV04c33RSEnbZUBCaA==}
+
+  '@paddle/paddle-node-sdk@3.8.0':
+    resolution: {integrity: sha512-4RS6AhZisloYaT2jiFgx9hwm22qwLRUx4EgIVb1gS3bS96lhDBQWq8BC1/Zow2i3CuxMkehXQUc3qKSBS77ozA==}
+    engines: {node: '>=20'}
 
   '@paulirish/trace_engine@0.0.53':
     resolution: {integrity: sha512-PUl/vlfo08Oj804VI5nDPeSk9vyslnBlVzDDwFt8SUVxY8+KdGMkra/vrXjEEHe8gb7+RqVTfOIlGw0nyrEelA==}
@@ -4629,6 +4642,10 @@ snapshots:
   '@noble/hashes@1.8.0': {}
 
   '@orama/orama@3.1.18': {}
+
+  '@paddle/paddle-js@1.6.4': {}
+
+  '@paddle/paddle-node-sdk@3.8.0': {}
 
   '@paulirish/trace_engine@0.0.53':
     dependencies:

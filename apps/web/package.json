@@ -12,6 +12,8 @@
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
+    "@paddle/paddle-js": "^1.4.2",
+    "@paddle/paddle-node-sdk": "^3.8.0",
     "@pseo/core": "workspace:*",
     "@pseo/db": "workspace:*",
     "@supabase/ssr": "^0.12.3",
