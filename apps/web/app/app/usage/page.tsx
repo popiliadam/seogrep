@@ -16,7 +16,9 @@ function parsePage(raw: string | undefined): number {
  * /app/usage — the full credit ledger, newest first, 25 per page. Reads through the
  * caller's authenticated client (RLS via @pseo/db/ledger-read). Prev/Next are plain
  * links; they render disabled at the first/last page. `searchParams` is a promise in
- * Next 16.
+ * Next 16. An overflowing ?page= is clamped by the repo to the last real page — the
+ * result's `page` is the SERVED page, so "Page X of Y" renders straight from it and a
+ * user-crafted URL can never produce a PostgREST 416 error page.
  */
 export default async function UsagePage({
   searchParams,
@@ -39,12 +41,13 @@ export default async function UsagePage({
     );
   }
 
-  const { entries, total, pageSize } = await listLedgerEntries(supabase, user.id, {
-    page,
-    pageSize: PAGE_SIZE,
-  });
+  const {
+    entries,
+    total,
+    page: currentPage,
+    pageSize,
+  } = await listLedgerEntries(supabase, user.id, { page, pageSize: PAGE_SIZE });
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const currentPage = Math.min(page, pageCount);
   const hasPrev = currentPage > 1;
   const hasNext = currentPage < pageCount;
 

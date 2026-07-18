@@ -72,6 +72,20 @@ describe("UsagePage", () => {
     });
   });
 
+  it("overflowing page renders the served (clamped) page without erroring", async () => {
+    // The repo clamps ?page=1000 on a 3-row ledger to page 1 and reports it back; the
+    // pager must reflect the SERVED page, not the requested one.
+    await renderUsage("1000", { entries: makeEntries(3), total: 3, page: 1, pageSize: 25 });
+    expect(listLedgerEntries).toHaveBeenCalledWith(expect.anything(), "user-1", {
+      page: 1000,
+      pageSize: 25,
+    });
+    expect(screen.getByText(/3 entries · Page 1 of 1/)).toBeTruthy();
+    // Single real page: both controls render disabled.
+    expect(screen.queryByRole("link", { name: "Previous" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Next" })).toBeNull();
+  });
+
   it("empty ledger shows the empty state and no pager", async () => {
     await renderUsage(undefined, { entries: [], total: 0, page: 1, pageSize: 25 });
     expect(screen.getByText("No activity yet.")).toBeTruthy();

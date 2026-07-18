@@ -31,7 +31,11 @@ export interface ListLedgerParams {
   readonly pageSize: number;
 }
 
-/** One page of ledger entries plus the RLS-scoped total row count. */
+/**
+ * One page of ledger entries plus the RLS-scoped total row count. `page` is the page
+ * actually SERVED: a request beyond the last real page is clamped to the last page,
+ * so callers can render "Page X of Y" straight from the result.
+ */
 export interface LedgerPage {
   readonly entries: readonly LedgerEntry[];
   readonly total: number;
@@ -84,14 +88,24 @@ export async function getBalance(client: ReadClient, userId: string): Promise<nu
  * List one page of the caller's ledger, newest first with a deterministic secondary
  * sort on id (so rows sharing a created_at keep a stable order across pages). `total`
  * is the RLS-scoped exact count. MUST be called with the caller's authenticated client.
+ *
+ * Overflow guard: PostgREST rejects a range whose offset lies beyond the total with
+ * 416 / PGRST103 when an exact count is requested, so a user-crafted ?page= overflow
+ * would otherwise THROW. Page 1 needs no pre-check (offset 0 is always satisfiable —
+ * the common Overview / default-Usage path stays a single query); deeper pages are
+ * clamped to the last real page via a rows-free count first. credit_ledger is
+ * append-only, so between the two queries the count can only GROW — a clamped offset
+ * can never become unsatisfiable.
  */
 export async function listLedgerEntries(
   client: ReadClient,
   userId: string,
   params: ListLedgerParams,
 ): Promise<LedgerPage> {
-  const page = clampPositiveInt(params.page, 1);
+  const requestedPage = clampPositiveInt(params.page, 1);
   const pageSize = clampPositiveInt(params.pageSize, 25);
+  const page =
+    requestedPage === 1 ? 1 : await clampToLastPage(client, userId, requestedPage, pageSize);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
 
@@ -112,4 +126,22 @@ export async function listLedgerEntries(
     page,
     pageSize,
   };
+}
+
+/** Clamp `requestedPage` (>1) to the caller's real last page (>=1) via a rows-free count. */
+async function clampToLastPage(
+  client: ReadClient,
+  userId: string,
+  requestedPage: number,
+  pageSize: number,
+): Promise<number> {
+  const { count, error } = await client
+    .from("credit_ledger")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`listLedgerEntries count failed: ${error.message}`);
+  }
+  const lastPage = Math.max(1, Math.ceil((count ?? 0) / pageSize));
+  return Math.min(requestedPage, lastPage);
 }

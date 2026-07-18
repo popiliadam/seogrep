@@ -1,24 +1,43 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import BillingPage from "./page";
 
+/** The card (li) that contains `text`; throws with a readable message if absent. */
+function cardOf(text: string): HTMLElement {
+  const card = screen.getByText(text).closest("li");
+  if (card === null) throw new Error(`no card contains "${text}"`);
+  return card;
+}
+
 describe("BillingPage", () => {
-  it("renders plan cards: prices from the shared pricing source, credits from CREDIT_PACKAGES", () => {
+  it("pairs each plan's price with its CREDIT_PACKAGES credits in the SAME card", () => {
     render(<BillingPage />);
-    // Prices re-used from the Faz 1 pricing data (no new price constant here).
-    expect(screen.getByText("$19")).toBeTruthy();
-    expect(screen.getByText("$49")).toBeTruthy();
-    expect(screen.getByText("$149")).toBeTruthy();
-    // Credit counts derive from @pseo/core CREDIT_PACKAGES (starter 1,000 · pro 3,500).
-    expect(screen.getByText("1,000 credits")).toBeTruthy();
-    expect(screen.getByText("3,500 credits")).toBeTruthy();
+    // Prices re-used from the shared Faz 1 pricing source; credits derive from
+    // @pseo/core CREDIT_PACKAGES. within() pins the pairing per card, so a price or
+    // credits transposition across cards fails here.
+    const plans = [
+      ["Trial", "$0", "200 credits"],
+      ["Starter", "$19", "1,000 credits"],
+      ["Pro", "$49", "3,500 credits"],
+      ["Agency", "$149", "12,000 credits"],
+    ] as const;
+    for (const [name, price, credits] of plans) {
+      const card = cardOf(name);
+      expect(within(card).getByText(price)).toBeTruthy();
+      expect(within(card).getByText(credits)).toBeTruthy();
+    }
   });
 
-  it("renders the top-ups with CREDIT_PACKAGES-derived credits", () => {
+  it("pairs each top-up's price with its CREDIT_PACKAGES credits in the SAME card", () => {
     render(<BillingPage />);
-    expect(screen.getByText("$10")).toBeTruthy();
-    expect(screen.getByText("400 credits")).toBeTruthy();
-    expect(screen.getByText("2,400 credits")).toBeTruthy();
+    const topUps = [
+      ["$10", "400 credits"],
+      ["$25", "1,100 credits"],
+      ["$50", "2,400 credits"],
+    ] as const;
+    for (const [price, credits] of topUps) {
+      expect(within(cardOf(price)).getByText(credits)).toBeTruthy();
+    }
   });
 
   it("Buy buttons are disabled with a checkout-coming-soon note (purchase lands in T7)", () => {

@@ -131,6 +131,28 @@ describe("ledger-read against local Supabase", () => {
     expect(page2.entries.map((e) => e.delta)).toEqual(expectedByIdDesc.slice(25));
   });
 
+  it("clamps an overflowing page to the last valid page instead of throwing", async () => {
+    const user = await makeUser();
+    await seedRows(user.id, [1, 2, 3]);
+    const asUser = await clientForUser(user);
+
+    // 3 rows / pageSize 25 -> only page 1 exists. A user-crafted ?page=1000 must not
+    // become a PostgREST 416 (PGRST103) throw; it serves the last real page instead.
+    const result = await listLedgerEntries(asUser, user.id, { page: 1000, pageSize: 25 });
+    expect(result.total).toBe(3);
+    expect(result.page).toBe(1);
+    expect(result.entries).toHaveLength(3);
+  });
+
+  it("deep page on an empty ledger returns an empty page 1 (no throw)", async () => {
+    const user = await makeUser();
+    const asUser = await clientForUser(user);
+    const result = await listLedgerEntries(asUser, user.id, { page: 5, pageSize: 25 });
+    expect(result.total).toBe(0);
+    expect(result.page).toBe(1);
+    expect(result.entries).toEqual([]);
+  });
+
   it("RLS: a caller cannot read another user's entries or balance", async () => {
     const userA = await makeUser();
     const userB = await makeUser();
