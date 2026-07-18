@@ -10,4 +10,7 @@ export * from "./billing/packages.js";
 export * from "./billing/ledger.js";
 export * from "./billing/paddle-events.js";
 
+export * from "./email/send.js";
+export * from "./email/welcome.js";
+
 export * from "./keys/api-key.js";
