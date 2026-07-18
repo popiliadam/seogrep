@@ -45,7 +45,9 @@ function signedOut() {
 }
 
 describe("connection server actions", () => {
-  afterEach(() => vi.clearAllMocks());
+  // resetAllMocks (not clearAllMocks): the compensation tests install throwing
+  // implementations on revokeKeyMock, which must not leak into later tests.
+  afterEach(() => vi.resetAllMocks());
 
   describe("createKeyAction", () => {
     it("rejects with no session and never writes", async () => {
@@ -108,6 +110,40 @@ describe("connection server actions", () => {
       expect(order).toEqual(["create", "revoke"]);
       expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
       expect(result.key).toBe("sg_PLAINTEXT");
+    });
+
+    it("old-key revoke failure: back-revokes the NEW key, throws clean-failure, old key touched once", async () => {
+      signedIn("user-1");
+      getKeyOwnerMock.mockResolvedValue("user-1");
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(NEW_ID));
+      const revoked: string[] = [];
+      revokeKeyMock.mockImplementation(async (_client, keyId) => {
+        revoked.push(keyId);
+        if (keyId === KEY_ID) throw new Error("db down");
+      });
+
+      // (b) The action rethrows a meaningful clean-failure error (old key still active).
+      await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/existing key is unchanged/i);
+
+      // (a) Compensation order: failed old-key attempt, then back-revoke of the new key.
+      expect(revoked).toEqual([KEY_ID, NEW_ID]);
+      // (c) Exactly ONE revoke attempt on the old key — no blind retry.
+      expect(revoked.filter((id) => id === KEY_ID)).toHaveLength(1);
+    });
+
+    it("old-key revoke + compensation both fail: throws a partial-failure error, nothing further", async () => {
+      signedIn("user-1");
+      getKeyOwnerMock.mockResolvedValue("user-1");
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(NEW_ID));
+      revokeKeyMock.mockRejectedValue(new Error("db down"));
+
+      await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/failed partway/i);
+      // Old-key attempt + new-key compensation attempt only.
+      expect(revokeKeyMock).toHaveBeenCalledTimes(2);
+      expect(revokeKeyMock).toHaveBeenNthCalledWith(1, expect.anything(), KEY_ID);
+      expect(revokeKeyMock).toHaveBeenNthCalledWith(2, expect.anything(), NEW_ID);
     });
   });
 

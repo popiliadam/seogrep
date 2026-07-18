@@ -54,17 +54,23 @@ async function assertOwnedBy(service: ServiceClient, keyId: string, userId: stri
   }
 }
 
+interface IssuedKey {
+  /** Row id of the newly inserted key — rotate needs it for failure compensation. */
+  readonly keyId: string;
+  readonly result: GeneratedKeyResult;
+}
+
 /** Generate a key, persist only its hash + prefix, and return the one-time reveal. */
-async function issueKey(service: ServiceClient, userId: string): Promise<GeneratedKeyResult> {
+async function issueKey(service: ServiceClient, userId: string): Promise<IssuedKey> {
   const { key, prefix, hash } = generateApiKey();
-  await createKey(service, { userId, keyHash: hash, keyPrefix: prefix });
-  return { key, prefix, mcpUrl: mcpUrlFor(key, mcpUrlTemplate()) };
+  const created = await createKey(service, { userId, keyHash: hash, keyPrefix: prefix });
+  return { keyId: created.id, result: { key, prefix, mcpUrl: mcpUrlFor(key, mcpUrlTemplate()) } };
 }
 
 export async function createKeyAction(): Promise<GeneratedKeyResult> {
   const userId = await requireUserId();
   const service = createServiceClient();
-  const result = await issueKey(service, userId);
+  const { result } = await issueKey(service, userId);
   revalidatePath(CONNECTION_PATH);
   return result;
 }
@@ -75,10 +81,24 @@ export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyRes
   await assertOwnedBy(service, oldKeyId, userId);
   // Chef order: mint + insert the new key FIRST, then revoke the old one, so the user is
   // never left without a copyable key (a brief double-active window is acceptable).
-  const result = await issueKey(service, userId);
-  await revokeKey(service, oldKeyId);
+  const issued = await issueKey(service, userId);
+  try {
+    await revokeKey(service, oldKeyId);
+  } catch (caught) {
+    console.error("rotateKeyAction: revoking the old key failed:", caught);
+    // Compensate: the throw below discards the new plaintext, so an active row for it
+    // would be an unusable orphan while the OLD credential stays live. Best-effort
+    // back-revoke restores the pre-rotation state (old key stays the single active one).
+    try {
+      await revokeKey(service, issued.keyId);
+    } catch (compensation) {
+      console.error("rotateKeyAction: back-revoking the new key also failed:", compensation);
+      throw new Error("Rotation failed partway; contact support or retry");
+    }
+    throw new Error("Rotation failed; your existing key is unchanged");
+  }
   revalidatePath(CONNECTION_PATH);
-  return result;
+  return issued.result;
 }
 
 export async function revokeKeyAction(keyId: string): Promise<void> {

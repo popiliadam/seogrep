@@ -1,10 +1,13 @@
 import { createHash, randomBytes as cryptoRandomBytes } from "node:crypto";
 
 /**
- * Pure personal-API-key domain. No I/O, no clock, no global state. The only
- * non-determinism (entropy) is injected so callers/tests can pin the format and
- * hashing; the DB layer (packages/db) persists ONLY the hash + prefix, never the
- * plaintext key, which is shown to the user exactly once at creation time.
+ * Personal-API-key domain. No I/O, no clock; the only non-determinism (entropy) is
+ * injected so callers/tests can pin the format and hashing. Every export is a pure
+ * function except mcpUrlTemplate(), which deliberately reads
+ * process.env.MCP_URL_TEMPLATE (config lookup — pass your own template to mcpUrlFor
+ * for a fully pure path). The DB layer (packages/db) persists ONLY the hash +
+ * prefix, never the plaintext key, which is shown to the user exactly once at
+ * creation time.
  *
  * `node:crypto` is a runtime dependency here (core already runs in a Node context —
  * its fetch adapters do); base58 and the URL template are hand-written so the package

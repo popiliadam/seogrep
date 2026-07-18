@@ -95,6 +95,9 @@ describe("generateApiKey", () => {
   it("never repeats across 1000 real-entropy generations (key + hash + prefix distinct)", () => {
     const keys = new Set<string>();
     const hashes = new Set<string>();
+    // 8 base58 chars after "sg_" ≈ 1.3e14 combinations — a 1000-draw collision is
+    // ~4e-9, so asserting prefix distinctness is flake-free.
+    const prefixes = new Set<string>();
     for (let i = 0; i < 1000; i += 1) {
       const { key, hash, prefix } = generateApiKey();
       expect(key.startsWith("sg_")).toBe(true);
@@ -102,9 +105,11 @@ describe("generateApiKey", () => {
       expect(hash).toBe(createHash("sha256").update(key, "utf8").digest("hex"));
       keys.add(key);
       hashes.add(hash);
+      prefixes.add(prefix);
     }
     expect(keys.size).toBe(1000);
     expect(hashes.size).toBe(1000);
+    expect(prefixes.size).toBe(1000);
   });
 });
 
