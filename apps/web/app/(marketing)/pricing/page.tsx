@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { PricingTable } from "../../../components/pricing-table";
+import { TOP_UPS, creditsLabel } from "../../../components/pricing-plans";
 
 export const metadata: Metadata = { title: "Pricing" };
 
@@ -10,12 +11,6 @@ const CREDIT_COSTS = [
   { action: "Full on-page + technical audit", cost: "50" },
   { action: "Keyword research (100 keywords)", cost: "25" },
   { action: "Monthly report", cost: "15" },
-] as const;
-
-const TOP_UPS = [
-  { price: "$10", credits: "400 credits" },
-  { price: "$25", credits: "1,100 credits" },
-  { price: "$50", credits: "2,400 credits" },
 ] as const;
 
 const POLICIES = [
@@ -95,14 +90,14 @@ export default function Page() {
             <ul className="mt-4 flex flex-col gap-3">
               {TOP_UPS.map((topUp) => (
                 <li
-                  key={topUp.price}
+                  key={topUp.key}
                   className="flex items-baseline justify-between gap-4 rounded-xl border border-ink/10 bg-paper px-4 py-3"
                 >
                   <span className="text-lg font-semibold text-ink">{topUp.price}</span>
                   <span aria-hidden="true" className="text-ink/40">
                     →
                   </span>
-                  <span className="font-medium text-accent-strong">{topUp.credits}</span>
+                  <span className="font-medium text-accent-strong">{creditsLabel(topUp.key)}</span>
                 </li>
               ))}
             </ul>
