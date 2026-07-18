@@ -9,6 +9,7 @@
     "test": "turbo run test",
     "build": "turbo run build",
     "verify": "bash guardrails/verify.sh",
+    "verify:db": "bash guardrails/verify-db.sh",
     "waitlist:smoke": "node scripts/waitlist-smoke.mjs",
     "lighthouse": "pnpm --filter @pseo/web build && lhci autorun",
     "db:start": "supabase start --workdir packages/db",
