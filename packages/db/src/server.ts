@@ -7,8 +7,11 @@ import type { Database } from "./types.js";
  * apps/web layer wraps its usage behind `server-only` (T4), and this runtime guard
  * fails fast if the factory is ever evaluated inside a browser bundle.
  *
- * Reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from the environment (never
- * hardcoded). Throws a clear error if either is missing.
+ * Reads SUPABASE_URL (falling back to NEXT_PUBLIC_SUPABASE_URL — same project URL,
+ * and deployments like Netlify only define the public name) and
+ * SUPABASE_SERVICE_ROLE_KEY from the environment (never hardcoded). Throws a clear
+ * error if either is missing. Prod incident 2026-07-18: the missing fallback made
+ * the signup trial grant throw on Netlify while local gates stayed green.
  */
 export function createServiceClient(): SupabaseClient<Database> {
   if (typeof window !== "undefined") {
@@ -17,11 +20,11 @@ export function createServiceClient(): SupabaseClient<Database> {
     );
   }
 
-  const url = process.env.SUPABASE_URL;
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRoleKey) {
     throw new Error(
-      "createServiceClient() requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to be set",
+      "createServiceClient() requires SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY to be set",
     );
   }
 
