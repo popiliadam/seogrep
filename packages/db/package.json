@@ -9,6 +9,7 @@
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" },
     "./ledger-repo": { "types": "./dist/ledger-repo.d.ts", "default": "./dist/ledger-repo.js" },
+    "./api-keys-repo": { "types": "./dist/api-keys-repo.d.ts", "default": "./dist/api-keys-repo.js" },
     "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" }
   },
   "scripts": {
