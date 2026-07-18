@@ -8,5 +8,6 @@ export * from "./waitlist/posthog-analytics.js";
 
 export * from "./billing/packages.js";
 export * from "./billing/ledger.js";
+export * from "./billing/paddle-events.js";
 
 export * from "./keys/api-key.js";
