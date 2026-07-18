@@ -21,6 +21,11 @@ vi.mock("../../../lib/supabase/server", () => ({
   createClient: async () => ({ auth: { getUser } }),
 }));
 
+const captureKeyCreated = vi.fn();
+vi.mock("../../../lib/analytics", () => ({
+  captureKeyCreated: (userId: string, rotated: boolean) => captureKeyCreated(userId, rotated),
+}));
+
 import { generateApiKey } from "@pseo/core";
 import { createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createKeyAction, revokeKeyAction, rotateKeyAction } from "./actions";
@@ -54,6 +59,7 @@ describe("connection server actions", () => {
       signedOut();
       await expect(createKeyAction()).rejects.toThrow(/not authenticated/i);
       expect(createKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
     it("mints for the session user and returns plaintext key + full MCP URL once", async () => {
@@ -73,6 +79,7 @@ describe("connection server actions", () => {
         prefix: "sg_PLAINTE",
         mcpUrl: "https://mcp.seogrep.com/mcp/sg_PLAINTEXT",
       });
+      expect(captureKeyCreated).toHaveBeenCalledWith("user-1", false);
     });
   });
 
@@ -83,6 +90,7 @@ describe("connection server actions", () => {
       await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/not found/i);
       expect(createKeyMock).not.toHaveBeenCalled();
       expect(revokeKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
     it("rejects a malformed key id without querying the DB", async () => {
@@ -90,6 +98,7 @@ describe("connection server actions", () => {
       await expect(rotateKeyAction("not-a-uuid")).rejects.toThrow(/not found/i);
       expect(getKeyOwnerMock).not.toHaveBeenCalled();
       expect(createKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
     it("mints the new key BEFORE revoking the old one", async () => {
@@ -110,6 +119,7 @@ describe("connection server actions", () => {
       expect(order).toEqual(["create", "revoke"]);
       expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
       expect(result.key).toBe("sg_PLAINTEXT");
+      expect(captureKeyCreated).toHaveBeenCalledWith("user-1", true);
     });
 
     it("old-key revoke failure: back-revokes the NEW key, throws clean-failure, old key touched once", async () => {
@@ -130,6 +140,8 @@ describe("connection server actions", () => {
       expect(revoked).toEqual([KEY_ID, NEW_ID]);
       // (c) Exactly ONE revoke attempt on the old key — no blind retry.
       expect(revoked.filter((id) => id === KEY_ID)).toHaveLength(1);
+      // (d) The rotation ultimately failed — the user has no new usable key, so no funnel event.
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
     it("old-key revoke + compensation both fail: throws a partial-failure error, nothing further", async () => {
@@ -144,6 +156,7 @@ describe("connection server actions", () => {
       expect(revokeKeyMock).toHaveBeenCalledTimes(2);
       expect(revokeKeyMock).toHaveBeenNthCalledWith(1, expect.anything(), KEY_ID);
       expect(revokeKeyMock).toHaveBeenNthCalledWith(2, expect.anything(), NEW_ID);
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
   });
 
@@ -166,6 +179,8 @@ describe("connection server actions", () => {
       getKeyOwnerMock.mockResolvedValue("user-1");
       await revokeKeyAction(KEY_ID);
       expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
+      // Revocation is not a key-creation event — never fires mcp_key_created.
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
   });
 });

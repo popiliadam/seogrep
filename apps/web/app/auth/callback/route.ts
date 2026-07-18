@@ -1,5 +1,6 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { captureSignup } from "../../../lib/analytics";
 import { grantTrialCredits } from "../../../lib/billing/trial";
 import { sendWelcomeIfFirst } from "../../../lib/billing/welcome";
 import { createClient } from "../../../lib/supabase/server";
@@ -55,7 +56,12 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.redirect(new URL("/login?error=auth", url.origin));
   }
 
-  await grantTrialCredits(userId);
+  const trialNewlyGranted = await grantTrialCredits(userId);
+  if (trialNewlyGranted) {
+    // Fires exactly once per user — the trial lock IS the one-time signup gate.
+    // captureSignup is itself best-effort (never throws), so no try/catch needed here.
+    await captureSignup(userId);
+  }
 
   // Best-effort first-login welcome email — it must NEVER block auth. The module itself
   // no-ops when unconfigured; here we additionally swallow any send/lock failure so a

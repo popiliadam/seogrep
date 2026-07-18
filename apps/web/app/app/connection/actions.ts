@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { generateApiKey, mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import { createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
+import { captureKeyCreated } from "../../../lib/analytics";
 import { createClient } from "../../../lib/supabase/server";
 
 /**
@@ -72,6 +73,7 @@ export async function createKeyAction(): Promise<GeneratedKeyResult> {
   const service = createServiceClient();
   const { result } = await issueKey(service, userId);
   revalidatePath(CONNECTION_PATH);
+  await captureKeyCreated(userId, false);
   return result;
 }
 
@@ -98,6 +100,9 @@ export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyRes
     throw new Error("Rotation failed; your existing key is unchanged");
   }
   revalidatePath(CONNECTION_PATH);
+  // Only reached on full success (old key revoked) — a mid-rotation failure above throws
+  // and never fires the funnel event, since the user did not end up with a usable new key.
+  await captureKeyCreated(userId, true);
   return issued.result;
 }
 

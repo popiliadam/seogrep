@@ -9,6 +9,7 @@ import {
   upsertSubscription,
 } from "@pseo/db/paddle-repo";
 import { createServiceClient } from "@pseo/db/server";
+import { capturePurchase } from "../../../../lib/analytics";
 
 /**
  * Paddle webhook. NEVER #3: no side effect happens without (1) a verified signature and
@@ -100,15 +101,21 @@ export async function POST(request: Request): Promise<Response> {
     );
 
     switch (command.kind) {
-      case "purchase":
+      case "purchase": {
         // Grant + stamp processed_at in ONE transaction (migration 0007), ref-idempotent.
-        await processPaddlePurchase(service, {
+        const granted = await processPaddlePurchase(service, {
           eventId,
           userId: command.userId,
           amount: command.amount,
           ref: command.ref,
         });
+        // Only a REAL (non-duplicate) grant fires the funnel event — a ref already
+        // credited (idempotent retry) returns false and must not double-count.
+        if (granted) {
+          await capturePurchase(command.userId, command.packageKey);
+        }
         break;
+      }
       case "subscription":
         await upsertSubscription(service, {
           userId: command.userId,

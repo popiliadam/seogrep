@@ -31,7 +31,15 @@ export interface PaddleEventLike {
 }
 
 export type LedgerCommand =
-  | { readonly kind: "purchase"; readonly userId: string; readonly amount: number; readonly ref: string }
+  | {
+      readonly kind: "purchase";
+      readonly userId: string;
+      readonly amount: number;
+      readonly ref: string;
+      /** The matched package — carried alongside the pinned amount so callers (e.g. the
+       * purchase_completed funnel event) never need to reverse-derive it from the amount. */
+      readonly packageKey: PackageKey;
+    }
   | {
       readonly kind: "subscription";
       readonly userId: string;
@@ -108,6 +116,7 @@ function transactionCommand(
     userId,
     amount: CREDIT_PACKAGES[packageKey].credits,
     ref: parsed.data.id,
+    packageKey,
   };
 }
 

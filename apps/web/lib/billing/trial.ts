@@ -34,7 +34,12 @@ function withTrial(client: SupabaseClient<Database>): SupabaseClient<DatabaseWit
   return client as unknown as SupabaseClient<DatabaseWithTrial>;
 }
 
-export async function grantTrialCredits(userId: string): Promise<void> {
+/**
+ * Returns true only when THIS call flipped the lock (a real, first-time grant) — the
+ * signal the callback route needs to fire the one-time `signup_completed` funnel event.
+ * false means an already-granted idempotent no-op (every subsequent callback).
+ */
+export async function grantTrialCredits(userId: string): Promise<boolean> {
   const service = createServiceClient();
 
   // Ensure the 1:1 profile row exists (no-op if a prior callback already created it).
@@ -56,7 +61,7 @@ export async function grantTrialCredits(userId: string): Promise<void> {
     throw new Error(`trial lock failed: ${error.message}`);
   }
   if (!data || data.length === 0) {
-    return; // already granted — idempotent no-op.
+    return false; // already granted — idempotent no-op.
   }
 
   await grantCredits(service, {
@@ -65,4 +70,5 @@ export async function grantTrialCredits(userId: string): Promise<void> {
     amount: CREDIT_PACKAGES.trial.credits,
     reason: "trial",
   });
+  return true;
 }

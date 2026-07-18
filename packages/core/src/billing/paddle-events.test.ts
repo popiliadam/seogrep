@@ -38,6 +38,7 @@ describe("ledgerCommandFor — transaction.completed", () => {
       userId: USER_ID,
       amount: CREDIT_PACKAGES.starter.credits, // 1000, from core — never from the event
       ref: "txn_123",
+      packageKey: "starter",
     });
   });
 
@@ -57,6 +58,7 @@ describe("ledgerCommandFor — transaction.completed", () => {
       userId: USER_ID,
       amount: CREDIT_PACKAGES.topup_10.credits, // 400
       ref: "txn_top",
+      packageKey: "topup_10",
     });
   });
 

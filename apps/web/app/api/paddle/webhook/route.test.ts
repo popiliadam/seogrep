@@ -19,6 +19,10 @@ vi.mock("@pseo/db/paddle-repo", () => ({
   processPaddlePurchase: vi.fn(),
   upsertSubscription: vi.fn(),
 }));
+const capturePurchase = vi.fn();
+vi.mock("../../../../lib/analytics", () => ({
+  capturePurchase: (userId: string, pkg: string) => capturePurchase(userId, pkg),
+}));
 
 import {
   getEventProcessed,
@@ -117,6 +121,7 @@ function expectNoRepoWrites() {
   expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
   expect(markProcessedMock).not.toHaveBeenCalled();
   expect(upsertSubscriptionMock).not.toHaveBeenCalled();
+  expect(capturePurchase).not.toHaveBeenCalled();
 }
 
 describe("POST /api/paddle/webhook", () => {
@@ -134,6 +139,7 @@ describe("POST /api/paddle/webhook", () => {
   });
 
   it("valid signature + transaction.completed grants the PINNED package amount via the RPC", async () => {
+    processPaddlePurchaseMock.mockResolvedValue(true);
     const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_123" })));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ status: "ok" });
@@ -147,6 +153,17 @@ describe("POST /api/paddle/webhook", () => {
     expect(markProcessedMock).not.toHaveBeenCalled();
     // Happy path leaves no money-loss trace: nothing is logged.
     expect(consoleErrorSpy).not.toHaveBeenCalled();
+    // The RPC reported a real (non-duplicate) grant — the funnel event fires with the
+    // matched package, never a raw amount.
+    expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
+  });
+
+  it("does NOT fire purchase_completed when the RPC reports a duplicate (ref already credited)", async () => {
+    processPaddlePurchaseMock.mockResolvedValue(false);
+    const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_dup" })));
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 
   it("a broken signature is 401 with ZERO side effects (no insert, no grant)", async () => {
@@ -178,11 +195,13 @@ describe("POST /api/paddle/webhook", () => {
     await expect(response.json()).resolves.toMatchObject({ status: "duplicate" });
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
     expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 
   it("a duplicate with processed_at NULL (prior half-attempt) is re-processed safely", async () => {
     insertEventMock.mockResolvedValue(false);
     getEventProcessedMock.mockResolvedValue({ processedAt: null });
+    processPaddlePurchaseMock.mockResolvedValue(true); // this replay is the one that actually grants
     const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_re" })));
     expect(response.status).toBe(200);
     // Re-runs the ref-idempotent RPC (which is safe — it will not double-grant).
@@ -190,6 +209,7 @@ describe("POST /api/paddle/webhook", () => {
       expect.anything(),
       expect.objectContaining({ ref: "txn_re" }),
     );
+    expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
   });
 
   it("an unmatched transaction price is recorded + marked processed, never granted", async () => {
@@ -203,6 +223,7 @@ describe("POST /api/paddle/webhook", () => {
       "paddle webhook: PAID transaction recorded without credit",
       expect.objectContaining({ eventId: expect.any(String), reason: expect.any(String) }),
     );
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 
   it("subscription.created upserts subscription state and marks the event processed", async () => {
@@ -219,6 +240,7 @@ describe("POST /api/paddle/webhook", () => {
     });
     expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 
   it("an unexpected processing error is a 500 (leaves the event un-stamped for Paddle retry)", async () => {
@@ -228,6 +250,7 @@ describe("POST /api/paddle/webhook", () => {
     // 500 discipline: the event must stay un-stamped so Paddle retries and the
     // null-processed duplicate path can recover it.
     expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 
   it("subscription upsert failure is a 500 with the event left un-stamped (mark never precedes upsert)", async () => {
@@ -237,5 +260,6 @@ describe("POST /api/paddle/webhook", () => {
     // Pins today's correct order: markProcessed runs AFTER a successful upsert, so a failed
     // upsert leaves processed_at NULL and the event is recoverable via retry.
     expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
   });
 });

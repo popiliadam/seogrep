@@ -35,9 +35,10 @@ function mockClient(updateResult: UpdateResult) {
 describe("grantTrialCredits", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("grants the trial package exactly once when the lock flips NULL -> now", async () => {
+  it("grants the trial package exactly once when the lock flips NULL -> now, and reports true", async () => {
     createServiceClientMock.mockReturnValue(mockClient({ data: [{ id: "user-1" }], error: null }));
-    await grantTrialCredits("user-1");
+    const granted = await grantTrialCredits("user-1");
+    expect(granted).toBe(true);
     expect(grantCreditsMock).toHaveBeenCalledTimes(1);
     expect(grantCreditsMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -50,9 +51,10 @@ describe("grantTrialCredits", () => {
     );
   });
 
-  it("does not grant when trial_granted_at is already set (no row returned)", async () => {
+  it("does not grant when trial_granted_at is already set (no row returned), and reports false", async () => {
     createServiceClientMock.mockReturnValue(mockClient({ data: [], error: null }));
-    await grantTrialCredits("user-1");
+    const granted = await grantTrialCredits("user-1");
+    expect(granted).toBe(false);
     expect(grantCreditsMock).not.toHaveBeenCalled();
   });
 });
