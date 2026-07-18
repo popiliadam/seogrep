@@ -2,20 +2,21 @@
 # DB-integration gate: boots the local Supabase stack, resets it to the committed
 # migrations, exports connection env, and runs the ledger repo tests against it.
 # Kept OUT of the fast gate (guardrails/verify.sh stays DB-less and fast). Requires
-# Docker running + the supabase CLI (on PATH via supabase/setup-cli in CI, or the
-# repo devDependency bin locally).
+# Docker running + the supabase CLI (the pinned repo devDependency bin — same
+# lockfile-controlled version locally and in CI; PATH is only a fallback).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 pnpm install --frozen-lockfile
 
-# Prefer a CLI on PATH (CI: supabase/setup-cli); fall back to the devDependency bin.
-SUPABASE="$(command -v supabase || true)"
-if [ -z "$SUPABASE" ]; then
-  SUPABASE="./node_modules/.bin/supabase"
+# Prefer the pinned devDependency bin (deterministic, lockfile-controlled);
+# fall back to a CLI on PATH only if the bin is missing.
+SUPABASE="./node_modules/.bin/supabase"
+if [ ! -x "$SUPABASE" ]; then
+  SUPABASE="$(command -v supabase || true)"
 fi
-if [ ! -x "$SUPABASE" ] && ! command -v "$SUPABASE" >/dev/null 2>&1; then
-  echo "verify-db: supabase CLI not found (PATH or ./node_modules/.bin/supabase)" >&2
+if [ -z "$SUPABASE" ] || [ ! -x "$SUPABASE" ]; then
+  echo "verify-db: supabase CLI not found (./node_modules/.bin/supabase or PATH)" >&2
   exit 1
 fi
 

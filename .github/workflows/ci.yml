@@ -31,6 +31,7 @@ jobs:
 
   verify-db:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,7 +39,6 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
+      # No setup-cli: the pinned devDependency CLI (lockfile-controlled) is the
+      # single version source, local and CI alike (verify-db.sh resolves it).
       - run: bash guardrails/verify-db.sh
