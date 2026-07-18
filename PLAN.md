@@ -3,7 +3,7 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 2 — PLAN ONAYLI, KOD STARTI BEKLEMEDE (insan kararı 2026-07-17: "önce zemin işleri") · Faz 1 CANLI (seogrep.com)
+## Faz: 2 — YÜRÜRLÜKTE (insan komutu 2026-07-18: "FAZ 2 BAŞLAT, OTONOM ÇALIŞ" — zemin işleri insan kuyruğunda paralel sürüyor) · T1 ✅ · Faz 1 CANLI (seogrep.com)
 
 ### Zemin (Faz 2 kod startı öncesi insan+şef işleri — sırayla)
 1. Google Cloud OAuth başvurusu (birlikte; onayı haftalar sürer — EN ÖNCELİKLİ)
