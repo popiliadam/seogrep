@@ -72,4 +72,20 @@ describe("createPostHogAnalytics", () => {
       /PostHog capture failed \(500\)/,
     );
   });
+
+  it("arms a default 3s abort signal on every capture call (hang protection always on)", async () => {
+    const { calls, fetchFn } = fetchStub([{ status: 200, body: { status: 1 } }]);
+    const analytics = createPostHogAnalytics({ apiKey: "phc_test", fetchFn });
+    await analytics.capture({ name: "e", distinctId: "d" });
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("aborts a hung capture after timeoutMs and rejects (best-effort callers can catch it)", async () => {
+    const fetchFn = ((_url: string | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    const analytics = createPostHogAnalytics({ apiKey: "phc_test", fetchFn, timeoutMs: 10 });
+    await expect(analytics.capture({ name: "e", distinctId: "d" })).rejects.toThrow(/timeout|aborted/i);
+  });
 });

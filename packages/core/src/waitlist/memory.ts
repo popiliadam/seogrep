@@ -29,7 +29,7 @@ export function createMemoryContactStore(): MemoryContactStore {
 interface CapturedEvent {
   name: string;
   distinctId: string;
-  properties?: Record<string, string>;
+  properties?: Record<string, string | boolean>;
 }
 
 export interface CapturingAnalytics extends AnalyticsClient {
