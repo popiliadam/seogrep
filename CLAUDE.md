@@ -50,6 +50,16 @@ Son söz `guardrails/verify.sh`. Biten işin done_when'i `goals/`a kalıcı hede
 Tekrarlayabilecek bir hata düzeltildiğinde ders buraya veya ilgili skill'e işlenir.
 Haftalık compost: haftanın FAIL'lerinden ≤3 kural önerisi; insan imzalamadan kural olmaz.
 
+### İmzalı dersler (insan onayı 2026-07-18)
+
+1. Plandaki bağımlılık pinleri dispatch'ten ÖNCE peer-uyumluluk kontrolünden geçer (Faz 1 Next-16 vakası).
+2. Paket, import ettiği runtime'ın tip paketini KENDİ `devDependencies`'ine yazar — hoist şansına güvenilmez
+   (2 vaka: Faz 1 @types/node · PR #9 CI packages/db).
+3. İnsan-merge rehberlerinde "Delete branch" adımı KALIN yazılır (Faz 1 stacked-merge kazası).
+4. Her işçi iş emrine UI-copy dili AÇIKÇA yazılır (bu üründe: English) — emir dilinden sızma olur (Faz 2 T4 vakası).
+5. Env okuyan kod, PROD'un gerçek env adlarıyla negatif test edilir; lokal kapının kendi export'ları prod
+   sözleşmesini maskeler (Faz 2 SUPABASE_URL incident'i — canlıda trial grant'i düşürdü).
+
 ## Komutlar
 
 `make verify` (kapı) · `make goals` (kalıcı hedefler) · `make dev` (web dev server)

@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Privacy Policy" };
 const SECTIONS = [
   {
     heading: "What we collect",
-    body: "Today we collect the email address you give us to join the waitlist. When accounts open, we will also process the account details you provide and the site data needed to run your analyses.",
+    body: "We collect the email address you use to join the waitlist or create an account, your account credentials (handled by our authentication provider), and the site data needed to run your analyses. Payments are handled by our payment provider — we never see your full card details.",
   },
   {
     heading: "How we use it",
@@ -17,7 +17,7 @@ const SECTIONS = [
   },
   {
     heading: "Processors we use",
-    body: "We use Resend to manage the email list and PostHog for product analytics, hosted in the EU. These providers process data only to deliver those functions.",
+    body: "We use Supabase for authentication and our database (hosted in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision), Paddle as our merchant of record for payments and billing, Resend for transactional email and the email list, and PostHog for product analytics, hosted in the EU. These providers process data only to deliver those functions.",
   },
   {
     heading: "AI training",
