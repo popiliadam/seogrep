@@ -3,11 +3,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   commitReserve,
-  getBalance,
   grantCredits,
   releaseReserve,
   reserveCredits,
 } from "./ledger-repo.js";
+// Balance is read through the consolidated read-path getBalance (ledger-repo no longer
+// duplicates it); with the service client the same credit_balances view is queried, so these
+// reserve/commit/release balance assertions are unchanged. Correctness of the query itself is
+// additionally covered (RLS-scoped) in ledger-read.db.test.ts.
+import { getBalance } from "./ledger-read.js";
 import { createServiceClient } from "./server.js";
 import type { Database } from "./types.js";
 

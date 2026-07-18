@@ -112,16 +112,3 @@ export async function releaseReserve(client: LedgerClient, reserveId: string): P
     throw new Error(`releaseReserve failed: ${error.message}`);
   }
 }
-
-/** Read the derived available balance for a user (credit_balances view); 0 if none. */
-export async function getBalance(client: LedgerClient, userId: string): Promise<number> {
-  const { data, error } = await client
-    .from("credit_balances")
-    .select("balance")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`getBalance failed: ${error.message}`);
-  }
-  return data?.balance ?? 0;
-}
