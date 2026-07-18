@@ -171,6 +171,20 @@ describe("ledgerCommandFor — subscription.*", () => {
     );
     expect(command.kind).toBe("record_only");
   });
+
+  it("record_only when a subscription event's price maps to a TOP-UP package (one-time, never a plan)", () => {
+    const command = ledgerCommandFor(
+      subscriptionEvent("subscription.updated", {
+        id: "sub_1",
+        status: "active",
+        items: [{ price: { id: "pri_topup_10" } }],
+        customData: { user_id: USER_ID },
+        currentBillingPeriod: null,
+      }),
+      PRICE_MAP,
+    );
+    expect(command.kind).toBe("record_only");
+  });
 });
 
 describe("ledgerCommandFor — other events", () => {

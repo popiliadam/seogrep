@@ -37,6 +37,10 @@ const processPaddlePurchaseMock = vi.mocked(processPaddlePurchase);
 const upsertSubscriptionMock = vi.mocked(upsertSubscription);
 const createServiceClientMock = vi.mocked(createServiceClient);
 
+// Route console.error output is silenced + captured for the whole file; calls are cleared per
+// test (clearAllMocks in afterEach), so "was / was not logged" assertions stay isolated.
+const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
 // Fake, unmistakably-not-real secret. NEVER a real key value in a fixture.
 const SECRET = "test_secret_pdl_ntfset_deadbeef";
 const USER_ID = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
@@ -141,6 +145,8 @@ describe("POST /api/paddle/webhook", () => {
     });
     // The purchase path stamps processed_at inside the RPC transaction — no separate mark.
     expect(markProcessedMock).not.toHaveBeenCalled();
+    // Happy path leaves no money-loss trace: nothing is logged.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it("a broken signature is 401 with ZERO side effects (no insert, no grant)", async () => {
@@ -191,6 +197,12 @@ describe("POST /api/paddle/webhook", () => {
     expect(response.status).toBe(200);
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
     expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    // Important: this is REAL customer money left un-credited (200 + processed, Paddle will not
+    // retry) — the route must leave a LOUD trace, without logging payload or secrets.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: PAID transaction recorded without credit",
+      expect.objectContaining({ eventId: expect.any(String), reason: expect.any(String) }),
+    );
   });
 
   it("subscription.created upserts subscription state and marks the event processed", async () => {
@@ -213,5 +225,17 @@ describe("POST /api/paddle/webhook", () => {
     processPaddlePurchaseMock.mockRejectedValue(new Error("db down"));
     const response = await POST(signedRequest(transactionEvent({})));
     expect(response.status).toBe(500);
+    // 500 discipline: the event must stay un-stamped so Paddle retries and the
+    // null-processed duplicate path can recover it.
+    expect(markProcessedMock).not.toHaveBeenCalled();
+  });
+
+  it("subscription upsert failure is a 500 with the event left un-stamped (mark never precedes upsert)", async () => {
+    upsertSubscriptionMock.mockRejectedValue(new Error("db down"));
+    const response = await POST(signedRequest(subscriptionEvent({})));
+    expect(response.status).toBe(500);
+    // Pins today's correct order: markProcessed runs AFTER a successful upsert, so a failed
+    // upsert leaves processed_at NULL and the event is recoverable via retry.
+    expect(markProcessedMock).not.toHaveBeenCalled();
   });
 });

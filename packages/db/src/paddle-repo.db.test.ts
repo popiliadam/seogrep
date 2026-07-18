@@ -138,6 +138,31 @@ describe("paddle-repo against local Supabase", () => {
     expect((await getEventProcessed(service, retryEventId))?.processedAt).toEqual(expect.any(String));
   });
 
+  it("two CONCURRENT calls for the same ref grant exactly once (the advisory lock's reason to exist)", async () => {
+    // Without the per-ref advisory lock in 0007, INSERT ... WHERE NOT EXISTS is not race-safe
+    // under READ COMMITTED: both transactions could see "not exists" and both insert. Two
+    // simultaneous deliveries of the same purchase must still yield exactly ONE grant.
+    const userId = await makeUserId();
+    const ref = `txn_${randomUUID()}`;
+    const eventA = `evt_${randomUUID()}`;
+    const eventB = `evt_${randomUUID()}`;
+    await insertEvent(service, { eventId: eventA, eventType: "transaction.completed", payload: {} });
+    await insertEvent(service, { eventId: eventB, eventType: "transaction.completed", payload: {} });
+
+    const results = await Promise.all([
+      processPaddlePurchase(service, { eventId: eventA, userId, amount: 1000, ref }),
+      processPaddlePurchase(service, { eventId: eventB, userId, amount: 1000, ref }),
+    ]);
+
+    // Exactly one delivery granted...
+    expect(results.filter((granted) => granted)).toHaveLength(1);
+    // ...and the ledger holds exactly ONE purchase row for the ref (no double grant).
+    expect(await purchaseRows(ref)).toHaveLength(1);
+    // Both events are closed regardless of which one won.
+    expect((await getEventProcessed(service, eventA))?.processedAt).toEqual(expect.any(String));
+    expect((await getEventProcessed(service, eventB))?.processedAt).toEqual(expect.any(String));
+  });
+
   it("process_paddle_purchase rejects a non-positive amount without writing", async () => {
     const userId = await makeUserId();
     const ref = `txn_${randomUUID()}`;

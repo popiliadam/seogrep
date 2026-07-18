@@ -120,6 +120,16 @@ export async function POST(request: Request): Promise<Response> {
         await markProcessed(service, eventId);
         break;
       case "record_only":
+        if (event.eventType === "transaction.completed") {
+          // A PAID transaction we could not attribute (unmapped price / lost user_id) would
+          // otherwise vanish silently: 200 + processed means Paddle never retries and the
+          // customer's money bought nothing. Leave a LOUD trace (no payload, no secret) —
+          // recovery runbook: scripts/paddle-smoke.md "paid but no credits".
+          console.error("paddle webhook: PAID transaction recorded without credit", {
+            eventId,
+            reason: command.reason,
+          });
+        }
         // Stored for audit; stamped so a retry is a cheap duplicate, not a re-run.
         await markProcessed(service, eventId);
         break;

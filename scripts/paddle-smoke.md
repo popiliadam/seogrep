@@ -66,6 +66,24 @@ A Starter subscription also emits `subscription.created`; confirm one row in
 billing page a **Manage subscription** button now appears (portal bridge) — clicking it should
 open the Paddle customer portal.
 
+## Troubleshooting: paid but no credits
+**Symptom:** checkout succeeded but the dashboard balance did not increase; Paddle shows the
+webhook delivered with 200; the `paddle_events` row IS processed. Server logs show
+`paddle webhook: PAID transaction recorded without credit` with a reason.
+
+**Diagnosis:** price-map/env mismatch — the bought package's `NEXT_PUBLIC_PADDLE_PRICE_*` is
+missing or wrong in the SERVER deploy env — or the checkout lost `custom_data.user_id`.
+
+**Recovery:** fix the env + redeploy, then re-credit manually from the recorded payload:
+```sql
+-- Inspect the stored event (user id, price id, transaction id are all in the payload):
+select payload from public.paddle_events where event_id = '<event id>';
+-- Grant with the PACKAGE credit figure (packages/core CREDIT_PACKAGES — never invent one):
+select public.process_paddle_purchase('<event id>', '<user uuid>', <package credits>, '<transaction id>');
+```
+This is ref-idempotent: if Paddle ever re-delivers the same transaction, the ref guard prevents
+a second grant, so the manual call is safe.
+
 ## Evidence to capture
 - The ledger row (SQL result) + the `/app` balance screenshot.
 - The Paddle destination delivery log showing 200 (and 200 again on a replay, with no second

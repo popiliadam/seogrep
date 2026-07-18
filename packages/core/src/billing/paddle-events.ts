@@ -131,6 +131,11 @@ function subscriptionCommand(
   if (!plan) {
     return recordOnly("subscription: no item price matched the price map");
   }
+  if (CREDIT_PACKAGES[plan].oneTime) {
+    // topup_* (and trial) are one-time packages — they can never be a recurring subscription
+    // plan. A subscription event carrying such a price is a config error: record, don't write.
+    return recordOnly(`subscription: matched package "${plan}" is one-time, not a plan`);
+  }
   return {
     kind: "subscription",
     userId,
