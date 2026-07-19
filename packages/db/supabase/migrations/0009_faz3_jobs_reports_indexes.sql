@@ -86,6 +86,12 @@ create index jobs_user_created_idx
 -- sole caller is the trusted server (service_role) via the PostgREST RPC. It only INSERTs
 -- credit_ledger (append-only armor intact — the trigger fires on UPDATE/DELETE, not INSERT)
 -- and UPDATEs/INSERTs users_profile.
+--
+-- ATOMICITY DEPENDS ON THE ABSENCE OF AN EXCEPTION HANDLER: the body has no
+-- BEGIN ... EXCEPTION block, so any raise (the invalid-amount guard, an FK violation, the
+-- grant INSERT) aborts the whole transaction and rolls back every earlier write in this call.
+-- Do NOT add an EXCEPTION WHEN OTHERS block — it would swallow the raise and silently break
+-- the all-or-nothing rollback this function's tests (claim-trial.db.test.ts) rely on.
 create function public.claim_trial(p_user_id uuid, p_amount bigint)
 returns boolean
 language plpgsql
