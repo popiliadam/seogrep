@@ -220,6 +220,26 @@ describe("crawlSite — limits and edge behavior", () => {
     }
   });
 
+  it("never fetches off-origin child sitemaps from a sitemapindex (SSRF guard)", async () => {
+    // Both servers are loopback; different ports = different origins. "outside"
+    // stands in for an internal endpoint a hostile sitemapindex could point at.
+    const outside = await startFixtureSite();
+    const site = await startFixtureSite({
+      sitemapIndex: ["/sitemap-child.xml", `${outside.origin}/evil-child.xml`],
+    });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      // The same-origin child is consumed (it alone seeds /orphan)...
+      expect(site.requested).toContain("/sitemap-child.xml");
+      expect(result.pages.map((p) => p.url)).toContain(normalizeUrl(site.origin + "/orphan"));
+      // ...while the off-origin child is never contacted at all (request-log proof).
+      expect(outside.requested).toHaveLength(0);
+    } finally {
+      await site.close();
+      await outside.close();
+    }
+  });
+
   it("gives up on a redirect loop past the hop limit", async () => {
     const site = await startFixtureSite({ sitemap: false });
     try {

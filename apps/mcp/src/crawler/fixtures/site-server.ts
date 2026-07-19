@@ -26,6 +26,12 @@ import {
 export interface FixtureOptions {
   /** Serve /sitemap.xml (default true). When false it 404s, forcing link-following BFS. */
   sitemap?: boolean;
+  /**
+   * When set, /sitemap.xml serves a <sitemapindex> with exactly these <loc>s
+   * (relative values are resolved against this server's origin). The same-origin
+   * child lives at /sitemap-child.xml and seeds /orphan.
+   */
+  sitemapIndex?: string[];
   /** Delay before /slow responds, ms (default 1000) — used to trigger page timeouts. */
   slowMs?: number;
 }
@@ -82,9 +88,19 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
         sendHtml(res, NOT_FOUND_HTML, 404);
         return;
       }
-      const urls = SITEMAP_PATHS.map((p) => `<url><loc>${origin}${p}</loc></url>`).join("");
       res.writeHead(200, { "content-type": "application/xml" });
+      if (options.sitemapIndex) {
+        const locs = options.sitemapIndex
+          .map((loc) => `<sitemap><loc>${new URL(loc, origin).toString()}</loc></sitemap>`)
+          .join("");
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex>${locs}</sitemapindex>`);
+        return;
+      }
+      const urls = SITEMAP_PATHS.map((p) => `<url><loc>${origin}${p}</loc></url>`).join("");
       res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${urls}</urlset>`);
+    } else if (path === "/sitemap-child.xml") {
+      res.writeHead(200, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>${origin}/orphan</loc></url></urlset>`);
     } else if (path === "/redirect") {
       res.writeHead(302, { location: "/about" });
       res.end();

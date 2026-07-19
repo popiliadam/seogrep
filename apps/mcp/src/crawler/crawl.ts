@@ -311,6 +311,16 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
   parsed.urls.forEach(add);
   for (const child of parsed.sitemaps.slice(0, 5)) {
     if (seeds.length >= limit) break;
+    // SSRF guard: child-sitemap locs are tenant-controlled input on a hosted
+    // service — never let them point our fetcher off the crawl origin (e.g. at
+    // cloud metadata endpoints). Off-origin or unparsable children are skipped.
+    let childUrl: URL;
+    try {
+      childUrl = new URL(child);
+    } catch {
+      continue;
+    }
+    if (!sameOrigin(childUrl, origin)) continue;
     const res = await fetchText(child, timeoutMs);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
