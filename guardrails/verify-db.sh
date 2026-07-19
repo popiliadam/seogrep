@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # DB-integration gate: boots the local Supabase stack, resets it to the committed
-# migrations, exports connection env, and runs the ledger repo tests against it.
+# migrations, exports connection env, and runs the DB-integration specs against it in
+# two lanes off the SAME stack + env:
+#   1. @pseo/db  — the ledger repo + claim_trial specs (packages/db).
+#   2. @pseo/mcp — the gateway's DB-backed specs (auth / credit guard / queue worker).
 # Kept OUT of the fast gate (guardrails/verify.sh stays DB-less and fast). Requires
 # Docker running + the supabase CLI (the pinned repo devDependency bin — same
 # lockfile-controlled version locally and in CI; PATH is only a fallback).
@@ -39,5 +42,6 @@ eval "$(
 set +a
 
 pnpm --filter @pseo/db run test:db
+pnpm --filter @pseo/mcp run test:db
 
 echo "VERIFY-DB: PASS"

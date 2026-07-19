@@ -3,7 +3,13 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 2 — TAMAMLANDI ✅ CANLI-PARA MÜHÜRLÜ (2026-07-18: PR #9+#10 merged; canlı sandbox satın alma uçtan uca kanıtlı — webhook processed + ledger purchase+1000 + dashboard 1200; signup zinciri markalı mail + otomatik trial + welcome ile canlı) · Faz 1 CANLI (seogrep.com)
+## Faz: 3 — YÜRÜTÜLÜYOR (2026-07-19: plan PR #12 merged; PR-A kod-tamam, final review YES — push/PR insan onayı bekliyor) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI (seogrep.com)
+
+### Faz 3 durumu (2026-07-19)
+- Kararlar (insan-onaylı, PR #12 merge imzası): D26 Fly.io Tokyo/nrt · D27 pg-boss (Redis yok) · D28 MCP_URL_TEMPLATE · kredi tablosu v0 · trial signup'ta kalır. Zemin: Fly token ✓ · Netlify env AD sözleşmesi `GOOGLE_CLIENT_ID/SECRET` ✓ · Google console ✓ · Search Console TXT ✓.
+- **PR-A (T1-T4) KOD-TAMAM (push bekliyor, dal `feat/faz3-a-cekirdek` @cc08cf4):** T1 gateway iskeleti + Fly temeli (workflow_dispatch-only deploy) · T3 0009 migration (jobs/reports kolonları + index bundle + atomic `claim_trial` + SECURITY DEFINER audit; **CLOUD APPLY MERGE SONRASI ŞEFTE**) · T2 `{key}` auth + tenant ctx + rate limit · T4 pg-boss + `withCredits` kredi guard + TOOL_COSTS v0. 4/4 taze-Fable hakemli; kayda değer fix dalgaları: T2'de auth-yolu crash-loop Critical'ı, finalde Docker core-build kırığı + verify-db'ye mcp para-testi lane'i (artık CI'da).
+- Kapılar (entegre): verify 16/16 · verify-db 36+17 · mcp fast 48/48 · docker build + container healthz smoke.
+- Sıradaki: PR-A insan merge → 0009 cloud apply + kanıt (şef) → PR-B (T5-T7: registry+kurulum tool'ları · crawler · crawl_site). Follow-up defteri `.superpowers/sdd/progress.md` (m-triyaj: m6 T16-öncesi ZORUNLU, m9 T7-öncesi ZORUNLU; T5/T8 iş emri notları hazır).
 
 ### Faz 2 canlı mühür + zemin durumu (2026-07-18 akşam)
 - **Çıkış kanıtı GERÇEKLEŞTİ (spec §9):** canlı prod'da sandbox Starter satın alma → `transaction.completed` işlendi → ledger `purchase +1000 ref=txn_01kxvafzkr...` → dashboard bakiye 1200. Subscriptions: starter/active.
