@@ -1,15 +1,16 @@
 import express, { type Express, type Request, type Response } from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
   createAuthenticator,
   createRateLimiter,
   hasValidKeyFormat,
   safeKeyPrefix,
   type Authenticator,
+  type AuthContext,
 } from "./auth.ts";
 import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
+import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
 
 /** Advertised MCP server identity. */
 const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
@@ -38,6 +39,33 @@ function errorMessage(error: unknown): string {
 /** Injected collaborators for the gateway app. Fakes are supplied by unit tests. */
 export interface AppDeps {
   readonly authenticate: Authenticator;
+  /**
+   * The MCP tools to advertise (tools/list) and dispatch (tools/call). The production
+   * composition root wires the full set (ALL_TOOLS); DB-free unit tests inject their
+   * own array, or omit it entirely — in which case tools/list is empty and no handler
+   * ever touches the database.
+   */
+  readonly tools?: readonly RegisteredTool[];
+}
+
+/** res.locals key holding the resolved tenant context (set on the authenticated path). */
+const AUTH_CONTEXT_LOCAL = "authContext";
+
+/**
+ * Typed accessor for the tenant context the auth gate stashed in res.locals. Throws if
+ * absent — the tool-dispatch path is only reached PAST authenticate, so a miss is a
+ * programming error, not a runtime condition. Confining the untyped res.locals string-key
+ * read to this one function keeps it from leaking into the tool layer, which sees only
+ * the typed AuthContext.
+ */
+export function getAuthContext(res: Response): AuthContext {
+  const context = (res.locals as Record<string, unknown>)[AUTH_CONTEXT_LOCAL];
+  if (context === undefined) {
+    throw new Error(
+      "auth context missing from res.locals (authenticate must run before tool dispatch)",
+    );
+  }
+  return context as AuthContext;
 }
 
 /**
@@ -56,6 +84,7 @@ function buildDefaultDeps(): AppDeps {
       stamp: (keyId, at) => touchLastUsed(client, keyId, at),
       rateLimiter: createRateLimiter(),
     }),
+    tools: ALL_TOOLS,
   };
 }
 
@@ -76,24 +105,31 @@ function keyOrReject(req: Request, res: Response): string | null {
 }
 
 /**
- * A stateless MCP server that advertises tools support and returns an empty tool
- * list. Tool registration + credit metering land in later tasks. The low-level
- * Server is used (not McpServer) so tools/list responds with [] even with no
- * tool registered.
+ * A stateless MCP server for one request: it advertises `tools` (tools/list) and
+ * dispatches them under the credit guard (tools/call), both scoped to `ctx`. The
+ * low-level Server is used (not McpServer) so an empty `tools` yields tools/list []
+ * — the shape the DB-free gateway tests inject. registerAll derives the tools/list
+ * JSON Schema from each tool's zod schema.
  */
-function createMcpServer(): Server {
+function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Server {
   const server = new Server(SERVER_INFO, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [] }));
+  registerAll(server, { ctx, tools });
   return server;
 }
 
 /**
  * Handle one MCP request in stateless mode: a fresh Server + transport per HTTP
- * request, both torn down when the response closes. JSON responses are enabled
- * because the T1 gateway has no server-initiated streaming.
+ * request, both torn down when the response closes. The per-request server is built
+ * with this request's tenant context (read once here via getAuthContext, so res.locals
+ * never reaches the tool layer) and the injected tool set. JSON responses are enabled
+ * because the gateway has no server-initiated streaming.
  */
-async function handleMcpRequest(req: Request, res: Response): Promise<void> {
-  const server = createMcpServer();
+async function handleMcpRequest(
+  req: Request,
+  res: Response,
+  tools: readonly RegisteredTool[],
+): Promise<void> {
+  const server = createMcpServer(getAuthContext(res), tools);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
@@ -160,9 +196,9 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
       }
 
       // Carry the tenant context in Express request scope (no global state). The tool
-      // registry (T5) reads res.locals.authContext to scope tool execution per tenant.
-      res.locals.authContext = decision.context;
-      await handleMcpRequest(req, res);
+      // registry reads it back via getAuthContext to scope tool execution per tenant.
+      res.locals[AUTH_CONTEXT_LOCAL] = decision.context;
+      await handleMcpRequest(req, res, deps.tools ?? []);
     } catch (error) {
       console.error(`MCP request failed for ${safeKeyPrefix(key)}: ${errorMessage(error)}`);
       if (!res.headersSent) {
