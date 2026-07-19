@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "./crypto.ts";
+import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "@pseo/core";
 
 /**
  * DB-integration specs proving the constitution's core GSC promise against a LOCAL

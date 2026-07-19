@@ -1,4 +1,4 @@
-import { GSC_READONLY_SCOPE, type GscSite } from "@pseo/mcp/src/gsc/client";
+import { GSC_READONLY_SCOPE, type GscSite } from "@pseo/core";
 
 /**
  * Pure helpers for the GSC OAuth redirect + property resolution. Kept out of the route

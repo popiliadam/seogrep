@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decryptToken, fromByteaHex } from "@pseo/mcp/src/gsc/crypto";
+import { decryptToken, fromByteaHex } from "@pseo/core";
 import { signState, freshStatePayload } from "../../../../lib/gsc/state";
 
 /**
@@ -28,11 +28,19 @@ vi.mock("@pseo/db/server", () => ({
     }),
   }),
 }));
-vi.mock("@pseo/mcp/src/gsc/client", () => ({
-  GSC_READONLY_SCOPE: "https://www.googleapis.com/auth/webmasters.readonly",
-  exchangeCodeForTokens: (...a: unknown[]) => exchangeCodeForTokens(...a),
-  listSites: (...a: unknown[]) => listSites(...a),
-}));
+// Fake ONLY the two Google-touching client functions (zero network, NEVER #5); the rest
+// of @pseo/core — the AES-256-GCM token crypto AND the key-format helper the state signer
+// reuses — stays REAL via importOriginal, so the seal + state verification are exercised
+// end to end. (Post-promotion the client + crypto both live in @pseo/core; before, the
+// client alone was mocked at its old @pseo/mcp deep path.)
+vi.mock("@pseo/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pseo/core")>();
+  return {
+    ...actual,
+    exchangeCodeForTokens: (...a: unknown[]) => exchangeCodeForTokens(...a),
+    listSites: (...a: unknown[]) => listSites(...a),
+  };
+});
 vi.mock("../../../../lib/gsc/store", () => ({
   upsertGscConnection: (...a: unknown[]) => upsertGscConnection(...a),
 }));

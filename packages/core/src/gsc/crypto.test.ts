@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "./crypto.ts";
+import { decryptToken, encryptToken, fromByteaHex, toByteaHex, tokenKeyBytes } from "./crypto.js";
 
 /**
  * Crypto is the armor around the most sensitive value we store (a Google refresh
@@ -111,5 +111,22 @@ describe("bytea hex serialization (DB boundary)", () => {
     const sealed = encryptToken("no-prefix", KEY_A);
     const bare = sealed.toString("hex");
     expect(fromByteaHex(bare).equals(sealed)).toBe(true);
+  });
+});
+
+describe("tokenKeyBytes (the shared 64-hex key-format check, reused by the state signer)", () => {
+  it("decodes a valid 64-hex key to 32 raw bytes", () => {
+    const bytes = tokenKeyBytes(KEY_A);
+    expect(bytes).toHaveLength(32);
+    expect(bytes.equals(Buffer.from(KEY_A, "hex"))).toBe(true);
+  });
+
+  it.each([
+    ["too short", "0123"],
+    ["63 hex chars", "0".repeat(63)],
+    ["non-hex characters", "z".repeat(64)],
+    ["empty", ""],
+  ])("throws naming TOKEN_ENCRYPTION_KEY for %s", (_label, badKey) => {
+    expect(() => tokenKeyBytes(badKey)).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
   });
 });

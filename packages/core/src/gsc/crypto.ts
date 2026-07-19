@@ -6,10 +6,12 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  * it is sealed here with AES-256-GCM before storage and only ever opened server-side
  * to mint a short-lived access token.
  *
- * This module is the SINGLE source of the encryption format. It lives under apps/mcp
- * (the MCP gateway owns the future `pull_gsc_data` read path), and the web OAuth
- * callback reuses it to seal the token on the write path — one format, no drift. It
- * has zero dependencies beyond node:crypto so both runtimes can import it cleanly.
+ * This module is the SINGLE source of the encryption format. It lives in @pseo/core so
+ * BOTH runtimes consume one built implementation: the web OAuth callback seals the token
+ * on the WRITE path, and the MCP gateway's `pull_gsc_data` tool opens it on the READ
+ * path. It has zero dependencies beyond node:crypto, so neither runtime pulls anything
+ * extra. (It was first written under apps/mcp and promoted here so the web app no longer
+ * deep-imports @pseo/mcp source — one seal format, one home.)
  *
  * Wire format of the sealed buffer (what the `encrypted_refresh_token` bytea holds):
  *
@@ -21,8 +23,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  * rather than returning garbage.
  *
  * The key is TOKEN_ENCRYPTION_KEY — 64 hex characters = 32 raw bytes (AES-256). It is
- * validated on every call so a mis-provisioned key fails loudly at first use, never
- * silently.
+ * validated on every call (see {@link tokenKeyBytes}) so a mis-provisioned key fails
+ * loudly at first use, never silently.
  */
 
 /** AES-256-GCM standard nonce size. */
@@ -37,11 +39,16 @@ const KEY_HEX_LENGTH = 64;
 const KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
 /**
- * Decode + validate the hex key into 32 raw bytes. A key of the wrong length or with
- * non-hex characters is a configuration error, so we throw a message that names the
- * variable (never its value) rather than let AES fail with an opaque low-level error.
+ * Decode + validate the hex TOKEN_ENCRYPTION_KEY into 32 raw bytes. A key of the wrong
+ * length or with non-hex characters is a configuration error, so this throws a message
+ * that names the variable (never its value) rather than let a downstream primitive fail
+ * with an opaque low-level error.
+ *
+ * Exported because it is the SINGLE source of the 64-hex key-format check: the OAuth
+ * `state` signer (apps/web/lib/gsc/state.ts) derives its HMAC key from the same master
+ * secret and reuses this validation so there is no second, drifting regex.
  */
-function keyBytes(keyHex: string): Buffer {
+export function tokenKeyBytes(keyHex: string): Buffer {
   if (!KEY_HEX_RE.test(keyHex)) {
     throw new Error(
       `TOKEN_ENCRYPTION_KEY must be ${KEY_HEX_LENGTH} hex characters (32 bytes for AES-256)`,
@@ -56,7 +63,7 @@ function keyBytes(keyHex: string): Buffer {
  * IV per call means the output is non-deterministic by design.
  */
 export function encryptToken(plain: string, keyHex: string): Buffer {
-  const key = keyBytes(keyHex);
+  const key = tokenKeyBytes(keyHex);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const ciphertext = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
@@ -70,7 +77,7 @@ export function encryptToken(plain: string, keyHex: string): Buffer {
  * GCM tag check in `final()` is what makes tampering detectable rather than silent.
  */
 export function decryptToken(sealed: Buffer, keyHex: string): string {
-  const key = keyBytes(keyHex);
+  const key = tokenKeyBytes(keyHex);
   if (sealed.length < MIN_SEALED_BYTES) {
     throw new Error(
       `encrypted token is corrupt: expected at least ${MIN_SEALED_BYTES} bytes, got ${sealed.length}`,

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@pseo/db/server";
-import { exchangeCodeForTokens, listSites } from "@pseo/mcp/src/gsc/client";
-import { encryptToken, toByteaHex } from "@pseo/mcp/src/gsc/crypto";
+import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pseo/core";
 import { createClient } from "../../../../lib/supabase/server";
 import { matchGscProperty } from "../../../../lib/gsc/oauth";
 import { upsertGscConnection } from "../../../../lib/gsc/store";

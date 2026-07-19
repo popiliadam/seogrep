@@ -16,7 +16,6 @@
     "@paddle/paddle-node-sdk": "^3.8.0",
     "@pseo/core": "workspace:*",
     "@pseo/db": "workspace:*",
-    "@pseo/mcp": "workspace:*",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.5",
     "fumadocs-core": "^16.11.2",

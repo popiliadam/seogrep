@@ -9,10 +9,11 @@
  * request body and is NEVER logged, returned, or embedded in a thrown error. Error paths
  * surface only Google's own error identifiers (e.g. `invalid_grant`) and HTTP status.
  *
- * This module lives under apps/mcp (the future `pull_gsc_data` tool refreshes + queries
- * here); the web OAuth callback reuses `exchangeCodeForTokens` + `listSites` to complete
- * the link. It imports nothing but the Web `fetch`/`Response`/`Headers` globals so both
- * runtimes can consume it directly.
+ * This module lives in @pseo/core so BOTH runtimes consume one built implementation: the
+ * web OAuth callback reuses `exchangeCodeForTokens` + `listSites` to complete the link,
+ * and the MCP gateway's `pull_gsc_data` tool uses `refreshAccessToken` +
+ * `searchAnalyticsQuery` on the read path. It imports nothing but the Web
+ * `fetch`/`Response`/`Headers` globals so both runtimes can consume it directly.
  */
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";

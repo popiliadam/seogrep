@@ -6,7 +6,7 @@ import {
   refreshAccessToken,
   searchAnalyticsQuery,
   type FetchLike,
-} from "./client.ts";
+} from "./client.js";
 
 /**
  * The Google client is bare `fetch` (no googleapis package — three REST endpoints do
