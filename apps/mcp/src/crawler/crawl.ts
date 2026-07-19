@@ -280,10 +280,20 @@ async function fetchText(url: string, timeoutMs: number): Promise<{ status: numb
   }
 }
 
-/** Load and parse /robots.txt; a missing/non-200 file yields an allow-all ruleset. */
-async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsRules> {
+type RobotsLoad =
+  | { readonly kind: "ok"; readonly rules: RobotsRules }
+  | { readonly kind: "unreachable" };
+
+/**
+ * Load /robots.txt with RFC 9309 reachability semantics: 200 parses the rules;
+ * a 4xx (file absent / client error) means no restrictions, so allow-all; a 5xx
+ * or a network failure (timeout, refused, DNS) means the file is UNREACHABLE and
+ * the crawler must assume complete disallow — the caller aborts the crawl.
+ */
+async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsLoad> {
   const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs);
-  return parseRobots(res && res.status === 200 ? res.body : "");
+  if (res === null || res.status >= 500) return { kind: "unreachable" };
+  return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
 }
 
 /** Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. */
@@ -352,7 +362,17 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
 
-  const robots = await loadRobots(originUrl, pageTimeoutMs);
+  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs);
+  if (robotsLoad.kind === "unreachable") {
+    // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete
+    // disallow. Stop before fetching anything else — the sitemap included.
+    return {
+      pages: [],
+      skipped: [{ url: normalizeUrl(originUrl.toString()), reason: "robots.txt unreachable" }],
+      fetchedAt,
+    };
+  }
+  const robots = robotsLoad.rules;
   const crawlDelayMs = Math.min(robots.crawlDelayMs, crawlDelayCapMs);
 
   const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls);

@@ -32,7 +32,12 @@ export interface FixtureOptions {
    * child lives at /sitemap-child.xml and seeds /orphan.
    */
   sitemapIndex?: string[];
-  /** Delay before /slow responds, ms (default 1000) — used to trigger page timeouts. */
+  /**
+   * /robots.txt behavior (default "ok"): "server-error" answers 500;
+   * "hang" delays the response by slowMs (lets specs force a robots timeout).
+   */
+  robots?: "ok" | "server-error" | "hang";
+  /** Delay before /slow (and a hanging robots) responds, ms (default 1000). */
   slowMs?: number;
 }
 
@@ -81,6 +86,22 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
     }
 
     if (path === "/robots.txt") {
+      const mode = options.robots ?? "ok";
+      if (mode === "server-error") {
+        res.writeHead(500, { "content-type": "text/plain" });
+        res.end("internal error");
+        return;
+      }
+      if (mode === "hang") {
+        const timer = setTimeout(() => {
+          if (!res.writableEnded) {
+            res.writeHead(200, { "content-type": "text/plain" });
+            res.end(ROBOTS_TXT);
+          }
+        }, slowMs);
+        res.on("close", () => clearTimeout(timer));
+        return;
+      }
       res.writeHead(200, { "content-type": "text/plain" });
       res.end(ROBOTS_TXT);
     } else if (path === "/sitemap.xml") {

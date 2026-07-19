@@ -220,6 +220,35 @@ describe("crawlSite — limits and edge behavior", () => {
     }
   });
 
+  it("treats a 5xx robots.txt as complete disallow (RFC 9309)", async () => {
+    const site = await startFixtureSite({ robots: "server-error" });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+      ]);
+      // Nothing beyond robots.txt itself is ever requested — not even the sitemap.
+      expect(site.requested).toEqual(["/robots.txt"]);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("treats an unresponsive robots.txt (network timeout) as complete disallow", async () => {
+    const site = await startFixtureSite({ robots: "hang", slowMs: 1000 });
+    try {
+      const result = await crawlSite(site.origin, { pageTimeoutMs: 120, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+      ]);
+      expect(site.requested).toEqual(["/robots.txt"]);
+    } finally {
+      await site.close();
+    }
+  });
+
   it("never fetches off-origin child sitemaps from a sitemapindex (SSRF guard)", async () => {
     // Both servers are loopback; different ports = different origins. "outside"
     // stands in for an internal endpoint a hostile sitemapindex could point at.
