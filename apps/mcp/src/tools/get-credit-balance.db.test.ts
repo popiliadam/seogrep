@@ -49,6 +49,18 @@ async function appendLedger(
   if (error) throw new Error(`ledger seed failed: ${error.message}`);
 }
 
+/** Bulk-append `count` grant rows of `delta` each in one request (fast >1000-row seed). */
+async function appendManyGrants(userId: string, count: number, delta: number): Promise<void> {
+  const rows = Array.from({ length: count }, () => ({
+    user_id: userId,
+    delta,
+    kind: "grant",
+    reason: "bulk-seed",
+  }));
+  const { error } = await service.from("credit_ledger").insert(rows);
+  if (error) throw new Error(`bulk ledger seed failed: ${error.message}`);
+}
+
 beforeAll(async () => {
   const { error } = await service.from("credit_ledger").select("id").limit(1);
   if (error) {
@@ -82,5 +94,19 @@ describe("get_credit_balance against the local stack", () => {
 
     const aResult = await getCreditBalanceTool.run(a, {});
     expect(aResult.content[0]?.text).toMatch(/balance: 50 credits/i);
+  });
+
+  it("sums the WHOLE ledger past PostgREST's 1000-row page (aggregate, not app-side Σ)", async () => {
+    // Regression guard: an app-side `select(delta)` + reduce silently truncates at
+    // config.toml's [api] max_rows = 1000, under-reporting the balance for any account with
+    // 1000+ ledger rows. The balance MUST derive from the DB aggregate (credit_balances view),
+    // where the SUM runs server-side over every row and returns a single row — no page cap.
+    const ctx = await makeCtx();
+    const rowCount = 1500; // > max_rows, so a truncating read would report 1000, not 1500.
+    await appendManyGrants(ctx.userId, rowCount, 1);
+
+    const result = await getCreditBalanceTool.run(ctx, {});
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toMatch(/balance: 1500 credits/i);
   });
 });

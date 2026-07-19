@@ -98,4 +98,39 @@ describe("setup_project against the local stack", () => {
     expect(aRows.map((r) => r.domain)).toEqual(["tenant-a.com"]);
     expect(bRows.map((r) => r.domain)).toEqual(["tenant-b.com"]);
   });
+
+  it("is race-safe: simultaneous first calls yield ONE row and consistent created flags", async () => {
+    const ctx = await makeCtx();
+    // Fire many first calls at once (mixing input forms that normalize to the SAME domain).
+    // With enough concurrency at least two reads land before any INSERT, exercising the exact
+    // window the (user_id, domain) unique constraint (migration 0010) + the ON CONFLICT upsert
+    // close: a plain INSERT loser would raise a unique violation, but the upsert loser hits
+    // DO NOTHING and reads back the winner's row instead of erroring or opening a second row.
+    const forms = [
+      "race.example.com",
+      "https://RACE.example.com/pricing",
+      "http://race.example.com",
+      "RACE.example.com.",
+      "race.example.com/a?b=c",
+      "https://race.EXAMPLE.com",
+      "race.example.com",
+      "https://race.example.com/",
+    ];
+    const results = await Promise.all(forms.map((domain) => setupProjectTool.run(ctx, { domain })));
+
+    // No call surfaces an error (the losers must NOT leak a unique-violation).
+    for (const result of results) expect(result.isError).toBeUndefined();
+
+    // Exactly one row exists — no oversell / duplicate registration.
+    const rows = await projectRows(ctx.userId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.domain).toBe("race.example.com");
+
+    // Consistent outcome: exactly one winner reports created: true, the rest created: false,
+    // and every call reports the SAME surviving project_id.
+    const texts = results.map((r) => r.content[0]?.text ?? "");
+    expect(texts.filter((t) => /created: true/.test(t))).toHaveLength(1);
+    expect(texts.filter((t) => /created: false/.test(t))).toHaveLength(forms.length - 1);
+    for (const text of texts) expect(text).toContain(rows[0]!.id);
+  });
 });
