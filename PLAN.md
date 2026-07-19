@@ -7,9 +7,11 @@
 
 ### Faz 3 durumu (2026-07-19)
 - Kararlar (insan-onaylı, PR #12 merge imzası): D26 Fly.io Tokyo/nrt · D27 pg-boss (Redis yok) · D28 MCP_URL_TEMPLATE · kredi tablosu v0 · trial signup'ta kalır. Zemin: Fly token ✓ · Netlify env AD sözleşmesi `GOOGLE_CLIENT_ID/SECRET` ✓ · Google console ✓ · Search Console TXT ✓.
-- **PR-A (T1-T4) KOD-TAMAM (push bekliyor, dal `feat/faz3-a-cekirdek` @cc08cf4):** T1 gateway iskeleti + Fly temeli (workflow_dispatch-only deploy) · T3 0009 migration (jobs/reports kolonları + index bundle + atomic `claim_trial` + SECURITY DEFINER audit; **CLOUD APPLY MERGE SONRASI ŞEFTE**) · T2 `{key}` auth + tenant ctx + rate limit · T4 pg-boss + `withCredits` kredi guard + TOOL_COSTS v0. 4/4 taze-Fable hakemli; kayda değer fix dalgaları: T2'de auth-yolu crash-loop Critical'ı, finalde Docker core-build kırığı + verify-db'ye mcp para-testi lane'i (artık CI'da).
-- Kapılar (entegre): verify 16/16 · verify-db 36+17 · mcp fast 48/48 · docker build + container healthz smoke.
-- Sıradaki: PR-A insan merge → 0009 cloud apply + kanıt (şef) → PR-B (T5-T7: registry+kurulum tool'ları · crawler · crawl_site). Follow-up defteri `.superpowers/sdd/progress.md` (m-triyaj: m6 T16-öncesi ZORUNLU, m9 T7-öncesi ZORUNLU; T5/T8 iş emri notları hazır).
+- **PR-A (T1-T4) ✅ MERGED (PR #13)** — gateway + `{key}` auth + pg-boss kuyruk + `withCredits` kredi guard main'de; **0009 CLOUD'DA** (13/13 nesne + rollback'li smoke + detection invariant canlı veride 0).
+- **PR-B (T5-T7) KOD-TAMAM (push bekliyor, dal `feat/faz3-b-tools` @e599220, 19 commit):** T5 zod registry + setup_project/list_projects/get_credit_balance + tipli getAuthContext + db konsolidasyonu · T6 crawler (RFC 9309 robots, SSRF-korumalı, dış-ağ-sıfır testli) · T7 async crawl_site + get_job_status (tek reserve→commit zinciri E2E kanıtlı; elle-kurulum sapması Fable-onaylı). 3/3 hakem + final tüm-dal review **YES** (fix'ler: `max_urls` rename [tam-snake yüzey yasası] + fetchText SSRF kesici).
+- Kapılar (entegre): verify 16/16 · verify-db 36+37 · mcp 120/120. **Tool skoru: 5/16 DONE.**
+- Sıradaki: PR-B insan merge → PR-C (T8-T10: audit üçlüsü · GSC OAuth · discovery). T8 iş emri listesi (5 madde) + **pre-T16 sert kapılar** (creditBalance max_rows aggregate geçişi — gerçek kullanıcıdan önce ZORUNLU) ledger'da.
+- **İNSAN TALİMATI (2026-07-19): Faz 3 çıkışında DUR — Faz 4'e otonom geçiş YOK; Faz 0-3 komple audit için fresh-session promptu yazılıp teslim edilir** (kayıt: memory/faz3-sonu-audit-dur.md + ledger).
 
 ### Faz 2 canlı mühür + zemin durumu (2026-07-18 akşam)
 - **Çıkış kanıtı GERÇEKLEŞTİ (spec §9):** canlı prod'da sandbox Starter satın alma → `transaction.completed` işlendi → ledger `purchase +1000 ref=txn_01kxvafzkr...` → dashboard bakiye 1200. Subscriptions: starter/active.
