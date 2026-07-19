@@ -1,28 +1,22 @@
 ---
 title: audit_tech
-description: Audit technical SEO — HTTP status spread, redirects, skipped URLs, and robots conflicts — from your latest crawl.
+description: "Audit technical SEO for a project's latest crawl: HTTP status spread, redirects, skipped URLs by reason, and robots (noindex) conflicts. Run crawl_site first."
 ---
 
-`audit_tech` reviews the technical health of the pages captured by your project's most
-recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous** and
-returns its findings immediately. Costs **15 credits**. Run `crawl_site` first — with
-no crawl on record the tool says so and charges nothing.
+**Cost:** 15 credits.
+
+`audit_tech` reviews the technical health of the pages captured by your project's most recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous** and returns its findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and charges nothing.
 
 ## What it does
 
 Summarizes the crawl from a technical angle:
 
-- **HTTP status spread** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the
-  4xx and 5xx page URLs listed.
-- **Redirects** — the redirects the crawler surfaced (off-origin redirects, redirect
-  loops, and redirects onto an already-crawled URL).
-- **Not crawled** — the URLs that were discovered but skipped, grouped by reason
-  (blocked by `robots.txt`, timed out, non-HTML, and so on).
+- **HTTP status spread** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx page URLs listed.
+- **Redirects** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and redirects onto an already-crawled URL).
+- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by `robots.txt`, timed out, non-HTML, and so on).
 - **Robots conflicts** — pages marked `noindex` that are still linked internally.
 
-Because the crawler follows a successful redirect and records the destination page,
-redirects appear here through the crawler's skip reasons rather than as duplicate
-pages.
+Because the crawler follows a successful redirect and records the destination page, redirects appear here through the crawler's skip reasons rather than as duplicate pages.
 
 ## Example
 
@@ -32,13 +26,10 @@ Ask your MCP client in plain language:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to audit (from `setup_project` / `list_projects`). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project to audit (from setup_project / list_projects). |
 
 ### Returns
 
-The status distribution, the redirect and skipped-URL breakdowns, and any
-noindex-but-linked conflicts.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+The status distribution, the redirect and skipped-URL breakdowns, and any noindex-but-linked conflicts.

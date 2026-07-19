@@ -1,20 +1,15 @@
 ---
 title: crawl_site
-description: Crawl a project's website asynchronously and return a job you can poll.
+description: "Crawl a project's website (async). Returns a job_id immediately; poll it with get_job_status."
 ---
 
-`crawl_site` crawls the website behind one of your projects — following its
-sitemap and same-origin links, respecting `robots.txt` — and records the pages
-for later audits. It is **asynchronous**: the call returns a `job_id`
-immediately instead of waiting for the crawl to finish, so the MCP request never
-times out on a large site. Costs **20 credits**, charged when the crawl runs (a
-crawl that reaches no pages is not charged).
+**Cost:** 20 credits.
+
+`crawl_site` crawls the website behind one of your projects — following its sitemap and same-origin links, respecting `robots.txt` — and records the pages for later audits. It is **asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to finish, so the MCP request never times out on a large site. The crawl is charged only when it runs — a crawl that reaches no pages is not charged.
 
 ## What it does
 
-Queues a crawl for the project's domain and hands you a `job_id`. A background
-worker runs the crawl and stores the result; you check progress with
-[`get_job_status`](/docs/tools-reference/get-job-status).
+Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the crawl and stores the result; you check progress with [`get_job_status`](/docs/tools-reference/get-job-status).
 
 ## Example
 
@@ -28,15 +23,11 @@ The tool replies with a `job_id`. Poll it until the job is done:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to crawl (from `setup_project` / `list_projects`). |
-| `max_urls` | integer | Optional. Maximum pages to crawl, `1`–`100` (default `100`). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project_id from setup_project / list_projects. |
+| `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). |
 
 ### Returns
 
-A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will
-cost. Feed the `job_id` to `get_job_status` to watch it finish and read the
-summary.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost. Feed the `job_id` to `get_job_status` to watch it finish and read the summary.

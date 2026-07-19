@@ -1,28 +1,21 @@
 ---
 title: connect_gsc
-description: Connect Google Search Console to a project with a secure, read-only OAuth link.
+description: "Connect Google Search Console to a project. Returns a secure Google sign-in link that grants SeoGrep read-only access. Optional — your crawl and audit tools work without it."
 ---
 
-`connect_gsc` links a project to Google Search Console so the tools that need real
-search-performance data — like `pull_gsc_data` and `analyze_content_decay` — can run.
-It is **optional**: your first crawl and audit work without it, so connecting is the
-**second step, never the first barrier**. Costs **0 credits**.
+**Cost:** Free (0 credits).
+
+`connect_gsc` links a project to Google Search Console so the tools that need real search-performance data — like `pull_gsc_data` and `analyze_content_decay` — can run. It is **optional**: your first crawl and audit work without it, so connecting is the **second step, never the first barrier**.
 
 ## What it does
 
-Given one of your projects, it returns a secure Google sign-in link. Opening the link
-takes you to Google's consent screen, where SeoGrep requests **read-only** Search
-Console access — it never asks for write access to your property. After you approve,
-SeoGrep stores an encrypted token and matches your project's domain to a verified
-Search Console property.
+Given one of your projects, it returns a secure Google sign-in link. Opening the link takes you to Google's consent screen, where SeoGrep requests **read-only** Search Console access — it never asks for write access to your property. After you approve, SeoGrep stores an encrypted token and matches your project's domain to a verified Search Console property.
 
 ## How it stays safe
 
 - The access SeoGrep requests is **read-only** (`webmasters.readonly`).
-- Your Google **refresh token is encrypted at rest** (AES-256-GCM); the plaintext is
-  never written to the database or logs.
-- You can revoke access any time from your Google Account's third-party access
-  settings.
+- Your Google **refresh token is encrypted at rest** (AES-256-GCM); the plaintext is never written to the database or logs.
+- You can revoke access any time from your Google Account's third-party access settings.
 
 ## Example
 
@@ -30,20 +23,14 @@ Ask your MCP client in plain language:
 
 > Connect Search Console for my example.com project.
 
-The tool replies with a link. Open it, approve read-only access, and you land back on
-your dashboard with the connection in place.
+The tool replies with a link. Open it, approve read-only access, and you land back on your dashboard with the connection in place.
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to connect (from `setup_project` / `list_projects`). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project to connect (from setup_project / list_projects). |
 
 ### Returns
 
-A Google sign-in link for the project, plus a reminder that the connection is optional
-and read-only. If your account has no property matching the project's domain, the
-connection is still saved — just without a matched property; you can reconnect to retry
-matching once the property is verified in Search Console.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+A Google sign-in link for the project, plus a reminder that the connection is optional and read-only. If your account has no property matching the project's domain, the connection is still saved — just without a matched property; you can reconnect to retry matching once the property is verified in Search Console.
