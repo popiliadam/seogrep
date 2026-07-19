@@ -177,77 +177,79 @@ export async function getJobForUser(
   return data;
 }
 
-/** The latest crawl the audits read: its stored CrawlResult and when the job was created. */
-export interface LatestCrawl {
+/**
+ * The latest SUCCEEDED tool-run result a read port returns: the job id, its stored jsonb
+ * result, and when the job was created. One shape for every "read the newest succeeded run
+ * of tool X" port — crawl (audits), pull (discovery), and now report generation (T12).
+ */
+export interface LatestResult {
   readonly jobId: string;
   readonly result: Json | null;
   readonly createdAt: string;
 }
 
 /**
- * Read the most recent SUCCEEDED crawl_site job for a project, tenant-scoped
- * (user_id = the caller AND project_id = the target). This is the audit tools' input
- * port: they consume the stored CrawlResult (jobs.result) of this job. The user_id
- * filter is the tenant guard on the RLS-bypassing service client (constitution NEVER
- * #4), so a project that is missing or belongs to another tenant both resolve to null
- * (the audit then tells the caller to run crawl_site first — no cross-tenant leak).
- * `jobs` is fully typed here, so the projection needs no cast.
+ * Read the most recent SUCCEEDED `tool` job for a project, tenant-scoped (user_id = the
+ * caller AND project_id = the target). This is the ONE generic read port the per-tool
+ * accessors below fold onto (referee fold, T12: a third reader — report generation — reads
+ * BOTH crawl and pull through this same query rather than adding a third copy).
+ *
+ * The user_id filter is the tenant guard on the RLS-bypassing service client (constitution
+ * NEVER #4): a project that is missing or belongs to another tenant both resolve to null
+ * (the caller then tells the user to run the upstream tool first — no cross-tenant existence
+ * leak). `jobs` is fully typed here, so the projection needs no cast.
+ */
+export async function getLatestSucceededResult(
+  client: ServiceClient,
+  params: { projectId: string; userId: string; tool: string },
+): Promise<LatestResult | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("user_id", params.userId)
+    .eq("project_id", params.projectId)
+    .eq("tool", params.tool)
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getLatestSucceededResult(${params.tool}) failed: ${error.message}`);
+  }
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
+/** The latest crawl the audits read: its stored CrawlResult and when the job was created. */
+export type LatestCrawl = LatestResult;
+
+/**
+ * The audit tools' input port: the most recent SUCCEEDED crawl_site run for a project. A thin
+ * delegate to getLatestSucceededResult (tool = "crawl_site") — the tenant-scoping and null
+ * semantics are the generic's; this keeps the audit call sites (audit/load.ts) unchanged.
  */
 export async function getLatestSucceededCrawl(
   client: ServiceClient,
   projectId: string,
   userId: string,
 ): Promise<LatestCrawl | null> {
-  const { data, error } = await client
-    .from("jobs")
-    .select("id, result, created_at")
-    .eq("user_id", userId)
-    .eq("project_id", projectId)
-    .eq("tool", "crawl_site")
-    .eq("status", "succeeded")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`getLatestSucceededCrawl failed: ${error.message}`);
-  }
-  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+  return getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" });
 }
 
 /** The latest pull the discovery tools read: its stored PullData jsonb and when it ran. */
-export interface LatestPull {
-  readonly jobId: string;
-  readonly result: Json | null;
-  readonly createdAt: string;
-}
+export type LatestPull = LatestResult;
 
 /**
- * Read the most recent SUCCEEDED pull_gsc_data job for a project, tenant-scoped
- * (user_id = the caller AND project_id = the target). This is the discovery tools' input
- * port — the sibling of getLatestSucceededCrawl for the GSC read path. The user_id filter
- * is the tenant guard on the RLS-bypassing service client (constitution NEVER #4), so a
- * project that is missing or belongs to another tenant both resolve to null (the tool then
- * tells the caller to run pull_gsc_data first — no cross-tenant leak).
+ * The discovery tools' input port: the most recent SUCCEEDED pull_gsc_data run for a project.
+ * A thin delegate to getLatestSucceededResult (tool = "pull_gsc_data") — the sibling of
+ * getLatestSucceededCrawl for the GSC read path, keeping the discovery call sites
+ * (gsc-data/load.ts) unchanged.
  */
 export async function getLatestSucceededPull(
   client: ServiceClient,
   projectId: string,
   userId: string,
 ): Promise<LatestPull | null> {
-  const { data, error } = await client
-    .from("jobs")
-    .select("id, result, created_at")
-    .eq("user_id", userId)
-    .eq("project_id", projectId)
-    .eq("tool", "pull_gsc_data")
-    .eq("status", "succeeded")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`getLatestSucceededPull failed: ${error.message}`);
-  }
-  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+  return getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" });
 }
 
 /**
