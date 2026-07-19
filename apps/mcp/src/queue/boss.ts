@@ -177,6 +177,43 @@ export async function getJobForUser(
   return data;
 }
 
+/** The latest crawl the audits read: its stored CrawlResult and when the job was created. */
+export interface LatestCrawl {
+  readonly jobId: string;
+  readonly result: Json | null;
+  readonly createdAt: string;
+}
+
+/**
+ * Read the most recent SUCCEEDED crawl_site job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). This is the audit tools' input
+ * port: they consume the stored CrawlResult (jobs.result) of this job. The user_id
+ * filter is the tenant guard on the RLS-bypassing service client (constitution NEVER
+ * #4), so a project that is missing or belongs to another tenant both resolve to null
+ * (the audit then tells the caller to run crawl_site first — no cross-tenant leak).
+ * `jobs` is fully typed here, so the projection needs no cast.
+ */
+export async function getLatestSucceededCrawl(
+  client: ServiceClient,
+  projectId: string,
+  userId: string,
+): Promise<LatestCrawl | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "crawl_site")
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getLatestSucceededCrawl failed: ${error.message}`);
+  }
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
 async function updateJob(
   jobId: string,
   patch: JobUpdate,
@@ -197,9 +234,28 @@ export async function markJobRunning(jobId: string): Promise<void> {
   );
 }
 
-/** Record the credit reserve held by this run (crash forensics + settlement audits). */
+/**
+ * Record the credit reserve held by this run (crash forensics + settlement audits).
+ * ASSERTS the row exists: the update must touch exactly the one jobs row named by
+ * jobId. A 0-row update means the id names no row (a broken reserve trace), so this
+ * throws rather than silently succeeding — the credit guard turns that throw into a
+ * release. Only the async worker path (a real queued job) reaches here; sync surface
+ * tools never call this (they have no jobs row).
+ */
 export async function setJobReserve(jobId: string, reserveId: string): Promise<void> {
-  await updateJob(jobId, { reserve_id: reserveId }, "setJobReserve");
+  const { data, error } = await getServiceClient()
+    .from("jobs")
+    .update({ reserve_id: reserveId })
+    .eq("id", jobId)
+    .select("id");
+  if (error) {
+    throw new Error(`setJobReserve failed: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
+    throw new Error(
+      `setJobReserve: no jobs row ${jobId} to record reserve ${reserveId} (broken reserve trace)`,
+    );
+  }
 }
 
 /** Terminal success: status, finish stamp, and the tool result payload. */

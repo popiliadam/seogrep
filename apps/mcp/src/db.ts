@@ -297,6 +297,27 @@ export function forUser(client: ServiceClient, userId: string) {
     selectOwn(table: TenantTable, columns = "*") {
       return client.from(table).select(columns).eq("user_id", userId);
     },
+    /**
+     * Tenant-scoped single-row read by id, returning the caller-declared projection
+     * type `T` (or null). Folds the two things every `selectOwn(...).eq("id").maybeSingle()`
+     * call site otherwise repeats: the id filter and the `as unknown as T` cast that
+     * supabase-js forces (a runtime column string yields no inferred row type). Still
+     * tenant-scoped by the .eq("user_id") filter (constitution NEVER #4): a row that is
+     * missing or owned by another tenant both read as null, indistinguishably. Throws on
+     * a query error (never returns a partial/ambiguous result).
+     */
+    async selectOwnById<T>(table: TenantTable, id: string, columns: string): Promise<T | null> {
+      const { data, error } = await client
+        .from(table)
+        .select(columns)
+        .eq("user_id", userId)
+        .eq("id", id)
+        .maybeSingle();
+      if (error) {
+        throw new Error(`${table} tenant-scoped read failed: ${error.message}`);
+      }
+      return (data ?? null) as unknown as T | null;
+    },
   };
 }
 
