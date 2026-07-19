@@ -2,16 +2,22 @@ import express, { type Express, type Request, type Response } from "express";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  createAuthenticator,
+  createRateLimiter,
+  hasValidKeyFormat,
+  type Authenticator,
+  type RateLimiter,
+} from "./auth.ts";
+import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
 
 /** Advertised MCP server identity. */
 const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
 
-/** Personal-API-key prefix (see packages/core keys). T1 checks the FORMAT only. */
-const API_KEY_PREFIX = "sg_";
-
 /** JSON-RPC error codes returned before a request reaches the MCP server. */
 const JSON_RPC_UNAUTHORIZED = -32001;
 const JSON_RPC_METHOD_NOT_ALLOWED = -32000;
+const JSON_RPC_RATE_LIMITED = -32002;
 const JSON_RPC_INTERNAL_ERROR = -32603;
 
 interface JsonRpcErrorBody {
@@ -25,19 +31,35 @@ function jsonRpcError(code: number, message: string): JsonRpcErrorBody {
   return { jsonrpc: "2.0", error: { code, message }, id: null };
 }
 
+/** Injected collaborators for the gateway app. Fakes are supplied by unit tests. */
+export interface AppDeps {
+  readonly authenticate: Authenticator;
+  readonly rateLimiter: RateLimiter;
+}
+
 /**
- * True when `key` has the personal-API-key shape (sg_ prefix + non-empty body).
- * This is a FORMAT gate only — real key verification and tenant resolution
- * arrive in T2. Exported for unit testing.
+ * Wire the production dependencies (composition root). This is the ONLY code that
+ * reads the service-role env and builds the DB client, and it is evaluated ONLY
+ * when createApp is called without explicit deps (the real entrypoint). Unit tests
+ * pass fakes, so they never touch the database or the environment.
  */
-export function hasValidKeyFormat(key: string): boolean {
-  return key.startsWith(API_KEY_PREFIX) && key.length > API_KEY_PREFIX.length;
+function buildDefaultDeps(): AppDeps {
+  const client = createServiceClient();
+  return {
+    authenticate: createAuthenticator({
+      lookup: (keyHash) => findActiveKeyByHash(client, keyHash),
+      stamp: (keyId, at) => touchLastUsed(client, keyId, at),
+    }),
+    rateLimiter: createRateLimiter(),
+  };
 }
 
 /**
  * Return the sg_-format key from the route, or send a 401 JSON-RPC error and
  * return null. The route param is `string | undefined` under
- * noUncheckedIndexedAccess, so a missing key also fails the gate.
+ * noUncheckedIndexedAccess, so a missing key also fails the gate. The sg_ shape is
+ * public (not a secret), so a distinct "format" message here is not an info leak;
+ * unknown vs revoked, which ARE sensitive, share one message downstream.
  */
 function keyOrReject(req: Request, res: Response): string | null {
   const key = req.params.key;
@@ -88,9 +110,10 @@ async function handleMcpRequest(req: Request, res: Response): Promise<void> {
 
 /**
  * Build the MCP gateway HTTP app: a health probe plus the personal MCP endpoint.
- * No key AUTHENTICATION yet (T2) — only the sg_ format is checked here.
+ * `deps` (authenticate + rateLimiter) are injected; the default wires the real
+ * DB-backed collaborators, while tests pass fakes to run without a database.
  */
-export function createApp(): Express {
+export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   const app = express();
   app.use(express.json());
 
@@ -100,13 +123,33 @@ export function createApp(): Express {
   });
 
   // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
+  // Gate order: sg_ format (cheap, no I/O) -> key authentication (DB) -> per-key
+  // rate limit -> dispatch. Unknown and revoked keys are indistinguishable (401).
   app.post("/mcp/:key", async (req, res) => {
-    if (keyOrReject(req, res) === null) return;
+    const key = keyOrReject(req, res);
+    if (key === null) return;
+
+    const context = await deps.authenticate(key);
+    if (context === null) {
+      res.status(401).json(jsonRpcError(JSON_RPC_UNAUTHORIZED, "Invalid API key"));
+      return;
+    }
+
+    if (!deps.rateLimiter.tryConsume(context.keyId)) {
+      res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
+      return;
+    }
+
+    // Carry the tenant context in Express request scope (no global state). The tool
+    // registry (T5) reads res.locals.authContext to scope tool execution per tenant.
+    res.locals.authContext = context;
     await handleMcpRequest(req, res);
   });
 
   // GET (SSE) and DELETE (session end) are unsupported in stateless mode; reject
   // after the same key-format gate so clients get a consistent 401 on bad keys.
+  // These transport methods carry no request body to dispatch, so they stop at the
+  // format gate and never perform key authentication.
   const rejectNonPost = (req: Request, res: Response): void => {
     if (keyOrReject(req, res) === null) return;
     res
