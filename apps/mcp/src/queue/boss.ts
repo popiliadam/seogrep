@@ -1,142 +1,25 @@
 import { PgBoss } from "pg-boss";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { loadEnv } from "../env.ts";
+import {
+  getServiceClient,
+  type Json,
+  type JobRow,
+  type JobUpdate,
+  type ServiceClient,
+} from "../db.ts";
 
 /**
- * Queue + jobs bridge. This module is the single owner of the two backend
- * connections the MCP service holds:
- *
- *  - a service-role Supabase client (PostgREST) for the jobs table and the
- *    ledger RPCs — the ONLY ledger write path this app uses is the three
- *    migration-0005 functions (reserve_credits / commit_reserve /
- *    release_reserve); no direct ledger writes exist here.
- *  - a pg-boss instance over SUPABASE_DB_URL for async job delivery.
+ * Queue + jobs bridge. Owns the pg-boss instance over SUPABASE_DB_URL for async job
+ * delivery, plus the jobs-table read/writes and the ledger-RPC reserve bookkeeping
+ * (setJobReserve). Its service-role Supabase client — for the jobs table and the
+ * migration-0005 ledger RPCs — now comes from db.ts (the single client owner); this
+ * module no longer defines a parallel client or schema slice.
  *
  * SUPABASE_DB_URL must be a Supavisor SESSION-mode connection (port 5432) or a
  * direct Postgres connection. The transaction pooler (port 6543) is FORBIDDEN:
  * pg-boss holds long-lived connections and uses session state (LISTEN/NOTIFY,
  * advisory locks) that transaction pooling breaks.
  */
-
-/** JSON value as stored in jsonb columns (mirrors the packages/db Json type). */
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
-
-export type JobStatus = "queued" | "running" | "succeeded" | "failed";
-
-// NOTE: a `type` literal, not an `interface` — interfaces lack the implicit index
-// signature the supabase-js GenericSchema constraint (`Row extends Record<string,
-// unknown>`) needs, and a failing constraint silently collapses the whole client
-// schema to `never`.
-export type JobRow = {
-  id: string;
-  user_id: string;
-  project_id: string | null;
-  tool: string;
-  status: JobStatus;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  error: string | null;
-  result: Json | null;
-  reserve_id: string | null;
-};
-
-/**
- * Minimal typed schema for what this app touches. Regenerated cloud types stay in
- * packages/db; the MCP service pins only its own surface: the jobs table, ledger
- * READS (tests observe the reserve/commit/release chains), and the 0005 RPCs.
- * The structural shape (__InternalSupabase, `[_ in never]` empties) mirrors the
- * generated packages/db/src/types.ts so the supabase-js generics resolve.
- */
-type McpDatabase = {
-  __InternalSupabase: {
-    PostgrestVersion: "14.5";
-  };
-  public: {
-    Tables: {
-      jobs: {
-        Row: JobRow;
-        Insert: {
-          user_id: string;
-          project_id?: string | null;
-          tool: string;
-          status?: JobStatus;
-        };
-        Update: {
-          status?: JobStatus;
-          started_at?: string | null;
-          finished_at?: string | null;
-          error?: string | null;
-          result?: Json | null;
-          reserve_id?: string | null;
-        };
-        Relationships: [];
-      };
-      credit_ledger: {
-        Row: {
-          id: number;
-          user_id: string;
-          delta: number;
-          kind: string;
-          reason: string | null;
-          tool: string | null;
-          job_id: string | null;
-          reserve_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          user_id: string;
-          delta: number;
-          kind: string;
-          reason?: string | null;
-          tool?: string | null;
-          job_id?: string | null;
-          reserve_id?: string | null;
-        };
-        Update: {
-          [_ in never]: never;
-        };
-        Relationships: [];
-      };
-    };
-    Views: {
-      [_ in never]: never;
-    };
-    Functions: {
-      reserve_credits: {
-        Args: { p_user_id: string; p_amount: number; p_tool: string; p_job_id: string };
-        Returns: string;
-      };
-      commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
-      release_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
-    };
-    Enums: {
-      [_ in never]: never;
-    };
-    CompositeTypes: {
-      [_ in never]: never;
-    };
-  };
-};
-
-export type McpDbClient = SupabaseClient<McpDatabase>;
-
-let cachedClient: McpDbClient | null = null;
-
-/**
- * Lazy service-role client (RLS bypass — server-side only). Lazy so importing this
- * module never requires env; the first DB touch fails fast via loadEnv when the
- * real prod-named variables are missing.
- */
-export function getServiceClient(): McpDbClient {
-  if (!cachedClient) {
-    const env = loadEnv();
-    cachedClient = createClient<McpDatabase>(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-  }
-  return cachedClient;
-}
 
 /** Single queue for tool runs; the message routes to a per-tool handler. */
 export const JOBS_QUEUE = "tool-jobs";
@@ -269,9 +152,34 @@ export async function getJob(jobId: string): Promise<JobRow | null> {
   return data;
 }
 
+/**
+ * Read one jobs row scoped to its owner: id = ? AND user_id = ?. This is the ONLY
+ * job read a tenant-facing surface may use (get_job_status). The user_id filter is
+ * the tenant guard on the RLS-bypassing service client (constitution NEVER #4), so
+ * another user's job — or an unknown id — both resolve to null and are therefore
+ * INDISTINGUISHABLE to the caller (no cross-tenant existence leak). Never wire the
+ * id-only getJob above to a tool surface; it does not scope by owner.
+ */
+export async function getJobForUser(
+  client: ServiceClient,
+  jobId: string,
+  userId: string,
+): Promise<JobRow | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getJobForUser failed: ${error.message}`);
+  }
+  return data;
+}
+
 async function updateJob(
   jobId: string,
-  patch: McpDatabase["public"]["Tables"]["jobs"]["Update"],
+  patch: JobUpdate,
   what: string,
 ): Promise<void> {
   const { error } = await getServiceClient().from("jobs").update(patch).eq("id", jobId);

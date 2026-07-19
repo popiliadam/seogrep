@@ -1,0 +1,33 @@
+---
+title: setup_project
+description: Register a website domain to track as a SeoGrep project.
+---
+
+`setup_project` registers a domain so SeoGrep can crawl, audit, and report on it.
+It is **idempotent** — running it again for the same domain (in any URL or host
+form) returns the existing project instead of creating a duplicate. Costs **0
+credits**.
+
+## What it does
+
+Normalizes the input to a canonical domain, then creates the project under your
+account — or returns the existing one if you already track that site.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Set up example.com as a project.
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `domain` | string | The site to track, e.g. `example.com` or `https://example.com`. |
+
+### Returns
+
+The `project_id`, the canonical `domain`, and `created` (whether it was newly
+created).
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
