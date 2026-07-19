@@ -12,6 +12,7 @@ import { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 import { auditOnpageTool } from "./audit-onpage.ts";
 import { auditTechTool } from "./audit-tech.ts";
 import { auditSchemaTool } from "./audit-schema.ts";
+import { generateReportTool } from "./generate-report.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
@@ -27,6 +28,7 @@ export { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 export { auditOnpageTool } from "./audit-onpage.ts";
 export { auditTechTool } from "./audit-tech.ts";
 export { auditSchemaTool } from "./audit-schema.ts";
+export { generateReportTool, makeGenerateReportTool } from "./generate-report.ts";
 
 /**
  * The production tool set, in tools/list order. The composition root (server.ts
@@ -47,4 +49,5 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   auditOnpageTool,
   auditTechTool,
   auditSchemaTool,
+  generateReportTool,
 ];

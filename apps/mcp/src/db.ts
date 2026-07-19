@@ -137,6 +137,40 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Generated, shareable report records (migrations 0001 + 0009). generate_report
+      // (T12) INSERTs the rendered HTML body + a human title, keyed to an unguessable
+      // public_slug the public /r/[slug] page reads back. The committed @pseo/db generated
+      // types still predate the 0009 title/html/tool columns, so — as with api_keys /
+      // gsc_connections above — the full column set is modelled here.
+      reports: {
+        Row: {
+          id: string;
+          user_id: string;
+          job_id: string | null;
+          public_slug: string | null;
+          title: string | null;
+          html: string | null;
+          tool: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          job_id?: string | null;
+          public_slug?: string | null;
+          title?: string | null;
+          html?: string | null;
+          tool?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          public_slug?: string | null;
+          title?: string | null;
+          html?: string | null;
+          tool?: string | null;
+        };
+        Relationships: [];
+      };
       // Per-project Google Search Console link (migrations 0003 + 0009). Stores the
       // AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex string) and the
       // resolved property. The web OAuth callback writes it; pull_gsc_data reads it back
