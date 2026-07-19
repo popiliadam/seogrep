@@ -19,6 +19,18 @@ const envSchema = z.object({
   SUPABASE_DB_URL: z.string().min(1, "SUPABASE_DB_URL is required"),
   // HTTP listen port. Fly maps internal_port 8080; local dev overrides with 3458.
   PORT: z.coerce.number().int().positive().default(8080),
+  // --- Google Search Console (GSC) OAuth + token encryption ------------------------
+  // OPTIONAL here so the gateway boots without them (only the GSC read path needs them),
+  // and so this addition cannot break the existing loadEnv contract. Names are the REAL
+  // prod names, verified against Netlify by a human on 2026-07-19. Fail-closed reads live
+  // at the point of use: gsc/client.ts readGoogleCredentials (Google OAuth) and
+  // gsc/crypto.ts key validation (TOKEN_ENCRYPTION_KEY) — the signed-lesson-#5 enforcement.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  // 64 hex chars (32 bytes) — AES-256 key for the at-rest refresh-token seal.
+  TOKEN_ENCRYPTION_KEY: z.string().optional(),
+  // Public base URL of the web app — connect_gsc builds its link-out against this.
+  WEB_BASE_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -37,4 +49,18 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`Invalid MCP environment configuration: ${details}`);
   }
   return result.data;
+}
+
+/**
+ * Resolve the public web base URL, failing closed with a clear error when it is unset.
+ * connect_gsc uses it to build the OAuth link-out (`${WEB_BASE_URL}/api/gsc/connect?...`);
+ * a missing value is a deploy misconfiguration that must surface loudly, not produce a
+ * broken `undefined/...` link. Trailing slashes are trimmed so callers can append a path.
+ */
+export function requireWebBaseUrl(source: NodeJS.ProcessEnv = process.env): string {
+  const raw = source.WEB_BASE_URL?.trim();
+  if (!raw) {
+    throw new Error("WEB_BASE_URL is not configured (required to build the GSC connect link)");
+  }
+  return raw.replace(/\/+$/, "");
 }

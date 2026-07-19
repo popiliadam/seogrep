@@ -1,5 +1,6 @@
 import type { RegisteredTool } from "./registry.ts";
 import { setupProjectTool } from "./setup-project.ts";
+import { connectGscTool } from "./connect-gsc.ts";
 import { listProjectsTool } from "./list-projects.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
 import { crawlSiteTool } from "./crawl-site.ts";
@@ -10,6 +11,7 @@ import { auditSchemaTool } from "./audit-schema.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
+export { connectGscTool } from "./connect-gsc.ts";
 export { listProjectsTool } from "./list-projects.ts";
 export { getCreditBalanceTool } from "./get-credit-balance.ts";
 export { crawlSiteTool } from "./crawl-site.ts";
@@ -25,6 +27,7 @@ export { auditSchemaTool } from "./audit-schema.ts";
  */
 export const ALL_TOOLS: readonly RegisteredTool[] = [
   setupProjectTool,
+  connectGscTool,
   listProjectsTool,
   getCreditBalanceTool,
   crawlSiteTool,

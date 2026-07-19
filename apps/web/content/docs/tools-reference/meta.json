@@ -2,6 +2,7 @@
   "title": "Tools Reference",
   "pages": [
     "setup-project",
+    "connect-gsc",
     "list-projects",
     "get-credit-balance",
     "crawl-site",
