@@ -53,10 +53,11 @@ function ext(): SupabaseClient<ClaimTrialDatabase> {
   return service as unknown as SupabaseClient<ClaimTrialDatabase>;
 }
 
-// An arbitrary positive amount for the tests — deliberately NOT the product figure. The
-// real trial size stays CREDIT_PACKAGES.trial in packages/core; claim_trial takes the
-// amount as a parameter precisely so the SQL never hardcodes it (CLAUDE.md NEVER #6).
-const TRIAL = 200;
+// An arbitrary non-product amount for the tests — 137 is intentionally NOT the real trial
+// size, so this test can never masquerade as approval of a pricing/credit figure
+// (CLAUDE.md NEVER #6). The real trial size stays CREDIT_PACKAGES.trial in packages/core;
+// claim_trial takes the amount as a parameter precisely so the SQL never hardcodes it.
+const TRIAL = 137;
 
 async function makeUserId(): Promise<string> {
   const { data, error } = await service.auth.admin.createUser({
