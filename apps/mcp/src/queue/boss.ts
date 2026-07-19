@@ -149,33 +149,51 @@ export interface JobMessage {
   payload: Record<string, unknown>;
 }
 
-let cachedBoss: PgBoss | null = null;
+let bossPromise: Promise<PgBoss> | null = null;
+
+async function createBoss(): Promise<PgBoss> {
+  const env = loadEnv();
+  // SESSION mode / direct connection only — see the module comment.
+  const boss = new PgBoss({ connectionString: env.SUPABASE_DB_URL, schema: "pgboss" });
+  boss.on("error", (error) => console.error("pg-boss error:", error));
+  await boss.start();
+  await boss.createQueue(JOBS_QUEUE, { retryLimit: 0 }); // ON CONFLICT DO NOTHING — idempotent
+  return boss;
+}
 
 /**
  * Lazy pg-boss singleton in its own `pgboss` schema. Queue retryLimit is pinned
  * to 0: a failed run must never be re-executed automatically — retries around
  * credit reserves are a money decision, not queue plumbing (see worker.ts).
+ *
+ * The cache holds the in-flight PROMISE, not the resolved instance. Caching
+ * only the resolved instance (null-check-then-await) leaves a window, between
+ * the check and `await boss.start()`, where two concurrent first callers both
+ * see no cached instance and each start their own PgBoss — the loser leaks a
+ * connection pool that stopBoss can never reach. Caching the promise closes
+ * that window: the assignment below happens synchronously (before either
+ * internal await runs), so every caller — concurrent or not — awaits the
+ * exact same promise and resolves to the exact same instance.
  */
 export async function getBoss(): Promise<PgBoss> {
-  if (!cachedBoss) {
-    const env = loadEnv();
-    // SESSION mode / direct connection only — see the module comment.
-    const boss = new PgBoss({ connectionString: env.SUPABASE_DB_URL, schema: "pgboss" });
-    boss.on("error", (error) => console.error("pg-boss error:", error));
-    await boss.start();
-    await boss.createQueue(JOBS_QUEUE, { retryLimit: 0 }); // ON CONFLICT DO NOTHING — idempotent
-    cachedBoss = boss;
+  if (!bossPromise) {
+    bossPromise = createBoss().catch((error: unknown) => {
+      // Startup failed — drop the cached rejection so the NEXT call gets a
+      // fresh attempt instead of permanently awaiting a broken promise.
+      bossPromise = null;
+      throw error;
+    });
   }
-  return cachedBoss;
+  return bossPromise;
 }
 
 /** Graceful shutdown: waits for in-flight work, then closes the pool (SIGTERM path). */
 export async function stopBoss(): Promise<void> {
-  if (cachedBoss) {
-    const boss = cachedBoss;
-    cachedBoss = null;
-    await boss.stop({ graceful: true, close: true });
-  }
+  if (!bossPromise) return;
+  const promise = bossPromise;
+  bossPromise = null;
+  const boss = await promise;
+  await boss.stop({ graceful: true, close: true });
 }
 
 export interface EnqueueContext {
@@ -230,7 +248,15 @@ export async function enqueueJob(
   return { jobId };
 }
 
-/** Read one jobs row (null when the id is unknown). */
+/**
+ * Read one jobs row (null when the id is unknown).
+ *
+ * id-only lookup — callers exposing this to tenants MUST scope by user_id
+ * (see get_job_status). This function does NOT check ownership itself;
+ * today's callers (executeJob, tests) are trusted internal call sites that
+ * already hold the expected user_id and cross-check it themselves before
+ * acting on the row.
+ */
 export async function getJob(jobId: string): Promise<JobRow | null> {
   const { data, error } = await getServiceClient()
     .from("jobs")

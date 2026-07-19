@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { enqueueJob, getJob, getServiceClient, stopBoss, type JobMessage } from "./boss.ts";
+import { enqueueJob, getBoss, getJob, getServiceClient, stopBoss, type JobMessage } from "./boss.ts";
 import { clearToolHandlers, executeJob, registerToolHandler, startWorker } from "./worker.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 
@@ -202,5 +202,58 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(job?.status).toBe("failed");
     expect(job?.error).toMatch(/no handler registered/);
     expect(await ledgerKinds(userId)).toEqual([]); // failed BEFORE any reserve
+  });
+});
+
+// --- Fix wave 1 (Important 1): worker cross-checks job ownership -----------
+// getJob(id) is an unscoped id-only lookup (see the loud comment on it in
+// boss.ts). executeJob is the trusted internal caller that must not act on a
+// queue message whose userId does not match the jobs row it names.
+describe("executeJob tenant isolation (fix wave 1, Important 1)", () => {
+  it("refuses to run when the message userId does not match the job's owner: handler never runs, job fails, no ledger row for anyone", async () => {
+    const ownerId = await makeUserId();
+    const otherUserId = await makeUserId();
+    await seedGrant(ownerId, TOOL_COSTS.audit_tech);
+    // otherUserId is FUNDED too — proves the guard is an identity check, not
+    // an accidental side effect of the mismatched user lacking balance.
+    await seedGrant(otherUserId, TOOL_COSTS.audit_tech);
+    const jobId = await makeQueuedJob(ownerId, "audit_tech");
+    let ran = false;
+    registerToolHandler("audit_tech", async () => {
+      ran = true;
+      return null;
+    });
+
+    // A message claiming a DIFFERENT userId than the job's real owner —
+    // forged/corrupted message, or a caller that resolved ownership wrong.
+    await executeJob({ jobId, userId: otherUserId, tool: "audit_tech", payload: {} });
+
+    expect(ran).toBe(false); // handler must not run under the wrong identity
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toMatch(/owner mismatch/i);
+    expect(job?.started_at).toBeNull(); // never even reached markJobRunning
+    // No credit reserve was ever opened — neither identity's ledger moved
+    // past its initial grant (in particular, otherUserId's funded balance
+    // was never touched to pay for someone else's job).
+    expect(await ledgerKinds(ownerId)).toEqual(["grant"]);
+    expect(await ledgerKinds(otherUserId)).toEqual(["grant"]);
+  });
+});
+
+// --- Fix wave 1 (Important 2): getBoss singleton is promise-cached ---------
+// A null-check-then-await cache lets two concurrent first callers each start
+// their own PgBoss (the loser leaks a connection stopBoss can never reach).
+// Caching the in-flight promise instead closes that window.
+describe("getBoss singleton (fix wave 1, Important 2)", () => {
+  it("two concurrent first calls resolve to the exact same pg-boss instance", async () => {
+    // Force a cold cache: stopBoss clears it synchronously before its own
+    // await, so the two getBoss() calls below race from a genuinely empty
+    // cache (not an already-resolved one left over from an earlier test).
+    await stopBoss();
+
+    const [first, second] = await Promise.all([getBoss(), getBoss()]);
+
+    expect(first).toBe(second);
   });
 });

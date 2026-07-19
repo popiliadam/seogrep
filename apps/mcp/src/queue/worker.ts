@@ -96,6 +96,16 @@ export async function executeJob(message: JobMessage): Promise<void> {
     console.warn(`executeJob: job ${jobId} is "${job.status}", not "queued"; skipping`);
     return;
   }
+  if (job.user_id !== userId) {
+    // Tenant-isolation guard: the queue message's userId must match the jobs
+    // row's owner before the handler runs or any credit reserve opens. A
+    // mismatch means a forged/corrupted message or a caller that resolved
+    // job ownership incorrectly — fail closed instead of running (and
+    // potentially billing) someone else's job under the wrong identity.
+    console.error(`executeJob: job ${jobId} does not belong to message userId ${userId}; failing`);
+    await failJob(jobId, "job owner mismatch: refusing to execute under a different user_id");
+    return;
+  }
 
   await markJobRunning(jobId);
   try {
