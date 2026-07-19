@@ -170,7 +170,7 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
           return {
             pages: [{
               url: origin, status: 200, title: null, metaDescription: null, h1s: [],
-              canonical: null, robotsMeta: null, links: [], wordCount: 1, issues: [],
+              canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
             }],
             skipped: [],
             fetchedAt: new Date().toISOString(),

@@ -24,6 +24,8 @@ export interface PageRecord {
   readonly robotsMeta: string | null;
   readonly links: string[];
   readonly wordCount: number;
+  /** Schema.org @type names declared in the page's JSON-LD blocks ([] when none). */
+  readonly jsonLdTypes: string[];
   readonly issues: string[];
 }
 
@@ -60,6 +62,8 @@ export interface ParsedHtml {
   /** Absolute, deduped href targets (non-http(s) schemes dropped). */
   readonly links: string[];
   readonly wordCount: number;
+  /** Schema.org @type names from JSON-LD blocks ([] when none/malformed). */
+  readonly jsonLdTypes: string[];
 }
 
 /** Resolve `href` against `baseUrl`, keeping only http(s); null if invalid. */
@@ -93,6 +97,65 @@ function parseAttrs(tag: string): Record<string, string> {
     if (name && !(name in out)) out[name] = decodeEntities(m[3] ?? m[4] ?? m[5] ?? "");
   }
   return out;
+}
+
+/**
+ * Extract the schema.org `@type` names declared in a page's JSON-LD blocks
+ * (`<script type="application/ld+json">`). Runs on the RAW html, BEFORE parseHtml
+ * strips scripts, since JSON-LD lives inside a script tag.
+ *
+ * Regex-scoped like the rest of this parser (no JSON-LD / DOM dependency): each script
+ * body is JSON.parsed and every `@type` collected, recursing through nested objects and
+ * arrays (so `@graph` containers and embedded nodes contribute their types too). Types
+ * are returned de-duplicated, first-seen order.
+ *
+ * KNOWN LIMITS (deliberate for a first-pass audit signal):
+ *  - only JSON-LD is read; microdata / RDFa are ignored;
+ *  - a block that is not valid JSON is skipped SILENTLY — a malformed <script> must
+ *    never reject the crawl (the T6 Critical lesson: one bad page is skipped, not fatal);
+ *  - only the TYPE names are kept; the raw JSON-LD body is never stored.
+ */
+export function parseJsonLdTypes(html: string): string[] {
+  const types: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const name = value.trim();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      types.push(name);
+    }
+  };
+  // Walk a parsed node: collect its @type (string or array of strings), then recurse
+  // into every object/array value so nested entities (@graph, author, publisher, …)
+  // contribute their types as well.
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    const type = obj["@type"];
+    if (Array.isArray(type)) type.forEach(add);
+    else add(type);
+    for (const value of Object.values(obj)) {
+      if (value && typeof value === "object") walk(value);
+    }
+  };
+  const blocks = html.matchAll(
+    /<script\b[^>]*\btype\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  );
+  for (const match of blocks) {
+    const body = match[1];
+    if (!body || !body.trim()) continue;
+    try {
+      walk(JSON.parse(body));
+    } catch {
+      // Malformed JSON-LD block — skip silently; the crawl must not die on it.
+    }
+  }
+  return types;
 }
 
 /**
@@ -149,7 +212,11 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   const words = textOf(content);
   const wordCount = words ? words.split(/\s+/).filter(Boolean).length : 0;
 
-  return { title, metaDescription, h1s, canonical, robotsMeta, links, wordCount };
+  // Read JSON-LD from the RAW html (parseJsonLdTypes scopes its own script blocks),
+  // not the script-stripped `content` above.
+  const jsonLdTypes = parseJsonLdTypes(html);
+
+  return { title, metaDescription, h1s, canonical, robotsMeta, links, wordCount, jsonLdTypes };
 }
 
 /**
@@ -483,7 +550,15 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
     const finalUrl = normalizeUrl(outcome.finalUrl);
     if (finalUrl !== url) {
-      if (visited.has(finalUrl)) continue; // redirected onto an already-seen page
+      if (visited.has(finalUrl)) {
+        // Redirected onto an already-crawled page: the CONTENT is already covered under
+        // finalUrl, but record this URL as skipped so it is accounted for rather than
+        // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
+        // without it, a sitemap URL that redirects to a crawled page reads as a coverage
+        // gap. Benign — the reason string marks it as a redirect, not a failure.
+        skipped.push({ url, reason: "redirects to already-crawled URL" });
+        continue;
+      }
       visited.add(finalUrl);
       const finalTarget = new URL(finalUrl);
       if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
@@ -519,6 +594,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       robotsMeta: parsed.robotsMeta,
       links: parsed.links,
       wordCount: parsed.wordCount,
+      jsonLdTypes: parsed.jsonLdTypes,
       issues: computeIssues(parsed),
     });
     parsed.links.forEach(enqueue);

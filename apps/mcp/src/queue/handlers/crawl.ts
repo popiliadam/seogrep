@@ -27,6 +27,20 @@ export type CrawlFn = (origin: string, opts: { maxUrls?: number }) => Promise<Cr
 /** Resolve the crawl origin for a job (default: the tenant's project domain). */
 export type OriginResolver = (userId: string, job: JobRow) => Promise<string>;
 
+/**
+ * Clamp a queue-message max_urls into the crawler's 1..100 contract. The queue payload
+ * is EXTERNAL input (a message that could be malformed or tampered), so a value the
+ * surface schema would have rejected can still arrive here. A finite number is floored
+ * and clamped to [1, 100]; anything else (undefined, NaN, ±Infinity, a non-number)
+ * yields undefined so the crawler applies its own default — never an unbounded or NaN
+ * cap. crawlSite also floors/min-guards, but Infinity survives Math.max/floor there, so
+ * the isFinite gate here is the real bound.
+ */
+export function clampMaxUrls(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return Math.min(100, Math.max(1, Math.floor(raw)));
+}
+
 export interface CrawlHandlerDeps {
   readonly crawl?: CrawlFn;
   readonly resolveOrigin?: OriginResolver;
@@ -79,8 +93,9 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
     const origin = await resolveOrigin(userId, job);
     // The tool surface is snake_case; internal module options are camelCase — mapped
     // here. The crawl_site queue payload carries `max_urls`; the crawler's CrawlOptions
-    // takes `maxUrls`. This is the single point that bridges the two conventions.
-    const maxUrls = typeof payload.max_urls === "number" ? payload.max_urls : undefined;
+    // takes `maxUrls`. This is the single point that bridges the two conventions, and it
+    // re-clamps to 1..100 because a raw queue message is external input (see clampMaxUrls).
+    const maxUrls = clampMaxUrls(payload.max_urls);
 
     const result = await crawl(origin, { maxUrls });
 
