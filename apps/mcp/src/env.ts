@@ -64,3 +64,17 @@ export function requireWebBaseUrl(source: NodeJS.ProcessEnv = process.env): stri
   }
   return raw.replace(/\/+$/, "");
 }
+
+/**
+ * Resolve the at-rest token encryption key, failing closed (naming the variable) when it is
+ * unset. pull_gsc_data needs it to OPEN the sealed refresh token. The 64-hex FORMAT check is
+ * @pseo/core's tokenKeyBytes at the point of decryption; this only guarantees a value is
+ * present, so a missing secret fails loudly here rather than degrading silently (lesson #5).
+ */
+export function requireTokenEncryptionKey(source: NodeJS.ProcessEnv = process.env): string {
+  const raw = source.TOKEN_ENCRYPTION_KEY?.trim();
+  if (!raw) {
+    throw new Error("TOKEN_ENCRYPTION_KEY is not configured (required to open the GSC refresh token)");
+  }
+  return raw;
+}

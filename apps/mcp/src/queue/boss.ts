@@ -214,6 +214,78 @@ export async function getLatestSucceededCrawl(
   return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
 }
 
+/** The latest pull the discovery tools read: its stored PullData jsonb and when it ran. */
+export interface LatestPull {
+  readonly jobId: string;
+  readonly result: Json | null;
+  readonly createdAt: string;
+}
+
+/**
+ * Read the most recent SUCCEEDED pull_gsc_data job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). This is the discovery tools' input
+ * port — the sibling of getLatestSucceededCrawl for the GSC read path. The user_id filter
+ * is the tenant guard on the RLS-bypassing service client (constitution NEVER #4), so a
+ * project that is missing or belongs to another tenant both resolve to null (the tool then
+ * tells the caller to run pull_gsc_data first — no cross-tenant leak).
+ */
+export async function getLatestSucceededPull(
+  client: ServiceClient,
+  projectId: string,
+  userId: string,
+): Promise<LatestPull | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "pull_gsc_data")
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getLatestSucceededPull failed: ${error.message}`);
+  }
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
+/**
+ * Record a completed pull_gsc_data run as a SUCCEEDED jobs row carrying the PullData in
+ * `result`. pull_gsc_data is a SYNC (surface-charged) tool, so this row is purely a data
+ * carrier: the credit reserve/commit lives on the ledger (keyed to a traceability uuid),
+ * and reserve_id is deliberately LEFT NULL here — there is no worker reserve on this path.
+ * Insert-then-complete mirrors the audit db-test seed shape (jobs.Insert has no result
+ * column, so the result lands via the succeeded update).
+ */
+export async function recordSucceededPull(
+  client: ServiceClient,
+  params: { userId: string; projectId: string; result: Json },
+): Promise<{ jobId: string }> {
+  const inserted = await client
+    .from("jobs")
+    .insert({
+      user_id: params.userId,
+      project_id: params.projectId,
+      tool: "pull_gsc_data",
+      status: "queued",
+    })
+    .select("id")
+    .single();
+  if (inserted.error || !inserted.data) {
+    throw new Error(`recordSucceededPull: jobs insert failed: ${inserted.error?.message ?? "no row"}`);
+  }
+  const jobId = inserted.data.id;
+  const { error } = await client
+    .from("jobs")
+    .update({ status: "succeeded", finished_at: new Date().toISOString(), result: params.result })
+    .eq("id", jobId);
+  if (error) {
+    throw new Error(`recordSucceededPull: jobs completion failed: ${error.message}`);
+  }
+  return { jobId };
+}
+
 async function updateJob(
   jobId: string,
   patch: JobUpdate,

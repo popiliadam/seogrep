@@ -137,6 +137,34 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Per-project Google Search Console link (migrations 0003 + 0009). Stores the
+      // AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex string) and the
+      // resolved property. The web OAuth callback writes it; pull_gsc_data reads it back
+      // (tenant-scoped by user_id — constitution NEVER #4). gsc_property is migration 0009,
+      // which the committed @pseo/db generated types still omit, so it is modeled here.
+      gsc_connections: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          encrypted_refresh_token: string | null;
+          gsc_property: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          encrypted_refresh_token?: string | null;
+          gsc_property?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          encrypted_refresh_token?: string | null;
+          gsc_property?: string | null;
+        };
+        Relationships: [];
+      };
       // Append-only money ledger. Update is `never` so the type system forbids the
       // mutation the DB armor (migration 0002) also rejects (constitution NEVER #2).
       credit_ledger: {
