@@ -17,19 +17,28 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 /**
+ * True when `code` may be passed to String.fromCodePoint: fromCodePoint THROWS a
+ * RangeError above U+10FFFF (or on NaN), and a decode helper on the crawl path must
+ * never throw — out-of-range references are kept verbatim instead.
+ */
+const isDecodableCodePoint = (code: number): boolean =>
+  Number.isFinite(code) && code >= 0 && code <= 0x10ffff;
+
+/**
  * Decode the common HTML/XML character references (named + numeric). Intentionally
  * small — enough to normalise hrefs, titles and loc URLs; not a full entity table.
+ * Malformed/out-of-range numeric references pass through unchanged (never throws).
  */
 export function decodeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body: string) => {
     const ref = body.toLowerCase();
     if (ref.startsWith("#x")) {
       const code = Number.parseInt(ref.slice(2), 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      return isDecodableCodePoint(code) ? String.fromCodePoint(code) : whole;
     }
     if (ref.startsWith("#")) {
       const code = Number.parseInt(ref.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      return isDecodableCodePoint(code) ? String.fromCodePoint(code) : whole;
     }
     return NAMED_ENTITIES[ref] ?? whole;
   });

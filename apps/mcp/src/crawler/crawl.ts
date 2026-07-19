@@ -424,7 +424,19 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       continue;
     }
 
-    const parsed = parseHtml(outcome.body, finalUrl);
+    // Belt-and-suspenders: parseHtml is written to never throw, but no future
+    // parser bug may be allowed to reject the whole crawl — one bad page becomes
+    // a skipped entry instead.
+    let parsed: ParsedHtml;
+    try {
+      parsed = parseHtml(outcome.body, finalUrl);
+    } catch (error) {
+      skipped.push({
+        url: finalUrl,
+        reason: `parse failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      continue;
+    }
     pages.push({
       url: finalUrl,
       status: outcome.status,

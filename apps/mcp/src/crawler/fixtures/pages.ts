@@ -22,6 +22,7 @@ export const INDEX_HTML = `<!doctype html><html><head>
   <a href="/noindex">Noindex</a>
   <a href="/private">Private (robots-disallowed)</a>
   <a href="/redirect">Redirected</a>
+  <a href="/weird">Weird entity</a>
   <a href="/image.png">An image</a>
   <a href="http://external.invalid/page">External (off-origin)</a>
 </nav>
@@ -71,6 +72,16 @@ export const ORPHAN_HTML = `<!doctype html><html><head>
 </head><body>
 <h1>Orphan</h1>
 <p>Seeded from the sitemap only.</p>
+</body></html>`;
+
+// Carries an out-of-range numeric character reference (&#x110000; > U+10FFFF).
+// Decoding must keep it verbatim; historically it threw and killed the whole crawl.
+export const WEIRD_ENTITY_HTML = `<!doctype html><html><head>
+<title>Weird &#x110000; Entity</title>
+<meta name="description" content="Page with an out-of-range character reference.">
+</head><body>
+<h1>Weird</h1>
+<p>Bad reference: &#x110000; — good reference: &amp;.</p>
 </body></html>`;
 
 export const NOT_FOUND_HTML = `<!doctype html><html><head>

@@ -20,6 +20,7 @@ import {
   ORPHAN_HTML,
   PRIVATE_HTML,
   ROBOTS_TXT,
+  WEIRD_ENTITY_HTML,
 } from "./pages.ts";
 
 export interface FixtureOptions {
@@ -45,6 +46,7 @@ const HTML_ROUTES: Record<string, string> = {
   "/noindex": NOINDEX_HTML,
   "/orphan": ORPHAN_HTML,
   "/private": PRIVATE_HTML,
+  "/weird": WEIRD_ENTITY_HTML,
 };
 
 /** Paths advertised in the generated sitemap (absolute locs built per-request). */

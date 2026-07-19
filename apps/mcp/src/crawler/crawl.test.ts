@@ -161,6 +161,14 @@ describe("crawlSite — full crawl (sitemap seeds + robots)", () => {
     expect(pageAt("/noindex")?.issues).toEqual(["noindex"]);
     expect(pageAt("/")?.issues).toEqual([]);
   });
+
+  it("survives an out-of-range character reference: page recorded, reference verbatim", () => {
+    // A single malformed entity must never reject the whole crawlSite promise.
+    const weird = pageAt("/weird");
+    expect(weird?.status).toBe(200);
+    expect(weird?.title).toBe("Weird &#x110000; Entity");
+    expect(weird?.issues).toEqual([]);
+  });
 });
 
 describe("crawlSite — limits and edge behavior", () => {

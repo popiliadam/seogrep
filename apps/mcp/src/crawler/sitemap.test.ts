@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSitemap } from "./sitemap.ts";
+import { decodeEntities, parseSitemap } from "./sitemap.ts";
 
 // Unit spec for the sitemap parser. Regex-based <loc> extraction (no XML DOM
 // dependency): we only need the loc URLs and whether the document is a
@@ -36,5 +36,22 @@ describe("parseSitemap", () => {
   it("returns empty arrays for non-sitemap / garbage input", () => {
     expect(parseSitemap("not xml at all")).toEqual({ urls: [], sitemaps: [] });
     expect(parseSitemap("")).toEqual({ urls: [], sitemaps: [] });
+  });
+
+  it("does not throw on an out-of-range numeric reference inside <loc>", () => {
+    const xml = "<urlset><url><loc>https://x.test/&#x110000;</loc></url></urlset>";
+    expect(parseSitemap(xml).urls).toEqual(["https://x.test/&#x110000;"]);
+  });
+});
+
+describe("decodeEntities — malformed numeric references", () => {
+  it("keeps out-of-range references verbatim instead of throwing (hex and decimal)", () => {
+    // 0x110000 / 1114112 are one past the Unicode max; fromCodePoint would throw.
+    expect(decodeEntities("&#x110000;")).toBe("&#x110000;");
+    expect(decodeEntities("&#1114112;")).toBe("&#1114112;");
+  });
+
+  it("still decodes the boundary code point U+10FFFF", () => {
+    expect(decodeEntities("a &#x10FFFF; b")).toBe(`a ${String.fromCodePoint(0x10ffff)} b`);
   });
 });
