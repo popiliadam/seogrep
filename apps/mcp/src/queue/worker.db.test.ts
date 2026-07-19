@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { enqueueJob, getBoss, getJob, getServiceClient, stopBoss, type JobMessage } from "./boss.ts";
+import { enqueueJob, getBoss, getJob, stopBoss, type JobMessage } from "./boss.ts";
+import { getServiceClient } from "../db.ts";
 import { clearToolHandlers, executeJob, registerToolHandler, startWorker } from "./worker.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { withCredits } from "./guard.ts";
 import { TOOL_COSTS } from "./costs.ts";
-import { getJob, getServiceClient } from "../queue/boss.ts";
+import { getJob } from "../queue/boss.ts";
+import { getServiceClient } from "../db.ts";
 
 /**
  * DB-integration proofs for the credit guard, run against a LOCAL Supabase stack

@@ -1,5 +1,6 @@
 import { TOOL_COSTS, type ToolName } from "./costs.ts";
-import { getServiceClient, setJobReserve } from "../queue/boss.ts";
+import { getServiceClient } from "../db.ts";
+import { setJobReserve } from "../queue/boss.ts";
 
 /**
  * Credit guard around a tool run. All ledger writes go through the migration-0005
