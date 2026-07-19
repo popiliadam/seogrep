@@ -9,7 +9,7 @@ ENV PATH="$PNPM_HOME:$PATH"
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 
-# 1. Prune the monorepo down to @pseo/mcp (and its workspace deps — currently none).
+# 1. Prune the monorepo down to @pseo/mcp and its workspace deps (@pseo/core).
 FROM base AS pruner
 WORKDIR /app
 COPY . .
@@ -24,6 +24,11 @@ RUN pnpm install --frozen-lockfile
 # Full pruned source, plus the root tsconfig the app extends (prune omits it).
 COPY --from=pruner /app/out/full/ .
 COPY tsconfig.base.json ./tsconfig.base.json
+# Build the workspace dependency first: @pseo/mcp imports @pseo/core, whose package.json
+# resolves to ./dist, so core's dist must exist for BOTH the mcp compile (its .d.ts) and
+# runtime (its .js). This is a bare `pnpm --filter` build (not turbo), so `^build` does not
+# fire automatically — core is compiled explicitly here, before the app that consumes it.
+RUN pnpm --filter @pseo/core run build
 RUN pnpm --filter @pseo/mcp run build
 
 # 3. Minimal runtime image: production dependencies + built output only.
@@ -33,6 +38,10 @@ ENV NODE_ENV=production
 ENV MODE=web
 COPY --from=pruner /app/out/json/ .
 RUN pnpm install --frozen-lockfile --prod
+# The prod install links @pseo/core as a workspace symlink
+# (apps/mcp/node_modules/@pseo/core -> ../../../../packages/core), so its compiled dist
+# must sit at the real workspace path for `import "@pseo/core"` to resolve at runtime.
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
 COPY --from=builder /app/apps/mcp/dist ./apps/mcp/dist
 USER node
 EXPOSE 8080
