@@ -1,6 +1,12 @@
 import { PgBoss } from "pg-boss";
 import { loadEnv } from "../env.ts";
-import { getServiceClient, type Json, type JobRow, type JobUpdate } from "../db.ts";
+import {
+  getServiceClient,
+  type Json,
+  type JobRow,
+  type JobUpdate,
+  type ServiceClient,
+} from "../db.ts";
 
 /**
  * Queue + jobs bridge. Owns the pg-boss instance over SUPABASE_DB_URL for async job
@@ -14,10 +20,6 @@ import { getServiceClient, type Json, type JobRow, type JobUpdate } from "../db.
  * pg-boss holds long-lived connections and uses session state (LISTEN/NOTIFY,
  * advisory locks) that transaction pooling breaks.
  */
-
-// Re-exported from the consolidated DB module so existing consumers (worker.ts,
-// the db-integration specs) keep importing the jobs row types from here.
-export type { Json, JobRow, JobStatus } from "../db.ts";
 
 /** Single queue for tool runs; the message routes to a per-tool handler. */
 export const JOBS_QUEUE = "tool-jobs";
@@ -146,6 +148,31 @@ export async function getJob(jobId: string): Promise<JobRow | null> {
     .maybeSingle();
   if (error) {
     throw new Error(`getJob failed: ${error.message}`);
+  }
+  return data;
+}
+
+/**
+ * Read one jobs row scoped to its owner: id = ? AND user_id = ?. This is the ONLY
+ * job read a tenant-facing surface may use (get_job_status). The user_id filter is
+ * the tenant guard on the RLS-bypassing service client (constitution NEVER #4), so
+ * another user's job — or an unknown id — both resolve to null and are therefore
+ * INDISTINGUISHABLE to the caller (no cross-tenant existence leak). Never wire the
+ * id-only getJob above to a tool surface; it does not scope by owner.
+ */
+export async function getJobForUser(
+  client: ServiceClient,
+  jobId: string,
+  userId: string,
+): Promise<JobRow | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getJobForUser failed: ${error.message}`);
   }
   return data;
 }

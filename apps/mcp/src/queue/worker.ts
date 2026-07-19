@@ -8,10 +8,11 @@ import {
   completeJob,
   stopBoss,
   type JobMessage,
-  type Json,
 } from "./boss.ts";
+import type { Json } from "../db.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
+import { createCrawlHandler } from "./handlers/crawl.ts";
 
 /**
  * pg-boss consumer + per-tool handler registry. Real tool handlers arrive in
@@ -50,6 +51,19 @@ export function getToolHandler(tool: ToolName): ToolHandler | undefined {
 /** Test helper: drop every registered handler. */
 export function clearToolHandlers(): void {
   registry.clear();
+}
+
+/**
+ * Register the production tool handlers. Called once by startWorker before the
+ * consumer loop opens, keeping registration OUT of module import (so the fast-lane
+ * registry specs see an empty registry until they populate it themselves). Idempotent
+ * by design — a repeated worker startup re-registers nothing rather than tripping the
+ * no-overwrite guard. crawl_site is the first real handler; more land in T8+.
+ */
+export function registerBuiltinHandlers(): void {
+  if (getToolHandler("crawl_site") === undefined) {
+    registerToolHandler("crawl_site", createCrawlHandler());
+  }
 }
 
 const toolNames = Object.keys(TOOL_COSTS) as [ToolName, ...ToolName[]];
@@ -123,6 +137,7 @@ export async function executeJob(message: JobMessage): Promise<void> {
  * handlers registered via registerToolHandler route the actual tool runs.
  */
 export async function startWorker(): Promise<void> {
+  registerBuiltinHandlers();
   const boss = await getBoss();
   await boss.work<JobMessage>(JOBS_QUEUE, async (jobs) => {
     for (const job of jobs) {
