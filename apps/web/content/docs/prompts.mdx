@@ -1,0 +1,49 @@
+---
+title: Prompts
+description: Ready-made, guided workflows that string SeoGrep's tools into the common SEO routines.
+---
+
+Alongside its tools, SeoGrep ships **MCP prompts** — ready-made, guided workflows that string the
+tools together into the routines you run most often. Your MCP client lists them as slash-style
+prompts you can pick by name; each one walks you through the steps, one tool at a time, in plain
+English. They spend **no credits** on their own — the tools they call do.
+
+## Available prompts
+
+### `new-site-audit`
+
+A first-time audit of a website, end to end. Give it a **domain** and it walks through
+`setup_project` → `crawl_site` → `audit_onpage` / `audit_tech` / `audit_schema` →
+`generate_report`. It works without Google Search Console; connecting it is offered as an
+optional step for deeper, query-level analysis.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `domain` | yes | The website domain to audit, e.g. `example.com`. |
+
+### `monthly-routine`
+
+Your monthly maintenance pass for a project. Give it a **project_id** and it refreshes Search
+Console data with `pull_gsc_data`, runs the discovery tools (`find_quick_wins`,
+`detect_cannibalization`, `analyze_content_decay`), and rolls the findings up with
+`generate_report`.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `project_id` | yes | The project to run the routine for (from `list_projects`). |
+
+### `quick-wins-sprint`
+
+A focused sprint on the pages ranking just below page one. Give it a **project_id** and it
+refreshes Search Console data, runs `find_quick_wins`, and prioritizes the highest-impact,
+lowest-effort fixes.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `project_id` | yes | The project to run the sprint for (from `list_projects`). |
+
+## Not sure which to run?
+
+Ask the [`whats_next`](/docs/tools-reference/whats-next) tool — it looks at where your project
+stands and points you at the right next step (and, when you're all set, at the `monthly-routine`
+prompt).
