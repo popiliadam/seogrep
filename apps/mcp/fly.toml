@@ -1,0 +1,36 @@
+# Fly.io deployment for the SeoGrep MCP gateway (@pseo/mcp).
+# First deploy is a human gate — see .github/workflows/deploy-mcp.yml
+# (workflow_dispatch only). Secrets (SUPABASE_*) are set via `fly secrets`.
+app = "seogrep-mcp"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "apps/mcp/Dockerfile"
+
+# MODE selects the process role at runtime (see apps/mcp/src/index.ts).
+[processes]
+  web = "sh -c 'MODE=web exec node apps/mcp/dist/index.js'"
+  worker = "sh -c 'MODE=worker exec node apps/mcp/dist/index.js'"
+
+# Public MCP endpoint. Always-on: auto-stop disabled, at least one machine.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["web"]
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# The worker process is a stub (logs "not yet implemented" and exits). Keep it
+# scaled to 0 until the queue consumer lands: `fly scale count worker=0`.

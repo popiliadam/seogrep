@@ -1,0 +1,20 @@
+# Keep the Docker build context lean: Turbo prune only needs manifests, the
+# lockfile, workspace config and source — never installed or built artifacts.
+**/node_modules
+**/dist
+**/.next
+**/.source
+**/.turbo
+out
+coverage
+.git
+.github
+.claude
+.superpowers
+.lighthouseci
+**/*.tsbuildinfo
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+.DS_Store
