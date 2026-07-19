@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "./env.ts";
 import { createApp } from "./server.ts";
+import { startWorker, stopWorker } from "./queue/worker.ts";
 
 export type Mode = "web" | "worker";
 
@@ -22,9 +23,15 @@ export function resolveMode(raw: string | undefined): Mode {
 export function main(): void {
   const mode = resolveMode(process.env.MODE);
   if (mode === "worker") {
-    // Background worker (queue consumer) lands in a later task. Clean exit: no
-    // handles are kept open, so the event loop drains and the process exits 0.
-    console.warn("worker mode not yet implemented");
+    // Queue consumer. SIGTERM triggers a graceful pg-boss stop: in-flight jobs
+    // drain, the pool closes, the event loop empties, and the process exits 0.
+    process.once("SIGTERM", () => {
+      void stopWorker();
+    });
+    startWorker().catch((error: unknown) => {
+      console.error("worker failed to start:", error);
+      process.exitCode = 1;
+    });
     return;
   }
 
