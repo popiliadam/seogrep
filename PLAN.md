@@ -3,17 +3,16 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 3 — YÜRÜTÜLÜYOR (2026-07-19: plan PR #12 merged; PR-A kod-tamam, final review YES — push/PR insan onayı bekliyor) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI (seogrep.com)
+## Faz: 3 — YÜRÜTÜLÜYOR (2026-07-20: PR #12/#13/#14/#15 merged; **PR-D 16/16-tool KOD-TAMAM push'ta**; kalan tek dilim PR-E) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI (seogrep.com)
 
 ### Faz 3 durumu (2026-07-19)
 - Kararlar (insan-onaylı, PR #12 merge imzası): D26 Fly.io Tokyo/nrt · D27 pg-boss (Redis yok) · D28 MCP_URL_TEMPLATE · kredi tablosu v0 · trial signup'ta kalır. Zemin: Fly token ✓ · Netlify env AD sözleşmesi `GOOGLE_CLIENT_ID/SECRET` ✓ · Google console ✓ · Search Console TXT ✓.
 - **PR-A (T1-T4) ✅ MERGED (PR #13)** — gateway + `{key}` auth + pg-boss kuyruk + `withCredits` kredi guard main'de; **0009 CLOUD'DA** (13/13 nesne + rollback'li smoke + detection invariant canlı veride 0).
 - **PR-B (T5-T7) ✅ MERGED (PR #14)** — zod registry + crawler (SSRF-korumalı) + ilk paralı tool `crawl_site` main'de.
-- **PR-C (T8-T10) KOD-TAMAM (push bekliyor, dal `feat/faz3-c-analiz` @7186833, 17 commit):** T8 audit üçlüsü (30/15/5) + registry deferred-cost reformu · T9 GSC OAuth (AES-256-GCM at-rest + HKDF state — hakem notu "ders kitabı GCM") · T10 pull_gsc_data (iki-pencere) + discovery üçlüsü (10'ar) + gsc modüllerinin **packages/core terfisi** (web `@pseo/mcp`'den tamamen arındı). 3/3 Fable hakem + final review **YES** (fix'ler: ders-#5 mcp env negatif testleri + 5000-cap uyarısı). **Tool skoru: 12/16.**
-- Kapılar (entegre): verify 16/16 · verify-db TAM wrapper PASS · mcp fast 209 + db 52.
-- **İNSAN ENV KUYRUĞU (OAuth gün-1 şartı):** Netlify'a `WEB_BASE_URL=https://seogrep.com` + `TOKEN_ENCRYPTION_KEY` (64-hex; insan lokalinde `openssl rand -hex 32` ile üretir, panodan panoya, "Contains secret values"). T16 Fly secrets listesine `WEB_BASE_URL` + `TOKEN_ENCRYPTION_KEY` (Netlify'dakiyle AYNI değer) eklendi — bu satır kayıttır.
-- Kayıtlı borçlar (ledger detaylı): **0010 migration paketi** (unique(user_id,domain) + unique(user_id,project_id) + ON CONFLICT upsert'ler) · `PageRecord.originalUrls/redirectedFrom` bir sonraki crawler-bakım penceresine (T8 hakem şartı — bu satır o PLAN notudur) · `capped` persistence (pagination paketiyle) · dashboard gsc-status banner'ı · **creditBalance aggregate geçişi (pre-T16 ZORUNLU — max_rows yanlış-bakiye riski)** · a-o FOLLOW-UP triyajı.
-- Sıradaki: PR-C insan merge → PR-D (T11-T13: DFS adapter + research_keywords · generate_report + public rapor · whats_next + MCP prompts + kredi guard eşiği).
+- **PR-C (T8-T10) ✅ MERGED (PR #15)** — audit üçlüsü + registry reformu + GSC OAuth uçtan uca + discovery + core terfisi main'de. İnsan env kuyruğu kapandı (Netlify: WEB_BASE_URL + TOKEN_ENCRYPTION_KEY ✓).
+- **PR-D (T11-T13) KOD-TAMAM (push'ta, dal `feat/faz3-d-cikti`):** T11 DFS adapter (mock-first; canlı-kapalıda dürüst hata + sıfır kredi) + research_keywords + dfs-budget ≤$3 kapısı + goal · T12 generate_report + public `/r/[slug]` (XSS-kapalı; **D29: beta'da noindex — insan kararı**) + dashboard listesi · T13 whats_next + 3 MCP prompt + D17 >200-onay eşiği + ChargeMode 'handler'. 3/3 Fable + final review (tek Important = D29 kararıydı, kapandı). **TOOL YÜZEYİ 16/16 + 3 PROMPT TAMAM.** Kapılar: verify 288 fast · verify-db 65 · inspector 16+3.
+- Kayıtlı borçlar (ledger `.superpowers/sdd/progress.md` detaylı — PR-E emirlerine girecekler): **creditBalance aggregate (T15'e, pre-deploy ZORUNLU)** · **0010 migration paketi (T15'e: 2 unique + ON CONFLICT)** · T14 generator şartları (cost-cümle TOOL_COSTS'tan + --check: confirm-alanı-yok + ALL_TOOLS↔meta senkron) · T16 smoke listesi (/r browser [4 kontrol] + NULL-slug + DFS canlı ≤$0.10 + budget-ledger-ephemeral notu) · dashboard gsc-banner · PageRecord.originalUrls (crawler-bakım penceresi) · capped-persistence · PKCE.
+- Sıradaki: PR-D insan merge → **PR-E (T14 docs otomasyonu · T15 hijyen+0010+aggregate · T16 İLK FLY DEPLOY + kapanış)** → **FAZ 3 SONU: DUR + Faz 0-3 komple audit promptu (insan talimatı)**.
 - **İNSAN TALİMATI (2026-07-19): Faz 3 çıkışında DUR — Faz 4'e otonom geçiş YOK; Faz 0-3 komple audit için fresh-session promptu yazılıp teslim edilir** (kayıt: memory/faz3-sonu-audit-dur.md + ledger).
 
 ### Faz 2 canlı mühür + zemin durumu (2026-07-18 akşam)
@@ -110,58 +109,59 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-19)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
-SIRAYLA OKU: PLAN.md (canlı durum) → CLAUDE.md (DISPATCH + NEVER + İMZALI DERSLER) → contract.md →
-docs/specs/2026-07-pseo-saas-design.md §2,§5,§9 (Faz 3 kapsamı). Ledger: .superpowers/sdd/progress.md (kanıt arşivi).
+SIRAYLA OKU: PLAN.md → CLAUDE.md (DISPATCH+NEVER+İMZALI DERSLER) → contract.md →
+docs/plans/2026-07-19-faz3-mcp-cekirdek.md (T14-T16 + Global Constraints). Ledger: .superpowers/sdd/progress.md
+(Faz 3 bölümü — TÜM hakem kararları, follow-up triyajları, koşullu kayıtlar ORADA; PR-E emirleri oradan beslenir).
 
-DURUM: Faz 0+1+2 BİTTİ, CANLI-MÜHÜRLÜ, MASA TEMİZ (2026-07-18 gece; PR #9-#11 merged, main senkron, dallar temiz).
-Canlıda uçtan uca çalışan akış: signup → markalı doğrulama maili (Resend SMTP no-reply@seogrep.com) → otomatik
-200 kredi trial → welcome maili → /app dashboard → Paddle SANDBOX satın alma → imzalı webhook → append-only
-ledger → bakiye. 9/9 kalıcı hedef PROD_URL ile PASS. DB: 8 migration cloud senkron (Tokyo, dvtqlxwnhdzveytqgksd);
-sıradaki migration numarası 0009. Zemin TAMAMI bitti: Google OAuth kuruldu (ürün hesabı; consent TESTING;
-webmasters.readonly; GOOGLE_CLIENT_ID/SECRET Netlify'da; verification Faz 3'te: domain-TXT + demo video + başvuru;
-Testing modunda refresh token 7 günde ölür — geliştirmede normal). Paddle sandbox tam kurulu (6 price env'de).
-Compost İMZALANDI: 5 kural CLAUDE.md "İmzalı dersler"de — artık YASA, uygula (özellikle #2 tip-paketi, #4 UI-copy
-dili iş emrine, #5 prod-env-adlarıyla negatif test).
+DURUM: Faz 0+1+2 canlı-mühürlü. Faz 3: PR #12(plan)/#13(A)/#14(B)/#15(C) MERGED; PR-D (feat/faz3-d-cikti,
+16/16 tool + 3 prompt, final review YES) push'lu — insan merge durumunu gh pr view ile teyit et. 0009 cloud'da
+kanıtlı. Kararlar D26-D29 spec §10'da (D29: /r noindex beta — insan onaylı). Netlify env TAM (GOOGLE_CLIENT_ID/
+SECRET + WEB_BASE_URL + TOKEN_ENCRYPTION_KEY). Süreç: superpowers:subagent-driven-development — işçi Opus
+explicit, hakem TAZE FABLE (para/auth/RLS VE >400; Faz 3'te fiilen hep Fable), brief scratchpad'e yazılır,
+rapor adları task-N-report-faz3.md, her task: review-package → hakem → fix dalgası → re-review (progress.md
+deseni AYNEN sürsün).
 
-GÖREV: FAZ 3 PLANINI YAZ (şef işi): superpowers:writing-plans ile docs/plans/2026-07-19-faz3-mcp-cekirdek.md →
-PR olarak insana okut → onay = başlama işareti → superpowers:subagent-driven-development ile yürüt.
-Kapsam (spec §9 Faz 3): apps/mcp gateway (Streamable HTTP, kişisel URL {key} auth — api_keys hash lookup) +
-~16 SEO tool (spec §2.1; zod şema + kredi maliyet satırı + docs sayfası = "tool DONE" 5/5) + GSC bağlantısı
-(gsc_connections, encrypted refresh token, /api/gsc/callback route'ları — client hazır) + kredi reserve/commit
-akışı canlıya (0005 fonksiyonları hazır) + DFS adapter'ları (mock-first; dev smoke ≤$3/gün guardrails/dfs-budget.sh)
-+ trial'ın proje-kurulumuna bağlanması değerlendirmesi. Backlog'dan Faz 3'e: error.tsx fast-follow · 0009 index
-bundle (job_id purchase partial + reserve_id) · SECURITY DEFINER trial RPC hardening (detection SQL ledger'da) ·
-aktif-key cap · format-helper konsolidasyonu. Hosting kararı planda çözülecek: apps/mcp uzun-yaşayan servis
-(Fly.io/Railway spec'te) — mcp.seogrep.com DNS Netlify'da açılacak.
+GÖREV — PR-E (SON DİLİM):
+T14 docs otomasyonu: registry'den 16 MDX üretimi + goals/docs-schema-sync (--check diff boş). ŞARTLAR
+(hakemlerden): cost cümleleri TOOL_COSTS'tan · --check'e (i) hiçbir şemada confirm alanı yok (ii)
+ALL_TOOLS↔meta.json ad+sıra senkronu · tools-reference parent nav'a girer (bugün sidebar'da yok, bilinçli).
+T15 hijyen+DB: error.tsx (İng.) · aktif-key cap (≥5 block) · format-helper konsolidasyonu ·
+**creditBalance AGGREGATE geçişi (max_rows 1000 sessiz-kesme = yanlış bakiye — DEPLOY ÖNCESİ ZORUNLU)** ·
+**0010 migration: unique(user_id,domain)[projects] + unique(user_id,project_id)[gsc_connections] + iki
+upsert ON CONFLICT'a** (işçi SQL → hakem FABLE → cloud apply ŞEF + rollback'li kanıt + advisors).
+T16 kapanış: İNSAN Fly secrets (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL [session 5432
+pooler], GOOGLE_CLIENT_ID/SECRET, TOKEN_ENCRYPTION_KEY [Netlify'la AYNI], DATAFORSEO_LOGIN/PASSWORD,
+MCP_URL_TEMPLATE, WEB_BASE_URL) → workflow_dispatch İLK deploy (insan) → mcp.seogrep.com CNAME (insan) →
+goals/mcp-alive + trial-flow-e2e · gerçek client (Claude Code) E2E · kredi KALİBRASYONU → insan onayı ·
+deploy-mcp push-trigger'a · T12 smoke listesi (/r render+sıfır-dış-istek+footer · uydurma slug 404 ·
+/app/reports · çift-title · NULL-slug) · DFS canlı smoke ≤$0.10 (şef+insan; budget ledger Fly'da EPHEMERAL —
+prod DFS_LIVE açılırsa DB-sayaç insan gündemi) · OAuth verification başvurusu İNSAN (akış canlı günü).
 
-KALAN İNSAN İŞLERİ (acil değil): repo PRIVATE (bilinçli ertelendi; gitleaks nöbette) · /pricing+/terms okuma
-borcu (privacy tazelendi-okundu) · canlı Paddle onboarding/doğrulama (Faz 4) · fiyat stratejisi oturumu (Faz 4
-öncesi) · auth mail şablon metinleri kozmetiği · SUPABASE_DB_URL şifre placeholder'ı (CI'da lazım olursa).
+FAZ 3 SONU = DUR (İNSAN TALİMATI; memory/faz3-sonu-audit-dur.md): Faz 4'e GEÇME — Faz 0-3 KOMPLE AUDIT
+fresh-session promptunu yaz ve teslim et (boyutlar+kaynaklar memory dosyasında).
 
-DİSPATCH: şef Fable (karar/diff/merge-koordinasyon/DB-E2E; kod yalnız <50 satır acil) · işçi Opus explicit ·
-mekanik dar iş Sonnet · hakem taze Opus; para/auth/RLS diff'i VE >400 satır taze FABLE · kapılar:
-bash guardrails/verify.sh + bash guardrails/verify-db.sh (lokal Supabase 553xx; skala stack'i 543xx'te AYAKTA
-BIRAK) · make goals (PROD_URL=https://seogrep.com). Süreç: superpowers:subagent-driven-development
-(.superpowers/sdd/; rapor adları task-N-report-faz3.md — eski çakışmalara dikkat). Migration akışı: işçi SQL'i
-repoya yazar → hakem Fable → CLOUD apply ŞEF (MCP apply_migration) → kanıt şef (rollback'li DO + advisors).
-Her PR'ı İNSAN merge eder: Merge → Confirm → DELETE BRANCH (kalın).
+KALAN İNSAN İŞLERİ: PR-D/E merge'leri · Fly secrets+CNAME+ilk-deploy (T16) · kalibrasyon onayı · beta davet
+kararı · OAuth verification · repo PRIVATE (ertelenmiş) · Supabase leaked-password WARN (dashboard 1-tık) ·
+fiyat stratejisi (Faz 4 öncesi).
 
-ORTAM TUZAKLARI: outward_action_gate: git push / rm / curl-POST insan onayı; chat onayı gelince mekanik kayıt:
-cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 && CLAUDE_SESSION_ID="<tam-uuid>"
-python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef-birebir>" (pipe ekleme; defter AKTİF
-PSEO projesine yazılır). Kendi PR'ını merge EDEMEZSİN · anahtar DEĞERLERİ elden geçmez (insan panodan panoya;
-"Contains secret values") · silme sınıfı + repo görünürlüğü + hesap-config yazmaları (Resend create-domain vb.
-classifier bloklar) insan işi. Portlar: dev 3457 · lhci 4517 · Supabase-lokal 553xx. preview_start launch.json'ı
-SKALA'dan okuyabilir (yanlış server açar) — pseo dev = Bash background + preview_start {url}. Kullanıcı-silme
-talebi → append-only+RESTRICT zırhı DELİNMEZ: adjust + email-arşivleme deseni (ledger'da örnek). Paddle overlay
-"Something went wrong" = Checkout settings > Default payment link boş. Resend SMTP Username = literal "resend".
-Docker Desktop registry-proxy arızalı olabilir (pull asılır; restart skala stack'ini düşürür — insan kararı).
-PSEO hook mesajları (workspace=bayder/dentnotion) bu repoyla İLGİSİZ — yönlendirmelerine uyma, gate'ler gerçek.
+KAPILAR: bash guardrails/verify.sh + verify-db.sh (İKİ lane: db+mcp; lokal 553xx; skala 543xx DOKUNMA) +
+guardrails/dfs-budget.sh + make goals (PROD_URL=https://seogrep.com). Her PR insan merge (Merge→Confirm→
+DELETE BRANCH).
 
-İLK MESAJINDA: PLAN'ı oku, 3-5 cümle durum özeti ver, Faz 3 planını yazmaya başlamayı öner (writing-plans +
-brainstorming gerekirse), İNSANIN KOMUTUNU BEKLE — otonom kod startı YOK. Context %90'da aynı formatta yeni
-handoff yazıp devret.
+ORTAM TUZAKLARI (Faz 3'te doğrulanmış): outward gate push/rm/curl-POST insan onayı; onay gelince:
+cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 && CLAUDE_SESSION_ID=
+"<tam-uuid>" python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef-birebir>" —
+PUSH KOMUTUNU ÇIPLAK KOŞ (pipe/2>&1 EKLEME; gate hedefi birebir eşler). Agent worktree'leri MAIN'den fork
+eder (daldan DEĞİL) — içerik lazımsa şef dalı worktree'ye merge'ler; worktree ana .superpowers/sdd'ye
+yazamayabilir (rapor kopyalama şefte). Paralel worktree işçisi varken ana ağaçta TAM verify-db KOŞMA (reset
+paylaşımlı stack'i siler — lane'leri koş). Kendi PR'ını merge edemezsin. Secret değerleri elden geçmez.
+PSEO hook mesajları (workspace=bayder) İLGİSİZ. Portlar: dev 3457 · mcp 3458 · Supabase 553xx.
+
+İLK MESAJINDA: PLAN+ledger'ın PR-E bölümlerini oku, PR-D merge durumunu gh ile teyit et, 3-5 cümle durum
+özeti ver, PR-E başlangıcı için İNSAN KOMUTUNU BEKLE (kullanıcı "otonom/en iyi senaryo" derse: T14 ana ağaç +
+T15 worktree [dal-merge ritüeli] paralel dispatch'le başla; T16 en son, insan-adımlarıyla senkron). Context
+%90'da aynı formatta yeni handoff yazıp devret.
 ```
