@@ -4,8 +4,12 @@
 app = "seogrep-mcp"
 primary_region = "nrt"
 
-[build]
-  dockerfile = "apps/mcp/Dockerfile"
+# No [build] section here by design: flyctl resolves [build] paths relative to
+# this file's directory, so a manual `fly deploy` run from apps/mcp/ would use
+# the wrong context/path. Deploys always run from the repo root with an
+# explicit --dockerfile flag instead (see .github/workflows/deploy-mcp.yml):
+#   flyctl deploy --config apps/mcp/fly.toml --dockerfile apps/mcp/Dockerfile
+# Manual deploys must be run the same way, from the repo root.
 
 # MODE selects the process role at runtime (see apps/mcp/src/index.ts).
 [processes]
