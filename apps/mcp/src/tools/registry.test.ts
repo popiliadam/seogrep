@@ -2,7 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { defineTool, registerAll, textResult, type RegisteredTool } from "./registry.ts";
+import {
+  CONFIRMATION_THRESHOLD_CREDITS,
+  confirmationGate,
+  defineTool,
+  evaluateConfirmation,
+  readConfirmFlag,
+  registerAll,
+  textResult,
+  type RegisteredTool,
+} from "./registry.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -131,6 +140,21 @@ describe("defineTool charge modes", () => {
     expect(result).toEqual(textResult("enqueued"));
   });
 
+  it("charge:'handler' runs a PRICED handler without the credit guard (handler self-settles)", async () => {
+    // research_keywords-shaped: priced (25) but the registry must NOT wrap it. A surface charge
+    // would open a reserve -> getServiceClient -> loadEnv, which throws with SUPABASE_* stripped;
+    // running to completion proves "handler" mode leaves settlement to the handler itself.
+    const tool = defineTool({
+      name: "research_keywords",
+      description: "d",
+      inputSchema: z.object({}),
+      charge: "handler",
+      handler: async () => textResult("self-settled"),
+    });
+    const result = await tool.run(CTX, {});
+    expect(result).toEqual(textResult("self-settled"));
+  });
+
   it("surface mode on a 0-credit tool skips the ledger entirely (default charge)", async () => {
     const tool = defineTool({
       name: "whats_next", // 0 credits — withCredits short-circuits before any DB client
@@ -209,5 +233,76 @@ describe("registerAll", () => {
     const result = await call({ params: { name: "whats_next", arguments: {} } });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/handler exploded/);
+  });
+});
+
+/**
+ * D17 credit confirmation threshold — the SaaS analogue of the consent ledger. No tool in
+ * TOOL_COSTS exceeds the threshold today (the priciest is 30), so the OVER-threshold behaviour
+ * is proven here with SYNTHETIC estimates passed straight to the pure gate — TOOL_COSTS is never
+ * touched. The registry wires confirmationGate(name, TOOL_COSTS[name], rawInput) before dispatch,
+ * so a triggered gate returns BEFORE withCredits and settles nothing (zero ledger by construction).
+ */
+describe("D17 threshold — evaluateConfirmation (pure rule)", () => {
+  it("requires confirmation when the estimate is strictly ABOVE the threshold and unconfirmed", () => {
+    expect(evaluateConfirmation(CONFIRMATION_THRESHOLD_CREDITS + 1, false)).toEqual({
+      requiresConfirmation: true,
+      estimate: CONFIRMATION_THRESHOLD_CREDITS + 1,
+    });
+    expect(evaluateConfirmation(250, false).requiresConfirmation).toBe(true);
+  });
+
+  it("does NOT require confirmation exactly AT the threshold (> is strict)", () => {
+    expect(evaluateConfirmation(CONFIRMATION_THRESHOLD_CREDITS, false).requiresConfirmation).toBe(false);
+  });
+
+  it("does NOT require confirmation once the caller has confirmed (confirm:true -> normal flow)", () => {
+    expect(evaluateConfirmation(250, true).requiresConfirmation).toBe(false);
+  });
+
+  it("does NOT require confirmation for ordinary sub-threshold costs", () => {
+    expect(evaluateConfirmation(30, false).requiresConfirmation).toBe(false);
+    expect(evaluateConfirmation(0, false).requiresConfirmation).toBe(false);
+  });
+});
+
+describe("D17 threshold — readConfirmFlag (reserved registry param)", () => {
+  it("is true ONLY for the literal boolean true", () => {
+    expect(readConfirmFlag({ confirm: true })).toBe(true);
+  });
+
+  it("is false for a missing, non-boolean, or false confirm (and non-objects)", () => {
+    expect(readConfirmFlag({})).toBe(false);
+    expect(readConfirmFlag({ confirm: false })).toBe(false);
+    expect(readConfirmFlag({ confirm: "true" })).toBe(false);
+    expect(readConfirmFlag({ confirm: 1 })).toBe(false);
+    expect(readConfirmFlag(null)).toBe(false);
+    expect(readConfirmFlag(undefined)).toBe(false);
+    expect(readConfirmFlag("nope")).toBe(false);
+  });
+});
+
+describe("D17 threshold — confirmationGate (dispatch gate)", () => {
+  it("returns a requires_confirmation result (NOT an error) for an over-threshold, unconfirmed call", () => {
+    const result = confirmationGate("crawl_site", 250, {});
+    expect(result).not.toBeNull();
+    expect(result?.isError).toBeUndefined();
+    const body = JSON.parse(result?.content[0]?.text ?? "{}") as {
+      requires_confirmation: boolean;
+      estimate_credits: number;
+      message: string;
+    };
+    expect(body.requires_confirmation).toBe(true);
+    expect(body.estimate_credits).toBe(250);
+    expect(body.message).toMatch(/"confirm": true/);
+  });
+
+  it("returns null (proceed) when an over-threshold call carries confirm:true", () => {
+    expect(confirmationGate("crawl_site", 250, { confirm: true })).toBeNull();
+  });
+
+  it("returns null (proceed) for a sub-threshold estimate — the only path real tools hit today", () => {
+    expect(confirmationGate("crawl_site", 20, {})).toBeNull();
+    expect(confirmationGate("whats_next", 0, {})).toBeNull();
   });
 });

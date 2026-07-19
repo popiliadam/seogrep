@@ -20,12 +20,14 @@ import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResu
  *   2. That live-disabled error is returned BEFORE any credit reserve, so the ledger is
  *      touched ZERO times and the user is not charged (constitution NEVER #2).
  *
- * Why charge:"worker" for a SYNCHRONOUS tool: this is NOT an async job — it settles its
+ * Why charge:"handler" for a SYNCHRONOUS tool: this is NOT an async job — it settles its
  * OWN credits, synchronously. defineTool's charge:"surface" reserves BEFORE the handler
- * runs, which cannot express rule 2's pre-reserve honesty gate. charge:"worker" is the one
- * mode where defineTool does NOT auto-wrap, so the handler gates enablement first and, only
- * on the serving path, settles via withCredits WITHOUT a jobId — the exact SURFACE ledger
- * shape (reserve -> handler -> commit, a traceability uuid, no jobs row).
+ * runs, which cannot express rule 2's pre-reserve honesty gate. "handler" mode is the one
+ * where the HANDLER owns settlement and defineTool does NOT auto-wrap, so the handler gates
+ * enablement first and, only on the serving path, settles via withCredits WITHOUT a jobId —
+ * the exact SURFACE ledger shape (reserve -> handler -> commit, a traceability uuid, no jobs
+ * row). ("worker" mode, by contrast, is for a handler that ENQUEUES and lets the async worker
+ * settle against the real jobs.id — crawl_site; using it here would misdescribe this tool.)
  */
 
 /** United States — the DataForSEO default location_code. */
@@ -105,7 +107,7 @@ export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): Regis
     description: DESCRIPTION,
     inputSchema,
     // See the module header: a self-settled SYNCHRONOUS surface charge, not an async job.
-    charge: "worker",
+    charge: "handler",
     handler: async (ctx: AuthContext, input): Promise<ToolResult> => {
       const port = deps.port ?? resolveDefaultPort();
       if (!port.enabled) {
