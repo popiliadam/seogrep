@@ -1,4 +1,4 @@
 {
   "title": "Tools Reference",
-  "pages": ["setup-project", "list-projects", "get-credit-balance"]
+  "pages": ["setup-project", "list-projects", "get-credit-balance", "crawl-site", "get-job-status"]
 }
