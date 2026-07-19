@@ -229,7 +229,17 @@ export type Database = {
       };
     };
     Views: {
-      [_ in never]: never;
+      // Per-user derived balance = COALESCE(SUM(delta), 0) (migration 0002, security_invoker).
+      // The SUM runs server-side and returns ONE row per user, so reading it (filtered to the
+      // tenant) is immune to PostgREST's max_rows page cap — unlike an app-side Σ over raw
+      // delta rows, which silently truncates a 1000+ row ledger and under-reports the balance.
+      credit_balances: {
+        Row: {
+          user_id: string | null;
+          balance: number | null;
+        };
+        Relationships: [];
+      };
     };
     // The migration-0005 ledger RPCs — the ONLY ledger write path this app uses
     // (reserve/commit/release under a per-user advisory lock). No direct ledger writes.
@@ -386,21 +396,25 @@ export function forUser(client: ServiceClient, userId: string) {
 export type TenantClient = ReturnType<typeof forUser>;
 
 /**
- * Tenant-scoped credit balance = Σ delta over the user's ledger rows. Balance derives
- * ONLY from the ledger sum, never a stored counter (constitution NEVER #2); the
- * .eq("user_id", …) filter is the tenant guard on this RLS-bypassing client (NEVER #4).
- * Summed here rather than via @pseo/core's balanceOf: that helper folds validated domain
- * LedgerEntry objects (strict per-kind schema), not raw persisted rows, so it cannot take
- * {delta}-only rows — the reduce below is the same Σ delta it (and the credit_balances
- * view) computes.
+ * Tenant-scoped credit balance = Σ delta over the user's ledger, read from the
+ * `credit_balances` aggregate view (migration 0002). Balance derives ONLY from the ledger
+ * sum, never a stored counter (constitution NEVER #2). Reading the view rather than summing
+ * raw delta rows app-side is a CORRECTNESS requirement, not a style choice: an app-side
+ * `select("delta")` + reduce is silently truncated by PostgREST's max_rows (1000) cap, so a
+ * 1000+ row ledger under-reports the balance with NO error. The view's SUM runs server-side
+ * and returns a single row, immune to the page cap. The explicit .eq("user_id", …) filter is
+ * the tenant guard on this RLS-bypassing service client (NEVER #4): the view is
+ * security_invoker, so service_role sees every user's row and the filter is what scopes it to
+ * one tenant. maybeSingle → 0 for a user with no ledger rows.
  */
 export async function creditBalance(client: ServiceClient, userId: string): Promise<number> {
   const { data, error } = await client
-    .from("credit_ledger")
-    .select("delta")
-    .eq("user_id", userId);
+    .from("credit_balances")
+    .select("balance")
+    .eq("user_id", userId)
+    .maybeSingle();
   if (error) {
-    throw new Error(`credit_ledger balance read failed: ${error.message}`);
+    throw new Error(`credit_balances read failed: ${error.message}`);
   }
-  return (data ?? []).reduce((sum, row) => sum + row.delta, 0);
+  return data?.balance ?? 0;
 }
