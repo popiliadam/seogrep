@@ -4,6 +4,9 @@ import { listProjectsTool } from "./list-projects.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
 import { crawlSiteTool } from "./crawl-site.ts";
 import { getJobStatusTool } from "./get-job-status.ts";
+import { auditOnpageTool } from "./audit-onpage.ts";
+import { auditTechTool } from "./audit-tech.ts";
+import { auditSchemaTool } from "./audit-schema.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
@@ -11,6 +14,9 @@ export { listProjectsTool } from "./list-projects.ts";
 export { getCreditBalanceTool } from "./get-credit-balance.ts";
 export { crawlSiteTool } from "./crawl-site.ts";
 export { getJobStatusTool } from "./get-job-status.ts";
+export { auditOnpageTool } from "./audit-onpage.ts";
+export { auditTechTool } from "./audit-tech.ts";
+export { auditSchemaTool } from "./audit-schema.ts";
 
 /**
  * The production tool set, in tools/list order. The composition root (server.ts
@@ -23,4 +29,7 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   getCreditBalanceTool,
   crawlSiteTool,
   getJobStatusTool,
+  auditOnpageTool,
+  auditTechTool,
+  auditSchemaTool,
 ];
