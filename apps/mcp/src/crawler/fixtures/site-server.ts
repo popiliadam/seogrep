@@ -37,6 +37,12 @@ export interface FixtureOptions {
    * "hang" delays the response by slowMs (lets specs force a robots timeout).
    */
   robots?: "ok" | "server-error" | "hang";
+  /**
+   * When set, /robots.txt answers 302 with this Location (redirect specs). An absolute
+   * URL redirects cross-origin (used to stand in for an SSRF target); a root-relative
+   * value like "/robots-alt.txt" resolves same-origin and is followed normally.
+   */
+  robotsRedirectTo?: string;
   /** Delay before /slow (and a hanging robots) responds, ms (default 1000). */
   slowMs?: number;
 }
@@ -86,6 +92,11 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
     }
 
     if (path === "/robots.txt") {
+      if (options.robotsRedirectTo !== undefined) {
+        res.writeHead(302, { location: options.robotsRedirectTo });
+        res.end();
+        return;
+      }
       const mode = options.robots ?? "ok";
       if (mode === "server-error") {
         res.writeHead(500, { "content-type": "text/plain" });
@@ -122,6 +133,10 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
     } else if (path === "/sitemap-child.xml") {
       res.writeHead(200, { "content-type": "application/xml" });
       res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>${origin}/orphan</loc></url></urlset>`);
+    } else if (path === "/robots-alt.txt") {
+      // Same-origin redirect target for /robots.txt: serves the real robots rules 200.
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(ROBOTS_TXT);
     } else if (path === "/redirect") {
       res.writeHead(302, { location: "/about" });
       res.end();

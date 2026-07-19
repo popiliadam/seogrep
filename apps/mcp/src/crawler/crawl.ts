@@ -266,6 +266,41 @@ async function fetchPage(
   }
 }
 
+/** IPv4 dotted-quad or bracketed IPv6 literal (URL.hostname keeps IPv6 in brackets). */
+function isIpLiteralHost(hostname: string): boolean {
+  if (hostname.startsWith("[")) return true; // [::1], [fd00::1], ... (IPv6 literal)
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname); // 127.0.0.1, 169.254.169.254, ...
+}
+
+/**
+ * Decide whether the post-follow final URL of a robots/sitemap fetch is a
+ * redirect-based SSRF target the crawler must refuse. Blocks redirect-based SSRF to
+ * IP-literal/metadata/single-label targets; public-DNS rebinding is out of scope here
+ * and owned by the phase-end security audit.
+ *
+ * The check fires ONLY when the redirect crossed to a different origin than requested:
+ * same-origin responses (including no redirect at all) pass untouched, which is what
+ * keeps both the 127.0.0.1 loopback fixtures and normal domain->domain hops (apex->www)
+ * working. A cross-origin final URL is refused when its scheme is not http(s), or its
+ * host is an IP literal (IPv4 / bracketed IPv6, e.g. cloud metadata at 169.254.169.254),
+ * or a single-label host with no dot (e.g. "metadata", "localhost").
+ */
+function isUnsafeRedirectTarget(requestedUrl: string, finalUrl: string): boolean {
+  let requested: URL;
+  let final: URL;
+  try {
+    requested = new URL(requestedUrl);
+    final = new URL(finalUrl);
+  } catch {
+    return true; // an unparseable final URL is not something we will read from
+  }
+  if (final.origin === requested.origin) return false; // no cross-origin redirect
+  if (final.protocol !== "http:" && final.protocol !== "https:") return true;
+  if (isIpLiteralHost(final.hostname)) return true;
+  if (!final.hostname.includes(".")) return true;
+  return false;
+}
+
 /** GET a text resource (robots/sitemap), following redirects; null on any failure. */
 async function fetchText(url: string, timeoutMs: number): Promise<{ status: number; body: string } | null> {
   try {
@@ -274,6 +309,13 @@ async function fetchText(url: string, timeoutMs: number): Promise<{ status: numb
       signal: AbortSignal.timeout(timeoutMs),
       headers: { "user-agent": USER_AGENT },
     });
+    // A followed redirect can land off the requested origin; refuse SSRF targets by
+    // inspecting the post-follow final URL (res.url). Treated as unreachable (null) so
+    // robots.txt falls back to RFC 9309 complete-disallow and sitemap seeds are skipped.
+    if (isUnsafeRedirectTarget(url, res.url)) {
+      await res.body?.cancel();
+      return null;
+    }
     return { status: res.status, body: await res.text() };
   } catch {
     return null;

@@ -249,6 +249,45 @@ describe("crawlSite — limits and edge behavior", () => {
     }
   });
 
+  it("treats a robots.txt that redirects to an IP-literal host as unreachable (SSRF guard)", async () => {
+    // The redirect target stands in for a metadata-style endpoint: a SECOND loopback
+    // server whose 127.0.0.1 origin is itself an IP-literal. It answers /robots.txt 200,
+    // so the ONLY thing that can stop the crawl is the post-follow response.url check —
+    // the target is fully reachable over loopback, so this is NOT a network failure.
+    const target = await startFixtureSite();
+    const site = await startFixtureSite({ robotsRedirectTo: `${target.origin}/robots.txt` });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      // The IP-literal target WAS actually contacted (redirect: "follow" reached it)...
+      expect(target.requested).toContain("/robots.txt");
+      // ...yet robots is treated as unreachable -> RFC 9309 complete disallow, 0 pages.
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+      ]);
+    } finally {
+      await site.close();
+      await target.close();
+    }
+  });
+
+  it("follows a SAME-ORIGIN robots.txt redirect normally (guard only blocks cross-origin SSRF)", async () => {
+    // A root-relative Location resolves on the crawl origin; the post-follow check must
+    // let it through (same origin) so normal domain->domain hops (e.g. apex->www) keep
+    // working. /robots-alt.txt serves the real rules, so the crawl proceeds and honors them.
+    const site = await startFixtureSite({ robotsRedirectTo: "/robots-alt.txt" });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      expect(site.requested).toContain("/robots-alt.txt"); // the redirect was followed
+      expect(result.pages.length).toBeGreaterThan(0); // robots parsed -> crawl ran
+      // The redirected robots.txt was honored: /private stays disallowed and unfetched.
+      expect(result.pages.some((p) => p.url === normalizeUrl(site.origin + "/private"))).toBe(false);
+      expect(site.requested).not.toContain("/private");
+    } finally {
+      await site.close();
+    }
+  });
+
   it("never fetches off-origin child sitemaps from a sitemapindex (SSRF guard)", async () => {
     // Both servers are loopback; different ports = different origins. "outside"
     // stands in for an internal endpoint a hostile sitemapindex could point at.
