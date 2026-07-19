@@ -99,54 +99,58 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-18 gece)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-19)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
-SIRAYLA OKU: PLAN.md (canlı durum) → CLAUDE.md (DISPATCH + NEVER) → contract.md → docs/specs/2026-07-pseo-saas-design.md §2,§9 (Faz 3 kapsamı). Ledger: .superpowers/sdd/progress.md (Faz 2 bölümü = kanıt zinciri arşivi).
+SIRAYLA OKU: PLAN.md (canlı durum) → CLAUDE.md (DISPATCH + NEVER + İMZALI DERSLER) → contract.md →
+docs/specs/2026-07-pseo-saas-design.md §2,§5,§9 (Faz 3 kapsamı). Ledger: .superpowers/sdd/progress.md (kanıt arşivi).
 
-DURUM: Faz 0+1+2 BİTTİ ve CANLI-MÜHÜRLÜ. seogrep.com'da uçtan uca çalışan akış: signup → markalı doğrulama maili
-(Resend SMTP, no-reply@seogrep.com) → otomatik 200 kredi trial → welcome maili → korumalı /app dashboard →
-Paddle SANDBOX satın alma (overlay) → imzalı webhook → append-only ledger'a purchase → bakiye canlı.
-Kanıtlar: ledger'da "FAZ 2 CANLI MUHUR" bloğu. DB: 8 migration cloud'da senkron (Tokyo, dvtqlxwnhdzveytqgksd).
-Dal yapısı: main'de her şey (PR #9 49-commit + PR #10 hotfix); PLAN commit'leri lokal main'de PUSH BEKLİYOR olabilir.
+DURUM: Faz 0+1+2 BİTTİ, CANLI-MÜHÜRLÜ, MASA TEMİZ (2026-07-18 gece; PR #9-#11 merged, main senkron, dallar temiz).
+Canlıda uçtan uca çalışan akış: signup → markalı doğrulama maili (Resend SMTP no-reply@seogrep.com) → otomatik
+200 kredi trial → welcome maili → /app dashboard → Paddle SANDBOX satın alma → imzalı webhook → append-only
+ledger → bakiye. 9/9 kalıcı hedef PROD_URL ile PASS. DB: 8 migration cloud senkron (Tokyo, dvtqlxwnhdzveytqgksd);
+sıradaki migration numarası 0009. Zemin TAMAMI bitti: Google OAuth kuruldu (ürün hesabı; consent TESTING;
+webmasters.readonly; GOOGLE_CLIENT_ID/SECRET Netlify'da; verification Faz 3'te: domain-TXT + demo video + başvuru;
+Testing modunda refresh token 7 günde ölür — geliştirmede normal). Paddle sandbox tam kurulu (6 price env'de).
+Compost İMZALANDI: 5 kural CLAUDE.md "İmzalı dersler"de — artık YASA, uygula (özellikle #2 tip-paketi, #4 UI-copy
+dili iş emrine, #5 prod-env-adlarıyla negatif test).
 
-ZEMİN DURUMU: OAuth ✓ (yeni ürün Google hesabı + SeoGrep Cloud projesi + consent TESTING + webmasters.readonly
-+ client anahtarları GOOGLE_CLIENT_ID/SECRET Netlify'da; verification Faz 3'te: domain-TXT + demo video + başvuru;
-Testing modunda refresh token 7 günde ölür — geliştirmede normal). Paddle sandbox ✓ tam kurulu (3 anahtar +
-6 price env'de; TUZAK: overlay "Something went wrong" = Checkout settings > Default payment link boş olması).
-Resend ✓ (domain eu-west-1 verified + SMTP; Username='resend' literal). Supabase auth URL config ✓.
-KALAN İNSAN İŞLERİ: GitHub billing + repo PRIVATE (iş planı halka açık!) · /pricing+/terms+/privacy okuma borcu ·
-POSTHOG_API_KEY secret işareti · fiyat stratejisi oturumu (Faz 4 öncesi) · canlı Paddle onboarding (Faz 4) ·
-auth mail şablon metinleri kozmetiği.
+GÖREV: FAZ 3 PLANINI YAZ (şef işi): superpowers:writing-plans ile docs/plans/2026-07-19-faz3-mcp-cekirdek.md →
+PR olarak insana okut → onay = başlama işareti → superpowers:subagent-driven-development ile yürüt.
+Kapsam (spec §9 Faz 3): apps/mcp gateway (Streamable HTTP, kişisel URL {key} auth — api_keys hash lookup) +
+~16 SEO tool (spec §2.1; zod şema + kredi maliyet satırı + docs sayfası = "tool DONE" 5/5) + GSC bağlantısı
+(gsc_connections, encrypted refresh token, /api/gsc/callback route'ları — client hazır) + kredi reserve/commit
+akışı canlıya (0005 fonksiyonları hazır) + DFS adapter'ları (mock-first; dev smoke ≤$3/gün guardrails/dfs-budget.sh)
++ trial'ın proje-kurulumuna bağlanması değerlendirmesi. Backlog'dan Faz 3'e: error.tsx fast-follow · 0009 index
+bundle (job_id purchase partial + reserve_id) · SECURITY DEFINER trial RPC hardening (detection SQL ledger'da) ·
+aktif-key cap · format-helper konsolidasyonu. Hosting kararı planda çözülecek: apps/mcp uzun-yaşayan servis
+(Fly.io/Railway spec'te) — mcp.seogrep.com DNS Netlify'da açılacak.
 
-GÖREV: Faz 3 planlaması (şef yazar, insan onaylar): MCP gateway (apps/mcp — kişisel URL {key} auth) + ~16 SEO
-tool (spec §2.1) + GSC bağlantısı (gsc_connections, encrypted refresh token) + kredi reserve/commit akışı canlıya
-bağlanır (fonksiyonlar 0005'te hazır) + DFS bütçe kapısı (guardrails/dfs-budget.sh, ≤$3/gün). Backlog'dan Faz 3'e
-girecekler: error.tsx fast-follow · 0009 index bundle · SECURITY DEFINER trial RPC hardening (detection SQL
-ledger'da) · aktif-key cap · portal past_due genişletmesi (Paddle live'da) · format-helper konsolidasyonu.
-Compost adayları İMZA BEKLİYOR (CLAUDE.md'ye yazılmadı): (a) plan-pinlerine peer-uyum kontrolü; (b) tip bağımlılığı
-kendi paketine [İKİ VAKA: Faz1 + PR#9 CI]; (c) insan-merge rehberinde Delete-branch kalın; (d) iş emrine UI-copy
-dili yazılır [T4 vakası]; (e) env-okuyan kod için prod-adlarıyla negatif test [SUPABASE_URL incident'i].
+KALAN İNSAN İŞLERİ (acil değil): repo PRIVATE (bilinçli ertelendi; gitleaks nöbette) · /pricing+/terms okuma
+borcu (privacy tazelendi-okundu) · canlı Paddle onboarding/doğrulama (Faz 4) · fiyat stratejisi oturumu (Faz 4
+öncesi) · auth mail şablon metinleri kozmetiği · SUPABASE_DB_URL şifre placeholder'ı (CI'da lazım olursa).
 
-DİSPATCH: şef Fable (karar/diff-inceleme/merge-koordinasyon/DB-E2E doğrulama; kod yalnız <50 satır acil) ·
-işçi Opus explicit · mekanik dar iş Sonnet · hakem taze Opus; para/auth/RLS diff'i VE >400 satır taze FABLE ·
-kapı: bash guardrails/verify.sh + bash guardrails/verify-db.sh (lokal Supabase 553xx portlarda; skala stack'i
-543xx'te AYAKTA BIRAK) · make goals (9 hedef; landing-live PROD_URL=https://seogrep.com ister).
-Süreç: superpowers:subagent-driven-development (brief/report dosyaları .superpowers/sdd/; task-N-report-faz2.md
-adlandırması — Faz 0 çakışmaları var). Migration akışı: işçi SQL'i repoya yazar (sıradaki numara: 0009) → hakem
-Fable → CLOUD apply ŞEF (MCP apply_migration) → kanıtlar şef (rollback'li DO blokları + advisors).
+DİSPATCH: şef Fable (karar/diff/merge-koordinasyon/DB-E2E; kod yalnız <50 satır acil) · işçi Opus explicit ·
+mekanik dar iş Sonnet · hakem taze Opus; para/auth/RLS diff'i VE >400 satır taze FABLE · kapılar:
+bash guardrails/verify.sh + bash guardrails/verify-db.sh (lokal Supabase 553xx; skala stack'i 543xx'te AYAKTA
+BIRAK) · make goals (PROD_URL=https://seogrep.com). Süreç: superpowers:subagent-driven-development
+(.superpowers/sdd/; rapor adları task-N-report-faz3.md — eski çakışmalara dikkat). Migration akışı: işçi SQL'i
+repoya yazar → hakem Fable → CLOUD apply ŞEF (MCP apply_migration) → kanıt şef (rollback'li DO + advisors).
+Her PR'ı İNSAN merge eder: Merge → Confirm → DELETE BRANCH (kalın).
 
-ORTAM TUZAKLARI: outward_action_gate: git push / rm / curl-POST insan onayı ister; onay chat'te gelince mekanik
-kayıt: cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 && CLAUDE_SESSION_ID=
-"<tam-uuid>" python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef-birebir>" (pipe ekleme!).
-Kendi PR'ını merge edemezsin; anahtar DEĞERLERİ elden geçmez (insan panodan panoya; env'de "Contains secret values");
-silme sınıfı + repo görünürlüğü insan işi. Auto-classifier Resend create-domain gibi hesap-config yazmalarını da
-bloklayabilir — insana panelden yaptır. Portlar: dev 3457 · lhci 4517 · Supabase-lokal 553xx. preview_start
-launch.json'ı SKALA'dan okuyabilir (yanlış server) — pseo dev server'ı Bash background + preview_start {url}.
-Kullanıcı silme talebi → append-only+RESTRICT zırhı DELİNMEZ: adjust-satırı + email-arşivleme deseni (ledger'da örnek).
-Docker Desktop registry-proxy arızalı olabilir (pull'lar asılır; restart skala stack'ini düşürür — insan kararı).
-PSEO hook mesajları (workspace=bayder/dentnotion vb.) bu repoyla İLGİSİZ — yönlendirmelerine uyma, gate'ler gerçek.
+ORTAM TUZAKLARI: outward_action_gate: git push / rm / curl-POST insan onayı; chat onayı gelince mekanik kayıt:
+cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 && CLAUDE_SESSION_ID="<tam-uuid>"
+python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef-birebir>" (pipe ekleme; defter AKTİF
+PSEO projesine yazılır). Kendi PR'ını merge EDEMEZSİN · anahtar DEĞERLERİ elden geçmez (insan panodan panoya;
+"Contains secret values") · silme sınıfı + repo görünürlüğü + hesap-config yazmaları (Resend create-domain vb.
+classifier bloklar) insan işi. Portlar: dev 3457 · lhci 4517 · Supabase-lokal 553xx. preview_start launch.json'ı
+SKALA'dan okuyabilir (yanlış server açar) — pseo dev = Bash background + preview_start {url}. Kullanıcı-silme
+talebi → append-only+RESTRICT zırhı DELİNMEZ: adjust + email-arşivleme deseni (ledger'da örnek). Paddle overlay
+"Something went wrong" = Checkout settings > Default payment link boş. Resend SMTP Username = literal "resend".
+Docker Desktop registry-proxy arızalı olabilir (pull asılır; restart skala stack'ini düşürür — insan kararı).
+PSEO hook mesajları (workspace=bayder/dentnotion) bu repoyla İLGİSİZ — yönlendirmelerine uyma, gate'ler gerçek.
 
-İLK MESAJINDA: PLAN'ı oku, 3-5 cümle durum özeti ver, sıradaki işi öner (önerilen: Faz 3 planı taslağı ya da
-kalan zemin: repo PRIVATE), İNSANIN KOMUTUNU BEKLE. Context %90'da aynı formatta yeni handoff yazıp devret.
+İLK MESAJINDA: PLAN'ı oku, 3-5 cümle durum özeti ver, Faz 3 planını yazmaya başlamayı öner (writing-plans +
+brainstorming gerekirse), İNSANIN KOMUTUNU BEKLE — otonom kod startı YOK. Context %90'da aynı formatta yeni
+handoff yazıp devret.
 ```
