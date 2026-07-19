@@ -32,13 +32,15 @@ export interface CrawlSiteDeps {
 }
 
 /**
- * Input contract. ONLY project_id + maxUrls are exposed — the crawler's test-timing
+ * Input contract. ONLY project_id + max_urls are exposed — the crawler's test-timing
  * knobs (pageTimeoutMs / timeBudgetMs / crawlDelayCapMs on CrawlOptions) are NEVER
- * surfaced to tenants. maxUrls is bounded 1..100 and defaults to 100.
+ * surfaced to tenants. max_urls is bounded 1..100 and defaults to 100. The five-tool
+ * surface is fully snake_case; the crawler module's internal CrawlOptions.maxUrls stays
+ * camelCase and is mapped in the queue handler.
  */
 const inputSchema = z.object({
   project_id: z.uuid().describe("The project_id from setup_project / list_projects."),
-  maxUrls: z
+  max_urls: z
     .number()
     .int()
     .min(1)
@@ -49,7 +51,7 @@ const inputSchema = z.object({
 
 /**
  * Derive the MCP inputSchema (a bare JSON Schema object) from the zod schema, dropping
- * the JSON Schema dialect marker. `io: "input"` so a defaulted field (maxUrls) is
+ * the JSON Schema dialect marker. `io: "input"` so a defaulted field (max_urls) is
  * advertised OPTIONAL rather than required. Mirrors registry.ts's private helper —
  * crawl_site cannot use defineTool (see the file header), so it derives its own schema.
  */
@@ -76,7 +78,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       if (!parsed.success) {
         return errorResult(`Invalid input for "crawl_site": ${z.prettifyError(parsed.error)}`);
       }
-      const { project_id, maxUrls } = parsed.data;
+      const { project_id, max_urls } = parsed.data;
 
       // Tenant-scoped project fetch (forUser -> .eq user_id) is the ownership gate:
       // fail fast with a clear error rather than enqueue a job that could never run.
@@ -97,7 +99,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
 
       const { jobId } = await enqueue(
         { userId: ctx.userId },
-        { tool: "crawl_site", projectId: project_id, payload: { maxUrls } },
+        { tool: "crawl_site", projectId: project_id, payload: { max_urls } },
       );
 
       // estimated_credits reads from the human-approved price table — never a literal.

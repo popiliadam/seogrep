@@ -77,7 +77,10 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
     }
 
     const origin = await resolveOrigin(userId, job);
-    const maxUrls = typeof payload.maxUrls === "number" ? payload.maxUrls : undefined;
+    // The tool surface is snake_case; internal module options are camelCase — mapped
+    // here. The crawl_site queue payload carries `max_urls`; the crawler's CrawlOptions
+    // takes `maxUrls`. This is the single point that bridges the two conventions.
+    const maxUrls = typeof payload.max_urls === "number" ? payload.max_urls : undefined;
 
     const result = await crawl(origin, { maxUrls });
 

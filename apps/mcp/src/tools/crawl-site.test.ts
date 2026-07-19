@@ -16,21 +16,21 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 const spyEnqueue = (): ReturnType<typeof vi.fn<EnqueueFn>> =>
   vi.fn<EnqueueFn>(async () => ({ jobId: "job-should-not-happen" }));
 
-describe("crawl_site input schema (referee: only project_id + maxUrls)", () => {
-  it("advertises ONLY project_id + maxUrls — never the crawler's timing knobs", () => {
+describe("crawl_site input schema (referee: only project_id + max_urls)", () => {
+  it("advertises ONLY project_id + max_urls — never the crawler's timing knobs", () => {
     const tool = makeCrawlSiteTool({ enqueue: spyEnqueue() });
     const schema = tool.inputJsonSchema as {
       properties: Record<string, unknown>;
       required?: string[];
     };
-    expect(Object.keys(schema.properties).sort()).toEqual(["maxUrls", "project_id"]);
+    expect(Object.keys(schema.properties).sort()).toEqual(["max_urls", "project_id"]);
     // The CrawlOptions test-timing knobs must NEVER leak onto the tool surface.
     for (const knob of ["pageTimeoutMs", "timeBudgetMs", "crawlDelayCapMs"]) {
       expect(schema.properties).not.toHaveProperty(knob);
     }
-    // maxUrls is optional (defaulted); only project_id is required.
+    // max_urls is optional (defaulted); only project_id is required.
     expect(schema.required).toEqual(["project_id"]);
-    expect(schema.properties.maxUrls).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
+    expect(schema.properties.max_urls).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
   });
 });
 
@@ -50,13 +50,13 @@ describe("crawl_site surface rejects invalid input before enqueuing", () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it("rejects maxUrls out of the 1..100 range without enqueuing", async () => {
+  it("rejects max_urls out of the 1..100 range without enqueuing", async () => {
     const enqueue = spyEnqueue();
     const tool = makeCrawlSiteTool({ enqueue });
     const id = randomUUID();
-    expect((await tool.run(CTX, { project_id: id, maxUrls: 0 })).isError).toBe(true);
-    expect((await tool.run(CTX, { project_id: id, maxUrls: 101 })).isError).toBe(true);
-    expect((await tool.run(CTX, { project_id: id, maxUrls: 3.5 })).isError).toBe(true);
+    expect((await tool.run(CTX, { project_id: id, max_urls: 0 })).isError).toBe(true);
+    expect((await tool.run(CTX, { project_id: id, max_urls: 101 })).isError).toBe(true);
+    expect((await tool.run(CTX, { project_id: id, max_urls: 3.5 })).isError).toBe(true);
     expect(enqueue).not.toHaveBeenCalled();
   });
 });

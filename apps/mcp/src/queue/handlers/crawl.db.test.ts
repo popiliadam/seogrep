@@ -105,7 +105,7 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     try {
       // Real crawlSite (default dep) against the loopback fixture; origin injected.
       registerToolHandler("crawl_site", createCrawlHandler({ resolveOrigin: async () => site.origin }));
-      await executeJob({ jobId, userId, tool: "crawl_site", payload: { maxUrls: 25 } });
+      await executeJob({ jobId, userId, tool: "crawl_site", payload: { max_urls: 25 } });
     } finally {
       await site.close();
     }
@@ -139,7 +139,7 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     const site = await startFixtureSite({ robots: "server-error" }); // robots.txt 500 -> unreachable
     try {
       registerToolHandler("crawl_site", createCrawlHandler({ resolveOrigin: async () => site.origin }));
-      await executeJob({ jobId, userId, tool: "crawl_site", payload: { maxUrls: 25 } });
+      await executeJob({ jobId, userId, tool: "crawl_site", payload: { max_urls: 25 } });
     } finally {
       await site.close();
     }

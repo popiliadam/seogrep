@@ -73,7 +73,7 @@ describe("crawl_site surface against the local stack", () => {
 
     const result = await makeCrawlSiteTool({ enqueue }).run(ctx, {
       project_id: projectId,
-      maxUrls: 42,
+      max_urls: 42,
     });
 
     expect(result.isError).toBeUndefined();
@@ -85,14 +85,14 @@ describe("crawl_site surface against the local stack", () => {
     expect(captured![1]).toEqual({
       tool: "crawl_site",
       projectId,
-      payload: { maxUrls: 42 },
+      payload: { max_urls: 42 },
     });
 
     // The surface must not touch the ledger — the reserve/commit is the worker's job.
     expect(await ledgerRows(ctx.userId)).toEqual([]);
   });
 
-  it("defaults maxUrls to 100 when omitted", async () => {
+  it("defaults max_urls to 100 when omitted", async () => {
     const ctx = await makeCtx();
     const projectId = await makeProject(ctx.userId, "default-max.example.com");
     let capturedPayload: unknown = null;
@@ -101,7 +101,7 @@ describe("crawl_site surface against the local stack", () => {
       return { jobId: "job-x" };
     };
     await makeCrawlSiteTool({ enqueue }).run(ctx, { project_id: projectId });
-    expect(capturedPayload).toEqual({ maxUrls: 100 });
+    expect(capturedPayload).toEqual({ max_urls: 100 });
   });
 
   it("another tenant's project is 'not found' and is never enqueued", async () => {
