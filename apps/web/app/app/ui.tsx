@@ -1,9 +1,14 @@
 import type { LedgerEntry } from "@pseo/db/ledger-read";
+import { formatDate, formatNumber } from "../../lib/format";
 
 /**
  * Small presentational pieces shared by the dashboard data pages (Overview + Usage).
  * All pure/stateless server components — no data access, no client interactivity.
+ *
+ * formatDate / formatNumber now live in ../../lib/format (shared with the connection and
+ * pricing surfaces); re-exported here so existing "../ui" importers are unchanged.
  */
+export { formatDate, formatNumber };
 
 const KIND_LABELS: Readonly<Record<string, string>> = {
   grant: "grant",
@@ -22,18 +27,6 @@ const KIND_STYLES: Readonly<Record<string, string>> = {
   spend_release: "bg-blue-100 text-blue-700",
   adjust: "bg-neutral-100 text-neutral-600",
 };
-
-/** Format an integer with thousands separators (locale-independent, deterministic). */
-export function formatNumber(value: number): string {
-  const sign = value < 0 ? "-" : "";
-  return sign + String(Math.abs(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Render an ISO timestamp as YYYY-MM-DD; fall back to the raw value if unparseable. */
-export function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toISOString().slice(0, 10);
-}
 
 /** A coloured pill for a ledger row kind. Unknown kinds fall back to the raw value. */
 export function KindBadge({ kind }: { kind: string }) {

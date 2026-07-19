@@ -1,4 +1,5 @@
 import { CREDIT_PACKAGES, type PackageKey } from "@pseo/core";
+import { formatNumber } from "../lib/format";
 
 /**
  * Single source of PLAN + TOP-UP pricing, shared by the marketing pricing surfaces
@@ -63,10 +64,5 @@ export const TOP_UPS: readonly TopUp[] = [
 
 /** Human "1,000 credits" label derived from CREDIT_PACKAGES (never a copied number). */
 export function creditsLabel(key: PackageKey): string {
-  return `${formatCredits(CREDIT_PACKAGES[key].credits)} credits`;
-}
-
-/** Thousands separators, locale-independent and deterministic. */
-function formatCredits(value: number): string {
-  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${formatNumber(CREDIT_PACKAGES[key].credits)} credits`;
 }
