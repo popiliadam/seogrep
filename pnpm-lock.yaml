@@ -32,6 +32,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@pseo/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@supabase/supabase-js':
+        specifier: ^2.110.5
+        version: 2.110.7
       express:
         specifier: ^4.22.2
         version: 4.22.2
