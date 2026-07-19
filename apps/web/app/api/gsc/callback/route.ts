@@ -11,14 +11,16 @@ import { verifyState } from "../../../../lib/gsc/state";
  * `code` and the `state` we signed at connect time. The flow, fail-closed at each step:
  *
  *   1. require full configuration (secrets present) — else a broken deploy stops here;
- *   2. verify the state signature + expiry, then re-check the LIVE session matches its
+ *   2. resolve the live session up front, so a broken state can be routed by sign-in
+ *      status (a signed-in user returns to /app; an anonymous visitor goes to /login);
+ *   3. verify the state signature + expiry, then re-check the LIVE session matches its
  *      user_id (a leaked state alone cannot bind a project to another signed-in user);
- *   3. exchange the code for tokens — the client_secret is server-side inside the client
+ *   4. exchange the code for tokens — the client_secret is server-side inside the client
  *      module and is NEVER logged or returned;
- *   4. SEAL the refresh token (AES-256-GCM) before it touches the DB — plaintext never
+ *   5. SEAL the refresh token (AES-256-GCM) before it touches the DB — plaintext never
  *      reaches storage or a log;
- *   5. list the account's properties and match the project domain to one;
- *   6. upsert the connection and redirect to /app with a status.
+ *   6. list the account's properties and match the project domain to one;
+ *   7. upsert the connection and redirect to /app with a status.
  *
  * No redirect target is ever read from the request. Node runtime: crypto + token exchange.
  */
@@ -51,15 +53,23 @@ export async function GET(request: Request): Promise<Response> {
     return redirect("/app?gsc=error", origin);
   }
 
-  // (2) Trust the state only if it verifies AND matches the live session.
-  const state = verifyState(stateParam, encryptionKey);
-  if (!state) {
-    return redirect("/login?error=gsc", origin);
-  }
+  // (2) Resolve the live session up front so a broken state can be routed by sign-in
+  // status: an already-signed-in user should return to their dashboard (they can retry
+  // connect), not be bounced to the login page.
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // (3) Trust the state only if it verifies (signature + expiry). A forged/expired state
+  // sends a signed-in user to /app with an error, and an anonymous visitor to /login.
+  const state = verifyState(stateParam, encryptionKey);
+  if (!state) {
+    return user ? redirect("/app?gsc=error", origin) : redirect("/login?error=gsc", origin);
+  }
+
+  // (4) The state is valid — the live session must match its user_id (a leaked state alone
+  // cannot bind a project to another signed-in user). A missing/different session -> /login.
   if (!user || user.id !== state.user_id) {
     return redirect("/login?error=gsc", origin);
   }
@@ -89,18 +99,18 @@ export async function GET(request: Request): Promise<Response> {
     }
     const domain = (project as { domain: string }).domain;
 
-    // (3) Exchange the code. redirect_uri MUST match the one used at connect time.
+    // (4) Exchange the code. redirect_uri MUST match the one used at connect time.
     const tokens = await exchangeCodeForTokens({
       code,
       redirectUri: `${webBaseUrl.replace(/\/+$/, "")}/api/gsc/callback`,
     });
 
-    // (4) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
+    // (5) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
     const encryptedTokenHex = tokens.refreshToken
       ? toByteaHex(encryptToken(tokens.refreshToken, encryptionKey))
       : null;
 
-    // (5) Match the project domain to a verified property. A listing failure is non-fatal:
+    // (6) Match the project domain to a verified property. A listing failure is non-fatal:
     // the connection (token) still stands; the property is simply left unmatched.
     let gscProperty: string | null = null;
     try {
@@ -109,7 +119,7 @@ export async function GET(request: Request): Promise<Response> {
       console.error("gsc callback: sites.list failed (property left unmatched):", errorMessage(listError));
     }
 
-    // (6) Persist and route to the dashboard with a status the /app page renders.
+    // (7) Persist and route to the dashboard with a status the /app page renders.
     const outcome = await upsertGscConnection(service, {
       userId: state.user_id,
       projectId: state.project_id,

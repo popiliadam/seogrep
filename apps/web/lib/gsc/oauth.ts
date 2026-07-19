@@ -11,8 +11,11 @@ const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 /**
  * Build the Google OAuth 2.0 consent URL. `access_type=offline` + `prompt=consent` are
  * what make Google return a refresh token (and re-issue one even if the user consented
- * before) — without them there is nothing to seal at rest. Scope is read-only Search
- * Console: SeoGrep never requests write access to a property.
+ * before) — without them there is nothing to seal at rest. Scope is exactly the read-only
+ * Search Console scope and nothing else: SeoGrep never requests write access, and we
+ * deliberately do NOT set `include_granted_scopes` — incremental authorization would let
+ * an unrelated previously-granted scope ride along on this token, blurring the one-scope
+ * discipline this consent is meant to hold.
  */
 export function buildConsentUrl(params: {
   clientId: string;
@@ -26,7 +29,6 @@ export function buildConsentUrl(params: {
     scope: GSC_READONLY_SCOPE,
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
     state: params.state,
   });
   return `${GOOGLE_AUTH_ENDPOINT}?${query.toString()}`;

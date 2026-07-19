@@ -1,4 +1,5 @@
 import { createHmac, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
+import { tokenKeyBytes } from "@pseo/core";
 
 /**
  * Signed, expiring OAuth `state` for the GSC connect flow. The state is the ONLY thing
@@ -26,7 +27,11 @@ export interface StatePayload {
   readonly project_id: string;
   /** Absolute expiry, epoch SECONDS. */
   readonly exp: number;
-  /** Random per-issue value (defence against state reuse). */
+  /**
+   * Random per-issue value. It only makes each issued state UNIQUE — there is no
+   * server-side nonce store, so nothing detects or rejects a replayed state; short
+   * expiry (exp) plus the live-session re-check in the callback are what bound reuse.
+   */
   readonly nonce: string;
 }
 
@@ -34,9 +39,14 @@ export interface StatePayload {
  * Derive the 32-byte HMAC key from the hex master secret. HKDF with a fixed info label
  * yields a key bound to this purpose; a different master secret yields a different key,
  * so a state signed under one secret never verifies under another.
+ *
+ * The master secret is TOKEN_ENCRYPTION_KEY, validated through tokenKeyBytes — the SAME
+ * 64-hex format check the token crypto uses (one source, no drift). A mis-provisioned key
+ * throws here, naming the variable, instead of silently deriving from a garbage-length
+ * buffer (signed lesson #5: config errors fail loudly, never degrade silently).
  */
 function deriveStateKey(secretHex: string): Buffer {
-  const ikm = Buffer.from(secretHex, "hex");
+  const ikm = tokenKeyBytes(secretHex);
   return Buffer.from(hkdfSync("sha256", ikm, Buffer.alloc(0), STATE_KEY_INFO, 32));
 }
 

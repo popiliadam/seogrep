@@ -54,6 +54,12 @@ describe("signState / verifyState", () => {
     expect(verifyState(token, OTHER, 1_000_000)).toBeNull();
   });
 
+  it("throws on a non-64-hex secret — the key-format check shared with the token crypto", () => {
+    // A mis-provisioned TOKEN_ENCRYPTION_KEY must fail loudly (signed lesson #5), naming
+    // the variable, rather than silently derive a garbage-length HKDF key.
+    expect(() => signState(PAYLOAD, "not-hex")).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
+  });
+
   it.each([
     ["empty", ""],
     ["no separator", "abcdef"],

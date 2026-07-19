@@ -148,9 +148,25 @@ describe("GET /api/gsc/callback", () => {
     expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=no_token");
   });
 
-  it("rejects an invalid/forged state without exchanging the code", async () => {
+  it("sends a SIGNED-IN user with a forged/expired state back to /app (not /login), code not exchanged", async () => {
+    // getUser (beforeEach) resolves a live session. A broken state for an already
+    // signed-in user should not bounce them to the login page — they land on the
+    // dashboard with an error and can retry connect.
+    const response = await GET(callbackUrl({ code: "auth-code", state: "forged.state" }));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+  });
+
+  it("sends an ANONYMOUS visitor with a bad state to /login", async () => {
+    getUser.mockResolvedValue({ data: { user: null } });
     const response = await GET(callbackUrl({ code: "auth-code", state: "forged.state" }));
     expect(response.headers.get("location")).toBe("http://localhost:3457/login?error=gsc");
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+  });
+
+  it("redirects error on a missing code with no error param (malformed callback), code not exchanged", async () => {
+    const response = await GET(callbackUrl({ state: validState() })); // valid state, no code, no error
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
