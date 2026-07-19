@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
 import { createApp, type AppDeps } from "./server.ts";
-import type { AuthContext } from "./auth.ts";
+import { safeKeyPrefix, type AuthContext } from "./auth.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate + rateLimiter (no DB), so the
@@ -119,6 +119,38 @@ describe("mcp gateway app", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.result.tools).toEqual([]);
+  });
+});
+
+describe("mcp gateway auth failure handling", () => {
+  it("returns 500 JSON-RPC error when authenticate rejects, keeps serving, never logs the key", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({ authenticate: () => Promise.reject(new Error("db down")) }),
+    );
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error.code).toBe(-32603);
+      expect(body.jsonrpc).toBe("2.0");
+
+      // The process survives the rejection and keeps serving (no crash-loop).
+      const after = await fetch(`${app.baseUrl}/healthz`);
+      expect(after.status).toBe(200);
+
+      // The plaintext key is never logged — at most its safe prefix.
+      const logged = errorSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+      expect(logged).toContain(safeKeyPrefix(VALID_KEY));
+      expect(logged).not.toContain(VALID_KEY);
+    } finally {
+      errorSpy.mockRestore();
+      await app.close();
+    }
   });
 });
 

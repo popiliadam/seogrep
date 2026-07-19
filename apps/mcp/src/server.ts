@@ -6,6 +6,7 @@ import {
   createAuthenticator,
   createRateLimiter,
   hasValidKeyFormat,
+  safeKeyPrefix,
   type Authenticator,
   type RateLimiter,
 } from "./auth.ts";
@@ -29,6 +30,10 @@ interface JsonRpcErrorBody {
 /** Build a JSON-RPC 2.0 error envelope. `id` is null for pre-dispatch failures. */
 function jsonRpcError(code: number, message: string): JsonRpcErrorBody {
   return { jsonrpc: "2.0", error: { code, message }, id: null };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Injected collaborators for the gateway app. Fakes are supplied by unit tests. */
@@ -125,25 +130,37 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
   // Gate order: sg_ format (cheap, no I/O) -> key authentication (DB) -> per-key
   // rate limit -> dispatch. Unknown and revoked keys are indistinguishable (401).
+  // The whole async pipeline is caught here: Express 4 does not handle async
+  // rejections, so an uncaught one (e.g. a transient DB outage inside authenticate)
+  // would leave the response hanging AND crash the process (Node's default
+  // unhandled-rejection policy). Failures answer 500 with the same JSON-RPC
+  // envelope; the log carries at most the safe key prefix, never the plaintext key.
   app.post("/mcp/:key", async (req, res) => {
     const key = keyOrReject(req, res);
     if (key === null) return;
 
-    const context = await deps.authenticate(key);
-    if (context === null) {
-      res.status(401).json(jsonRpcError(JSON_RPC_UNAUTHORIZED, "Invalid API key"));
-      return;
-    }
+    try {
+      const context = await deps.authenticate(key);
+      if (context === null) {
+        res.status(401).json(jsonRpcError(JSON_RPC_UNAUTHORIZED, "Invalid API key"));
+        return;
+      }
 
-    if (!deps.rateLimiter.tryConsume(context.keyId)) {
-      res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
-      return;
-    }
+      if (!deps.rateLimiter.tryConsume(context.keyId)) {
+        res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
+        return;
+      }
 
-    // Carry the tenant context in Express request scope (no global state). The tool
-    // registry (T5) reads res.locals.authContext to scope tool execution per tenant.
-    res.locals.authContext = context;
-    await handleMcpRequest(req, res);
+      // Carry the tenant context in Express request scope (no global state). The tool
+      // registry (T5) reads res.locals.authContext to scope tool execution per tenant.
+      res.locals.authContext = context;
+      await handleMcpRequest(req, res);
+    } catch (error) {
+      console.error(`MCP request failed for ${safeKeyPrefix(key)}: ${errorMessage(error)}`);
+      if (!res.headersSent) {
+        res.status(500).json(jsonRpcError(JSON_RPC_INTERNAL_ERROR, "Internal server error"));
+      }
+    }
   });
 
   // GET (SSE) and DELETE (session end) are unsupported in stateless mode; reject
