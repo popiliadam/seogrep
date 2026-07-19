@@ -13,8 +13,10 @@ import type { PullData } from "./types.ts";
  * v0 query shape (documented limitations, not bugs): dimensions are [query, page]; a single
  * page of results is fetched (startRow 0, rowLimit MAX_ROW_LIMIT) — a property with more
  * than MAX_ROW_LIMIT (query, page) rows in a window is truncated to the top rows Google
- * returns, which is acceptable for the discovery tools that read the pull. Pagination can
- * land later without changing the stored shape.
+ * returns, which is acceptable for the discovery tools that read the pull. This is no longer
+ * SILENT: a window whose row count fills the cap is flagged `capped` (below), and
+ * format.ts's formatPullSummary surfaces a warning when that happens. Pagination can land
+ * later without changing the stored shape.
  */
 
 /** The two Google calls a pull needs, as an injectable port (real adapter: defaultGscApi). */
@@ -90,9 +92,14 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
     queryBody(windows.previous, rowLimit),
   );
 
+  const currentRows = parseSearchAnalyticsRows(currentResponse);
+  const previousRows = parseSearchAnalyticsRows(previousResponse);
+
   return {
     days: input.days,
-    current: { ...windows.current, rows: parseSearchAnalyticsRows(currentResponse) },
-    previous: { ...windows.previous, rows: parseSearchAnalyticsRows(previousResponse) },
+    // capped: the window's row count filled the single-page cap, so Google may hold more
+    // (query, page) rows than were fetched — see the file header and formatPullSummary.
+    current: { ...windows.current, rows: currentRows, capped: currentRows.length === rowLimit },
+    previous: { ...windows.previous, rows: previousRows, capped: previousRows.length === rowLimit },
   };
 }

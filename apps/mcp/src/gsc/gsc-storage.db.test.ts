@@ -11,8 +11,9 @@ import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "@pseo/core
  * this exercises directly against the real table).
  *
  * An UNTYPED service client is used deliberately: gsc_connections.gsc_property (migration
- * 0009) is not in the committed @pseo/db / db.ts type slices, so an untyped client lets us
- * write the real schema without editing those out-of-scope type files.
+ * 0009) is not in the committed @pseo/db generated types (apps/mcp/src/db.ts's own local
+ * slice models it separately), so an untyped client lets us write the real schema without
+ * editing the out-of-scope @pseo/db package.
  */
 
 function requireEnv(name: string): string {

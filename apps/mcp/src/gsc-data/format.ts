@@ -20,12 +20,16 @@ function pos(position: number): string {
 
 /** One-line summary of a completed pull (row counts + the two window ranges). */
 export function formatPullSummary(pull: PullData): string {
+  const capWarning = pull.current.capped || pull.previous.capped
+    ? "Note: this window hit the 5,000-row cap — results cover the top rows only; comparisons may be partial.\n"
+    : "";
   return (
     `Pulled ${pull.days} days of Search Console data.\n` +
     `Current window ${pull.current.start_date}..${pull.current.end_date}: ` +
     `${pull.current.rows.length} rows.\n` +
     `Previous window ${pull.previous.start_date}..${pull.previous.end_date}: ` +
     `${pull.previous.rows.length} rows.\n` +
+    capWarning +
     "Run find_quick_wins, detect_cannibalization, or analyze_content_decay next."
   );
 }

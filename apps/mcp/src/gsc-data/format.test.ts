@@ -4,6 +4,7 @@ import { detectCannibalization } from "./cannibalization.ts";
 import { analyzeContentDecay } from "./content-decay.ts";
 import { findQuickWins } from "./quick-wins.ts";
 import { SAMPLE_PULL } from "./fixtures.ts";
+import type { PullData } from "./types.ts";
 
 /**
  * The formatters are the text surface each tool returns. These pin the two branches that
@@ -17,6 +18,28 @@ describe("formatPullSummary", () => {
     expect(text).toContain("2026-04-19..2026-07-17");
     expect(text).toContain(`${SAMPLE_PULL.current.rows.length} rows`);
     expect(text).toContain("find_quick_wins");
+  });
+});
+
+describe("formatPullSummary surfaces the 5,000-row cap", () => {
+  const CAP_WARNING =
+    "Note: this window hit the 5,000-row cap — results cover the top rows only; comparisons may be partial.";
+
+  it("adds the cap warning when a window's rows filled the cap", () => {
+    const capped: PullData = {
+      ...SAMPLE_PULL,
+      current: { ...SAMPLE_PULL.current, capped: true },
+    };
+    expect(formatPullSummary(capped)).toContain(CAP_WARNING);
+  });
+
+  it("omits the cap warning when neither window hit the cap", () => {
+    const uncapped: PullData = {
+      ...SAMPLE_PULL,
+      current: { ...SAMPLE_PULL.current, capped: false },
+      previous: { ...SAMPLE_PULL.previous, capped: false },
+    };
+    expect(formatPullSummary(uncapped)).not.toContain(CAP_WARNING);
   });
 });
 

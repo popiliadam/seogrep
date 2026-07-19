@@ -23,8 +23,9 @@ const envSchema = z.object({
   // OPTIONAL here so the gateway boots without them (only the GSC read path needs them),
   // and so this addition cannot break the existing loadEnv contract. Names are the REAL
   // prod names, verified against Netlify by a human on 2026-07-19. Fail-closed reads live
-  // at the point of use: gsc/client.ts readGoogleCredentials (Google OAuth) and
-  // gsc/crypto.ts key validation (TOKEN_ENCRYPTION_KEY) — the signed-lesson-#5 enforcement.
+  // at the point of use: @pseo/core's readGoogleCredentials (packages/core/src/gsc/client.ts,
+  // Google OAuth) and tokenKeyBytes (packages/core/src/gsc/crypto.ts, TOKEN_ENCRYPTION_KEY) —
+  // the signed-lesson-#5 enforcement.
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   // 64 hex chars (32 bytes) — AES-256 key for the at-rest refresh-token seal.

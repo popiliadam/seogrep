@@ -31,6 +31,12 @@ export interface GscWindow {
   readonly start_date: string;
   readonly end_date: string;
   readonly rows: GscRow[];
+  /**
+   * True when this window's row count hit the pull's row cap (MAX_ROW_LIMIT in pull.ts), i.e.
+   * Google may have had more (query, page) rows than were fetched. Optional so parsed/older
+   * stored windows without this field default to "not capped" rather than throwing.
+   */
+  readonly capped?: boolean;
 }
 
 /**
