@@ -78,6 +78,24 @@ export async function listKeys(client: ApiKeysClient, userId: string): Promise<A
 }
 
 /**
+ * Count a user's ACTIVE (revoked_at IS NULL) keys. Service-role (RLS-bypassing), so the
+ * explicit user_id filter is the tenant guard (constitution NEVER #4). `head: true` fetches
+ * only the exact count, no rows. Backs the create-time active-key cap in the connection
+ * server action.
+ */
+export async function countActiveKeys(client: ApiKeysClient, userId: string): Promise<number> {
+  const { count, error } = await client
+    .from("api_keys")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .is("revoked_at", null);
+  if (error) {
+    throw new Error(`countActiveKeys failed: ${error.message}`);
+  }
+  return count ?? 0;
+}
+
+/**
  * Return the user_id that owns `keyId`, or null if no such key exists. Service-role
  * (RLS-bypassing) so a server action can authorize a revoke/rotate against the
  * session user before mutating.

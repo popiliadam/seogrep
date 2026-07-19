@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { generateApiKey, mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
-import { createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
+import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
 import { createClient } from "../../../lib/supabase/server";
@@ -18,6 +18,13 @@ import { createClient } from "../../../lib/supabase/server";
 
 const CONNECTION_PATH = "/app/connection";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Cap on simultaneously-active keys per user, enforced when GENERATING a fresh key. Rotate is
+// deliberately EXEMPT: it is net-neutral on the active count (it mints one and revokes one,
+// create-first), so applying the cap there would wedge a user who is legitimately at the limit
+// and wants to roll their credential. The check is best-effort (a count read, not an atomic
+// constraint) — it bounds accidental/abusive growth, not a money or security invariant.
+const MAX_ACTIVE_KEYS = 5;
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -71,6 +78,13 @@ async function issueKey(service: ServiceClient, userId: string): Promise<IssuedK
 export async function createKeyAction(): Promise<GeneratedKeyResult> {
   const userId = await requireUserId();
   const service = createServiceClient();
+  const activeKeys = await countActiveKeys(service, userId);
+  if (activeKeys >= MAX_ACTIVE_KEYS) {
+    throw new Error(
+      `You already have ${MAX_ACTIVE_KEYS} active API keys, the maximum. ` +
+        "Revoke one before generating another.",
+    );
+  }
   const { result } = await issueKey(service, userId);
   revalidatePath(CONNECTION_PATH);
   await captureKeyCreated(userId, false);
