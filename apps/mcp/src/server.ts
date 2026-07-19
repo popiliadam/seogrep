@@ -8,7 +8,6 @@ import {
   hasValidKeyFormat,
   safeKeyPrefix,
   type Authenticator,
-  type RateLimiter,
 } from "./auth.ts";
 import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
 
@@ -39,14 +38,15 @@ function errorMessage(error: unknown): string {
 /** Injected collaborators for the gateway app. Fakes are supplied by unit tests. */
 export interface AppDeps {
   readonly authenticate: Authenticator;
-  readonly rateLimiter: RateLimiter;
 }
 
 /**
  * Wire the production dependencies (composition root). This is the ONLY code that
  * reads the service-role env and builds the DB client, and it is evaluated ONLY
  * when createApp is called without explicit deps (the real entrypoint). Unit tests
- * pass fakes, so they never touch the database or the environment.
+ * pass fakes, so they never touch the database or the environment. The per-key
+ * rate limiter is wired INSIDE the authenticator (between lookup and stamp) so an
+ * over-limit request never reaches the last_used_at write.
  */
 function buildDefaultDeps(): AppDeps {
   const client = createServiceClient();
@@ -54,8 +54,8 @@ function buildDefaultDeps(): AppDeps {
     authenticate: createAuthenticator({
       lookup: (keyHash) => findActiveKeyByHash(client, keyHash),
       stamp: (keyId, at) => touchLastUsed(client, keyId, at),
+      rateLimiter: createRateLimiter(),
     }),
-    rateLimiter: createRateLimiter(),
   };
 }
 
@@ -128,8 +128,10 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   });
 
   // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
-  // Gate order: sg_ format (cheap, no I/O) -> key authentication (DB) -> per-key
-  // rate limit -> dispatch. Unknown and revoked keys are indistinguishable (401).
+  // Gate order: sg_ format (cheap, no I/O) -> auth decision (lookup -> per-key
+  // rate limit -> stamp, see auth.ts — an over-limit request costs at most one
+  // read and zero writes) -> dispatch. Unknown and revoked keys are
+  // indistinguishable (401).
   // The whole async pipeline is caught here: Express 4 does not handle async
   // rejections, so an uncaught one (e.g. a transient DB outage inside authenticate)
   // would leave the response hanging AND crash the process (Node's default
@@ -140,20 +142,19 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     if (key === null) return;
 
     try {
-      const context = await deps.authenticate(key);
-      if (context === null) {
+      const decision = await deps.authenticate(key);
+      if (decision.status === "unauthorized") {
         res.status(401).json(jsonRpcError(JSON_RPC_UNAUTHORIZED, "Invalid API key"));
         return;
       }
-
-      if (!deps.rateLimiter.tryConsume(context.keyId)) {
+      if (decision.status === "rate_limited") {
         res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
         return;
       }
 
       // Carry the tenant context in Express request scope (no global state). The tool
       // registry (T5) reads res.locals.authContext to scope tool execution per tenant.
-      res.locals.authContext = context;
+      res.locals.authContext = decision.context;
       await handleMcpRequest(req, res);
     } catch (error) {
       console.error(`MCP request failed for ${safeKeyPrefix(key)}: ${errorMessage(error)}`);

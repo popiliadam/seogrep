@@ -2,23 +2,26 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
 import { createApp, type AppDeps } from "./server.ts";
-import { safeKeyPrefix, type AuthContext } from "./auth.ts";
+import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
-// app is exercised through an INJECTED authenticate + rateLimiter (no DB), so the
-// "valid key -> dispatch" cases now require a resolved tenant context, and two new
-// surfaces are asserted — 401 for a well-formed-but-unknown key, and 429 when the
-// rate limiter rejects. The pure hasValidKeyFormat unit cases moved with the
-// function to auth.test.ts. No prior assertion was weakened.
+// app is exercised through an INJECTED authenticate (no DB) that yields typed
+// decisions, so the "valid key -> dispatch" cases now require a resolved tenant
+// context, and three new surfaces are asserted — 401 for a well-formed-but-unknown
+// key, 429 for a rate_limited decision, and 500 (process survives) when the auth
+// pipeline rejects. The pure hasValidKeyFormat unit cases moved with the function
+// to auth.test.ts; the limiter's lookup->limit->stamp ordering (429 = zero writes)
+// is pinned in auth.test.ts. No prior assertion was weakened.
 
 const VALID_KEY = "sg_testkey1234";
 const CONTEXT: AuthContext = { userId: "user-A", keyId: "key-1" };
+const OK_DECISION: AuthDecision = { status: "ok", context: CONTEXT };
+const UNAUTHORIZED: AuthDecision = { status: "unauthorized" };
 
 /** Build the app with fake, DB-free deps. Overrides let a test force a path. */
 function appWith(overrides: Partial<AppDeps> = {}): ReturnType<typeof createApp> {
   const deps: AppDeps = {
-    authenticate: (key) => Promise.resolve(key === VALID_KEY ? CONTEXT : null),
-    rateLimiter: { tryConsume: () => true },
+    authenticate: (key) => Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED),
     ...overrides,
   };
   return createApp(deps);
@@ -155,8 +158,10 @@ describe("mcp gateway auth failure handling", () => {
 });
 
 describe("mcp gateway rate limiting", () => {
-  it("returns 429 JSON-RPC error when the per-key limiter rejects", async () => {
-    const app = await listen(appWith({ rateLimiter: { tryConsume: () => false } }));
+  it("returns 429 JSON-RPC error when the auth decision is rate_limited", async () => {
+    const app = await listen(
+      appWith({ authenticate: () => Promise.resolve({ status: "rate_limited" }) }),
+    );
     try {
       const res = await postRpc(app.baseUrl, VALID_KEY, { jsonrpc: "2.0", id: 1, method: "tools/list" });
       expect(res.status).toBe(429);

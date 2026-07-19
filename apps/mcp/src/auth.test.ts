@@ -4,10 +4,14 @@ import {
   createRateLimiter,
   hasValidKeyFormat,
   safeKeyPrefix,
+  type AuthDecision,
   type KeyRecord,
+  type RateLimiter,
 } from "./auth.ts";
 
 const RECORD: KeyRecord = { keyId: "key-1", userId: "user-A" };
+const OK: AuthDecision = { status: "ok", context: { userId: "user-A", keyId: "key-1" } };
+const ALLOW: RateLimiter = { tryConsume: () => true };
 
 describe("hasValidKeyFormat", () => {
   it("accepts an sg_-prefixed key with a body", () => {
@@ -31,30 +35,62 @@ describe("safeKeyPrefix", () => {
 describe("createAuthenticator", () => {
   it("resolves a known active key to its tenant context", async () => {
     const lookup = vi.fn(async () => RECORD);
-    const authenticate = createAuthenticator({ lookup });
-    expect(await authenticate("sg_validbody")).toEqual({ userId: "user-A", keyId: "key-1" });
+    const authenticate = createAuthenticator({ lookup, rateLimiter: ALLOW });
+    expect(await authenticate("sg_validbody")).toEqual(OK);
     expect(lookup).toHaveBeenCalledOnce();
   });
 
   it("hashes the key with sha256 before lookup (plaintext never passed to storage)", async () => {
     const lookup = vi.fn(async () => RECORD);
-    await createAuthenticator({ lookup })("sg_validbody");
+    await createAuthenticator({ lookup, rateLimiter: ALLOW })("sg_validbody");
     const passed = lookup.mock.calls[0]?.[0];
     expect(passed).toMatch(/^[0-9a-f]{64}$/);
     expect(passed).not.toContain("sg_validbody");
   });
 
-  it("rejects a malformed key WITHOUT touching storage (fast reject before I/O)", async () => {
+  it("rejects a malformed key WITHOUT touching storage or the limiter (fast reject before I/O)", async () => {
     const lookup = vi.fn(async () => RECORD);
-    expect(await createAuthenticator({ lookup })("nope")).toBeNull();
+    const tryConsume = vi.fn(() => true);
+    const authenticate = createAuthenticator({ lookup, rateLimiter: { tryConsume } });
+    expect(await authenticate("nope")).toEqual({ status: "unauthorized" });
     expect(lookup).not.toHaveBeenCalled();
+    expect(tryConsume).not.toHaveBeenCalled();
   });
 
-  it("returns null for an unknown/revoked key (lookup miss) and does not stamp", async () => {
+  it("unknown/revoked key (lookup miss): unauthorized, no stamp, no token consumed", async () => {
     const lookup = vi.fn(async () => null);
     const stamp = vi.fn(async () => undefined);
-    expect(await createAuthenticator({ lookup, stamp })("sg_validbody")).toBeNull();
+    const tryConsume = vi.fn(() => true);
+    const authenticate = createAuthenticator({ lookup, stamp, rateLimiter: { tryConsume } });
+    expect(await authenticate("sg_validbody")).toEqual({ status: "unauthorized" });
     expect(stamp).not.toHaveBeenCalled();
+    expect(tryConsume).not.toHaveBeenCalled();
+  });
+
+  it("consults the per-key limiter with the key id, AFTER the lookup", async () => {
+    const lookup = vi.fn(async () => RECORD);
+    const tryConsume = vi.fn(() => true);
+    await createAuthenticator({ lookup, rateLimiter: { tryConsume } })("sg_validbody");
+    expect(tryConsume).toHaveBeenCalledExactlyOnceWith("key-1");
+    expect(lookup.mock.invocationCallOrder[0]).toBeLessThan(
+      tryConsume.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("over-limit key: rate_limited decision, at most one read and ZERO writes", async () => {
+    const lookup = vi.fn(async () => RECORD);
+    const stamp = vi.fn(async () => undefined);
+    const onStamp = vi.fn();
+    const authenticate = createAuthenticator({
+      lookup,
+      stamp,
+      onStamp,
+      rateLimiter: { tryConsume: () => false },
+    });
+    expect(await authenticate("sg_validbody")).toEqual({ status: "rate_limited" });
+    expect(lookup).toHaveBeenCalledOnce(); // at most 1 read
+    expect(stamp).not.toHaveBeenCalled(); // ZERO writes on the 429 path
+    expect(onStamp).not.toHaveBeenCalled(); // the stamp was never even fired
   });
 
   it("stamps last_used_at with the injected clock on success", async () => {
@@ -65,12 +101,13 @@ describe("createAuthenticator", () => {
     const authenticate = createAuthenticator({
       lookup,
       stamp,
+      rateLimiter: ALLOW,
       now: () => when,
       onStamp: (p) => {
         settled = p;
       },
     });
-    await authenticate("sg_validbody");
+    expect(await authenticate("sg_validbody")).toEqual(OK);
     await settled;
     expect(stamp).toHaveBeenCalledWith("key-1", when);
   });
@@ -85,15 +122,13 @@ describe("createAuthenticator", () => {
     const authenticate = createAuthenticator({
       lookup,
       stamp,
+      rateLimiter: ALLOW,
       onError,
       onStamp: (p) => {
         settled = p;
       },
     });
-    expect(await authenticate("sg_1234567890ABCDEF_SECRET")).toEqual({
-      userId: "user-A",
-      keyId: "key-1",
-    });
+    expect(await authenticate("sg_1234567890ABCDEF_SECRET")).toEqual(OK);
     await settled;
     expect(onError).toHaveBeenCalledOnce();
     const logged = String(onError.mock.calls[0]?.[0]);

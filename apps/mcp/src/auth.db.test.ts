@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateApiKey } from "@pseo/core";
-import { createAuthenticator } from "./auth.ts";
+import {
+  createAuthenticator,
+  createRateLimiter,
+  type AuthContext,
+  type AuthDecision,
+} from "./auth.ts";
 import { createServiceClient, findActiveKeyByHash, forUser, touchLastUsed } from "./db.ts";
 
 /**
@@ -53,14 +58,23 @@ async function insertKey(userId: string): Promise<{ key: string; keyId: string }
   return { key: generated.key, keyId: data.id };
 }
 
-/** The production wiring: an authenticator over the real DB lookup + stamp. */
+/** The production wiring: real DB lookup + stamp, real (fresh) per-key limiter. */
 function makeAuthenticator(opts: { now?: () => Date; onStamp?: (settled: Promise<void>) => void } = {}) {
   return createAuthenticator({
     lookup: (keyHash) => findActiveKeyByHash(service, keyHash),
     stamp: (keyId, at) => touchLastUsed(service, keyId, at),
+    rateLimiter: createRateLimiter(),
     now: opts.now,
     onStamp: opts.onStamp,
   });
+}
+
+/** Narrow a decision to its ok-context, failing loudly on any other status. */
+function contextOf(decision: AuthDecision): AuthContext {
+  if (decision.status !== "ok") {
+    throw new Error(`expected an ok decision, got "${decision.status}"`);
+  }
+  return decision.context;
 }
 
 async function readLastUsed(keyId: string): Promise<string | null> {
@@ -87,10 +101,10 @@ describe("mcp auth against local Supabase", () => {
     const userId = await makeUser();
     const { key, keyId } = await insertKey(userId);
     const authenticate = makeAuthenticator();
-    expect(await authenticate(key)).toEqual({ userId, keyId });
+    expect(await authenticate(key)).toEqual({ status: "ok", context: { userId, keyId } });
   });
 
-  it("(b) returns null for a revoked key, indistinguishable from an unknown key", async () => {
+  it("(b) rejects a revoked key, indistinguishable from an unknown key", async () => {
     const userId = await makeUser();
     const { key, keyId } = await insertKey(userId);
     const { error } = await service
@@ -100,9 +114,9 @@ describe("mcp auth against local Supabase", () => {
     expect(error).toBeNull();
 
     const authenticate = makeAuthenticator();
-    expect(await authenticate(key)).toBeNull();
-    // Control: a well-formed key that was never inserted is also null (same envelope).
-    expect(await authenticate(generateApiKey().key)).toBeNull();
+    expect(await authenticate(key)).toEqual({ status: "unauthorized" });
+    // Control: a well-formed key that was never inserted gets the SAME decision.
+    expect(await authenticate(generateApiKey().key)).toEqual({ status: "unauthorized" });
   });
 
   it("(c) stamps last_used_at on successful auth (fire-and-forget)", async () => {
@@ -118,7 +132,7 @@ describe("mcp auth against local Supabase", () => {
         settled = p;
       },
     });
-    await authenticate(key);
+    expect((await authenticate(key)).status).toBe("ok");
     await settled; // wait for the fire-and-forget stamp to land before asserting
 
     const stamped = await readLastUsed(keyId);
@@ -133,13 +147,13 @@ describe("mcp auth against local Supabase", () => {
     const b = await insertKey(userB);
     const authenticate = makeAuthenticator();
 
-    const ctxA = await authenticate(a.key);
+    const ctxA = contextOf(await authenticate(a.key));
     expect(ctxA).toEqual({ userId: userA, keyId: a.keyId });
-    expect(ctxA?.userId).not.toBe(userB);
+    expect(ctxA.userId).not.toBe(userB);
 
-    const ctxB = await authenticate(b.key);
-    expect(ctxB?.userId).toBe(userB);
-    expect(ctxB?.keyId).not.toBe(a.keyId);
+    const ctxB = contextOf(await authenticate(b.key));
+    expect(ctxB.userId).toBe(userB);
+    expect(ctxB.keyId).not.toBe(a.keyId);
 
     // forUser tenant scope: even on the service-role (RLS-bypassing) client, the
     // .eq("user_id", ...) filter keeps A's view to A's rows and never surfaces B's.

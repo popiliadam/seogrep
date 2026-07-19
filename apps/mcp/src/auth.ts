@@ -25,6 +25,19 @@ export interface AuthContext {
   readonly keyId: string;
 }
 
+/**
+ * The outcome of resolving a personal key. "unauthorized" covers malformed,
+ * unknown AND revoked keys (indistinguishable — no info leak); "rate_limited"
+ * means the key is valid but over its per-key allowance.
+ */
+export type AuthDecision =
+  | { readonly status: "ok"; readonly context: AuthContext }
+  | { readonly status: "unauthorized" }
+  | { readonly status: "rate_limited" };
+
+const UNAUTHORIZED: AuthDecision = { status: "unauthorized" };
+const RATE_LIMITED: AuthDecision = { status: "rate_limited" };
+
 /** The minimal active-key record the authenticator needs from storage. */
 export interface KeyRecord {
   readonly keyId: string;
@@ -37,11 +50,16 @@ export type KeyLookup = (keyHash: string) => Promise<KeyRecord | null>;
 /** Stamp a key's last-used time. Called fire-and-forget; must never block auth. */
 export type KeyStamp = (keyId: string, at: Date) => Promise<void>;
 
-/** Resolve a plaintext personal key to its tenant context, or null. */
-export type Authenticator = (key: string) => Promise<AuthContext | null>;
+/** Resolve a plaintext personal key to an auth decision. */
+export type Authenticator = (key: string) => Promise<AuthDecision>;
 
 export interface AuthenticatorDeps {
   readonly lookup: KeyLookup;
+  /**
+   * Per-key rate limiter, consulted AFTER the lookup (it needs the key id) and
+   * BEFORE the stamp — an over-limit request costs at most one read, never a write.
+   */
+  readonly rateLimiter: RateLimiter;
   /** Optional last-used stamp; when omitted, successful auth performs no write. */
   readonly stamp?: KeyStamp;
   /** Injectable clock (defaults to Date). Tests pin it for determinism. */
@@ -70,19 +88,21 @@ function errorMessage(error: unknown): string {
  * Build an authenticator over injected storage ports. Flow:
  *   1. format gate — fast reject, no I/O (the sg_ shape is public, not a secret);
  *   2. sha256-hash the key, then look up an ACTIVE row;
- *   3. miss -> null (unknown and revoked are indistinguishable — no info leak);
- *   4. hit  -> the tenant AuthContext.
- * On a hit, last_used_at is stamped fire-and-forget: the stamp is never awaited and
- * a stamp failure is only logged (with the safe prefix), so it can never block or
- * fail authentication.
+ *   3. miss -> unauthorized (unknown and revoked are indistinguishable — no leak);
+ *   4. per-key rate limit — over-limit -> rate_limited WITHOUT stamping, so a
+ *      429'd request costs at most one read and zero writes;
+ *   5. hit + allowed -> stamp last_used_at fire-and-forget, return the context.
+ * The stamp is never awaited and a stamp failure is only logged (with the safe
+ * prefix), so it can never block or fail authentication.
  */
 export function createAuthenticator(deps: AuthenticatorDeps): Authenticator {
   const now = deps.now ?? ((): Date => new Date());
   const onError = deps.onError ?? ((message: string): void => console.error(message));
-  return async (key: string): Promise<AuthContext | null> => {
-    if (!hasValidKeyFormat(key)) return null;
+  return async (key: string): Promise<AuthDecision> => {
+    if (!hasValidKeyFormat(key)) return UNAUTHORIZED;
     const record = await deps.lookup(sha256hex(key));
-    if (record === null) return null;
+    if (record === null) return UNAUTHORIZED;
+    if (!deps.rateLimiter.tryConsume(record.keyId)) return RATE_LIMITED;
     if (deps.stamp !== undefined) {
       const settled = deps
         .stamp(record.keyId, now())
@@ -91,7 +111,7 @@ export function createAuthenticator(deps: AuthenticatorDeps): Authenticator {
         );
       deps.onStamp?.(settled);
     }
-    return { userId: record.userId, keyId: record.keyId };
+    return { status: "ok", context: { userId: record.userId, keyId: record.keyId } };
   };
 }
 
