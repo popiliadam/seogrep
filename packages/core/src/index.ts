@@ -14,3 +14,10 @@ export * from "./email/send.js";
 export * from "./email/welcome.js";
 
 export * from "./keys/api-key.js";
+
+// GSC at-rest token crypto + the bare-fetch Google Search Console client. Promoted here
+// from apps/mcp so the web OAuth routes consume one BUILT implementation (no @pseo/mcp
+// source deep-import / transpile) and the MCP `pull_gsc_data` read path shares the exact
+// same seal format + client.
+export * from "./gsc/crypto.js";
+export * from "./gsc/client.js";

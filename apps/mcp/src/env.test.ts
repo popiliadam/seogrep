@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEnv } from "./env.ts";
+import { loadEnv, requireTokenEncryptionKey, requireWebBaseUrl } from "./env.ts";
 
 /**
  * A complete environment using the REAL production variable names. The
@@ -39,5 +39,40 @@ describe("loadEnv", () => {
     expect(() => loadEnv({})).toThrowError(
       /SUPABASE_URL.*SUPABASE_SERVICE_ROLE_KEY.*SUPABASE_DB_URL/s,
     );
+  });
+});
+
+/**
+ * Negative cases for the two fail-closed readers (signed lesson #5, 2026-07-18): a missing
+ * secret must fail loudly and NAME the real prod variable, never degrade silently. These pin
+ * the CURRENT (already-correct) behaviour of requireWebBaseUrl / requireTokenEncryptionKey as
+ * a contract, so a future regression here is caught the same way the SUPABASE_URL incident
+ * should have been.
+ */
+describe("requireWebBaseUrl", () => {
+  it("throws an error naming WEB_BASE_URL when it is missing", () => {
+    expect(() => requireWebBaseUrl({})).toThrowError(/WEB_BASE_URL/);
+  });
+
+  it("trims a trailing slash so callers can append a path", () => {
+    expect(requireWebBaseUrl({ WEB_BASE_URL: "https://seogrep.com/" })).toBe(
+      "https://seogrep.com",
+    );
+  });
+});
+
+describe("requireTokenEncryptionKey", () => {
+  it("throws an error naming TOKEN_ENCRYPTION_KEY when it is missing", () => {
+    expect(() => requireTokenEncryptionKey({})).toThrowError(/TOKEN_ENCRYPTION_KEY/);
+  });
+});
+
+describe("valid values pass through unchanged", () => {
+  it("requireWebBaseUrl and requireTokenEncryptionKey return the configured value", () => {
+    expect(requireWebBaseUrl({ WEB_BASE_URL: "https://seogrep.com" })).toBe(
+      "https://seogrep.com",
+    );
+    const KEY = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+    expect(requireTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: KEY })).toBe(KEY);
   });
 });

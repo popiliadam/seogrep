@@ -11,6 +11,9 @@ export const INDEX_HTML = `<!doctype html><html><head>
 <title>SeoGrep Fixture — Home</title>
 <meta name="description" content="Fixture home page for crawler tests.">
 <link rel="canonical" href="/">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"SeoGrep Fixture"},{"@type":"WebSite","name":"SeoGrep"}]}
+</script>
 </head><body>
 <h1>Home</h1>
 <p>Welcome to the fixture site used by crawler tests.</p>
@@ -38,8 +41,12 @@ export const ABOUT_HTML = `<!doctype html><html><head>
 </body></html>`;
 
 // Intentionally two <h1> and no meta description -> exercises the issue flags.
+// Carries one Article JSON-LD block plus a MALFORMED block: the malformed one must be
+// skipped silently (never fatal) while Article is still collected.
 export const BLOG_HTML = `<!doctype html><html><head>
 <title>Blog — Fixture</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Fixture Blog"}</script>
+<script type="application/ld+json">{ this is not valid json }</script>
 </head><body>
 <h1>Blog</h1>
 <h1>Second Heading</h1>

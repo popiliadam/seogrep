@@ -137,6 +137,34 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Per-project Google Search Console link (migrations 0003 + 0009). Stores the
+      // AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex string) and the
+      // resolved property. The web OAuth callback writes it; pull_gsc_data reads it back
+      // (tenant-scoped by user_id — constitution NEVER #4). gsc_property is migration 0009,
+      // which the committed @pseo/db generated types still omit, so it is modeled here.
+      gsc_connections: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          encrypted_refresh_token: string | null;
+          gsc_property: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          encrypted_refresh_token?: string | null;
+          gsc_property?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          encrypted_refresh_token?: string | null;
+          gsc_property?: string | null;
+        };
+        Relationships: [];
+      };
       // Append-only money ledger. Update is `never` so the type system forbids the
       // mutation the DB armor (migration 0002) also rejects (constitution NEVER #2).
       credit_ledger: {
@@ -296,6 +324,27 @@ export function forUser(client: ServiceClient, userId: string) {
     /** A SELECT over `table`, pre-filtered to this tenant's rows. */
     selectOwn(table: TenantTable, columns = "*") {
       return client.from(table).select(columns).eq("user_id", userId);
+    },
+    /**
+     * Tenant-scoped single-row read by id, returning the caller-declared projection
+     * type `T` (or null). Folds the two things every `selectOwn(...).eq("id").maybeSingle()`
+     * call site otherwise repeats: the id filter and the `as unknown as T` cast that
+     * supabase-js forces (a runtime column string yields no inferred row type). Still
+     * tenant-scoped by the .eq("user_id") filter (constitution NEVER #4): a row that is
+     * missing or owned by another tenant both read as null, indistinguishably. Throws on
+     * a query error (never returns a partial/ambiguous result).
+     */
+    async selectOwnById<T>(table: TenantTable, id: string, columns: string): Promise<T | null> {
+      const { data, error } = await client
+        .from(table)
+        .select(columns)
+        .eq("user_id", userId)
+        .eq("id", id)
+        .maybeSingle();
+      if (error) {
+        throw new Error(`${table} tenant-scoped read failed: ${error.message}`);
+      }
+      return (data ?? null) as unknown as T | null;
     },
   };
 }

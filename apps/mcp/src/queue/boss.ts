@@ -177,6 +177,115 @@ export async function getJobForUser(
   return data;
 }
 
+/** The latest crawl the audits read: its stored CrawlResult and when the job was created. */
+export interface LatestCrawl {
+  readonly jobId: string;
+  readonly result: Json | null;
+  readonly createdAt: string;
+}
+
+/**
+ * Read the most recent SUCCEEDED crawl_site job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). This is the audit tools' input
+ * port: they consume the stored CrawlResult (jobs.result) of this job. The user_id
+ * filter is the tenant guard on the RLS-bypassing service client (constitution NEVER
+ * #4), so a project that is missing or belongs to another tenant both resolve to null
+ * (the audit then tells the caller to run crawl_site first — no cross-tenant leak).
+ * `jobs` is fully typed here, so the projection needs no cast.
+ */
+export async function getLatestSucceededCrawl(
+  client: ServiceClient,
+  projectId: string,
+  userId: string,
+): Promise<LatestCrawl | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "crawl_site")
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getLatestSucceededCrawl failed: ${error.message}`);
+  }
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
+/** The latest pull the discovery tools read: its stored PullData jsonb and when it ran. */
+export interface LatestPull {
+  readonly jobId: string;
+  readonly result: Json | null;
+  readonly createdAt: string;
+}
+
+/**
+ * Read the most recent SUCCEEDED pull_gsc_data job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). This is the discovery tools' input
+ * port — the sibling of getLatestSucceededCrawl for the GSC read path. The user_id filter
+ * is the tenant guard on the RLS-bypassing service client (constitution NEVER #4), so a
+ * project that is missing or belongs to another tenant both resolve to null (the tool then
+ * tells the caller to run pull_gsc_data first — no cross-tenant leak).
+ */
+export async function getLatestSucceededPull(
+  client: ServiceClient,
+  projectId: string,
+  userId: string,
+): Promise<LatestPull | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "pull_gsc_data")
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`getLatestSucceededPull failed: ${error.message}`);
+  }
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
+/**
+ * Record a completed pull_gsc_data run as a SUCCEEDED jobs row carrying the PullData in
+ * `result`. pull_gsc_data is a SYNC (surface-charged) tool, so this row is purely a data
+ * carrier: the credit reserve/commit lives on the ledger (keyed to a traceability uuid),
+ * and reserve_id is deliberately LEFT NULL here — there is no worker reserve on this path.
+ * Insert-then-complete mirrors the audit db-test seed shape (jobs.Insert has no result
+ * column, so the result lands via the succeeded update).
+ */
+export async function recordSucceededPull(
+  client: ServiceClient,
+  params: { userId: string; projectId: string; result: Json },
+): Promise<{ jobId: string }> {
+  const inserted = await client
+    .from("jobs")
+    .insert({
+      user_id: params.userId,
+      project_id: params.projectId,
+      tool: "pull_gsc_data",
+      status: "queued",
+    })
+    .select("id")
+    .single();
+  if (inserted.error || !inserted.data) {
+    throw new Error(`recordSucceededPull: jobs insert failed: ${inserted.error?.message ?? "no row"}`);
+  }
+  const jobId = inserted.data.id;
+  const { error } = await client
+    .from("jobs")
+    .update({ status: "succeeded", finished_at: new Date().toISOString(), result: params.result })
+    .eq("id", jobId);
+  if (error) {
+    throw new Error(`recordSucceededPull: jobs completion failed: ${error.message}`);
+  }
+  return { jobId };
+}
+
 async function updateJob(
   jobId: string,
   patch: JobUpdate,
@@ -197,9 +306,28 @@ export async function markJobRunning(jobId: string): Promise<void> {
   );
 }
 
-/** Record the credit reserve held by this run (crash forensics + settlement audits). */
+/**
+ * Record the credit reserve held by this run (crash forensics + settlement audits).
+ * ASSERTS the row exists: the update must touch exactly the one jobs row named by
+ * jobId. A 0-row update means the id names no row (a broken reserve trace), so this
+ * throws rather than silently succeeding — the credit guard turns that throw into a
+ * release. Only the async worker path (a real queued job) reaches here; sync surface
+ * tools never call this (they have no jobs row).
+ */
 export async function setJobReserve(jobId: string, reserveId: string): Promise<void> {
-  await updateJob(jobId, { reserve_id: reserveId }, "setJobReserve");
+  const { data, error } = await getServiceClient()
+    .from("jobs")
+    .update({ reserve_id: reserveId })
+    .eq("id", jobId)
+    .select("id");
+  if (error) {
+    throw new Error(`setJobReserve failed: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
+    throw new Error(
+      `setJobReserve: no jobs row ${jobId} to record reserve ${reserveId} (broken reserve trace)`,
+    );
+  }
 }
 
 /** Terminal success: status, finish stamp, and the tool result payload. */

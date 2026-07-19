@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -76,6 +76,70 @@ describe("defineTool", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/invalid input/i);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("advertises a .default() field as OPTIONAL, not required (io:'input')", () => {
+    // Regression pin: with the default JSON Schema view a defaulted field is emitted
+    // REQUIRED, so a client omitting it is wrongly rejected. The single io:"input"
+    // deriver models the pre-parse shape — max_urls here must be optional.
+    const tool = defineTool({
+      name: "crawl_site",
+      description: "d",
+      inputSchema: z.object({
+        project_id: z.uuid(),
+        max_urls: z.number().int().min(1).max(100).default(100),
+      }),
+      charge: "worker",
+      handler: async () => textResult("ok"),
+    });
+    const schema = tool.inputJsonSchema as { required?: string[]; properties: Record<string, unknown> };
+    expect(schema.required).toEqual(["project_id"]);
+    expect(Object.keys(schema.properties).sort()).toEqual(["max_urls", "project_id"]);
+  });
+});
+
+describe("defineTool charge modes", () => {
+  // Strip every SUPABASE var so ANY attempt to open a DB client (i.e. any reserve)
+  // throws loadEnv — a priced worker-mode tool that runs to completion proves the
+  // guard was NOT invoked (the reserve/commit is the worker's, keyed to jobs.id).
+  const ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
+  let saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>;
+  beforeEach(() => {
+    saved = {};
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("charge:'worker' runs a PRICED handler without the credit guard (no ledger touch)", async () => {
+    const tool = defineTool({
+      name: "crawl_site", // priced (20) — a surface charge here would need the DB and throw
+      description: "d",
+      inputSchema: z.object({}),
+      charge: "worker",
+      handler: async () => textResult("enqueued"),
+    });
+    const result = await tool.run(CTX, {});
+    expect(result).toEqual(textResult("enqueued"));
+  });
+
+  it("surface mode on a 0-credit tool skips the ledger entirely (default charge)", async () => {
+    const tool = defineTool({
+      name: "whats_next", // 0 credits — withCredits short-circuits before any DB client
+      description: "d",
+      inputSchema: z.object({}),
+      handler: async () => textResult("advice"),
+    });
+    const result = await tool.run(CTX, {});
+    expect(result).toEqual(textResult("advice"));
   });
 });
 

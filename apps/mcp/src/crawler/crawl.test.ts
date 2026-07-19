@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { computeIssues, crawlSite, normalizeUrl, parseHtml, type CrawlResult } from "./crawl.ts";
+import {
+  computeIssues,
+  crawlSite,
+  normalizeUrl,
+  parseHtml,
+  parseJsonLdTypes,
+  type CrawlResult,
+} from "./crawl.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 
 const BASE = "https://site.test/blog/post";
@@ -71,6 +78,52 @@ describe("parseHtml", () => {
     expect(bare.canonical).toBeNull();
     expect(bare.robotsMeta).toBeNull();
     expect(bare.h1s).toEqual([]);
+  });
+
+  it("collects JSON-LD @type names from the page (via parseHtml)", () => {
+    const withLd =
+      '<head><script type="application/ld+json">{"@type":"Article"}</script></head>';
+    expect(parseHtml(withLd, BASE).jsonLdTypes).toEqual(["Article"]);
+    // A page with no JSON-LD yields an empty array, never undefined.
+    expect(parseHtml("<html><body>x</body></html>", BASE).jsonLdTypes).toEqual([]);
+  });
+});
+
+describe("parseJsonLdTypes", () => {
+  it("extracts a single @type", () => {
+    expect(
+      parseJsonLdTypes('<script type="application/ld+json">{"@type":"Product"}</script>'),
+    ).toEqual(["Product"]);
+  });
+
+  it("walks @graph and nested nodes, deduping in first-seen order", () => {
+    const html =
+      '<script type="application/ld+json">' +
+      '{"@context":"https://schema.org","@graph":[' +
+      '{"@type":"Organization","name":"x"},' +
+      '{"@type":"WebSite","publisher":{"@type":"Organization"}}]}' +
+      "</script>";
+    // Organization appears twice (top-level + nested publisher) but is kept once.
+    expect(parseJsonLdTypes(html)).toEqual(["Organization", "WebSite"]);
+  });
+
+  it("supports an array-valued @type", () => {
+    expect(
+      parseJsonLdTypes('<script type="application/ld+json">{"@type":["Article","BlogPosting"]}</script>'),
+    ).toEqual(["Article", "BlogPosting"]);
+  });
+
+  it("collects across multiple blocks and SKIPS a malformed one (never throws)", () => {
+    const html =
+      '<script type="application/ld+json">{"@type":"Article"}</script>' +
+      '<script type="application/ld+json">{ not valid json }</script>' +
+      '<script type="application/ld+json">{"@type":"FAQPage"}</script>';
+    expect(parseJsonLdTypes(html)).toEqual(["Article", "FAQPage"]);
+  });
+
+  it("ignores non-JSON-LD scripts and returns [] when there is no structured data", () => {
+    expect(parseJsonLdTypes('<script>var t = {"@type":"Nope"};</script><p>hi</p>')).toEqual([]);
+    expect(parseJsonLdTypes("<html><body>plain</body></html>")).toEqual([]);
   });
 });
 
@@ -150,6 +203,22 @@ describe("crawlSite — full crawl (sitemap seeds + robots)", () => {
     expect(site.requested).toContain("/redirect");
     expect(result.pages.some((p) => p.url === at("/redirect"))).toBe(false);
     expect(result.pages.filter((p) => p.url === at("/about"))).toHaveLength(1);
+  });
+
+  it("records a redirect onto an already-crawled URL as skipped (audit accounting)", () => {
+    // /redirect -> /about, and /about is a sitemap seed crawled first, so /redirect
+    // resolves onto an already-visited page. It must be accounted for in skipped, not
+    // silently dropped (T6 finding h; audit_tech coverage consumes this).
+    const rec = result.skipped.find((s) => s.url === at("/redirect"));
+    expect(rec?.reason).toBe("redirects to already-crawled URL");
+  });
+
+  it("extracts JSON-LD @type names per page ([] when a page has none)", () => {
+    // Home carries an @graph of Organization + WebSite; blog one Article (plus a
+    // malformed block that is skipped); about has no structured data.
+    expect(pageAt("/")?.jsonLdTypes).toEqual(["Organization", "WebSite"]);
+    expect(pageAt("/blog")?.jsonLdTypes).toEqual(["Article"]);
+    expect(pageAt("/about")?.jsonLdTypes).toEqual([]);
   });
 
   it("skips non-HTML resources", () => {
