@@ -4,11 +4,12 @@ import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
  * setup_project — register (or return) a tracked domain for the tenant. 0 credits.
- * Idempotent by (user_id, domain): a second call for the same site returns the
- * existing project rather than creating a duplicate (migration 0001 has no unique
- * on (user_id, domain) yet, so idempotency is enforced by a tenant-scoped read
- * first; the residual race of two truly-simultaneous first calls is an accepted v0
- * limitation for personal-key usage).
+ * Idempotent by (user_id, domain): a second call for the same site returns the existing
+ * project rather than creating a duplicate. A tenant-scoped read-first serves the common
+ * repeat call, and the residual race of two truly-simultaneous first calls is closed at the
+ * DB level — the (user_id, domain) unique constraint (migration 0010) plus an ON CONFLICT
+ * DO NOTHING upsert: the loser's insert is a no-op and it reads back the winner's row, so two
+ * concurrent first calls still produce ONE row with consistent created: true/false flags.
  */
 
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -64,31 +65,60 @@ export const setupProjectTool = defineTool({
     }
     const client = getServiceClient();
 
-    const existing = await client
-      .from("projects")
-      .select("id")
-      .eq("user_id", ctx.userId)
-      .eq("domain", normalized.domain)
-      .maybeSingle();
-    if (existing.error) {
-      throw new Error(`projects lookup failed: ${existing.error.message}`);
+    const existing = await readProject(client, ctx.userId, normalized.domain);
+    if (existing) {
+      return alreadyExists(normalized.domain, existing);
     }
-    if (existing.data) {
+
+    // Race-safe insert: ON CONFLICT (user_id, domain) DO NOTHING (ignoreDuplicates). A row is
+    // returned ONLY when THIS call inserted it (created: true); an empty result means a
+    // concurrent first call won the row between our read and this write, so we read it back
+    // and report created: false — one row, consistent flags, no unique-violation surfaced.
+    const upserted = await client
+      .from("projects")
+      .upsert({ user_id: ctx.userId, domain: normalized.domain }, {
+        onConflict: "user_id,domain",
+        ignoreDuplicates: true,
+      })
+      .select("id");
+    if (upserted.error) {
+      throw new Error(`projects upsert failed: ${upserted.error.message}`);
+    }
+    const insertedId = upserted.data?.[0]?.id;
+    if (insertedId) {
       return textResult(
-        `Project already exists for "${normalized.domain}" (project_id: ${existing.data.id}, created: false).`,
+        `Created project for "${normalized.domain}" (project_id: ${insertedId}, created: true).`,
       );
     }
 
-    const inserted = await client
-      .from("projects")
-      .insert({ user_id: ctx.userId, domain: normalized.domain })
-      .select("id")
-      .single();
-    if (inserted.error || !inserted.data) {
-      throw new Error(`projects insert failed: ${inserted.error?.message ?? "no row returned"}`);
+    const winner = await readProject(client, ctx.userId, normalized.domain);
+    if (!winner) {
+      throw new Error("projects upsert reported a conflict but no existing row was found");
     }
-    return textResult(
-      `Created project for "${normalized.domain}" (project_id: ${inserted.data.id}, created: true).`,
-    );
+    return alreadyExists(normalized.domain, winner);
   },
 });
+
+/** Tenant-scoped read of a project id by (user_id, domain); null when absent. */
+async function readProject(
+  client: ReturnType<typeof getServiceClient>,
+  userId: string,
+  domain: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await client
+    .from("projects")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("domain", domain)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`projects lookup failed: ${error.message}`);
+  }
+  return data;
+}
+
+function alreadyExists(domain: string, row: { id: string }) {
+  return textResult(
+    `Project already exists for "${domain}" (project_id: ${row.id}, created: false).`,
+  );
+}

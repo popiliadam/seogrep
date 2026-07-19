@@ -96,8 +96,8 @@ export type Database = {
         };
         Relationships: [];
       };
-      // A tracked domain owned by a user (migration 0001). No DB unique on
-      // (user_id, domain) yet, so setup_project enforces idempotency by reading first.
+      // A tracked domain owned by a user (migration 0001). A (user_id, domain) unique
+      // constraint (migration 0010) backs setup_project's race-safe ON CONFLICT upsert.
       projects: {
         Row: {
           id: string;
