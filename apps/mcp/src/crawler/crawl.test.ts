@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { computeIssues, normalizeUrl, parseHtml } from "./crawl.ts";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { computeIssues, crawlSite, normalizeUrl, parseHtml, type CrawlResult } from "./crawl.ts";
+import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 
 const BASE = "https://site.test/blog/post";
 
@@ -100,5 +101,126 @@ describe("computeIssues", () => {
     expect(
       computeIssues({ title: "T", metaDescription: "D", h1s: ["only one"], robotsMeta: "index" }),
     ).toEqual([]);
+  });
+});
+
+// --- Integration: crawlSite against a local node:http fixture site --------------
+// The fixture binds to 127.0.0.1 on an ephemeral port; every request is loopback,
+// so these specs make ZERO external network calls. crawlDelayCapMs:0 keeps them fast.
+
+describe("crawlSite — full crawl (sitemap seeds + robots)", () => {
+  let site: FixtureSite;
+  let result: CrawlResult;
+  const at = (path: string): string => normalizeUrl(site.origin + path);
+  const pageAt = (path: string) => result.pages.find((p) => p.url === at(path));
+
+  beforeAll(async () => {
+    site = await startFixtureSite();
+    result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+  });
+  afterAll(() => site.close());
+
+  it("crawls linked pages and sitemap-only orphans, with an ISO fetchedAt", () => {
+    expect(new Date(result.fetchedAt).toISOString()).toBe(result.fetchedAt);
+    const urls = result.pages.map((p) => p.url);
+    expect(urls).toEqual(expect.arrayContaining([at("/"), at("/about"), at("/blog"), at("/noindex")]));
+    expect(urls).toContain(at("/orphan")); // reachable only through the sitemap
+  });
+
+  it("records status and parsed fields on a page", () => {
+    const home = pageAt("/");
+    expect(home?.status).toBe(200);
+    expect(home?.title).toBe("SeoGrep Fixture — Home");
+    expect(home?.canonical).toBe(at("/"));
+    expect(home?.wordCount).toBeGreaterThan(0);
+  });
+
+  it("respects robots.txt: /private is skipped and never fetched", () => {
+    expect(result.pages.some((p) => p.url === at("/private"))).toBe(false);
+    expect(site.requested).not.toContain("/private");
+    expect(result.skipped.find((s) => s.url === at("/private"))?.reason).toMatch(/robots/i);
+  });
+
+  it("never follows off-origin links", () => {
+    const seen = [...result.pages.map((p) => p.url), ...result.skipped.map((s) => s.url)];
+    expect(seen.some((u) => u.includes("external.invalid"))).toBe(false);
+  });
+
+  it("follows redirects to the final URL and dedupes it", () => {
+    expect(site.requested).toContain("/redirect");
+    expect(result.pages.some((p) => p.url === at("/redirect"))).toBe(false);
+    expect(result.pages.filter((p) => p.url === at("/about"))).toHaveLength(1);
+  });
+
+  it("skips non-HTML resources", () => {
+    expect(result.skipped.find((s) => s.url === at("/image.png"))?.reason).toMatch(/html/i);
+  });
+
+  it("computes shallow page issues", () => {
+    expect(pageAt("/blog")?.issues).toEqual(["missing meta description", "multiple h1"]);
+    expect(pageAt("/noindex")?.issues).toEqual(["noindex"]);
+    expect(pageAt("/")?.issues).toEqual([]);
+  });
+});
+
+describe("crawlSite — limits and edge behavior", () => {
+  it("falls back to link-following BFS when there is no sitemap (no orphan)", async () => {
+    const site = await startFixtureSite({ sitemap: false });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls).toContain(normalizeUrl(site.origin + "/about"));
+      expect(urls).not.toContain(normalizeUrl(site.origin + "/orphan"));
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("enforces maxUrls and records the remainder as skipped", async () => {
+    const site = await startFixtureSite({ sitemap: false });
+    try {
+      const result = await crawlSite(site.origin, { maxUrls: 2, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(2);
+      expect(result.skipped.some((s) => /max url/i.test(s.reason))).toBe(true);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("skips a page that exceeds the per-page timeout", async () => {
+    const site = await startFixtureSite({ sitemap: false, slowMs: 1000 });
+    try {
+      const result = await crawlSite(site.origin + "/slow", { pageTimeoutMs: 150, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped.find((s) => s.url === normalizeUrl(site.origin + "/slow"))?.reason).toMatch(
+        /timeout/i,
+      );
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("drains the queue to skipped when the time budget is exhausted", async () => {
+    const site = await startFixtureSite();
+    try {
+      const result = await crawlSite(site.origin, { timeBudgetMs: 0, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped.length).toBeGreaterThan(0);
+      expect(result.skipped.every((s) => /time budget/i.test(s.reason))).toBe(true);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("gives up on a redirect loop past the hop limit", async () => {
+    const site = await startFixtureSite({ sitemap: false });
+    try {
+      const result = await crawlSite(site.origin + "/redirect-loop", { crawlDelayCapMs: 0 });
+      expect(result.skipped.find((s) => s.url === normalizeUrl(site.origin + "/redirect-loop"))?.reason).toMatch(
+        /redirect/i,
+      );
+    } finally {
+      await site.close();
+    }
   });
 });
