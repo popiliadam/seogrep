@@ -12,3 +12,5 @@ coverage/
 .lighthouseci/
 **/supabase/.temp/
 **/supabase/.branches/
+# DataForSEO daily dev-budget ledger (guardrails/dfs-budget.sh) — local spend, never committed.
+guardrails/.dfs-spend/

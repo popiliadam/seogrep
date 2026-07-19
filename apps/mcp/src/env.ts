@@ -32,6 +32,18 @@ const envSchema = z.object({
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
   // Public base URL of the web app — connect_gsc builds its link-out against this.
   WEB_BASE_URL: z.string().optional(),
+  // --- DataForSEO (keyword research) ------------------------------------------------
+  // OPTIONAL so the gateway boots without them: the LIVE DataForSEO path is OFF by
+  // default, so research_keywords returns a clear "not enabled" error (charging nothing)
+  // until it is switched on. Names are the REAL prod names (already in .env.example).
+  // Fail-closed reads live at the point of use (requireDataForSeoCredentials) — signed
+  // lesson #5: env-reading code is negative-tested with the real prod names, because a
+  // local gate's own export names can mask the prod contract.
+  DATAFORSEO_LOGIN: z.string().optional(),
+  DATAFORSEO_PASSWORD: z.string().optional(),
+  // Live-mode switch — the paid DataForSEO HTTP path runs ONLY when this is exactly "1"
+  // (AND both credentials are present). Unset / anything else keeps live OFF.
+  DFS_LIVE: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -78,4 +90,33 @@ export function requireTokenEncryptionKey(source: NodeJS.ProcessEnv = process.en
     throw new Error("TOKEN_ENCRYPTION_KEY is not configured (required to open the GSC refresh token)");
   }
   return raw;
+}
+
+/**
+ * True ONLY when the paid DataForSEO live path is explicitly switched on (DFS_LIVE === "1").
+ * A deliberate exact-match on "1" (not a truthy coercion) so a stray "true" / "0" / "" can
+ * never accidentally enable paid calls. Credentials are checked separately, at the point of
+ * use, by requireDataForSeoCredentials.
+ */
+export function isDfsLiveEnabled(source: NodeJS.ProcessEnv = process.env): boolean {
+  return source.DFS_LIVE === "1";
+}
+
+/**
+ * Resolve the DataForSEO Basic-auth credentials, failing closed (naming BOTH variables)
+ * when either is missing or blank. The live keyword path needs them; a missing secret must
+ * surface loudly here rather than produce a silent 401 downstream (signed lesson #5 — this
+ * read is negative-tested against the REAL prod names DATAFORSEO_LOGIN / DATAFORSEO_PASSWORD).
+ */
+export function requireDataForSeoCredentials(
+  source: NodeJS.ProcessEnv = process.env,
+): { login: string; password: string } {
+  const login = source.DATAFORSEO_LOGIN?.trim();
+  const password = source.DATAFORSEO_PASSWORD?.trim();
+  if (!login || !password) {
+    throw new Error(
+      "DataForSEO credentials are not configured: DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD are both required for live keyword research",
+    );
+  }
+  return { login, password };
 }

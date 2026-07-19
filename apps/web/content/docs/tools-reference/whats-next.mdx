@@ -1,0 +1,49 @@
+---
+title: whats_next
+description: Not sure what to do next? Get the single best next step for a project, with a reason and what follows.
+---
+
+`whats_next` is the guide for non-experts. It looks at where a project stands — whether it has
+been crawled, whether Google Search Console is connected, whether you have pulled performance
+data — and tells you the **single best next step**, a short reason, and the two or three steps
+that come after. Checking is free (**0 credits**).
+
+## What it does
+
+It reads the project's current state through the same tenant-scoped data the tools use (your
+latest [`crawl_site`](/docs/tools-reference/crawl-site) and
+[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, plus your Search Console connection)
+and walks a simple ladder:
+
+- **No project yet** → run [`setup_project`](/docs/tools-reference/setup-project).
+- **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without Search Console).
+- **Crawl ready** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage),
+  [`audit_tech`](/docs/tools-reference/audit-tech), [`audit_schema`](/docs/tools-reference/audit-schema).
+  Connecting Search Console with [`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional**
+  and never a barrier.
+- **Search Console connected, no data pulled** → run [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
+- **Data pulled** → run the discovery tools:
+  [`find_quick_wins`](/docs/tools-reference/find-quick-wins),
+  [`detect_cannibalization`](/docs/tools-reference/detect-cannibalization),
+  [`analyze_content_decay`](/docs/tools-reference/analyze-content-decay).
+- **Everything fresh** → you're all set: [`generate_report`](/docs/tools-reference/generate-report)
+  for a shareable summary, and the `monthly-routine` prompt to keep it up to date.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> What should I do next with my example.com project?
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (uuid, optional) | The project to route from (from `setup_project` / `list_projects`). Omit it to route from your project list — with one project it is picked automatically; with several you'll be asked to choose. |
+
+### Returns
+
+One clear next step for the project, a short reason, and the next two or three steps — all in
+plain language, naming the exact tools to run.
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.

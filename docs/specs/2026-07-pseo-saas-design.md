@@ -370,6 +370,7 @@ insana onaya sun. Onaysız hiçbirini CLAUDE.md'ye yazma.
 | D26 | apps/mcp hosting: **Fly.io, Tokyo (nrt)** — Supabase Tokyo co-location (sorgu ~2-5ms; Railway'de Tokyo yok); deploy = merge sonrası GitHub Action (`FLY_API_TOKEN`); fiyat-performans gerekçesiyle insan onaylı | 07-19 |
 | D27 | Job kuyruğu: **pg-boss** (Supabase Postgres içinde, SKIP LOCKED) — beta'da Redis/BullMQ yok (+1 hesap/maliyet/arıza modu); hacim on binlerce job/güne çıkarsa BullMQ değerlendirilir; insan onaylı | 07-19 |
 | D28 | Kişisel MCP URL şekli env şablonundan: `MCP_URL_TEMPLATE`, default `https://mcp.seogrep.com/mcp/{key}` (Faz 2 karar adayının onayı) | 07-19 |
+| D29 | Public rapor sayfaları (`/r/[slug]`) **beta'da NOINDEX** — plan T12'nin "indexlenebilir" direktifinin bilinçli tersi (insan kararı: kullanıcı raporlarının kendi domain'de indexlenmesi thin-content riski; "powered by" linki ziyaretçi için çalışmaya devam eder). Faz 4 SEO stratejisinde yeniden değerlendirilir. | 07-20 |
 
 **Marka aday havuzu (Faz 0'da müsaitlik kontrolüyle shortlist'e iner):** Rankforge · Serpline · Platina · Rankpilot · Seolith · Crawline (+ Faz 0'da üretilecek yeni adaylar).
 

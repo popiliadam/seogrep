@@ -1,0 +1,48 @@
+---
+title: generate_report
+description: Turn your latest crawl and Search Console data into a shareable HTML report with a public link.
+---
+
+`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site)
+and [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) results into a single, self-contained
+**HTML report** and returns a **public link** you can share with clients or teammates. Costs
+**15 credits**. Run `crawl_site` and/or `pull_gsc_data` first.
+
+## What it does
+
+It reads the most recent successful crawl and Search Console pull for the project (whichever
+exist) and renders a light, readable summary:
+
+- **Site crawl** — pages crawled, pages skipped, and basic on-page issues (missing titles, meta
+  descriptions, or H1s, and error responses).
+- **Search performance** — the current window's total clicks and impressions, plus your top
+  queries and top pages.
+
+The report is deliberately a **summary**, not a re-run of the analysis engines — it points you
+back to `audit_onpage`, `audit_tech`, `audit_schema`, `find_quick_wins`,
+`detect_cannibalization`, and `analyze_content_decay` for the deep breakdowns. Every report
+carries a small "powered by SeoGrep" footer.
+
+If the project has **neither** a crawl nor a Search Console pull yet, the tool tells you to run
+`crawl_site` or `pull_gsc_data` first — and you are **not** charged.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Generate a shareable SEO report for my example.com project.
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (uuid) | The project to report on (from `setup_project` / `list_projects`). |
+| `title` | string (optional, ≤120 chars) | Report title. Defaults to `SEO Report — <domain> — <date>`. |
+
+### Returns
+
+The report's title, its `report_id`, and a **public URL** (`/r/<slug>`) that anyone with the
+link can open — no sign-in required. The link uses an unguessable 64-bit slug, and you can see
+all your reports on the **Reports** page of your dashboard.
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.

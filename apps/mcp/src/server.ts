@@ -11,6 +11,7 @@ import {
 } from "./auth.ts";
 import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
+import { registerPrompts } from "./prompts.ts";
 
 /** Advertised MCP server identity. */
 const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
@@ -106,14 +107,16 @@ function keyOrReject(req: Request, res: Response): string | null {
 
 /**
  * A stateless MCP server for one request: it advertises `tools` (tools/list) and
- * dispatches them under the credit guard (tools/call), both scoped to `ctx`. The
+ * dispatches them under the credit guard (tools/call), both scoped to `ctx`, plus the
+ * static orchestration `prompts` (prompts/list + prompts/get, tenant-independent). The
  * low-level Server is used (not McpServer) so an empty `tools` yields tools/list []
  * — the shape the DB-free gateway tests inject. registerAll derives the tools/list
- * JSON Schema from each tool's zod schema.
+ * JSON Schema from each tool's zod schema; registerPrompts wires the prompts surface.
  */
 function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Server {
-  const server = new Server(SERVER_INFO, { capabilities: { tools: {} } });
+  const server = new Server(SERVER_INFO, { capabilities: { tools: {}, prompts: {} } });
   registerAll(server, { ctx, tools });
+  registerPrompts(server);
   return server;
 }
 
