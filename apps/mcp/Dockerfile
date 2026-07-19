@@ -12,9 +12,8 @@ RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 # 1. Prune the monorepo down to @pseo/mcp (and its workspace deps — currently none).
 FROM base AS pruner
 WORKDIR /app
-RUN pnpm add -g turbo@2.10.4
 COPY . .
-RUN turbo prune @pseo/mcp --docker
+RUN pnpm dlx turbo@2.10.4 prune @pseo/mcp --docker
 
 # 2. Install dependencies and compile TypeScript to dist/.
 FROM base AS builder
