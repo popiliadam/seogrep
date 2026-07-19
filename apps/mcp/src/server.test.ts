@@ -125,6 +125,51 @@ describe("mcp gateway app", () => {
   });
 });
 
+describe("mcp gateway prompts", () => {
+  // Prompts are STATIC (no tenant/DB), so they are advertised even when no tools are injected —
+  // the same DB-free app the other gateway specs use. This is the inspector-equivalent proof that
+  // prompts/list returns the three orchestration prompts and prompts/get renders one.
+  it("POST prompts/list returns the three orchestration prompts in order", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "prompts/list",
+        params: {},
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result.prompts.map((prompt: { name: string }) => prompt.name)).toEqual([
+        "new-site-audit",
+        "monthly-routine",
+        "quick-wins-sprint",
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST prompts/get renders a prompt with its argument interpolated", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "prompts/get",
+        params: { name: "monthly-routine", arguments: { project_id: "proj-xyz" } },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result.messages[0].role).toBe("user");
+      expect(body.result.messages[0].content.text).toContain("proj-xyz");
+      expect(body.result.messages[0].content.text).toContain("pull_gsc_data");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe("mcp gateway auth failure handling", () => {
   it("returns 500 JSON-RPC error when authenticate rejects, keeps serving, never logs the key", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
