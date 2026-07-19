@@ -7,6 +7,10 @@
     "get-credit-balance",
     "crawl-site",
     "get-job-status",
+    "pull-gsc-data",
+    "find-quick-wins",
+    "detect-cannibalization",
+    "analyze-content-decay",
     "audit-onpage",
     "audit-tech",
     "audit-schema"

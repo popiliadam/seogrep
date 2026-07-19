@@ -1,0 +1,54 @@
+---
+title: pull_gsc_data
+description: Pull two windows of Google Search Console performance so the discovery tools can analyze it.
+---
+
+`pull_gsc_data` fetches your project's Google Search Console performance for **two adjacent
+windows** — the most recent `days`-day period and the `days`-day period right before it —
+and stores them so the discovery tools ([`find_quick_wins`](/docs/tools-reference/find-quick-wins),
+[`detect_cannibalization`](/docs/tools-reference/detect-cannibalization),
+[`analyze_content_decay`](/docs/tools-reference/analyze-content-decay)) can read them without
+calling Google again. Costs **5 credits**. [Connect Search Console](/docs/tools-reference/connect-gsc)
+first.
+
+## What it does
+
+Using your project's encrypted refresh token, it mints a short-lived Google access token and
+runs `searchAnalytics.query` for both windows, broken down by **query and page**. The two
+windows are equal length and adjacent, so the discovery tools can compare "now" against
+"before". The result is stored against your project; the discovery tools read the most recent
+pull.
+
+Only a completed pull is charged: if the project has no Search Console connection, no stored
+token, or no matched property — or if the Google call fails — you are **not** charged.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Pull the last 90 days of Search Console data for my example.com project.
+
+Then run a discovery tool over it:
+
+> Find quick wins for example.com.
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (uuid) | The connected project to pull (from `setup_project` / `list_projects`). |
+| `days` | integer | Optional. Window length in days per period, `7`–`90` (default `90`). The tool compares this window with the one immediately before it. |
+
+### Returns
+
+A summary of the pull: the two window date ranges, how many `(query, page)` rows each holds,
+and a `job_id` for the stored result. Feed the project into a discovery tool next.
+
+### Limitations (v0)
+
+- Search Console finalizes data with a ~2–3 day delay, so the most recent day or two of the
+  current window can be partial.
+- A single page of up to 5,000 `(query, page)` rows is fetched per window; a very large
+  property is truncated to the top rows Google returns.
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.

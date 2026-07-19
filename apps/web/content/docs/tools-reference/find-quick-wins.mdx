@@ -1,0 +1,36 @@
+---
+title: find_quick_wins
+description: Surface the "almost there" queries — ranking just off page one with real demand.
+---
+
+`find_quick_wins` reads your latest [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data)
+and surfaces the **quick wins**: `(query, page)` pairs that already rank just off the top of
+page one and already draw impressions, where a small on-page push can convert that demand into
+clicks. Costs **10 credits**. Run `pull_gsc_data` first.
+
+## What it does
+
+From the pull's current window, it selects queries where your page ranks in **positions 8–20**
+with **at least 20 impressions**, then prioritizes them by impressions (biggest opportunity
+first). Already-winning queries (position under 8) and near-zero-demand long-tail queries are
+left out, so the list stays a focused shortlist rather than a dump.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> What are the quick wins for my example.com project?
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (uuid) | The project to analyze (must have run `pull_gsc_data` first). |
+
+### Returns
+
+A prioritized list of quick-win opportunities — each with its query, page, average position,
+impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so
+(and you are still charged for the delivered analysis).
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.

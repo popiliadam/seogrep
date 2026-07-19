@@ -1,0 +1,37 @@
+---
+title: detect_cannibalization
+description: Find queries where two or more of your pages compete for the same search.
+---
+
+`detect_cannibalization` reads your latest [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data)
+and finds **keyword cannibalization**: queries where two or more of your own pages each pull a
+meaningful share of the impressions, splitting the ranking signal. Consolidating or clearly
+differentiating those pages usually lifts the query. Costs **10 credits**. Run `pull_gsc_data`
+first.
+
+## What it does
+
+From the pull's current window, it groups rows by query and flags a query when **two or more of
+its pages** each clear both floors: at least **10 impressions** and at least a **10% share** of
+that query's impressions. A dominant page plus a negligible straggler is not flagged — only
+genuine competition. Groups are ordered by total impressions, biggest query first.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Do I have any keyword cannibalization on example.com?
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `project_id` | string (uuid) | The project to analyze (must have run `pull_gsc_data` first). |
+
+### Returns
+
+A list of cannibalized queries, each with its competing pages and their impressions, clicks, and
+average position (main contender first). If no query is contested, it says so (and you are still
+charged for the delivered analysis).
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
