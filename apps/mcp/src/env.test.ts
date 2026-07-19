@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEnv } from "./env.js";
+import { loadEnv } from "./env.ts";
 
 /**
  * A complete environment using the REAL production variable names. The

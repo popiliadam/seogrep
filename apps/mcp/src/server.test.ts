@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
-import { createApp, hasValidKeyFormat } from "./server.js";
+import { createApp, hasValidKeyFormat } from "./server.ts";
 
 const VALID_KEY = "sg_testkey1234";
 

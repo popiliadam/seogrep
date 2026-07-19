@@ -1,8 +1,8 @@
 import { argv } from "node:process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv } from "./env.js";
-import { createApp } from "./server.js";
+import { loadEnv } from "./env.ts";
+import { createApp } from "./server.ts";
 
 export type Mode = "web" | "worker";
 

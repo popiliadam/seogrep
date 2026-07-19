@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMode } from "./index.js";
+import { resolveMode } from "./index.ts";
 
 describe("resolveMode", () => {
   it("defaults to web when MODE is unset", () => {
