@@ -146,3 +146,73 @@ describe("gsc_connections encrypted-at-rest storage", () => {
     expect(rows.data![0]!.gsc_property).toBe("sc-domain:upsert.example.com");
   });
 });
+
+describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", () => {
+  it("rejects a second plain insert for the same (user, project) with a unique violation", async () => {
+    const userId = await makeUser();
+    const projectId = await makeProject(userId, "uniq.example.com");
+
+    const first = await service.from("gsc_connections").insert({
+      user_id: userId,
+      project_id: projectId,
+      encrypted_refresh_token: toByteaHex(encryptToken(`1//a-${randomUUID()}`, KEY)),
+      gsc_property: null,
+    });
+    expect(first.error).toBeNull();
+
+    // A raw (non-upsert) second insert — the pre-0010 race would have opened a duplicate — now
+    // hits the constraint. Postgres unique_violation is SQLSTATE 23505.
+    const second = await service.from("gsc_connections").insert({
+      user_id: userId,
+      project_id: projectId,
+      encrypted_refresh_token: toByteaHex(encryptToken(`1//b-${randomUUID()}`, KEY)),
+      gsc_property: null,
+    });
+    expect(second.error?.code).toBe("23505");
+
+    const rows = await service
+      .from("gsc_connections")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("project_id", projectId);
+    expect(rows.data).toHaveLength(1);
+  });
+
+  it("ON CONFLICT (user_id, project_id) upsert merges the newer token into the single row", async () => {
+    const userId = await makeUser();
+    const projectId = await makeProject(userId, "merge.example.com");
+
+    const t1 = `1//first-${randomUUID()}`;
+    await service.from("gsc_connections").insert({
+      user_id: userId,
+      project_id: projectId,
+      encrypted_refresh_token: toByteaHex(encryptToken(t1, KEY)),
+      gsc_property: null,
+    });
+
+    // The write path's conflict-bound upsert (re-connect / concurrent-loser path): no error,
+    // no second row — the newer token + property win.
+    const t2 = `1//second-${randomUUID()}`;
+    const merged = await service.from("gsc_connections").upsert(
+      {
+        user_id: userId,
+        project_id: projectId,
+        encrypted_refresh_token: toByteaHex(encryptToken(t2, KEY)),
+        gsc_property: "sc-domain:merge.example.com",
+      },
+      { onConflict: "user_id,project_id" },
+    );
+    expect(merged.error).toBeNull();
+
+    const rows = await service
+      .from("gsc_connections")
+      .select("encrypted_refresh_token, gsc_property")
+      .eq("user_id", userId)
+      .eq("project_id", projectId);
+    expect(rows.data).toHaveLength(1);
+    expect(decryptToken(fromByteaHex(rows.data![0]!.encrypted_refresh_token as string), KEY)).toBe(
+      t2,
+    );
+    expect(rows.data![0]!.gsc_property).toBe("sc-domain:merge.example.com");
+  });
+});
