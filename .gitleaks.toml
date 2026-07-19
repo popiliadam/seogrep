@@ -1,0 +1,23 @@
+# gitleaks configuration for SeoGrep.
+#
+# Extends the full default ruleset (nothing is weakened for product/source code)
+# and allowlists ONLY test files. Test fixtures use deterministic FAKE secrets by
+# design — e.g. the 64-hex AES test key "0f1e2d3c...e1f0" whose own comment reads
+# "Unmistakably a test value, never a real key" — and GSC OAuth/state/crypto test
+# vectors. Real credentials live exclusively in environment variables (Netlify /
+# Fly secrets), never in the repository, so scanning test files only produces
+# false positives. Product and library code remain fully scanned.
+#
+# This file is read by both the local `no-secrets` goal (`gitleaks detect`) and
+# CI's gitleaks-action, keeping the two in parity.
+
+title = "SeoGrep gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test files carry deterministic fake fixtures, never real secrets (real secrets live only in env)."
+paths = [
+  '''.*\.test\.tsx?$''',
+]
