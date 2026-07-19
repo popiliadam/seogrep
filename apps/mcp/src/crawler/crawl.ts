@@ -11,7 +11,8 @@
  * headings, and anchor extraction — the signals a first-pass on-page audit needs.
  */
 
-import { decodeEntities } from "./sitemap.ts";
+import { parseRobots, type RobotsRules } from "./robots.ts";
+import { decodeEntities, parseSitemap } from "./sitemap.ts";
 
 export interface PageRecord {
   readonly url: string;
@@ -175,4 +176,269 @@ export function computeIssues(
   if (page.h1s.length > 1) issues.push("multiple h1");
   if (page.robotsMeta && /\bnoindex\b/i.test(page.robotsMeta)) issues.push("noindex");
   return issues;
+}
+
+// --- Crawl orchestration --------------------------------------------------------
+
+/** Sent on every request so operators can identify (and rate-limit) the crawler. */
+export const USER_AGENT = "SeoGrepBot/1.0 (+https://seogrep.com/docs)";
+
+const DEFAULT_MAX_URLS = 100;
+const DEFAULT_PAGE_TIMEOUT_MS = 10_000;
+const DEFAULT_TIME_BUDGET_MS = 90_000;
+const DEFAULT_CRAWL_DELAY_CAP_MS = 1_000;
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function sameOrigin(a: URL, b: URL): boolean {
+  return a.protocol === b.protocol && a.host === b.host;
+}
+
+function isHtml(contentType: string): boolean {
+  const type = contentType.toLowerCase();
+  return type.includes("text/html") || type.includes("application/xhtml+xml");
+}
+
+interface FetchOk {
+  readonly kind: "ok";
+  readonly status: number;
+  readonly finalUrl: string;
+  readonly contentType: string;
+  readonly body: string;
+}
+type FetchOutcome =
+  | FetchOk
+  | { readonly kind: "timeout" }
+  | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "too-many-redirects" }
+  | { readonly kind: "off-origin-redirect"; readonly target: string };
+
+/**
+ * Fetch one page, following up to MAX_REDIRECTS same-origin redirects manually so
+ * the whole chain shares a single timeout and off-origin hops can be rejected. Only
+ * text/html bodies are read; other content types return with an empty body for the
+ * caller to skip. AbortController bounds the entire chain to `timeoutMs`.
+ */
+async function fetchPage(
+  url: string,
+  origin: URL,
+  timeoutMs: number,
+): Promise<FetchOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const res = await fetch(current, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml" },
+      });
+      const contentType = res.headers.get("content-type") ?? "";
+      if (REDIRECT_STATUS.has(res.status)) {
+        const location = res.headers.get("location");
+        await res.body?.cancel();
+        if (!location) return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return { kind: "error", message: "invalid redirect location" };
+        }
+        if (!sameOrigin(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
+        current = next.toString();
+        continue;
+      }
+      if (!isHtml(contentType)) {
+        await res.body?.cancel();
+        return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
+      }
+      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: await res.text() };
+    }
+    return { kind: "too-many-redirects" };
+  } catch (error) {
+    if (controller.signal.aborted) return { kind: "timeout" };
+    return { kind: "error", message: error instanceof Error ? error.message : String(error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** GET a text resource (robots/sitemap), following redirects; null on any failure. */
+async function fetchText(url: string, timeoutMs: number): Promise<{ status: number; body: string } | null> {
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "user-agent": USER_AGENT },
+    });
+    return { status: res.status, body: await res.text() };
+  } catch {
+    return null;
+  }
+}
+
+/** Load and parse /robots.txt; a missing/non-200 file yields an allow-all ruleset. */
+async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsRules> {
+  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs);
+  return parseRobots(res && res.status === 200 ? res.body : "");
+}
+
+/** Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. */
+async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): Promise<string[]> {
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  const add = (raw: string): void => {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      return;
+    }
+    if (!sameOrigin(u, origin)) return;
+    const norm = normalizeUrl(u.toString());
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      seeds.push(norm);
+    }
+  };
+
+  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs);
+  if (!root || root.status !== 200) return seeds;
+  const parsed = parseSitemap(root.body);
+  parsed.urls.forEach(add);
+  for (const child of parsed.sitemaps.slice(0, 5)) {
+    if (seeds.length >= limit) break;
+    const res = await fetchText(child, timeoutMs);
+    if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
+  }
+  return seeds.slice(0, limit);
+}
+
+/**
+ * Crawl a site starting from `origin`, robots-respectfully and bounded by maxUrls
+ * and a wall-clock budget. Seeds come from /sitemap.xml when present, otherwise from
+ * same-origin link-following (BFS). Produces the PageRecords audits (T8) consume; it
+ * touches no DB/queue/credits and follows only same-origin http(s) links.
+ */
+export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promise<CrawlResult> {
+  const started = Date.now();
+  const fetchedAt = new Date(started).toISOString();
+
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    throw new Error(`crawlSite: invalid origin URL "${origin}"`);
+  }
+  if (originUrl.protocol !== "http:" && originUrl.protocol !== "https:") {
+    throw new Error(`crawlSite: origin must be http(s), got "${originUrl.protocol}"`);
+  }
+
+  const maxUrls = Math.max(1, Math.floor(opts.maxUrls ?? DEFAULT_MAX_URLS));
+  const pageTimeoutMs = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
+  const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
+  const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
+
+  const robots = await loadRobots(originUrl, pageTimeoutMs);
+  const crawlDelayMs = Math.min(robots.crawlDelayMs, crawlDelayCapMs);
+
+  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls);
+  const queue: string[] = seeds.length > 0 ? [...seeds] : [normalizeUrl(originUrl.toString())];
+  const enqueued = new Set<string>(queue);
+  const visited = new Set<string>();
+  const pages: PageRecord[] = [];
+  const skipped: SkippedUrl[] = [];
+  let fetches = 0;
+
+  const enqueue = (link: string): void => {
+    let u: URL;
+    try {
+      u = new URL(link);
+    } catch {
+      return;
+    }
+    if (!sameOrigin(u, originUrl)) return;
+    const norm = normalizeUrl(link);
+    if (!visited.has(norm) && !enqueued.has(norm)) {
+      enqueued.add(norm);
+      queue.push(norm);
+    }
+  };
+
+  while (queue.length > 0) {
+    if (pages.length >= maxUrls) {
+      for (const url of queue.splice(0)) skipped.push({ url, reason: "max URL limit reached" });
+      break;
+    }
+    if (Date.now() - started >= timeBudgetMs) {
+      for (const url of queue.splice(0)) skipped.push({ url, reason: "time budget exhausted" });
+      break;
+    }
+
+    const url = queue.shift();
+    if (url === undefined || visited.has(url)) continue;
+    visited.add(url);
+
+    const target = new URL(url);
+    if (!robots.isAllowed(target.pathname + target.search)) {
+      skipped.push({ url, reason: "blocked by robots.txt" });
+      continue;
+    }
+
+    if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
+    fetches++;
+
+    const outcome = await fetchPage(url, originUrl, pageTimeoutMs);
+    if (outcome.kind === "timeout") {
+      skipped.push({ url, reason: "timeout" });
+      continue;
+    }
+    if (outcome.kind === "too-many-redirects") {
+      skipped.push({ url, reason: "too many redirects" });
+      continue;
+    }
+    if (outcome.kind === "off-origin-redirect") {
+      skipped.push({ url, reason: `off-origin redirect to ${outcome.target}` });
+      continue;
+    }
+    if (outcome.kind === "error") {
+      skipped.push({ url, reason: `fetch failed: ${outcome.message}` });
+      continue;
+    }
+
+    const finalUrl = normalizeUrl(outcome.finalUrl);
+    if (finalUrl !== url) {
+      if (visited.has(finalUrl)) continue; // redirected onto an already-seen page
+      visited.add(finalUrl);
+      const finalTarget = new URL(finalUrl);
+      if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
+        skipped.push({ url: finalUrl, reason: "blocked by robots.txt" });
+        continue;
+      }
+    }
+    if (!isHtml(outcome.contentType)) {
+      skipped.push({ url: finalUrl, reason: `non-HTML (${outcome.contentType || "unknown"})` });
+      continue;
+    }
+
+    const parsed = parseHtml(outcome.body, finalUrl);
+    pages.push({
+      url: finalUrl,
+      status: outcome.status,
+      title: parsed.title,
+      metaDescription: parsed.metaDescription,
+      h1s: parsed.h1s,
+      canonical: parsed.canonical,
+      robotsMeta: parsed.robotsMeta,
+      links: parsed.links,
+      wordCount: parsed.wordCount,
+      issues: computeIssues(parsed),
+    });
+    parsed.links.forEach(enqueue);
+  }
+
+  return { pages, skipped, fetchedAt };
 }
