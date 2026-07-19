@@ -99,8 +99,15 @@ async function handleMcpRequest(req: Request, res: Response): Promise<void> {
     enableJsonResponse: true,
   });
   res.on("close", () => {
-    void transport.close();
-    void server.close();
+    // Best-effort teardown. Swallow (log-only) any close rejection: an unhandled promise
+    // rejection is fatal under Node's default policy, so a failing close must not escape.
+    // No plaintext key is in scope on this path, so the error is safe to log verbatim.
+    transport.close().catch((error) => {
+      console.error("MCP transport close failed:", error);
+    });
+    server.close().catch((error) => {
+      console.error("MCP server close failed:", error);
+    });
   });
   try {
     await server.connect(transport);
