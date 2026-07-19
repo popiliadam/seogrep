@@ -1,0 +1,49 @@
+---
+title: research_keywords
+description: Look up Google search volume, CPC, and competition for a batch of keywords.
+---
+
+`research_keywords` looks up Google Ads **search volume**, **CPC**, and **competition** for
+up to 100 keywords at once, powered by DataForSEO. It is **synchronous** — it returns a
+table immediately, with no background job to poll. Costs **25 credits**.
+
+## What it does
+
+Given a list of keywords (plus an optional language and location), it returns one row per
+keyword with:
+
+- **Search volume** — average monthly Google searches.
+- **CPC** — the average cost-per-click advertisers pay.
+- **Competition** — the advertiser competition band (`HIGH` / `MEDIUM` / `LOW`).
+
+It also prints a one-line summary with the total monthly search volume across the batch.
+
+## Availability during beta
+
+Live keyword data is **off during the beta**. While it is off, `research_keywords` returns
+a clear _"keyword research is not yet enabled on this deployment"_ message and **charges you
+nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder
+figures dressed up as real data. Once live keyword research is switched on, the same call
+starts returning real numbers.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> What's the search volume for "seo software" and "rank tracker"?
+
+### Input
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `keywords` | string[] (1–100) | The keywords to look up. |
+| `language_code` | string | Language code (optional, default `en`). |
+| `location_code` | integer | DataForSEO location code (optional, default `2840` = United States). |
+
+### Returns
+
+A table with one row per keyword — search volume, CPC, and competition — plus a total-volume
+summary line. While live data is off, it returns the "not yet enabled" message instead and
+charges nothing.
+
+> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.

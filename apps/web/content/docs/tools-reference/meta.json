@@ -13,6 +13,7 @@
     "analyze-content-decay",
     "audit-onpage",
     "audit-tech",
-    "audit-schema"
+    "audit-schema",
+    "research-keywords"
   ]
 }
