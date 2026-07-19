@@ -81,6 +81,9 @@ importers:
       '@pseo/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@pseo/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@supabase/ssr':
         specifier: ^0.12.3
         version: 0.12.3(@supabase/supabase-js@2.110.7)
