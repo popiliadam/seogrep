@@ -139,12 +139,15 @@ const STATUS_PENDING_TIMEOUT_MS = 1_000;
 
 /**
  * Read the pending-jobs backlog for `/status`, made SAFE for an operator signal: bounded by
- * `timeoutMs` and swallowing any rejection, so a slow or broken DB resolves to `null`
- * instead of hanging or 5xx-ing `/status`. Returns null when no reader is wired (DB-free
- * tests inject none). The reader's rejection is folded to null HERE — not left to
- * Promise.race — because a rejection arriving AFTER the timeout already won would otherwise
- * be an unhandled rejection (fatal under Node's default policy). Exported so the never-hang
- * guarantee can be unit-tested directly with a short bound.
+ * `timeoutMs` and swallowing ANY reader failure — a rejecting promise OR a SYNCHRONOUS throw
+ * — so a slow or broken DB resolves to `null` instead of hanging or 5xx-ing `/status`.
+ * Returns null when no reader is wired (DB-free tests inject none). The reader is invoked
+ * INSIDE `.then(read)` (not called directly), so a synchronous throw becomes a rejection and
+ * folds to null exactly like an async rejection would — the route's charter is to survive
+ * any reader behavior. Folding here (via `.catch`, not left to Promise.race) also means a
+ * rejection arriving AFTER the timeout already won is handled, never an unhandled rejection
+ * (fatal under Node's default policy). Exported so the never-hang guarantee is unit-testable
+ * directly with a short bound.
  */
 export async function readPendingJobsBounded(
   read: (() => Promise<number>) | undefined,
@@ -155,13 +158,12 @@ export async function readPendingJobsBounded(
   const timeout = new Promise<null>((resolve) => {
     timer = setTimeout(() => resolve(null), timeoutMs);
   });
-  const counted = read().then(
-    (n) => n,
-    (error: unknown) => {
+  const counted = Promise.resolve()
+    .then(read) // deferred invocation: a synchronous throw in read becomes a rejection here
+    .catch((error: unknown) => {
       console.warn(`/status pendingJobs read failed: ${errorMessage(error)}`);
       return null;
-    },
-  );
+    });
   try {
     return await Promise.race([counted, timeout]);
   } finally {

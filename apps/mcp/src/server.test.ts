@@ -354,6 +354,30 @@ describe("mcp gateway /status endpoint", () => {
     }
   });
 
+  it("GET /status degrades to pendingJobs:null (still ok:true) when the backlog read THROWS SYNCHRONOUSLY", async () => {
+    // The charter is "never hang or 5xx no matter what the reader does" — a synchronous
+    // throw (not a rejecting promise) must fold to null exactly like a rejection, or the
+    // async handler would reject with no catch and Express 4 would hang the response.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          throw new Error("sync boom");
+        },
+      }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
   it("GET /status returns pendingJobs:null when no backlog reader is injected (DB-free default)", async () => {
     const app = await listen(appWith()); // no pendingJobs dep — mirrors the DB-free unit path
     try {
