@@ -89,3 +89,19 @@ describe("recordSpend", () => {
     expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.125, 5);
   });
 });
+
+describe("DFS_BUDGET_DIR env override (real prod name — container-writable dir)", () => {
+  it("recordSpend and readTodaySpendUsd use DFS_BUDGET_DIR when no ctx.dir is injected", () => {
+    const envDir = mkdtempSync(path.join(tmpdir(), "dfs-envdir-"));
+    vi.stubEnv("DFS_BUDGET_DIR", envDir);
+    try {
+      recordSpend({ cost_usd: 0.05, endpoint: "search_volume", count: 3 }, { now });
+      const raw = readFileSync(path.join(envDir, DAY_FILE), "utf8");
+      expect(raw).toContain('"cost_usd":0.05');
+      expect(readTodaySpendUsd({ now })).toBe(0.05);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(envDir, { recursive: true, force: true });
+    }
+  });
+});
