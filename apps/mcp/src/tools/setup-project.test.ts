@@ -52,4 +52,17 @@ describe("normalizeDomain", () => {
   it("rejects a URL with no host", () => {
     expect(normalizeDomain("https://").ok).toBe(false);
   });
+
+  it("rejects internal / reserved (non-public) names even when syntactically valid", () => {
+    // These pass DOMAIN_RE but must never be tracked or crawled (SSRF surface).
+    for (const raw of ["foo.internal", "metadata.google.internal", "a.local", "b.test"]) {
+      const result = normalizeDomain(raw);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/public domain|internal|reserved/i);
+    }
+  });
+
+  it("still accepts a normal public domain", () => {
+    expect(normalizeDomain("example.com")).toEqual({ ok: true, domain: "example.com" });
+  });
 });
