@@ -16,9 +16,28 @@ const FULL_MODEL: ReportModel = {
     fetchedAt: "2026-07-18T00:00:00.000Z",
     pageCount: 42,
     skippedCount: 3,
-    issues: [
-      { label: "Pages missing a meta description", count: 7 },
-      { label: "Pages returning an error (4xx/5xx)", count: 2 },
+  },
+  onpage: {
+    pageCount: 42,
+    findings: [
+      { label: "missing canonical", count: 42 },
+      { label: "missing meta description", count: 7 },
+    ],
+  },
+  tech: {
+    pageCount: 42,
+    ok2xx: 39,
+    redirect3xx: 1,
+    clientError4xx: 2,
+    serverError5xx: 0,
+    robotsConflicts: 1,
+  },
+  schema: {
+    pageCount: 42,
+    pagesWithSchema: 30,
+    topTypes: [
+      { type: "Article", pages: 20 },
+      { type: "WebPage", pages: 10 },
     ],
   },
   gsc: {
@@ -69,12 +88,32 @@ describe("renderReportHtml", () => {
     expect(html).toMatch(/powered by\s*<a[^>]*>SeoGrep<\/a>/i);
   });
 
-  it("renders the crawl section counts and light issues", () => {
-    expect(html).toContain("42");
-    expect(html).toContain("Pages missing a meta description");
+  it("renders the crawl counts and the REAL on-page findings, not the old shallow string (G1)", () => {
+    expect(html).toContain("42"); // pages crawled / missing-canonical count
+    // Real engine findings, in the SAME vocabulary audit_onpage prints.
+    expect(html).toContain("missing canonical");
+    expect(html).toContain("missing meta description");
     expect(html).toContain("7");
-    // Points the reader at the deep audit tools rather than re-running the engines.
+    // The misleading blanket string G1 flagged is gone for good.
+    expect(html).not.toContain("No basic on-page issues detected");
+    // Points the reader at the deep audit tool for the per-page breakdown.
     expect(html).toMatch(/audit_onpage/);
+  });
+
+  it("renders the technical-health distribution and robots-conflict count", () => {
+    expect(html).toMatch(/audit_tech/);
+    expect(html).toContain("39"); // 2xx
+    expect(html).toMatch(/2xx/);
+    expect(html).toMatch(/4xx/);
+    expect(html).toMatch(/5xx/);
+    expect(html).toMatch(/robots/i); // robots-conflict line
+  });
+
+  it("renders schema coverage and top declared types", () => {
+    expect(html).toMatch(/audit_schema/);
+    expect(html).toContain("30"); // pagesWithSchema
+    expect(html).toContain("Article");
+    expect(html).toContain("WebPage");
   });
 
   it("renders the GSC section totals, window, and top lists", () => {
@@ -100,10 +139,38 @@ describe("renderReportHtml", () => {
     expect(evil).not.toMatch(/<img\b/i);
   });
 
+  it("escapes a crawled JSON-LD @type so structured-data names cannot inject markup", () => {
+    // @type names come straight from the crawled page's JSON-LD — untrusted site data. They render
+    // as escaped TEXT in the schema section, never as a tag or a resource-loading attribute.
+    const evil = renderReportHtml({
+      ...FULL_MODEL,
+      schema: {
+        ...FULL_MODEL.schema!,
+        topTypes: [{ type: '"><img src=x onerror=alert(1)><script>', pages: 3 }],
+      },
+    });
+    expect(evil).not.toMatch(/<img\b/i);
+    expect(evil).not.toMatch(/<script\b/i);
+    expect(evil).toContain("&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;");
+  });
+
+  it("uses honest zero-issue copy when the on-page engine finds nothing (not the old blanket string)", () => {
+    const clean = renderReportHtml({ ...FULL_MODEL, onpage: { pageCount: 18, findings: [] } });
+    expect(clean).toContain("No on-page issues found across 18 page");
+    expect(clean).not.toContain("No basic on-page issues detected");
+  });
+
   it("shows a call-to-action when a section's data is absent", () => {
     const crawlOnly = renderReportHtml({ ...FULL_MODEL, gsc: null });
     expect(crawlOnly).toMatch(/pull_gsc_data/);
-    const gscOnly = renderReportHtml({ ...FULL_MODEL, crawl: null });
+    // crawl absent -> every crawl-derived section is null (they co-vary in the real model).
+    const gscOnly = renderReportHtml({
+      ...FULL_MODEL,
+      crawl: null,
+      onpage: null,
+      tech: null,
+      schema: null,
+    });
     expect(gscOnly).toMatch(/crawl_site/);
   });
 });

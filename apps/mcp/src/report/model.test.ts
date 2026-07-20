@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { AuditCrawl } from "../audit/index.ts";
+import { auditOnpage, auditSchema, auditTech, ONPAGE_LABELS, ONPAGE_ORDER } from "../audit/index.ts";
 import type { PullData } from "../gsc-data/index.ts";
 import { buildReportModel, resolveReportTitle } from "./model.ts";
 
 /**
- * Pure unit tests for the report model builder — the LIGHT roll-up generate_report derives
- * from an already-loaded crawl and/or pull. No engines are re-run here: crawl issues are
- * plain field checks and the GSC section is a group-by-sum over the current window.
+ * Pure unit tests for the report model builder — the roll-up generate_report derives from an
+ * already-loaded crawl and/or pull. The on-page/tech/schema summaries are the SAME pure audit
+ * engines re-run over that crawl (G1: byte-identical to audit_onpage/tech/schema, no new I/O),
+ * while the crawl provenance and the GSC section stay light group-by folds.
  */
 
 function crawl(pages: AuditCrawl["pages"], skipped: AuditCrawl["skipped"] = []): AuditCrawl {
@@ -68,18 +70,16 @@ describe("resolveReportTitle", () => {
 });
 
 describe("buildReportModel — crawl section", () => {
-  it("counts pages, skips, and LIGHT issues (missing title/meta/h1, 4xx/5xx) with no engine run", () => {
+  it("counts pages and skips from the crawl and keeps provenance", () => {
     const model = buildReportModel({
       domain: "example.com",
       title: "T",
       generatedAt: "2026-07-19T00:00:00.000Z",
       crawl: crawl(
         [
-          page({ url: "https://example.com/1", title: null }),
-          page({ url: "https://example.com/2", metaDescription: "" }),
-          page({ url: "https://example.com/3", h1s: [] }),
-          page({ url: "https://example.com/4", status: 404 }),
-          page({ url: "https://example.com/5" }),
+          page({ url: "https://example.com/1" }),
+          page({ url: "https://example.com/2" }),
+          page({ url: "https://example.com/3" }),
         ],
         [{ url: "https://example.com/x", reason: "robots" }],
       ),
@@ -87,27 +87,12 @@ describe("buildReportModel — crawl section", () => {
     });
 
     expect(model.crawl).not.toBeNull();
-    expect(model.crawl?.pageCount).toBe(5);
+    expect(model.crawl?.fetchedAt).toBe("2026-07-19T00:00:00.000Z");
+    expect(model.crawl?.pageCount).toBe(3);
     expect(model.crawl?.skippedCount).toBe(1);
-    const issues = Object.fromEntries((model.crawl?.issues ?? []).map((i) => [i.label, i.count]));
-    expect(issues["Pages missing a title"]).toBe(1);
-    expect(issues["Pages missing a meta description"]).toBe(1);
-    expect(issues["Pages missing an H1"]).toBe(1);
-    expect(issues["Pages returning an error (4xx/5xx)"]).toBe(1);
   });
 
-  it("omits zero-count issues", () => {
-    const model = buildReportModel({
-      domain: "example.com",
-      title: "T",
-      generatedAt: "2026-07-19T00:00:00.000Z",
-      crawl: crawl([page({})]),
-      pull: null,
-    });
-    expect(model.crawl?.issues).toEqual([]);
-  });
-
-  it("is null when no crawl was loaded", () => {
+  it("leaves every crawl-derived section null when no crawl was loaded", () => {
     const model = buildReportModel({
       domain: "example.com",
       title: "T",
@@ -116,6 +101,131 @@ describe("buildReportModel — crawl section", () => {
       pull: PULL,
     });
     expect(model.crawl).toBeNull();
+    expect(model.onpage).toBeNull();
+    expect(model.tech).toBeNull();
+    expect(model.schema).toBeNull();
+  });
+});
+
+/**
+ * A crawl with KNOWN issues — the G1 shape: two pages missing a canonical (the exact signal the
+ * old shallow field-check missed), one 404, one page with no JSON-LD, two with structured data.
+ * Every page's title/meta/h1/wordCount is otherwise clean so the ONLY on-page finding is the
+ * missing canonical — this keeps the report≡tool assertion sharp.
+ */
+const KNOWN_ISSUES = crawl(
+  [
+    page({
+      url: "https://example.com/",
+      title: "Homepage title that is plainly long enough",
+      metaDescription: "The homepage meta description comfortably clears the fifty-character minimum bar.",
+      canonical: "https://example.com/",
+      h1s: ["Home"],
+      wordCount: 500,
+      jsonLdTypes: ["WebSite", "Organization"],
+    }),
+    page({
+      url: "https://example.com/a",
+      title: "Article A title that is plainly long enough",
+      metaDescription: "The Article A meta description comfortably clears the fifty-character minimum too.",
+      canonical: null, // missing canonical (G1)
+      h1s: ["A"],
+      wordCount: 400,
+      jsonLdTypes: ["Article"],
+    }),
+    page({
+      url: "https://example.com/gone",
+      status: 404,
+      title: "Gone page title that is plainly long enough",
+      metaDescription: "The Gone page meta description comfortably clears the fifty-character minimum here.",
+      canonical: null, // missing canonical (G1)
+      h1s: ["Gone"],
+      wordCount: 300,
+      jsonLdTypes: [], // no structured data
+    }),
+  ],
+  [{ url: "https://example.com/loop", reason: "redirect loop" }],
+);
+
+const AT_ISO = "2026-07-19T00:00:00.000Z";
+
+describe("buildReportModel — audit engine summaries (G1)", () => {
+  it("derives onpage/tech/schema summaries that MATCH the engines run directly (report ≡ tool)", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: KNOWN_ISSUES,
+      pull: null,
+    });
+
+    // Same engines the audit_onpage/tech/schema tools call, over the SAME crawl.
+    const onpage = auditOnpage(KNOWN_ISSUES);
+    const tech = auditTech(KNOWN_ISSUES);
+    const schema = auditSchema(KNOWN_ISSUES);
+
+    // On-page: the report's findings are exactly the engine's per-type counts (>0), each mapped
+    // through the SAME ONPAGE_LABELS vocabulary audit_onpage prints, sorted by count desc.
+    const expectedFindings = ONPAGE_ORDER.filter((type) => (onpage.counts[type] ?? 0) > 0)
+      .map((type) => ({ label: ONPAGE_LABELS[type]!, count: onpage.counts[type]! }))
+      .sort((a, b) => b.count - a.count);
+    expect(model.onpage).toEqual({ pageCount: onpage.pageCount, findings: expectedFindings });
+
+    // Tech: the key HTTP-health signals mirror the engine exactly.
+    expect(model.tech).toEqual({
+      pageCount: tech.pageCount,
+      ok2xx: tech.status.ok2xx,
+      redirect3xx: tech.status.redirect3xx,
+      clientError4xx: tech.status.clientError4xx,
+      serverError5xx: tech.status.serverError5xx,
+      robotsConflicts: tech.robotsConflicts.length,
+    });
+
+    // Schema: coverage plus the first N types straight off the engine's typeCoverage.
+    expect(model.schema).toEqual({
+      pageCount: schema.pageCount,
+      pagesWithSchema: schema.pagesWithSchema,
+      topTypes: schema.typeCoverage.slice(0, 5),
+    });
+  });
+
+  it("surfaces the real missing-canonical count the shallow field-check missed (G1)", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: KNOWN_ISSUES,
+      pull: null,
+    });
+    const missingCanonical = model.onpage?.findings.find(
+      (finding) => finding.label === ONPAGE_LABELS.missing_canonical,
+    );
+    expect(missingCanonical?.count).toBe(2);
+    expect(model.tech?.clientError4xx).toBe(1);
+    expect(model.tech?.ok2xx).toBe(2);
+    expect(model.schema?.pagesWithSchema).toBe(2);
+    expect(model.schema?.topTypes).toContainEqual({ type: "Article", pages: 1 });
+  });
+
+  it("reports zero on-page findings for a fully clean crawl", () => {
+    const cleanPage = page({
+      url: "https://example.com/clean",
+      title: "A perfectly fine clean title",
+      metaDescription: "A clean meta description that comfortably clears the fifty-character minimum bar.",
+      canonical: "https://example.com/clean",
+      h1s: ["Clean"],
+      wordCount: 800,
+      jsonLdTypes: ["WebPage"],
+    });
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([cleanPage]),
+      pull: null,
+    });
+    expect(model.onpage?.pageCount).toBe(1);
+    expect(model.onpage?.findings).toEqual([]);
   });
 });
 
