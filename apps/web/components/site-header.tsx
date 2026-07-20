@@ -19,6 +19,9 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
+          <Link href="/login" className="text-sm text-ink/80 hover:text-ink">
+            Sign in
+          </Link>
           <Link
             href="/#waitlist"
             className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-paper hover:opacity-90"
