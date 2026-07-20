@@ -8,6 +8,7 @@ import {
   type CrawlResult,
 } from "./crawl.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
+import type { LookupFn } from "./ssrf.ts";
 
 const BASE = "https://site.test/blog/post";
 
@@ -321,15 +322,17 @@ describe("crawlSite — limits and edge behavior", () => {
   it("treats a robots.txt that redirects to an IP-literal host as unreachable (SSRF guard)", async () => {
     // The redirect target stands in for a metadata-style endpoint: a SECOND loopback
     // server whose 127.0.0.1 origin is itself an IP-literal. It answers /robots.txt 200,
-    // so the ONLY thing that can stop the crawl is the post-follow response.url check —
-    // the target is fully reachable over loopback, so this is NOT a network failure.
+    // but the cross-origin hop is refused BEFORE it is emitted (pre-emission SSRF guard),
+    // so the target is never contacted even though it is fully reachable over loopback.
     const target = await startFixtureSite();
     const site = await startFixtureSite({ robotsRedirectTo: `${target.origin}/robots.txt` });
     try {
       const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
-      // The IP-literal target WAS actually contacted (redirect: "follow" reached it)...
-      expect(target.requested).toContain("/robots.txt");
-      // ...yet robots is treated as unreachable -> RFC 9309 complete disallow, 0 pages.
+      // The IP-literal target is NEVER contacted: the request is refused pre-emission.
+      // (Before this hardening the request WAS emitted and only the body read was blocked;
+      // this now pins ZERO emission — the strictly stronger property.)
+      expect(target.requested).toHaveLength(0);
+      // Robots is treated as unreachable -> RFC 9309 complete disallow, 0 pages.
       expect(result.pages).toHaveLength(0);
       expect(result.skipped).toEqual([
         { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
@@ -386,6 +389,66 @@ describe("crawlSite — limits and edge behavior", () => {
       );
     } finally {
       await site.close();
+    }
+  });
+});
+
+// --- SSRF origin gate + pre-emission redirect parity (audit §1 Important) --------
+// The injectable `lookup` fakes DNS so these make ZERO real DNS calls: the blocked-origin
+// path never fetches, and the redirect-parity path is loopback-only.
+
+describe("crawlSite — SSRF origin gate and pre-emission redirect parity", () => {
+  it("refuses a hostname origin that resolves to a private address (origin gate, DNS path)", async () => {
+    let calls = 0;
+    const lookup: LookupFn = async () => {
+      calls++;
+      return [{ address: "10.0.0.5", family: 4 }];
+    };
+    // A public-looking name (reaches the DNS stage), whose fake A record is RFC1918.
+    const origin = "http://ssrf-blocked-host.example.com";
+    const result = await crawlSite(origin, { crawlDelayCapMs: 0, lookup });
+    expect(calls).toBeGreaterThan(0); // the injected resolver WAS consulted
+    expect(result.pages).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.url).toBe(normalizeUrl(origin + "/"));
+    expect(result.skipped[0]?.reason).toMatch(/origin blocked \(SSRF guard\)/i);
+  });
+
+  it("refuses a non-loopback IP-literal origin without any DNS lookup", async () => {
+    let calls = 0;
+    const lookup: LookupFn = async () => {
+      calls++;
+      return [{ address: "8.8.8.8", family: 4 }];
+    };
+    const result = await crawlSite("http://169.254.169.254/", { crawlDelayCapMs: 0, lookup });
+    expect(calls).toBe(0); // an IP literal is decided without DNS
+    expect(result.pages).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.reason).toMatch(/origin blocked \(SSRF guard\)/i);
+  });
+
+  it("refuses a cross-origin robots redirect BEFORE it is emitted (pre-emission parity)", async () => {
+    // THE audit finding: a robots.txt that redirects off-origin must be refused BEFORE the
+    // request leaves the process. The victim is a loopback listener; the redirect Location
+    // uses the single-label host `localhost` (string-level refusal — no real DNS involved),
+    // which also resolves to 127.0.0.1, so if the hop WERE emitted the victim would log it.
+    const victim = await startFixtureSite();
+    const victimPort = new URL(victim.origin).port;
+    const site = await startFixtureSite({
+      robotsRedirectTo: `http://localhost:${victimPort}/robots.txt`,
+    });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      // The hop is refused pre-emission: the victim is never contacted at all.
+      expect(victim.requested).toHaveLength(0);
+      // robots.txt therefore stays unreachable -> RFC 9309 complete disallow, 0 pages.
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+      ]);
+    } finally {
+      await site.close();
+      await victim.close();
     }
   });
 });

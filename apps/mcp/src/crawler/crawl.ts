@@ -13,6 +13,12 @@
 
 import { parseRobots, type RobotsRules } from "./robots.ts";
 import { decodeEntities, parseSitemap } from "./sitemap.ts";
+import {
+  checkPublicHost,
+  defaultLookup,
+  type LookupFn,
+  nonPublicHostnameReason,
+} from "./ssrf.ts";
 
 export interface PageRecord {
   readonly url: string;
@@ -50,6 +56,11 @@ export interface CrawlOptions {
   timeBudgetMs?: number;
   /** Upper bound applied to robots Crawl-delay, ms (default 1_000). Test knob. */
   crawlDelayCapMs?: number;
+  /**
+   * DNS resolver the SSRF guard uses (origin gate + cross-origin redirect checks).
+   * Defaults to node:dns/promises; injected in tests so DNS is never real. Test knob.
+   */
+  lookup?: LookupFn;
 }
 
 /** Parsed page signals, before url/status/issues are attached. */
@@ -339,53 +350,88 @@ function isIpLiteralHost(hostname: string): boolean {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname); // 127.0.0.1, 169.254.169.254, ...
 }
 
-/**
- * Decide whether the post-follow final URL of a robots/sitemap fetch is a
- * redirect-based SSRF target the crawler must refuse. Blocks redirect-based SSRF to
- * IP-literal/metadata/single-label targets; public-DNS rebinding is out of scope here
- * and owned by the phase-end security audit.
- *
- * The check fires ONLY when the redirect crossed to a different origin than requested:
- * same-origin responses (including no redirect at all) pass untouched, which is what
- * keeps both the 127.0.0.1 loopback fixtures and normal domain->domain hops (apex->www)
- * working. A cross-origin final URL is refused when its scheme is not http(s), or its
- * host is an IP literal (IPv4 / bracketed IPv6, e.g. cloud metadata at 169.254.169.254),
- * or a single-label host with no dot (e.g. "metadata", "localhost").
- */
-function isUnsafeRedirectTarget(requestedUrl: string, finalUrl: string): boolean {
-  let requested: URL;
-  let final: URL;
-  try {
-    requested = new URL(requestedUrl);
-    final = new URL(finalUrl);
-  } catch {
-    return true; // an unparseable final URL is not something we will read from
-  }
-  if (final.origin === requested.origin) return false; // no cross-origin redirect
-  if (final.protocol !== "http:" && final.protocol !== "https:") return true;
-  if (isIpLiteralHost(final.hostname)) return true;
-  if (!final.hostname.includes(".")) return true;
-  return false;
+/** The loopback IP literals the crawl-origin local-test seam permits: 127.0.0.0/8 or [::1]. */
+function isLoopbackLiteral(hostname: string): boolean {
+  if (hostname.startsWith("[")) return hostname === "[::1]";
+  const m = /^(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(hostname);
+  return m !== null && m[1] === "127";
 }
 
-/** GET a text resource (robots/sitemap), following redirects; null on any failure. */
-async function fetchText(url: string, timeoutMs: number): Promise<{ status: number; body: string } | null> {
+/**
+ * Validate a CROSS-ORIGIN redirect target BEFORE its request is emitted (the pre-emission
+ * SSRF fix). Unlike the crawl-origin seam, a redirect to ANY IP literal is refused —
+ * loopback included — since a legitimate site never needs to redirect its robots/sitemap
+ * to a bare IP. Otherwise: http(s) scheme only, the name must not be reserved/internal
+ * (nonPublicHostnameReason), and every resolved address must be public (checkPublicHost,
+ * with the plumbed lookup). Returns true only when every check passes.
+ */
+async function validateRedirectTarget(target: URL, lookup: LookupFn): Promise<boolean> {
+  if (target.protocol !== "http:" && target.protocol !== "https:") return false;
+  if (isIpLiteralHost(target.hostname)) return false;
+  if (nonPublicHostnameReason(target.hostname) !== null) return false;
+  return (await checkPublicHost(target.hostname, lookup)).ok;
+}
+
+/**
+ * GET a text resource (robots/sitemap), following up to MAX_REDIRECTS redirects MANUALLY so
+ * each cross-origin hop is validated BEFORE its request is emitted (the pre-emission SSRF
+ * fix — a blind redirect at an internal endpoint never leaves the process). One
+ * AbortController bounds the whole chain to `timeoutMs`, mirroring fetchPage.
+ *
+ * Same-origin hops (a relative Location on the originally requested origin) emit freely.
+ * A cross-origin hop must pass validateRedirectTarget; legitimate apex->www hops on a
+ * publicly-resolving host validate-then-emit and keep working. Returns null on any failure
+ * (robots -> RFC 9309 complete disallow; sitemap seed -> skipped).
+ *
+ * CALLER CONTRACT: the INITIAL url's host is the caller's responsibility to validate —
+ * crawlSite vets the crawl origin before any fetchText. fetchText validates cross-origin
+ * REDIRECT hops only.
+ */
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  lookup: LookupFn,
+): Promise<{ status: number; body: string } | null> {
+  let requestedOrigin: URL;
   try {
-    const res = await fetch(url, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { "user-agent": USER_AGENT },
-    });
-    // A followed redirect can land off the requested origin; refuse SSRF targets by
-    // inspecting the post-follow final URL (res.url). Treated as unreachable (null) so
-    // robots.txt falls back to RFC 9309 complete-disallow and sitemap seeds are skipped.
-    if (isUnsafeRedirectTarget(url, res.url)) {
-      await res.body?.cancel();
-      return null;
-    }
-    return { status: res.status, body: await res.text() };
+    requestedOrigin = new URL(url);
   } catch {
     return null;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const res = await fetch(current, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { "user-agent": USER_AGENT },
+      });
+      if (REDIRECT_STATUS.has(res.status)) {
+        const location = res.headers.get("location");
+        await res.body?.cancel();
+        if (!location) return null; // redirect with no target -> unreachable
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return null;
+        }
+        // Cross-origin hop: validate BEFORE emitting the next request (pre-emission guard).
+        if (!sameOrigin(next, requestedOrigin) && !(await validateRedirectTarget(next, lookup))) {
+          return null;
+        }
+        current = next.toString();
+        continue;
+      }
+      return { status: res.status, body: await res.text() };
+    }
+    return null; // exceeded MAX_REDIRECTS -> unreachable
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -399,14 +445,19 @@ type RobotsLoad =
  * or a network failure (timeout, refused, DNS) means the file is UNREACHABLE and
  * the crawler must assume complete disallow — the caller aborts the crawl.
  */
-async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsLoad> {
-  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs);
+async function loadRobots(origin: URL, timeoutMs: number, lookup: LookupFn): Promise<RobotsLoad> {
+  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs, lookup);
   if (res === null || res.status >= 500) return { kind: "unreachable" };
   return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
 }
 
 /** Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. */
-async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): Promise<string[]> {
+async function loadSitemapSeeds(
+  origin: URL,
+  timeoutMs: number,
+  limit: number,
+  lookup: LookupFn,
+): Promise<string[]> {
   const seeds: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string): void => {
@@ -424,7 +475,7 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
     }
   };
 
-  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs);
+  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs, lookup);
   if (!root || root.status !== 200) return seeds;
   const parsed = parseSitemap(root.body);
   parsed.urls.forEach(add);
@@ -440,10 +491,19 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
       continue;
     }
     if (!sameOrigin(childUrl, origin)) continue;
-    const res = await fetchText(child, timeoutMs);
+    const res = await fetchText(child, timeoutMs, lookup);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
   return seeds.slice(0, limit);
+}
+
+/** Early-return shape for an origin the SSRF guard refused (nothing is ever fetched). */
+function blockedOrigin(origin: URL, reason: string, fetchedAt: string): CrawlResult {
+  return {
+    pages: [],
+    skipped: [{ url: normalizeUrl(origin.toString()), reason: `origin blocked (SSRF guard): ${reason}` }],
+    fetchedAt,
+  };
 }
 
 /**
@@ -470,8 +530,26 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const pageTimeoutMs = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
+  const lookup = opts.lookup ?? defaultLookup;
 
-  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs);
+  // SSRF origin gate. The origin is tenant-controlled, so before any request goes out it
+  // must resolve to a public address. IP-literal origins are refused EXCEPT loopback — the
+  // documented local-test seam: the crawler's own fixtures bind loopback servers and seed
+  // http://127.0.0.1:<port>, while production origins come from setup_project's
+  // normalizeDomain, which structurally cannot emit an IP literal. Any other literal, or a
+  // hostname that resolves (or string-matches) to a non-public address, is refused here so
+  // nothing downstream (robots, sitemap, pages) is fetched from it. This also catches a
+  // PRE-EXISTING stored domain that would only now be judged non-public.
+  if (isIpLiteralHost(originUrl.hostname)) {
+    if (!isLoopbackLiteral(originUrl.hostname)) {
+      return blockedOrigin(originUrl, "non-loopback IP literal", fetchedAt);
+    }
+  } else {
+    const check = await checkPublicHost(originUrl.hostname, lookup);
+    if (!check.ok) return blockedOrigin(originUrl, check.reason, fetchedAt);
+  }
+
+  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs, lookup);
   if (robotsLoad.kind === "unreachable") {
     // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete
     // disallow. Stop before fetching anything else — the sitemap included.
@@ -484,7 +562,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const robots = robotsLoad.rules;
   const crawlDelayMs = Math.min(robots.crawlDelayMs, crawlDelayCapMs);
 
-  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls);
+  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls, lookup);
   const queue: string[] = seeds.length > 0 ? [...seeds] : [normalizeUrl(originUrl.toString())];
   const enqueued = new Set<string>(queue);
   const visited = new Set<string>();
