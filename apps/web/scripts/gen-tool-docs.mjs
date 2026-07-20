@@ -277,6 +277,21 @@ export const DOC_PROSE = {
       "Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the " +
       "crawl and stores the result; you check progress with " +
       "[`get_job_status`](/docs/tools-reference/get-job-status).",
+    preExampleSections: [
+      {
+        heading: "Large sites",
+        body:
+          "Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with " +
+          "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; this " +
+          "keeps every crawl within the cap and spends predictably.\n\n" +
+          "Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, " +
+          "it first returns a **confirmation** — nothing is charged — that states this run's flat cost " +
+          "and, kept separate, an **informational projection** of what crawling the whole site would " +
+          "take at the current rate. The projection is never what you are charged; it just means a big " +
+          "site can't silently run up cost. Re-run with `\"confirm\": true` to proceed, or narrow the " +
+          "scope with `include_paths`.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +
       "with a `job_id`. Poll it until the job is done:\n\n> What's the status of job `<job_id>`?",

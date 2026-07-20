@@ -39,4 +39,11 @@ describe("pricing page", () => {
     expect(screen.getAllByText(/beta pricing/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/most popular/i)).toBeNull();
   });
+
+  it("notes the crawl page cap and focused large-site path filters", () => {
+    render(<Page />);
+    expect(screen.getByText(/covers up to 100 pages for 20 credits/i)).toBeTruthy();
+    expect(screen.getByText(/path filters/i)).toBeTruthy();
+    expect(screen.getByText(/tiered large-site crawling is coming/i)).toBeTruthy();
+  });
 });

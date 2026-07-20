@@ -72,6 +72,10 @@ export default function Page() {
               </tbody>
             </table>
           </div>
+          <p className="mt-6 max-w-2xl text-sm text-ink/70">
+            A crawl covers up to 100 pages for 20 credits. Larger sites can be crawled in focused parts
+            with path filters (one crawl per section, e.g. /blog) — tiered large-site crawling is coming.
+          </p>
         </div>
       </section>
 
