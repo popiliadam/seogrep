@@ -33,7 +33,10 @@ separate `/status` route, which nothing uses as a liveness gate.
 ```
 
 - **`uptimeSeconds`** — whole seconds since the web process booted.
-- **`errorsSinceBoot`** — count of 5xx (internal server error) responses since boot.
+- **`errorsSinceBoot`** — count of internal-error (500) responses since boot, incremented at
+  the two instrumented 500 paths in the MCP endpoint (the request-pipeline catch and the
+  MCP-dispatch catch). Because the whole POST pipeline runs inside that try, these cover
+  effectively every realistic 500.
 - **`pendingJobs`** — jobs in `status in ('queued','running')` — the app's own view of queue
   backlog / stuck work. `null` when the count could not be read in time (see §4).
 
