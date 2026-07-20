@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
+import http from "node:http";
+import { unlinkSync } from "node:fs";
 import { createApp, type AppDeps } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 
@@ -49,6 +51,23 @@ const postRpc = (baseUrl: string, key: string, body: unknown): Promise<Response>
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(body),
+  });
+
+/** POST with extra request headers (e.g. Fly-Client-IP) merged over the JSON-RPC defaults. */
+const postRpcWith = (
+  baseUrl: string,
+  key: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<Response> =>
+  fetch(`${baseUrl}/mcp/${key}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...headers,
     },
     body: JSON.stringify(body),
   });
@@ -215,6 +234,193 @@ describe("mcp gateway rate limiting", () => {
       expect(body.jsonrpc).toBe("2.0");
     } finally {
       await app.close();
+    }
+  });
+});
+
+describe("mcp gateway per-IP flood throttle", () => {
+  it("throttled IP: 429 and authenticate is NEVER called (the 429 path performs zero DB reads)", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(OK_DECISION));
+    const app = await listen(appWith({ authenticate, ipThrottle: { tryConsume: () => false } }));
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(429);
+      const body = await res.json();
+      expect(body.error.code).toBe(-32002); // same envelope as the per-key 429 (indistinguishable)
+      expect(body.jsonrpc).toBe("2.0");
+      // authenticate is where the DB lookup lives; a throttled request must not reach it.
+      expect(authenticate).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allowing throttle: the request reaches authenticate exactly once (flow intact)", async () => {
+    const authenticate = vi.fn((key: string) =>
+      Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED),
+    );
+    const app = await listen(appWith({ authenticate, ipThrottle: { tryConsume: () => true } }));
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(200);
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("malformed key: 401 format path and the throttle is NOT consumed (format gate runs first)", async () => {
+    const tryConsume = vi.fn(() => true);
+    const app = await listen(appWith({ ipThrottle: { tryConsume } }));
+    try {
+      const res = await postRpc(app.baseUrl, "not-a-key", {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body.error.code).toBe(-32001);
+      expect(tryConsume).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("no throttle injected (undefined): requests flow as before (back-compat)", async () => {
+    const authenticate = vi.fn((key: string) =>
+      Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED),
+    );
+    const app = await listen(appWith({ authenticate })); // ipThrottle omitted
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(200);
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("mcp gateway client IP extraction (throttle bucket key)", () => {
+  // clientIpOf is module-private; it is exercised through driven requests by injecting a
+  // throttle that records the id (bucket key) it was consulted with.
+  it("prefers the Fly-Client-IP header over the socket peer address", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { "fly-client-ip": "203.0.113.7" },
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      );
+      expect(seenIp).toBe("203.0.113.7"); // the header, not the 127.0.0.1 socket peer
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("normalizes an IPv4-mapped IPv6 Fly-Client-IP to its bare IPv4 form", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { "fly-client-ip": "::ffff:203.0.113.9" },
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      );
+      expect(seenIp).toBe("203.0.113.9");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("falls back to the socket peer address when Fly-Client-IP is absent", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      // baseUrl connects over IPv4 loopback, so the peer normalizes to 127.0.0.1
+      // (whether the dual-stack socket reports it bare or IPv4-mapped).
+      await postRpc(app.baseUrl, VALID_KEY, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(seenIp).toBe("127.0.0.1");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("yields 'unknown' when neither Fly-Client-IP nor a socket peer address is present", async () => {
+    let seenIp: string | undefined;
+    // A Unix-domain-socket peer has no remoteAddress, so this drives the final "unknown"
+    // fallback through a real request (TCP peers always expose an address, so a UDS is the
+    // only way to exercise that branch end-to-end).
+    const socketPath = `/tmp/sg-ip-${process.pid}-${Math.random().toString(36).slice(2)}.sock`;
+    const server = appWith({
+      ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } },
+    }).listen(socketPath);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request(
+          {
+            socketPath,
+            path: `/mcp/${VALID_KEY}`,
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+            },
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.on("error", reject);
+        req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+      });
+      expect(status).toBe(200);
+      expect(seenIp).toBe("unknown");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+      try {
+        unlinkSync(socketPath);
+      } catch {
+        /* socket file already gone */
+      }
     }
   });
 });
