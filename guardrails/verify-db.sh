@@ -12,6 +12,15 @@ cd "$(dirname "$0")/.."
 
 pnpm install --frozen-lockfile
 
+# Build the workspace library packages so the DB specs resolve their COMPILED
+# deps: @pseo/core and @pseo/db are `main: ./dist/index.js`, so a clean checkout
+# (CI) has no dist and @pseo/mcp's test:db dies with "Failed to resolve entry for
+# @pseo/core". The fast gate (verify.sh) builds these via turbo's ^build; this DB
+# lane runs `pnpm --filter … test:db` directly, so it must build the deps itself.
+# Locally this is a fast turbo cache hit — the missing build was masked until now
+# by a stale local dist, so CI (clean checkout) failed while local stayed green.
+pnpm turbo run build --filter='./packages/*'
+
 # Prefer the pinned devDependency bin (deterministic, lockfile-controlled);
 # fall back to a CLI on PATH only if the bin is missing.
 SUPABASE="./node_modules/.bin/supabase"

@@ -1,16 +1,15 @@
 ---
 title: research_keywords
-description: Look up Google search volume, CPC, and competition for a batch of keywords.
+description: "Look up Google search volume, CPC, and competition for up to 100 keywords. Synchronous — returns a table immediately. Live keyword data is off during beta; while it is off this tool returns a clear 'not yet enabled' error and charges nothing."
 ---
 
-`research_keywords` looks up Google Ads **search volume**, **CPC**, and **competition** for
-up to 100 keywords at once, powered by DataForSEO. It is **synchronous** — it returns a
-table immediately, with no background job to poll. Costs **25 credits**.
+**Cost:** 25 credits.
+
+`research_keywords` looks up Google Ads **search volume**, **CPC**, and **competition** for up to 100 keywords at once, powered by DataForSEO. It is **synchronous** — it returns a table immediately, with no background job to poll.
 
 ## What it does
 
-Given a list of keywords (plus an optional language and location), it returns one row per
-keyword with:
+Given a list of keywords (plus an optional language and location), it returns one row per keyword with:
 
 - **Search volume** — average monthly Google searches.
 - **CPC** — the average cost-per-click advertisers pay.
@@ -20,11 +19,7 @@ It also prints a one-line summary with the total monthly search volume across th
 
 ## Availability during beta
 
-Live keyword data is **off during the beta**. While it is off, `research_keywords` returns
-a clear _"keyword research is not yet enabled on this deployment"_ message and **charges you
-nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder
-figures dressed up as real data. Once live keyword research is switched on, the same call
-starts returning real numbers.
+Live keyword data is **off during the beta**. While it is off, `research_keywords` returns a clear _"keyword research is not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data. Once live keyword research is switched on, the same call starts returning real numbers.
 
 ## Example
 
@@ -34,16 +29,12 @@ Ask your MCP client in plain language:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `keywords` | string[] (1–100) | The keywords to look up. |
-| `language_code` | string | Language code (optional, default `en`). |
-| `location_code` | integer | DataForSEO location code (optional, default `2840` = United States). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `keywords` | string[] | Yes | Keywords to look up (1–100). |
+| `language_code` | string | No | Language code (default 'en'). |
+| `location_code` | integer | No | DataForSEO location code (default 2840 = United States). |
 
 ### Returns
 
-A table with one row per keyword — search volume, CPC, and competition — plus a total-volume
-summary line. While live data is off, it returns the "not yet enabled" message instead and
-charges nothing.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+A table with one row per keyword — search volume, CPC, and competition — plus a total-volume summary line. While live data is off, it returns the "not yet enabled" message instead and charges nothing.

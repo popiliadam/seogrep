@@ -1,25 +1,21 @@
 ---
 title: audit_schema
-description: Audit structured data — JSON-LD coverage and the spread of schema.org types — from your latest crawl.
+description: "Audit structured data (JSON-LD) for a project's latest crawl: coverage and the spread of schema.org @type names, plus pages with none. Run crawl_site first."
 ---
 
-`audit_schema` reviews the structured data on the pages captured by your project's most
-recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous** and
-returns its findings immediately. Costs **5 credits**. Run `crawl_site` first — with no
-crawl on record the tool says so and charges nothing.
+**Cost:** 5 credits.
+
+`audit_schema` reviews the structured data on the pages captured by your project's most recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous** and returns its findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and charges nothing.
 
 ## What it does
 
 Reports on the JSON-LD found across the site:
 
 - **Coverage** — how many pages carry JSON-LD structured data and how many have none.
-- **Type spread** — a site-wide count of the schema.org `@type` names in use
-  (`Organization`, `WebSite`, `Article`, `Product`, and so on).
+- **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, `WebSite`, `Article`, `Product`, and so on).
 - **Gaps** — the URLs of pages with no structured data at all.
 
-**Detection is JSON-LD only** — microdata and RDFa are not read — and only the `@type`
-names are analyzed. The crawler never stores the JSON-LD body, so this is a coverage
-and type-spread report, not per-field validation.
+**Detection is JSON-LD only** — microdata and RDFa are not read — and only the `@type` names are analyzed. The crawler never stores the JSON-LD body, so this is a coverage and type-spread report, not per-field validation.
 
 ## Example
 
@@ -29,13 +25,10 @@ Ask your MCP client in plain language:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to audit (from `setup_project` / `list_projects`). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project to audit (from setup_project / list_projects). |
 
 ### Returns
 
-The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with
-no structured data.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with no structured data.

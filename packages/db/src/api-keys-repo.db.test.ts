@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createKey, getKeyOwner, listKeys, revokeKey } from "./api-keys-repo.js";
+import { countActiveKeys, createKey, getKeyOwner, listKeys, revokeKey } from "./api-keys-repo.js";
 import { createServiceClient } from "./server.js";
 import type { Database } from "./types.js";
 
@@ -143,5 +143,19 @@ describe("api-keys-repo against local Supabase", () => {
       .from("api_keys")
       .insert({ user_id: user.id, key_hash: randomUUID(), key_prefix: "sg_nope1234" });
     expect(error).not.toBeNull();
+  });
+
+  it("(f) countActiveKeys counts only non-revoked keys, scoped to the tenant", async () => {
+    const user = await makeUser();
+    const other = await makeUser();
+    // user: two active + one revoked (excluded); other tenant: one active (never counted for user).
+    await createKey(service, { userId: user.id, ...fakeKeyMaterial() });
+    await createKey(service, { userId: user.id, ...fakeKeyMaterial() });
+    const toRevoke = await createKey(service, { userId: user.id, ...fakeKeyMaterial() });
+    await revokeKey(service, toRevoke.id);
+    await createKey(service, { userId: other.id, ...fakeKeyMaterial() });
+
+    expect(await countActiveKeys(service, user.id)).toBe(2);
+    expect(await countActiveKeys(service, other.id)).toBe(1);
   });
 });

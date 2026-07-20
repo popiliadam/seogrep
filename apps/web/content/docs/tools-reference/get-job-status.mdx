@@ -1,18 +1,15 @@
 ---
 title: get_job_status
-description: Check the status and result summary of an asynchronous job.
+description: "Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id."
 ---
 
-`get_job_status` reports on an asynchronous job — such as a
-[`crawl_site`](/docs/tools-reference/crawl-site) run — by its `job_id`. It is how
-you follow an async tool from `queued` to `succeeded` (or `failed`). Costs **0
-credits**.
+**Cost:** Free (0 credits).
+
+`get_job_status` reports on an asynchronous job — such as a [`crawl_site`](/docs/tools-reference/crawl-site) run — by its `job_id`. It is how you follow an async tool from `queued` to `succeeded` (or `failed`).
 
 ## What it does
 
-Looks up the job under your account and returns its current status, its lifecycle
-timestamps, and — once it succeeds — a short summary of the result. A job that
-does not belong to you is reported as not found, the same as an unknown id.
+Looks up the job under your account and returns its current status, its lifecycle timestamps, and — once it succeeds — a short summary of the result. A job that does not belong to you is reported as not found, the same as an unknown id.
 
 ## Example
 
@@ -20,19 +17,14 @@ After `crawl_site` gives you a `job_id`, ask your MCP client:
 
 > What's the status of job `<job_id>`?
 
-Repeat until the status is `succeeded`. A finished crawl summarizes how many
-pages were crawled, how many were skipped, and how many issues were found.
+Repeat until the status is `succeeded`. A finished crawl summarizes how many pages were crawled, how many were skipped, and how many issues were found.
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `job_id` | string (uuid) | The `job_id` returned by an async tool such as `crawl_site`. |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `job_id` | string (uuid) | Yes | The job_id returned by an async tool such as crawl_site. |
 
 ### Returns
 
-The job `status` (`queued`, `running`, `succeeded`, or `failed`), its
-created / started / finished timestamps, and — on success — a result summary, or
-the error message on failure.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / finished timestamps, and — on success — a result summary, or the error message on failure.

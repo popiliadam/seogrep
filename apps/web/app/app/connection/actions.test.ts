@@ -10,6 +10,7 @@ vi.mock("@pseo/core", () => ({
   mcpUrlTemplate: () => "https://mcp.seogrep.com/mcp/{key}",
 }));
 vi.mock("@pseo/db/api-keys-repo", () => ({
+  countActiveKeys: vi.fn(),
   createKey: vi.fn(),
   getKeyOwner: vi.fn(),
   revokeKey: vi.fn(),
@@ -27,10 +28,11 @@ vi.mock("../../../lib/analytics", () => ({
 }));
 
 import { generateApiKey } from "@pseo/core";
-import { createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
+import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createKeyAction, revokeKeyAction, rotateKeyAction } from "./actions";
 
 const generateApiKeyMock = vi.mocked(generateApiKey);
+const countActiveKeysMock = vi.mocked(countActiveKeys);
 const createKeyMock = vi.mocked(createKey);
 const getKeyOwnerMock = vi.mocked(getKeyOwner);
 const revokeKeyMock = vi.mocked(revokeKey);
@@ -64,6 +66,7 @@ describe("connection server actions", () => {
 
     it("mints for the session user and returns plaintext key + full MCP URL once", async () => {
       signedIn("user-1");
+      countActiveKeysMock.mockResolvedValue(0);
       generateApiKeyMock.mockReturnValue(SAMPLE);
       createKeyMock.mockResolvedValue(createdRow(KEY_ID));
 
@@ -80,6 +83,27 @@ describe("connection server actions", () => {
         mcpUrl: "https://mcp.seogrep.com/mcp/sg_PLAINTEXT",
       });
       expect(captureKeyCreated).toHaveBeenCalledWith("user-1", false);
+    });
+
+    it("allows a new key at the boundary (4 active < cap of 5)", async () => {
+      signedIn("user-1");
+      countActiveKeysMock.mockResolvedValue(4);
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(KEY_ID));
+
+      const result = await createKeyAction();
+
+      expect(result.key).toBe("sg_PLAINTEXT");
+      expect(createKeyMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects with a clear message at the active-key cap and never writes", async () => {
+      signedIn("user-1");
+      countActiveKeysMock.mockResolvedValue(5);
+
+      await expect(createKeyAction()).rejects.toThrow(/5 active API keys, the maximum/i);
+      expect(createKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
   });
 
@@ -99,6 +123,24 @@ describe("connection server actions", () => {
       expect(getKeyOwnerMock).not.toHaveBeenCalled();
       expect(createKeyMock).not.toHaveBeenCalled();
       expect(captureKeyCreated).not.toHaveBeenCalled();
+    });
+
+    it("is EXEMPT from the active-key cap: rotates even at the limit, without a count read", async () => {
+      signedIn("user-1");
+      getKeyOwnerMock.mockResolvedValue("user-1");
+      // At (indeed over) the cap — rotate must still succeed (it's net-neutral on the count).
+      countActiveKeysMock.mockResolvedValue(99);
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(NEW_ID));
+      revokeKeyMock.mockResolvedValue(undefined);
+
+      const result = await rotateKeyAction(KEY_ID);
+
+      expect(result.key).toBe("sg_PLAINTEXT");
+      expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
+      // Rotate never consults the cap — the exemption is in the code path, not just the number.
+      expect(countActiveKeysMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).toHaveBeenCalledWith("user-1", true);
     });
 
     it("mints the new key BEFORE revoking the old one", async () => {

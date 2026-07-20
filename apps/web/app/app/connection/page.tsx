@@ -1,5 +1,6 @@
 import { mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import { listKeys } from "@pseo/db/api-keys-repo";
+import { formatDate } from "../../../lib/format";
 import { createClient } from "../../../lib/supabase/server";
 import { createKeyAction, revokeKeyAction, rotateKeyAction } from "./actions";
 import { KeyPanel } from "./key-panel";
@@ -85,10 +86,4 @@ export default async function ConnectionPage() {
       </div>
     </section>
   );
-}
-
-/** Render an ISO timestamp as YYYY-MM-DD; fall back to the raw value if unparseable. */
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toISOString().slice(0, 10);
 }

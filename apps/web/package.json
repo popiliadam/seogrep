@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint app components lib mdx-components.tsx",
     "test": "vitest run",
+    "docs:tools": "node scripts/gen-tool-docs.mjs",
+    "docs:tools:check": "node scripts/gen-tool-docs.mjs --check",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {

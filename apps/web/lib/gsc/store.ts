@@ -2,15 +2,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { createServiceClient } from "@pseo/db/server";
 
 /**
- * The gsc_connections write path. There is no DB unique on (user_id, project_id) yet
- * (migrations 0003/0009), so the "upsert" is an explicit read-then-update/insert, scoped
- * to the tenant by user_id + project_id (constitution NEVER #4). The refresh token is
- * ALREADY sealed by the caller (crypto.encryptToken -> toByteaHex); this module only
- * persists the opaque bytea and the resolved property — it never sees plaintext.
+ * The gsc_connections write path: a tenant-scoped read-then-update/insert (scoped by
+ * user_id + project_id — constitution NEVER #4). The refresh token is ALREADY sealed by the
+ * caller (crypto.encryptToken -> toByteaHex); this module only persists the opaque bytea and
+ * the resolved property — it never sees plaintext.
  *
  * Google returns a refresh token only on first consent (even with prompt=consent it can
  * be omitted if one was issued before), so `encryptedTokenHex === null` means "no NEW
  * token": we KEEP any stored token rather than null it, and only refresh the property.
+ *
+ * The first-link INSERT is bound to ON CONFLICT (user_id, project_id) — the unique constraint
+ * from migration 0010. Two concurrent first links can no longer each open a row: the loser's
+ * write conflicts and MERGES into the winner's row (the newer sealed token + property win,
+ * i.e. re-connect semantics) instead of raising a unique violation or duplicating the row.
  */
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
@@ -107,12 +111,18 @@ export async function upsertGscConnection(
     // No row to keep and no token to store — the connection cannot be established.
     return "no_token";
   }
-  const { error } = await db.from("gsc_connections").insert({
-    user_id: write.userId,
-    project_id: write.projectId,
-    encrypted_refresh_token: write.encryptedTokenHex,
-    gsc_property: write.gscProperty,
-  });
+  // ON CONFLICT (user_id, project_id) upsert (merge): a first link normally inserts, but if a
+  // concurrent link won the row after our read, this merges the newer token + property into it
+  // rather than raising a unique violation — one row survives, carrying a usable token.
+  const { error } = await db.from("gsc_connections").upsert(
+    {
+      user_id: write.userId,
+      project_id: write.projectId,
+      encrypted_refresh_token: write.encryptedTokenHex,
+      gsc_property: write.gscProperty,
+    },
+    { onConflict: "user_id,project_id" },
+  );
   if (error) {
     throw new Error(`gsc_connections insert failed: ${error.message}`);
   }

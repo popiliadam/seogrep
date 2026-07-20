@@ -1,20 +1,15 @@
 ---
 title: analyze_content_decay
-description: Find pages losing clicks vs the previous window — the ones worth refreshing first.
+description: "Find decaying pages from your latest Search Console pull: pages whose clicks dropped meaningfully (absolute and proportional) vs the previous window, biggest loss first. Run pull_gsc_data first."
 ---
 
-`analyze_content_decay` compares the two windows in your latest
-[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) and flags **decaying pages**: pages whose
-clicks fell by a meaningful amount and a meaningful proportion between the previous window and the
-current one. These are the pages most worth a refresh, re-optimization, or internal-link boost
-before the slide continues. Costs **10 credits**. Run `pull_gsc_data` first.
+**Cost:** 10 credits.
+
+`analyze_content_decay` compares the two windows in your latest [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) and flags **decaying pages**: pages whose clicks fell by a meaningful amount and a meaningful proportion between the previous window and the current one. These are the pages most worth a refresh, re-optimization, or internal-link boost before the slide continues. Run `pull_gsc_data` first.
 
 ## What it does
 
-It sums each page's clicks across both windows (a page can rank for many queries) and flags a page
-when it lost **at least 5 clicks** AND **at least 30%** of its previous clicks. Both thresholds
-must be met, so a tiny wobble or a large-but-proportionally-small dip is left out. Results are
-ordered by clicks lost, biggest bleed first.
+It sums each page's clicks across both windows (a page can rank for many queries) and flags a page when it lost **at least 5 clicks** AND **at least 30%** of its previous clicks. Both thresholds must be met, so a tiny wobble or a large-but-proportionally-small dip is left out. Results are ordered by clicks lost, biggest bleed first.
 
 ## Example
 
@@ -24,14 +19,10 @@ Ask your MCP client in plain language:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to analyze (must have run `pull_gsc_data` first). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project to analyze (must have run pull_gsc_data first). |
 
 ### Returns
 
-A list of decaying pages — each with its previous and current clicks, the clicks lost, and the
-drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still
-charged for the delivered analysis).
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+A list of decaying pages — each with its previous and current clicks, the clicks lost, and the drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still charged for the delivered analysis).

@@ -1,21 +1,18 @@
 ---
 title: audit_onpage
-description: Audit on-page SEO — titles, meta descriptions, headings, canonicals, and thin content — from your latest crawl.
+description: "Audit on-page SEO for a project's latest crawl: titles, meta descriptions, h1s, canonicals, and thin content, per page. Run crawl_site first."
 ---
 
-`audit_onpage` reviews the on-page SEO of the pages captured by your project's most
-recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous**:
-it returns the findings immediately. Costs **30 credits**. Run `crawl_site` first —
-if the project has never been crawled, the tool tells you so and charges nothing.
+**Cost:** 30 credits.
+
+`audit_onpage` reviews the on-page SEO of the pages captured by your project's most recent [`crawl_site`](/docs/tools-reference/crawl-site) run. It is **synchronous**: it returns the findings immediately. Run `crawl_site` first — if the project has never been crawled, the tool tells you so and charges nothing.
 
 ## What it does
 
 Runs a rule engine over every crawled page and reports, per page, issues such as:
 
-- **Titles** — missing, too long (over ~60 characters), too short, or duplicated
-  across pages.
-- **Meta descriptions** — missing, too long (over ~160 characters), too short, or
-  duplicated.
+- **Titles** — missing, too long (over ~60 characters), too short, or duplicated across pages.
+- **Meta descriptions** — missing, too long (over ~160 characters), too short, or duplicated.
 - **Headings** — a missing `h1`, or more than one `h1`.
 - **Canonicals** — missing, or pointing to a different URL than the page itself.
 - **Thin content** — pages under ~200 words.
@@ -30,13 +27,10 @@ Ask your MCP client in plain language:
 
 ### Input
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `project_id` | string (uuid) | The project to audit (from `setup_project` / `list_projects`). |
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project to audit (from setup_project / list_projects). |
 
 ### Returns
 
-A summary of issue counts followed by a per-page list of findings. Pages with no
-issues are counted but not listed.
-
-> **Beta note:** Auto-generated tool docs land in a later task; this is the v0 skeleton.
+A summary of issue counts followed by a per-page list of findings. Pages with no issues are counted but not listed.
