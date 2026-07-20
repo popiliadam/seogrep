@@ -45,8 +45,14 @@ export interface SpendEntry {
   readonly count: number;
 }
 
+/**
+ * Directory precedence: injected ctx.dir (tests) → DFS_BUDGET_DIR env (real prod name —
+ * the Fly image is root-owned and the process is non-root, so the repo-relative default
+ * is unwritable in the container; fly.toml sets DFS_BUDGET_DIR=/tmp/dfs-spend) → the
+ * repo-relative default (local dev). T16 live-smoke EACCES incident, 2026-07-20.
+ */
 function resolveDir(ctx: SpendContext): string {
-  return ctx.dir ?? DEFAULT_SPEND_DIR;
+  return ctx.dir ?? process.env.DFS_BUDGET_DIR ?? DEFAULT_SPEND_DIR;
 }
 
 /** UTC day stamp (YYYY-MM-DD) — matches the guard script's `date -u +%F`. */

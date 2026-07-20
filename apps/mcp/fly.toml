@@ -11,6 +11,12 @@ primary_region = "nrt"
 #   flyctl deploy --config apps/mcp/fly.toml --dockerfile apps/mcp/Dockerfile
 # Manual deploys must be run the same way, from the repo root.
 
+# Non-secret runtime env. DFS_BUDGET_DIR: the image is root-owned and the process runs
+# non-root, so the repo-relative spend dir is unwritable in the container (T16 live-smoke
+# EACCES) — point the DataForSEO budget ledger at /tmp (per-boot ephemeral, accepted).
+[env]
+  DFS_BUDGET_DIR = "/tmp/dfs-spend"
+
 # MODE selects the process role at runtime (see apps/mcp/src/index.ts).
 [processes]
   web = "sh -c 'MODE=web exec node apps/mcp/dist/index.js'"

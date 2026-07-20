@@ -1,7 +1,15 @@
 name: Deploy MCP
-# First deploy is a human gate: manual trigger only, never on push/PR.
+# First deploy was a human gate (workflow_dispatch, done 2026-07-20 — success). Now also
+# auto-deploys on main pushes that touch the MCP image inputs: the app itself, the
+# workspace package the image builds (@pseo/core), or this workflow. Manual dispatch stays.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mcp/**"
+      - "packages/core/**"
+      - ".github/workflows/deploy-mcp.yml"
 
 permissions:
   contents: read
