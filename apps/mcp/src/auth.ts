@@ -128,6 +128,16 @@ export interface RateLimiterOptions {
   readonly refillPerSecond?: number;
   /** Injectable clock in milliseconds (defaults to Date.now). Tests pin it. */
   readonly now?: () => number;
+  /**
+   * Optional cap on the number of distinct buckets held in memory. Default:
+   * unbounded (the per-key usage is unaffected). When set and admitting a NEW id
+   * would push the map PAST `maxEntries`, the WHOLE map is cleared first — crude
+   * but bounded, no LRU. A rotating-id flood then resets everyone's burst
+   * allowance, which is an accepted beta tradeoff: an attacker rotating
+   * >maxEntries ids already defeats per-id accounting regardless, so this cap
+   * exists to bound MEMORY, not to improve fairness.
+   */
+  readonly maxEntries?: number;
 }
 
 interface Bucket {
@@ -147,12 +157,19 @@ interface Bucket {
 export function createRateLimiter(options: RateLimiterOptions = {}): RateLimiter {
   const capacity = options.capacity ?? DEFAULT_CAPACITY;
   const refillPerSecond = options.refillPerSecond ?? DEFAULT_REFILL_PER_SECOND;
+  const maxEntries = options.maxEntries;
   const now = options.now ?? Date.now;
   const buckets = new Map<string, Bucket>();
   return {
     tryConsume(id: string): boolean {
       const nowMs = now();
-      const bucket = buckets.get(id) ?? { tokens: capacity, updatedMs: nowMs };
+      const existing = buckets.get(id);
+      // Bounded memory: before admitting a NEW id that would push the map past
+      // maxEntries, drop every bucket (see maxEntries docs — crude, no LRU).
+      if (existing === undefined && maxEntries !== undefined && buckets.size >= maxEntries) {
+        buckets.clear();
+      }
+      const bucket = existing ?? { tokens: capacity, updatedMs: nowMs };
       const elapsedSeconds = Math.max(0, (nowMs - bucket.updatedMs) / 1000);
       const refilled = Math.min(capacity, bucket.tokens + elapsedSeconds * refillPerSecond);
       if (refilled < 1) {

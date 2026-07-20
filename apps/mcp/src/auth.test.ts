@@ -176,3 +176,27 @@ describe("createRateLimiter (token bucket)", () => {
     expect(rl.tryConsume("k")).toBe(false);
   });
 });
+
+describe("createRateLimiter maxEntries (bounded memory)", () => {
+  it("clears every bucket when a NEW id would exceed the cap, then keeps working", () => {
+    const ms = 0;
+    const rl = createRateLimiter({ capacity: 1, refillPerSecond: 1, maxEntries: 2, now: () => ms });
+    expect(rl.tryConsume("a")).toBe(true); // size 1
+    expect(rl.tryConsume("a")).toBe(false); // "a" exhausted, still size 1
+    expect(rl.tryConsume("b")).toBe(true); // size 2 (at the cap)
+    // Admitting "c" would exceed the cap -> whole map cleared, "c" gets a fresh bucket.
+    expect(rl.tryConsume("c")).toBe(true);
+    // Eviction reset "a" (it was exhausted before) -> full allowance again, proving the clear.
+    expect(rl.tryConsume("a")).toBe(true);
+  });
+
+  it("defaults to unbounded: many ids coexist and early ids are not evicted", () => {
+    const ms = 0;
+    const rl = createRateLimiter({ capacity: 1, refillPerSecond: 1, now: () => ms });
+    for (let i = 0; i < 100; i += 1) {
+      expect(rl.tryConsume(`id-${i}`)).toBe(true);
+    }
+    // id-0's bucket survived all 100 inserts (still exhausted, not reset) -> no hidden cap.
+    expect(rl.tryConsume("id-0")).toBe(false);
+  });
+});
