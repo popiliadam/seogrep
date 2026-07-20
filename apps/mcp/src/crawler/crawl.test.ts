@@ -1,7 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   computeIssues,
   crawlSite,
+  estimateSiteSize,
+  matchesIncludePaths,
+  normalizeIncludePaths,
   normalizeUrl,
   parseHtml,
   parseJsonLdTypes,
@@ -450,5 +453,132 @@ describe("crawlSite — SSRF origin gate and pre-emission redirect parity", () =
       await site.close();
       await victim.close();
     }
+  });
+});
+
+// --- include_paths scoping (T35) -----------------------------------------------
+
+describe("normalizeIncludePaths", () => {
+  it("ensures a leading slash, trims, drops blanks, and dedupes (first-seen order)", () => {
+    expect(normalizeIncludePaths(["blog", "/docs", "  /blog  ", "", "   "])).toEqual([
+      "/blog",
+      "/docs",
+    ]);
+  });
+
+  it("treats an absent / empty list as no restriction ([])", () => {
+    expect(normalizeIncludePaths()).toEqual([]);
+    expect(normalizeIncludePaths([])).toEqual([]);
+  });
+});
+
+describe("matchesIncludePaths", () => {
+  it("is always true for an empty prefix list (no restriction)", () => {
+    expect(matchesIncludePaths("/anything", [])).toBe(true);
+  });
+
+  it("matches a pathname that STARTS WITH a prefix (raw prefix match)", () => {
+    expect(matchesIncludePaths("/blog", ["/blog"])).toBe(true);
+    expect(matchesIncludePaths("/blog/post", ["/blog"])).toBe(true);
+    expect(matchesIncludePaths("/docs/x", ["/blog", "/docs"])).toBe(true);
+    expect(matchesIncludePaths("/about", ["/blog"])).toBe(false);
+  });
+});
+
+describe("crawlSite — includePaths scoping", () => {
+  it("crawls only in-scope URLs and never fetches out-of-scope links", async () => {
+    const site = await startFixtureSite();
+    const at = (path: string): string => normalizeUrl(site.origin + path);
+    try {
+      // The fixture sitemap seeds /, /about, /blog, /noindex, /orphan. Scoped to /blog, only
+      // /blog is seeded; its one link (/about) is out of scope, so it is skipped, not fetched.
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, includePaths: ["/blog"] });
+      expect(result.pages.map((p) => p.url)).toEqual([at("/blog")]);
+      // Out-of-scope pages are never requested at all (request-log proof).
+      expect(site.requested).toContain("/blog");
+      expect(site.requested).not.toContain("/about");
+      expect(site.requested).not.toContain("/orphan");
+      expect(site.requested).not.toContain("/noindex");
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("an empty includePaths is a no-op — identical pages to an unscoped crawl", async () => {
+    const site = await startFixtureSite();
+    try {
+      const unscoped = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const empty = await crawlSite(site.origin, { crawlDelayCapMs: 0, includePaths: [] });
+      expect(empty.pages.map((p) => p.url).sort()).toEqual(unscoped.pages.map((p) => p.url).sort());
+    } finally {
+      await site.close();
+    }
+  });
+});
+
+// --- estimateSiteSize (free, guarded pre-discovery) -----------------------------
+// The loopback fixture makes these ZERO external calls; the SSRF paths fake DNS / mock fetch.
+
+describe("estimateSiteSize", () => {
+  it("counts same-origin sitemap <loc>s (source 'sitemap')", async () => {
+    const site = await startFixtureSite();
+    try {
+      const est = await estimateSiteSize(site.origin, { timeoutMs: 2_000 });
+      // The fixture sitemap advertises /, /about, /blog, /noindex, /orphan.
+      expect(est).toEqual({ pages: 5, source: "sitemap" });
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("applies includePaths to the sitemap count", async () => {
+    const site = await startFixtureSite();
+    try {
+      const est = await estimateSiteSize(site.origin, { timeoutMs: 2_000, includePaths: ["/blog"] });
+      expect(est).toEqual({ pages: 1, source: "sitemap" });
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("falls back to a homepage-link floor when there is no sitemap (source 'homepage')", async () => {
+    const site = await startFixtureSite({ sitemap: false });
+    try {
+      const est = await estimateSiteSize(site.origin, { timeoutMs: 2_000 });
+      expect(est.source).toBe("homepage");
+      expect(est.pages).toBeGreaterThan(0);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("returns null WITHOUT any fetch for a blocked origin (shared SSRF gate)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // A public-looking name whose fake A record is RFC1918 — the gate refuses it pre-fetch.
+    const lookup: LookupFn = async () => [{ address: "10.0.0.5", family: 4 }];
+    try {
+      const est = await estimateSiteSize("http://ssrf-estimate.example.com", { lookup });
+      expect(est).toEqual({ pages: null, source: "unknown" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("degrades to null and NEVER throws when fetching fails", async () => {
+    // Gate passes (fake public A record), but every fetch rejects -> best-effort null.
+    const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    try {
+      const est = await estimateSiteSize("http://fetch-fail.example.com", { lookup });
+      expect(est).toEqual({ pages: null, source: "unknown" });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("degrades to null for an invalid / non-http origin (no throw)", async () => {
+    expect(await estimateSiteSize("not a url")).toEqual({ pages: null, source: "unknown" });
+    expect(await estimateSiteSize("ftp://example.com")).toEqual({ pages: null, source: "unknown" });
   });
 });
