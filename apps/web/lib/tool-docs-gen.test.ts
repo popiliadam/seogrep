@@ -4,15 +4,18 @@ import { describe, expect, it } from "vitest";
 // exported so this unit test can pin the template render + the --check sync logic without the
 // built MCP registry (the CLI loads that lazily, so importing the module here is side-effect free).
 import {
+  FRONTMATTER_DESCRIPTION_MAX,
   checkToolsMetaSync,
   deriveSlug,
   findConfirmFields,
+  frontmatterDescription,
   mdxEscapeInline,
   renderCostLine,
   renderFieldType,
   renderInputTable,
   renderToolPage,
   stripCostSentences,
+  truncateAtWord,
 } from "../scripts/gen-tool-docs.mjs";
 
 describe("deriveSlug", () => {
@@ -48,6 +51,81 @@ describe("stripCostSentences", () => {
     expect(stripCostSentences("List the website domains you are tracking (oldest first).")).toBe(
       "List the website domains you are tracking (oldest first).",
     );
+  });
+});
+
+describe("truncateAtWord", () => {
+  it("leaves a string within the limit unchanged", () => {
+    const short = "Register a website domain to track.";
+    expect(truncateAtWord(short, 155)).toBe(short);
+  });
+
+  it("leaves a string exactly at the limit unchanged", () => {
+    const exact = "x".repeat(155);
+    expect(truncateAtWord(exact, 155)).toBe(exact);
+    expect(truncateAtWord(exact, 155).length).toBe(155);
+  });
+
+  it("truncates a long string to the limit at a word boundary with an ellipsis", () => {
+    const long =
+      "Find quick-win keyword opportunities from your latest Search Console pull: queries ranking in " +
+      "positions 8 to 20 with enough impressions to be worth a push, prioritized. Run pull_gsc_data first.";
+    const result = truncateAtWord(long, 155);
+    expect(result.length).toBeLessThanOrEqual(155);
+    expect(result.endsWith("…")).toBe(true);
+    // Cut at a word boundary: the text before the ellipsis is a prefix of the original, whole-word.
+    const body = result.slice(0, -1);
+    expect(long.startsWith(body)).toBe(true);
+    expect(long[body.length]).toBe(" "); // the next original char is a space → no split word
+  });
+
+  it("hard-cuts a single over-long word (no space to break on) and still fits", () => {
+    const oneWord = "a".repeat(300);
+    const result = truncateAtWord(oneWord, 155);
+    expect(result.length).toBeLessThanOrEqual(155);
+    expect(result.endsWith("…")).toBe(true);
+  });
+
+  it("drops a dangling separator before the ellipsis", () => {
+    // Force the boundary to land right after an em dash.
+    const text = `${"word ".repeat(30)}— tail that overflows the budget by a wide margin here now`;
+    const result = truncateAtWord(text, 155);
+    expect(result.endsWith("—…")).toBe(false);
+    expect(result.endsWith("…")).toBe(true);
+  });
+});
+
+describe("frontmatterDescription", () => {
+  it("extracts and decodes the description scalar from a rendered page", () => {
+    const page = renderToolPage(
+      { name: "demo_tool", description: 'He said "hi". Costs 3 credits.', inputJsonSchema: { properties: {} } },
+      3,
+      { whatItDoes: "It does.", example: "> Do it.", returns: "A result." },
+    );
+    expect(frontmatterDescription(page)).toBe('He said "hi".');
+  });
+
+  it("returns empty string when there is no description", () => {
+    expect(frontmatterDescription("---\ntitle: x\n---\n\nbody\n")).toBe("");
+  });
+
+  it("flags a hand-built page whose description exceeds the budget (the --check invariant)", () => {
+    const tooLong = "y".repeat(200);
+    const page = `---\ntitle: t\ndescription: "${tooLong}"\n---\n\nbody\n`;
+    expect(frontmatterDescription(page).length).toBe(200);
+    expect(frontmatterDescription(page).length).toBeGreaterThan(FRONTMATTER_DESCRIPTION_MAX);
+  });
+
+  it("keeps every rendered tool page within the budget after truncation", () => {
+    const raw =
+      "Not sure what to do next? whats_next looks at where your project stands — crawl, audits, Search " +
+      "Console, reports — and tells you the single best next step, with a short reason and what comes after.";
+    const page = renderToolPage(
+      { name: "whats_next", description: raw, inputJsonSchema: { properties: {} } },
+      0,
+      { whatItDoes: "It routes.", example: "> Next?", returns: "A step." },
+    );
+    expect(frontmatterDescription(page).length).toBeLessThanOrEqual(FRONTMATTER_DESCRIPTION_MAX);
   });
 });
 
