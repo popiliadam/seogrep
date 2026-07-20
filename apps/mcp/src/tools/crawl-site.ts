@@ -167,14 +167,14 @@ function confirmationResult(
   const scopeClause = scopedPaths ? " in the paths you scoped to" : "";
   const message =
     `Your site looks large — about ${pagesText} pages found${scopeClause}. ` +
-    `This one crawl of ${domain} will cost ${runCost} credits and covers up to ${PAGE_CAP} pages — ` +
+    `This one crawl of ${domain} costs a flat ${runCost} credits (one crawl covers up to ${PAGE_CAP} pages) — ` +
     `that ${runCost} credits is the only charge. ` +
     `Crawling the WHOLE site at the current rate (${runCost} credits per ${PAGE_CAP} pages) would take about ` +
     `${runsText} separate crawls and roughly ${projCreditsText} credits in total — that ${projCreditsText} is an ` +
     `informational projection, NOT a charge, and no credits have been charged. ` +
     `To crawl just part of the site, re-run with include_paths (for example ["/blog"]) to target a section ` +
     `and stay within the ${PAGE_CAP}-page cap. ` +
-    `To queue this single ${runCost}-credit crawl of up to ${PAGE_CAP} pages now, re-run with "confirm": true.`;
+    `To queue this single ${runCost}-credit crawl now, re-run with "confirm": true.`;
   return textResult(
     JSON.stringify({
       requires_confirmation: true,
