@@ -314,6 +314,28 @@ export function getServiceClient(): ServiceClient {
 }
 
 /**
+ * Count jobs currently `queued` or `running` — the gateway's own view of queue backlog /
+ * stuck work, surfaced on the unauthenticated `/status` operator endpoint. This is a
+ * PROCESS-WIDE aggregate and is deliberately NOT tenant-scoped: it returns only a single
+ * integer (head:true transfers ZERO rows, so no tenant data leaves the database), which is
+ * why the `user_id` filter that guards tenant DATA reads (constitution NEVER #4) does not
+ * apply here. NOTE: there is no dedicated index on `jobs.status` today, so this is a plain
+ * count over the jobs table — cheap at beta volume, and the `/status` caller bounds it with
+ * a short timeout + best-effort `null` fallback regardless. Throws on a query error; the
+ * caller degrades to `null` rather than failing `/status`.
+ */
+export async function countPendingJobs(client: ServiceClient): Promise<number> {
+  const { count, error } = await client
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .in("status", ["queued", "running"]);
+  if (error) {
+    throw new Error(`jobs pending count failed: ${error.message}`);
+  }
+  return count ?? 0;
+}
+
+/**
  * Look up an ACTIVE key by its sha256 hash: key_hash = ? AND revoked_at IS NULL.
  * This is the one deliberately NON-tenant-scoped query — it is how the gateway
  * DISCOVERS the tenant. Returns only { keyId, userId }; a revoked or unknown key

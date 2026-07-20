@@ -10,7 +10,13 @@ import {
   type AuthContext,
   type RateLimiter,
 } from "./auth.ts";
-import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
+import {
+  countPendingJobs,
+  createServiceClient,
+  findActiveKeyByHash,
+  touchLastUsed,
+} from "./db.ts";
+import { metrics } from "./metrics.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
 import { registerPrompts } from "./prompts.ts";
 
@@ -56,6 +62,15 @@ export interface AppDeps {
    * ever touches the database.
    */
   readonly tools?: readonly RegisteredTool[];
+  /**
+   * Backlog reader for the `/status` operator signal: the count of `queued`+`running`
+   * jobs. Optional and injected exactly like ipThrottle above — the production root wires
+   * the DB-backed countPendingJobs; DB-free unit tests omit it, in which case `/status`
+   * reports pendingJobs:null and no handler touches the database. The `/status` handler
+   * always calls this through readPendingJobsBounded, so a slow/failing read degrades to
+   * null instead of hanging or 5xx-ing the endpoint.
+   */
+  readonly pendingJobs?: () => Promise<number>;
 }
 
 /** res.locals key holding the resolved tenant context (set on the authenticated path). */
@@ -107,7 +122,51 @@ function buildDefaultDeps(): AppDeps {
     // per-process limitation (a multi-instance deployment throttles per instance).
     ipThrottle: createRateLimiter({ capacity: 240, refillPerSecond: 4, maxEntries: 10_000 }),
     tools: ALL_TOOLS,
+    // Backlog count for /status, over the SAME service client. Read-only, non-tenant
+    // aggregate (see countPendingJobs); the /status handler bounds it so a slow DB can
+    // never hang the operator endpoint.
+    pendingJobs: () => countPendingJobs(client),
   };
+}
+
+/**
+ * Upper bound (ms) on the `/status` pending-jobs read. Past this the endpoint reports
+ * pendingJobs:null rather than waiting: `/status` is an operator signal, not a liveness
+ * gate, so a slow DB must degrade it, never hang it. Short by design — an operator polling
+ * `/status` wants a fast answer even when the DB is the thing that is unwell.
+ */
+const STATUS_PENDING_TIMEOUT_MS = 1_000;
+
+/**
+ * Read the pending-jobs backlog for `/status`, made SAFE for an operator signal: bounded by
+ * `timeoutMs` and swallowing any rejection, so a slow or broken DB resolves to `null`
+ * instead of hanging or 5xx-ing `/status`. Returns null when no reader is wired (DB-free
+ * tests inject none). The reader's rejection is folded to null HERE — not left to
+ * Promise.race — because a rejection arriving AFTER the timeout already won would otherwise
+ * be an unhandled rejection (fatal under Node's default policy). Exported so the never-hang
+ * guarantee can be unit-tested directly with a short bound.
+ */
+export async function readPendingJobsBounded(
+  read: (() => Promise<number>) | undefined,
+  timeoutMs: number,
+): Promise<number | null> {
+  if (!read) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  const counted = read().then(
+    (n) => n,
+    (error: unknown) => {
+      console.warn(`/status pendingJobs read failed: ${errorMessage(error)}`);
+      return null;
+    },
+  );
+  try {
+    return await Promise.race([counted, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
@@ -202,6 +261,7 @@ async function handleMcpRequest(
   } catch (error) {
     console.error("MCP request handling failed:", error);
     if (!res.headersSent) {
+      metrics.recordServerError(); // count the 5xx so /status.errorsSinceBoot reflects it
       res.status(500).json(jsonRpcError(JSON_RPC_INTERNAL_ERROR, "Internal server error"));
     }
   }
@@ -219,6 +279,21 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // Liveness probe for Fly health checks and load balancers.
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Operator status signal — deliberately SEPARATE from /healthz. /healthz stays a trivial
+  // zero-I/O liveness probe wired to the Fly health check (fly.toml, every 15s / 2s timeout)
+  // AND the external uptime monitor; adding a DB read there would let a slow DB fail the
+  // check and have Fly kill an otherwise-healthy machine. /status carries the richer signals
+  // and is NOT wired to any health check, so its DB read can never endanger liveness.
+  // Unauthenticated on purpose: it exposes only COARSE, PROCESS-WIDE operational counts
+  // (uptime, 5xx-since-boot, and the global queued+running backlog) — no tenant data and
+  // nothing per-user — so it is as safe to expose as /healthz. The backlog read is bounded
+  // and best-effort (readPendingJobsBounded): on a slow/broken DB it degrades to
+  // pendingJobs:null and STILL answers ok:true, so /status never hangs or returns 5xx.
+  app.get("/status", async (_req, res) => {
+    const pendingJobs = await readPendingJobsBounded(deps.pendingJobs, STATUS_PENDING_TIMEOUT_MS);
+    res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
   });
 
   // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
@@ -265,6 +340,7 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     } catch (error) {
       console.error(`MCP request failed for ${safeKeyPrefix(key)}: ${errorMessage(error)}`);
       if (!res.headersSent) {
+        metrics.recordServerError(); // count the 5xx so /status.errorsSinceBoot reflects it
         res.status(500).json(jsonRpcError(JSON_RPC_INTERNAL_ERROR, "Internal server error"));
       }
     }
