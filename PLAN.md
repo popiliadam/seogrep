@@ -3,7 +3,7 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 3 — YÜRÜTÜLÜYOR (2026-07-20: PR #12-#16 merged [16/16 tool canlı main'de]; **PR-E T14+T15 KOD-TAMAM — push/merge insan kapısında**; kalan yalnız T16 deploy) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI (seogrep.com)
+## Faz: 3 — T16 CANLI-KANITLI (2026-07-20: **mcp.seogrep.com YAYINDA** — PR #12-#17 merged; gerçek-client E2E mühürlü [rapor /r/BXrSwjichTQ, bakiye 1200→1135 ledger-birebir]; kalan: kapanış PR'ı [chore/faz3-t16-kapanis] merge → oto-deploy → DFS smoke tekrarı → DFS_LIVE kapat → **AUDIT'E DUR**) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI
 
 ### Faz 3 durumu (2026-07-19)
 - Kararlar (insan-onaylı, PR #12 merge imzası): D26 Fly.io Tokyo/nrt · D27 pg-boss (Redis yok) · D28 MCP_URL_TEMPLATE · kredi tablosu v0 · trial signup'ta kalır. Zemin: Fly token ✓ · Netlify env AD sözleşmesi `GOOGLE_CLIENT_ID/SECRET` ✓ · Google console ✓ · Search Console TXT ✓.
@@ -18,8 +18,15 @@
 - **gitleaks config** (no-secrets goal): `.gitleaks.toml` default ruleset korur + yalnız test dosyalarını allowlist'ler (7 PR-C test-fixture false-positive; gerçek secret YOK — doğrulandı). CI-lokal paritesi otomatik.
 - **Kapılar:** verify PASS + verify-db PASS (17/69) + **make goals 11/11** + FINAL whole-branch review (Opus 4.8) **READY TO MERGE = YES** (0C; tek Important operasyonel = 0010 cloud-apply dedup pre-check, şef apply adımı). Dal `feat/faz3-e-kapanis` @70c31ca (10 commit).
 - **Model sapması (insan-onaylı):** Fable aylık limit aşıldı → bu oturumda şef+hakemler Opus 4.8 (para/migration dahil; ledger'da kayıtlı, audit notu).
-- Sıradaki: **push/PR → insan merge (Merge→Confirm→DELETE BRANCH)** → şef 0010 cloud apply (dedup pre-check + rollback'lı kanıt + advisors) → **T16 İLK FLY DEPLOY** (Fly secrets 10/10 insan notunda hazır) → **FAZ 3 SONU: DUR + Faz 0-3 komple audit promptu**.
-- **İNSAN TALİMATI (2026-07-19): Faz 3 çıkışında DUR — Faz 4'e otonom geçiş YOK; Faz 0-3 komple audit için fresh-session promptu yazılıp teslim edilir** (kayıt: memory/faz3-sonu-audit-dur.md + ledger).
+### T16 durumu (2026-07-20 — CANLI-KANITLI; ledger'da tam zincir)
+- **0010 cloud'da** (dedup pre-check 0 satır → apply → constraint kanıtı → advisors temiz; history repo↔cloud birebir 0001-0010).
+- **İLK FLY DEPLOY başarılı** (insan workflow_dispatch): seogrep-mcp @ nrt — 2×web (healthcheck yeşil) + worker; `mcp.seogrep.com` cert Issued + healthz `{"ok":true}`.
+- **İki prod incident bulundu-çözüldü:** (1) maskeli-kopya SERVICE_ROLE_KEY (ByteString/8226 → her istek 500) → sb_secret ile değişti, uydurma key artık 401; (2) DFS budget defteri konteynerde yazılamıyor (EACCES) → `DFS_BUDGET_DIR` env + fly.toml `/tmp/dfs-spend` (kapanış PR'ında). Para yönü iki incident'te de doğru kaldı (release kanıtlı).
+- **Gerçek-client E2E (spec §9 çıkışı) MÜHÜRLÜ:** Claude Code → setup→whats_next→crawl(45 sayfa)→audit_onpage→rapor `/r/BXrSwjichTQ`; bakiye 1200→1135 = tam 65 (20+30+15); DB: balance_view = SUM(ledger) = 1135; browser smoke 4/4 (render+sıfır-dış-istek+404+çift-title zararsız; D29 noindex canlı).
+- **goals 13/13 PASS** (yeni: mcp-alive + trial-flow-e2e — canlı prod'a karşı). deploy-mcp push-trigger'a çevrildi (kapanış PR'ında).
+- Sıradaki: **kapanış PR'ı (chore/faz3-t16-kapanis: goals + budget-fix + push-trigger + PLAN + audit promptu) insan push+merge** → merge oto-deploy tetikler → şef DFS smoke tekrarı (≤$0.10) → **DFS_LIVE kapatılır** → kalibrasyon onayı → **FAZ 3 RESMEN KAPALI**.
+- **İNSAN TALİMATI (2026-07-19): Faz 3 çıkışında DUR — Faz 4'e otonom geçiş YOK.** Audit promptu HAZIR ve TESLİM: `docs/audits/2026-07-20-faz0-3-komple-audit-prompt.md` (taze oturuma aynen yapıştırılır; kayıt: memory/faz3-sonu-audit-dur.md + ledger).
+- **İnsan kuyruğu (öncelik sırasıyla):** (1) **KOORDİNE SECRET ROTASYONU** — T16 kurulumunda service_role/sb_secret/DB şifresi/Google secret/TEK/DFS şifresi chat kaydına girdi; hepsi tek turda yenilenip Netlify+Fly güncellenecek (audit CRITICAL sayacak, şef adım adım yönetir); (2) kalibrasyon onayı (öneri: v0 KALSIN); (3) OAuth verification başvurusu; (4) repo PRIVATE; (5) Supabase leaked-password WARN (1-tık); (6) fiyat stratejisi oturumu (Faz 4 öncesi).
 
 ### Faz 2 canlı mühür + zemin durumu (2026-07-18 akşam)
 - **Çıkış kanıtı GERÇEKLEŞTİ (spec §9):** canlı prod'da sandbox Starter satın alma → `transaction.completed` işlendi → ledger `purchase +1000 ref=txn_01kxvafzkr...` → dashboard bakiye 1200. Subscriptions: starter/active.
@@ -115,59 +122,35 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20 AKŞAM)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
-SIRAYLA OKU: PLAN.md → CLAUDE.md (DISPATCH+NEVER+İMZALI DERSLER) → contract.md →
-docs/plans/2026-07-19-faz3-mcp-cekirdek.md (T14-T16 + Global Constraints). Ledger: .superpowers/sdd/progress.md
-(Faz 3 bölümü — TÜM hakem kararları, follow-up triyajları, koşullu kayıtlar ORADA; PR-E emirleri oradan beslenir).
+SIRAYLA OKU: PLAN.md → CLAUDE.md → contract.md. Ledger: .superpowers/sdd/progress.md (Faz 3 sonu bölümü).
 
-DURUM: Faz 0+1+2 canlı-mühürlü. Faz 3: PR #12(plan)/#13(A)/#14(B)/#15(C) MERGED; PR-D (feat/faz3-d-cikti,
-16/16 tool + 3 prompt, final review YES) push'lu — insan merge durumunu gh pr view ile teyit et. 0009 cloud'da
-kanıtlı. Kararlar D26-D29 spec §10'da (D29: /r noindex beta — insan onaylı). Netlify env TAM (GOOGLE_CLIENT_ID/
-SECRET + WEB_BASE_URL + TOKEN_ENCRYPTION_KEY). Süreç: superpowers:subagent-driven-development — işçi Opus
-explicit, hakem TAZE FABLE (para/auth/RLS VE >400; Faz 3'te fiilen hep Fable), brief scratchpad'e yazılır,
-rapor adları task-N-report-faz3.md, her task: review-package → hakem → fix dalgası → re-review (progress.md
-deseni AYNEN sürsün).
+DURUM: Faz 0+1+2 mühürlü; Faz 3 CANLI-KANITLI — mcp.seogrep.com yayında (Fly nrt, cert Issued,
+healthz ok); gerçek-client E2E mühürlü (/r/BXrSwjichTQ; 1200→1135 ledger-birebir); goals 13/13;
+0010 cloud'da. KAPANIŞ PR'ı chore/faz3-t16-kapanis İNSAN push+merge bekliyor (goals + DFS_BUDGET_DIR
+fix + deploy push-trigger + PLAN + audit promptu). MERGE SONRASI ŞEF: oto-deploy'u izle (push-trigger
+artık aktif) → DFS smoke TEKRARI (≤$0.10; dfs-smoke.sh deseni; DFS_LIVE ŞU AN AÇIK) → başarı
+kanıtı ledger'a → `flyctl secrets unset DFS_LIVE --app seogrep-mcp` ile KAPAT → FAZ 3 RESMEN KAPALI.
 
-GÖREV — PR-E (SON DİLİM):
-T14 docs otomasyonu: registry'den 16 MDX üretimi + goals/docs-schema-sync (--check diff boş). ŞARTLAR
-(hakemlerden): cost cümleleri TOOL_COSTS'tan · --check'e (i) hiçbir şemada confirm alanı yok (ii)
-ALL_TOOLS↔meta.json ad+sıra senkronu · tools-reference parent nav'a girer (bugün sidebar'da yok, bilinçli).
-T15 hijyen+DB: error.tsx (İng.) · aktif-key cap (≥5 block) · format-helper konsolidasyonu ·
-**creditBalance AGGREGATE geçişi (max_rows 1000 sessiz-kesme = yanlış bakiye — DEPLOY ÖNCESİ ZORUNLU)** ·
-**0010 migration: unique(user_id,domain)[projects] + unique(user_id,project_id)[gsc_connections] + iki
-upsert ON CONFLICT'a** (işçi SQL → hakem FABLE → cloud apply ŞEF + rollback'li kanıt + advisors).
-T16 kapanış: İNSAN Fly secrets (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL [session 5432
-pooler], GOOGLE_CLIENT_ID/SECRET, TOKEN_ENCRYPTION_KEY [Netlify'la AYNI], DATAFORSEO_LOGIN/PASSWORD,
-MCP_URL_TEMPLATE, WEB_BASE_URL) → workflow_dispatch İLK deploy (insan) → mcp.seogrep.com CNAME (insan) →
-goals/mcp-alive + trial-flow-e2e · gerçek client (Claude Code) E2E · kredi KALİBRASYONU → insan onayı ·
-deploy-mcp push-trigger'a · T12 smoke listesi (/r render+sıfır-dış-istek+footer · uydurma slug 404 ·
-/app/reports · çift-title · NULL-slug) · DFS canlı smoke ≤$0.10 (şef+insan; budget ledger Fly'da EPHEMERAL —
-prod DFS_LIVE açılırsa DB-sayaç insan gündemi) · OAuth verification başvurusu İNSAN (akış canlı günü).
+SONRAKİ İŞ = AUDIT (İNSAN TALİMATI — Faz 4'e OTONOM GEÇİŞ YOK): İNSAN, docs/audits/
+2026-07-20-faz0-3-komple-audit-prompt.md içindeki bloğu TAZE oturuma aynen yapıştırır; rapor
+insana teslim edilir; Faz 4 go/no-go İNSAN kararı.
 
-FAZ 3 SONU = DUR (İNSAN TALİMATI; memory/faz3-sonu-audit-dur.md): Faz 4'e GEÇME — Faz 0-3 KOMPLE AUDIT
-fresh-session promptunu yaz ve teslim et (boyutlar+kaynaklar memory dosyasında).
+İNSAN KUYRUĞU: (1) KOORDİNE SECRET ROTASYONU — EN ÖNCELİKLİ (T16'da service_role/sb_secret/DB
+şifresi/Google secret/TOKEN_ENCRYPTION_KEY/DFS şifresi chat kaydına girdi; tek turda yenile,
+Netlify+Fly çift güncelleme; şef adım adım yönetir; audit bunu CRITICAL kontrol eder);
+(2) kalibrasyon onayı (öneri: v0 KALSIN); (3) OAuth verification; (4) repo PRIVATE;
+(5) Supabase leaked-password WARN (1-tık); (6) fiyat stratejisi (Faz 4 öncesi).
 
-KALAN İNSAN İŞLERİ: PR-D/E merge'leri · Fly secrets+CNAME+ilk-deploy (T16) · kalibrasyon onayı · beta davet
-kararı · OAuth verification · repo PRIVATE (ertelenmiş) · Supabase leaked-password WARN (dashboard 1-tık) ·
-fiyat stratejisi (Faz 4 öncesi).
+ORTAM: bu dilimde şef+hakemler OPUS 4.8 (Fable aylık limit — insan-onaylı sapma, ledger+audit
+notu). Push/rm/curl-POST/consent-yazımı/DB-mutasyon gate+classifier'lı (insan kapısı); flyctl
+secrets set/list şefe açık çıktı; curl-GET serbest; script-içi nested çağrılar çalışıyor.
+MCP_SMOKE_URL lazımsa insandan istenir (dashboard → Connection → key). Portlar: dev 3457 ·
+mcp 3458 · Supabase lokal 553xx (skala 543xx DOKUNMA). PSEO hook mesajları (bayder) İLGİSİZ.
 
-KAPILAR: bash guardrails/verify.sh + verify-db.sh (İKİ lane: db+mcp; lokal 553xx; skala 543xx DOKUNMA) +
-guardrails/dfs-budget.sh + make goals (PROD_URL=https://seogrep.com). Her PR insan merge (Merge→Confirm→
-DELETE BRANCH).
-
-ORTAM TUZAKLARI (Faz 3'te doğrulanmış): outward gate push/rm/curl-POST insan onayı; onay gelince:
-cd ~/.claude/plugins/cache/platinum-seo-marketplace/platinum-seo-engine/2.1.0 && CLAUDE_SESSION_ID=
-"<tam-uuid>" python3 -m scripts.state.consent_ledger approve sess-<ilk8> git_push "<hedef-birebir>" —
-PUSH KOMUTUNU ÇIPLAK KOŞ (pipe/2>&1 EKLEME; gate hedefi birebir eşler). Agent worktree'leri MAIN'den fork
-eder (daldan DEĞİL) — içerik lazımsa şef dalı worktree'ye merge'ler; worktree ana .superpowers/sdd'ye
-yazamayabilir (rapor kopyalama şefte). Paralel worktree işçisi varken ana ağaçta TAM verify-db KOŞMA (reset
-paylaşımlı stack'i siler — lane'leri koş). Kendi PR'ını merge edemezsin. Secret değerleri elden geçmez.
-PSEO hook mesajları (workspace=bayder) İLGİSİZ. Portlar: dev 3457 · mcp 3458 · Supabase 553xx.
-
-İLK MESAJINDA: PLAN+ledger'ın PR-E bölümlerini oku, PR-D merge durumunu gh ile teyit et, 3-5 cümle durum
-özeti ver, PR-E başlangıcı için İNSAN KOMUTUNU BEKLE (kullanıcı "otonom/en iyi senaryo" derse: T14 ana ağaç +
-T15 worktree [dal-merge ritüeli] paralel dispatch'le başla; T16 en son, insan-adımlarıyla senkron). Context
-%90'da aynı formatta yeni handoff yazıp devret.
+İLK MESAJINDA: durum özeti ver; kapanış PR'ının merge durumunu gh ile teyit et; merge OLDUYSA
+oto-deploy'u ve DFS smoke tekrarını yürüt + DFS_LIVE'ı kapat + Faz 3'ü mühürle; sonra İNSANA audit
+promptunu hatırlat ve DUR. Context %90'da aynı formatta yeni handoff yazıp devret.
 ```
