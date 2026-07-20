@@ -10,6 +10,10 @@
 //   # SUPABASE_DB_URL — the prod names, matching guardrails/verify-db.sh)
 //   node scripts/reconcile.mjs [--older-than-minutes=N]   # N defaults to 15
 //
+// Node floor: this imports the reaper's .ts directly, so it needs Node >=22.18 (or >=23)
+// with default type-stripping. Older Node exits with ERR_UNKNOWN_FILE_EXTENSION before any
+// DB call — safe (no money moves), but confusing mid-incident; upgrade Node if you see it.
+//
 // Exit 0 on success, 1 on any error.
 import { reconcileStuckJobs } from "../apps/mcp/src/queue/reaper.ts";
 
