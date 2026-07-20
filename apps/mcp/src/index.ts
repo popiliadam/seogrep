@@ -19,7 +19,7 @@ export function resolveMode(raw: string | undefined): Mode {
   return mode;
 }
 
-/** Start the selected process: the web gateway, or the (stub) worker. */
+/** Start the selected process: the web gateway, or the pg-boss queue worker. */
 export function main(): void {
   const mode = resolveMode(process.env.MODE);
   if (mode === "worker") {
