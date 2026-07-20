@@ -8,6 +8,7 @@ import {
   safeKeyPrefix,
   type Authenticator,
   type AuthContext,
+  type RateLimiter,
 } from "./auth.ts";
 import { createServiceClient, findActiveKeyByHash, touchLastUsed } from "./db.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
@@ -40,6 +41,14 @@ function errorMessage(error: unknown): string {
 /** Injected collaborators for the gateway app. Fakes are supplied by unit tests. */
 export interface AppDeps {
   readonly authenticate: Authenticator;
+  /**
+   * Per-IP flood throttle, consulted in the POST handler AFTER the format gate and
+   * BEFORE authenticate (which owns the DB lookup) — so a throttled request performs
+   * ZERO DB reads. Optional: when omitted the gate is skipped and requests flow as
+   * before (existing DB-free unit tests inject no throttle). The production root
+   * wires one keyed by client IP.
+   */
+  readonly ipThrottle?: RateLimiter;
   /**
    * The MCP tools to advertise (tools/list) and dispatch (tools/call). The production
    * composition root wires the full set (ALL_TOOLS); DB-free unit tests inject their
@@ -85,6 +94,18 @@ function buildDefaultDeps(): AppDeps {
       stamp: (keyId, at) => touchLastUsed(client, keyId, at),
       rateLimiter: createRateLimiter(),
     }),
+    // Per-IP invalid-key flood throttle (consulted in the POST handler), keyed by
+    // client IP. Capacity/refill rationale: the per-key allowance is 60/min (1/s
+    // refill); per-IP steady-state 4/s is 4x that, so a single legitimate user is
+    // never bound by the IP gate before their own per-key limit, and a NAT sharing up
+    // to ~4 heavy users stays clear — beyond that is an accepted beta limitation. The
+    // 240 burst mirrors the 4x ratio of the per-key 60 burst. maxEntries bounds memory
+    // under an IP-rotating flood. App-level in-memory (not the Fly edge) is deliberate:
+    // Fly Proxy's http_service exposes machine concurrency backpressure, not
+    // per-client-IP rate limits, so an edge-level throttle would require an external
+    // WAF/CDN — out of scope for beta. This shares the per-key limiter's accepted
+    // per-process limitation (a multi-instance deployment throttles per instance).
+    ipThrottle: createRateLimiter({ capacity: 240, refillPerSecond: 4, maxEntries: 10_000 }),
     tools: ALL_TOOLS,
   };
 }
@@ -103,6 +124,33 @@ function keyOrReject(req: Request, res: Response): string | null {
     return null;
   }
   return key;
+}
+
+/** Header Fly's edge proxy SETS to the real client IP, overwriting any client-sent value. */
+const FLY_CLIENT_IP_HEADER = "fly-client-ip";
+/** IPv4-mapped IPv6 prefix — stripped so ::ffff:1.2.3.4 and 1.2.3.4 share one bucket key. */
+const IPV4_MAPPED_PREFIX = "::ffff:";
+
+/** Normalize an IPv4-mapped IPv6 address (::ffff:1.2.3.4) to its bare IPv4 form. */
+function normalizeIp(ip: string): string {
+  return ip.startsWith(IPV4_MAPPED_PREFIX) ? ip.slice(IPV4_MAPPED_PREFIX.length) : ip;
+}
+
+/**
+ * Best-effort client IP, used ONLY as the per-IP flood-throttle bucket key. Prefers
+ * the Fly-Client-IP header, which Fly's edge proxy sets/overwrites for proxied traffic
+ * (edge-authoritative); a direct internal-network (6PN) caller could forge it, which is
+ * acceptable because reaching 6PN already means being inside the trust boundary. We
+ * deliberately do NOT use req.ip / trust-proxy / X-Forwarded-For: XFF is
+ * client-appendable, so its leftmost value is forgeable, whereas Fly-Client-IP is the
+ * header the edge controls. Falls back to the socket peer address (local dev / tests),
+ * then the literal "unknown" (missing both -> one shared, still-bounded bucket). Never
+ * returns undefined, so the bucket key is always a stable string.
+ */
+function clientIpOf(req: Request): string {
+  const header = req.headers[FLY_CLIENT_IP_HEADER];
+  const flyIp = Array.isArray(header) ? header[0] : header;
+  return normalizeIp(flyIp ?? req.socket.remoteAddress ?? "unknown");
 }
 
 /**
@@ -161,8 +209,8 @@ async function handleMcpRequest(
 
 /**
  * Build the MCP gateway HTTP app: a health probe plus the personal MCP endpoint.
- * `deps` (authenticate + rateLimiter) are injected; the default wires the real
- * DB-backed collaborators, while tests pass fakes to run without a database.
+ * `deps` (authenticate, the per-IP ipThrottle, and tools) are injected; the default
+ * wires the real DB-backed collaborators, while tests pass fakes to run without a DB.
  */
 export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   const app = express();
@@ -174,10 +222,12 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   });
 
   // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
-  // Gate order: sg_ format (cheap, no I/O) -> auth decision (lookup -> per-key
-  // rate limit -> stamp, see auth.ts — an over-limit request costs at most one
-  // read and zero writes) -> dispatch. Unknown and revoked keys are
-  // indistinguishable (401).
+  // Gate order: sg_ format (cheap, no I/O) -> per-IP flood throttle (in-memory, no
+  // I/O; a throttled request never reaches the DB) -> auth decision (lookup ->
+  // per-key rate limit -> stamp, see auth.ts — an over-limit request costs at most
+  // one read and zero writes) -> dispatch. Unknown and revoked keys are
+  // indistinguishable (401); an IP-throttled and a key-throttled request likewise
+  // share one 429 envelope, so neither leaks a probing signal.
   // The whole async pipeline is caught here: Express 4 does not handle async
   // rejections, so an uncaught one (e.g. a transient DB outage inside authenticate)
   // would leave the response hanging AND crash the process (Node's default
@@ -186,6 +236,16 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   app.post("/mcp/:key", async (req, res) => {
     const key = keyOrReject(req, res);
     if (key === null) return;
+
+    // Per-IP flood throttle BEFORE authenticate: a well-formed-but-invalid key still
+    // costs one api_keys read inside authenticate, so an unauthenticated flood is
+    // capped here by client IP first. A denied request answers the SAME 429 envelope
+    // as the per-key limiter (indistinguishable) and performs ZERO DB reads. Skipped
+    // when no throttle is injected (DB-free unit tests).
+    if (deps.ipThrottle && !deps.ipThrottle.tryConsume(clientIpOf(req))) {
+      res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
+      return;
+    }
 
     try {
       const decision = await deps.authenticate(key);
