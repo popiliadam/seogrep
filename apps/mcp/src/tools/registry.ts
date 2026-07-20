@@ -62,7 +62,14 @@ export interface ToolSpec<TIn> {
   readonly name: ToolName;
   readonly description: string;
   readonly inputSchema: z.ZodType<TIn>;
-  readonly handler: (ctx: AuthContext, input: TIn) => Promise<ToolResult>;
+  /**
+   * The tool body. Receives the parsed+validated `input` and, as a third argument, the RAW
+   * MCP arguments — the pre-parse object. Almost every handler ignores `rawInput`; it exists
+   * so a tool that must read a RESERVED, schema-less parameter (e.g. `confirm`, via
+   * readConfirmFlag) can do so without polluting its zod schema / tools/list. Reading it does
+   * NOT bypass the registry's own D17 gate below — that gate still runs first, unchanged.
+   */
+  readonly handler: (ctx: AuthContext, input: TIn, rawInput: unknown) => Promise<ToolResult>;
   /** Credit-settlement mode. Defaults to "surface" (sync charge under the guard). */
   readonly charge?: ChargeMode;
 }
@@ -228,12 +235,14 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
         // Registry-owned settlement: charge at the surface. No jobId — the guard uses a
         // traceability uuid for the ledger and never writes a jobs row (credits/guard.ts).
         return withCredits({ userId: ctx.userId }, { tool: spec.name }, () =>
-          spec.handler(ctx, parsed.data),
+          spec.handler(ctx, parsed.data, rawInput),
         );
       }
       // "handler" or "worker": settlement is the handler's (sync self-settle) or the worker's
       // (async, keyed to jobs.id). The registry does NOT wrap — wrapping would double-charge.
-      return spec.handler(ctx, parsed.data);
+      // rawInput is threaded so a worker/handler tool can read a reserved param (crawl_site's
+      // dynamic large-site confirm) without adding it to its schema.
+      return spec.handler(ctx, parsed.data, rawInput);
     },
   };
 }
