@@ -27,8 +27,16 @@ import { getServiceClient } from "../db.ts";
 const DEFAULT_OLDER_THAN_MS = 15 * 60_000;
 /** Bounded batch: at most this many stuck jobs per run. */
 const DEFAULT_LIMIT = 100;
-/** The failure reason stamped on a reconciled job. */
-const RECONCILE_ERROR = "reconciled: worker did not finish; reserve released, re-run the tool";
+/** Stamped on a reconciled job whose open reserve WAS released (refunded). */
+const RECONCILE_ERROR_RELEASED = "reconciled: worker did not finish; reserve released, re-run the tool";
+/**
+ * Stamped on a reconciled job whose reserve was ALREADY SETTLED and could not be refunded
+ * (released=0, alreadySettled>0): the worker crashed in the window between commit_reserve
+ * and completeJob, so the charge stood and the work may be lost. Honest wording — this is
+ * NOT a "reserve released, re-run" case; it needs a human, not an automatic refund.
+ */
+const RECONCILE_ERROR_SETTLED =
+  "reconciled: worker did not finish but the charge had already settled; work may be incomplete — contact support for review";
 
 export interface ReconcileOptions {
   /** Reap running jobs whose started_at is older than this (default 15 min). */
@@ -137,6 +145,10 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
   for (const job of candidates) {
     try {
       const reserveWasNull = job.reserve_id === null;
+      // Per-job tally (for the honest fail-mark string below); the global counters keep
+      // their existing semantics untouched.
+      let jobReleased = 0;
+      let jobAlreadySettled = 0;
 
       // Release FIRST, then conditional-fail. Rationale: if we failed the job first and
       // the real worker then committed, we would have a job that is BOTH failed AND
@@ -148,6 +160,7 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
         });
         if (!releaseError) {
           released++;
+          jobReleased++;
           if (reserveWasNull) orphanReserves++; // an open reserve found only via job_id
           continue;
         }
@@ -156,6 +169,7 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
           // The real worker committed/released concurrently under the advisory lock — the
           // settlement stands; re-releasing would double-refund. Skip.
           alreadySettled++;
+          jobAlreadySettled++;
         } else if (message.includes("unknown reserve")) {
           // No spend_reserve row for this id — a data anomaly, nothing to refund.
           console.warn(`reconcileStuckJobs: unknown reserve ${reserveId} on job ${job.id}; nothing to refund`);
@@ -167,12 +181,20 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
         }
       }
 
+      // Honest fail-mark: if nothing was released but a reserve was already settled
+      // (released=0, alreadySettled>0), the worker crashed AFTER the charge settled — the
+      // user was charged and cannot be auto-refunded, so the "reserve released, re-run"
+      // wording would be false. Every other shape (a refund happened, or there was no
+      // reserve at all) keeps the released wording.
+      const reconcileError =
+        jobReleased === 0 && jobAlreadySettled > 0 ? RECONCILE_ERROR_SETTLED : RECONCILE_ERROR_RELEASED;
+
       // Conditional fail: flip to failed ONLY while the row is still `running`. The status
       // guard prevents clobbering a job the real worker completed concurrently (that job
       // is already succeeded/failed, so this update matches 0 rows and is a no-op).
       const failUpdate = await client
         .from("jobs")
-        .update({ status: "failed", finished_at: nowDate.toISOString(), error: RECONCILE_ERROR })
+        .update({ status: "failed", finished_at: nowDate.toISOString(), error: reconcileError })
         .eq("id", job.id)
         .eq("status", "running")
         .select("id");

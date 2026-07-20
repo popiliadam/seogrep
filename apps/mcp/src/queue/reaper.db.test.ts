@@ -143,9 +143,9 @@ describe("reconcileStuckJobs against the local stack", () => {
     expect(await creditBalance(service, userId)).toBe(GRANT - COST); // still debited
   });
 
-  it("already-settled: a committed reserve is skipped (no double refund)", async () => {
+  it("already-settled: a committed reserve is skipped (no double refund), honest fail-mark", async () => {
     const now = new Date();
-    const { userId, reserveId } = await seedStuckJob(TWENTY_MIN, now, true);
+    const { userId, jobId, reserveId } = await seedStuckJob(TWENTY_MIN, now, true);
     // The real worker finished just as the reaper runs: the reserve is committed.
     const commit = await service.rpc("commit_reserve", { p_reserve_id: reserveId });
     if (commit.error) throw new Error(`commit_reserve failed: ${commit.error.message}`);
@@ -155,7 +155,12 @@ describe("reconcileStuckJobs against the local stack", () => {
 
     expect(outcome.alreadySettled).toBe(1);
     expect(outcome.released).toBe(0);
-    expect(await creditBalance(service, userId)).toBe(GRANT - COST); // NOT re-refunded
+    expect(await creditBalance(service, userId)).toBe(GRANT - COST); // invariant: NOT re-refunded
+    // Crash-after-commit is charged + unrefundable — the fail-mark must NOT claim a refund.
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain("already settled");
+    expect(job?.error).not.toContain("reserve released");
   });
 
   it("orphan reserve: an open reserve found via ledger.job_id when jobs.reserve_id is NULL", async () => {
