@@ -91,7 +91,7 @@ const inputSchema = z.object({
     .default(PAGE_CAP)
     .describe("Maximum pages to crawl (1–100, default 100)."),
   include_paths: z
-    .array(z.string())
+    .array(z.string().min(1))
     .optional()
     .describe(
       'Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap).',
@@ -179,7 +179,7 @@ function confirmationResult(
     JSON.stringify({
       requires_confirmation: true,
       run_cost_credits: runCost,
-      run_covers_up_to_pages: PAGE_CAP,
+      pages_per_crawl: PAGE_CAP,
       site_pages_estimate: projection.pages,
       full_site_projection: {
         credits: projection.credits,
@@ -245,17 +245,25 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       const scopedPaths =
         Array.isArray(include_paths) && include_paths.length > 0 ? include_paths : undefined;
 
+      // `confirm` is a reserved raw-input param. Read it BEFORE pre-discovery so a confirmed call
+      // SKIPS the (up to ~30s) free size check entirely — the caller has already seen the
+      // projection and opted in; re-sizing the site would only add latency. include_paths still
+      // flows to the enqueue below (it is independent of the estimate).
+      const confirmed = readConfirmFlag(rawInput);
+
       // FREE pre-discovery (worker-mode handler runs directly — no reserve, no ledger touch).
-      // Degrades to null and never blocks the crawl.
-      const projection = await projectFullCrawl(estimate, project.domain, scopedPaths);
+      // Skipped once confirmed; degrades to null and never blocks the crawl.
+      const projection = confirmed
+        ? null
+        : await projectFullCrawl(estimate, project.domain, scopedPaths);
 
       // Large-site confirmation: fire on the PROJECTION (not the flat 20), reusing the D17
       // primitive with the DYNAMIC estimate. Over the threshold + unconfirmed -> the HONEST
       // confirmation, with NO enqueue and NO charge. The registry's own auto-gate keys off the
       // flat TOOL_COSTS.crawl_site (20 < 200) so it never fires here; this is crawl_site's own
-      // dynamic gate layered on top. `confirm` is read from the RAW input (reserved param).
+      // dynamic gate layered on top.
       if (projection && projection.credits > CONFIRMATION_THRESHOLD_CREDITS) {
-        const decision = evaluateConfirmation(projection.credits, readConfirmFlag(rawInput));
+        const decision = evaluateConfirmation(projection.credits, confirmed);
         if (decision.requiresConfirmation) {
           return confirmationResult(project.domain, projection, scopedPaths);
         }

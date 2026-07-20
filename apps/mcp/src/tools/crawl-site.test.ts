@@ -100,7 +100,7 @@ function captureEnqueue(): {
 interface ConfirmationBody {
   requires_confirmation: boolean;
   run_cost_credits: number;
-  run_covers_up_to_pages: number;
+  pages_per_crawl: number;
   site_pages_estimate: number;
   full_site_projection: { credits: number; runs: number; note: string };
   message: string;
@@ -118,6 +118,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const body = JSON.parse(result.content[0]!.text) as ConfirmationBody;
     expect(body.requires_confirmation).toBe(true);
     expect(body.run_cost_credits).toBe(20);
+    expect(body.pages_per_crawl).toBe(100); // the per-crawl cap (not this run's coverage)
     expect(body.site_pages_estimate).toBe(1500);
     expect(body.full_site_projection).toMatchObject({ credits: 300, runs: 15 });
     expect(body.message).toMatch(/"confirm": true/);
@@ -179,6 +180,35 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       payload: { max_urls: 100, include_paths: ["/blog"] },
     });
     expect(result.content[0]!.text).toContain("status: queued");
+  });
+
+  it("confirm:true SKIPS pre-discovery (estimator not called) but still enqueues include_paths", async () => {
+    let estimateCalls = 0;
+    const spyEstimate: EstimateFn = async () => {
+      estimateCalls++;
+      return { pages: 1500, source: "sitemap" };
+    };
+    const { fn: enqueue, calls } = captureEnqueue();
+    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    await tool.run(CTX, { project_id: PID, include_paths: ["/blog"], confirm: true });
+    expect(estimateCalls).toBe(0); // the ~30s pre-discovery is skipped on the confirmed path
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![1].payload).toEqual({ max_urls: 100, include_paths: ["/blog"] });
+  });
+
+  it("rejects an include_paths entry that is an empty string (schema hardening)", async () => {
+    let estimateCalls = 0;
+    const spyEstimate: EstimateFn = async () => {
+      estimateCalls++;
+      return { pages: 30, source: "sitemap" };
+    };
+    const { fn: enqueue, calls } = captureEnqueue();
+    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    const result = await tool.run(CTX, { project_id: PID, include_paths: [""] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/invalid input/i);
+    expect(calls).toHaveLength(0); // rejected at schema, before any handler work
+    expect(estimateCalls).toBe(0);
   });
 
   it("a small site enqueues normally with an honest one-liner and no confirmation", async () => {
