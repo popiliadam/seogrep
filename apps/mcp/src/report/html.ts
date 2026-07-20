@@ -76,9 +76,14 @@ function statBlock(n: number, label: string): string {
   return `<div class="stat"><div class="n">${fmtNum(n)}</div><div class="l">${escapeHtml(label)}</div></div>`;
 }
 
-/** A "run <code>tool</code> for the full per-page breakdown" hint — the report is a summary. */
-function auditHint(tool: string): string {
-  return `<p class="hint">Run <code>${tool}</code> for the full per-page breakdown.</p>`;
+/**
+ * A "run <code>tool</code> for the full per-page breakdown" hint — the report is a summary.
+ * `tool` is escaped like every other dynamic value in this file (defense-in-depth: today all
+ * call sites pass static literals, but the file's contract is "every dynamic value is escaped").
+ * Exported so the escaping is directly testable.
+ */
+export function auditHint(tool: string): string {
+  return `<p class="hint">Run <code>${escapeHtml(tool)}</code> for the full per-page breakdown.</p>`;
 }
 
 function crawlSection(crawl: CrawlSummary): string {

@@ -37,6 +37,14 @@ const RECONCILE_ERROR_RELEASED = "reconciled: worker did not finish; reserve rel
  */
 const RECONCILE_ERROR_SETTLED =
   "reconciled: worker did not finish but the charge had already settled; work may be incomplete — contact support for review";
+/**
+ * Stamped on a reconciled job that had NO open reserve at all (released=0, alreadySettled=0):
+ * it crashed before any reserve opened, so nothing was released and nothing settled. Honest
+ * wording — the "reserve released" clause would be untrue here. The user was never debited, so
+ * re-running the tool is still the correct guidance.
+ */
+const RECONCILE_ERROR_NO_RESERVE =
+  "reconciled: worker did not finish; no open reserve to release, re-run the tool";
 
 export interface ReconcileOptions {
   /** Reap running jobs whose started_at is older than this (default 15 min). */
@@ -181,13 +189,19 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
         }
       }
 
-      // Honest fail-mark: if nothing was released but a reserve was already settled
-      // (released=0, alreadySettled>0), the worker crashed AFTER the charge settled — the
-      // user was charged and cannot be auto-refunded, so the "reserve released, re-run"
-      // wording would be false. Every other shape (a refund happened, or there was no
-      // reserve at all) keeps the released wording.
+      // Honest fail-mark, three-way — the stamped wording must match what actually happened:
+      //  - a refund happened (released>0)                  → RELEASED ("reserve released, re-run")
+      //  - nothing released but a reserve had settled       → SETTLED  (charged; needs a human)
+      //  - no reserve at all (crashed before any opened)    → NO_RESERVE (nothing to release, re-run)
+      // The settled shape must NOT claim a refund; the no-reserve shape must NOT claim a
+      // "reserve released" that never occurred. Money direction is untouched — this only
+      // selects the fail-mark string.
       const reconcileError =
-        jobReleased === 0 && jobAlreadySettled > 0 ? RECONCILE_ERROR_SETTLED : RECONCILE_ERROR_RELEASED;
+        jobReleased > 0
+          ? RECONCILE_ERROR_RELEASED
+          : jobAlreadySettled > 0
+            ? RECONCILE_ERROR_SETTLED
+            : RECONCILE_ERROR_NO_RESERVE;
 
       // Conditional fail: flip to failed ONLY while the row is still `running`. The status
       // guard prevents clobbering a job the real worker completed concurrently (that job

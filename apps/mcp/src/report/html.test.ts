@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReportModel } from "./model.ts";
-import { escapeHtml, renderReportHtml } from "./html.ts";
+import { auditHint, escapeHtml, renderReportHtml } from "./html.ts";
 
 /**
  * Pure unit tests for the self-contained HTML renderer. The document must carry no external
@@ -56,6 +56,14 @@ const FULL_MODEL: ReportModel = {
 describe("escapeHtml", () => {
   it("escapes the HTML-significant characters", () => {
     expect(escapeHtml(`<script>"a"&'b'`)).toBe("&lt;script&gt;&quot;a&quot;&amp;&#39;b&#39;");
+  });
+});
+
+describe("auditHint", () => {
+  it("escapes the tool name so no dynamic value bypasses escaping", () => {
+    const out = auditHint("audit<script>");
+    expect(out).toContain("audit&lt;script&gt;");
+    expect(out).not.toContain("audit<script>");
   });
 });
 

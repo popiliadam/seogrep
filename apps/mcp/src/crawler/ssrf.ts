@@ -156,6 +156,13 @@ function isBlockedIpv6(bytes: Uint8Array): boolean {
   }
   // :: (unspecified) and ::1 (loopback).
   if (allZero(0, 15) && (b(15) === 0 || b(15) === 1)) return true;
+  // ::/96 — deprecated IPv4-compatible (RFC 4291): bytes 0-11 zero, an embedded IPv4 in
+  // bytes 12-15. Mirror the IPv4-mapped branch and apply the IPv4 rules so an embedded
+  // loopback/private address (e.g. ::127.0.0.1) can't slip through. :: and ::1 are already
+  // returned above, so this only fires for a non-trivial embedded IPv4.
+  if (allZero(0, 12)) {
+    return isBlockedIpv4(`${b(12)}.${b(13)}.${b(14)}.${b(15)}`);
+  }
   // 64:ff9b::/96 — NAT64 well-known prefix (block outright).
   if (b(0) === 0x00 && b(1) === 0x64 && b(2) === 0xff && b(3) === 0x9b && allZero(4, 12)) return true;
   // fc00::/7 — ULA (this is what covers Fly 6PN fdaa::/16).

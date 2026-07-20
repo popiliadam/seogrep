@@ -36,6 +36,9 @@ describe("isBlockedIp", () => {
     ["bracketed IPv6 loopback [::1]", "[::1]"],
     ["IPv4-mapped loopback", "::ffff:127.0.0.1"],
     ["IPv4-mapped private", "::ffff:10.0.0.5"],
+    ["IPv4-compatible loopback ::127.0.0.1", "::127.0.0.1"],
+    ["IPv4-compatible private ::10.0.0.5", "::10.0.0.5"],
+    ["IPv4-compatible metadata ::169.254.169.254", "::169.254.169.254"],
     ["NAT64 well-known prefix", "64:ff9b::a00:1"],
     ["IPv6 multicast ff00::/8", "ff02::1"],
     ["documentation 2001:db8::/32", "2001:db8::1"],
@@ -52,6 +55,7 @@ describe("isBlockedIp", () => {
     ["public IPv4 8.8.8.8", "8.8.8.8"],
     ["public IPv4 1.1.1.1", "1.1.1.1"],
     ["public IPv6 Cloudflare", "2606:4700::1111"],
+    ["IPv4-mapped public 8.8.8.8", "::ffff:8.8.8.8"],
   ] as const;
   for (const [label, ip] of allowed) {
     it(`allows ${label} (${ip})`, () => {

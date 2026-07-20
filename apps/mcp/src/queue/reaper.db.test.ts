@@ -177,6 +177,29 @@ describe("reconcileStuckJobs against the local stack", () => {
     expect((await getJob(jobId))?.status).toBe("failed");
   });
 
+  it("no-reserve reap: an aged running job that never opened a reserve fails with honest wording, balance untouched", async () => {
+    const now = new Date();
+    // No reserve_credits call: the worker crashed before any reserve opened. reserve_id NULL
+    // and there is no spend_reserve ledger row for this job — nothing to release.
+    const userId = await makeUserId();
+    await seedGrant(userId, GRANT);
+    const jobId = await insertRunningJob(userId, new Date(now.getTime() - TWENTY_MIN), null);
+    expect(await creditBalance(service, userId)).toBe(GRANT); // never debited
+
+    const outcome = await reconcileStuckJobs({ now: () => now });
+
+    expect(outcome.released).toBe(0);
+    expect(outcome.alreadySettled).toBe(0);
+    expect(outcome.orphanReserves).toBe(0);
+    expect(outcome.failed).toBe(1);
+    expect(await creditBalance(service, userId)).toBe(GRANT); // still whole — nothing to refund
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain("no open reserve");
+    expect(job?.error).not.toContain("reserve released");
+    expect(job?.finished_at).not.toBeNull();
+  });
+
   it("batch isolation: a healthy stuck job is reaped alongside a broken (already-released) one", async () => {
     const now = new Date();
     const healthy = await seedStuckJob(TWENTY_MIN, now, true);
