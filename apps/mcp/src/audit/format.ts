@@ -24,7 +24,13 @@ function bulletList(items: string[], indent = "  "): string {
 
 // --- on-page ---------------------------------------------------------------------
 
-const ONPAGE_LABELS: Record<string, string> = {
+/**
+ * finding-type -> human label. The single source of truth for on-page wording: both the
+ * audit_onpage text (below) AND the shareable report (report/model.ts, G1) map counts through
+ * THIS map, so a reader who ran the tool sees the same terms in the report. Exported (pure,
+ * additive) for that reuse — no behavior change to the formatters.
+ */
+export const ONPAGE_LABELS: Record<string, string> = {
   missing_title: "missing title",
   title_too_long: "title too long",
   title_too_short: "title too short",
@@ -39,7 +45,8 @@ const ONPAGE_LABELS: Record<string, string> = {
   canonical_elsewhere: "canonical points elsewhere",
   thin_content: "thin content",
 };
-const ONPAGE_ORDER = Object.keys(ONPAGE_LABELS);
+/** The canonical finding-type order (semantic, not by count) — stable tie-break for summaries. */
+export const ONPAGE_ORDER = Object.keys(ONPAGE_LABELS);
 
 export function formatOnpageReport(report: OnpageReport, fetchedAt: string | null): string {
   const lines = [`On-page audit — ${report.pageCount} page(s) analyzed (${crawlProvenance(fetchedAt)}).`, ""];

@@ -1,4 +1,12 @@
-import type { AggRow, CrawlSummary, GscSummary, IssueCount, ReportModel } from "./model.ts";
+import type {
+  AggRow,
+  CrawlSummary,
+  GscSummary,
+  OnpageSummary,
+  ReportModel,
+  SchemaSummary,
+  TechSummary,
+} from "./model.ts";
 import { isoDate } from "./model.ts";
 
 /**
@@ -8,11 +16,12 @@ import { isoDate } from "./model.ts";
  * acquisition surface. This is what generate_report stores in reports.html and the public
  * /r/[slug] page serves.
  *
- * SECURITY: every dynamic value (title, domain, query strings, page URLs) is HTML-escaped
- * through escapeHtml before it enters the markup — a crawled page URL or a Search Console
- * query is untrusted site data and must never be able to inject markup. The static chrome is
- * the only literal HTML. GSC page/query URLs render as escaped TEXT (never href/src), so the
- * document issues no request when opened.
+ * SECURITY: every dynamic value (title, domain, GSC query strings and page URLs, and crawled
+ * JSON-LD @type names) is HTML-escaped through escapeHtml before it enters the markup — all of
+ * it is untrusted site data and must never be able to inject markup. The audit sections (G1)
+ * emit only counts (numbers) plus static finding labels and those @type names, every one as
+ * escaped TEXT; no crawled page URL is ever emitted as href/src, so the document still issues
+ * no request when opened. The static chrome is the only literal HTML.
  */
 
 /** Escape the five HTML-significant characters so untrusted data cannot break out of text. */
@@ -63,18 +72,13 @@ const STYLE = `
   footer.rpt a { color: #6b7280; }
 `;
 
-function issuesBlock(issues: readonly IssueCount[]): string {
-  if (issues.length === 0) {
-    return `<p class="muted">No basic on-page issues detected in this crawl.</p>`;
-  }
-  const items = issues
-    .map((issue) => `<li><strong>${fmtNum(issue.count)}</strong> — ${escapeHtml(issue.label)}</li>`)
-    .join("");
-  return `<ul class="issues">${items}</ul>`;
-}
-
 function statBlock(n: number, label: string): string {
   return `<div class="stat"><div class="n">${fmtNum(n)}</div><div class="l">${escapeHtml(label)}</div></div>`;
+}
+
+/** A "run <code>tool</code> for the full per-page breakdown" hint — the report is a summary. */
+function auditHint(tool: string): string {
+  return `<p class="hint">Run <code>${tool}</code> for the full per-page breakdown.</p>`;
 }
 
 function crawlSection(crawl: CrawlSummary): string {
@@ -88,9 +92,62 @@ function crawlSection(crawl: CrawlSummary): string {
       ${statBlock(crawl.pageCount, "Pages crawled")}
       ${statBlock(crawl.skippedCount, "Pages skipped")}
     </div>
-    ${issuesBlock(crawl.issues)}
-    <p class="hint">This is a light summary. Run <code>audit_onpage</code>, <code>audit_tech</code>,
-    or <code>audit_schema</code> for the full issue breakdown.</p>
+  </section>`;
+}
+
+/**
+ * On-page findings from the REAL engine (G1). Counts (numbers) + static ONPAGE_LABELS strings
+ * only — no page URL is emitted. When the engine finds nothing the copy is HONEST about the page
+ * count analyzed, never the old blanket "no basic on-page issues" line the shallow check printed.
+ */
+function onpageSection(onpage: OnpageSummary): string {
+  const body =
+    onpage.findings.length === 0
+      ? `<p class="muted">No on-page issues found across ${fmtNum(onpage.pageCount)} page(s).</p>`
+      : `<ul class="issues">${onpage.findings
+          .map((f) => `<li><strong>${fmtNum(f.count)}</strong> — ${escapeHtml(f.label)}</li>`)
+          .join("")}</ul>`;
+  return `<section class="rpt">
+    <h2>On-page issues</h2>
+    ${body}
+    ${auditHint("audit_onpage")}
+  </section>`;
+}
+
+/** Technical health from the REAL engine (G1): the HTTP status split + robots-conflict count. */
+function techSection(tech: TechSummary): string {
+  return `<section class="rpt">
+    <h2>Technical health</h2>
+    <div class="stats">
+      ${statBlock(tech.ok2xx, "OK (2xx)")}
+      ${statBlock(tech.redirect3xx, "Redirects (3xx)")}
+      ${statBlock(tech.clientError4xx, "Client errors (4xx)")}
+      ${statBlock(tech.serverError5xx, "Server errors (5xx)")}
+    </div>
+    <p class="muted">Robots conflicts (noindex but internally linked): <strong>${fmtNum(tech.robotsConflicts)}</strong></p>
+    ${auditHint("audit_tech")}
+  </section>`;
+}
+
+/**
+ * Structured-data coverage from the REAL engine (G1). The @type names are crawled site data
+ * (untrusted), so each renders as escaped TEXT; the counts are numbers. No URL is emitted.
+ */
+function schemaSection(schema: SchemaSummary): string {
+  const types =
+    schema.topTypes.length === 0
+      ? `<p class="muted">No JSON-LD structured data found.</p>`
+      : `<ul class="issues">${schema.topTypes
+          .map((t) => `<li><strong>${fmtNum(t.pages)}</strong> — ${escapeHtml(t.type)}</li>`)
+          .join("")}</ul>`;
+  return `<section class="rpt">
+    <h2>Structured data</h2>
+    <div class="stats">
+      ${statBlock(schema.pagesWithSchema, "Pages with schema")}
+      ${statBlock(schema.pageCount, "Pages crawled")}
+    </div>
+    ${types}
+    ${auditHint("audit_schema")}
   </section>`;
 }
 
@@ -163,6 +220,9 @@ export function renderReportHtml(model: ReportModel): string {
       <p class="muted">${escapeHtml(model.domain)} · ${escapeHtml(isoDate(model.generatedAt))}</p>
     </header>
     ${model.crawl ? crawlSection(model.crawl) : crawlAbsentSection()}
+    ${model.onpage ? onpageSection(model.onpage) : ""}
+    ${model.tech ? techSection(model.tech) : ""}
+    ${model.schema ? schemaSection(model.schema) : ""}
     ${model.gsc ? gscSection(model.gsc) : gscAbsentSection()}
     <footer class="rpt">powered by <a href="${MARKETING_URL}" rel="noopener">SeoGrep</a></footer>
   </div>`;
