@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = { title: "How it works" };
+export const metadata: Metadata = {
+  title: "How it works",
+  description:
+    "How SeoGrep works: get your personal MCP URL, paste it into your AI client, and ask for crawls, audits, and Search Console insights in plain language.",
+};
 
 type Step = {
   title: string;

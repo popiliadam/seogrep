@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = { title: "Terms of Service" };
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  description: "SeoGrep Terms of Service — the terms that govern use of the SeoGrep hosted SEO MCP service.",
+};
 
 type Section = {
   heading: string;

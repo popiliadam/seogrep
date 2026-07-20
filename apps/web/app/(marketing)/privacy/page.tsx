@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "Privacy Policy" };
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "SeoGrep Privacy Policy — what the SeoGrep SEO MCP service collects, how it is used, and your rights. We never train AI models on your data.",
+};
 
 const SECTIONS = [
   {

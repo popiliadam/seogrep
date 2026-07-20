@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChatDemo } from "../../components/chat-demo";
+import { SoftwareApplicationStructuredData } from "../../components/structured-data";
 import { WaitlistForm } from "../../components/waitlist-form";
 
-export const metadata: Metadata = { title: "SEO analysis inside your AI assistant" };
+export const metadata: Metadata = {
+  title: "SEO analysis inside your AI assistant",
+  description:
+    "Run SEO crawls, audits, quick-win discovery, and Search Console analysis in plain language — inside Claude, Cursor, or Windsurf via one personal MCP URL.",
+};
 
 const TRUST = [
   "Your data never trains AI models.",
@@ -50,6 +55,7 @@ const STEPS = [
 export default function Page() {
   return (
     <>
+      <SoftwareApplicationStructuredData />
       <section className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-24">
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <div className="flex flex-col items-start gap-6">

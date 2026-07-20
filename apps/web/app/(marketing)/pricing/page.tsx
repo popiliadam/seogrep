@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import { PricingTable } from "../../../components/pricing-table";
 import { TOP_UPS, creditsLabel } from "../../../components/pricing-plans";
 
-export const metadata: Metadata = { title: "Pricing" };
+export const metadata: Metadata = {
+  title: "Pricing",
+  description:
+    "SeoGrep pricing: start free, then credit-based plans and pay-as-you-go top-ups. Pay for the SEO work you run, not per seat.",
+};
 
 const CREDIT_COSTS = [
   { action: "GSC pull (90 days)", cost: "5" },
