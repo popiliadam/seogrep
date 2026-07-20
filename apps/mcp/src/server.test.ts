@@ -4,6 +4,8 @@ import type { Server as HttpServer } from "node:http";
 import http from "node:http";
 import { unlinkSync } from "node:fs";
 import { createApp, type AppDeps } from "./server.ts";
+// Additive T5 import kept on its own line so every existing line above stays byte-identical.
+import { readPendingJobsBounded } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
@@ -311,6 +313,105 @@ describe("mcp gateway per-IP flood throttle", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe("mcp gateway /status endpoint", () => {
+  // /status is the operator signal, SEPARATE from /healthz (which stays a trivial zero-I/O
+  // liveness probe wired to the Fly check). It is unauthenticated and exposes only coarse
+  // process-wide counts. The pending-jobs backlog is injected as a fake here (the fast lane
+  // is DB-free) exactly the way ipThrottle/authenticate are, so no DB is touched.
+
+  it("GET /status returns ok:true with numeric counters and the injected pendingJobs", async () => {
+    const app = await listen(appWith({ pendingJobs: () => Promise.resolve(3) }));
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBe(3);
+      expect(typeof body.uptimeSeconds).toBe("number");
+      expect(typeof body.errorsSinceBoot).toBe("number");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("GET /status degrades to pendingJobs:null (still ok:true) when the backlog read REJECTS", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({ pendingJobs: () => Promise.reject(new Error("db down")) }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200); // never 5xx — /status is a signal, not a liveness gate
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
+  it("GET /status returns pendingJobs:null when no backlog reader is injected (DB-free default)", async () => {
+    const app = await listen(appWith()); // no pendingJobs dep — mirrors the DB-free unit path
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a request that hits the 500 path increments errorsSinceBoot seen on a later /status", async () => {
+    // metrics is a process singleton shared by every app in this file, so assert the DELTA
+    // (before -> after) rather than an absolute count: robust to any 5xx another test logged.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = await listen(appWith({ authenticate: () => Promise.reject(new Error("db down")) }));
+    try {
+      const before = await (await fetch(`${app.baseUrl}/status`)).json();
+      const res = await postRpc(app.baseUrl, VALID_KEY, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(res.status).toBe(500);
+      const after = await (await fetch(`${app.baseUrl}/status`)).json();
+      expect(after.errorsSinceBoot).toBe(before.errorsSinceBoot + 1);
+    } finally {
+      errorSpy.mockRestore();
+      await app.close();
+    }
+  });
+});
+
+describe("readPendingJobsBounded (bounded best-effort backlog read)", () => {
+  // The unit-level proof of the /status degradation contract: a slow read must resolve to
+  // null within the bound (NEVER hang), a rejection must resolve to null, and a missing
+  // reader must resolve to null — so /status can always answer without the DB deciding it.
+
+  it("returns the count when the read resolves within the bound", async () => {
+    expect(await readPendingJobsBounded(() => Promise.resolve(7), 1_000)).toBe(7);
+  });
+
+  it("resolves null (never hangs) when the read exceeds the timeout", async () => {
+    const hang = () => new Promise<number>(() => undefined); // never settles
+    const start = Date.now();
+    const result = await readPendingJobsBounded(hang, 20);
+    expect(result).toBeNull();
+    expect(Date.now() - start).toBeLessThan(1_000); // bounded, did not wait on the hung read
+  });
+
+  it("resolves null and warns when the read rejects", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await readPendingJobsBounded(() => Promise.reject(new Error("boom")), 1_000);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it("resolves null when no reader is wired", async () => {
+    expect(await readPendingJobsBounded(undefined, 1_000)).toBeNull();
   });
 });
 
