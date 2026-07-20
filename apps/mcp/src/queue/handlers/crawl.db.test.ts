@@ -184,6 +184,42 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     expect((await getJobRow(jobId)).status).toBe("succeeded");
   });
 
+  it("passes include_paths from the queue payload through to the crawler opts", async () => {
+    const userId = await makeUser();
+    await seedGrant(userId, 100);
+    const projectId = await makeProject(userId, "scoped.example.com");
+    const jobId = await makeQueuedCrawlJob(userId, projectId);
+
+    let seenOpts: { maxUrls?: number; includePaths?: string[] } | null = null;
+    registerToolHandler(
+      "crawl_site",
+      createCrawlHandler({
+        resolveOrigin: async () => "https://scoped.example.com",
+        crawl: async (_origin, opts) => {
+          seenOpts = opts;
+          return {
+            pages: [{
+              url: "https://scoped.example.com/blog", status: 200, title: null, metaDescription: null,
+              h1s: [], canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+            }],
+            skipped: [],
+            fetchedAt: new Date().toISOString(),
+          };
+        },
+      }),
+    );
+    await executeJob({
+      jobId,
+      userId,
+      tool: "crawl_site",
+      payload: { max_urls: 25, include_paths: ["/blog"] },
+    });
+
+    // The snake_case payload is bridged to the crawler's camelCase opts (clampIncludePaths).
+    expect(seenOpts).toEqual({ maxUrls: 25, includePaths: ["/blog"] });
+    expect((await getJobRow(jobId)).status).toBe("succeeded");
+  });
+
   it("default resolver refuses a project that is not the job owner's (tenant-scoped origin)", async () => {
     const owner = await makeUser();
     const other = await makeUser();
