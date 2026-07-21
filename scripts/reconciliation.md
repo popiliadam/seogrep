@@ -125,6 +125,46 @@ order by j.started_at asc;
 > absence — such a row is NOT reaped (it cannot be aged). The reaper logs those separately
 > for manual inspection; investigate them by hand.
 
+### 2d. Charged but result lost (failed after commit, NOT refundable)
+
+A job can end `status = 'failed'` with its reserve already **committed** (a `spend_commit`
+exists for the reserve, no `spend_release`). That is the *charged-but-result-lost* shape: the
+tool ran and the charge settled inside `withCredits`, but persisting the result failed
+afterward (`completeJob` errored while the process was still alive — B-I3), so the worker
+marked the job failed with the honest `charge settled but result did not persist — contact
+support` wording. It is **NOT refundable** (the charge is a settled commit, same money position
+as §2c) — it needs **manual review / a support credit**, not an automatic refund. A *normal*
+handler failure instead carries a `spend_release` (the reserve was refunded), so joining on
+`spend_commit` isolates exactly these. (This query also re-surfaces any §2c crash-after-commit
+job the reaper has already transitioned to `failed` — same class, same handling.)
+
+```sql
+-- Failed jobs whose reserve is already COMMITTED (charge stood, result did not persist).
+select
+  j.id            as job_id,
+  j.user_id,
+  j.tool,
+  j.finished_at,
+  j.error,
+  c.reserve_id,
+  -res.delta      as charged_credits
+from public.jobs j
+join public.credit_ledger c
+  on c.job_id = j.id::text
+ and c.kind = 'spend_commit'
+join public.credit_ledger res
+  on res.reserve_id = c.reserve_id
+ and res.kind = 'spend_reserve'
+where j.status = 'failed'
+order by j.finished_at asc;
+```
+
+Recovery is operator-judged: the tool is idempotent, so the user can simply **re-run it**
+(charging them once, correctly, for a result they can keep), or — if you would rather not
+charge twice for the same intent — issue a **support credit** for the lost run. Either way this
+is a support decision, never an automatic refund (the original charge is a valid settled
+commit).
+
 ---
 
 ## 3. Recovery
