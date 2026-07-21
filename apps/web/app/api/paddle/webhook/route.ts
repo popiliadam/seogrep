@@ -21,8 +21,10 @@ import { capturePurchase } from "../../../../lib/analytics";
  *     that is already processed short-circuits to 200 "duplicate"; a duplicate still un-stamped
  *     (a prior half-attempt) is re-processed — safe because the purchase RPC is ref-idempotent;
  *   - the pure @pseo/core translation picks the command; purchases go through the 0007 RPC
- *     (grant + stamp in one transaction), subscriptions upsert + mark, everything else records +
- *     marks. An unexpected error is 500 and leaves processed_at NULL so Paddle retries.
+ *     (grant + stamp in one transaction), subscriptions upsert + mark, informational events
+ *     record + mark. A PAID transaction.completed we could not attribute (record_only) is the one
+ *     exception: it stays retryable — 500 + processed_at NULL, never stamped (B-C1). An unexpected
+ *     error is likewise 500 and leaves processed_at NULL so Paddle retries.
  *
  * Node runtime: unmarshal needs Node crypto. Secrets are never logged — only event_id + message.
  */
@@ -128,16 +130,25 @@ export async function POST(request: Request): Promise<Response> {
         break;
       case "record_only":
         if (event.eventType === "transaction.completed") {
-          // A PAID transaction we could not attribute (unmapped price / lost user_id) would
-          // otherwise vanish silently: 200 + processed means Paddle never retries and the
-          // customer's money bought nothing. Leave a LOUD trace (no payload, no secret) —
-          // recovery runbook: scripts/paddle-smoke.md "paid but no credits".
+          // B-C1: a PAID transaction we could not attribute — unmapped price (server env drift)
+          // or a lost custom_data.user_id (checkout regression). Stamping it 200 would tell Paddle
+          // to STOP retrying and silently close a paid event: the customer's money bought nothing
+          // and the only trace is an unmonitored log. Instead leave the LOUD trace (no payload, no
+          // secret) AND return 500 WITHOUT markProcessed, so processed_at stays NULL: Paddle keeps
+          // retrying across its ~3-day window, the null-processed re-process path re-attempts, and
+          // once the price env is fixed / data corrected a retry maps to `purchase` and grants.
+          // processPaddlePurchase is ref-idempotent, so the healing retry cannot double-grant; the
+          // raw event is already persisted (insertEvent) for manual recovery via the runbook
+          // (scripts/paddle-smoke.md "paid but no credits").
           console.error("paddle webhook: PAID transaction recorded without credit", {
             eventId,
             reason: command.reason,
           });
+          return json({ error: "paid transaction pending attribution" }, 500);
         }
-        // Stored for audit; stamped so a retry is a cheap duplicate, not a re-run.
+        // Every OTHER record_only is genuinely informational (an unhandled / non-purchase event we
+        // only log) — retrying is pointless. Store for audit; stamp so a retry is a cheap
+        // duplicate, not a re-run.
         await markProcessed(service, eventId);
         break;
     }
