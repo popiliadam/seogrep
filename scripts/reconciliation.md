@@ -165,6 +165,41 @@ charge twice for the same intent — issue a **support credit** for the lost run
 is a support decision, never an automatic refund (the original charge is a valid settled
 commit).
 
+### 2e. Paid Paddle events not yet attributed (B-C1)
+
+A different money surface: the Paddle **webhook**, not the jobs/ledger. A paid
+`transaction.completed` the webhook could not attribute — unmapped price (server env drift) or a
+lost `custom_data.user_id` (checkout regression) — returns 500 **without** stamping
+`processed_at` (B-C1), so Paddle keeps retrying across its ~3-day window and the row sits in
+`paddle_events` with `processed_at IS NULL`. Within that window an env fix / data correction lets
+a retry self-heal (it maps to `purchase`, grants, and stamps). A row still NULL well past a day
+is a **persistent** attribution failure worth acting on *now* (so the remaining retries heal it);
+one past the full retry window has **dead-lettered** — Paddle gave up — and the customer paid for
+nothing until it is replayed by hand.
+
+```sql
+-- Paid transactions the webhook has not attributed (processed_at still NULL) for over a day.
+-- These are real customer money awaiting attribution — investigate the price env / user before
+-- Paddle's retry window closes.
+select
+  event_id,
+  event_type,
+  created_at
+from public.paddle_events
+where event_type = 'transaction.completed'
+  and processed_at is null
+  and created_at < now() - interval '1 day'
+order by created_at asc;
+```
+
+Recovery: fix the root cause — set the missing price env var (`NEXT_PUBLIC_PADDLE_PRICE_*`) and
+redeploy, or resolve the correct user for the lost `custom_data.user_id`. If the row is still
+inside Paddle's retry window the next retry then attributes it automatically; if it has already
+dead-lettered, the full raw event is preserved in `paddle_events.payload`, so replay it via the
+webhook runbook (`scripts/paddle-smoke.md`, "paid but no credits") to grant the credits. Never
+fabricate a grant that bypasses the `process_paddle_purchase` idempotency guard — replay through
+the real path so a later Paddle retry cannot double-grant.
+
 ---
 
 ## 3. Recovery

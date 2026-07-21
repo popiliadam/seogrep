@@ -128,8 +128,14 @@ export async function executeJob(message: JobMessage): Promise<void> {
       handler({ jobId, userId, payload }),
     );
   } catch (error) {
-    // A handler or reserve error — withCredits already released the reserve (guard.ts), so this
-    // is a clean, refunded failure. Record the raw detail and stop.
+    // withCredits threw. Two shapes reach here, per guard.ts's contract:
+    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded failure);
+    //   • a commit_reserve failure — the guard deliberately did NOT release (work delivered, the
+    //     debit stands), leaving the reserve OPEN and visible via jobs.reserve_id for
+    //     reconciliation (reconciliation.md §2a/§2b).
+    // Both are recorded here with the raw detail. Giving the commit-failure case its own honest
+    // string (like the post-commit path below) needs a distinguishing signal from guard.ts and is
+    // a deliberate Faz-4 follow-up — not silently folded into a plain failure without one.
     await failJob(jobId, errorDetail(error));
     return;
   }
