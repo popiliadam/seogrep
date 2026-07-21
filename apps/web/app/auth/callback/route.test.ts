@@ -139,3 +139,22 @@ describe("GET /auth/callback — canonical redirect base (A-I4)", () => {
     expect(location.href).toBe("https://app.example.com/login?error=auth");
   });
 });
+
+describe("GET /auth/callback — empty WEB_BASE_URL falls back (W4 empty-env class)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  // A SET-but-EMPTY WEB_BASE_URL ("") is the broken-deploy case `??` missed: "" is not nullish, so
+  // the base stayed "" and `new URL("/app", "")` threw a 500 mid-auth. `||` treats "" as absent and
+  // falls back to the request origin, keeping the user moving (signed lesson #5 — empty-env class).
+  it("redirects through the request origin (no 500) when WEB_BASE_URL is set but empty", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    exchangeCodeForSession.mockResolvedValue({ data: { user: { id: "u1", email: null } }, error: null });
+    grantTrialCredits.mockResolvedValue(false);
+    const response = await GET(new Request(`${BASE}?code=abc`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+  });
+});
