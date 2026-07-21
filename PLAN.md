@@ -5,6 +5,14 @@
 
 ## Faz: 3.5 + CODEX-REMEDIATION KOD-TAMAM (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga] dalda mühürlü; dal `feat/faz35-sertlestirme` @44e590e, ~63 commit; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; **PUSH/PR/MERGE + 0011 CLOUD-APPLY + T0 ROTASYON İNSAN KAPISI**) · Faz 3 KAPALI · Faz 2 CANLI-PARA · Faz 1 CANLI
 
+### Bu oturum ilerlemesi (2026-07-21 — Faz 4 öncesi insan-kapıları, interaktif şef+insan)
+> Kod bitti; kalanlar insan-girdisi/karar. Sıradaki oturum buradan devam eder.
+- **T0 secret rotasyon 3/6:** ✅ (a) service_role TEMİZ döndürüldü + açıktaki eski/yanık key'ler silindi · ✅ (b) DB şifresi (`[YOUR-PASSWORD]` köşeli-parantez bug'ı sagası; canlı crawl job `9bc30d40` created→started→finished ile uçtan uca doğrulandı) · ✅ (f) smoke key (eski key 404=öldü) · ⏸️ (c) Google · (d) TOKEN_ENCRYPTION_KEY · (e) DataForSEO = **beta davetinden ÖNCE** (insan kararı; gerçek T16-sızıntı ama canlı dış-kullanıcı yok).
+- **Madde 2 — Migration 0011 cloud-apply:** ✅ VERIFIED. Canlı pre-check 26 satır 0-ihlal → `apply_migration` → 6 CHECK `convalidated=true` + 1 partial unique idx + advisors 0-yeni-bulgu. NEVER#2 artık DB katmanında gerçek.
+- **Madde 3 — Politika/destek-e-postası:** ✅ KOD-TAMAM, **deploy bekliyor**. `support@seogrep.com` (ImprovMX→Gmail forwarding, Netlify DNS MX+SPF canlı, catch-all `security@`'i kapsar) + copy 8 düzeltme/5 dosya. `make verify` 16/16. Rollover/erasure beta-dürüst kaldı (implement Faz-4). Dal `chore/gate3-support-email` @`d839b67` → **insan push+PR+merge → Netlify deploy**.
+- **Kalan insan-kapıları:** T0 c/d/e (beta-öncesi) · Madde 4 küçükler (branch-protection 1-tık, T9 research_keywords=KAPALI-öneri, LICENSE/SBOM, repo-private, OAuth-verify, Supabase leaked-pw WARN) · Madde 5 Faz 4 go/no-go · copy deploy.
+- **2 ders (insan-imza bekler, CLAUDE.md'ye otonom yazılmadı):** (L1) `SUPABASE_DB_URL` `min(1)` yerine URL-yapı doğrulanmalı — bozuk URL sessizce pg-boss enqueue'yu düşürdü (async down) ama `/status` yeşil kaldı (countPendingJobs PostgREST üzerinden) → worker-down maskelendi; worker crash-loop → Fly stop → fix-deploy'da auto-start ETMEZ (elle `machine start`). (L2) `make goals` mcp-alive/trial-flow-e2e `MCP_SMOKE_URL` unset'te key-probe'u SKIP eder → "14/14" o ikisinde healthz-only olabilir.
+
 ### Codex çapraz-audit düzeltmesi (2026-07-21) — İKİNCİ bağımsız audit NO-GO dedi; şef her bulguyu HEAD'e karşı doğrulattı + gerçek kod-bug'ları düzeltti
 - Kaynak: `docs/audits/2026-07-20-faz0-3-codex-audit-raporu.md` (insan yapıştırdı). Snapshot `48c908e` (mid-T1) → Faz 3.5'in çoğunu görmedi. Verdict dosyası: `scratchpad/codex-verdicts.md` (session).
 - **DOĞRULAMA (4 paralel taze-Fable + şef canlı-DB):** ~35 bulgu → 7 zaten-kapalı/not-bug (A-C1-guard=T1, A-I2=T3, B-I5/G-I1=T4, A-S1 canlı-DB-safe, A-I1 no-reachable-path); gerçek kod-bug'lar 7 dalgada düzeltildi; policy/legal/secret insan-kararı ayrıldı.
@@ -137,43 +145,64 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20 GECE — Faz 3.5 kod-tamam)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-21 — Codex remediation MERGE+DEPLOY, Faz 4 öncesi kalanlar)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
-SIRAYLA OKU: PLAN.md → CLAUDE.md → contract.md. Ledger: .superpowers/sdd/progress.md (Faz 3.5 bölümü + FINAL kayıtlar).
+SIRAYLA OKU: PLAN.md (bu blok + üstteki "Faz: 3.5 + CODEX-REMEDIATION" bölümü) → CLAUDE.md → contract.md.
+Ledger: .superpowers/sdd/progress.md (en alt: "CODEX REMEDIATION" + "MERGE+DEPLOY" + "T0 SECRET" kayıtları).
 
-DURUM: Faz 0+1+2+3 mühürlü. **Faz 3.5 (SERTLEŞTİRME+QUICK-WIN dilimi) KOD-TAMAM** — audit KOŞULLU-GO'nun
-4 kod-koşulu + 4 quick-win/UX işi dalda mühürlü. Dal `feat/faz35-sertlestirme` @4e81e92 (38 commit);
-verify PASS + verify-db PASS + make goals 13/13 PASS; whole-branch review (taze Fable) READY-TO-MERGE
-(0C/0I). 8 iş: T1 SSRF · T2 worker-yorum · T3 key-throttle · T4 reaper+runbook · T5 /status izleme ·
-T6 rapor-audit(G1) · T7 site-SEO+signin+docs-meta · T8 crawl-UX(ön-keşif+include_paths+confirm).
+DURUM (2026-07-21): Faz 0+1+2+3 + Faz 3.5 + Codex-remediation TAMAMEN BİTTİ + MERGE'Lİ + DEPLOY'LU + CANLI-DOĞRULANMIŞ.
+- İki bağımsız audit'in kod-bulguları main'de (@f1f444e, **PR #19 MERGED**, dal silindi) + prod'a deploy edildi.
+- Canlı doğrulama: healthz ok · /status ok (yeni T5 endpoint) · web 200 · yeni dürüst copy canlı ·
+  **make goals 14/14** (mcp-alive/landing-live/trial-flow-e2e canlı-prod'a karşı).
+- İki whole-branch review READY-TO-MERGE (0C/0I). Remediation 7 dalga (W1 money B-C1-Critical/B-I2/B-I3 ·
+  W2 migration 0011 · W3 RLS+append-only test · W4 gitleaks/redirect/CSP · W5 env-guard/deploy/SHA-pin ·
+  W6 GSC-capped/docs-gate/pricing · W7+policy docs-honesty). Kapanış: docs/audits/2026-07-21-codex-remediation-closure.md.
 
-SONRAKİ İŞ = İNSAN KAPILARI (Faz 4'e OTONOM GEÇİŞ YOK):
-(1) **Dalı push + PR + merge** (insan; Merge→Confirm→**DELETE BRANCH** — imzalı ders #3). Merge oto-deploy
-    tetikler (push-trigger). Merge sonrası şef: mcp.seogrep.com healthz/tools-list smoke + goals tekrar.
-(2) **T0 KOORDİNE SECRET ROTASYONU** (en öncelikli; kod-dışı, dalı beklemez): runbook
-    `docs/runbooks/secret-rotation.md` — 6 secret (service_role/sb_secret · DB şifresi[5432 session pooler] ·
-    Google secret · TOKEN_ENCRYPTION_KEY[gsc_connections=0→bedava, Netlify+Fly AYNI değer] · DataForSEO şifresi ·
-    smoke key sg_9wYke…). DEĞERLER İNSANDA KALIR (chat'e YAPIŞTIRMA — geçen sefer bu audit CRITICAL'ıydı).
-    Şef yalnız adım listesi verir + flyctl secrets list digest-değişimi + canlı smoke ile doğrular; kanıt ledger'a.
-(3) **T9 KARARI (İNSANA SORULACAK — kod yok karar yok):** research_keywords beta duruşu —
-    A) DFS_LIVE aç + bütçe sayacını /tmp'den DB tablosuna taşı (migration akışı: işçi SQL→hakem→şef cloud-apply)
-    B) kapalı kalsın (dürüst "not yet enabled" hatası sürer). ŞEF ÖNERİSİ: B (beta), A erken-Faz-4.
-    Detay: scratchpad T9-research-keywords-decision.md (özeti PLAN'da).
-(4) **Faz 4 go/no-go** (audit raporu + bu kapanış kanıtları yan yana). Faz 4 planı go'dan SONRA.
-    Faz 4 aday backlog: ledger "FAZ 4 ADAY BACKLOG" (1-12) + audit G-tablosu (G4/G5/G7/G8/G10/G11 vb.).
+BU OTURUMUN GÖREVİ = FAZ 4 ÖNCESİ KALAN İNSAN-KAPILARINI TAMAMLAMAK (Faz 4'e OTONOM GEÇİŞ YOK; go/no-go insanın).
+Kod tarafı bitti; kalanlar insan-girdisi/kararı/gated. Şef her adımda doğrular/uygular. SIRAYLA:
 
-DİĞER İNSAN KUYRUĞU (audit + önceki): repo PRIVATE · OAuth verification başvurusu · Supabase leaked-password
-WARN(1-tık) · fiyat stratejisi oturumu(Faz 4 öncesi, kullanıcı istedi) · kalibrasyon v0 KALSIN(öneri).
-Acceptable-for-beta minor'lar (Faz-4 follow-up, ledger'da): /status throttle · pre-discovery robots · vb.
+1. **T0 SECRET ROTASYONU (CRITICAL — canlı-para öncesi ZORUNLU).** Runbook: docs/runbooks/secret-rotation.md.
+   - service_role: ROTATE EDİLDİ (yeni sb_secret, Fly digest bde0a3cd, trial-flow-e2e PASS = çalışıyor). AMA yeni değer
+     geçen oturumda flyctl komutuyla CHAT'E YAPIŞTI → yakıldı; insan "beta'da kalsın" dedi (KABUL-RİSK, kayıtlı).
+     → Canlı-paradan ÖNCE TEMİZ döndür: yeni sb_secret üret, Netlify+Fly'a DEĞER-YAPIŞTIRMADAN koy, sonra
+     Supabase "Secret keys"'te açıkta kalan TÜM secret key'leri (yakılan + eski default) SİL. Tek temiz anahtar kalsın.
+   - KALAN 5 secret (hepsi runbook, DEĞERLER İNSANDA — CHAT'E YAPIŞTIRMA): DB şifresi (SUPABASE_DB_URL, 5432 session
+     pooler) · Google client secret · TOKEN_ENCRYPTION_KEY (gsc_connections=0→bedava; Netlify+Fly AYNI değer+redeploy) ·
+     DataForSEO şifresi · smoke key (dashboard Rotate).
+   - ŞEF ROLÜ: adım listesi ver + `flyctl secrets list` DIGEST-değişimi + healthz/trial-flow SMOKE ile doğrula (değeri GÖRME).
+   - DERS (bu oturumdan): insan flyctl komutunu DEĞERLE yapıştırırsa DUR + hatırlat "değeri yapıştırma, sadece 'bitti' de".
 
-ORTAM: bu dilimde şef Fable (ana oturum) + hakemler TAZE Fable (erişilebilir — sapma yok; Opus 4.8
-işçilerde). Push/rm/curl-POST/consent/DB-mutasyon gate'li (insan kapısı); flyctl secrets set/list şefe
-açık; curl-GET serbest. Portlar: dev 3457 · mcp 3458 · Supabase lokal 553xx (skala 543xx DOKUNMA).
-UI copy İngilizce (ders #4). PSEO hook (bayder) İLGİSİZ. Not: repo'da untracked .agents/.codex/AGENTS.md +
-codex-audit-*.md var (paralel aktivite, BU DİLİME AİT DEĞİL — merge'e katma).
+2. **Migration 0011 CLOUD-APPLY.** Repo'da packages/db/supabase/migrations/0011_ledger_shape_and_job_reserve.sql
+   (6 money CHECK + one-reserve-per-job idx). Lokal-uygulanmış + referee-approved; CANLI pre-check 0-violation/24-satır
+   (2× koşuldu). Cloud-apply classifier-gated → insan: `supabase db push` (CLI, history'e yazar — EN TEMİZ) YA DA
+   Supabase SQL Editor'e SQL yapıştır YA DA interaktif oturumda şef apply_migration çağırır + insan onaylar.
+   Şef: apply sonrası pg_constraint + pg_indexes (Supabase MCP execute_sql, read-only) ile constraint+index oturdu mu doğrula.
 
-İLK MESAJINDA: durum özeti; dalın merge durumunu gh ile teyit et; merge OLMADIYSA insana push+merge+
-DELETE-BRANCH hatırlat + T0 rotasyonu başlatmayı öner + T9 kararını sor; merge OLDUYSA smoke+goals koş.
-Faz 4 planını YAZMA (go kararından sonra). Context %90'da aynı formatta yeni handoff yaz.
+3. **POLİTİKA (dürüst-lansman kapısı).** (a) E-I3 gizlilik copy'si "email us" diyor → insan GERÇEK destek e-postası
+   verir, şef copy'ye işler. (b) E-I1 rollover / E-I3 erasure: expiry/purge IMPLEMENT mi (Faz-4 fiyat/compliance projesi)
+   yoksa mevcut beta-dürüst copy yeterli mi — insan kararı (şu an copy beta-dürüst; uygulandı+canlı).
+
+4. **KÜÇÜK KALEMLER.** T9 (research_keywords — şef önerisi KAPALI kalsın; insan onayı yeter) · branch protection
+   (GitHub Settings→Branches→main→require checks verify+verify-db+gitleaks, 1-tık owner) · LICENSE/SBOM (insan
+   legal-entity ismi→şef üretir; hosted-only düşük öncelik) · repo PRIVATE (bilinen borç) · OAuth verification ·
+   Supabase leaked-password WARN(1-tık).
+
+5. **FAZ 4 GO/NO-GO.** Üç kaynak yan yana: audit#1 (docs/audits/2026-07-20-faz0-3-audit-raporu.md, KOŞULLU-GO) +
+   audit#2 Codex (docs/audits/2026-07-20-faz0-3-codex-audit-raporu.md untracked, NO-GO) + kapanış
+   (docs/audits/2026-07-21-codex-remediation-closure.md). Codex NO-GO'nun KOD-blocker'ları KAPANDI; kalan GO-şartı =
+   T0 temiz-rotasyon + 0011-apply + politika. Faz 4 planı GO'dan SONRA. Aday backlog: ledger "FAZ 4 ADAY BACKLOG"(1-12) +
+   A-C1 DNS-rebinding (undici IP-pin, bilinçli ertelendi, ssrf.ts belgeli) + audit G-tablosu.
+
+ORTAM: şef Fable (ana oturum) + hakemler TAZE Fable. git push / gh pr merge → outward_action_gate'li
+(insan terminalden YA DA /pseo-approve sess-<id> git_push "…"). apply_migration/DB-mutasyon classifier-gated (insan).
+flyctl secrets list/set + gh pr/run + curl-GET serbest (şefe açık). Portlar: dev 3457 · mcp 3458 · Supabase lokal
+553xx (skala 543xx DOKUNMA). UI copy İngilizce (ders #4). PSEO hook (bayder) İLGİSİZ. Repo untracked:
+.agents/.codex/AGENTS.md + codex-audit-*.md (insan tooling — merge'e KATMA). Prod: main @f1f444e canlı;
+Supabase ref dvtqlxwnhdzveytqgksd; Fly app seogrep-mcp; deploy oto-tetik (main push → deploy-mcp.yml).
+
+İLK MESAJINDA: durum özeti; `gh pr view 19 --json state` ile MERGED teyit; canlı smoke (curl healthz + /status +
+`PROD_URL=https://seogrep.com make goals`) ile prod sağlığı; sonra insana KALAN LİSTEYİ (T0-temiz-rotasyon →
+0011-apply → politika/e-posta → küçükler → Faz4 go/no-go) sırayla sun, "hangisinden başlayalım" diye sor.
+T0'da değer-yapıştırma uyarısını TEKRARLA. Faz 4 planını YAZMA (go'dan sonra). Context %90'da yeni handoff yaz.
 ```
