@@ -1,74 +1,57 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CREDIT_PACKAGES } from "@pseo/core";
-import { grantCredits } from "@pseo/db/ledger-repo";
 import { createServiceClient } from "@pseo/db/server";
 import type { Database } from "@pseo/db/types";
 
 /**
- * One-time signup trial grant. Runs ONLY from server-only modules (it uses the
- * service-role client). `trial_granted_at` (migration 0006) is the persistent lock:
- * the `UPDATE ... WHERE trial_granted_at IS NULL RETURNING` is atomic, so under two
- * concurrent callbacks exactly one caller flips the column and fires the grant. The
- * credit amount is read from CREDIT_PACKAGES.trial — never hardcoded (CLAUDE.md NEVER #6).
+ * One-time signup trial grant. Runs ONLY from server-only modules (it uses the service-role
+ * client). The lock + grant is ONE atomic transaction inside the `claim_trial` RPC (migration
+ * 0009, SECURITY DEFINER, service_role-only EXECUTE): it upserts the 1:1 profile row, flips the
+ * `trial_granted_at` lock, and appends the trial grant in a single function body with all-or-
+ * nothing rollback.
+ *
+ * This closes the Phase-2 gap (B-I2): the app previously did the lock UPDATE and the
+ * grantCredits INSERT as TWO statements, so a failure between them left the user permanently
+ * locked-but-creditless — the callback 500s and every retry hits the already-locked
+ * short-circuit and returns false, so the trial credits are never granted. Fusing both into one
+ * transaction makes that inconsistent state unreachable: if the grant raises, the lock rolls
+ * back with it and a later retry can succeed. The credit amount is read from
+ * CREDIT_PACKAGES.trial and passed as p_amount — never hardcoded (CLAUDE.md NEVER #6).
+ *
+ * Returns true only when THIS call flipped the lock (a real, first-time grant) — the signal the
+ * callback route needs to fire the one-time `signup_completed` funnel event. false is the
+ * idempotent already-granted no-op (every subsequent callback).
  */
 
-// trial_granted_at is not in the generated types.ts yet (that file is regenerated from
-// the cloud project in the chef flow). This overlay keeps the lock UPDATE typed until
-// then — the same fenced `as unknown as` cast pattern used by packages/db ledger-repo.
-type TrialColumn = { trial_granted_at: string | null };
-type DatabaseWithTrial = Omit<Database, "public"> & {
-  public: Omit<Database["public"], "Tables"> & {
-    Tables: Omit<Database["public"]["Tables"], "users_profile"> & {
-      users_profile: {
-        Row: Database["public"]["Tables"]["users_profile"]["Row"] & TrialColumn;
-        Insert: Database["public"]["Tables"]["users_profile"]["Insert"] & Partial<TrialColumn>;
-        Update: Database["public"]["Tables"]["users_profile"]["Update"] & Partial<TrialColumn>;
-        Relationships: [];
-      };
-    };
-  };
+// claim_trial is not in the generated types.ts yet (that file is regenerated from the cloud
+// project in the chef flow). This overlay keeps the rpc() call typed until then — the same
+// fenced `as unknown as` cast pattern used by packages/db ledger-repo. The one unavoidable cast
+// is fenced into fns() below (the whole client is never loosened to `any`).
+type TrialFunctions = {
+  claim_trial: { Args: { p_user_id: string; p_amount: number }; Returns: boolean };
 };
 
-function withTrial(client: SupabaseClient<Database>): SupabaseClient<DatabaseWithTrial> {
-  return client as unknown as SupabaseClient<DatabaseWithTrial>;
+type TrialDatabase = Omit<Database, "public"> & {
+  public: Omit<Database["public"], "Functions"> & { Functions: TrialFunctions };
+};
+
+function fns(client: SupabaseClient<Database>): SupabaseClient<TrialDatabase> {
+  return client as unknown as SupabaseClient<TrialDatabase>;
 }
 
-/**
- * Returns true only when THIS call flipped the lock (a real, first-time grant) — the
- * signal the callback route needs to fire the one-time `signup_completed` funnel event.
- * false means an already-granted idempotent no-op (every subsequent callback).
- */
 export async function grantTrialCredits(userId: string): Promise<boolean> {
   const service = createServiceClient();
 
-  // Ensure the 1:1 profile row exists (no-op if a prior callback already created it).
-  const { error: upsertError } = await service
-    .from("users_profile")
-    .upsert({ id: userId }, { onConflict: "id", ignoreDuplicates: true });
-  if (upsertError) {
-    throw new Error(`trial profile upsert failed: ${upsertError.message}`);
-  }
-
-  // Atomic one-time lock: only the first caller flips NULL -> now and gets a row back.
-  const { data, error } = await withTrial(service)
-    .from("users_profile")
-    .update({ trial_granted_at: new Date().toISOString() })
-    .eq("id", userId)
-    .is("trial_granted_at", null)
-    .select("id");
-  if (error) {
-    throw new Error(`trial lock failed: ${error.message}`);
-  }
-  if (!data || data.length === 0) {
-    return false; // already granted — idempotent no-op.
-  }
-
-  await grantCredits(service, {
-    userId,
-    kind: "grant",
-    amount: CREDIT_PACKAGES.trial.credits,
-    reason: "trial",
+  // Atomic lock + grant in one transaction (see the RPC's own comment in migration 0009). No
+  // separate INSERT to leave dangling: an error rolls the whole call back, so there is no
+  // partial (locked-but-creditless) state for a retry to trip over.
+  const { data, error } = await fns(service).rpc("claim_trial", {
+    p_user_id: userId,
+    p_amount: CREDIT_PACKAGES.trial.credits,
   });
-  return true;
+  if (error) {
+    throw new Error(`claim_trial failed: ${error.message}`);
+  }
+  return data === true;
 }

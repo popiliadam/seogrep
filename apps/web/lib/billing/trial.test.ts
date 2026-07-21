@@ -2,59 +2,68 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CREDIT_PACKAGES } from "@pseo/core";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@pseo/db/ledger-repo", () => ({ grantCredits: vi.fn() }));
 vi.mock("@pseo/db/server", () => ({ createServiceClient: vi.fn() }));
 
-import { grantCredits } from "@pseo/db/ledger-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { grantTrialCredits } from "./trial";
 
-const grantCreditsMock = vi.mocked(grantCredits);
 const createServiceClientMock = vi.mocked(createServiceClient);
 
-interface UpdateResult {
-  data: { id: string }[] | null;
+interface RpcResult {
+  data: boolean | null;
   error: { message: string } | null;
 }
 
-/** Minimal chainable stand-in for the service client used by grantTrialCredits. */
-function mockClient(updateResult: UpdateResult) {
-  const builder = {
-    eq: () => builder,
-    is: () => builder,
-    select: () => Promise.resolve(updateResult),
-  };
-  return {
-    from: () => ({
-      upsert: () => Promise.resolve({ error: null }),
-      update: () => builder,
-    }),
-  } as unknown as ReturnType<typeof createServiceClient>;
+/**
+ * Minimal stand-in for the service client: grantTrialCredits now makes exactly ONE call —
+ * `service.rpc("claim_trial", ...)` (the atomic migration-0009 RPC). The mock records the rpc
+ * name + args so the test asserts them directly (closes Codex C-I1d, where the old lock-UPDATE
+ * mock recorded no `.eq/.is` args).
+ */
+function mockClient(result: RpcResult) {
+  const rpc = vi.fn().mockResolvedValue(result);
+  const client = { rpc } as unknown as ReturnType<typeof createServiceClient>;
+  return { client, rpc };
 }
 
 describe("grantTrialCredits", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("grants the trial package exactly once when the lock flips NULL -> now, and reports true", async () => {
-    createServiceClientMock.mockReturnValue(mockClient({ data: [{ id: "user-1" }], error: null }));
+  it("calls claim_trial with the PINNED trial amount and returns true on a first-time grant", async () => {
+    const { client, rpc } = mockClient({ data: true, error: null });
+    createServiceClientMock.mockReturnValue(client);
+
     const granted = await grantTrialCredits("user-1");
-    expect(granted).toBe(true);
-    expect(grantCreditsMock).toHaveBeenCalledTimes(1);
-    expect(grantCreditsMock).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        userId: "user-1",
-        kind: "grant",
-        amount: CREDIT_PACKAGES.trial.credits,
-        reason: "trial",
-      }),
-    );
+
+    expect(granted).toBe(true); // true => THIS call flipped the lock; callback fires the funnel event.
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("claim_trial", {
+      p_user_id: "user-1",
+      p_amount: CREDIT_PACKAGES.trial.credits, // amount from core — never a literal (NEVER #6).
+    });
   });
 
-  it("does not grant when trial_granted_at is already set (no row returned), and reports false", async () => {
-    createServiceClientMock.mockReturnValue(mockClient({ data: [], error: null }));
+  it("returns false on the idempotent already-granted no-op (claim_trial -> false)", async () => {
+    const { client, rpc } = mockClient({ data: false, error: null });
+    createServiceClientMock.mockReturnValue(client);
+
     const granted = await grantTrialCredits("user-1");
+
     expect(granted).toBe(false);
-    expect(grantCreditsMock).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("claim_trial", {
+      p_user_id: "user-1",
+      p_amount: CREDIT_PACKAGES.trial.credits,
+    });
+  });
+
+  it("throws when claim_trial errors — atomic rollback means the failure leaves NO partial state", async () => {
+    // The web-level failure the RPC atomicity now makes safe: lock + grant are one transaction, so
+    // an error here rolled BOTH back (no locked-but-creditless user). The caller may safely retry.
+    const { client } = mockClient({ data: null, error: { message: "deadlock detected" } });
+    createServiceClientMock.mockReturnValue(client);
+
+    await expect(grantTrialCredits("user-1")).rejects.toThrow(
+      /claim_trial failed: deadlock detected/,
+    );
   });
 });
