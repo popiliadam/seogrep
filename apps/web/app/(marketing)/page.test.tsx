@@ -22,4 +22,14 @@ describe("landing page", () => {
     render(<Page />);
     expect(screen.getByText(/200 credits, no card required/i)).toBeDefined();
   });
+
+  it("emits valid SoftwareApplication JSON-LD (audit G2: was 0/42 pages)", () => {
+    const { container } = render(<Page />);
+    const scripts = Array.from(container.querySelectorAll('script[type="application/ld+json"]'));
+    const blocks = scripts.map((s) => JSON.parse(s.textContent ?? "{}"));
+    const app = blocks.find((b) => b["@type"] === "SoftwareApplication");
+    expect(app, "SoftwareApplication JSON-LD present").toBeDefined();
+    expect(app["@context"]).toBe("https://schema.org");
+    expect(app.name).toBe("SeoGrep");
+  });
 });

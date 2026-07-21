@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampMaxUrls } from "./crawl.ts";
+import { clampIncludePaths, clampMaxUrls } from "./crawl.ts";
 
 /**
  * Fast unit tests for clampMaxUrls — the guard that keeps a malformed/tampered queue
@@ -30,5 +30,24 @@ describe("clampMaxUrls", () => {
     expect(clampMaxUrls(undefined)).toBeUndefined();
     expect(clampMaxUrls("50")).toBeUndefined();
     expect(clampMaxUrls(null)).toBeUndefined();
+  });
+});
+
+describe("clampIncludePaths", () => {
+  it("passes an array of non-empty strings through", () => {
+    expect(clampIncludePaths(["/blog", "/docs"])).toEqual(["/blog", "/docs"]);
+  });
+
+  it("drops blank / non-string entries and yields undefined when nothing valid remains", () => {
+    expect(clampIncludePaths(["/blog", "", "   ", 42, null])).toEqual(["/blog"]);
+    expect(clampIncludePaths(["", "   "])).toBeUndefined();
+    expect(clampIncludePaths([])).toBeUndefined();
+  });
+
+  it("rejects non-array values -> undefined (crawler applies no filter)", () => {
+    expect(clampIncludePaths(undefined)).toBeUndefined();
+    expect(clampIncludePaths("/blog")).toBeUndefined();
+    expect(clampIncludePaths(null)).toBeUndefined();
+    expect(clampIncludePaths({ 0: "/blog" })).toBeUndefined();
   });
 });

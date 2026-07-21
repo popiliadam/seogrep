@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { requireSupabaseAnonKey, requireSupabaseUrl } from "./public-env";
 
 /**
  * Request-scoped server Supabase client (anon key + the user's JWT read from cookies).
@@ -9,9 +10,12 @@ import { cookies } from "next/headers";
  */
 export async function createClient() {
   const cookieStore = await cookies();
+  // Fail loud (naming the variable) if the public env is missing on the server read path —
+  // the exact class the 2026-07-18 SUPABASE_URL incident hit (signed lesson #5) — rather than
+  // pass `undefined` into the client. Static reads so Next keeps inlining them.
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    requireSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
+    requireSupabaseAnonKey(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
     {
       cookies: {
         getAll() {

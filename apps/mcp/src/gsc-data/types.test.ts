@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { GscWindow, PullData } from "./types.ts";
 import { parsePullResult, pullResultToJson } from "./types.ts";
 import { SAMPLE_PULL, gscRow, pullData } from "./fixtures.ts";
 
@@ -11,6 +12,22 @@ import { SAMPLE_PULL, gscRow, pullData } from "./fixtures.ts";
 describe("pullResultToJson / parsePullResult round-trip", () => {
   it("serializes a pull and reads it back unchanged", () => {
     expect(parsePullResult(pullResultToJson(SAMPLE_PULL))).toEqual(SAMPLE_PULL);
+  });
+
+  it("carries the window row-cap flag through serialize + parse (G-I4)", () => {
+    // A pull whose current window hit the 5,000-row cap; the previous window did not.
+    const capped: PullData = { ...SAMPLE_PULL, current: { ...SAMPLE_PULL.current, capped: true } };
+
+    // Serialize emits capped:true only for the capped window; the un-capped one omits the field.
+    const json = pullResultToJson(capped) as { current: GscWindow; previous: GscWindow };
+    expect(json.current.capped).toBe(true);
+    expect("capped" in json.previous).toBe(false);
+
+    // Parse restores capped:true and round-trips the whole pull with full fidelity.
+    const parsed = parsePullResult(json);
+    expect(parsed?.current.capped).toBe(true);
+    expect(parsed?.previous.capped).toBeUndefined(); // un-capped window → not "capped"
+    expect(parsed).toEqual(capped);
   });
 });
 

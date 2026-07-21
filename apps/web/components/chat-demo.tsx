@@ -2,7 +2,7 @@ const TURNS = [
   { role: "user", text: "Audit example.com for SEO issues." },
   { role: "tool", text: "crawl_site → job c_42 started · up to 100 URLs · 20 credits" },
   { role: "tool", text: "get_job_status → crawl finished · 87 pages fetched" },
-  { role: "tool", text: "audit_onpage → 12 missing meta descriptions · 3 broken internal links" },
+  { role: "tool", text: "audit_onpage → 12 missing meta descriptions · 3 duplicate titles" },
   { role: "assistant", text: "Here's your prioritized fix list. Want the shareable report? (generate_report)" },
 ] as const;
 

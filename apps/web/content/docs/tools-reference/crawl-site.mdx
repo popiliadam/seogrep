@@ -11,6 +11,12 @@ description: "Crawl a project's website (async). Returns a job_id immediately; p
 
 Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the crawl and stores the result; you check progress with [`get_job_status`](/docs/tools-reference/get-job-status).
 
+## Large sites
+
+Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with `include_paths` — for example `["/blog"]` — and run one focused crawl per section; this keeps every crawl within the cap and spends predictably.
+
+Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, it first returns a **confirmation** — nothing is charged — that states this run's flat cost and, kept separate, an **informational projection** of what crawling the whole site would take at the current rate. The projection is never what you are charged; it just means a big site can't silently run up cost. Re-run with `"confirm": true` to proceed, or narrow the scope with `include_paths`.
+
 ## Example
 
 Ask your MCP client in plain language:
@@ -27,6 +33,7 @@ The tool replies with a `job_id`. Poll it until the job is done:
 | --- | --- | --- | --- |
 | `project_id` | string (uuid) | Yes | The project_id from setup_project / list_projects. |
 | `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). |
+| `include_paths` | string[] | No | Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap). |
 
 ### Returns
 

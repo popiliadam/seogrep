@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nonPublicHostnameReason } from "../crawler/ssrf.ts";
 import { getServiceClient } from "../db.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
@@ -23,7 +24,8 @@ export type NormalizedDomain = { readonly ok: true; readonly domain: string } | 
  * Canonicalize a domain input. Accepts a bare host or a full URL; extracts the host,
  * lowercases it, drops any trailing dot (FQDN) — the scheme/path/port/query fall away
  * with the URL parse. Returns a descriptive English error for anything that is not a
- * valid public domain (no host, single label, illegal characters).
+ * valid public domain (no host, single label, illegal characters, or an internal /
+ * reserved name such as foo.internal / x.local).
  */
 export function normalizeDomain(raw: string): NormalizedDomain {
   const trimmed = raw.trim();
@@ -42,6 +44,16 @@ export function normalizeDomain(raw: string): NormalizedDomain {
     return {
       ok: false,
       error: `"${raw}" is not a valid domain — expected a host like "example.com".`,
+    };
+  }
+  // Reject internal / reserved names that pass DOMAIN_RE but must never be tracked or
+  // crawled (foo.internal, metadata.google.internal, x.local, a.test, ...). The crawl-time
+  // origin gate (crawler/ssrf.ts) additionally refuses any PRE-EXISTING stored domain that
+  // would only now be judged non-public.
+  if (nonPublicHostnameReason(domain) !== null) {
+    return {
+      ok: false,
+      error: `"${raw}" is not a public domain — internal or reserved names cannot be tracked.`,
     };
   }
   return { ok: true, domain };

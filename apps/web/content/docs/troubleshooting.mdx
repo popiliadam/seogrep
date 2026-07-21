@@ -20,18 +20,23 @@ that needs a restart, or a beta limit. Check these before anything else.
 ## "Connection failed" or similar error
 
 - **Symptom:** the client shows an error when you add the URL.
-- **Check:** confirm you pasted the full URL exactly as your dashboard
-  shows it — partial pastes are a common cause.
-- **Fix:** copy the URL again from the dashboard and paste it fresh, rather
-  than editing the old one.
+- **Check:** confirm you pasted the full URL with no missing characters,
+  trailing spaces, or line breaks — partial pastes are a common cause.
+- **Fix:** your MCP URL is only ever shown once, right when a key is
+  created or rotated — the dashboard shows just a masked prefix after
+  that. If you no longer have the original copy, rotate your key from the
+  Connection page: it mints a fresh URL on the spot (the old URL stops
+  working immediately) so you can copy the new one and paste it fresh.
 
 ## Tools worked, then stopped
 
 - **Symptom:** SeoGrep tools were working and then disappeared.
 - **Check:** restart the client — some clients drop remote connectors after
   being idle or after an update.
-- **Fix:** if restarting doesn't help, re-add the connector with a freshly
-  copied URL from the dashboard.
+- **Fix:** if restarting doesn't help, re-add the connector. If you no
+  longer have your original MCP URL saved, rotate your key from the
+  Connection page to get a new one — the old URL stops working as soon as
+  you do.
 
 ## Runs stop with an out-of-credits message
 

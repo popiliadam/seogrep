@@ -2,7 +2,10 @@
 # Build from the repo ROOT: `docker build -f apps/mcp/Dockerfile .`
 # Turbo prune keeps only this app's slice of the monorepo in the image.
 
-FROM node:22-alpine AS base
+# node:22-alpine — digest-pinned to the current multi-arch index so the base image is immutable
+# (D-I3). Refresh the digest deliberately when bumping the Node base; resolve via
+# `docker buildx imagetools inspect node:22-alpine`.
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS base
 RUN apk add --no-cache libc6-compat
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
@@ -10,6 +13,13 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 
 # 1. Prune the monorepo down to @pseo/mcp and its workspace deps (@pseo/core).
+# turbo is pinned to this exact version in the root package.json devDependencies (pnpm-lock.yaml),
+# so local/CI and this image share ONE turbo version — no drift. The prune runs BEFORE any install
+# (its whole purpose is to shrink the workspace first) and .dockerignore strips node_modules from
+# the context, so there is no installed turbo binary to `pnpm exec` here; dlx pins the same exact
+# version. RESIDUAL (D-I3): sourcing the prune tool from the lockfile itself would require an
+# install-before-prune (`pnpm install --frozen-lockfile --ignore-scripts` then `pnpm exec turbo
+# prune`), a build-graph change to smoke via `docker build -f apps/mcp/Dockerfile .` before merge.
 FROM base AS pruner
 WORKDIR /app
 COPY . .

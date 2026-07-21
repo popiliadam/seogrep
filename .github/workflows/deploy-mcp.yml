@@ -10,6 +10,15 @@ on:
       - "apps/mcp/**"
       - "packages/core/**"
       - ".github/workflows/deploy-mcp.yml"
+      # Repo-root inputs the Docker image consumes (Dockerfile: COPY . . -> turbo prune ->
+      # pnpm install --frozen-lockfile -> COPY tsconfig.base.json). A root-only change — e.g. a
+      # pnpm-lock.yaml security bump — must ship a fresh image, not a silently stale one (D-I1).
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "tsconfig.base.json"
+      - ".dockerignore"
 
 permissions:
   contents: read
@@ -22,7 +31,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # pin: master@2026-07-19
       - name: Deploy to Fly.io
         run: flyctl deploy --remote-only --config apps/mcp/fly.toml --dockerfile apps/mcp/Dockerfile

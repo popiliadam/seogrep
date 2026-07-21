@@ -47,6 +47,39 @@ export function stripCostSentences(description) {
     .trim();
 }
 
+/** Max length of a generated frontmatter `description` (the page's `<meta>` description). */
+export const FRONTMATTER_DESCRIPTION_MAX = 155;
+
+/**
+ * Truncate `text` to at most `max` characters at a WORD boundary, ending with a single-character
+ * ellipsis (`…`). Strings already within the limit are returned unchanged. Used to keep a tool's
+ * frontmatter `description` — which becomes the page's meta description — short enough that search
+ * engines don't truncate it; the full behavior prose still lives in the page body, so nothing is
+ * lost. Guarantees `result.length <= max`.
+ */
+export function truncateAtWord(text, max = FRONTMATTER_DESCRIPTION_MAX) {
+  const str = String(text ?? "");
+  if (str.length <= max) return str;
+  const ellipsis = "…";
+  const budget = max - ellipsis.length; // leave room for the ellipsis
+  let cut = str.slice(0, budget);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace > 0) cut = cut.slice(0, lastSpace); // don't split the final word
+  cut = cut.replace(/[\s–—,.;:!?-]+$/u, ""); // drop a dangling separator/punctuation
+  return `${cut}${ellipsis}`;
+}
+
+/**
+ * The frontmatter `description` string of a rendered MDX page (decoded from its YAML double-quoted
+ * scalar), or "" if the page has none. Lets the --check gate measure the ACTUAL emitted meta
+ * description length, so a regression that bypasses truncation is caught at the rendered output.
+ */
+export function frontmatterDescription(pageText) {
+  const match = String(pageText).match(/^description:\s*"((?:[^"\\]|\\.)*)"/m);
+  if (!match) return "";
+  return match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+
 /** The single credit-cost line, derived from TOOL_COSTS[name]. Zero renders as free. */
 export function renderCostLine(cost) {
   if (cost === 0) return "**Cost:** Free (0 credits).";
@@ -106,7 +139,7 @@ export function yamlString(value) {
  * the "### Input" table (from `toolMeta.inputJsonSchema`). Editorial prose comes from `prose`.
  */
 export function renderToolPage(toolMeta, cost, prose) {
-  const description = stripCostSentences(toolMeta.description);
+  const description = truncateAtWord(stripCostSentences(toolMeta.description), FRONTMATTER_DESCRIPTION_MAX);
   const frontmatter = [
     "---",
     `title: ${toolMeta.name}`,
@@ -244,6 +277,21 @@ export const DOC_PROSE = {
       "Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the " +
       "crawl and stores the result; you check progress with " +
       "[`get_job_status`](/docs/tools-reference/get-job-status).",
+    preExampleSections: [
+      {
+        heading: "Large sites",
+        body:
+          "Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with " +
+          "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; this " +
+          "keeps every crawl within the cap and spends predictably.\n\n" +
+          "Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, " +
+          "it first returns a **confirmation** — nothing is charged — that states this run's flat cost " +
+          "and, kept separate, an **informational projection** of what crawling the whole site would " +
+          "take at the current rate. The projection is never what you are charged; it just means a big " +
+          "site can't silently run up cost. Re-run with `\"confirm\": true` to proceed, or narrow the " +
+          "scope with `include_paths`.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +
       "with a `job_id`. Poll it until the job is done:\n\n> What's the status of job `<job_id>`?",
@@ -634,6 +682,19 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
     errors.push("(iii) could not read parent docs/meta.json.");
   }
 
+  // (iv) Every generated frontmatter description is within the meta-description budget, so a future
+  // long tool description can't silently regress a page's <meta name="description">. Measured on the
+  // ACTUAL rendered page, so a regression that bypasses truncation is caught here.
+  for (const tool of ALL_TOOLS) {
+    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name])).length;
+    if (length > FRONTMATTER_DESCRIPTION_MAX) {
+      errors.push(
+        `(iv) ${deriveSlug(tool.name)}.mdx frontmatter description is ${length} chars ` +
+          `(max ${FRONTMATTER_DESCRIPTION_MAX}) — shorten the tool description or its truncation.`,
+      );
+    }
+  }
+
   return errors;
 }
 
@@ -647,7 +708,8 @@ async function main() {
       process.exit(1);
     }
     console.error(
-      `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, no confirm fields, meta + nav synced.`,
+      `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, no confirm fields, ` +
+        `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars.`,
     );
     return;
   }

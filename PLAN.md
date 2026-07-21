@@ -3,7 +3,22 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 3 — T16 CANLI-KANITLI (2026-07-20: **mcp.seogrep.com YAYINDA** — PR #12-#17 merged; gerçek-client E2E mühürlü [rapor /r/BXrSwjichTQ, bakiye 1200→1135 ledger-birebir]; kalan: kapanış PR'ı [chore/faz3-t16-kapanis] merge → oto-deploy → DFS smoke tekrarı → DFS_LIVE kapat → **AUDIT'E DUR**) · Faz 2 CANLI-PARA MÜHÜRLÜ · Faz 1 CANLI
+## Faz: 3.5 + CODEX-REMEDIATION KOD-TAMAM (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga] dalda mühürlü; dal `feat/faz35-sertlestirme` @44e590e, ~63 commit; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; **PUSH/PR/MERGE + 0011 CLOUD-APPLY + T0 ROTASYON İNSAN KAPISI**) · Faz 3 KAPALI · Faz 2 CANLI-PARA · Faz 1 CANLI
+
+### Codex çapraz-audit düzeltmesi (2026-07-21) — İKİNCİ bağımsız audit NO-GO dedi; şef her bulguyu HEAD'e karşı doğrulattı + gerçek kod-bug'ları düzeltti
+- Kaynak: `docs/audits/2026-07-20-faz0-3-codex-audit-raporu.md` (insan yapıştırdı). Snapshot `48c908e` (mid-T1) → Faz 3.5'in çoğunu görmedi. Verdict dosyası: `scratchpad/codex-verdicts.md` (session).
+- **DOĞRULAMA (4 paralel taze-Fable + şef canlı-DB):** ~35 bulgu → 7 zaten-kapalı/not-bug (A-C1-guard=T1, A-I2=T3, B-I5/G-I1=T4, A-S1 canlı-DB-safe, A-I1 no-reachable-path); gerçek kod-bug'lar 7 dalgada düzeltildi; policy/legal/secret insan-kararı ayrıldı.
+- **7 DÜZELTME DALGASI (hepsi taze-Fable hakem-onaylı):** W1 money-code (**B-C1 Critical**: paid Paddle event artık 500+retryable, sessizce processed-değil · B-I2 atomic claim_trial · B-I3 post-commit dürüst fail-mark) · W2 **migration 0011** (B-I4 6 ledger CHECK + B-I1 one-reserve-per-job idx + atomic CAS claim; **cloud-apply İNSAN kapısı**, canlı pre-check 0-violation/24-satır) · W3 sec-tests (A-I5 6-tablo authenticated RLS A/B negatif + C-I3 append-only mutation-reddi + goal) · W4 sec-config (A-I3 gitleaks fixture-scope · A-I4 canonical redirects · C-S1 CSP /r/*) · W5 deploy/CI (D-I2 web-supabase env-guard+20 test [lesson#5] · D-I1 deploy-path · D-I3 SHA-pin+digest+turbo-devDep) · W6 small-code (E-I6 docs-gate · G-I4 GSC-capped round-trip · B-M1 pricing-drift-guard · E-I2/E-I4d pricing-copy · auth empty-env) · W7 docs-honesty (E-I4a/b/c+E-I5 copy).
+- **Final whole-branch review (taze Fable, 47f7c74..44e590e, 25 commit): READY TO MERGE = YES** (0C/0I; money-path adversarial uçtan-uca yürüdü — CAS+0011-idx+0007-ref-idempotent+0009-atomic+B-I3 tutarlı, çift-tahsilat/commit-iade/bozuk-balance YOK; 5 minor hepsi acceptable-for-beta). Kapılar 14/14.
+- **A-C1 DNS-rebinding: BİLİNÇLİ Faz-4'e ERTELENDİ** (undici IP-pin gerektirir; Important-not-Critical, GET-only, body-tenant'a-dönmez; ssrf.ts'te belgeli).
+- **İNSAN-KARARI (şef DEĞİŞTİRMEDİ, sunuldu):** E-I1 rollover/2×cap (davranış promise'ten CÖMERT — expiry-impl mi copy-soften mi; ikisi de fiyat-offer kararı) · E-I3/G-I2 90-gün-silme + "account deletion removes all" vs append-only ON DELETE RESTRICT (erasure model, KVKK/GDPR) · F-I1 LICENSE/SBOM (legal entity; hosted-only düşük maruziyet) · G-I3 DR runbook (Faz4) · I-I4 branch protection (1-tık) · I-I1/2/3/5 süreç.
+
+### Faz 3.5 durumu (2026-07-20 — SERTLEŞTİRME + QUICK-WIN dilimi, audit KOŞULLU-GO kapatma)
+- Kaynak: bağımsız audit raporu (`docs/audits/2026-07-20-faz0-3-audit-raporu.md`, dala alındı) + insan-onaylı quick-win/crawl-UX tasarımı. **Bu FAZ 4 DEĞİL**; Faz 4 go/no-go İNSANIN.
+- **8 iş TAMAM (her biri işçi Opus → taze-Fable hakem → fix → re-review; ledger detaylı):** T1 SSRF sertleştirme (DNS-sonrası IP blocklist 14 IPv4+7 IPv6 +::/96, non-public TLD reddi, fetchText emisyon-öncesi parite) · T2 worker "scale-0" bayat yorum düzeltmesi · T3 geçersiz-key per-IP throttle (429=0 DB okuması) · T4 stuck-job reaper + reconciliation runbook (money-adjacent, at-most-once refund) · T5 asgari izleme (/status + metrics + monitoring runbook; /healthz dokunulmadı) · T6 generate_report'a GERÇEK audit bulguları (G1; "No basic issues" yanılgısı bitti; XSS-korumalı) · T7 quick-win'ler (G2 site canonical+meta+JSON-LD · G3 Sign-in link · G9 docs-meta ≤155) · T8 crawl-UX (ücretsiz ön-keşif + include_paths + dürüst büyük-site confirmation + docs).
+- **Whole-branch review (taze Fable): READY TO MERGE = YES** (0C/0I; 5 minor'ın 3'ü pre-merge fix'lendi [ssrf ::/96, reaper no-reserve string, html auditHint escape @4e81e92], kalanı acceptable-for-beta). Cross-task entegrasyon + 5 yüksek-risk iddia adversarial doğrulandı.
+- **Audit 5 zorunlu koşul:** (1) secret rotasyonu = T0 İNSAN+ŞEF (checklist `docs/runbooks/secret-rotation.md`; kod-dışı, dalı bloklamaz) — TEK AÇIK KOŞUL; (2-5) SSRF·worker·throttle·izleme+reaper = DALDA MÜHÜRLÜ.
+- **İNSAN KUYRUĞU (bu dilim çıkışı):** (1) **dalı push+PR+merge** (Merge→Confirm→**DELETE BRANCH**); (2) **T0 koordine secret rotasyonu** (şef adım adım yönetir, değerler insanda); (3) **T9 KARARI: research_keywords beta duruşu** (DFS_LIVE aç+DB-sayaç migration MI, kapalı kalsın MI — şef önerisi B/beta, A/erken-Faz-4); (4) **Faz 4 go/no-go** (audit raporu + bu kapanış kanıtları yan yana — Faz 4 planı go'dan SONRA yazılır).
 
 ### Faz 3 durumu (2026-07-19)
 - Kararlar (insan-onaylı, PR #12 merge imzası): D26 Fly.io Tokyo/nrt · D27 pg-boss (Redis yok) · D28 MCP_URL_TEMPLATE · kredi tablosu v0 · trial signup'ta kalır. Zemin: Fly token ✓ · Netlify env AD sözleşmesi `GOOGLE_CLIENT_ID/SECRET` ✓ · Google console ✓ · Search Console TXT ✓.
@@ -122,35 +137,43 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20 AKŞAM)
+## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-20 GECE — Faz 3.5 kod-tamam)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
-SIRAYLA OKU: PLAN.md → CLAUDE.md → contract.md. Ledger: .superpowers/sdd/progress.md (Faz 3 sonu bölümü).
+SIRAYLA OKU: PLAN.md → CLAUDE.md → contract.md. Ledger: .superpowers/sdd/progress.md (Faz 3.5 bölümü + FINAL kayıtlar).
 
-DURUM: Faz 0+1+2 mühürlü; Faz 3 CANLI-KANITLI — mcp.seogrep.com yayında (Fly nrt, cert Issued,
-healthz ok); gerçek-client E2E mühürlü (/r/BXrSwjichTQ; 1200→1135 ledger-birebir); goals 13/13;
-0010 cloud'da. KAPANIŞ PR'ı chore/faz3-t16-kapanis İNSAN push+merge bekliyor (goals + DFS_BUDGET_DIR
-fix + deploy push-trigger + PLAN + audit promptu). MERGE SONRASI ŞEF: oto-deploy'u izle (push-trigger
-artık aktif) → DFS smoke TEKRARI (≤$0.10; dfs-smoke.sh deseni; DFS_LIVE ŞU AN AÇIK) → başarı
-kanıtı ledger'a → `flyctl secrets unset DFS_LIVE --app seogrep-mcp` ile KAPAT → FAZ 3 RESMEN KAPALI.
+DURUM: Faz 0+1+2+3 mühürlü. **Faz 3.5 (SERTLEŞTİRME+QUICK-WIN dilimi) KOD-TAMAM** — audit KOŞULLU-GO'nun
+4 kod-koşulu + 4 quick-win/UX işi dalda mühürlü. Dal `feat/faz35-sertlestirme` @4e81e92 (38 commit);
+verify PASS + verify-db PASS + make goals 13/13 PASS; whole-branch review (taze Fable) READY-TO-MERGE
+(0C/0I). 8 iş: T1 SSRF · T2 worker-yorum · T3 key-throttle · T4 reaper+runbook · T5 /status izleme ·
+T6 rapor-audit(G1) · T7 site-SEO+signin+docs-meta · T8 crawl-UX(ön-keşif+include_paths+confirm).
 
-SONRAKİ İŞ = AUDIT (İNSAN TALİMATI — Faz 4'e OTONOM GEÇİŞ YOK): İNSAN, docs/audits/
-2026-07-20-faz0-3-komple-audit-prompt.md içindeki bloğu TAZE oturuma aynen yapıştırır; rapor
-insana teslim edilir; Faz 4 go/no-go İNSAN kararı.
+SONRAKİ İŞ = İNSAN KAPILARI (Faz 4'e OTONOM GEÇİŞ YOK):
+(1) **Dalı push + PR + merge** (insan; Merge→Confirm→**DELETE BRANCH** — imzalı ders #3). Merge oto-deploy
+    tetikler (push-trigger). Merge sonrası şef: mcp.seogrep.com healthz/tools-list smoke + goals tekrar.
+(2) **T0 KOORDİNE SECRET ROTASYONU** (en öncelikli; kod-dışı, dalı beklemez): runbook
+    `docs/runbooks/secret-rotation.md` — 6 secret (service_role/sb_secret · DB şifresi[5432 session pooler] ·
+    Google secret · TOKEN_ENCRYPTION_KEY[gsc_connections=0→bedava, Netlify+Fly AYNI değer] · DataForSEO şifresi ·
+    smoke key sg_9wYke…). DEĞERLER İNSANDA KALIR (chat'e YAPIŞTIRMA — geçen sefer bu audit CRITICAL'ıydı).
+    Şef yalnız adım listesi verir + flyctl secrets list digest-değişimi + canlı smoke ile doğrular; kanıt ledger'a.
+(3) **T9 KARARI (İNSANA SORULACAK — kod yok karar yok):** research_keywords beta duruşu —
+    A) DFS_LIVE aç + bütçe sayacını /tmp'den DB tablosuna taşı (migration akışı: işçi SQL→hakem→şef cloud-apply)
+    B) kapalı kalsın (dürüst "not yet enabled" hatası sürer). ŞEF ÖNERİSİ: B (beta), A erken-Faz-4.
+    Detay: scratchpad T9-research-keywords-decision.md (özeti PLAN'da).
+(4) **Faz 4 go/no-go** (audit raporu + bu kapanış kanıtları yan yana). Faz 4 planı go'dan SONRA.
+    Faz 4 aday backlog: ledger "FAZ 4 ADAY BACKLOG" (1-12) + audit G-tablosu (G4/G5/G7/G8/G10/G11 vb.).
 
-İNSAN KUYRUĞU: (1) KOORDİNE SECRET ROTASYONU — EN ÖNCELİKLİ (T16'da service_role/sb_secret/DB
-şifresi/Google secret/TOKEN_ENCRYPTION_KEY/DFS şifresi chat kaydına girdi; tek turda yenile,
-Netlify+Fly çift güncelleme; şef adım adım yönetir; audit bunu CRITICAL kontrol eder);
-(2) kalibrasyon onayı (öneri: v0 KALSIN); (3) OAuth verification; (4) repo PRIVATE;
-(5) Supabase leaked-password WARN (1-tık); (6) fiyat stratejisi (Faz 4 öncesi).
+DİĞER İNSAN KUYRUĞU (audit + önceki): repo PRIVATE · OAuth verification başvurusu · Supabase leaked-password
+WARN(1-tık) · fiyat stratejisi oturumu(Faz 4 öncesi, kullanıcı istedi) · kalibrasyon v0 KALSIN(öneri).
+Acceptable-for-beta minor'lar (Faz-4 follow-up, ledger'da): /status throttle · pre-discovery robots · vb.
 
-ORTAM: bu dilimde şef+hakemler OPUS 4.8 (Fable aylık limit — insan-onaylı sapma, ledger+audit
-notu). Push/rm/curl-POST/consent-yazımı/DB-mutasyon gate+classifier'lı (insan kapısı); flyctl
-secrets set/list şefe açık çıktı; curl-GET serbest; script-içi nested çağrılar çalışıyor.
-MCP_SMOKE_URL lazımsa insandan istenir (dashboard → Connection → key). Portlar: dev 3457 ·
-mcp 3458 · Supabase lokal 553xx (skala 543xx DOKUNMA). PSEO hook mesajları (bayder) İLGİSİZ.
+ORTAM: bu dilimde şef Fable (ana oturum) + hakemler TAZE Fable (erişilebilir — sapma yok; Opus 4.8
+işçilerde). Push/rm/curl-POST/consent/DB-mutasyon gate'li (insan kapısı); flyctl secrets set/list şefe
+açık; curl-GET serbest. Portlar: dev 3457 · mcp 3458 · Supabase lokal 553xx (skala 543xx DOKUNMA).
+UI copy İngilizce (ders #4). PSEO hook (bayder) İLGİSİZ. Not: repo'da untracked .agents/.codex/AGENTS.md +
+codex-audit-*.md var (paralel aktivite, BU DİLİME AİT DEĞİL — merge'e katma).
 
-İLK MESAJINDA: durum özeti ver; kapanış PR'ının merge durumunu gh ile teyit et; merge OLDUYSA
-oto-deploy'u ve DFS smoke tekrarını yürüt + DFS_LIVE'ı kapat + Faz 3'ü mühürle; sonra İNSANA audit
-promptunu hatırlat ve DUR. Context %90'da aynı formatta yeni handoff yazıp devret.
+İLK MESAJINDA: durum özeti; dalın merge durumunu gh ile teyit et; merge OLMADIYSA insana push+merge+
+DELETE-BRANCH hatırlat + T0 rotasyonu başlatmayı öner + T9 kararını sor; merge OLDUYSA smoke+goals koş.
+Faz 4 planını YAZMA (go kararından sonra). Context %90'da aynı formatta yeni handoff yaz.
 ```

@@ -57,7 +57,7 @@ describe("GET /api/gsc/connect", () => {
     stubEnv();
     getUser.mockResolvedValue({ data: { user: null } });
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/login");
+    expect(response.headers.get("location")).toBe("https://app.example.com/login");
     expect(maybeSingle).not.toHaveBeenCalled();
   });
 
@@ -66,14 +66,14 @@ describe("GET /api/gsc/connect", () => {
     signedIn();
     maybeSingle.mockResolvedValue({ data: null, error: null }); // RLS-scoped read finds nothing
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=unknown_project");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
   });
 
   it("rejects a non-uuid project_id as unknown without touching the DB", async () => {
     stubEnv();
     signedIn();
     const response = await GET(new Request(`${BASE}?project_id=not-a-uuid`));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=unknown_project");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
     expect(maybeSingle).not.toHaveBeenCalled();
   });
 
@@ -83,7 +83,7 @@ describe("GET /api/gsc/connect", () => {
     signedIn();
     maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
   });
 
   it("fails closed when TOKEN_ENCRYPTION_KEY is unset", async () => {
@@ -92,6 +92,29 @@ describe("GET /api/gsc/connect", () => {
     signedIn();
     maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
+  });
+
+  it("fails closed when WEB_BASE_URL is unset (no canonical base to redirect through)", async () => {
+    stubEnv();
+    vi.stubEnv("WEB_BASE_URL", "");
+    signedIn();
+    // Falls back to the request origin for this one error page only — no canonical base exists.
+    const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+  });
+
+  it("routes internal redirects through the canonical WEB_BASE_URL, not a spoofed request Host", async () => {
+    // Models a proxy forwarding an attacker-controlled Host into request.url: url.origin is the
+    // attacker's, yet the internal 302 must carry the canonical origin, never the spoofed one.
+    stubEnv();
+    signedIn();
+    maybeSingle.mockResolvedValue({ data: null, error: null }); // -> /app?gsc=unknown_project
+    const spoofed = new Request(`https://attacker.example/api/gsc/connect?project_id=${PROJECT_ID}`, {
+      headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
+    });
+    const location = new URL((await GET(spoofed)).headers.get("location")!);
+    expect(location.origin).toBe("https://app.example.com");
+    expect(location.href).toBe("https://app.example.com/app?gsc=unknown_project");
   });
 });

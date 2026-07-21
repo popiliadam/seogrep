@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { makeCrawlSiteTool, type EnqueueFn } from "./crawl-site.ts";
+import { makeCrawlSiteTool, type EnqueueFn, type EstimateFn } from "./crawl-site.ts";
 
 /**
  * DB-integration specs for the crawl_site SURFACE against a LOCAL Supabase stack. The
@@ -10,7 +10,14 @@ import { makeCrawlSiteTool, type EnqueueFn } from "./crawl-site.ts";
  * guarantees: a valid call enqueues with the right payload and returns a job_id while
  * charging NOTHING at the surface (the 20-credit charge is the worker's), and another
  * tenant's project is indistinguishable from a missing one.
+ *
+ * The pre-discovery estimator is stubbed to DEGRADE ({pages:null}) so these DB specs stay
+ * hermetic — the real estimateSiteSize would resolve/fetch the test domains over the network.
+ * The projection/confirmation behavior is proven hermetically in crawl-site.test.ts.
  */
+
+/** A degrading pre-discovery: keeps these specs network-free (no real DNS/HTTP to the test domain). */
+const NO_ESTIMATE: EstimateFn = async () => ({ pages: null, source: "unknown" });
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -71,7 +78,7 @@ describe("crawl_site surface against the local stack", () => {
       return { jobId: "job-surface-1" };
     };
 
-    const result = await makeCrawlSiteTool({ enqueue }).run(ctx, {
+    const result = await makeCrawlSiteTool({ enqueue, estimate: NO_ESTIMATE }).run(ctx, {
       project_id: projectId,
       max_urls: 42,
     });
@@ -100,7 +107,7 @@ describe("crawl_site surface against the local stack", () => {
       capturedPayload = input.payload;
       return { jobId: "job-x" };
     };
-    await makeCrawlSiteTool({ enqueue }).run(ctx, { project_id: projectId });
+    await makeCrawlSiteTool({ enqueue, estimate: NO_ESTIMATE }).run(ctx, { project_id: projectId });
     expect(capturedPayload).toEqual({ max_urls: 100 });
   });
 

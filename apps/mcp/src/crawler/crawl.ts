@@ -13,6 +13,12 @@
 
 import { parseRobots, type RobotsRules } from "./robots.ts";
 import { decodeEntities, parseSitemap } from "./sitemap.ts";
+import {
+  checkPublicHost,
+  defaultLookup,
+  type LookupFn,
+  nonPublicHostnameReason,
+} from "./ssrf.ts";
 
 export interface PageRecord {
   readonly url: string;
@@ -50,6 +56,20 @@ export interface CrawlOptions {
   timeBudgetMs?: number;
   /** Upper bound applied to robots Crawl-delay, ms (default 1_000). Test knob. */
   crawlDelayCapMs?: number;
+  /**
+   * DNS resolver the SSRF guard uses (origin gate + cross-origin redirect checks).
+   * Defaults to node:dns/promises; injected in tests so DNS is never real. Test knob.
+   */
+  lookup?: LookupFn;
+  /**
+   * Restrict the crawl to URLs whose pathname starts with one of these prefixes (a prefix
+   * match on the pathname; a bare `blog` is normalized to `/blog`). Applied to BOTH the
+   * sitemap seeds and every BFS-discovered link — a link outside the prefixes is skipped, not
+   * fetched. Empty / absent means no restriction (the whole-site default). The public knob the
+   * crawl_site tool exposes as `include_paths`. NOTE: with no usable sitemap, discovery seeds
+   * only the homepage; if the homepage itself is out of scope, nothing in scope is reachable.
+   */
+  includePaths?: string[];
 }
 
 /** Parsed page signals, before url/status/issues are attached. */
@@ -231,6 +251,40 @@ export function normalizeUrl(raw: string): string {
 }
 
 /**
+ * Normalize include-path prefixes: trim, ensure a single leading slash (`blog` -> `/blog`),
+ * drop blanks, and dedupe (first-seen order). An absent or all-blank list yields `[]`, which
+ * every consumer treats as "no restriction" (the whole-site default). Pure — the single
+ * normalizer the crawl seeds, the BFS enqueue, and the estimator share.
+ */
+export function normalizeIncludePaths(includePaths?: readonly string[]): string[] {
+  if (!includePaths || includePaths.length === 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of includePaths) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const prefix = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+    if (!seen.has(prefix)) {
+      seen.add(prefix);
+      out.push(prefix);
+    }
+  }
+  return out;
+}
+
+/**
+ * True when `pathname` is in scope for the given ALREADY-normalized prefixes: an empty list
+ * means "no restriction" (always true); otherwise the pathname must START WITH one of the
+ * prefixes. This is a raw prefix match, so `/blog` matches `/blog`, `/blog/x`, and — by
+ * design, kept simple and predictable — also `/blogxyz`. Pure; the single scoping predicate.
+ */
+export function matchesIncludePaths(pathname: string, prefixes: readonly string[]): boolean {
+  if (prefixes.length === 0) return true;
+  return prefixes.some((prefix) => pathname.startsWith(prefix));
+}
+
+/**
  * Page-level issue flags. Deliberately shallow — the four cheap on-page signals the
  * crawler owns; deep on-page/tech/schema analysis is T8's job, not this module's.
  */
@@ -339,53 +393,88 @@ function isIpLiteralHost(hostname: string): boolean {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname); // 127.0.0.1, 169.254.169.254, ...
 }
 
-/**
- * Decide whether the post-follow final URL of a robots/sitemap fetch is a
- * redirect-based SSRF target the crawler must refuse. Blocks redirect-based SSRF to
- * IP-literal/metadata/single-label targets; public-DNS rebinding is out of scope here
- * and owned by the phase-end security audit.
- *
- * The check fires ONLY when the redirect crossed to a different origin than requested:
- * same-origin responses (including no redirect at all) pass untouched, which is what
- * keeps both the 127.0.0.1 loopback fixtures and normal domain->domain hops (apex->www)
- * working. A cross-origin final URL is refused when its scheme is not http(s), or its
- * host is an IP literal (IPv4 / bracketed IPv6, e.g. cloud metadata at 169.254.169.254),
- * or a single-label host with no dot (e.g. "metadata", "localhost").
- */
-function isUnsafeRedirectTarget(requestedUrl: string, finalUrl: string): boolean {
-  let requested: URL;
-  let final: URL;
-  try {
-    requested = new URL(requestedUrl);
-    final = new URL(finalUrl);
-  } catch {
-    return true; // an unparseable final URL is not something we will read from
-  }
-  if (final.origin === requested.origin) return false; // no cross-origin redirect
-  if (final.protocol !== "http:" && final.protocol !== "https:") return true;
-  if (isIpLiteralHost(final.hostname)) return true;
-  if (!final.hostname.includes(".")) return true;
-  return false;
+/** The loopback IP literals the crawl-origin local-test seam permits: 127.0.0.0/8 or [::1]. */
+function isLoopbackLiteral(hostname: string): boolean {
+  if (hostname.startsWith("[")) return hostname === "[::1]";
+  const m = /^(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.exec(hostname);
+  return m !== null && m[1] === "127";
 }
 
-/** GET a text resource (robots/sitemap), following redirects; null on any failure. */
-async function fetchText(url: string, timeoutMs: number): Promise<{ status: number; body: string } | null> {
+/**
+ * Validate a CROSS-ORIGIN redirect target BEFORE its request is emitted (the pre-emission
+ * SSRF fix). Unlike the crawl-origin seam, a redirect to ANY IP literal is refused —
+ * loopback included — since a legitimate site never needs to redirect its robots/sitemap
+ * to a bare IP. Otherwise: http(s) scheme only, the name must not be reserved/internal
+ * (nonPublicHostnameReason), and every resolved address must be public (checkPublicHost,
+ * with the plumbed lookup). Returns true only when every check passes.
+ */
+async function validateRedirectTarget(target: URL, lookup: LookupFn): Promise<boolean> {
+  if (target.protocol !== "http:" && target.protocol !== "https:") return false;
+  if (isIpLiteralHost(target.hostname)) return false;
+  if (nonPublicHostnameReason(target.hostname) !== null) return false;
+  return (await checkPublicHost(target.hostname, lookup)).ok;
+}
+
+/**
+ * GET a text resource (robots/sitemap), following up to MAX_REDIRECTS redirects MANUALLY so
+ * each cross-origin hop is validated BEFORE its request is emitted (the pre-emission SSRF
+ * fix — a blind redirect at an internal endpoint never leaves the process). One
+ * AbortController bounds the whole chain to `timeoutMs`, mirroring fetchPage.
+ *
+ * Same-origin hops (a relative Location on the originally requested origin) emit freely.
+ * A cross-origin hop must pass validateRedirectTarget; legitimate apex->www hops on a
+ * publicly-resolving host validate-then-emit and keep working. Returns null on any failure
+ * (robots -> RFC 9309 complete disallow; sitemap seed -> skipped).
+ *
+ * CALLER CONTRACT: the INITIAL url's host is the caller's responsibility to validate —
+ * crawlSite vets the crawl origin before any fetchText. fetchText validates cross-origin
+ * REDIRECT hops only.
+ */
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  lookup: LookupFn,
+): Promise<{ status: number; body: string } | null> {
+  let requestedOrigin: URL;
   try {
-    const res = await fetch(url, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { "user-agent": USER_AGENT },
-    });
-    // A followed redirect can land off the requested origin; refuse SSRF targets by
-    // inspecting the post-follow final URL (res.url). Treated as unreachable (null) so
-    // robots.txt falls back to RFC 9309 complete-disallow and sitemap seeds are skipped.
-    if (isUnsafeRedirectTarget(url, res.url)) {
-      await res.body?.cancel();
-      return null;
-    }
-    return { status: res.status, body: await res.text() };
+    requestedOrigin = new URL(url);
   } catch {
     return null;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const res = await fetch(current, {
+        redirect: "manual",
+        signal: controller.signal,
+        headers: { "user-agent": USER_AGENT },
+      });
+      if (REDIRECT_STATUS.has(res.status)) {
+        const location = res.headers.get("location");
+        await res.body?.cancel();
+        if (!location) return null; // redirect with no target -> unreachable
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return null;
+        }
+        // Cross-origin hop: validate BEFORE emitting the next request (pre-emission guard).
+        if (!sameOrigin(next, requestedOrigin) && !(await validateRedirectTarget(next, lookup))) {
+          return null;
+        }
+        current = next.toString();
+        continue;
+      }
+      return { status: res.status, body: await res.text() };
+    }
+    return null; // exceeded MAX_REDIRECTS -> unreachable
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -399,14 +488,26 @@ type RobotsLoad =
  * or a network failure (timeout, refused, DNS) means the file is UNREACHABLE and
  * the crawler must assume complete disallow — the caller aborts the crawl.
  */
-async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsLoad> {
-  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs);
+async function loadRobots(origin: URL, timeoutMs: number, lookup: LookupFn): Promise<RobotsLoad> {
+  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs, lookup);
   if (res === null || res.status >= 500) return { kind: "unreachable" };
   return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
 }
 
-/** Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. */
-async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): Promise<string[]> {
+/**
+ * Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. When
+ * `prefixes` is non-empty, only same-origin locs whose pathname is in scope are kept — an
+ * empty `prefixes` (the default) filters nothing, so the crawl's existing behavior is
+ * byte-identical. The guarded fetchText path (incl. its cross-origin redirect checks) is
+ * unchanged; scoping is a pure post-fetch filter.
+ */
+async function loadSitemapSeeds(
+  origin: URL,
+  timeoutMs: number,
+  limit: number,
+  lookup: LookupFn,
+  prefixes: readonly string[] = [],
+): Promise<string[]> {
   const seeds: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string): void => {
@@ -417,6 +518,7 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
       return;
     }
     if (!sameOrigin(u, origin)) return;
+    if (!matchesIncludePaths(u.pathname, prefixes)) return;
     const norm = normalizeUrl(u.toString());
     if (!seen.has(norm)) {
       seen.add(norm);
@@ -424,7 +526,7 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
     }
   };
 
-  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs);
+  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs, lookup);
   if (!root || root.status !== 200) return seeds;
   const parsed = parseSitemap(root.body);
   parsed.urls.forEach(add);
@@ -440,10 +542,36 @@ async function loadSitemapSeeds(origin: URL, timeoutMs: number, limit: number): 
       continue;
     }
     if (!sameOrigin(childUrl, origin)) continue;
-    const res = await fetchText(child, timeoutMs);
+    const res = await fetchText(child, timeoutMs, lookup);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
   return seeds.slice(0, limit);
+}
+
+/**
+ * The crawl-origin SSRF gate as a pure decision: null when `originUrl` is allowed to be
+ * fetched, otherwise a short English reason. IP-literal origins are refused EXCEPT loopback
+ * (the documented local-test seam: the crawler's own fixtures bind loopback servers and seed
+ * http://127.0.0.1:<port>, while production origins come from setup_project's normalizeDomain,
+ * which structurally cannot emit an IP literal); every other host must resolve public
+ * (checkPublicHost, with the plumbed lookup). crawlSite and estimateSiteSize share this ONE
+ * gate so there is a single guarded path — no second SSRF policy to drift.
+ */
+async function originGateReason(originUrl: URL, lookup: LookupFn): Promise<string | null> {
+  if (isIpLiteralHost(originUrl.hostname)) {
+    return isLoopbackLiteral(originUrl.hostname) ? null : "non-loopback IP literal";
+  }
+  const check = await checkPublicHost(originUrl.hostname, lookup);
+  return check.ok ? null : check.reason;
+}
+
+/** Early-return shape for an origin the SSRF guard refused (nothing is ever fetched). */
+function blockedOrigin(origin: URL, reason: string, fetchedAt: string): CrawlResult {
+  return {
+    pages: [],
+    skipped: [{ url: normalizeUrl(origin.toString()), reason: `origin blocked (SSRF guard): ${reason}` }],
+    fetchedAt,
+  };
 }
 
 /**
@@ -470,8 +598,17 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const pageTimeoutMs = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
+  const lookup = opts.lookup ?? defaultLookup;
+  const prefixes = normalizeIncludePaths(opts.includePaths);
 
-  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs);
+  // SSRF origin gate (shared with estimateSiteSize via originGateReason). The origin is
+  // tenant-controlled, so before any request goes out it must resolve to a public address;
+  // a refused origin fetches nothing downstream (robots, sitemap, pages). This also catches a
+  // PRE-EXISTING stored domain that would only now be judged non-public.
+  const gateReason = await originGateReason(originUrl, lookup);
+  if (gateReason !== null) return blockedOrigin(originUrl, gateReason, fetchedAt);
+
+  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs, lookup);
   if (robotsLoad.kind === "unreachable") {
     // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete
     // disallow. Stop before fetching anything else — the sitemap included.
@@ -484,8 +621,18 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const robots = robotsLoad.rules;
   const crawlDelayMs = Math.min(robots.crawlDelayMs, crawlDelayCapMs);
 
-  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls);
-  const queue: string[] = seeds.length > 0 ? [...seeds] : [normalizeUrl(originUrl.toString())];
+  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls, lookup, prefixes);
+  // Fallback seed (no usable sitemap) is the homepage — but honor the scope filter: if the
+  // homepage itself is out of scope, there is no in-scope entry point (an empty queue -> 0
+  // pages). With no prefixes, matchesIncludePaths is always true, so this is byte-identical
+  // to the previous `[root]` fallback.
+  const rootSeed = normalizeUrl(originUrl.toString());
+  const queue: string[] =
+    seeds.length > 0
+      ? [...seeds]
+      : matchesIncludePaths(new URL(rootSeed).pathname, prefixes)
+        ? [rootSeed]
+        : [];
   const enqueued = new Set<string>(queue);
   const visited = new Set<string>();
   const pages: PageRecord[] = [];
@@ -500,6 +647,8 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       return;
     }
     if (!sameOrigin(u, originUrl)) return;
+    // Out-of-scope links are skipped, not fetched (with no prefixes this is a no-op).
+    if (!matchesIncludePaths(u.pathname, prefixes)) return;
     const norm = normalizeUrl(link);
     if (!visited.has(norm) && !enqueued.has(norm)) {
       enqueued.add(norm);
@@ -601,4 +750,104 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   }
 
   return { pages, skipped, fetchedAt };
+}
+
+// --- Free pre-discovery (site-size estimate) ------------------------------------
+
+export interface SiteSizeEstimate {
+  /** Best-effort discovered page count, or null when discovery could not run / degraded. */
+  readonly pages: number | null;
+  /** Where the count came from: the sitemap, a homepage-link floor, or nothing usable. */
+  readonly source: "sitemap" | "homepage" | "unknown";
+}
+
+/** Bounded ceiling on the sitemap URLs the estimator counts — enough to flag a >1000-page site. */
+const ESTIMATE_SITEMAP_LIMIT = 5_000;
+/** Default wall-clock budget for each fetch in the free pre-discovery, ms. */
+const DEFAULT_ESTIMATE_TIMEOUT_MS = 5_000;
+
+/** Count distinct same-origin, in-scope links in `html` (a homepage-size floor). Pure. */
+function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly string[]): number {
+  const { links } = parseHtml(html, normalizeUrl(originUrl.toString()));
+  const seen = new Set<string>();
+  for (const link of links) {
+    let u: URL;
+    try {
+      u = new URL(link);
+    } catch {
+      continue;
+    }
+    if (!sameOrigin(u, originUrl)) continue;
+    if (!matchesIncludePaths(u.pathname, prefixes)) continue;
+    seen.add(normalizeUrl(link));
+  }
+  return seen.size;
+}
+
+/**
+ * FREE, guarded, best-effort pre-discovery of a site's size — the input to crawl_site's
+ * large-site confirmation. It NEVER throws and NEVER charges (it opens no ledger): any
+ * failure, timeout, or blocked origin degrades to `{ pages: null, source: "unknown" }`, so it
+ * can never block a crawl. It reuses the SAME SSRF-guarded path crawlSite uses — the origin
+ * gate (originGateReason) and the guarded fetchText / bounded sitemap expansion
+ * (loadSitemapSeeds) — so there is ONE guarded fetcher, not a second with different rules.
+ *
+ *  - a blocked / non-public / invalid origin returns null WITHOUT any fetch;
+ *  - /sitemap.xml (one bounded level of index expansion) -> count same-origin, in-scope
+ *    `<loc>`s -> source "sitemap";
+ *  - otherwise the homepage's same-origin, in-scope links as a rough floor -> source "homepage";
+ *  - `includePaths` scopes the count exactly as it scopes the crawl.
+ */
+export async function estimateSiteSize(
+  origin: string,
+  opts: { lookup?: LookupFn; timeoutMs?: number; includePaths?: string[] } = {},
+): Promise<SiteSizeEstimate> {
+  const lookup = opts.lookup ?? defaultLookup;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_ESTIMATE_TIMEOUT_MS;
+  const prefixes = normalizeIncludePaths(opts.includePaths);
+
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return { pages: null, source: "unknown" };
+  }
+  if (originUrl.protocol !== "http:" && originUrl.protocol !== "https:") {
+    return { pages: null, source: "unknown" };
+  }
+
+  try {
+    // The SAME origin gate crawlSite applies — a blocked origin is never fetched.
+    if ((await originGateReason(originUrl, lookup)) !== null) {
+      return { pages: null, source: "unknown" };
+    }
+
+    // Guarded sitemap count (reuses loadSitemapSeeds' fetchText + bounded index expansion).
+    const sitemapSeeds = await loadSitemapSeeds(
+      originUrl,
+      timeoutMs,
+      ESTIMATE_SITEMAP_LIMIT,
+      lookup,
+      prefixes,
+    );
+    if (sitemapSeeds.length > 0) {
+      return { pages: sitemapSeeds.length, source: "sitemap" };
+    }
+
+    // No usable sitemap -> the homepage's in-scope same-origin links as a rough floor.
+    const home = await fetchText(rootSeedOf(originUrl), timeoutMs, lookup);
+    if (!home || home.status !== 200 || !home.body) {
+      return { pages: null, source: "unknown" };
+    }
+    const links = countInScopeLinks(home.body, originUrl, prefixes);
+    return links > 0 ? { pages: links, source: "homepage" } : { pages: null, source: "unknown" };
+  } catch {
+    // Best-effort: pre-discovery must NEVER throw — any surprise degrades to unknown.
+    return { pages: null, source: "unknown" };
+  }
+}
+
+/** The normalized homepage URL for an origin (shared spelling with the crawl's root seed). */
+function rootSeedOf(originUrl: URL): string {
+  return normalizeUrl(originUrl.toString());
 }

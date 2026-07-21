@@ -140,10 +140,14 @@ describe("withCredits against the local stack", () => {
     expect(job?.reserve_id).toBe(rows[1]?.reserve_id);
   });
 
-  it("(c) a second reserve for the same job_id cannot double-spend (0005 guards)", async () => {
+  it("(c) a second reserve for the same job_id is rejected by the unique index, NOT by balance (B-I1)", async () => {
     const userId = await makeUserId();
     const cost = TOOL_COSTS.crawl_site;
-    await seedGrant(userId, cost); // funded EXACTLY to one run
+    // Fund TWO runs on purpose: the balance check would PASS the second reserve, so the
+    // only thing that can stop the double-reserve is the partial unique index
+    // (credit_ledger_one_reserve_per_job). This is the C-I1c fix — the old test funded 1x
+    // and so only ever measured insufficient-balance, never the one-reserve-per-job invariant.
+    await seedGrant(userId, cost * 2);
     const jobId = await makeJobId(userId, "crawl_site");
 
     const first = await service.rpc("reserve_credits", {
@@ -155,18 +159,23 @@ describe("withCredits against the local stack", () => {
     expect(first.error).toBeNull();
     const reserveId = first.data as string;
 
-    // Retry of the same job: the balance check rejects it — no second debit.
+    // Second reserve for the SAME job_id: the balance is still sufficient (one run's worth
+    // remains), so the reserve reaches the INSERT — and the unique index rejects it.
     const second = await service.rpc("reserve_credits", {
       p_user_id: userId,
       p_amount: cost,
       p_tool: "crawl_site",
       p_job_id: jobId,
     });
-    expect(second.error?.message).toMatch(/insufficient balance/);
+    expect(second.error).not.toBeNull();
+    expect(second.error?.code).toBe("23505"); // unique_violation
+    // Proven by the INDEX, not the balance guard: the message names the index, not "insufficient".
+    expect(second.error?.message).toMatch(/credit_ledger_one_reserve_per_job/);
+    expect(second.error?.message).not.toMatch(/insufficient balance/);
 
     let rows = await ledgerRows(userId);
-    expect(rows.filter((r) => r.kind === "spend_reserve")).toHaveLength(1);
-    expect(balanceOf(rows)).toBe(0); // never below zero, never doubly debited
+    expect(rows.filter((r) => r.kind === "spend_reserve")).toHaveLength(1); // exactly ONE reserve
+    expect(balanceOf(rows)).toBe(cost); // 2*cost granted, exactly ONE cost debited — never doubly
 
     // Settle the real reserve; a second settlement of the SAME reserve is rejected.
     const commit = await service.rpc("commit_reserve", { p_reserve_id: reserveId });
@@ -176,7 +185,7 @@ describe("withCredits against the local stack", () => {
 
     rows = await ledgerRows(userId);
     expect(rows.filter((r) => r.kind === "spend_commit")).toHaveLength(1);
-    expect(balanceOf(rows)).toBe(0); // the job cost was spent exactly once
+    expect(balanceOf(rows)).toBe(cost); // commit is zero-delta: still exactly one run spent
   });
 
   it("(d) a 0-credit tool never calls reserve: ledger stays empty even at zero balance", async () => {

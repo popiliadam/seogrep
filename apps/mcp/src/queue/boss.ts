@@ -299,13 +299,26 @@ async function updateJob(
   }
 }
 
-/** Transition to `running` and stamp started_at (worker calls this before the tool runs). */
-export async function markJobRunning(jobId: string): Promise<void> {
-  await updateJob(
-    jobId,
-    { status: "running", started_at: new Date().toISOString() },
-    "markJobRunning",
-  );
+/**
+ * Atomically CLAIM a queued job: flip queued -> running and stamp started_at, but ONLY while
+ * the row is still `queued`. Returns true iff THIS call won the claim (a row came back);
+ * false means another consumer already claimed it (or it is no longer queued) and the caller
+ * MUST skip — re-running would open a second credit reserve (B-I1). This compare-and-set is
+ * the single atomic gate; it replaces the old unconditional UPDATE paired with a separate
+ * read-then-check in executeJob, which had a TOCTOU window between the status read and the
+ * write that two concurrent deliveries could both slip through.
+ */
+export async function markJobRunning(jobId: string): Promise<boolean> {
+  const { data, error } = await getServiceClient()
+    .from("jobs")
+    .update({ status: "running", started_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .eq("status", "queued")
+    .select("id");
+  if (error) {
+    throw new Error(`markJobRunning failed: ${error.message}`);
+  }
+  return (data?.length ?? 0) > 0;
 }
 
 /**

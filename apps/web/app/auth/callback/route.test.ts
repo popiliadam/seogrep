@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const exchangeCodeForSession = vi.fn();
 const verifyOtp = vi.fn();
@@ -107,5 +107,54 @@ describe("GET /auth/callback", () => {
     expect(response.status).toBe(307);
     expect(grantTrialCredits).toHaveBeenCalledWith("u4");
     expect(captureSignup).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /auth/callback — canonical redirect base (A-I4)", () => {
+  beforeEach(() => {
+    vi.stubEnv("WEB_BASE_URL", "https://app.example.com");
+    grantTrialCredits.mockResolvedValue(false);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  // A proxy that forwards an attacker-controlled Host puts the attacker origin into request.url;
+  // the same-app 302 must still be built from the canonical WEB_BASE_URL, never that origin.
+  function spoofed(path: string): Request {
+    return new Request(`https://attacker.example${path}`, {
+      headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
+    });
+  }
+
+  it("routes the success redirect to the canonical /app, not the spoofed Host", async () => {
+    exchangeCodeForSession.mockResolvedValue({ data: { user: { id: "u1", email: null } }, error: null });
+    const location = new URL((await GET(spoofed("/auth/callback?code=abc"))).headers.get("location")!);
+    expect(location.href).toBe("https://app.example.com/app");
+  });
+
+  it("routes the failure redirect to the canonical /login?error=auth, not the spoofed Host", async () => {
+    const location = new URL((await GET(spoofed("/auth/callback"))).headers.get("location")!);
+    expect(location.href).toBe("https://app.example.com/login?error=auth");
+  });
+});
+
+describe("GET /auth/callback — empty WEB_BASE_URL falls back (W4 empty-env class)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+  });
+
+  // A SET-but-EMPTY WEB_BASE_URL ("") is the broken-deploy case `??` missed: "" is not nullish, so
+  // the base stayed "" and `new URL("/app", "")` threw a 500 mid-auth. `||` treats "" as absent and
+  // falls back to the request origin, keeping the user moving (signed lesson #5 — empty-env class).
+  it("redirects through the request origin (no 500) when WEB_BASE_URL is set but empty", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    exchangeCodeForSession.mockResolvedValue({ data: { user: { id: "u1", email: null } }, error: null });
+    grantTrialCredits.mockResolvedValue(false);
+    const response = await GET(new Request(`${BASE}?code=abc`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
   });
 });

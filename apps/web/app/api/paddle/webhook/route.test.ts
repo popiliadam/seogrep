@@ -212,17 +212,42 @@ describe("POST /api/paddle/webhook", () => {
     expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
   });
 
-  it("an unmatched transaction price is recorded + marked processed, never granted", async () => {
+  it("a paid unattributable transaction is 500 + left un-stamped (retryable), never granted", async () => {
+    // B-C1 (Codex C-I1b) SANCTIONED FLIP: this test previously pinned the money-loss BUG as
+    // "success" (200 + markProcessed for a paid transaction we could not attribute — which tells
+    // Paddle never to retry, so an env-drift / checkout-regression paid event is silently closed).
+    // It now pins the CORRECT retryable-recovery contract: an unmapped price (server env drift) is
+    // a paid transaction.completed we could not attribute, so the route must return 500 and leave
+    // processed_at NULL — Paddle keeps retrying across its ~3-day window, and once the price env is
+    // fixed a retry maps to `purchase` and grants. Do NOT re-weaken this to 200 + markProcessed.
     const response = await POST(signedRequest(transactionEvent({ priceId: "pri_not_configured" })));
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "paid transaction pending attribution",
+    });
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
-    expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
-    // Important: this is REAL customer money left un-credited (200 + processed, Paddle will not
-    // retry) — the route must leave a LOUD trace, without logging payload or secrets.
+    // Must NOT stamp: a stamped event is a cheap duplicate on retry (no re-attempt) — money lost.
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    // Still leaves a LOUD trace (no payload, no secrets) so the incident is visible.
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "paddle webhook: PAID transaction recorded without credit",
       expect.objectContaining({ eventId: expect.any(String), reason: expect.any(String) }),
     );
+    expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
+  it("a non-transaction record_only (informational event) still returns 200 + marks processed", async () => {
+    // The other half of the B-C1 split: a record_only that is NOT a paid transaction.completed
+    // (here a subscription.updated whose price is unmapped) is genuinely informational — retrying
+    // is pointless, so it stays 200 + markProcessed and leaves NO money-loss trace.
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated", priceId: "pri_unmapped" })),
+    );
+    expect(response.status).toBe(200);
+    expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(capturePurchase).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = { title: "How it works" };
+export const metadata: Metadata = {
+  title: "How it works",
+  description:
+    "How SeoGrep works: get your personal MCP URL, paste it into your AI client, and ask for crawls, audits, and Search Console insights in plain language.",
+};
 
 type Step = {
   title: string;
@@ -33,7 +37,7 @@ const STEPS: readonly Step[] = [
 const CARDS = [
   {
     title: "Long jobs never block your chat",
-    body: "Crawls and audits run as background jobs. SeoGrep hands back a job you can check with get_job_status while you keep working.",
+    body: "Crawls run as background jobs — SeoGrep hands back a job you can check with get_job_status while you keep working. Audits then run instantly on your stored crawl, so findings come back the moment you ask.",
   },
   {
     title: "Expensive runs ask first",
@@ -41,7 +45,7 @@ const CARDS = [
   },
   {
     title: "Reports you can share",
-    body: "Any analysis can become an HTML report with a public link for clients and teammates — each one carries a small “powered by SeoGrep” footer.",
+    body: "Your crawl, audits, and Search Console data become a shareable HTML report with a public link for clients and teammates — each one carries a small “powered by SeoGrep” footer.",
   },
 ] as const;
 

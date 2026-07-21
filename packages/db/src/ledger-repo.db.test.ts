@@ -89,6 +89,12 @@ beforeAll(async () => {
   }
 });
 
+// Every reserve below uses a fresh randomUUID() job id — the same globally-unique shape
+// production emits (sync tools: a fresh uuid per call; async worker: the jobs.id uuid). The
+// migration-0011 partial unique index (credit_ledger_one_reserve_per_job) enforces ONE open
+// reserve per job_id across the whole append-only ledger, so a shared literal job id reused
+// across these single-DB tests would (correctly) collide. Uniqueness here is the fixture
+// matching reality — no behavioral assertion changes.
 describe("ledger-repo against local Supabase", () => {
   it("(a) grants and purchases are reflected in credit_balances", async () => {
     const user = await makeUser();
@@ -114,7 +120,7 @@ describe("ledger-repo against local Supabase", () => {
       userId: user.id,
       amount: 30,
       tool: "audit",
-      jobId: "j",
+      jobId: randomUUID(),
     });
     expect(await getBalance(service, user.id)).toBe(70); // reserve debited immediately
     await commitReserve(service, reserveId);
@@ -130,7 +136,7 @@ describe("ledger-repo against local Supabase", () => {
       userId: user.id,
       amount: 30,
       tool: "audit",
-      jobId: "j",
+      jobId: randomUUID(),
     });
     expect(await getBalance(service, user.id)).toBe(70);
     await releaseReserve(service, reserveId);
@@ -144,7 +150,7 @@ describe("ledger-repo against local Supabase", () => {
       userId: user.id,
       amount: 30,
       tool: "audit",
-      jobId: "j",
+      jobId: randomUUID(),
     });
     await commitReserve(service, reserveId);
     await expect(releaseReserve(service, reserveId)).rejects.toThrow(/already settled/);

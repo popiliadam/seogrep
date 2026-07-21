@@ -4,7 +4,7 @@ kaynak: Faz 3 T14 done_when + plan D11 — tools-reference docs sayfaları apps/
 
 ## predicate
 ```predicate
-[ -d apps/mcp/dist ] || pnpm --filter @pseo/mcp build >/dev/null 2>&1
+pnpm --filter @pseo/mcp build >/dev/null 2>&1
 node apps/web/scripts/gen-tool-docs.mjs --check
 ```
 

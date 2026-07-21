@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: `${SITE_NAME} — SEO analysis inside your AI assistant`, template: `%s · ${SITE_NAME}` },
   description: SITE_DESCRIPTION,
+  // Self-referencing canonical: Next resolves the relative "./" against metadataBase + the current
+  // route, so every page inherits a canonical pointing at its own absolute URL (audit G2: 42/42
+  // pages were canonical-less). Pages that don't override `alternates` keep this default.
+  alternates: { canonical: "./" },
   openGraph: {
     siteName: SITE_NAME,
     type: "website",

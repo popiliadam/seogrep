@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
 
-export const metadata: Metadata = { title: "Privacy Policy" };
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "SeoGrep Privacy Policy — what the SeoGrep SEO MCP service collects, how it is used, and your rights. We never train AI models on your data.",
+};
 
 const SECTIONS = [
   {
@@ -13,7 +17,7 @@ const SECTIONS = [
   },
   {
     heading: "Data retention",
-    body: "Raw crawl data is kept for 90 days. Report outputs are kept for the lifetime of your account. When you request deletion, we perform a full purge of your data.",
+    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account. To have your data deleted, email us and we will remove it.",
   },
   {
     heading: "Processors we use",

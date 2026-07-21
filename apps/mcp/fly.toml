@@ -42,5 +42,7 @@ primary_region = "nrt"
   size = "shared-cpu-1x"
   memory = "512mb"
 
-# The worker process is a stub (logs "not yet implemented" and exits). Keep it
-# scaled to 0 until the queue consumer lands: `fly scale count worker=0`.
+# The worker process is the real pg-boss queue consumer: it processes every async
+# job (crawl_site, audits, generate_report). Do NOT scale it to 0 — with no
+# consumer, queued jobs silently pile up and never run. SIGTERM drains in-flight
+# jobs gracefully (see apps/mcp/src/index.ts and apps/mcp/src/queue/worker.ts).

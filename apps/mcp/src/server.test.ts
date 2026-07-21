@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server as HttpServer } from "node:http";
+import http from "node:http";
+import { unlinkSync } from "node:fs";
 import { createApp, type AppDeps } from "./server.ts";
+// Additive T5 import kept on its own line so every existing line above stays byte-identical.
+import { readPendingJobsBounded } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
@@ -49,6 +53,23 @@ const postRpc = (baseUrl: string, key: string, body: unknown): Promise<Response>
     headers: {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(body),
+  });
+
+/** POST with extra request headers (e.g. Fly-Client-IP) merged over the JSON-RPC defaults. */
+const postRpcWith = (
+  baseUrl: string,
+  key: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<Response> =>
+  fetch(`${baseUrl}/mcp/${key}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...headers,
     },
     body: JSON.stringify(body),
   });
@@ -215,6 +236,316 @@ describe("mcp gateway rate limiting", () => {
       expect(body.jsonrpc).toBe("2.0");
     } finally {
       await app.close();
+    }
+  });
+});
+
+describe("mcp gateway per-IP flood throttle", () => {
+  it("throttled IP: 429 and authenticate is NEVER called (the 429 path performs zero DB reads)", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(OK_DECISION));
+    const app = await listen(appWith({ authenticate, ipThrottle: { tryConsume: () => false } }));
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(429);
+      const body = await res.json();
+      expect(body.error.code).toBe(-32002); // same envelope as the per-key 429 (indistinguishable)
+      expect(body.jsonrpc).toBe("2.0");
+      // authenticate is where the DB lookup lives; a throttled request must not reach it.
+      expect(authenticate).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("allowing throttle: the request reaches authenticate exactly once (flow intact)", async () => {
+    const authenticate = vi.fn((key: string) =>
+      Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED),
+    );
+    const app = await listen(appWith({ authenticate, ipThrottle: { tryConsume: () => true } }));
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(200);
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("malformed key: 401 format path and the throttle is NOT consumed (format gate runs first)", async () => {
+    const tryConsume = vi.fn(() => true);
+    const app = await listen(appWith({ ipThrottle: { tryConsume } }));
+    try {
+      const res = await postRpc(app.baseUrl, "not-a-key", {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body.error.code).toBe(-32001);
+      expect(tryConsume).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("no throttle injected (undefined): requests flow as before (back-compat)", async () => {
+    const authenticate = vi.fn((key: string) =>
+      Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED),
+    );
+    const app = await listen(appWith({ authenticate })); // ipThrottle omitted
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      });
+      expect(res.status).toBe(200);
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("mcp gateway /status endpoint", () => {
+  // /status is the operator signal, SEPARATE from /healthz (which stays a trivial zero-I/O
+  // liveness probe wired to the Fly check). It is unauthenticated and exposes only coarse
+  // process-wide counts. The pending-jobs backlog is injected as a fake here (the fast lane
+  // is DB-free) exactly the way ipThrottle/authenticate are, so no DB is touched.
+
+  it("GET /status returns ok:true with numeric counters and the injected pendingJobs", async () => {
+    const app = await listen(appWith({ pendingJobs: () => Promise.resolve(3) }));
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBe(3);
+      expect(typeof body.uptimeSeconds).toBe("number");
+      expect(typeof body.errorsSinceBoot).toBe("number");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("GET /status degrades to pendingJobs:null (still ok:true) when the backlog read REJECTS", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({ pendingJobs: () => Promise.reject(new Error("db down")) }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200); // never 5xx — /status is a signal, not a liveness gate
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
+  it("GET /status degrades to pendingJobs:null (still ok:true) when the backlog read THROWS SYNCHRONOUSLY", async () => {
+    // The charter is "never hang or 5xx no matter what the reader does" — a synchronous
+    // throw (not a rejecting promise) must fold to null exactly like a rejection, or the
+    // async handler would reject with no catch and Express 4 would hang the response.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          throw new Error("sync boom");
+        },
+      }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
+  it("GET /status returns pendingJobs:null when no backlog reader is injected (DB-free default)", async () => {
+    const app = await listen(appWith()); // no pendingJobs dep — mirrors the DB-free unit path
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.pendingJobs).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a request that hits the 500 path increments errorsSinceBoot seen on a later /status", async () => {
+    // metrics is a process singleton shared by every app in this file, so assert the DELTA
+    // (before -> after) rather than an absolute count: robust to any 5xx another test logged.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const app = await listen(appWith({ authenticate: () => Promise.reject(new Error("db down")) }));
+    try {
+      const before = await (await fetch(`${app.baseUrl}/status`)).json();
+      const res = await postRpc(app.baseUrl, VALID_KEY, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(res.status).toBe(500);
+      const after = await (await fetch(`${app.baseUrl}/status`)).json();
+      expect(after.errorsSinceBoot).toBe(before.errorsSinceBoot + 1);
+    } finally {
+      errorSpy.mockRestore();
+      await app.close();
+    }
+  });
+});
+
+describe("readPendingJobsBounded (bounded best-effort backlog read)", () => {
+  // The unit-level proof of the /status degradation contract: a slow read must resolve to
+  // null within the bound (NEVER hang), a rejection must resolve to null, and a missing
+  // reader must resolve to null — so /status can always answer without the DB deciding it.
+
+  it("returns the count when the read resolves within the bound", async () => {
+    expect(await readPendingJobsBounded(() => Promise.resolve(7), 1_000)).toBe(7);
+  });
+
+  it("resolves null (never hangs) when the read exceeds the timeout", async () => {
+    const hang = () => new Promise<number>(() => undefined); // never settles
+    const start = Date.now();
+    const result = await readPendingJobsBounded(hang, 20);
+    expect(result).toBeNull();
+    expect(Date.now() - start).toBeLessThan(1_000); // bounded, did not wait on the hung read
+  });
+
+  it("resolves null and warns when the read rejects", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await readPendingJobsBounded(() => Promise.reject(new Error("boom")), 1_000);
+    expect(result).toBeNull();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    warnSpy.mockRestore();
+  });
+
+  it("resolves null when no reader is wired", async () => {
+    expect(await readPendingJobsBounded(undefined, 1_000)).toBeNull();
+  });
+});
+
+describe("mcp gateway client IP extraction (throttle bucket key)", () => {
+  // clientIpOf is module-private; it is exercised through driven requests by injecting a
+  // throttle that records the id (bucket key) it was consulted with.
+  it("prefers the Fly-Client-IP header over the socket peer address", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { "fly-client-ip": "203.0.113.7" },
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      );
+      expect(seenIp).toBe("203.0.113.7"); // the header, not the 127.0.0.1 socket peer
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("normalizes an IPv4-mapped IPv6 Fly-Client-IP to its bare IPv4 form", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { "fly-client-ip": "::ffff:203.0.113.9" },
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      );
+      expect(seenIp).toBe("203.0.113.9");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("falls back to the socket peer address when Fly-Client-IP is absent", async () => {
+    let seenIp: string | undefined;
+    const app = await listen(
+      appWith({ ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } } }),
+    );
+    try {
+      // baseUrl connects over IPv4 loopback, so the peer normalizes to 127.0.0.1
+      // (whether the dual-stack socket reports it bare or IPv4-mapped).
+      await postRpc(app.baseUrl, VALID_KEY, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      expect(seenIp).toBe("127.0.0.1");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("yields 'unknown' when neither Fly-Client-IP nor a socket peer address is present", async () => {
+    let seenIp: string | undefined;
+    // A Unix-domain-socket peer has no remoteAddress, so this drives the final "unknown"
+    // fallback through a real request (TCP peers always expose an address, so a UDS is the
+    // only way to exercise that branch end-to-end).
+    const socketPath = `/tmp/sg-ip-${process.pid}-${Math.random().toString(36).slice(2)}.sock`;
+    const server = appWith({
+      ipThrottle: { tryConsume: (id) => {
+          seenIp = id;
+          return true;
+        } },
+    }).listen(socketPath);
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = http.request(
+          {
+            socketPath,
+            path: `/mcp/${VALID_KEY}`,
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+            },
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.on("error", reject);
+        req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+      });
+      expect(status).toBe(200);
+      expect(seenIp).toBe("unknown");
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+      try {
+        unlinkSync(socketPath);
+      } catch {
+        /* socket file already gone */
+      }
     }
   });
 });

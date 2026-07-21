@@ -2,21 +2,25 @@ import type { Metadata } from "next";
 import { PricingTable } from "../../../components/pricing-table";
 import { TOP_UPS, creditsLabel } from "../../../components/pricing-plans";
 
-export const metadata: Metadata = { title: "Pricing" };
+export const metadata: Metadata = {
+  title: "Pricing",
+  description:
+    "SeoGrep pricing: start free, then credit-based plans and pay-as-you-go top-ups. Pay for the SEO work you run, not per seat.",
+};
 
 const CREDIT_COSTS = [
   { action: "GSC pull (90 days)", cost: "5" },
   { action: "Site crawl (up to 100 URLs)", cost: "20" },
   { action: "Quick-win, cannibalization, or decay scan", cost: "10" },
-  { action: "Full on-page + technical audit", cost: "50" },
+  { action: "Full on-page + technical + schema audit", cost: "50" },
   { action: "Keyword research (100 keywords)", cost: "25" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 
 const POLICIES = [
-  "Unused credits roll over for one month, capped at twice your monthly plan credits.",
+  "During beta, unused credits stay in your balance and don't expire.",
   "The free trial requires email verification.",
-  "One trial per domain.",
+  "One trial per account.",
 ] as const;
 
 export default function Page() {
@@ -68,6 +72,10 @@ export default function Page() {
               </tbody>
             </table>
           </div>
+          <p className="mt-6 max-w-2xl text-sm text-ink/70">
+            A crawl covers up to 100 pages for 20 credits. Larger sites can be crawled in focused parts
+            with path filters (one crawl per section, e.g. /blog) — tiered large-site crawling is coming.
+          </p>
         </div>
       </section>
 

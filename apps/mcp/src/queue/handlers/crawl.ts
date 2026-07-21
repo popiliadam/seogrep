@@ -22,7 +22,10 @@ import type { ToolHandler } from "../worker.ts";
  */
 
 /** The crawl function the handler drives (default: the real fetch-based crawlSite). */
-export type CrawlFn = (origin: string, opts: { maxUrls?: number }) => Promise<CrawlResult>;
+export type CrawlFn = (
+  origin: string,
+  opts: { maxUrls?: number; includePaths?: string[] },
+) => Promise<CrawlResult>;
 
 /** Resolve the crawl origin for a job (default: the tenant's project domain). */
 export type OriginResolver = (userId: string, job: JobRow) => Promise<string>;
@@ -39,6 +42,19 @@ export type OriginResolver = (userId: string, job: JobRow) => Promise<string>;
 export function clampMaxUrls(raw: unknown): number | undefined {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
   return Math.min(100, Math.max(1, Math.floor(raw)));
+}
+
+/**
+ * Coerce a queue-message include_paths into the crawler's contract. Like clampMaxUrls, the
+ * queue payload is EXTERNAL input, so accept ONLY an array of non-empty strings; anything else
+ * (a non-array, an array of the wrong element types, or one that filters down to empty) yields
+ * undefined so the crawler applies NO scope filter. Normalization of the prefixes themselves
+ * (leading slash, dedupe) is the crawler's job (normalizeIncludePaths).
+ */
+export function clampIncludePaths(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const paths = raw.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
+  return paths.length > 0 ? paths : undefined;
 }
 
 export interface CrawlHandlerDeps {
@@ -92,12 +108,14 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
 
     const origin = await resolveOrigin(userId, job);
     // The tool surface is snake_case; internal module options are camelCase — mapped
-    // here. The crawl_site queue payload carries `max_urls`; the crawler's CrawlOptions
-    // takes `maxUrls`. This is the single point that bridges the two conventions, and it
-    // re-clamps to 1..100 because a raw queue message is external input (see clampMaxUrls).
+    // here. The crawl_site queue payload carries `max_urls` / `include_paths`; the crawler's
+    // CrawlOptions takes `maxUrls` / `includePaths`. This is the single point that bridges the
+    // two conventions, and it re-clamps because a raw queue message is external input (see
+    // clampMaxUrls / clampIncludePaths).
     const maxUrls = clampMaxUrls(payload.max_urls);
+    const includePaths = clampIncludePaths(payload.include_paths);
 
-    const result = await crawl(origin, { maxUrls });
+    const result = await crawl(origin, { maxUrls, includePaths });
 
     // A crawl that fetched NOTHING (e.g. an unreachable robots.txt — RFC 9309
     // complete disallow) delivered no value. Throw so withCredits RELEASES the

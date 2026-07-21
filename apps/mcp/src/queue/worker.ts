@@ -20,10 +20,12 @@ import { createCrawlHandler } from "./handlers/crawl.ts";
  *
  *   queued -> running -> succeeded (result) | failed (error)
  *
- * Money safety: a job is executed ONLY from `queued`. A redelivered or crashed
- * `running` row is never re-run automatically (the queue's retryLimit is 0 and
- * this guard is the second belt) — re-running would reserve credits again.
- * Recovering stuck `running` rows is a reconciliation concern, not the worker's.
+ * Money safety: a job is executed ONLY from `queued`, and the transition is claimed
+ * by an ATOMIC compare-and-set (markJobRunning: UPDATE ... WHERE status='queued'). A
+ * redelivered or crashed `running` row loses the claim and is never re-run automatically
+ * (retryLimit 0 is the first belt; the atomic claim is the second) — re-running would
+ * reserve credits again. Recovering stuck `running` rows is a reconciliation concern,
+ * not the worker's.
  */
 
 export interface ToolHandlerInput {
@@ -105,30 +107,60 @@ export async function executeJob(message: JobMessage): Promise<void> {
     console.error(`executeJob: jobs row ${jobId} not found; dropping message`);
     return;
   }
-  if (job.status !== "queued") {
-    // Redelivery / crash leftover — never auto re-run (see module comment).
-    console.warn(`executeJob: job ${jobId} is "${job.status}", not "queued"; skipping`);
-    return;
-  }
   if (job.user_id !== userId) {
     // Tenant-isolation guard: the queue message's userId must match the jobs
     // row's owner before the handler runs or any credit reserve opens. A
     // mismatch means a forged/corrupted message or a caller that resolved
     // job ownership incorrectly — fail closed instead of running (and
     // potentially billing) someone else's job under the wrong identity.
+    // This runs BEFORE the claim so a mismatched delivery never even flips the
+    // row to running (started_at stays NULL).
     console.error(`executeJob: job ${jobId} does not belong to message userId ${userId}; failing`);
     await failJob(jobId, "job owner mismatch: refusing to execute under a different user_id");
     return;
   }
 
-  await markJobRunning(jobId);
+  // Atomic claim: flip queued -> running ONLY if still queued (see markJobRunning). This is
+  // the single money-safe gate against double-reserve (B-I1): a redelivery or a second
+  // concurrent consumer that loses the race gets claimed=false and returns here, BEFORE any
+  // reserve opens. It replaces the old read-status-then-unconditional-mark, whose gap two
+  // concurrent deliveries could both slip through and each reserve credits.
+  const claimed = await markJobRunning(jobId);
+  if (!claimed) {
+    console.warn(`executeJob: job ${jobId} was not claimable (already claimed or not queued); skipping`);
+    return;
+  }
+
+  let result: Json | null;
   try {
-    const result = await withCredits({ userId }, { tool, jobId }, () =>
+    result = await withCredits({ userId }, { tool, jobId }, () =>
       handler({ jobId, userId, payload }),
     );
+  } catch (error) {
+    // withCredits threw. Two shapes reach here, per guard.ts's contract:
+    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded failure);
+    //   • a commit_reserve failure — the guard deliberately did NOT release (work delivered, the
+    //     debit stands), leaving the reserve OPEN and visible via jobs.reserve_id for
+    //     reconciliation (reconciliation.md §2a/§2b).
+    // Both are recorded here with the raw detail. Giving the commit-failure case its own honest
+    // string (like the post-commit path below) needs a distinguishing signal from guard.ts and is
+    // a deliberate Faz-4 follow-up — not silently folded into a plain failure without one.
+    await failJob(jobId, errorDetail(error));
+    return;
+  }
+
+  // Reaching here means the charge COMMITTED (withCredits returned) and the work is done. A
+  // completeJob failure now is NOT a plain failure: the customer was charged and the result is
+  // lost, so mark it HONESTLY (never release — refunding a committed, delivered charge would be
+  // the wrong money direction; guard.ts keeps the commit). Detection/recovery: reconciliation.md
+  // §2d ("paid but result lost") — re-run the idempotent tool or a support credit, operator-judged.
+  try {
     await completeJob(jobId, result);
   } catch (error) {
-    await failJob(jobId, errorDetail(error));
+    await failJob(
+      jobId,
+      `charge settled but result did not persist — contact support (${errorDetail(error)})`,
+    );
   }
 }
 

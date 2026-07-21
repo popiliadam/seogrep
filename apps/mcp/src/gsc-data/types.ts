@@ -88,6 +88,8 @@ function parseWindow(raw: Json | undefined): GscWindow | null {
     start_date: asString(obj.start_date) ?? "",
     end_date: asString(obj.end_date) ?? "",
     rows,
+    // A stored capped:true must survive the round-trip; absent/false → omitted (window not capped).
+    ...(obj.capped === true ? { capped: true } : {}),
   };
 }
 
@@ -123,6 +125,9 @@ export function pullResultToJson(pull: PullData): Json {
       ctr: r.ctr,
       position: r.position,
     })),
+    // Persist the row-cap flag so a capped pull is not silently restored as complete; an
+    // un-capped window keeps its existing shape (no noisy capped:false is emitted).
+    ...(w.capped ? { capped: true } : {}),
   });
   return { days: pull.days, current: windowJson(pull.current), previous: windowJson(pull.previous) };
 }
