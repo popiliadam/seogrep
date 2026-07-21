@@ -18,7 +18,7 @@ const CREDIT_COSTS = [
 ] as const;
 
 const POLICIES = [
-  "Unused credits roll over for one month, capped at twice your monthly plan credits.",
+  "During beta, unused credits stay in your balance and don't expire.",
   "The free trial requires email verification.",
   "One trial per account.",
 ] as const;
