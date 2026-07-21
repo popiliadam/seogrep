@@ -17,7 +17,7 @@ const SECTIONS = [
   },
   {
     heading: "Data retention",
-    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account. To have your data deleted, email us and we will remove it.",
+    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account. To have your data deleted, email us at support@seogrep.com and we will remove it.",
   },
   {
     heading: "Processors we use",
@@ -33,7 +33,7 @@ const SECTIONS = [
   },
   {
     heading: "Contact",
-    body: "For any privacy request, reach us via the waitlist email you used.",
+    body: "For any privacy request, email us at support@seogrep.com.",
   },
 ] as const;
 
