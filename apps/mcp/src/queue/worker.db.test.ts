@@ -224,6 +224,30 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
   });
 
+  it("executeJob atomic claim (B-I1): two concurrent deliveries of the same job reserve EXACTLY once", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 100); // funded for many runs — the guard must be the claim, not balance
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    let calls = 0;
+    registerToolHandler("audit_tech", async () => {
+      calls += 1;
+      return { audited: true };
+    });
+
+    // Two deliveries race for the same queued job. The atomic CAS claim
+    // (markJobRunning: UPDATE ... WHERE status='queued') lets exactly ONE win; the loser
+    // gets claimed=false and skips BEFORE opening a reserve. Without the CAS both would
+    // read status='queued' and each open a reserve — a double charge.
+    const message: JobMessage = { jobId, userId, tool: "audit_tech", payload: {} };
+    await Promise.all([executeJob(message), executeJob(message)]);
+
+    expect(calls).toBe(1); // the handler ran once — the loser never reached it
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("succeeded");
+    // EXACTLY one reserve + commit: the concurrent double-delivery did not double-reserve.
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+  });
+
   it("executeJob with no registered handler marks the job failed", async () => {
     const userId = await makeUserId();
     const jobId = await makeQueuedJob(userId, "generate_report");
