@@ -122,13 +122,30 @@ export async function executeJob(message: JobMessage): Promise<void> {
   }
 
   await markJobRunning(jobId);
+  let result: Json | null;
   try {
-    const result = await withCredits({ userId }, { tool, jobId }, () =>
+    result = await withCredits({ userId }, { tool, jobId }, () =>
       handler({ jobId, userId, payload }),
     );
+  } catch (error) {
+    // A handler or reserve error — withCredits already released the reserve (guard.ts), so this
+    // is a clean, refunded failure. Record the raw detail and stop.
+    await failJob(jobId, errorDetail(error));
+    return;
+  }
+
+  // Reaching here means the charge COMMITTED (withCredits returned) and the work is done. A
+  // completeJob failure now is NOT a plain failure: the customer was charged and the result is
+  // lost, so mark it HONESTLY (never release — refunding a committed, delivered charge would be
+  // the wrong money direction; guard.ts keeps the commit). Detection/recovery: reconciliation.md
+  // §2d ("paid but result lost") — re-run the idempotent tool or a support credit, operator-judged.
+  try {
     await completeJob(jobId, result);
   } catch (error) {
-    await failJob(jobId, errorDetail(error));
+    await failJob(
+      jobId,
+      `charge settled but result did not persist — contact support (${errorDetail(error)})`,
+    );
   }
 }
 

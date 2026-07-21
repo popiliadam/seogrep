@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { enqueueJob, getBoss, getJob, stopBoss, type JobMessage } from "./boss.ts";
+import * as boss from "./boss.ts";
 import { getServiceClient } from "../db.ts";
 import { clearToolHandlers, executeJob, registerToolHandler, startWorker } from "./worker.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
@@ -153,6 +154,36 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(job?.error).toContain("quick wins handler exploded");
     expect(job?.finished_at).not.toBeNull();
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
+  });
+
+  it("executeJob post-commit completeJob failure (B-I3): honest fail-mark, the committed charge stands", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    registerToolHandler("audit_tech", async () => ({ audited: true }));
+
+    // The handler SUCCEEDS, so withCredits commits the charge; the failure is strictly
+    // POST-commit — completeJob throws while the process is still alive (the shape T4's crash
+    // reaper cannot see, invisible to the open-reserve detection query). This must NOT be
+    // recorded as a plain failure: the customer was charged and the work is done.
+    const spy = vi
+      .spyOn(boss, "completeJob")
+      .mockRejectedValueOnce(new Error("jobs update lost the row"));
+    try {
+      await executeJob({ jobId, userId, tool: "audit_tech", payload: {} });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    // Honest wording (not a plain failure) + the underlying cause preserved for forensics.
+    expect(job?.error).toContain("charge settled but result did not persist");
+    expect(job?.error).toContain("jobs update lost the row");
+    expect(job?.finished_at).not.toBeNull();
+    // Money direction: the commit STOOD — no release on a committed charge (guard.ts's rule).
+    // The ledger shows the spend_commit and NO spend_release; the charge is not refunded.
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
   });
 
   it("executeJob insufficient balance: failed with the DB error, only the grant in the ledger", async () => {
