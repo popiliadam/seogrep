@@ -149,7 +149,18 @@ Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
 SIRAYLA OKU: PLAN.md (bu blok + üstteki "Faz: 3.5 + CODEX-REMEDIATION" bölümü) → CLAUDE.md → contract.md.
-Ledger: .superpowers/sdd/progress.md (en alt: "CODEX REMEDIATION" + "MERGE+DEPLOY" + "T0 SECRET" kayıtları).
+Ledger: .superpowers/sdd/progress.md (en alt: "GATE-3 DEPLOYED" + "T0 DEVAM+KAPANIS" kayıtları).
+
+=== GÜNCEL (2026-07-21 akşam) — BU OTURUM Faz-4-öncesi İNSAN-KAPILARINI KAPATTI. Aşağıdaki "BU OTURUMUN GÖREVİ (1-5)" ARTIK YAPILDI; ESAS DURUM budur: ===
+- **T0 secret 5/6 TEMİZ** (a service_role · b DB [bracket-bug çözüldü; crawl job 9bc30d40 ile uçtan uca doğrulandı] · c Google [Console: seogrep.app@gmail / "SeoGrep" / "seogrep-web"] · d TOKEN_ENC [gsc_connections=0] · f smoke) + **(e) DataForSEO İNSAN ROTATE ETMEDİ** (çok yere bağlı; DFS_LIVE off=dormant, kabul-risk; memory dfs-password-rotation-declined → **BİR DAHA SORMA**). Audit CRITICAL (T16 chat-exposed) büyük ölçüde kapandı.
+- **0011 cloud-apply ✅ VERIFIED** (26-satır 0-ihlal → apply → 6 CHECK convalidated=true + partial unique idx; advisors 0-yeni; NEVER#2 artık DB katmanında).
+- **Madde 3 ✅ CANLI** (PR #20 merged+deployed): support@seogrep.com (ImprovMX→Gmail; Netlify DNS MX+SPF; catch-all security@) + copy 8-düzeltme. İNSAN KALAN: Gmail "never spam" filtresi.
+- **Madde 4 ✅**: branch-protection (main: PR + checks verify/gitleaks/verify-db zorunlu, approvals=0, force-push/delete kapalı) · T9 research_keywords=**KAPALI** (karar) · **LICENSE** proprietary/Süleyman Çapar = **PR #21** · leaked-password=**Pro-gated** (FREE'de açılamaz, WARN kabul).
+- **KALAN (İKİSİ DE DIŞ/LAUNCH — Faz-4-dev BLOKER'I DEĞİL, paralel yürür):** repo PRIVATE (GitHub billing çözülmeli) · OAuth verification (app TESTING=beta'ya yeter; production launch işi, Google incelemesi haftalar).
+- **FAZ 4 GO/NO-GO = TAZE SESSION'IN İLK İŞİ** (bu oturumda VERİLMEDİ). Şef önerisi: **GO defansible** (kod-blocker'lar kapalı; GO-şartları 0011+politika+T0-kritik karşılandı). Plan GO'dan SONRA.
+- **2 DERS (insan-imza bekler):** (L1) SUPABASE_DB_URL min(1) → URL-yapı doğrula (bozuk URL sessizce pg-boss enqueue'yu düşürdü [async down] ama /status yeşil kaldı [countPendingJobs PostgREST üzerinden → worker-down maskelendi]; worker crash-loop → Fly stop → fix-deploy auto-start ETMEZ → elle flyctl machine start). (L2) make goals mcp-alive/trial-flow-e2e MCP_SMOKE_URL unset'te key-probe SKIP eder → "14/14" o ikisinde healthz-only olabilir.
+- **ORTAM DEĞİŞTİ:** git push = plugin outward-gate ŞEFİ bloklar (**/pseo-approve BU ORTAMDA ÇALIŞMAZ**) → **İNSAN terminalden push** (`cd "…/pseo web saas"` önce). gh pr merge = harness classifier-blocked → **İNSAN GitHub-UI'dan merge** (+Delete branch). branch-protection artık aktif: main'e **PR + CI zorunlu**. gh pr create / gh api-branch-delete / flyctl secrets list-set / curl-GET / execute_sql(read) / apply_migration(insan-onaylı) ŞEFE açık.
+===
 
 DURUM (2026-07-21): Faz 0+1+2+3 + Faz 3.5 + Codex-remediation TAMAMEN BİTTİ + MERGE'Lİ + DEPLOY'LU + CANLI-DOĞRULANMIŞ.
 - İki bağımsız audit'in kod-bulguları main'de (@f1f444e, **PR #19 MERGED**, dal silindi) + prod'a deploy edildi.
@@ -201,8 +212,9 @@ flyctl secrets list/set + gh pr/run + curl-GET serbest (şefe açık). Portlar: 
 .agents/.codex/AGENTS.md + codex-audit-*.md (insan tooling — merge'e KATMA). Prod: main @f1f444e canlı;
 Supabase ref dvtqlxwnhdzveytqgksd; Fly app seogrep-mcp; deploy oto-tetik (main push → deploy-mcp.yml).
 
-İLK MESAJINDA: durum özeti; `gh pr view 19 --json state` ile MERGED teyit; canlı smoke (curl healthz + /status +
-`PROD_URL=https://seogrep.com make goals`) ile prod sağlığı; sonra insana KALAN LİSTEYİ (T0-temiz-rotasyon →
-0011-apply → politika/e-posta → küçükler → Faz4 go/no-go) sırayla sun, "hangisinden başlayalım" diye sor.
-T0'da değer-yapıştırma uyarısını TEKRARLA. Faz 4 planını YAZMA (go'dan sonra). Context %90'da yeni handoff yaz.
+İLK MESAJINDA (taze Faz-4 session): durum özeti (yukarıdaki GÜNCEL bloğundan); `gh pr view 21 --json state` ile
+LICENSE PR MERGED teyit; canlı smoke (curl healthz + /status + seogrep.com 200; istersen `make verify`) ile prod
+sağlığı; sonra **FAZ 4 GO/NO-GO kararını İNSANA SUN** (üç audit + şef GO-önerisi yan yana). GO gelirse Faz 4 planını
+YAZ (go'dan SONRA — aday backlog: ledger "FAZ 4 ADAY BACKLOG" + memory faz4-aday-backlog + A-C1 DNS-rebinding
+[ssrf.ts belgeli] + audit G-tablosu). repo-private + OAuth-verify launch-paralel takipte. Context %90'da yeni handoff yaz.
 ```
