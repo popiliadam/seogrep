@@ -12,7 +12,7 @@ const CREDIT_COSTS = [
   { action: "GSC pull (90 days)", cost: "5" },
   { action: "Site crawl (up to 100 URLs)", cost: "20" },
   { action: "Quick-win, cannibalization, or decay scan", cost: "10" },
-  { action: "Full on-page + technical audit", cost: "50" },
+  { action: "Full on-page + technical + schema audit", cost: "50" },
   { action: "Keyword research (100 keywords)", cost: "25" },
   { action: "Monthly report", cost: "15" },
 ] as const;
@@ -20,7 +20,7 @@ const CREDIT_COSTS = [
 const POLICIES = [
   "Unused credits roll over for one month, capped at twice your monthly plan credits.",
   "The free trial requires email verification.",
-  "One trial per domain.",
+  "One trial per account.",
 ] as const;
 
 export default function Page() {
