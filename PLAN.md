@@ -5,6 +5,14 @@
 
 ## Faz: 3.5 + CODEX-REMEDIATION KOD-TAMAM (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga] dalda mühürlü; dal `feat/faz35-sertlestirme` @44e590e, ~63 commit; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; **PUSH/PR/MERGE + 0011 CLOUD-APPLY + T0 ROTASYON İNSAN KAPISI**) · Faz 3 KAPALI · Faz 2 CANLI-PARA · Faz 1 CANLI
 
+### Bu oturum ilerlemesi (2026-07-21 — Faz 4 öncesi insan-kapıları, interaktif şef+insan)
+> Kod bitti; kalanlar insan-girdisi/karar. Sıradaki oturum buradan devam eder.
+- **T0 secret rotasyon 3/6:** ✅ (a) service_role TEMİZ döndürüldü + açıktaki eski/yanık key'ler silindi · ✅ (b) DB şifresi (`[YOUR-PASSWORD]` köşeli-parantez bug'ı sagası; canlı crawl job `9bc30d40` created→started→finished ile uçtan uca doğrulandı) · ✅ (f) smoke key (eski key 404=öldü) · ⏸️ (c) Google · (d) TOKEN_ENCRYPTION_KEY · (e) DataForSEO = **beta davetinden ÖNCE** (insan kararı; gerçek T16-sızıntı ama canlı dış-kullanıcı yok).
+- **Madde 2 — Migration 0011 cloud-apply:** ✅ VERIFIED. Canlı pre-check 26 satır 0-ihlal → `apply_migration` → 6 CHECK `convalidated=true` + 1 partial unique idx + advisors 0-yeni-bulgu. NEVER#2 artık DB katmanında gerçek.
+- **Madde 3 — Politika/destek-e-postası:** ✅ KOD-TAMAM, **deploy bekliyor**. `support@seogrep.com` (ImprovMX→Gmail forwarding, Netlify DNS MX+SPF canlı, catch-all `security@`'i kapsar) + copy 8 düzeltme/5 dosya. `make verify` 16/16. Rollover/erasure beta-dürüst kaldı (implement Faz-4). Dal `chore/gate3-support-email` @`d839b67` → **insan push+PR+merge → Netlify deploy**.
+- **Kalan insan-kapıları:** T0 c/d/e (beta-öncesi) · Madde 4 küçükler (branch-protection 1-tık, T9 research_keywords=KAPALI-öneri, LICENSE/SBOM, repo-private, OAuth-verify, Supabase leaked-pw WARN) · Madde 5 Faz 4 go/no-go · copy deploy.
+- **2 ders (insan-imza bekler, CLAUDE.md'ye otonom yazılmadı):** (L1) `SUPABASE_DB_URL` `min(1)` yerine URL-yapı doğrulanmalı — bozuk URL sessizce pg-boss enqueue'yu düşürdü (async down) ama `/status` yeşil kaldı (countPendingJobs PostgREST üzerinden) → worker-down maskelendi; worker crash-loop → Fly stop → fix-deploy'da auto-start ETMEZ (elle `machine start`). (L2) `make goals` mcp-alive/trial-flow-e2e `MCP_SMOKE_URL` unset'te key-probe'u SKIP eder → "14/14" o ikisinde healthz-only olabilir.
+
 ### Codex çapraz-audit düzeltmesi (2026-07-21) — İKİNCİ bağımsız audit NO-GO dedi; şef her bulguyu HEAD'e karşı doğrulattı + gerçek kod-bug'ları düzeltti
 - Kaynak: `docs/audits/2026-07-20-faz0-3-codex-audit-raporu.md` (insan yapıştırdı). Snapshot `48c908e` (mid-T1) → Faz 3.5'in çoğunu görmedi. Verdict dosyası: `scratchpad/codex-verdicts.md` (session).
 - **DOĞRULAMA (4 paralel taze-Fable + şef canlı-DB):** ~35 bulgu → 7 zaten-kapalı/not-bug (A-C1-guard=T1, A-I2=T3, B-I5/G-I1=T4, A-S1 canlı-DB-safe, A-I1 no-reachable-path); gerçek kod-bug'lar 7 dalgada düzeltildi; policy/legal/secret insan-kararı ayrıldı.
