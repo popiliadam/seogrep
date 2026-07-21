@@ -1,12 +1,17 @@
 # gitleaks configuration for SeoGrep.
 #
-# Extends the full default ruleset (nothing is weakened for product/source code)
-# and allowlists ONLY test files. Test fixtures use deterministic FAKE secrets by
-# design — e.g. the 64-hex AES test key "0f1e2d3c...e1f0" whose own comment reads
-# "Unmistakably a test value, never a real key" — and GSC OAuth/state/crypto test
-# vectors. Real credentials live exclusively in environment variables (Netlify /
-# Fly secrets), never in the repository, so scanning test files only produces
-# false positives. Product and library code remain fully scanned.
+# Extends the full default ruleset (nothing is weakened for product/source code).
+# EVERY file is scanned, tests included — the previous blanket `.*\.test\.tsx?$`
+# path exemption is gone, so a real credential pasted into any test file is now
+# caught by both the local `no-secrets` goal and CI.
+#
+# The repo's test fixtures use a small, fixed set of DETERMINISTIC FAKE secrets:
+# 64-hex (32-byte) AES / TOKEN_ENCRYPTION_KEY test vectors (e.g. the
+# "a1b2c3d4...c5d6" value whose own fixture comment reads "Unmistakably a test
+# value"). Those exact literals are allowlisted BY VALUE below so they don't
+# false-positive, while any OTHER secret-shaped string in a test file still fires.
+# Real credentials live only in environment variables (Netlify / Fly secrets),
+# never in the repository.
 #
 # This file is read by both the local `no-secrets` goal (`gitleaks detect`) and
 # CI's gitleaks-action, keeping the two in parity.
@@ -17,7 +22,14 @@ title = "SeoGrep gitleaks config"
 useDefault = true
 
 [allowlist]
-description = "Test files carry deterministic fake fixtures, never real secrets (real secrets live only in env)."
-paths = [
-  '''.*\.test\.tsx?$''',
+description = "Deterministic FAKE test-fixture secrets, allowlisted by exact value — not by path, so every file is still scanned."
+regexes = [
+  # 32-byte crypto/AES test key — apps/mcp env + GSC storage fixtures
+  # (apps/mcp/src/env.test.ts, tools/pull-gsc-data.db.test.ts, gsc/gsc-storage.db.test.ts).
+  '''0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0''',
+  # 32-byte crypto test key — packages/core GSC crypto fixture (packages/core/src/gsc/crypto.test.ts).
+  '''0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef''',
+  # 32-byte TOKEN_ENCRYPTION_KEY test vector — apps/web GSC connect/callback/state fixtures
+  # (app/api/gsc/connect/route.test.ts, app/api/gsc/callback/route.test.ts, lib/gsc/state.test.ts).
+  '''a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6''',
 ]
