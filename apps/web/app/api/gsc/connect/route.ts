@@ -26,18 +26,30 @@ export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("project_id") ?? "";
 
+  // Canonical origin for every SAME-APP redirect below. url.origin is the request Host, which
+  // a proxy can let an attacker spoof, so internal 302 Locations must be built from the
+  // canonical WEB_BASE_URL (A-I4) — the same origin the OAuth redirect_uri already uses —
+  // never from the request. WEB_BASE_URL missing = broken deploy: fail closed (signed lesson
+  // #5). url.origin is the fallback for that ONE error page only, since no canonical base exists.
+  const webBaseUrl = process.env.WEB_BASE_URL;
+  if (!webBaseUrl) {
+    console.error("gsc connect: WEB_BASE_URL not configured");
+    return redirect("/app?gsc=error", url.origin);
+  }
+  const base = webBaseUrl.replace(/\/+$/, "");
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
     // Not signed in: send to login. The user re-opens the connect link once authenticated.
-    return redirect("/login", url.origin);
+    return redirect("/login", base);
   }
 
   // A non-uuid can own no project — reject before any DB round-trip.
   if (!UUID_RE.test(projectId)) {
-    return redirect("/app?gsc=unknown_project", url.origin);
+    return redirect("/app?gsc=unknown_project", base);
   }
 
   // Fail closed on missing configuration (signed lesson #5): a broken deploy must not
@@ -45,10 +57,9 @@ export async function GET(request: Request): Promise<Response> {
   // reads env (process.env at request time).
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
-  const webBaseUrl = process.env.WEB_BASE_URL;
-  if (!clientId || !encryptionKey || !webBaseUrl) {
-    console.error("gsc connect: GOOGLE_CLIENT_ID / TOKEN_ENCRYPTION_KEY / WEB_BASE_URL not configured");
-    return redirect("/app?gsc=error", url.origin);
+  if (!clientId || !encryptionKey) {
+    console.error("gsc connect: GOOGLE_CLIENT_ID / TOKEN_ENCRYPTION_KEY not configured");
+    return redirect("/app?gsc=error", base);
   }
 
   // Ownership gate via the caller's RLS-scoped client: another tenant's project (or a
@@ -60,16 +71,16 @@ export async function GET(request: Request): Promise<Response> {
     .maybeSingle();
   if (error) {
     console.error("gsc connect: project lookup failed:", error.message);
-    return redirect("/app?gsc=error", url.origin);
+    return redirect("/app?gsc=error", base);
   }
   if (!project) {
-    return redirect("/app?gsc=unknown_project", url.origin);
+    return redirect("/app?gsc=unknown_project", base);
   }
 
   const state = signState(freshStatePayload(user.id, projectId), encryptionKey);
   const consentUrl = buildConsentUrl({
     clientId,
-    redirectUri: `${webBaseUrl.replace(/\/+$/, "")}/api/gsc/callback`,
+    redirectUri: `${base}/api/gsc/callback`,
     state,
   });
   return NextResponse.redirect(consentUrl);

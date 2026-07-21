@@ -95,7 +95,7 @@ describe("GET /api/gsc/callback", () => {
   it("completes the link: exchanges the code, SEALS the token, matches the property, redirects connected", async () => {
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3457/app?gsc=connected&property=matched",
+      "https://app.example.com/app?gsc=connected&property=matched",
     );
 
     // Code exchanged with the redirect_uri that matches the one used at connect time.
@@ -122,7 +122,7 @@ describe("GET /api/gsc/callback", () => {
     listSites.mockResolvedValue([{ siteUrl: "sc-domain:other.com", permissionLevel: "siteOwner" }]);
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3457/app?gsc=connected&property=none",
+      "https://app.example.com/app?gsc=connected&property=none",
     );
     expect((upsertGscConnection.mock.calls[0]![1] as { gscProperty: unknown }).gscProperty).toBeNull();
   });
@@ -145,7 +145,7 @@ describe("GET /api/gsc/callback", () => {
     exchangeCodeForTokens.mockResolvedValue({ accessToken: "ya29", refreshToken: null, expiresIn: 1, scope: "", tokenType: "Bearer" });
     upsertGscConnection.mockResolvedValue("no_token");
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=no_token");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=no_token");
   });
 
   it("sends a SIGNED-IN user with a forged/expired state back to /app (not /login), code not exchanged", async () => {
@@ -153,47 +153,47 @@ describe("GET /api/gsc/callback", () => {
     // signed-in user should not bounce them to the login page — they land on the
     // dashboard with an error and can retry connect.
     const response = await GET(callbackUrl({ code: "auth-code", state: "forged.state" }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("sends an ANONYMOUS visitor with a bad state to /login", async () => {
     getUser.mockResolvedValue({ data: { user: null } });
     const response = await GET(callbackUrl({ code: "auth-code", state: "forged.state" }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/login?error=gsc");
+    expect(response.headers.get("location")).toBe("https://app.example.com/login?error=gsc");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("redirects error on a missing code with no error param (malformed callback), code not exchanged", async () => {
     const response = await GET(callbackUrl({ state: validState() })); // valid state, no code, no error
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("rejects when the live session is a DIFFERENT user than the state (cross-tenant defense)", async () => {
     getUser.mockResolvedValue({ data: { user: { id: "someone-else" } } });
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/login?error=gsc");
+    expect(response.headers.get("location")).toBe("https://app.example.com/login?error=gsc");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("rejects when there is no live session", async () => {
     getUser.mockResolvedValue({ data: { user: null } });
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/login?error=gsc");
+    expect(response.headers.get("location")).toBe("https://app.example.com/login?error=gsc");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("redirects gsc=denied when the user declines at Google (error param)", async () => {
     const response = await GET(callbackUrl({ error: "access_denied", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=denied");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=denied");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
   it("redirects unknown_project when the project no longer exists / is not owned", async () => {
     projectMaybeSingle.mockResolvedValue({ data: null, error: null });
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=unknown_project");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
@@ -201,7 +201,7 @@ describe("GET /api/gsc/callback", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exchangeCodeForTokens.mockRejectedValue(new Error("invalid_grant"));
     const response = await GET(callbackUrl({ code: "bad", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
     expect(upsertGscConnection).not.toHaveBeenCalled();
     for (const call of errorSpy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SECRET);
@@ -211,6 +211,13 @@ describe("GET /api/gsc/callback", () => {
   it("fails closed to an error when GOOGLE_CLIENT_SECRET is unset (negative env)", async () => {
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when WEB_BASE_URL is unset (falls back to request origin — no canonical base)", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
@@ -219,8 +226,26 @@ describe("GET /api/gsc/callback", () => {
     listSites.mockRejectedValue(new Error("403"));
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "http://localhost:3457/app?gsc=connected&property=none",
+      "https://app.example.com/app?gsc=connected&property=none",
     );
     expect(upsertGscConnection).toHaveBeenCalled();
+  });
+
+  it("routes the post-connect redirect through the canonical WEB_BASE_URL, not a spoofed Host", async () => {
+    // Models a proxy forwarding an attacker-controlled Host into request.url: url.origin is the
+    // attacker's, yet both the internal 302 AND the OAuth redirect_uri stay on the canonical origin.
+    const url = new URL("https://attacker.example/api/gsc/callback");
+    url.searchParams.set("code", "auth-code");
+    url.searchParams.set("state", validState());
+    const spoofed = new Request(url, {
+      headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
+    });
+    const location = new URL((await GET(spoofed)).headers.get("location")!);
+    expect(location.origin).toBe("https://app.example.com");
+    expect(location.href).toBe("https://app.example.com/app?gsc=connected&property=matched");
+    expect(exchangeCodeForTokens).toHaveBeenCalledWith({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+    });
   });
 });

@@ -34,6 +34,12 @@ export async function GET(request: Request): Promise<Response> {
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
 
+  // Canonical origin for the same-app redirects below. url.origin is the request Host, which
+  // a proxy can let an attacker spoof, so the 302 Location must come from the canonical
+  // WEB_BASE_URL (A-I4), never the request. If WEB_BASE_URL is unset (broken deploy) we fall
+  // back to url.origin rather than strand a mid-auth user on a hard error.
+  const base = (process.env.WEB_BASE_URL ?? url.origin).replace(/\/+$/, "");
+
   const supabase = await createClient();
   let userId: string | null = null;
   let email: string | null = null;
@@ -53,7 +59,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   if (!userId) {
-    return NextResponse.redirect(new URL("/login?error=auth", url.origin));
+    return NextResponse.redirect(new URL("/login?error=auth", base));
   }
 
   const trialNewlyGranted = await grantTrialCredits(userId);
@@ -75,5 +81,5 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
-  return NextResponse.redirect(new URL("/app", url.origin));
+  return NextResponse.redirect(new URL("/app", base));
 }

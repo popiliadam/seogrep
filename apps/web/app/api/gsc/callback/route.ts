@@ -41,16 +41,26 @@ export async function GET(request: Request): Promise<Response> {
   const stateParam = url.searchParams.get("state") ?? "";
   const googleError = url.searchParams.get("error");
 
-  // (1) Configuration must be complete; a missing secret must fail loudly, not degrade
-  // (signed lesson #5). GOOGLE_CLIENT_SECRET is only presence-checked here — it is used
-  // inside the client module, never handled or logged by this route.
+  // (1) Canonical origin for every SAME-APP redirect below. origin (the request Host) is
+  // proxy-spoofable, so internal 302 Locations are built from the canonical WEB_BASE_URL
+  // (A-I4), never the request. WEB_BASE_URL missing = broken deploy: fail closed (signed
+  // lesson #5); origin is the fallback for that ONE error page, where no canonical base exists.
+  const webBaseUrl = process.env.WEB_BASE_URL;
+  if (!webBaseUrl) {
+    console.error("gsc callback: WEB_BASE_URL not configured");
+    return redirect("/app?gsc=error", origin);
+  }
+  const base = webBaseUrl.replace(/\/+$/, "");
+
+  // The remaining OAuth/encryption secrets must be present too; a missing one fails loudly,
+  // not degrade (signed lesson #5). GOOGLE_CLIENT_SECRET is only presence-checked here — it is
+  // used inside the client module, never handled or logged by this route.
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
-  const webBaseUrl = process.env.WEB_BASE_URL;
-  if (!clientId || !clientSecret || !encryptionKey || !webBaseUrl) {
+  if (!clientId || !clientSecret || !encryptionKey) {
     console.error("gsc callback: Google OAuth / encryption env is not fully configured");
-    return redirect("/app?gsc=error", origin);
+    return redirect("/app?gsc=error", base);
   }
 
   // (2) Resolve the live session up front so a broken state can be routed by sign-in
@@ -65,21 +75,21 @@ export async function GET(request: Request): Promise<Response> {
   // sends a signed-in user to /app with an error, and an anonymous visitor to /login.
   const state = verifyState(stateParam, encryptionKey);
   if (!state) {
-    return user ? redirect("/app?gsc=error", origin) : redirect("/login?error=gsc", origin);
+    return user ? redirect("/app?gsc=error", base) : redirect("/login?error=gsc", base);
   }
 
   // (4) The state is valid — the live session must match its user_id (a leaked state alone
   // cannot bind a project to another signed-in user). A missing/different session -> /login.
   if (!user || user.id !== state.user_id) {
-    return redirect("/login?error=gsc", origin);
+    return redirect("/login?error=gsc", base);
   }
 
   // The user declined consent (or Google reported an error) — nothing to store.
   if (googleError) {
-    return redirect("/app?gsc=denied", origin);
+    return redirect("/app?gsc=denied", base);
   }
   if (!code) {
-    return redirect("/app?gsc=error", origin);
+    return redirect("/app?gsc=error", base);
   }
 
   try {
@@ -95,14 +105,14 @@ export async function GET(request: Request): Promise<Response> {
       throw new Error(`project lookup failed: ${error.message}`);
     }
     if (!project) {
-      return redirect("/app?gsc=unknown_project", origin);
+      return redirect("/app?gsc=unknown_project", base);
     }
     const domain = (project as { domain: string }).domain;
 
     // (4) Exchange the code. redirect_uri MUST match the one used at connect time.
     const tokens = await exchangeCodeForTokens({
       code,
-      redirectUri: `${webBaseUrl.replace(/\/+$/, "")}/api/gsc/callback`,
+      redirectUri: `${base}/api/gsc/callback`,
     });
 
     // (5) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
@@ -127,12 +137,12 @@ export async function GET(request: Request): Promise<Response> {
       gscProperty,
     });
     if (outcome === "no_token") {
-      return redirect("/app?gsc=no_token", origin);
+      return redirect("/app?gsc=no_token", base);
     }
-    return redirect(`/app?gsc=connected&property=${gscProperty ? "matched" : "none"}`, origin);
+    return redirect(`/app?gsc=connected&property=${gscProperty ? "matched" : "none"}`, base);
   } catch (caught) {
     // Never log the code, tokens, or secret — only a short message.
     console.error("gsc callback: connection failed:", errorMessage(caught));
-    return redirect("/app?gsc=error", origin);
+    return redirect("/app?gsc=error", base);
   }
 }
