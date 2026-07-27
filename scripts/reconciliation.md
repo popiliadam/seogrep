@@ -274,10 +274,13 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
 
 ## 5. Scope
 
-This is **manual / on-demand** recovery: an operator runs detection, then the one command.
-`scripts/reconcile.mjs` is one-shot by design — no daemon, no scheduling.
+Since Faz 4 (T-D1) the reaper also runs **automatically inside the worker process**: an
+in-worker sweep every 10 minutes (`REAPER_INTERVAL_MS`, `apps/mcp/src/queue/worker.ts`)
+calls the same `reconcileStuckJobs()`; outcomes surface on the worker's `/status` as
+`reaperRuns` / `reservesReleased` / `lastReaperRunAt` — see `scripts/monitoring.md` §4.
+Errors are logged (`reaper run failed:`), never fatal; safety is unchanged because
+at-most-once release stays arbitrated by the `release_reserve` RPC, not the scheduler.
 
-Automatic periodic reaping (a cron/scheduled invocation) plus alerting on stuck-job counts
-is **deferred to the Faz 4 monitoring work** — see the monitoring task and the audit
-finding for stuck-job recovery (§7). Until then, run this runbook when the symptoms in §1
-appear or after any worker crash/redeploy.
+This runbook remains the **manual / on-demand** path: `scripts/reconcile.mjs` is still
+one-shot by design. Run it when the §1 symptoms appear, after a worker crash/redeploy,
+or whenever `lastReaperRunAt` on `/status` looks stale.
