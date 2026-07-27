@@ -167,7 +167,49 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — fresh session bunu aynen alsın; güncelleme 2026-07-21 — Codex remediation MERGE+DEPLOY, Faz 4 öncesi kalanlar)
+## Oturum devir notu (HANDOFF — 2026-07-27, Faz 4 dal KOD-TAMAM)
+
+```
+Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (üstteki "Faz: 4" + "Faz 4 ilerleme" blokları) → CLAUDE.md → contract.md
+→ docs/plans/2026-07-27-faz4-launch.md (plan+triyaj) → ledger .superpowers/sdd/progress.md (en alt:
+"FAZ 4 DAL KOD-TAMAM + WHOLE-BRANCH REVIEW").
+
+DURUM: Faz 4 GO verildi (insan, 2026-07-27). Dal `feat/faz4-launch` @33 commit KOD-TAMAM.
+13 görev, her biri ayrı hakem-onaylı; final whole-branch review (taze Fable) **READY TO MERGE = YES** (0C/0I/3m).
+Seri kapılar: verify PASS · verify-db PASS (78) · make goals **16/16** (purchase-flow-live canlı 401'i
+gerçekten doğruladı = NEVER#3 fail-closed kapısı makine-kanıtlı).
+
+>>> DAL PUSH EDİLMEDİ. İNSAN KAPISI: push (terminalden, `cd "…/pseo web saas"` önce) → PR → GitHub-UI merge
+    (+**Delete branch**). Şef push/merge YAPAMAZ (plugin outward-gate + harness classifier).
+
+MERGE SONRASI İZLEME (şef yapar, insan tetikler): (1) ilk mcp deploy boot'u — T-L1 artık bozuk
+SUPABASE_DB_URL'de BOOT ETMEZ (kasıtlı); gateway+worker ayağa kalktı mı; (2) ~15 dk içinde /status'ta
+reaperRuns≥1 + lastReaperRunAt dolu; (3) seogrep.com/blog canlı (2 yazı merge'de yayına çıkar).
+DEPLOY SIRASI ÖNERİSİ: mcp önce, web sonra (docs'taki "Two ways to connect" endpoint'i önce canlı olsun).
+
+İNSAN KUYRUĞU (öncelik sırasıyla):
+1. Dal push+PR+merge (yukarıdaki not).
+2. Netlify: NEXT_PUBLIC_PADDLE_ENV=sandbox teyit (artık server SDK'sını da yönlendiriyor).
+3. Paddle LIVE onboarding + nihai FİYAT OTURUMU (NEVER#6) → docs/runbooks/paddle-live-cutover.md adım adım.
+   Canlı $10 smoke + Replay-idempotency → şef goals/evidence/purchase-flow-live.txt yazar.
+4. UptimeRobot/Better Stack → mcp.seogrep.com/healthz (2 ardışık hatada alarm) → "kuruldu" de, şef
+   goals/evidence/uptime-monitor.txt yazar → uptime hedefi tam kapsama döner.
+5. MCP_SMOKE_URL kalıcı set (ders L2 — goals'un gerçek kapsamı).
+6. Dizin gönderimleri: Resmî MCP Registry (DNS TXT + CLI, ~1s) → PulseMCP (otomatik) → mcp.so ($39 kararı)
+   → Smithery (T-C3 shipped, hazır) → Anthropic (Team-org kararı + mcp-review@anthropic.com ön-teması).
+   Metinler hazır: docs/launch/2026-07-directory-submissions.md.
+7. Launch yayınları (PH/HN/X): docs/launch/2026-07-launch-posts.md — yayın butonu İNSAN.
+8. repo PRIVATE (GitHub billing) · OAuth verification (haftalar — launch'a yakın başlat).
+9. Ders imzaları (CLAUDE.md'ye otonom YAZILMADI): L1 (kod kapandı) · L2 (MCP_SMOKE_URL) ·
+   YENİ: paralel işçiler aynı çalışma ağacında hayalet test-hatası üretir → worktree izolasyonu / seri kapı.
+
+ERTELENEN BACKLOG (launch-sonrası ilk dilim önerisi, ledger'da gerekçeli): #10 DFS-derinlik araç ailesi ⭐
+(en yüksek gelir potansiyeli; yeni paralı tool = fiyat kapısı) · #7 audit_speed+CrUX · #2 Scrapling ·
+#5 büyük-site kademeleri · #6 import_crawl · #4 Tools vitrini · G8 rapor silme/slug-iptali.
+```
+
+## Önceki devir notu (2026-07-21 — Codex remediation MERGE+DEPLOY, Faz 4 öncesi kalanlar)
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
 SIRAYLA OKU: PLAN.md (bu blok + üstteki "Faz: 3.5 + CODEX-REMEDIATION" bölümü) → CLAUDE.md → contract.md.
