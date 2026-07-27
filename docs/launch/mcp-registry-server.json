@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.seogrep/seogrep",
+  "title": "SeoGrep",
+  "description": "SEO for AI agents: crawl sites, audit pages, pull Search Console data, generate shareable reports.",
+  "version": "1.0.0",
+  "websiteUrl": "https://seogrep.com",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.seogrep.com/mcp/{key}",
+      "variables": {
+        "key": {
+          "description": "Your personal key from the SeoGrep dashboard (free trial, no card)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+uptime monitor — kurulum kanıtı
+
+provider : UptimeRobot (free plan)
+monitor  : Keyword monitoring, "SeoGrep MCP gateway (healthz)"
+url      : https://mcp.seogrep.com/healthz
+keyword  : {"ok":true} — incident when keyword does NOT exist
+interval : 5 dakika · timeout 30 sn · follow redirects on
+alert    : e-posta (operatör)
+kuruldu  : 2026-07-27 (operatör onayı; hesap operatörde, şef erişemez)
+
+Not: bu dosya yalnız "harici monitör kuruldu" beyanının kaydıdır.
+goals/uptime.md bu dosya VARSA canlı healthz + /status kontrollerini koşar.
