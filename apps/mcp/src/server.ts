@@ -19,9 +19,17 @@ import {
 import { metrics } from "./metrics.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
 import { registerPrompts } from "./prompts.ts";
+import { SERVER_CARD_CACHE_CONTROL, SERVER_CARD_PATH, buildServerCard } from "./server-card.ts";
 
 /** Advertised MCP server identity. */
 const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
+
+/**
+ * Capabilities advertised on the handshake. Hoisted to a single const because the public
+ * capability card republishes them verbatim — a second literal would let the card and the
+ * real handshake drift apart.
+ */
+const SERVER_CAPABILITIES = { tools: {}, prompts: {} } as const;
 
 /** JSON-RPC error codes returned before a request reaches the MCP server. */
 const JSON_RPC_UNAUTHORIZED = -32001;
@@ -255,7 +263,7 @@ function clientIpOf(req: Request): string {
  * JSON Schema from each tool's zod schema; registerPrompts wires the prompts surface.
  */
 function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Server {
-  const server = new Server(SERVER_INFO, { capabilities: { tools: {}, prompts: {} } });
+  const server = new Server(SERVER_INFO, { capabilities: SERVER_CAPABILITIES });
   registerAll(server, { ctx, tools });
   registerPrompts(server);
   return server;
@@ -388,6 +396,29 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // Liveness probe for Fly health checks and load balancers.
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Public MCP capability card — the answer to an auth-walled server being unscannable (see
+  // server-card.ts for why it exists and what it may disclose). It holds itself to /healthz's
+  // discipline: unauthenticated, ZERO database reads, and no throttle accounting. The payload
+  // is built ONCE here because the registry is static, so the handler does no work at all —
+  // it cannot be slow, cannot fail, and has nothing per-request to leak. Its path lives under
+  // /.well-known/, which cannot collide with `/mcp` or `/mcp/:key`, so the MCP auth chain
+  // (format gate -> per-IP throttle -> authenticate) is untouched and a scanner polling the
+  // card can never spend the flood budget that protects the real endpoints.
+  const serverCard = buildServerCard({
+    serverInfo: SERVER_INFO,
+    capabilities: SERVER_CAPABILITIES,
+    tools: deps.tools ?? [],
+  });
+  app.get(SERVER_CARD_PATH, (_req, res) => {
+    res
+      .set("Cache-Control", SERVER_CARD_CACHE_CONTROL)
+      // The card is a credential-free public document and the well-known discovery convention
+      // expects it to be readable cross-origin, so browser-based validators and directory
+      // tooling can fetch it. Nothing here is tenant-scoped, so `*` gives away nothing.
+      .set("Access-Control-Allow-Origin", "*")
+      .json(serverCard);
   });
 
   // Operator status signal — deliberately SEPARATE from /healthz. /healthz stays a trivial
