@@ -3,7 +3,13 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 3.5 + CODEX-REMEDIATION KOD-TAMAM (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga] dalda mühürlü; dal `feat/faz35-sertlestirme` @44e590e, ~63 commit; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; **PUSH/PR/MERGE + 0011 CLOUD-APPLY + T0 ROTASYON İNSAN KAPISI**) · Faz 3 KAPALI · Faz 2 CANLI-PARA · Faz 1 CANLI
+## Faz: 4 (LAUNCH) — **GO VERİLDİ (2026-07-27, İNSAN)** · Faz 0+1+2+3+3.5+Codex-remediation KAPALI + MERGE'Lİ + CANLI
+
+### Faz 4 açılışı (2026-07-27 — bu oturum)
+- Kickoff (docs/plans/2026-07-21-faz4-kickoff.md) uygulandı: prod smoke YEŞİL (healthz ok · /status ok uptime ~5.6g/0 hata/pendingJobs 0 · seogrep.com 200 · verify 16/16 · PR #21 LICENSE MERGED) → üç audit yan yana sunuldu → **insan GO verdi** ("en iyi senaryo, şef önerisine göre devam").
+- Sıradaki: Faz 4 planı (`docs/plans/2026-07-27-faz4-launch.md`) — spec §9 A-E + aday-backlog + G-tablosu triyajı. Fiyat/kredi rakamları (NEVER#6) + Paddle live onboarding + yayın butonları İNSAN kapısı kalır.
+
+## Önceki faz durumu: 3.5 + CODEX-REMEDIATION (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga]; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; merge+deploy+0011 cloud-apply+T0 rotasyon TAMAMLANDI)
 
 ### Bu oturum ilerlemesi (2026-07-21 — Faz 4 öncesi insan-kapıları, interaktif şef+insan)
 > Kod bitti; kalanlar insan-girdisi/karar. Sıradaki oturum buradan devam eder.
