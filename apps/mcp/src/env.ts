@@ -18,6 +18,12 @@ const envSchema = z.object({
   // Direct Postgres connection string (ledger / session reads, pg-boss).
   SUPABASE_DB_URL: z
     .string()
+    // .trim() FIRST: new URL() ignores surrounding whitespace, so a padded value passed
+    // validation while the raw string reached pg-boss, which read it as a relative URL and
+    // silently resolved a garbage host. Trimming here cleans the DELIVERED value too, and
+    // matches the sibling readers below, which already trim. Whitespace-only becomes ""
+    // and stays rejected by min(1).
+    .trim()
     .min(1, "SUPABASE_DB_URL is required")
     .superRefine((value, ctx) => {
       // Structure is checked HERE, at boot, because min(1) alone once let a malformed

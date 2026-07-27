@@ -64,6 +64,16 @@ describe("SUPABASE_DB_URL structural validation", () => {
     expect(loadEnv({ ...completeEnv, SUPABASE_DB_URL: dbUrl }).SUPABASE_DB_URL).toBe(dbUrl);
   });
 
+  it("trims surrounding whitespace so the delivered value is clean", () => {
+    // new URL() ignores surrounding spaces, so a padded value passed validation while the
+    // RAW string reached pg-boss, which read it as a relative URL and silently resolved a
+    // garbage host — the same silent-async-down shape as the placeholder incident.
+    const dbUrl = "postgresql://user:pass@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres";
+    expect(loadEnv({ ...completeEnv, SUPABASE_DB_URL: `  ${dbUrl}  ` }).SUPABASE_DB_URL).toBe(
+      dbUrl,
+    );
+  });
+
   it.each(INVALID_DB_URLS)("rejects %s at boot", (dbUrl, expected) => {
     expect(() => loadEnv({ ...completeEnv, SUPABASE_DB_URL: dbUrl })).toThrowError(expected);
   });
