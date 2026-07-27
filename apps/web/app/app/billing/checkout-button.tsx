@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { initializePaddle, type Environments, type Paddle } from "@paddle/paddle-js";
+import { resolvePaddleEnvironment } from "../../../lib/paddle-env";
 
 interface CheckoutButtonProps {
   /** Paddle price id for this package, or null when it is not configured. */
@@ -12,11 +13,10 @@ interface CheckoutButtonProps {
 }
 
 // NEXT_PUBLIC_* are inlined at build. Read once at module scope; a missing/invalid value keeps
-// the button fail-closed rather than throwing.
+// the button fail-closed rather than throwing. The environment goes through the shared resolver
+// so the overlay and the server-side Node SDK can never disagree about sandbox vs production.
 const CLIENT_TOKEN = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN;
-const RAW_ENV = process.env.NEXT_PUBLIC_PADDLE_ENV;
-const ENVIRONMENT: Environments | undefined =
-  RAW_ENV === "sandbox" || RAW_ENV === "production" ? RAW_ENV : undefined;
+const ENVIRONMENT: Environments | undefined = resolvePaddleEnvironment();
 
 /**
  * Client checkout trigger. FAIL-CLOSED: with no priceId / client token / environment the button

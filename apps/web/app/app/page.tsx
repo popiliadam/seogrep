@@ -1,15 +1,31 @@
 import Link from "next/link";
 import { getBalance, listLedgerEntries } from "@pseo/db/ledger-read";
+import { GscBanner } from "../../components/gsc-banner";
 import { createClient } from "../../lib/supabase/server";
 import { LedgerTable, StatCard, formatNumber } from "./ui";
+
+/** A repeated query param (?gsc=a&gsc=b) arrives as an array; only the first value counts. */
+function firstValue(raw: string | string[] | undefined): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 /**
  * /app — Overview. The /app layout already guards the session; this RSC reads the
  * caller's OWN balance and latest activity through their authenticated client (RLS via
  * @pseo/db/ledger-read — never the service-role write module). Balance is the derived
  * SUM from credit_balances; the list is the five newest ledger rows.
+ *
+ * Overview is also where /api/gsc/{connect,callback} land the user after a Search Console
+ * link attempt: `searchParams` (a promise in Next 16) carries the ?gsc= status that GscBanner
+ * turns into copy. The banner renders nothing when there is no (known) status.
  */
-export default async function OverviewPage() {
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = await searchParams;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -34,6 +50,8 @@ export default async function OverviewPage() {
         <h1 className="text-xl font-semibold">Overview</h1>
         <p className="text-sm text-neutral-600">Your current credit balance and latest activity.</p>
       </header>
+
+      <GscBanner status={firstValue(params.gsc)} property={firstValue(params.property)} />
 
       <StatCard
         label="Available credits"

@@ -19,9 +19,11 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function renderPage() {
+type Params = Record<string, string | string[] | undefined>;
+
+async function renderPage(params: Params = {}) {
   getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-  render(await OverviewPage());
+  render(await OverviewPage({ searchParams: Promise.resolve(params) }));
 }
 
 describe("OverviewPage", () => {
@@ -57,5 +59,42 @@ describe("OverviewPage", () => {
     await renderPage();
 
     expect(screen.getByText("No activity yet.")).toBeTruthy();
+  });
+
+  // The GSC OAuth routes redirect back here with ?gsc=… (and ?property=… on success).
+  // Overview is the only page that reads them.
+  describe("Search Console return status", () => {
+    function emptyLedger() {
+      getBalance.mockResolvedValue(0);
+      listLedgerEntries.mockResolvedValue({ entries: [], total: 0, page: 1, pageSize: 5 });
+    }
+
+    it("?gsc=connected&property=matched renders the success copy", async () => {
+      emptyLedger();
+      await renderPage({ gsc: "connected", property: "matched" });
+      expect(screen.getByText("Search Console connected.")).toBeTruthy();
+    });
+
+    it("?gsc=error renders the failure copy", async () => {
+      emptyLedger();
+      await renderPage({ gsc: "error" });
+      expect(
+        screen.getByText("Something went wrong connecting Search Console. Please try again."),
+      ).toBeTruthy();
+    });
+
+    it("repeated params are normalized to the first value", async () => {
+      emptyLedger();
+      await renderPage({ gsc: ["connected", "error"], property: ["matched", "none"] });
+      expect(screen.getByText("Search Console connected.")).toBeTruthy();
+    });
+
+    it("no params: no banner at all", async () => {
+      emptyLedger();
+      await renderPage();
+      expect(screen.queryByText(/Search Console/)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+    });
   });
 });

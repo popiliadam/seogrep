@@ -29,7 +29,8 @@ separate `/status` route, which nothing uses as a liveness gate.
 `GET /status` returns:
 
 ```json
-{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0 }
+{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0,
+  "reaperRuns": 6, "reservesReleased": 0, "lastReaperRunAt": "2026-07-27T09:40:00.000Z" }
 ```
 
 - **`uptimeSeconds`** — whole seconds since the web process booted.
@@ -39,6 +40,11 @@ separate `/status` route, which nothing uses as a liveness gate.
   effectively every realistic 500.
 - **`pendingJobs`** — jobs in `status in ('queued','running')` — the app's own view of queue
   backlog / stuck work. `null` when the count could not be read in time (see §4).
+- **`reaperRuns` / `reservesReleased` / `lastReaperRunAt`** — the in-worker stuck-job reaper's
+  heartbeat: completed sweeps since boot, credit reserves refunded since boot (cumulative),
+  and the ISO timestamp of the last completed sweep (`null` before the first one). Only the
+  **worker** process sweeps, so the **web** process answers `0 / 0 / null` here — read them
+  from the worker (§4).
 
 **In-memory caveat (important):** `uptimeSeconds` and `errorsSinceBoot` are **in-memory and
 per-process**. They **reset to zero on every deploy/restart**, and in a multi-machine
@@ -115,8 +121,21 @@ up and finished quickly by the worker.
   fall back to `flyctl logs` and the reconciliation runbook. `/status` never hangs or 5xx-es
   on a slow DB by design: it is an operator signal, not a liveness gate.
 
-> Automatic periodic reaping of stuck jobs + alerting on a rising `pendingJobs` is Faz 4
-> work (noted in `scripts/reconciliation.md` §5). Until then this is a manual watch.
+**Automatic reaping (Faz 4 — now live).** The worker process sweeps for stuck jobs **every 10
+minutes** on its own (`REAPER_INTERVAL_MS` in `apps/mcp/src/queue/worker.ts`, running the same
+`reconcileStuckJobs` the manual script uses). Open reserves are refunded without waiting for a
+human. Watch it on `/status`:
+
+- **`lastReaperRunAt` stale** (older than ~10 min on the worker) or **`reaperRuns` not climbing**
+  → sweeps are failing or the worker is down. A failed sweep is **logged, never fatal**: grep
+  `flyctl logs --app seogrep-mcp` for `reaper run failed:`. The worker keeps draining the queue.
+- **`reservesReleased` climbing** → jobs are genuinely crashing mid-run; refunds are happening,
+  but find the cause in the logs.
+
+`scripts/reconcile.mjs` remains for **on-demand** runs (an incident, or a sweep you don't want to
+wait 10 minutes for) — see [`scripts/reconciliation.md`](./reconciliation.md).
+
+> Still manual: **alerting** on a rising `pendingJobs`. Nothing pages on backlog growth yet (§5).
 
 ---
 
@@ -124,6 +143,10 @@ up and finished quickly by the worker.
 
 This slice is minimal on purpose (beta): give the operator cheap, real signals and a
 free external uptime alert, without building an observability platform.
+
+**Since shipped (Faz 4):** automatic periodic reaping of stuck jobs — the worker sweeps every 10
+minutes and reports `reaperRuns` / `reservesReleased` / `lastReaperRunAt` on `/status` (§4). It is
+no longer on the deferred list below.
 
 Explicitly **out of scope**, deferred to **Faz 4 (audit G4)**:
 

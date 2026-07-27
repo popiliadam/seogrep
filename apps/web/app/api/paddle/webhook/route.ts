@@ -1,4 +1,4 @@
-import { Paddle } from "@paddle/paddle-node-sdk";
+import { Environment, Paddle } from "@paddle/paddle-node-sdk";
 import { ledgerCommandFor, type PackageKey } from "@pseo/core";
 import type { Json } from "@pseo/db/types";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@pseo/db/paddle-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { capturePurchase } from "../../../../lib/analytics";
+import { resolvePaddleEnvironment } from "../../../../lib/paddle-env";
 
 /**
  * Paddle webhook. NEVER #3: no side effect happens without (1) a verified signature and
@@ -68,7 +69,14 @@ export async function POST(request: Request): Promise<Response> {
 
   let event;
   try {
-    event = await new Paddle(apiKey).webhooks.unmarshal(rawBody, secret, signature);
+    // Same NEXT_PUBLIC_PADDLE_ENV the checkout overlay uses. Unresolved -> construct exactly as
+    // before (no options), so the SDK default is untouched. Stays INSIDE the try: a constructor
+    // throw must still be the 401 no-side-effect path, never a 500.
+    const environment = resolvePaddleEnvironment();
+    const paddle = environment
+      ? new Paddle(apiKey, { environment: Environment[environment] })
+      : new Paddle(apiKey);
+    event = await paddle.webhooks.unmarshal(rawBody, secret, signature);
   } catch {
     // Verification failed — do NOT touch the DB. (unmarshal throws on a bad signature.)
     return json({ error: "invalid signature" }, 401);

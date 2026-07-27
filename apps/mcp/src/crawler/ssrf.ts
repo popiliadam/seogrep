@@ -18,14 +18,16 @@
  *  - checkPublicHost(hostname, lookup): resolves the name and fails if ANY resolved
  *    address is blocked. The DNS lookup is injectable so tests never touch real DNS.
  *
- * KNOWN RESIDUAL RISK — DNS REBINDING (deliberately NOT mitigated in this slice).
- * checkPublicHost validates the addresses returned by ONE lookup, but the subsequent
- * fetch() performs its OWN, independent resolution. A hostile authoritative server can
- * answer our validation lookup with a public IP and the fetch's lookup with an internal
- * IP (a low-TTL "DNS rebind"), slipping past this guard. Closing that gap requires pinning
- * the validated IP through the fetch dispatcher (a custom Undici connect hook) so the
- * socket connects to the exact address we vetted. That pinning is out of scope here and is
- * tracked separately — do NOT assume this module defends against rebinding.
+ * DNS REBINDING — CLOSED, though not by this module. checkPublicHost validates the
+ * addresses returned by ONE lookup; a plain fetch() would then perform its OWN,
+ * independent resolution, so a hostile authoritative server could answer our validation
+ * lookup with a public IP and the fetch's lookup with an internal IP (a low-TTL "DNS
+ * rebind") and slip past this guard. That gap is closed in pinned-fetch.ts, which pins the
+ * validated address through the fetch dispatcher (an Undici connect hook) so the socket
+ * connects to the exact address vetted HERE — with the Host header and TLS SNI still on the
+ * original name. Both crawler call sites, crawl.ts's fetchPage and fetchText, emit EVERY
+ * hop through such a pinned dispatcher, so this module's verdict is what the socket
+ * actually obeys. A future caller that fetches without pinning re-opens the window.
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";

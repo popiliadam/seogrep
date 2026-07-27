@@ -6,6 +6,7 @@ export function baseOptions(): BaseLayoutProps {
     links: [
       { text: "Pricing", url: "/pricing" },
       { text: "How it works", url: "/how-it-works" },
+      { text: "Blog", url: "/blog" },
     ],
   };
 }

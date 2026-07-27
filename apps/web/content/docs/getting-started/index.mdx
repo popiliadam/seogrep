@@ -14,6 +14,19 @@ client, and ask for an analysis in plain language.
 3. **Ask in plain language.** Try "Crawl my site and find quick wins." Credits
    pay for the analysis work; your AI subscription stays your own.
 
+## Two ways to connect
+
+- **Your personal URL (default).** Paste `YOUR_MCP_URL` — the whole URL,
+  including your key — into your client's MCP server settings. This works in
+  every client and is what the dashboard gives you.
+- **Fixed URL plus a header.** Point the client at `https://mcp.seogrep.com/mcp`
+  and send your key in an `x-api-key` header (`Authorization: Bearer YOUR_KEY`
+  also works). Some directories and proxies only support this form, and it keeps
+  your key out of URLs, which get written to logs and browser history.
+
+Both accept the same key and expose the same tools — use whichever your client
+supports.
+
 > **One-time URL:** your MCP URL is shown only once, right when a key is
 > created or rotated — the dashboard shows just a masked prefix after
 > that. Save it somewhere safe. If you lose it, rotate your key from the

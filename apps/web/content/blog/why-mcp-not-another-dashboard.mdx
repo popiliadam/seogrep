@@ -1,0 +1,29 @@
+---
+title: "Why SeoGrep is an MCP server, not another dashboard"
+description: "Why SeoGrep ships as an MCP server instead of a dashboard: the work happens in your agent, so the SEO data should live there too."
+date: "2026-07-27"
+---
+
+Most SEO tools assume you'll open a tab, read a table, and carry what you learned back to wherever the work actually happens — the codebase, the CMS, the agent you're already talking to about the fix. SeoGrep skips that step by being the thing your agent talks to directly.
+
+## Where the work already happens
+
+If you're using Claude, Claude Code, Cursor, or Windsurf, the work already happens in an editor or a chat window. A dashboard asks you to leave that window, remember what you were looking for, translate it back into instructions for your agent, and hope nothing got lost in the retelling. That round trip is the tax every tab-based tool charges, and it's paid on every single question, not just the first one. SeoGrep's MCP server puts the SEO data in the same place as the work: you ask in plain language, the agent calls the tool, reads the result, and acts on it — in the same conversation where you're already fixing the page.
+
+## What MCP actually gives you
+
+MCP is not just "an API the AI can also call." It's a set of typed tools with schemas an agent can read, understand, and compose on its own — chaining a crawl into an on-page audit into a fix without you writing the glue code yourself. SeoGrep gives your agent 16 of them: a site crawler; on-page, technical, and structured-data audits; Search Console tools that run against your own GSC property through your own OAuth connection (quick wins, cannibalization detection, content decay); keyword research; a shareable HTML report; and a router tool that looks at your project and tells you the single best next step.
+
+"Your own OAuth" is worth pausing on. SeoGrep never sees a shared or pooled Search Console account — the GSC-backed tools only work because you connected your own property, and they only ever see your own data. A crawl feeds the audits, the crawl and your Search Console data feed the report, and the router tool can point at all of it — the agent moves between them by calling the next tool, not by you copying a URL from one screen into another.
+
+## The honest limits
+
+None of this is unlimited, and we'd rather say so up front than have you find out mid-task. Crawls are capped at 100 pages per run today — enough for most marketing sites and docs sets in one pass, not enough for a large catalog site in one go; the workaround for now is scoping a crawl to a section with a path filter and running it in parts, so a run stays predictable rather than open-ended. Keyword-volume research is off during the beta: the tool returns a plain "not yet enabled" message and charges nothing, rather than making up a number to fill the space. Both limits are things the tool tells you directly, in the same chat, instead of failing silently or quietly billing you anyway.
+
+## How it's built
+
+Two choices back up the "typed tools" pitch instead of just asserting it. First, every tool is defined by an actual schema, and the tool-reference pages in [the docs](/docs) are generated from those same schemas — the documentation can't drift from what a tool actually accepts and returns, because it is the same source read twice. Second, credits are tracked as an append-only ledger in Postgres: there's no mutable balance column to fall out of sync, your balance is always the sum of the ledger rows. Both are boring choices, on purpose. An agent is going to call these tools on your behalf, sometimes several in a row, so "boring and correct" beats "flexible and occasionally wrong."
+
+## Try it where you already work
+
+Setup is a personal MCP URL pasted into the client you already use, then a plain-language request the same way you'd ask for anything else. [The docs](/docs) walk through connecting each client and what a first session looks like, crawl to audit to fix, without a second tab in sight.

@@ -23,6 +23,20 @@ const capturePurchase = vi.fn();
 vi.mock("../../../../lib/analytics", () => ({
   capturePurchase: (userId: string, pkg: string) => capturePurchase(userId, pkg),
 }));
+// Records every `new Paddle(...)` argument list WITHOUT replacing the SDK: the spy subclass
+// calls through to the real constructor, so unmarshal stays the genuine local crypto verifier
+// the rest of this file depends on.
+const paddleConstructor = vi.fn();
+vi.mock("@paddle/paddle-node-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@paddle/paddle-node-sdk")>();
+  class PaddleSpy extends actual.Paddle {
+    constructor(...args: ConstructorParameters<typeof actual.Paddle>) {
+      paddleConstructor(...args);
+      super(...args);
+    }
+  }
+  return { ...actual, Paddle: PaddleSpy };
+});
 
 import {
   getEventProcessed,
@@ -286,5 +300,27 @@ describe("POST /api/paddle/webhook", () => {
     // upsert leaves processed_at NULL and the event is recoverable via retry.
     expect(markProcessedMock).not.toHaveBeenCalled();
     expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
+  it("threads NEXT_PUBLIC_PADDLE_ENV=sandbox into the server SDK", async () => {
+    // Without this the SDK silently defaults to the PRODUCTION API base even with a sandbox
+    // key, so a sandbox rehearsal would verify against the wrong environment.
+    vi.stubEnv("NEXT_PUBLIC_PADDLE_ENV", "sandbox");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(signedRequest(transactionEvent({})));
+    expect(response.status).toBe(200);
+    expect(paddleConstructor).toHaveBeenCalledWith(
+      "test_apikey_not_real",
+      expect.objectContaining({ environment: "sandbox" }),
+    );
+  });
+
+  it("passes NO options object when NEXT_PUBLIC_PADDLE_ENV is unset (SDK default untouched)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PADDLE_ENV", undefined);
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(signedRequest(transactionEvent({})));
+    expect(response.status).toBe(200);
+    expect(paddleConstructor).toHaveBeenCalledWith("test_apikey_not_real");
+    expect(paddleConstructor.mock.calls[0]).toHaveLength(1);
   });
 });

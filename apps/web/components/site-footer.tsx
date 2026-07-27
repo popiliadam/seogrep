@@ -7,6 +7,7 @@ export function SiteFooter() {
         <p>© 2026 SeoGrep · Your site data is never used to train AI models.</p>
         <nav aria-label="Footer" className="flex gap-4">
           <Link href="/docs" className="hover:text-ink">Docs</Link>
+          <Link href="/blog" className="hover:text-ink">Blog</Link>
           <Link href="/pricing" className="hover:text-ink">Pricing</Link>
           <Link href="/terms" className="hover:text-ink">Terms</Link>
           <Link href="/privacy" className="hover:text-ink">Privacy</Link>

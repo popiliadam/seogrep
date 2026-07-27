@@ -15,8 +15,50 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().min(1, "SUPABASE_URL is required"),
   // Supabase service-role key — RLS bypass, must never reach the browser.
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
-  // Direct Postgres connection string (ledger / session reads).
-  SUPABASE_DB_URL: z.string().min(1, "SUPABASE_DB_URL is required"),
+  // Direct Postgres connection string (ledger / session reads, pg-boss).
+  SUPABASE_DB_URL: z
+    .string()
+    // .trim() FIRST: new URL() ignores surrounding whitespace, so a padded value passed
+    // validation while the raw string reached pg-boss, which read it as a relative URL and
+    // silently resolved a garbage host. Trimming here cleans the DELIVERED value too, and
+    // matches the sibling readers below, which already trim. Whitespace-only becomes ""
+    // and stays rejected by min(1).
+    .trim()
+    .min(1, "SUPABASE_DB_URL is required")
+    .superRefine((value, ctx) => {
+      // Structure is checked HERE, at boot, because min(1) alone once let a malformed
+      // value through: a left-over `[YOUR-PASSWORD]` placeholder booted fine and only
+      // crashed pg-boss later, so the worker crash-looped and the async pipeline was
+      // down while /status stayed green. Both MODE=web and MODE=worker call loadEnv,
+      // so a bad deploy now fails loudly instead of silently. The Supavisor SESSION-mode
+      // rule (port 5432, never the 6543 transaction pooler) stays documentation — no
+      // port is rejected here, since direct connections legitimately use other ports.
+      if (value.length === 0) return; // already reported by min(1)
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        ctx.addIssue({ code: "custom", message: "SUPABASE_DB_URL must be a valid URL" });
+        return;
+      }
+      if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+        ctx.addIssue({
+          code: "custom",
+          message: "SUPABASE_DB_URL must use the postgres:// or postgresql:// scheme",
+        });
+      }
+      if (parsed.hostname.length === 0) {
+        ctx.addIssue({ code: "custom", message: "SUPABASE_DB_URL must include a host" });
+      }
+      // Trade-off: this also rejects bracketed IPv6 literals — acceptable, Supabase
+      // connection strings are hostnames, and catching the placeholder matters more.
+      if (value.includes("[") || value.includes("]")) {
+        ctx.addIssue({
+          code: "custom",
+          message: "SUPABASE_DB_URL must not contain the placeholder brackets [ or ]",
+        });
+      }
+    }),
   // HTTP listen port. Fly maps internal_port 8080; local dev overrides with 3458.
   PORT: z.coerce.number().int().positive().default(8080),
   // --- Google Search Console (GSC) OAuth + token encryption ------------------------

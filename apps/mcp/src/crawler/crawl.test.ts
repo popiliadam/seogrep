@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   computeIssues,
@@ -14,6 +16,20 @@ import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 import type { LookupFn } from "./ssrf.ts";
 
 const BASE = "https://site.test/blog/post";
+
+/**
+ * The tenant-visible robots-unreachable skip reasons, pinned VERBATIM. Declared as
+ * literals HERE rather than imported from the implementation, so a wording change can
+ * only happen as a deliberate edit to this spec. They travel unchanged into the crawl
+ * handler's "no pages could be crawled" error — what the user finally reads via
+ * get_job_status — so each must name what happened AND what to do next.
+ */
+const ROBOTS_SERVER_ERROR_REASON =
+  "robots.txt returned a server error (5xx) on your site; we did not crawl to stay polite. " +
+  "Fix robots.txt, then run crawl_site again.";
+const ROBOTS_NETWORK_REASON =
+  "we could not reach robots.txt (network error or timeout); we did not crawl. " +
+  "Check that the site is reachable, then run crawl_site again.";
 
 // --- Pure parsing / normalization units (no network) ---------------------------
 
@@ -296,13 +312,14 @@ describe("crawlSite — limits and edge behavior", () => {
   it("treats a 5xx robots.txt as complete disallow (RFC 9309)", async () => {
     const site = await startFixtureSite({ robots: "server-error" });
     try {
-      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
       expect(result.pages).toHaveLength(0);
       expect(result.skipped).toEqual([
-        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+        { url: normalizeUrl(site.origin + "/"), reason: ROBOTS_SERVER_ERROR_REASON },
       ]);
-      // Nothing beyond robots.txt itself is ever requested — not even the sitemap.
-      expect(site.requested).toEqual(["/robots.txt"]);
+      // Nothing beyond robots.txt itself is ever requested — not even the sitemap. Two
+      // hits: the first attempt plus the ONE automatic retry, never a third.
+      expect(site.requested).toEqual(["/robots.txt", "/robots.txt"]);
     } finally {
       await site.close();
     }
@@ -311,12 +328,16 @@ describe("crawlSite — limits and edge behavior", () => {
   it("treats an unresponsive robots.txt (network timeout) as complete disallow", async () => {
     const site = await startFixtureSite({ robots: "hang", slowMs: 1000 });
     try {
-      const result = await crawlSite(site.origin, { pageTimeoutMs: 120, crawlDelayCapMs: 0 });
+      const result = await crawlSite(site.origin, {
+        pageTimeoutMs: 120,
+        crawlDelayCapMs: 0,
+        robotsRetryDelayMs: 0,
+      });
       expect(result.pages).toHaveLength(0);
       expect(result.skipped).toEqual([
-        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+        { url: normalizeUrl(site.origin + "/"), reason: ROBOTS_NETWORK_REASON },
       ]);
-      expect(site.requested).toEqual(["/robots.txt"]);
+      expect(site.requested).toEqual(["/robots.txt", "/robots.txt"]);
     } finally {
       await site.close();
     }
@@ -330,15 +351,17 @@ describe("crawlSite — limits and edge behavior", () => {
     const target = await startFixtureSite();
     const site = await startFixtureSite({ robotsRedirectTo: `${target.origin}/robots.txt` });
     try {
-      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
       // The IP-literal target is NEVER contacted: the request is refused pre-emission.
       // (Before this hardening the request WAS emitted and only the body read was blocked;
-      // this now pins ZERO emission — the strictly stronger property.)
+      // this now pins ZERO emission — the strictly stronger property.) The retry does not
+      // weaken it: BOTH attempts are refused before emission, so the count is still 0.
       expect(target.requested).toHaveLength(0);
-      // Robots is treated as unreachable -> RFC 9309 complete disallow, 0 pages.
+      // Robots is treated as unreachable -> RFC 9309 complete disallow, 0 pages. A refused
+      // redirect surfaces as a null fetch, i.e. the `network` cause.
       expect(result.pages).toHaveLength(0);
       expect(result.skipped).toEqual([
-        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+        { url: normalizeUrl(site.origin + "/"), reason: ROBOTS_NETWORK_REASON },
       ]);
     } finally {
       await site.close();
@@ -441,17 +464,200 @@ describe("crawlSite — SSRF origin gate and pre-emission redirect parity", () =
       robotsRedirectTo: `http://localhost:${victimPort}/robots.txt`,
     });
     try {
-      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
-      // The hop is refused pre-emission: the victim is never contacted at all.
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      // The hop is refused pre-emission: the victim is never contacted at all — on the
+      // first attempt AND on the automatic retry.
       expect(victim.requested).toHaveLength(0);
       // robots.txt therefore stays unreachable -> RFC 9309 complete disallow, 0 pages.
       expect(result.pages).toHaveLength(0);
       expect(result.skipped).toEqual([
-        { url: normalizeUrl(site.origin + "/"), reason: "robots.txt unreachable" },
+        { url: normalizeUrl(site.origin + "/"), reason: ROBOTS_NETWORK_REASON },
       ]);
     } finally {
       await site.close();
       await victim.close();
+    }
+  });
+});
+
+// --- robots.txt unreachability: honest cause + ONE automatic retry (U2) ---------
+
+/**
+ * A loopback site whose /robots.txt outcome is scripted PER ATTEMPT. The shared fixture
+ * serves ONE fixed robots mode for a whole crawl, so it cannot express "fails, then
+ * recovers" — the exact shape the single retry exists for. Each entry is an HTTP status,
+ * or 0 meaning "destroy the socket" (a network-level failure: fetch rejects, so fetchText
+ * yields null). The last entry repeats once the script is exhausted.
+ *
+ * Test infrastructure only: binds 127.0.0.1 (the documented loopback seam) and makes ZERO
+ * outbound requests. Every requested path is recorded, so "exactly one retry" is provable
+ * by COUNTING /robots.txt hits rather than trusting a timer.
+ */
+interface ScriptedSite {
+  readonly origin: string;
+  readonly requested: string[];
+  close(): Promise<void>;
+}
+
+function startScriptedRobotsSite(statuses: number[]): Promise<ScriptedSite> {
+  const requested: string[] = [];
+  let attempt = 0;
+
+  const server = createServer((req, res) => {
+    const { port } = server.address() as AddressInfo;
+    const path = new URL(req.url ?? "/", `http://127.0.0.1:${port}`).pathname;
+    requested.push(path);
+
+    if (path === "/robots.txt") {
+      const status = statuses[Math.min(attempt, statuses.length - 1)] ?? 200;
+      attempt++;
+      if (status === 0) {
+        res.destroy(); // socket reset -> a network failure, not an HTTP answer
+        return;
+      }
+      res.writeHead(status, { "content-type": "text/plain" });
+      res.end(status === 200 ? "User-agent: *\nAllow: /\n" : "robots unavailable");
+      return;
+    }
+    if (path === "/") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><head><title>Home</title></head><body><h1>Home</h1><p>one two three</p></body></html>");
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+    res.end("<html><body>not found</body></html>");
+  });
+
+  return new Promise<ScriptedSite>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        origin: `http://127.0.0.1:${port}`,
+        requested,
+        close: () => new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      });
+    });
+  });
+}
+
+describe("crawlSite — robots.txt unreachable: honest cause + one automatic retry", () => {
+  const SERVER_ERROR_REASON = ROBOTS_SERVER_ERROR_REASON;
+  const NETWORK_REASON = ROBOTS_NETWORK_REASON;
+
+  const robotsHits = (site: ScriptedSite): number =>
+    site.requested.filter((p) => p === "/robots.txt").length;
+
+  it("retries ONCE after a 5xx and crawls normally when the retry succeeds", async () => {
+    const site = await startScriptedRobotsSite([503, 200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // the crawl PROCEEDED
+      expect(result.skipped).toEqual([]);
+      expect(robotsHits(site)).toBe(2); // exactly one retry — never a third attempt
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("retries ONCE after a network failure and crawls normally when the retry succeeds", async () => {
+    const site = await startScriptedRobotsSite([0, 200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("two consecutive 5xx -> ONE skipped entry carrying the server-error message", async () => {
+    const site = await startScriptedRobotsSite([503, 503]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages).toHaveLength(0); // politeness unchanged: robots unreadable = no crawl
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: SERVER_ERROR_REASON },
+      ]);
+      expect(robotsHits(site)).toBe(2);
+      // Nothing beyond robots.txt is ever requested — not even the sitemap.
+      expect(site.requested).toEqual(["/robots.txt", "/robots.txt"]);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("two consecutive network failures -> ONE skipped entry carrying the network message", async () => {
+    const site = await startScriptedRobotsSite([0, 0]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: NETWORK_REASON },
+      ]);
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("reports the SECOND attempt's cause (5xx then network -> network)", async () => {
+    const site = await startScriptedRobotsSite([503, 0]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.skipped[0]?.reason).toBe(NETWORK_REASON);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("reports the SECOND attempt's cause (network then 5xx -> server error)", async () => {
+    const site = await startScriptedRobotsSite([0, 503]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.skipped[0]?.reason).toBe(SERVER_ERROR_REASON);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("leaves 4xx allow-all UNCHANGED and does NOT retry a reachable robots.txt", async () => {
+    const site = await startScriptedRobotsSite([404]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // 4xx = no restrictions
+      expect(robotsHits(site)).toBe(1); // a REACHED robots.txt is never re-fetched
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT retry a 200 robots.txt", async () => {
+    const site = await startScriptedRobotsSite([200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(robotsHits(site)).toBe(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("waits the configured delay between the two attempts (the retry is not a tight loop)", async () => {
+    // The sleep is INJECTED and asserted by value, so this pins the seam exactly without
+    // the suite ever really sleeping — no wall clock, nothing timing-dependent to flake.
+    const site = await startScriptedRobotsSite([503, 503]);
+    const retrySleep = vi.fn(async () => {});
+    try {
+      await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        robotsRetryDelayMs: 120,
+        robotsRetrySleep: retrySleep,
+      });
+      expect(retrySleep).toHaveBeenCalledTimes(1); // waited once — between the two attempts
+      expect(retrySleep).toHaveBeenCalledWith(120); // with the configured delay, not 0
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
     }
   });
 });
@@ -580,5 +786,69 @@ describe("estimateSiteSize", () => {
   it("degrades to null for an invalid / non-http origin (no throw)", async () => {
     expect(await estimateSiteSize("not a url")).toEqual({ pages: null, source: "unknown" });
     expect(await estimateSiteSize("ftp://example.com")).toEqual({ pages: null, source: "unknown" });
+  });
+});
+
+// --- DNS-rebinding pin (every emitted request goes out through a pinned dispatcher) ---
+// The origin gate validates ONE lookup; without pinning, fetch() then resolved again on
+// its own, so a hostile low-TTL answer could show the gate a public IP and the socket an
+// internal one. These pin the closed behavior. fetch is mocked throughout, so no request
+// ever leaves the process and DNS is the injected fake — ZERO real network.
+
+describe("crawler fetches are pinned to the validated address", () => {
+  const notFound = (): Promise<Response> => Promise.resolve(new Response("", { status: 404 }));
+
+  it("re-validates EVERY request, so a rebound answer is never emitted", async () => {
+    let calls = 0;
+    const lookup: LookupFn = async () => {
+      calls++;
+      // Public for the origin gate, then the name rebinds to the cloud-metadata endpoint.
+      return calls === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "169.254.169.254", family: 4 }];
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      const est = await estimateSiteSize("http://rebind.example.com", { lookup });
+      expect(est).toEqual({ pages: null, source: "unknown" });
+      // The gate passed on the first answer, but the request re-validates before it is
+      // emitted, so the rebound address is caught and NOTHING leaves the process.
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(calls).toBeGreaterThan(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("spends exactly ONE lookup per emitted request (no second resolution)", async () => {
+    let lookups = 0;
+    const lookup: LookupFn = async () => {
+      lookups++;
+      return [{ address: "93.184.216.34", family: 4 }];
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      await estimateSiteSize("http://counted.example.com", { lookup });
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(0);
+      // One origin-gate validation, then exactly one pinning validation per request.
+      // Any extra resolution would be an unpinned path — the rebinding window itself.
+      expect(lookups).toBe(fetchSpy.mock.calls.length + 1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("passes a dispatcher on every emitted request", async () => {
+    const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      await estimateSiteSize("http://dispatched.example.com", { lookup });
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(0);
+      for (const [, init] of fetchSpy.mock.calls) {
+        expect((init as { dispatcher?: unknown } | undefined)?.dispatcher).toBeDefined();
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

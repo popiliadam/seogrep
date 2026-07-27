@@ -19,6 +19,7 @@
     "@supabase/supabase-js": "^2.110.5",
     "express": "^4.22.2",
     "pg-boss": "^12.26.1",
+    "undici": "^6.28.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
