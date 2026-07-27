@@ -13,4 +13,9 @@ describe("SiteHeader", () => {
     render(<SiteHeader />);
     expect(screen.getByRole("link", { name: /join waitlist/i }).getAttribute("href")).toBe("/#waitlist");
   });
+
+  it("puts Blog in the main nav", () => {
+    render(<SiteHeader />);
+    expect(screen.getByRole("link", { name: /^blog$/i }).getAttribute("href")).toBe("/blog");
+  });
 });
