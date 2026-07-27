@@ -276,11 +276,14 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
 
 Since Faz 4 (T-D1) the reaper also runs **automatically inside the worker process**: an
 in-worker sweep every 10 minutes (`REAPER_INTERVAL_MS`, `apps/mcp/src/queue/worker.ts`)
-calls the same `reconcileStuckJobs()`; outcomes surface on the worker's `/status` as
-`reaperRuns` / `reservesReleased` / `lastReaperRunAt` — see `scripts/monitoring.md` §4.
-Errors are logged (`reaper run failed:`), never fatal; safety is unchanged because
-at-most-once release stays arbitrated by the `release_reserve` RPC, not the scheduler.
+calls the same `reconcileStuckJobs()`. The worker starts no HTTP listener, so its outcomes do
+**not** reach `/status` (that endpoint is served by the web process, which always reports zeros
+for the reaper counters); each completed sweep logs one line instead —
+`flyctl logs --app seogrep-mcp | grep 'reaper sweep'`, expected every ~10 min — see
+`scripts/monitoring.md` §4. Errors are logged (`reaper run failed:`), never fatal; safety is
+unchanged because at-most-once release stays arbitrated by the `release_reserve` RPC, not the
+scheduler.
 
 This runbook remains the **manual / on-demand** path: `scripts/reconcile.mjs` is still
 one-shot by design. Run it when the §1 symptoms appear, after a worker crash/redeploy,
-or whenever `lastReaperRunAt` on `/status` looks stale.
+or whenever the worker's `reaper sweep:` heartbeat has gone quiet.

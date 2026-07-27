@@ -3,7 +3,12 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 4 (LAUNCH) — **GO VERİLDİ (2026-07-27, İNSAN)** · Faz 0+1+2+3+3.5+Codex-remediation KAPALI + MERGE'Lİ + CANLI
+## Faz: 4 (LAUNCH) — **DAL MERGE'Lİ + DEPLOY'LU + CANLI-DOĞRULANMIŞ (2026-07-27)** · Faz 0-3.5 KAPALI
+
+### Faz 4 merge + canlı doğrulama (2026-07-27)
+- **[PR #23](https://github.com/popiliadam/seogrep/pull/23) MERGED** @`afad10f` (34 commit, insan merge + dal silindi). Deploy MCP + CI: **success**.
+- Canlı: healthz ok · `/status` ok (taze boot → **T-L1 yapı doğrulaması canlı DB-URL'i kabul etti**) · Fly 2 web healthcheck-passing + worker started · seogrep.com 200 · **/blog + 2 yazı canlı** · sitemap **45 URL** · robots `/app` disallow · `make goals` **16/16**.
+- **Şef post-deploy keşfi (açık iş):** reaper canlıda **gözlenemiyor** — `MODE=worker` HTTP dinlemiyor, `/status` yalnız web process'inde, başarı yolu log atmıyor → sayaçlar sonsuza dek 0/0/null. Düzeltme dalda: `fix/reaper-heartbeat` (heartbeat log + doc aşırı-iddia düzeltmesi).
 
 ### Faz 4 açılışı (2026-07-27 — bu oturum)
 - Kickoff (docs/plans/2026-07-21-faz4-kickoff.md) uygulandı: prod smoke YEŞİL (healthz ok · /status ok uptime ~5.6g/0 hata/pendingJobs 0 · seogrep.com 200 · verify 16/16 · PR #21 LICENSE MERGED) → üç audit yan yana sunuldu → **insan GO verdi** ("en iyi senaryo, şef önerisine göre devam").
@@ -184,8 +189,9 @@ gerçekten doğruladı = NEVER#3 fail-closed kapısı makine-kanıtlı).
     (+**Delete branch**). Şef push/merge YAPAMAZ (plugin outward-gate + harness classifier).
 
 MERGE SONRASI İZLEME (şef yapar, insan tetikler): (1) ilk mcp deploy boot'u — T-L1 artık bozuk
-SUPABASE_DB_URL'de BOOT ETMEZ (kasıtlı); gateway+worker ayağa kalktı mı; (2) ~15 dk içinde /status'ta
-reaperRuns≥1 + lastReaperRunAt dolu; (3) seogrep.com/blog canlı (2 yazı merge'de yayına çıkar).
+SUPABASE_DB_URL'de BOOT ETMEZ (kasıtlı); gateway+worker ayağa kalktı mı; (2) reaper canlılığı
+`flyctl logs --app seogrep-mcp | grep 'reaper sweep'` ile (~10 dk'da bir satır) — **/status'un reaper
+sayaçları DAİMA 0/0/null'dır**: reaper worker'da koşar, worker HTTP dinlemez; (3) seogrep.com/blog canlı.
 DEPLOY SIRASI ÖNERİSİ: mcp önce, web sonra (docs'taki "Two ways to connect" endpoint'i önce canlı olsun).
 
 İNSAN KUYRUĞU (öncelik sırasıyla):
