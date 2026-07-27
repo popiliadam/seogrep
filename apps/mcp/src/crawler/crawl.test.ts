@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   computeIssues,
@@ -474,6 +476,181 @@ describe("crawlSite — SSRF origin gate and pre-emission redirect parity", () =
     } finally {
       await site.close();
       await victim.close();
+    }
+  });
+});
+
+// --- robots.txt unreachability: honest cause + ONE automatic retry (U2) ---------
+
+/**
+ * A loopback site whose /robots.txt outcome is scripted PER ATTEMPT. The shared fixture
+ * serves ONE fixed robots mode for a whole crawl, so it cannot express "fails, then
+ * recovers" — the exact shape the single retry exists for. Each entry is an HTTP status,
+ * or 0 meaning "destroy the socket" (a network-level failure: fetch rejects, so fetchText
+ * yields null). The last entry repeats once the script is exhausted.
+ *
+ * Test infrastructure only: binds 127.0.0.1 (the documented loopback seam) and makes ZERO
+ * outbound requests. Every requested path is recorded, so "exactly one retry" is provable
+ * by COUNTING /robots.txt hits rather than trusting a timer.
+ */
+interface ScriptedSite {
+  readonly origin: string;
+  readonly requested: string[];
+  close(): Promise<void>;
+}
+
+function startScriptedRobotsSite(statuses: number[]): Promise<ScriptedSite> {
+  const requested: string[] = [];
+  let attempt = 0;
+
+  const server = createServer((req, res) => {
+    const { port } = server.address() as AddressInfo;
+    const path = new URL(req.url ?? "/", `http://127.0.0.1:${port}`).pathname;
+    requested.push(path);
+
+    if (path === "/robots.txt") {
+      const status = statuses[Math.min(attempt, statuses.length - 1)] ?? 200;
+      attempt++;
+      if (status === 0) {
+        res.destroy(); // socket reset -> a network failure, not an HTTP answer
+        return;
+      }
+      res.writeHead(status, { "content-type": "text/plain" });
+      res.end(status === 200 ? "User-agent: *\nAllow: /\n" : "robots unavailable");
+      return;
+    }
+    if (path === "/") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><head><title>Home</title></head><body><h1>Home</h1><p>one two three</p></body></html>");
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+    res.end("<html><body>not found</body></html>");
+  });
+
+  return new Promise<ScriptedSite>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        origin: `http://127.0.0.1:${port}`,
+        requested,
+        close: () => new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      });
+    });
+  });
+}
+
+describe("crawlSite — robots.txt unreachable: honest cause + one automatic retry", () => {
+  const SERVER_ERROR_REASON = ROBOTS_SERVER_ERROR_REASON;
+  const NETWORK_REASON = ROBOTS_NETWORK_REASON;
+
+  const robotsHits = (site: ScriptedSite): number =>
+    site.requested.filter((p) => p === "/robots.txt").length;
+
+  it("retries ONCE after a 5xx and crawls normally when the retry succeeds", async () => {
+    const site = await startScriptedRobotsSite([503, 200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // the crawl PROCEEDED
+      expect(result.skipped).toEqual([]);
+      expect(robotsHits(site)).toBe(2); // exactly one retry — never a third attempt
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("retries ONCE after a network failure and crawls normally when the retry succeeds", async () => {
+    const site = await startScriptedRobotsSite([0, 200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("two consecutive 5xx -> ONE skipped entry carrying the server-error message", async () => {
+    const site = await startScriptedRobotsSite([503, 503]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages).toHaveLength(0); // politeness unchanged: robots unreadable = no crawl
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: SERVER_ERROR_REASON },
+      ]);
+      expect(robotsHits(site)).toBe(2);
+      // Nothing beyond robots.txt is ever requested — not even the sitemap.
+      expect(site.requested).toEqual(["/robots.txt", "/robots.txt"]);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("two consecutive network failures -> ONE skipped entry carrying the network message", async () => {
+    const site = await startScriptedRobotsSite([0, 0]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(result.skipped).toEqual([
+        { url: normalizeUrl(site.origin + "/"), reason: NETWORK_REASON },
+      ]);
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("reports the SECOND attempt's cause (5xx then network -> network)", async () => {
+    const site = await startScriptedRobotsSite([503, 0]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.skipped[0]?.reason).toBe(NETWORK_REASON);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("reports the SECOND attempt's cause (network then 5xx -> server error)", async () => {
+    const site = await startScriptedRobotsSite([0, 503]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.skipped[0]?.reason).toBe(SERVER_ERROR_REASON);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("leaves 4xx allow-all UNCHANGED and does NOT retry a reachable robots.txt", async () => {
+    const site = await startScriptedRobotsSite([404]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // 4xx = no restrictions
+      expect(robotsHits(site)).toBe(1); // a REACHED robots.txt is never re-fetched
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT retry a 200 robots.txt", async () => {
+    const site = await startScriptedRobotsSite([200]);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(robotsHits(site)).toBe(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("waits the injected delay between the two attempts (the retry is not a tight loop)", async () => {
+    const site = await startScriptedRobotsSite([503, 503]);
+    try {
+      const started = Date.now();
+      await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 120 });
+      expect(Date.now() - started).toBeGreaterThanOrEqual(100); // the delay seam is honored
+      expect(robotsHits(site)).toBe(2);
+    } finally {
+      await site.close();
     }
   });
 });
