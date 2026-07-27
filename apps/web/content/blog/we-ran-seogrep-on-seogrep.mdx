@@ -1,0 +1,60 @@
+---
+title: "We ran SeoGrep on seogrep.com. Here is what it found."
+description: "An SEO tool audited by itself: what our crawl, on-page, and schema checks found on seogrep.com, and the fixes that shipped."
+date: "2026-07-27"
+---
+
+SeoGrep exists to answer one question about a website: what's broken, and what's worth fixing first. The most direct way to check whether that answer is any good is to ask it about a site we control completely — our own. On 2026-07-20 we ran SeoGrep against seogrep.com, start to finish, the same way any user would: from a chat window, in plain language.
+
+## Setting up the run
+
+We didn't reach for a database console or a one-off script. We opened a chat with SeoGrep connected over MCP and asked for a project and a crawl — the same two tools, [`setup_project`](/docs/tools-reference/setup-project) and [`crawl_site`](/docs/tools-reference/crawl-site), that any new user's first session runs. `crawl_site` is asynchronous: it hands back a `job_id` and a background worker does the fetching, following the sitemap and `robots.txt`, so the next step was just polling [`get_job_status`](/docs/tools-reference/get-job-status) until it reported done.
+
+The crawl covered 42 pages — marketing pages, the docs, the blog index — comfortably inside the current 100-page-per-run cap.
+
+## Running the audits
+
+With a crawl on record, two synchronous tools did the actual checking: [`audit_onpage`](/docs/tools-reference/audit-onpage) for titles, meta descriptions, headings, and canonicals, and [`audit_schema`](/docs/tools-reference/audit-schema) for structured data. Both return their findings directly in the chat, no dashboard or export required.
+
+Here's roughly what that looks like in a client. This transcript is illustrative — paraphrased to show the shape of the exchange, not a verbatim log:
+
+```
+You: Run an on-page audit for my seogrep.com project.
+
+SeoGrep: 42 pages checked.
+  - Canonicals: 42 missing, 0 present
+  - Titles: no issues found
+  - Meta descriptions: 5 pages share one duplicate description,
+    several others run past the recommended length
+
+You: Now check structured data.
+
+SeoGrep: 0 of 42 pages carry any JSON-LD. No Organization,
+no WebSite, nothing for a crawler to key off.
+```
+
+The real findings were just as blunt as that reads:
+
+- **Canonicals** — 42 of 42 pages had no canonical tag at all. Zero.
+- **Structured data** — [`audit_schema`](/docs/tools-reference/audit-schema) found 0 of 42 pages with any JSON-LD structured data.
+- **Meta descriptions** — five marketing pages shared the exact same 178-character description: duplicate content, and past the usual display length in one move. Several docs pages ran well over 155 characters too.
+- **Technical health** — the one clean result. [`audit_tech`](/docs/tools-reference/audit-tech) showed all 42 pages returning a 2xx status, no redirect chains, and no robots conflicts. The plumbing was fine; the metadata layer was not.
+
+That's a rough scorecard for a tool that sells SEO audits. Which was exactly the point of running it.
+
+## What shipped afterward
+
+Findings that stay findings aren't worth much, so here's what changed on the back of this run:
+
+- Every route now carries a self-referencing canonical tag.
+- Meta descriptions are unique per page — no more five pages sharing one string.
+- The marketing pages carry `Organization`, `WebSite`, and `SoftwareApplication` JSON-LD.
+- Docs meta descriptions are truncated to 155 characters or fewer, cut at a word boundary instead of mid-word.
+
+None of that required touching the audit tools themselves — [`audit_onpage`](/docs/tools-reference/audit-onpage) and [`audit_schema`](/docs/tools-reference/audit-schema) didn't change. The site had to catch up to what they were already checking for.
+
+## What we are not claiming
+
+We are not going to tell you canonical tags and JSON-LD moved seogrep.com's rankings, because we haven't measured that — no before/after traffic number, no ranking chart, nothing to point to. If we had one, we'd publish it here with the same directness as the 42 out of 42.
+
+What we can say is narrower, and we think more useful: an SEO tool ought to survive being pointed at itself. Ours found real, unglamorous, fixable problems in its own marketing pages and docs, and fixing them was mechanical work — canonical tags, unique descriptions, structured data, description length — exactly the kind of thing the tool exists to surface. If you want to see what it finds on your own site, [setup is a personal MCP URL and a few minutes](/docs).
