@@ -937,3 +937,174 @@ describe("negotiatedAccept (Accept widening handed to the SDK)", () => {
     expect(negotiatedAccept(raw)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Public capability card (`GET /.well-known/mcp/server-card.json`). Additive:
+// every spec above stays byte-unchanged. This gateway is auth-walled — every MCP
+// call needs a per-user key — so an anonymous directory scanner cannot reach
+// initialize/tools/list and reads back no capabilities at all (Smithery measured
+// `serverInfo:null` against production). The documented remedy is a STATIC card at
+// this well-known path. These specs pin the three properties that make it safe and
+// useful: it answers unauthenticated, it is generated from the SAME registry
+// tools/list serves (so it cannot drift), and it costs nothing — no auth, no DB,
+// and it never spends a per-IP throttle token.
+// ---------------------------------------------------------------------------
+
+/** The well-known path, spelled out here so a route rename fails these specs loudly. */
+const CARD_PATH = "/.well-known/mcp/server-card.json";
+
+/** One tool entry as the card publishes it — the shape of a tools/list result entry. */
+interface CardToolEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+
+const fetchCard = (baseUrl: string, headers: Record<string, string> = {}): Promise<Response> =>
+  fetch(`${baseUrl}${CARD_PATH}`, { headers });
+
+describe("mcp gateway public server card", () => {
+  it("GET the card with NO auth returns 200 + a JSON content-type + the seogrep-mcp serverInfo", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const res = await fetchCard(app.baseUrl); // no key in the path, no key header
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      const card = await res.json();
+      expect(card.serverInfo.name).toBe("seogrep-mcp");
+      expect(typeof card.serverInfo.version).toBe("string");
+      expect(card.serverInfo.version.length).toBeGreaterThan(0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card lists EXACTLY the registry's tool names (asserted against ALL_TOOLS, not a fixed list)", async () => {
+    // Compared to the registry itself so the spec stays true when a tool is added or
+    // removed — a hardcoded list of names would have to be edited alongside the change,
+    // which is precisely the drift this card must not have.
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const card = await (await fetchCard(app.baseUrl)).json();
+      expect(card.tools.map((tool: CardToolEntry) => tool.name)).toEqual(
+        ALL_TOOLS.map((tool) => tool.name),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card's tool names match what an AUTHENTICATED tools/list returns (one source, two surfaces)", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const card = await (await fetchCard(app.baseUrl)).json();
+      const listed = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(listed.status).toBe(200);
+      expect(card.tools.map((tool: CardToolEntry) => tool.name)).toEqual(
+        toolNames(await listed.json()),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("every card tool carries a non-empty description and an inputSchema OBJECT", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const card = await (await fetchCard(app.baseUrl)).json();
+      expect(card.tools.length).toBe(ALL_TOOLS.length);
+      for (const tool of card.tools as CardToolEntry[]) {
+        expect(typeof tool.description).toBe("string");
+        expect(tool.description.length).toBeGreaterThan(0);
+        expect(typeof tool.inputSchema).toBe("object");
+        expect(tool.inputSchema).not.toBeNull();
+        expect(Array.isArray(tool.inputSchema)).toBe(false);
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serving the card NEVER calls authenticate (unauthenticated by construction, zero DB reads)", async () => {
+    // authenticate is where the api_keys lookup lives, so "never called" is the proof that
+    // the card route performs no authentication AND touches no database — the same
+    // observation point the throttle and header-key specs above use.
+    const authenticate = vi.fn(() => Promise.resolve(OK_DECISION));
+    const app = await listen(appWith({ authenticate, tools: ALL_TOOLS }));
+    try {
+      const res = await fetchCard(app.baseUrl);
+      expect(res.status).toBe(200);
+      expect(authenticate).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card is served with a conservative public Cache-Control (it is static per deploy)", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const res = await fetchCard(app.baseUrl);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card describes the REAL key-based auth and claims no OAuth we do not implement", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const card = await (await fetchCard(app.baseUrl)).json();
+      expect(card.authentication.required).toBe(true);
+      expect(card.authentication.schemes).toEqual(["apiKey"]);
+      expect(card.authentication.description).toContain("x-api-key");
+      expect(card.authentication.description).toContain("https://mcp.seogrep.com/mcp/{key}");
+      expect(JSON.stringify(card).toLowerCase()).not.toContain("oauth2");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("mcp gateway public server card does not spend the per-IP throttle", () => {
+  // The card is a public, zero-cost document: serving it must not eat a token from the
+  // flood budget that protects the MCP routes, or a directory scanner polling the card
+  // would lock the real endpoint out for everyone behind that IP. A REAL limiter with
+  // capacity 1 and NO refill is used (same idiom as the shared-throttle specs above), so
+  // the single token is provably still there after the card has been fetched repeatedly.
+  const CARD_IP = { "fly-client-ip": "198.51.100.77" };
+
+  it("card fetches leave the IP's only token intact for a later MCP request", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(UNAUTHORIZED));
+    const app = await listen(
+      appWith({
+        authenticate,
+        tools: ALL_TOOLS,
+        ipThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }),
+      }),
+    );
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        expect((await fetchCard(app.baseUrl, CARD_IP)).status).toBe(200);
+      }
+
+      // The token was never spent, so the MCP request still gets through to the lookup
+      // (401 from authenticate, NOT the 429 a spent budget would produce).
+      const mcp = await postRpcWith(app.baseUrl, "sg_cardkey00001", CARD_IP, TOOLS_LIST);
+      expect(mcp.status).toBe(401);
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serving the card never consults the throttle at all (tryConsume is not called)", async () => {
+    const tryConsume = vi.fn(() => true);
+    const app = await listen(appWith({ tools: ALL_TOOLS, ipThrottle: { tryConsume } }));
+    try {
+      expect((await fetchCard(app.baseUrl, CARD_IP)).status).toBe(200);
+      expect(tryConsume).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+});
