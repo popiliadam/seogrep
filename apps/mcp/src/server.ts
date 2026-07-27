@@ -172,19 +172,51 @@ export async function readPendingJobsBounded(
 }
 
 /**
- * Return the sg_-format key from the route, or send a 401 JSON-RPC error and
- * return null. The route param is `string | undefined` under
- * noUncheckedIndexedAccess, so a missing key also fails the gate. The sg_ shape is
- * public (not a secret), so a distinct "format" message here is not an info leak;
- * unknown vs revoked, which ARE sensitive, share one message downstream.
+ * Return `rawKey` when it has the sg_ format, or send a 401 JSON-RPC error and
+ * return null. The caller supplies the raw candidate (a path param or a header
+ * value), both `string | undefined`, so a MISSING key fails this same gate — the
+ * header form's "no header at all" is therefore byte-identical to the path form's
+ * missing key. 401 (never 403): a 403 reads as an initialization failure to the
+ * directory scanners that probe this endpoint. The sg_ shape is public (not a
+ * secret), so a distinct "format" message here is not an info leak; unknown vs
+ * revoked, which ARE sensitive, share one message downstream.
  */
-function keyOrReject(req: Request, res: Response): string | null {
-  const key = req.params.key;
-  if (typeof key !== "string" || !hasValidKeyFormat(key)) {
+function keyOrReject(rawKey: string | undefined, res: Response): string | null {
+  if (typeof rawKey !== "string" || !hasValidKeyFormat(rawKey)) {
     res.status(401).json(jsonRpcError(JSON_RPC_UNAUTHORIZED, "Invalid API key format"));
     return null;
   }
-  return key;
+  return rawKey;
+}
+
+/** Header carrying the personal key on the FIXED endpoint; preferred over `authorization`. */
+const API_KEY_HEADER = "x-api-key";
+/** Fallback credential header on the fixed endpoint, in `Bearer <key>` form. */
+const AUTHORIZATION_HEADER = "authorization";
+/** Matches a Bearer scheme case-insensitively (`Bearer`/`bearer`) and captures the token. */
+const BEARER_PATTERN = /^bearer[ \t]+(\S.*)$/i;
+
+/** First value of a possibly-repeated header, or undefined when absent. */
+function firstHeaderValue(value: string | readonly string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : (value as string | undefined);
+}
+
+/**
+ * Extract the personal key from the request HEADERS for the FIXED `/mcp` endpoint.
+ * Precedence: `x-api-key` first, then `authorization: Bearer <key>`. x-api-key WINS
+ * when both are present because it is the unambiguous, purpose-built carrier — the
+ * proxies and directories this endpoint exists for pass user config that way, whereas
+ * `authorization` is also what a generic OAuth layer would populate, so preferring it
+ * would let an unrelated token shadow the key the user actually configured. An EMPTY
+ * value counts as absent (fall through, then fail the format gate) — a client that
+ * sets a blank header should get the same answer as one that sets none.
+ * Returns undefined when neither header carries a value; the format gate rejects that.
+ */
+function keyFromHeaders(req: Request): string | undefined {
+  const direct = firstHeaderValue(req.headers[API_KEY_HEADER]);
+  if (direct !== undefined && direct !== "") return direct;
+  const authorization = firstHeaderValue(req.headers[AUTHORIZATION_HEADER]);
+  return authorization === undefined ? undefined : (BEARER_PATTERN.exec(authorization)?.[1]);
 }
 
 /** Header Fly's edge proxy SETS to the real client IP, overwriting any client-sent value. */
@@ -270,8 +302,10 @@ async function handleMcpRequest(
 }
 
 /**
- * Build the MCP gateway HTTP app: a health probe plus the personal MCP endpoint.
- * `deps` (authenticate, the per-IP ipThrottle, and tools) are injected; the default
+ * Build the MCP gateway HTTP app: a health probe plus the MCP endpoint, exposed in TWO
+ * equivalent forms — the personal URL `/mcp/:key` (key in the path) and the fixed `/mcp`
+ * (key in a header). They share one handler and one throttle store; only key EXTRACTION
+ * differs. `deps` (authenticate, the per-IP ipThrottle, and tools) are injected; the default
  * wires the real DB-backed collaborators, while tests pass fakes to run without a DB.
  */
 export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
@@ -298,7 +332,11 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
   });
 
-  // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
+  // The MCP POST pipeline, shared VERBATIM by both endpoints below. The ONLY
+  // difference between the personal-URL form and the fixed header form is how the
+  // raw key was extracted (`rawKey`); everything from the format gate onward lives
+  // here exactly once, so the two routes cannot drift apart — a security fix or a
+  // gate reordering applies to both by construction.
   // Gate order: sg_ format (cheap, no I/O) -> per-IP flood throttle (in-memory, no
   // I/O; a throttled request never reaches the DB) -> auth decision (lookup ->
   // per-key rate limit -> stamp, see auth.ts — an over-limit request costs at most
@@ -310,15 +348,22 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // would leave the response hanging AND crash the process (Node's default
   // unhandled-rejection policy). Failures answer 500 with the same JSON-RPC
   // envelope; the log carries at most the safe key prefix, never the plaintext key.
-  app.post("/mcp/:key", async (req, res) => {
-    const key = keyOrReject(req, res);
+  const handleMcpPost = async (
+    req: Request,
+    res: Response,
+    rawKey: string | undefined,
+  ): Promise<void> => {
+    const key = keyOrReject(rawKey, res);
     if (key === null) return;
 
     // Per-IP flood throttle BEFORE authenticate: a well-formed-but-invalid key still
     // costs one api_keys read inside authenticate, so an unauthenticated flood is
     // capped here by client IP first. A denied request answers the SAME 429 envelope
     // as the per-key limiter (indistinguishable) and performs ZERO DB reads. Skipped
-    // when no throttle is injected (DB-free unit tests).
+    // when no throttle is injected (DB-free unit tests). Because BOTH routes reach
+    // this one line, they consume from the SAME deps.ipThrottle accounting store:
+    // an attacker cannot win a fresh budget by switching from the path form to the
+    // header form (pinned by the shared-throttle specs).
     if (deps.ipThrottle && !deps.ipThrottle.tryConsume(clientIpOf(req))) {
       res.status(429).json(jsonRpcError(JSON_RPC_RATE_LIMITED, "Rate limit exceeded"));
       return;
@@ -346,20 +391,42 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
         res.status(500).json(jsonRpcError(JSON_RPC_INTERNAL_ERROR, "Internal server error"));
       }
     }
-  });
+  };
+
+  // Personal MCP endpoint — Streamable HTTP, stateless. POST carries JSON-RPC.
+  // The key is a PATH segment here: this is the personal-URL form the dashboard
+  // renders (MCP_URL_TEMPLATE) and the shape the MCP registry's {key} URL template
+  // expresses. Unchanged.
+  app.post("/mcp/:key", (req, res) => handleMcpPost(req, res, req.params.key));
+
+  // FIXED MCP endpoint — same handler, same pipeline, key read from a HEADER instead.
+  // Required by proxies and directories that forward to ONE fixed upstream URL and can
+  // only pass user config as a header, and preferred on security grounds: a header keeps
+  // the credential out of URLs, which land in logs, proxies and browser history. Kept
+  // ALONGSIDE the path form (not replacing it) because some clients cannot send custom
+  // headers, so the personal URL stays the default everywhere.
+  app.post("/mcp", (req, res) => handleMcpPost(req, res, keyFromHeaders(req)));
 
   // GET (SSE) and DELETE (session end) are unsupported in stateless mode; reject
   // after the same key-format gate so clients get a consistent 401 on bad keys.
   // These transport methods carry no request body to dispatch, so they stop at the
-  // format gate and never perform key authentication.
-  const rejectNonPost = (req: Request, res: Response): void => {
-    if (keyOrReject(req, res) === null) return;
-    res
-      .status(405)
-      .json(jsonRpcError(JSON_RPC_METHOD_NOT_ALLOWED, "Method not allowed in stateless mode"));
-  };
-  app.get("/mcp/:key", rejectNonPost);
-  app.delete("/mcp/:key", rejectNonPost);
+  // format gate and never perform key authentication. Both key carriers are wired so
+  // a probe of the fixed endpoint gets the same JSON-RPC 405 as the path form rather
+  // than Express's default HTML 404.
+  const rejectNonPost =
+    (extractKey: (req: Request) => string | undefined) =>
+    (req: Request, res: Response): void => {
+      if (keyOrReject(extractKey(req), res) === null) return;
+      res
+        .status(405)
+        .json(jsonRpcError(JSON_RPC_METHOD_NOT_ALLOWED, "Method not allowed in stateless mode"));
+    };
+  const rejectNonPostFromPath = rejectNonPost((req) => req.params.key);
+  const rejectNonPostFromHeaders = rejectNonPost(keyFromHeaders);
+  app.get("/mcp/:key", rejectNonPostFromPath);
+  app.delete("/mcp/:key", rejectNonPostFromPath);
+  app.get("/mcp", rejectNonPostFromHeaders);
+  app.delete("/mcp", rejectNonPostFromHeaders);
 
   return app;
 }
