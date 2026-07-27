@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
+import { DEFAULT_MCP_URL_TEMPLATE, mcpUrlTemplate } from "@pseo/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -79,6 +80,15 @@ export interface AppDeps {
    * null instead of hanging or 5xx-ing the endpoint.
    */
   readonly pendingJobs?: () => Promise<number>;
+  /**
+   * The personal-URL template the PUBLIC capability card advertises. Decision D28 makes this
+   * shape env-driven (`MCP_URL_TEMPLATE`, a Fly secret) so it can change with ONE env edit;
+   * the production root below resolves it through @pseo/core's mcpUrlTemplate(), the SAME
+   * helper the dashboard renders from, so the card and the dashboard cannot advertise
+   * different URLs. Optional exactly like the deps above — DB-free unit tests omit it and the
+   * card falls back to the compiled-in default, which is what an unset env resolves to anyway.
+   */
+  readonly mcpUrlTemplate?: string;
 }
 
 /** res.locals key holding the resolved tenant context (set on the authenticated path). */
@@ -134,6 +144,10 @@ function buildDefaultDeps(): AppDeps {
     // aggregate (see countPendingJobs); the /status handler bounds it so a slow DB can
     // never hang the operator endpoint.
     pendingJobs: () => countPendingJobs(client),
+    // D28: the personal MCP URL shape comes from MCP_URL_TEMPLATE. Read HERE, at the
+    // composition root, alongside the other env-backed wiring — buildServerCard itself stays
+    // pure and never touches the environment.
+    mcpUrlTemplate: mcpUrlTemplate(),
   };
 }
 
@@ -410,6 +424,7 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     serverInfo: SERVER_INFO,
     capabilities: SERVER_CAPABILITIES,
     tools: deps.tools ?? [],
+    mcpUrlTemplate: deps.mcpUrlTemplate ?? DEFAULT_MCP_URL_TEMPLATE,
   });
   app.get(SERVER_CARD_PATH, (_req, res) => {
     res

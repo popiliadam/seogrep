@@ -1,4 +1,3 @@
-import { DEFAULT_MCP_URL_TEMPLATE } from "@pseo/core";
 import type { RegisteredTool } from "./tools/registry.ts";
 
 /**
@@ -19,8 +18,13 @@ import type { RegisteredTool } from "./tools/registry.ts";
  * cannot express the one thing this card exists to publish — the tools.
  *
  * DERIVED, NEVER HAND-MAINTAINED: the tool entries are a projection of the same registry
- * `tools/list` serves, and serverInfo/capabilities are passed in from the values the MCP
- * Server instance itself is constructed with. There is no second copy of any of it to drift.
+ * `tools/list` serves, serverInfo/capabilities are passed in from the values the MCP Server
+ * instance itself is constructed with, and the advertised URL comes from the SAME env-driven
+ * template the dashboard renders (decision D28). There is no second copy of any of it to drift.
+ *
+ * PURE: this module reads no environment and performs no I/O. Every environment-dependent
+ * value — the URL template above included — is resolved by the composition root and passed
+ * in, so the card is a deterministic function of its inputs and stays trivially testable.
  *
  * DISCLOSURE: everything published here is ALREADY public — the docs site lists all of these
  * tools with their descriptions and input fields (apps/web/content/docs/tools-reference/,
@@ -48,27 +52,26 @@ export const SERVER_CARD_CACHE_CONTROL = "public, max-age=300";
 const KEY_PLACEHOLDER_SEGMENT = "/{key}";
 
 /**
- * The FIXED endpoint (same gateway, key supplied in a header). Derived from the ONE canonical
- * personal-URL template in @pseo/core — which is also what the dashboard renders — so the two
- * advertised forms cannot describe different hosts.
+ * How clients actually authenticate, stated honestly and in full, for the personal-URL
+ * `template` this deployment advertises. Both real carriers are named because clients differ:
+ * some cannot send custom headers (they get the personal URL), and proxies that forward to one
+ * fixed upstream can only pass user config as a header. The fixed endpoint is DERIVED from the
+ * same template rather than written out again, so the two advertised forms cannot describe
+ * different hosts. No authorization server, token endpoint or client registration exists here
+ * — the card must not imply a delegated-authorization flow this gateway does not implement.
  */
-const FIXED_MCP_ENDPOINT = DEFAULT_MCP_URL_TEMPLATE.replace(KEY_PLACEHOLDER_SEGMENT, "");
-
-/**
- * How clients actually authenticate, stated honestly and in full. Both real carriers are
- * named because clients differ: some cannot send custom headers (they get the personal URL),
- * and proxies that forward to one fixed upstream can only pass user config as a header. No
- * authorization server, token endpoint or client registration exists here — the card must not
- * imply a delegated-authorization flow this gateway does not implement.
- */
-const AUTHENTICATION_DESCRIPTION =
-  "Every request needs a personal SeoGrep API key, created in the SeoGrep dashboard at " +
-  "https://seogrep.com (free trial, no card). Supply it in ONE of two equivalent ways: as the " +
-  `last path segment of your personal URL ${DEFAULT_MCP_URL_TEMPLATE}, or, against the fixed ` +
-  `endpoint ${FIXED_MCP_ENDPOINT}, in an "x-api-key" request header ("Authorization: Bearer ` +
-  '<key>" is accepted as a fallback). Keys are the only accepted credential: there is no ' +
-  "authorization server, no token endpoint and no client registration. Unauthenticated calls " +
-  "are answered 401.";
+function authenticationDescription(template: string): string {
+  const fixedEndpoint = template.replace(KEY_PLACEHOLDER_SEGMENT, "");
+  return (
+    "Every request needs a personal SeoGrep API key, created in the SeoGrep dashboard at " +
+    "https://seogrep.com (free trial, no card). Supply it in ONE of two equivalent ways: as " +
+    `the last path segment of your personal URL ${template}, or, against the fixed endpoint ` +
+    `${fixedEndpoint}, in an "x-api-key" request header ("Authorization: Bearer <key>" is ` +
+    "accepted as a fallback). Keys are the only accepted credential: there is no authorization " +
+    "server, no token endpoint and no client registration. Unauthenticated calls are " +
+    "answered 401."
+  );
+}
 
 /** The MCP server identity a client would read off a successful handshake. */
 export interface ServerCardServerInfo {
@@ -103,6 +106,13 @@ export interface ServerCardInput {
   readonly serverInfo: ServerCardServerInfo;
   readonly capabilities: Readonly<Record<string, unknown>>;
   readonly tools: readonly RegisteredTool[];
+  /**
+   * The personal-URL template to advertise, e.g. `https://mcp.seogrep.com/mcp/{key}`. Injected
+   * rather than imported so this module stays pure: decision D28 makes the URL shape env-driven
+   * (`MCP_URL_TEMPLATE`), and the composition root resolves it through the SAME helper the
+   * dashboard uses — so a template change reaches the public card and the dashboard together.
+   */
+  readonly mcpUrlTemplate: string;
 }
 
 /**
@@ -118,7 +128,7 @@ export function buildServerCard(input: ServerCardInput): ServerCard {
     authentication: {
       required: true,
       schemes: ["apiKey"],
-      description: AUTHENTICATION_DESCRIPTION,
+      description: authenticationDescription(input.mcpUrlTemplate),
     },
     tools: input.tools.map((tool) => ({
       name: tool.name,
