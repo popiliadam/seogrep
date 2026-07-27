@@ -262,6 +262,69 @@ function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Se
 }
 
 /**
+ * Media types the SDK's Streamable HTTP POST path demands a client accept. It tests for
+ * BOTH as plain SUBSTRINGS of the Accept header, so a wildcard alone does not satisfy it.
+ */
+const REQUIRED_ACCEPT_TYPES = ["application/json", "text/event-stream"] as const;
+
+/** Accept media ranges that mean "this client will take JSON" — exact, or a wildcard over it. */
+const JSON_ACCEPT_RANGES: readonly string[] = ["application/json", "application/*", "*/*"];
+
+/** The media range of one Accept entry: the part before any `;q=` parameters, lowercased. */
+function mediaRangeOf(entry: string): string {
+  const [range] = entry.split(";");
+  return (range ?? "").trim().toLowerCase();
+}
+
+/**
+ * The Accept value to hand the MCP transport, or undefined meaning "leave the client's
+ * header alone".
+ *
+ * WHY this is safe: the transport below is built with `enableJsonResponse: true` and this
+ * gateway never initiates a stream, so EVERY response is plain JSON. The SDK's "client must
+ * accept text/event-stream" rule on POST is therefore vestigial for this server — refusing a
+ * JSON-only client buys us nothing and broke real consumers (a directory scanner connected
+ * but read back serverInfo:null, which is exactly the 406 this produced). This widens what we
+ * ACCEPT; it never changes what we EMIT.
+ *
+ * Only a client that already signalled it takes JSON is widened — explicitly, via a wildcard
+ * media range, or by sending no Accept at all (HTTP treats an absent Accept as the full
+ * wildcard). Its own media types are KEPT and only the missing required ones are appended, so
+ * an Accept that genuinely excludes JSON (e.g. `text/html`) yields undefined and the SDK's
+ * content negotiation still answers 406 exactly as before.
+ */
+export function negotiatedAccept(raw: string | undefined): string | undefined {
+  const offered = raw ?? "*/*"; // an absent Accept means "any media type" per HTTP
+  const acceptsJson = offered
+    .split(",")
+    .some((entry) => JSON_ACCEPT_RANGES.includes(mediaRangeOf(entry)));
+  if (!acceptsJson) return undefined;
+  const missing = REQUIRED_ACCEPT_TYPES.filter((type) => !offered.includes(type));
+  return missing.length === 0 ? offered : [offered, ...missing].join(", ");
+}
+
+/** Header name matched case-insensitively while rewriting the flat rawHeaders array. */
+const ACCEPT_HEADER = "accept";
+
+/**
+ * A NEW rawHeaders array (the input is never mutated) carrying exactly one `Accept` entry,
+ * set to `value`. Required in ADDITION to the parsed `headers` object because the SDK's
+ * transport converts the Node request to a Web Request via @hono/node-server, which reads
+ * `rawHeaders` — so widening only `headers.accept` would be invisible to it. Node stores
+ * rawHeaders FLAT as [name0, value0, name1, value1, ...]; each entry is kept or dropped by
+ * the NAME slot (its own, at an even index; the preceding one, at an odd index), so a
+ * dropped Accept takes its value with it and every other header survives untouched.
+ */
+function withAcceptHeader(rawHeaders: readonly string[], value: string): string[] {
+  const withoutAccept = rawHeaders.filter((entry, index) =>
+    index % 2 === 0
+      ? entry.toLowerCase() !== ACCEPT_HEADER
+      : (rawHeaders[index - 1] ?? "").toLowerCase() !== ACCEPT_HEADER,
+  );
+  return [...withoutAccept, "Accept", value];
+}
+
+/**
  * Handle one MCP request in stateless mode: a fresh Server + transport per HTTP
  * request, both torn down when the response closes. The per-request server is built
  * with this request's tenant context (read once here via getAuthContext, so res.locals
@@ -291,6 +354,16 @@ async function handleMcpRequest(
   });
   try {
     await server.connect(transport);
+    // Widen the Accept the transport sees (see negotiatedAccept for why that is safe here).
+    // Assignment on the request is how the value reaches the SDK: it reads Accept off the Node
+    // request, not from an argument — `headers` for the Express-side view and `rawHeaders`,
+    // which is what the SDK's Node->Web Request conversion actually parses. Undefined means the
+    // client did not offer JSON, so its header — and the SDK's 406 — are left untouched.
+    const accept = negotiatedAccept(req.headers.accept);
+    if (accept !== undefined) {
+      req.headers.accept = accept;
+      req.rawHeaders = withAcceptHeader(req.rawHeaders, accept);
+    }
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
     console.error("MCP request handling failed:", error);

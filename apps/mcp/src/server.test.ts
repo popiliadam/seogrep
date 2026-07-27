@@ -12,6 +12,9 @@ import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 // both routes advertise the same 16 tools) and a REAL limiter (to prove one shared budget).
 import { createRateLimiter } from "./auth.ts";
 import { ALL_TOOLS } from "./tools/index.ts";
+// Additive import for the JSON-only Accept specs, on its own line so every existing
+// line above stays byte-identical.
+import { negotiatedAccept } from "./server.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate (no DB) that yields typed
@@ -779,5 +782,47 @@ describe("mcp gateway per-IP throttle is SHARED across both routes", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe("negotiatedAccept (Accept widening handed to the SDK)", () => {
+  // The pure unit proof, testable without HTTP: a client that signalled it takes JSON
+  // (explicitly or by wildcard, or by sending no Accept at all) gets text/event-stream
+  // added ALONGSIDE its own media types; a client that did not gets undefined, meaning
+  // "leave the header alone" so real content negotiation still applies.
+
+  it.each([
+    ["explicit JSON", "application/json"],
+    ["already both", "application/json, text/event-stream"],
+    ["full wildcard", "*/*"],
+    ["subtype wildcard", "application/*"],
+    ["absent (HTTP default is */*)", undefined],
+    ["JSON with quality params", "application/json;q=0.9, text/plain;q=0.1"],
+  ])("%s -> a value carrying BOTH application/json and text/event-stream", (_label, raw) => {
+    const value = negotiatedAccept(raw);
+    expect(value).toBeDefined();
+    expect(value).toContain("application/json");
+    expect(value).toContain("text/event-stream");
+  });
+
+  it("keeps the client's own media types rather than replacing them", () => {
+    expect(negotiatedAccept("application/json")).toContain("application/json");
+    expect(negotiatedAccept("*/*")).toContain("*/*");
+    expect(negotiatedAccept("application/*")).toContain("application/*");
+  });
+
+  it("does NOT duplicate text/event-stream when the client already sent both", () => {
+    const raw = "application/json, text/event-stream";
+    const value = negotiatedAccept(raw);
+    expect(value).toBe(raw); // nothing to add — handed through untouched
+    expect(value?.match(/text\/event-stream/g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["HTML only", "text/html"],
+    ["text wildcard that does not cover JSON", "text/*"],
+    ["a non-JSON application subtype", "application/xml"],
+  ])("%s -> undefined (leave the header alone; the SDK may still 406)", (_label, raw) => {
+    expect(negotiatedAccept(raw)).toBeUndefined();
   });
 });
