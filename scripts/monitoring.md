@@ -30,7 +30,7 @@ separate `/status` route, which nothing uses as a liveness gate.
 
 ```json
 { "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0,
-  "reaperRuns": 6, "reservesReleased": 0, "lastReaperRunAt": "2026-07-27T09:40:00.000Z" }
+  "reaperRuns": 0, "reservesReleased": 0, "lastReaperRunAt": null }
 ```
 
 - **`uptimeSeconds`** — whole seconds since the web process booted.
@@ -40,11 +40,12 @@ separate `/status` route, which nothing uses as a liveness gate.
   effectively every realistic 500.
 - **`pendingJobs`** — jobs in `status in ('queued','running')` — the app's own view of queue
   backlog / stuck work. `null` when the count could not be read in time (see §4).
-- **`reaperRuns` / `reservesReleased` / `lastReaperRunAt`** — the in-worker stuck-job reaper's
-  heartbeat: completed sweeps since boot, credit reserves refunded since boot (cumulative),
-  and the ISO timestamp of the last completed sweep (`null` before the first one). Only the
-  **worker** process sweeps, so the **web** process answers `0 / 0 / null` here — read them
-  from the worker (§4).
+- **`reaperRuns` / `reservesReleased` / `lastReaperRunAt`** — counters for the stuck-job reaper:
+  completed sweeps since boot, credit reserves refunded since boot (cumulative), and the ISO
+  timestamp of the last completed sweep. **On this endpoint they are always `0 / 0 / null`.**
+  The reaper runs inside the **worker** process, which starts no HTTP listener at all; `/status`
+  is served only by the **web** processes, whose in-memory counters never see a sweep. The
+  reaper's real heartbeat is the worker's log — see §4.
 
 **In-memory caveat (important):** `uptimeSeconds` and `errorsSinceBoot` are **in-memory and
 per-process**. They **reset to zero on every deploy/restart**, and in a multi-machine
@@ -124,13 +125,16 @@ up and finished quickly by the worker.
 **Automatic reaping (Faz 4 — now live).** The worker process sweeps for stuck jobs **every 10
 minutes** on its own (`REAPER_INTERVAL_MS` in `apps/mcp/src/queue/worker.ts`, running the same
 `reconcileStuckJobs` the manual script uses). Open reserves are refunded without waiting for a
-human. Watch it on `/status`:
+human. `/status` cannot show this (§1) — watch the **worker's logs**, where every completed sweep
+writes one line: `flyctl logs --app seogrep-mcp | grep 'reaper sweep'` →
+`reaper sweep: scanned=0 released=0 alreadySettled=0 failed=0 orphanReserves=0`, expected roughly
+every 10 minutes.
 
-- **`lastReaperRunAt` stale** (older than ~10 min on the worker) or **`reaperRuns` not climbing**
-  → sweeps are failing or the worker is down. A failed sweep is **logged, never fatal**: grep
-  `flyctl logs --app seogrep-mcp` for `reaper run failed:`. The worker keeps draining the queue.
-- **`reservesReleased` climbing** → jobs are genuinely crashing mid-run; refunds are happening,
-  but find the cause in the logs.
+- **No `reaper sweep:` line for well over 10 minutes** → sweeps are failing or the worker is
+  down. A failed sweep is **logged, never fatal**: also grep for `reaper run failed:`. The
+  worker keeps draining the queue.
+- **`released=` non-zero** → jobs are genuinely crashing mid-run; refunds are happening, but
+  find the cause in the logs.
 
 `scripts/reconcile.mjs` remains for **on-demand** runs (an incident, or a sweep you don't want to
 wait 10 minutes for) — see [`scripts/reconciliation.md`](./reconciliation.md).
@@ -145,8 +149,9 @@ This slice is minimal on purpose (beta): give the operator cheap, real signals a
 free external uptime alert, without building an observability platform.
 
 **Since shipped (Faz 4):** automatic periodic reaping of stuck jobs — the worker sweeps every 10
-minutes and reports `reaperRuns` / `reservesReleased` / `lastReaperRunAt` on `/status` (§4). It is
-no longer on the deferred list below.
+minutes and logs one `reaper sweep:` line per sweep (§4). It is no longer on the deferred list
+below. Still deferred: surfacing those counters on a *reachable* endpoint — the worker serves no
+HTTP, so cross-process metrics remain Faz-4 platform work.
 
 Explicitly **out of scope**, deferred to **Faz 4 (audit G4)**:
 

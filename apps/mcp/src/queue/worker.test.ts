@@ -55,6 +55,12 @@ describe("in-worker stuck-job reaper", () => {
     orphanReserves: 0,
   });
 
+  /** The reaper heartbeat lines a console.warn spy saw, in call order (other warns ignored). */
+  const heartbeatLines = (spy: { mock: { calls: unknown[][] } }): string[] =>
+    spy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes("reaper sweep:"));
+
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -141,6 +147,48 @@ describe("in-worker stuck-job reaper", () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(metrics.snapshot().reaperRuns).toBe(before.reaperRuns);
+    errorSpy.mockRestore();
+  });
+
+  it("logs ONE greppable heartbeat line per completed sweep", async () => {
+    // The worker process serves no HTTP listener, so its metrics singleton is unreachable:
+    // the public /status is answered by the WEB process, whose counters never see a sweep.
+    // Logs are the only liveness channel this process has — one line per sweep, grepped with
+    // `flyctl logs --app seogrep-mcp | grep 'reaper sweep'`. Distinct field values here so a
+    // swapped label cannot pass.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sweep: ReconcileOutcome = {
+      scanned: 3,
+      released: 1,
+      alreadySettled: 2,
+      failed: 3,
+      orphanReserves: 1,
+    };
+    startReaperTimer({ reaperIntervalMs: 1_000, reconcile: async () => sweep });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(heartbeatLines(warnSpy)).toEqual([
+      "reaper sweep: scanned=3 released=1 alreadySettled=2 failed=3 orphanReserves=1",
+    ]);
+    warnSpy.mockRestore();
+  });
+
+  it("emits NO heartbeat when the sweep FAILS — only the error line", async () => {
+    // A failed sweep must not look like a healthy one: the heartbeat is the operator's proof
+    // that a sweep COMPLETED, so it is written only on the success path.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    startReaperTimer({
+      reaperIntervalMs: 1_000,
+      reconcile: () => Promise.reject(new Error("db down")),
+    });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(errorSpy).toHaveBeenCalledWith("reaper run failed:", expect.any(Error));
+    expect(heartbeatLines(warnSpy)).toEqual([]);
+    warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
 

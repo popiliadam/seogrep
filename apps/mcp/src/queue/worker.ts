@@ -187,12 +187,24 @@ let reaperTimer: ReturnType<typeof setInterval> | null = null;
  * One sweep. NEVER rejects: a failure is logged and dropped so a broken sweep can neither
  * kill the worker (an unhandled rejection would, under Node's default policy) nor cancel
  * the timer — the next tick simply tries again. Only a COMPLETED sweep is counted, so
- * /status's lastReaperRunAt going stale is an honest "sweeps are failing" signal.
+ * lastReaperRunAt going stale is an honest "sweeps are failing" signal.
+ *
+ * The success path also LOGS the outcome, and that log is the operator's real heartbeat: the
+ * worker process runs no HTTP listener, so the counters recorded here are unreachable — the
+ * public /status is answered by the WEB process, whose metrics singleton never sees a sweep
+ * and therefore always reports zeros. A quiet sweep (nothing stuck) leaves no DB trace either,
+ * so without this line a silently dead timer would be invisible. One greppable line per sweep:
+ * `flyctl logs --app seogrep-mcp | grep 'reaper sweep'` (see scripts/monitoring.md §4).
  */
 async function runReaperTick(reconcile: () => Promise<ReconcileOutcome>): Promise<void> {
   try {
     const outcome = await reconcile();
     metrics.recordReaperRun({ released: outcome.released });
+    console.warn(
+      `reaper sweep: scanned=${outcome.scanned} released=${outcome.released}` +
+        ` alreadySettled=${outcome.alreadySettled} failed=${outcome.failed}` +
+        ` orphanReserves=${outcome.orphanReserves}`,
+    );
   } catch (error) {
     console.error("reaper run failed:", error);
   }
