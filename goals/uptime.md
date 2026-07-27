@@ -14,9 +14,11 @@ curl -sf --max-time 15 https://mcp.seogrep.com/status | grep -q '"ok":true'
 
 ## on-violation
 Şüpheliler: Fly deploy'u / makine durumu (fly status, son deploy), DB (/status'ta `pendingJobs: null`
-= backlog okunamıyor; worker'ın düştüğünü MASKELER — reaper sayaçları da donar), harici monitörün
-kendisi (hesap/kota/yanlış URL — monitör yanılıyor olabilir).
+= backlog okunamıyor; worker'ın düştüğünü MASKELER), harici monitörün kendisi (hesap/kota/yanlış URL —
+monitör yanılıyor olabilir).
 Runbook: `flyctl logs --app seogrep-mcp` ile 5xx/crash ayrımı → `scripts/monitoring.md` triyajı
 (/healthz vs /status, errorsSinceBoot trendi, pendingJobs okuması) → takılı işler için
-`scripts/reconciliation.md` (in-worker reaper 10 dk'da bir süpürür; `lastReaperRunAt` bayatsa
-süpürme başarısız demektir) → 5xx'te İNSANI UYANDIR (contract.md). Otomatik düzeltme YOK.
+`scripts/reconciliation.md`. NOT: reaper worker process'inde koşar ve worker HTTP dinlemez; `/status`'un
+reaper sayaçları DAİMA `0 / 0 / null`'dır (web process'i onları hiç görmez). Reaper canlılığı yalnız
+`flyctl logs --app seogrep-mcp | grep 'reaper sweep'` ile doğrulanır (~10 dk'da bir satır).
+→ 5xx'te İNSANI UYANDIR (contract.md). Otomatik düzeltme YOK.

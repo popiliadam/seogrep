@@ -189,8 +189,9 @@ gerçekten doğruladı = NEVER#3 fail-closed kapısı makine-kanıtlı).
     (+**Delete branch**). Şef push/merge YAPAMAZ (plugin outward-gate + harness classifier).
 
 MERGE SONRASI İZLEME (şef yapar, insan tetikler): (1) ilk mcp deploy boot'u — T-L1 artık bozuk
-SUPABASE_DB_URL'de BOOT ETMEZ (kasıtlı); gateway+worker ayağa kalktı mı; (2) ~15 dk içinde /status'ta
-reaperRuns≥1 + lastReaperRunAt dolu; (3) seogrep.com/blog canlı (2 yazı merge'de yayına çıkar).
+SUPABASE_DB_URL'de BOOT ETMEZ (kasıtlı); gateway+worker ayağa kalktı mı; (2) reaper canlılığı
+`flyctl logs --app seogrep-mcp | grep 'reaper sweep'` ile (~10 dk'da bir satır) — **/status'un reaper
+sayaçları DAİMA 0/0/null'dır**: reaper worker'da koşar, worker HTTP dinlemez; (3) seogrep.com/blog canlı.
 DEPLOY SIRASI ÖNERİSİ: mcp önce, web sonra (docs'taki "Two ways to connect" endpoint'i önce canlı olsun).
 
 İNSAN KUYRUĞU (öncelik sırasıyla):
