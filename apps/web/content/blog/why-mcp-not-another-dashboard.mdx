@@ -14,7 +14,7 @@ If you're using Claude, Claude Code, Cursor, or Windsurf, the work already happe
 
 MCP is not just "an API the AI can also call." It's a set of typed tools with schemas an agent can read, understand, and compose on its own — chaining a crawl into an on-page audit into a fix without you writing the glue code yourself. SeoGrep gives your agent 16 of them: a site crawler; on-page, technical, and structured-data audits; Search Console tools that run against your own GSC property through your own OAuth connection (quick wins, cannibalization detection, content decay); keyword research; a shareable HTML report; and a router tool that looks at your project and tells you the single best next step.
 
-"Your own OAuth" is worth pausing on. SeoGrep never sees a shared or pooled Search Console account — the GSC-backed tools only work because you connected your own property, and they only ever see your own data. A crawl feeds the audits, the audits feed the report, and the router tool can point at all of it — the agent moves between them by calling the next tool, not by you copying a URL from one screen into another.
+"Your own OAuth" is worth pausing on. SeoGrep never sees a shared or pooled Search Console account — the GSC-backed tools only work because you connected your own property, and they only ever see your own data. A crawl feeds the audits, the crawl and your Search Console data feed the report, and the router tool can point at all of it — the agent moves between them by calling the next tool, not by you copying a URL from one screen into another.
 
 ## The honest limits
 

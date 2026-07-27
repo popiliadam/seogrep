@@ -8,9 +8,9 @@ SeoGrep exists to answer one question about a website: what's broken, and what's
 
 ## Setting up the run
 
-We didn't reach for a database console or a one-off script. We opened a chat with SeoGrep connected over MCP and asked for a project and a crawl — the same two tools, [`setup_project`](/docs/tools-reference/setup-project) and [`crawl_site`](/docs/tools-reference/crawl-site), that any new user's first session runs. `crawl_site` is asynchronous: it hands back a `job_id` and a background worker does the fetching, following the sitemap and `robots.txt`, so the next step was just polling [`get_job_status`](/docs/tools-reference/get-job-status) until it reported done.
+We didn't reach for a database console or a one-off script. We opened a chat with SeoGrep connected over MCP and asked for a project and a crawl — the same two tools, [`setup_project`](/docs/tools-reference/setup-project) and [`crawl_site`](/docs/tools-reference/crawl-site), that any new user's first session runs. `crawl_site` is asynchronous: it hands back a `job_id` and a background worker does the fetching, following the sitemap and same-origin links and respecting `robots.txt`, so the next step was just polling [`get_job_status`](/docs/tools-reference/get-job-status) until it reported done.
 
-The crawl covered 42 pages — marketing pages, the docs, the blog index — comfortably inside the current 100-page-per-run cap.
+The crawl covered 42 pages, comfortably inside the current 100-page-per-run cap.
 
 ## Running the audits
 
@@ -23,7 +23,6 @@ You: Run an on-page audit for my seogrep.com project.
 
 SeoGrep: 42 pages checked.
   - Canonicals: 42 missing, 0 present
-  - Titles: no issues found
   - Meta descriptions: 5 pages share one duplicate description,
     several others run past the recommended length
 
@@ -51,10 +50,10 @@ Findings that stay findings aren't worth much, so here's what changed on the bac
 - The marketing pages carry `Organization`, `WebSite`, and `SoftwareApplication` JSON-LD.
 - Docs meta descriptions are truncated to 155 characters or fewer, cut at a word boundary instead of mid-word.
 
-None of that required touching the audit tools themselves — [`audit_onpage`](/docs/tools-reference/audit-onpage) and [`audit_schema`](/docs/tools-reference/audit-schema) didn't change. The site had to catch up to what they were already checking for.
+None of that required touching the audit tools themselves — [`audit_onpage`](/docs/tools-reference/audit-onpage) and [`audit_schema`](/docs/tools-reference/audit-schema) didn't change. The site had to catch up to what they were already checking for. For the tools-reference pages specifically, the description-length fix isn't a one-off hand-edit either: the docs generator enforces the 155-character cap and truncates at a word boundary itself, so a future tool description can't quietly push a page over the limit again.
 
 ## What we are not claiming
 
 We are not going to tell you canonical tags and JSON-LD moved seogrep.com's rankings, because we haven't measured that — no before/after traffic number, no ranking chart, nothing to point to. If we had one, we'd publish it here with the same directness as the 42 out of 42.
 
-What we can say is narrower, and we think more useful: an SEO tool ought to survive being pointed at itself. Ours found real, unglamorous, fixable problems in its own marketing pages and docs, and fixing them was mechanical work — canonical tags, unique descriptions, structured data, description length — exactly the kind of thing the tool exists to surface. If you want to see what it finds on your own site, [setup is a personal MCP URL and a few minutes](/docs).
+What we can say is narrower, and we think more useful: an SEO tool ought to survive being pointed at itself. Ours found real, unglamorous, fixable problems in its own marketing pages and docs, and fixing them was mechanical work — canonical tags, unique descriptions, structured data, description length — exactly the kind of thing the tool exists to surface. If you want to see what it finds on your own site, [setup is a personal MCP URL pasted into your client](/docs).
