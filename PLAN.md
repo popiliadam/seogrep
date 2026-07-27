@@ -8,7 +8,10 @@
 ### Faz 4 merge + canlı doğrulama (2026-07-27)
 - **[PR #23](https://github.com/popiliadam/seogrep/pull/23) MERGED** @`afad10f` (34 commit, insan merge + dal silindi). Deploy MCP + CI: **success**.
 - Canlı: healthz ok · `/status` ok (taze boot → **T-L1 yapı doğrulaması canlı DB-URL'i kabul etti**) · Fly 2 web healthcheck-passing + worker started · seogrep.com 200 · **/blog + 2 yazı canlı** · sitemap **45 URL** · robots `/app` disallow · `make goals` **16/16**.
-- **Şef post-deploy keşfi (açık iş):** reaper canlıda **gözlenemiyor** — `MODE=worker` HTTP dinlemiyor, `/status` yalnız web process'inde, başarı yolu log atmıyor → sayaçlar sonsuza dek 0/0/null. Düzeltme dalda: `fix/reaper-heartbeat` (heartbeat log + doc aşırı-iddia düzeltmesi).
+- **Şef post-deploy keşfi → KAPANDI ([PR #24](https://github.com/popiliadam/seogrep/pull/24) merged @`b2ffb0c`):** reaper canlıda gözlenemiyordu (`MODE=worker` HTTP dinlemiyor, `/status` yalnız web process'inde, başarı yolu log atmıyordu → sayaçlar sonsuza dek 0/0/null; dört ayrı doküman bunu "`/status`'tan oku" diye yanlış anlatıyordu, biri örnek JSON'da `reaperRuns: 6` gösteriyordu). Süpürme başına heartbeat log + dört düzeltme.
+- **CANLI KANIT:** worker boot 09:51:34Z → ilk süpürme 10:01:41Z: `reaper sweep: scanned=0 released=0 alreadySettled=0 failed=0 orphanReserves=0`. Reaper canlılığı artık `flyctl logs -a seogrep-mcp | grep 'reaper sweep'` ile doğrulanıyor (~10 dk'da bir satır).
+
+### ✅ Faz 4 KOD TARAFI BİTTİ — kalan her şey insan kuyruğunda (aşağıdaki handoff bloğu)
 
 ### Faz 4 açılışı (2026-07-27 — bu oturum)
 - Kickoff (docs/plans/2026-07-21-faz4-kickoff.md) uygulandı: prod smoke YEŞİL (healthz ok · /status ok uptime ~5.6g/0 hata/pendingJobs 0 · seogrep.com 200 · verify 16/16 · PR #21 LICENSE MERGED) → üç audit yan yana sunuldu → **insan GO verdi** ("en iyi senaryo, şef önerisine göre devam").
