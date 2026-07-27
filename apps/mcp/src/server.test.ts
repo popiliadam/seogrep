@@ -7,9 +7,10 @@ import { createApp, type AppDeps } from "./server.ts";
 // Additive T5 import kept on its own line so every existing line above stays byte-identical.
 import { readPendingJobsBounded } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
-// Additive import for the fixed header-key endpoint specs, kept on its own line so every
-// existing line above stays byte-identical: the production tool set, used to prove both
-// routes advertise the same 16 tools.
+// Additive imports for the fixed header-key endpoint specs, each on its own line so
+// every existing line above stays byte-identical: the production tool set (to prove
+// both routes advertise the same 16 tools) and a REAL limiter (to prove one shared budget).
+import { createRateLimiter } from "./auth.ts";
 import { ALL_TOOLS } from "./tools/index.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
@@ -719,6 +720,62 @@ describe("mcp gateway fixed header-key endpoint", () => {
       });
       expect(res.status).toBe(405);
       expect((await res.json()).error.code).toBe(-32000);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("mcp gateway per-IP throttle is SHARED across both routes", () => {
+  // The security property of adding a second route: the per-IP flood budget is ONE
+  // accounting store, so an attacker cannot win a fresh allowance by switching from
+  // the path form to the header form (or back). A real limiter is used — capacity 1
+  // with NO refill — so the first request spends the only token and every later
+  // request from that IP is denied regardless of which route it arrives on. Fly-Client-IP
+  // is pinned so both requests provably land in the SAME bucket.
+  const SAME_IP = { "fly-client-ip": "198.51.100.42" };
+  const oneShotThrottle = () => createRateLimiter({ capacity: 1, refillPerSecond: 0 });
+
+  it("budget spent on /mcp/:key -> /mcp is throttled (429) and performs ZERO DB reads", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(UNAUTHORIZED));
+    const app = await listen(appWith({ authenticate, ipThrottle: oneShotThrottle() }));
+    try {
+      // Spend the IP's only token on the PATH form with a well-formed-but-invalid key.
+      const first = await postRpcWith(app.baseUrl, "sg_floodkey0001", SAME_IP, TOOLS_LIST);
+      expect(first.status).toBe(401);
+      expect(authenticate).toHaveBeenCalledOnce();
+
+      // Same IP, other route: the shared budget is already empty.
+      const second = await postFixedRpc(
+        app.baseUrl,
+        { ...SAME_IP, "x-api-key": "sg_floodkey0002" },
+        TOOLS_LIST,
+      );
+      expect(second.status).toBe(429);
+      expect((await second.json()).error.code).toBe(-32002);
+      // Still ONE call in total: the throttled request never reached the lookup.
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("budget spent on /mcp -> /mcp/:key is throttled (429) and performs ZERO DB reads", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(UNAUTHORIZED));
+    const app = await listen(appWith({ authenticate, ipThrottle: oneShotThrottle() }));
+    try {
+      const first = await postFixedRpc(
+        app.baseUrl,
+        { ...SAME_IP, "x-api-key": "sg_floodkey0003" },
+        TOOLS_LIST,
+      );
+      expect(first.status).toBe(401);
+      expect(authenticate).toHaveBeenCalledOnce();
+
+      const second = await postRpcWith(app.baseUrl, "sg_floodkey0004", SAME_IP, TOOLS_LIST);
+      expect(second.status).toBe(429);
+      expect((await second.json()).error.code).toBe(-32002);
+      expect(authenticate).toHaveBeenCalledOnce();
     } finally {
       await app.close();
     }
