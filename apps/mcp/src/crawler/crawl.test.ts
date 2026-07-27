@@ -582,3 +582,67 @@ describe("estimateSiteSize", () => {
     expect(await estimateSiteSize("ftp://example.com")).toEqual({ pages: null, source: "unknown" });
   });
 });
+
+// --- DNS-rebinding pin (every emitted request goes out through a pinned dispatcher) ---
+// The origin gate validates ONE lookup; without pinning, fetch() then resolved again on
+// its own, so a hostile low-TTL answer could show the gate a public IP and the socket an
+// internal one. These pin the closed behavior. fetch is mocked throughout, so no request
+// ever leaves the process and DNS is the injected fake — ZERO real network.
+
+describe("crawler fetches are pinned to the validated address", () => {
+  const notFound = (): Promise<Response> => Promise.resolve(new Response("", { status: 404 }));
+
+  it("re-validates EVERY request, so a rebound answer is never emitted", async () => {
+    let calls = 0;
+    const lookup: LookupFn = async () => {
+      calls++;
+      // Public for the origin gate, then the name rebinds to the cloud-metadata endpoint.
+      return calls === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "169.254.169.254", family: 4 }];
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      const est = await estimateSiteSize("http://rebind.example.com", { lookup });
+      expect(est).toEqual({ pages: null, source: "unknown" });
+      // The gate passed on the first answer, but the request re-validates before it is
+      // emitted, so the rebound address is caught and NOTHING leaves the process.
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(calls).toBeGreaterThan(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("spends exactly ONE lookup per emitted request (no second resolution)", async () => {
+    let lookups = 0;
+    const lookup: LookupFn = async () => {
+      lookups++;
+      return [{ address: "93.184.216.34", family: 4 }];
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      await estimateSiteSize("http://counted.example.com", { lookup });
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(0);
+      // One origin-gate validation, then exactly one pinning validation per request.
+      // Any extra resolution would be an unpinned path — the rebinding window itself.
+      expect(lookups).toBe(fetchSpy.mock.calls.length + 1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("passes a dispatcher on every emitted request", async () => {
+    const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(notFound);
+    try {
+      await estimateSiteSize("http://dispatched.example.com", { lookup });
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(0);
+      for (const [, init] of fetchSpy.mock.calls) {
+        expect((init as { dispatcher?: unknown } | undefined)?.dispatcher).toBeDefined();
+      }
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});

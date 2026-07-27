@@ -11,6 +11,8 @@
  * headings, and anchor extraction — the signals a first-pass on-page audit needs.
  */
 
+import type { Dispatcher } from "undici";
+import { pinnedDispatcherFor, withPin } from "./pinned-fetch.ts";
 import { parseRobots, type RobotsRules } from "./robots.ts";
 import { decodeEntities, parseSitemap } from "./sitemap.ts";
 import {
@@ -336,27 +338,49 @@ type FetchOutcome =
   | { readonly kind: "too-many-redirects" }
   | { readonly kind: "off-origin-redirect"; readonly target: string };
 
+/** Release the per-hop pinned dispatchers a chain opened (bodies are consumed by now). */
+async function destroyAll(dispatchers: readonly Dispatcher[]): Promise<void> {
+  await Promise.allSettled(dispatchers.map((d) => d.destroy()));
+}
+
 /**
  * Fetch one page, following up to MAX_REDIRECTS same-origin redirects manually so
  * the whole chain shares a single timeout and off-origin hops can be rejected. Only
  * text/html bodies are read; other content types return with an empty body for the
  * caller to skip. AbortController bounds the entire chain to `timeoutMs`.
+ *
+ * Every hop — the first request included — is re-validated and PINNED to the address
+ * that validation just approved (pinnedDispatcherFor). The chain is same-origin, so the
+ * hostname never changes, but a hostile low-TTL answer can still flip that one name to an
+ * internal address between hops; the origin gate validated once and cannot see that. A
+ * refused hop emits NO request and reports through the existing fetch-failure path.
  */
 async function fetchPage(
   url: string,
   origin: URL,
   timeoutMs: number,
+  lookup: LookupFn,
 ): Promise<FetchOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const dispatchers: Dispatcher[] = [];
   try {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      const res = await fetch(current, {
-        redirect: "manual",
-        signal: controller.signal,
-        headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml" },
-      });
+      const pin = await pinnedDispatcherFor(current, lookup);
+      if ("blocked" in pin) return { kind: "error", message: pin.blocked };
+      dispatchers.push(pin.dispatcher);
+      const res = await fetch(
+        current,
+        withPin(
+          {
+            redirect: "manual",
+            signal: controller.signal,
+            headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml" },
+          },
+          pin.dispatcher,
+        ),
+      );
       const contentType = res.headers.get("content-type") ?? "";
       if (REDIRECT_STATUS.has(res.status)) {
         const location = res.headers.get("location");
@@ -384,6 +408,7 @@ async function fetchPage(
     return { kind: "error", message: error instanceof Error ? error.message : String(error) };
   } finally {
     clearTimeout(timer);
+    await destroyAll(dispatchers);
   }
 }
 
@@ -426,6 +451,11 @@ async function validateRedirectTarget(target: URL, lookup: LookupFn): Promise<bo
  * publicly-resolving host validate-then-emit and keep working. Returns null on any failure
  * (robots -> RFC 9309 complete disallow; sitemap seed -> skipped).
  *
+ * On top of that, every hop is PINNED to the address its own validation just approved
+ * (pinnedDispatcherFor), so the socket cannot be steered elsewhere by a second resolution
+ * — the DNS-rebinding close. Order per hop is validate -> pin -> emit; a hop whose host
+ * fails resolution emits nothing and returns null like any other failure.
+ *
  * CALLER CONTRACT: the INITIAL url's host is the caller's responsibility to validate —
  * crawlSite vets the crawl origin before any fetchText. fetchText validates cross-origin
  * REDIRECT hops only.
@@ -443,14 +473,20 @@ async function fetchText(
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const dispatchers: Dispatcher[] = [];
   try {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      const res = await fetch(current, {
-        redirect: "manual",
-        signal: controller.signal,
-        headers: { "user-agent": USER_AGENT },
-      });
+      const pin = await pinnedDispatcherFor(current, lookup);
+      if ("blocked" in pin) return null;
+      dispatchers.push(pin.dispatcher);
+      const res = await fetch(
+        current,
+        withPin(
+          { redirect: "manual", signal: controller.signal, headers: { "user-agent": USER_AGENT } },
+          pin.dispatcher,
+        ),
+      );
       if (REDIRECT_STATUS.has(res.status)) {
         const location = res.headers.get("location");
         await res.body?.cancel();
@@ -475,6 +511,7 @@ async function fetchText(
     return null;
   } finally {
     clearTimeout(timer);
+    await destroyAll(dispatchers);
   }
 }
 
@@ -679,7 +716,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
     fetches++;
 
-    const outcome = await fetchPage(url, originUrl, pageTimeoutMs);
+    const outcome = await fetchPage(url, originUrl, pageTimeoutMs, lookup);
     if (outcome.kind === "timeout") {
       skipped.push({ url, reason: "timeout" });
       continue;

@@ -3,10 +3,10 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   makePinnedDispatcher,
-  type PinnedRequestInit,
   pinnedConnectOptions,
   pinnedDispatcherFor,
   resolveAndPin,
+  withPin,
 } from "./pinned-fetch.ts";
 import type { LookupFn } from "./ssrf.ts";
 
@@ -43,9 +43,8 @@ describe("makePinnedDispatcher — the rebinding kill-shot", () => {
     // rebinding window: fetch() no longer performs its own independent resolution.
     const dispatcher = makePinnedDispatcher({ hostname: "example.com", ip: "127.0.0.1" });
     try {
-      const res = await fetch(`http://example.com:${port}/pinned-path`, {
-        dispatcher,
-      } satisfies PinnedRequestInit);
+      // Goes out exactly the way crawl.ts sends its requests: through withPin.
+      const res = await fetch(`http://example.com:${port}/pinned-path`, withPin({}, dispatcher));
       expect(res.status).toBe(200);
       expect(await res.text()).toContain("pinned");
     } finally {

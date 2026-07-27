@@ -34,14 +34,19 @@ export interface PinnedTarget {
   readonly ip: string;
 }
 
+/** A fetch init carrying undici's `dispatcher` extension. */
+type PinnedRequestInit = Omit<RequestInit, "dispatcher"> & { readonly dispatcher: Dispatcher };
+
 /**
- * Node's global fetch is undici underneath and accepts an undici dispatcher in its init.
- * This alias is THE ONE place the crawler reconciles that extension with the ambient
- * `RequestInit`, so no call site needs a cast of its own.
+ * Attach a pinned dispatcher to a fetch init. Node's global fetch IS undici underneath and
+ * honours `dispatcher`, but the ambient `RequestInit` in this project's lib set does not
+ * declare that extension — so this is THE ONE place the two are reconciled, and every call
+ * site stays a plain, cast-free `fetch(url, withPin(init, dispatcher))`.
  */
-export type PinnedRequestInit = Omit<RequestInit, "dispatcher"> & {
-  readonly dispatcher: Dispatcher;
-};
+export function withPin(init: RequestInit, dispatcher: Dispatcher): RequestInit {
+  const pinned: PinnedRequestInit = { ...init, dispatcher };
+  return pinned as RequestInit;
+}
 
 /** IPv6 hostnames arrive bracketed from URL.hostname; sockets want the bare address. */
 function stripBrackets(host: string): string {
