@@ -109,7 +109,34 @@ $39 one-time = instant publish, Verified badge, **dofollow** link from a DR-72 s
 self-reported 2.2M visitors/yr. Chief's recommendation: **pay it** — for an SEO product
 the dofollow backlink alone likely justifies $39. Human decides (real money).
 
-## 4. Smithery — smithery.ai (AFTER T-C3)
+## 4. Smithery — smithery.ai ⏸️ **draft started 2026-07-27, paused for a server fix**
+
+What the flow actually asks for (walked it end to end):
+1. `smithery.ai/new` → **Namespace/Server ID**: the namespace is your username; we used
+   `seogrep`. **MCP Server URL**: `https://mcp.seogrep.com/mcp` — the FIXED endpoint, not
+   the `{key}` path form (Smithery proxies to one upstream).
+2. **Configure connection settings** → *Add Parameter* (do NOT Skip — without a parameter
+   the gateway cannot carry the user's key and everyone gets 401):
+   name `apiKey` · type `string` · location `header` · Required on ·
+   description `Your personal SeoGrep key from the dashboard` ·
+   **`Output as header` → `x-api-key`** ← the decisive field.
+   Verify on the right-hand preview that **YOUR MCP SERVER** shows `x-api-key: {apiKey}`.
+   ⚠️ Do the form in English — with the page auto-translated, the "Parameter name"
+   placeholder gets written into the field and becomes an invalid header name.
+3. **Provide scan credentials** → paste a real `sg_…` key so Smithery can enumerate tools.
+   Their scan calls `tools/list` only, which costs 0 credits; the key is revocable.
+
+**Blocker found here, and it was ours:** the scan returned
+`{"status":{"state":"connected"},"serverInfo":null}`. Cause (measured against production):
+the MCP SDK's transport requires `text/event-stream` in `Accept` on POST, so a client
+sending `Accept: application/json` only got **406** — even though this server sets
+`enableJsonResponse: true` and never streams. Fixed by widening what we accept (see
+`negotiatedAccept` in `apps/mcp/src/server.ts`); nothing we emit changed. **Re-run the
+scan after that fix is deployed**, then finish publishing.
+
+Post-publish: Settings → Verification for the vendor badge.
+
+### Reference (original research)
 
 **Mechanism:** account + `smithery.ai/new`, or CLI:
 ```

@@ -12,6 +12,9 @@ import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 // both routes advertise the same 16 tools) and a REAL limiter (to prove one shared budget).
 import { createRateLimiter } from "./auth.ts";
 import { ALL_TOOLS } from "./tools/index.ts";
+// Additive import for the JSON-only Accept specs, on its own line so every existing
+// line above stays byte-identical.
+import { negotiatedAccept } from "./server.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate (no DB) that yields typed
@@ -779,5 +782,158 @@ describe("mcp gateway per-IP throttle is SHARED across both routes", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// JSON-only clients. Additive: every spec above stays byte-unchanged. The SDK's
+// Streamable HTTP transport 406s a POST whose Accept lacks text/event-stream, but
+// this gateway builds that transport with enableJsonResponse: true and never opens
+// an SSE stream — so the requirement is vestigial here while a real consumer (a
+// directory scanner sending `Accept: application/json`) read back serverInfo:null
+// off exactly that 406. These specs pin the widened behaviour on BOTH routes and
+// that nothing about what we SEND changed (still a JSON content-type).
+// ---------------------------------------------------------------------------
+
+/** The initialize call a directory scanner makes first — the request that was 406ing. */
+const INITIALIZE = {
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "vitest", version: "0.0.0" },
+  },
+} as const;
+
+/** Accept exactly as a JSON-only client sends it (overrides the both-types default). */
+const JSON_ONLY = { accept: "application/json" };
+
+describe("mcp gateway accepts JSON-only clients", () => {
+  it("POST /mcp/:key initialize with `Accept: application/json` ONLY returns 200 + serverInfo", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, JSON_ONLY, INITIALIZE);
+      expect(res.status).toBe(200); // was 406 Not Acceptable
+      const body = await res.json();
+      expect(body.result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp (header key) initialize with `Accept: application/json` ONLY returns 200 + serverInfo", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postFixedRpc(
+        app.baseUrl,
+        { "x-api-key": VALID_KEY, ...JSON_ONLY },
+        INITIALIZE,
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a JSON-only initialize is answered with a JSON content-type (we never start streaming)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, JSON_ONLY, INITIALIZE);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      expect(res.headers.get("content-type")).not.toContain("text/event-stream");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the both-types Accept still works on both routes (no regression)", async () => {
+    const app = await listen(appWith());
+    try {
+      const viaPath = await postRpc(app.baseUrl, VALID_KEY, INITIALIZE);
+      expect(viaPath.status).toBe(200);
+      expect((await viaPath.json()).result.serverInfo.name).toBe("seogrep-mcp");
+
+      const viaHeader = await postFixedRpc(app.baseUrl, { "x-api-key": VALID_KEY }, INITIALIZE);
+      expect(viaHeader.status).toBe(200);
+      expect((await viaHeader.json()).result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the Accept rewrite preserves the request's OTHER headers (200, never 415)", async () => {
+    // Widening rewrites the flat rawHeaders array the SDK parses, so the standing risk is
+    // dropping a neighbouring header along with the Accept entry. content-type is the
+    // observable one: the SDK answers 415 when it is missing, so a 200 proves it survived.
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { ...JSON_ONLY, "x-trace": "keep-me" },
+        INITIALIZE,
+      );
+      expect(res.status).not.toBe(415);
+      expect(res.status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("an Accept that excludes JSON entirely is left alone (still 406 — negotiation intact)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, { accept: "text/html" }, INITIALIZE);
+      expect(res.status).toBe(406);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("negotiatedAccept (Accept widening handed to the SDK)", () => {
+  // The pure unit proof, testable without HTTP: a client that signalled it takes JSON
+  // (explicitly or by wildcard, or by sending no Accept at all) gets text/event-stream
+  // added ALONGSIDE its own media types; a client that did not gets undefined, meaning
+  // "leave the header alone" so real content negotiation still applies.
+
+  it.each([
+    ["explicit JSON", "application/json"],
+    ["already both", "application/json, text/event-stream"],
+    ["full wildcard", "*/*"],
+    ["subtype wildcard", "application/*"],
+    ["absent (HTTP default is */*)", undefined],
+    ["JSON with quality params", "application/json;q=0.9, text/plain;q=0.1"],
+  ])("%s -> a value carrying BOTH application/json and text/event-stream", (_label, raw) => {
+    const value = negotiatedAccept(raw);
+    expect(value).toBeDefined();
+    expect(value).toContain("application/json");
+    expect(value).toContain("text/event-stream");
+  });
+
+  it("keeps the client's own media types rather than replacing them", () => {
+    expect(negotiatedAccept("application/json")).toContain("application/json");
+    expect(negotiatedAccept("*/*")).toContain("*/*");
+    expect(negotiatedAccept("application/*")).toContain("application/*");
+  });
+
+  it("does NOT duplicate text/event-stream when the client already sent both", () => {
+    const raw = "application/json, text/event-stream";
+    const value = negotiatedAccept(raw);
+    expect(value).toBe(raw); // nothing to add — handed through untouched
+    expect(value?.match(/text\/event-stream/g)).toHaveLength(1);
+  });
+
+  it.each([
+    ["HTML only", "text/html"],
+    ["text wildcard that does not cover JSON", "text/*"],
+    ["a non-JSON application subtype", "application/xml"],
+  ])("%s -> undefined (leave the header alone; the SDK may still 406)", (_label, raw) => {
+    expect(negotiatedAccept(raw)).toBeUndefined();
   });
 });
