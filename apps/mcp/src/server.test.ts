@@ -785,6 +785,117 @@ describe("mcp gateway per-IP throttle is SHARED across both routes", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// JSON-only clients. Additive: every spec above stays byte-unchanged. The SDK's
+// Streamable HTTP transport 406s a POST whose Accept lacks text/event-stream, but
+// this gateway builds that transport with enableJsonResponse: true and never opens
+// an SSE stream — so the requirement is vestigial here while a real consumer (a
+// directory scanner sending `Accept: application/json`) read back serverInfo:null
+// off exactly that 406. These specs pin the widened behaviour on BOTH routes and
+// that nothing about what we SEND changed (still a JSON content-type).
+// ---------------------------------------------------------------------------
+
+/** The initialize call a directory scanner makes first — the request that was 406ing. */
+const INITIALIZE = {
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "vitest", version: "0.0.0" },
+  },
+} as const;
+
+/** Accept exactly as a JSON-only client sends it (overrides the both-types default). */
+const JSON_ONLY = { accept: "application/json" };
+
+describe("mcp gateway accepts JSON-only clients", () => {
+  it("POST /mcp/:key initialize with `Accept: application/json` ONLY returns 200 + serverInfo", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, JSON_ONLY, INITIALIZE);
+      expect(res.status).toBe(200); // was 406 Not Acceptable
+      const body = await res.json();
+      expect(body.result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp (header key) initialize with `Accept: application/json` ONLY returns 200 + serverInfo", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postFixedRpc(
+        app.baseUrl,
+        { "x-api-key": VALID_KEY, ...JSON_ONLY },
+        INITIALIZE,
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a JSON-only initialize is answered with a JSON content-type (we never start streaming)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, JSON_ONLY, INITIALIZE);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      expect(res.headers.get("content-type")).not.toContain("text/event-stream");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the both-types Accept still works on both routes (no regression)", async () => {
+    const app = await listen(appWith());
+    try {
+      const viaPath = await postRpc(app.baseUrl, VALID_KEY, INITIALIZE);
+      expect(viaPath.status).toBe(200);
+      expect((await viaPath.json()).result.serverInfo.name).toBe("seogrep-mcp");
+
+      const viaHeader = await postFixedRpc(app.baseUrl, { "x-api-key": VALID_KEY }, INITIALIZE);
+      expect(viaHeader.status).toBe(200);
+      expect((await viaHeader.json()).result.serverInfo.name).toBe("seogrep-mcp");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the Accept rewrite preserves the request's OTHER headers (200, never 415)", async () => {
+    // Widening rewrites the flat rawHeaders array the SDK parses, so the standing risk is
+    // dropping a neighbouring header along with the Accept entry. content-type is the
+    // observable one: the SDK answers 415 when it is missing, so a 200 proves it survived.
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(
+        app.baseUrl,
+        VALID_KEY,
+        { ...JSON_ONLY, "x-trace": "keep-me" },
+        INITIALIZE,
+      );
+      expect(res.status).not.toBe(415);
+      expect(res.status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("an Accept that excludes JSON entirely is left alone (still 406 — negotiation intact)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpcWith(app.baseUrl, VALID_KEY, { accept: "text/html" }, INITIALIZE);
+      expect(res.status).toBe(406);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe("negotiatedAccept (Accept widening handed to the SDK)", () => {
   // The pure unit proof, testable without HTTP: a client that signalled it takes JSON
   // (explicitly or by wildcard, or by sending no Accept at all) gets text/event-stream
