@@ -59,6 +59,12 @@ export interface CrawlOptions {
   /** Upper bound applied to robots Crawl-delay, ms (default 1_000). Test knob. */
   crawlDelayCapMs?: number;
   /**
+   * Pause before the ONE automatic robots.txt retry, ms (default 2_000). A blip (a
+   * restarting origin, a dropped connection) should not cost the tenant a whole crawl,
+   * but the retry must not hammer a struggling site either. Tests pin it to 0. Test knob.
+   */
+  robotsRetryDelayMs?: number;
+  /**
    * DNS resolver the SSRF guard uses (origin gate + cross-origin redirect checks).
    * Defaults to node:dns/promises; injected in tests so DNS is never real. Test knob.
    */
@@ -310,6 +316,7 @@ const DEFAULT_MAX_URLS = 100;
 const DEFAULT_PAGE_TIMEOUT_MS = 10_000;
 const DEFAULT_TIME_BUDGET_MS = 90_000;
 const DEFAULT_CRAWL_DELAY_CAP_MS = 1_000;
+const DEFAULT_ROBOTS_RETRY_DELAY_MS = 2_000;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
@@ -515,20 +522,71 @@ async function fetchText(
   }
 }
 
+/**
+ * WHY the two unreachable causes are kept apart: they are different problems with
+ * different fixes, and the tenant is the only one who can act on either. "The site
+ * answered 5xx for robots.txt" is a bug on their server; "we could not reach it at
+ * all" is a DNS/network/timeout problem. Collapsing both into one "unreachable" told
+ * the user nothing they could act on.
+ */
+export type RobotsUnreachableCause = "server_error" | "network";
+
 type RobotsLoad =
   | { readonly kind: "ok"; readonly rules: RobotsRules }
-  | { readonly kind: "unreachable" };
+  | { readonly kind: "unreachable"; readonly cause: RobotsUnreachableCause };
+
+/**
+ * The tenant-visible skip reason per cause. These strings travel verbatim into the crawl
+ * queue handler's "no pages could be crawled" error, which is what the user finally reads
+ * via get_job_status — so each one names WHAT happened and WHAT to do next. They are
+ * pinned by spec; keep them honest (never claim something the code does not guarantee)
+ * and keep the phrase "robots" in them (audit's categorizeSkip buckets on it).
+ */
+const ROBOTS_UNREACHABLE_REASON: Record<RobotsUnreachableCause, string> = {
+  server_error:
+    "robots.txt returned a server error (5xx) on your site; we did not crawl to stay polite. " +
+    "Fix robots.txt, then run crawl_site again.",
+  network:
+    "we could not reach robots.txt (network error or timeout); we did not crawl. " +
+    "Check that the site is reachable, then run crawl_site again.",
+};
 
 /**
  * Load /robots.txt with RFC 9309 reachability semantics: 200 parses the rules;
  * a 4xx (file absent / client error) means no restrictions, so allow-all; a 5xx
  * or a network failure (timeout, refused, DNS) means the file is UNREACHABLE and
- * the crawler must assume complete disallow — the caller aborts the crawl.
+ * the crawler must assume complete disallow — the caller aborts the crawl. The two
+ * unreachable shapes are distinguished (see RobotsUnreachableCause): an HTTP answer
+ * of 5xx is `server_error`; a null fetchText (timeout, refused, DNS, refused redirect,
+ * blocked pin) is `network`.
  */
 async function loadRobots(origin: URL, timeoutMs: number, lookup: LookupFn): Promise<RobotsLoad> {
   const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs, lookup);
-  if (res === null || res.status >= 500) return { kind: "unreachable" };
+  if (res === null) return { kind: "unreachable", cause: "network" };
+  if (res.status >= 500) return { kind: "unreachable", cause: "server_error" };
   return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
+}
+
+/**
+ * loadRobots plus ONE automatic retry after `retryDelayMs`. A transient blip (a restarting
+ * origin, a dropped connection) otherwise costs the tenant an entire crawl, and a re-run
+ * costs them credits. Exactly two attempts, never more — a struggling site must not be
+ * hammered, and this is a politeness-first crawler.
+ *
+ * A REACHED robots.txt (200 or 4xx) is never re-fetched: only the unreachable shapes retry.
+ * The reported cause is the SECOND attempt's, because that is the state the site was
+ * actually left in.
+ */
+async function loadRobotsWithRetry(
+  origin: URL,
+  timeoutMs: number,
+  lookup: LookupFn,
+  retryDelayMs: number,
+): Promise<RobotsLoad> {
+  const first = await loadRobots(origin, timeoutMs, lookup);
+  if (first.kind === "ok") return first;
+  await sleep(retryDelayMs);
+  return loadRobots(origin, timeoutMs, lookup);
 }
 
 /**
@@ -635,6 +693,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const pageTimeoutMs = opts.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT_MS;
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
+  const robotsRetryDelayMs = opts.robotsRetryDelayMs ?? DEFAULT_ROBOTS_RETRY_DELAY_MS;
   const lookup = opts.lookup ?? defaultLookup;
   const prefixes = normalizeIncludePaths(opts.includePaths);
 
@@ -645,13 +704,20 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const gateReason = await originGateReason(originUrl, lookup);
   if (gateReason !== null) return blockedOrigin(originUrl, gateReason, fetchedAt);
 
-  const robotsLoad = await loadRobots(originUrl, pageTimeoutMs, lookup);
+  // One automatic retry first — a blip must not cost a whole crawl (loadRobotsWithRetry).
+  const robotsLoad = await loadRobotsWithRetry(originUrl, pageTimeoutMs, lookup, robotsRetryDelayMs);
   if (robotsLoad.kind === "unreachable") {
-    // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete
-    // disallow. Stop before fetching anything else — the sitemap included.
+    // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete disallow.
+    // Stop before fetching anything else — the sitemap included. The policy is UNCHANGED
+    // by the retry; only the reason the user reads is now cause-specific and actionable.
     return {
       pages: [],
-      skipped: [{ url: normalizeUrl(originUrl.toString()), reason: "robots.txt unreachable" }],
+      skipped: [
+        {
+          url: normalizeUrl(originUrl.toString()),
+          reason: ROBOTS_UNREACHABLE_REASON[robotsLoad.cause],
+        },
+      ],
       fetchedAt,
     };
   }
