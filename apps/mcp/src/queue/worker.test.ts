@@ -154,22 +154,24 @@ describe("in-worker stuck-job reaper", () => {
     // The worker process serves no HTTP listener, so its metrics singleton is unreachable:
     // the public /status is answered by the WEB process, whose counters never see a sweep.
     // Logs are the only liveness channel this process has — one line per sweep, grepped with
-    // `flyctl logs --app seogrep-mcp | grep 'reaper sweep'`. Distinct field values here so a
-    // swapped label cannot pass.
+    // `flyctl logs --app seogrep-mcp | grep 'reaper sweep'`. All five values below are
+    // deliberately DISTINCT, so swapping any two labels in the format string changes the
+    // emitted line and fails this spec — notably a `released=` mis-wired to another field,
+    // which is the money-adjacent one an operator reads for "refunds are happening".
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const sweep: ReconcileOutcome = {
       scanned: 3,
       released: 1,
       alreadySettled: 2,
-      failed: 3,
-      orphanReserves: 1,
+      failed: 4,
+      orphanReserves: 5,
     };
     startReaperTimer({ reaperIntervalMs: 1_000, reconcile: async () => sweep });
 
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(heartbeatLines(warnSpy)).toEqual([
-      "reaper sweep: scanned=3 released=1 alreadySettled=2 failed=3 orphanReserves=1",
+      "reaper sweep: scanned=3 released=1 alreadySettled=2 failed=4 orphanReserves=5",
     ]);
     warnSpy.mockRestore();
   });
