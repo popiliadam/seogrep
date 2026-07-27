@@ -1,11 +1,47 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.fn();
 const listKeys = vi.fn();
 
+/** Every table the page reads, and every .eq() filter it applied — the tenant-scoping proof. */
+let fromCalls: string[] = [];
+let eqCalls: { table: string; column: string; value: unknown }[] = [];
+let projectRows: { id: string; domain: string }[] = [];
+let connectionRows: { project_id: string }[] = [];
+
+/**
+ * Minimal PostgREST-ish builder: records the table + every .eq(), and resolves to that
+ * table's rows whether the caller ends the chain with .order() or awaits it directly.
+ */
+function queryBuilder(table: string) {
+  const result = {
+    data: table === "projects" ? projectRows : connectionRows,
+    error: null,
+  };
+  const builder = {
+    eq(column: string, value: unknown) {
+      eqCalls.push({ table, column, value });
+      return builder;
+    },
+    order() {
+      return Promise.resolve(result);
+    },
+    then(onFulfilled?: (value: typeof result) => unknown, onRejected?: (reason: unknown) => unknown) {
+      return Promise.resolve(result).then(onFulfilled, onRejected);
+    },
+  };
+  return builder;
+}
+
 vi.mock("../../../lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser } }),
+  createClient: async () => ({
+    auth: { getUser },
+    from: (table: string) => {
+      fromCalls.push(table);
+      return { select: () => queryBuilder(table) };
+    },
+  }),
 }));
 vi.mock("@pseo/db/api-keys-repo", () => ({ listKeys: (...args: unknown[]) => listKeys(...args) }));
 vi.mock("@pseo/core", () => ({
@@ -40,14 +76,28 @@ const REVOKED = {
   revokedAt: "2026-06-15T10:00:00.000Z",
 };
 
+const PROJECT_A = { id: "11111111-1111-4111-8111-111111111111", domain: "alpha.example" };
+const PROJECT_B = { id: "22222222-2222-4222-8222-222222222222", domain: "beta.example" };
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  fromCalls = [];
+  eqCalls = [];
+  projectRows = [];
+  connectionRows = [];
 });
 
 async function renderPage() {
   getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
   render(await ConnectionPage());
+}
+
+/** The <li> that carries a given domain, so per-row state is asserted inside its own row. */
+function rowOf(domain: string): HTMLElement {
+  const row = screen.getByText(domain).closest("li");
+  if (row === null) throw new Error(`no row contains "${domain}"`);
+  return row;
 }
 
 describe("ConnectionPage", () => {
@@ -76,5 +126,70 @@ describe("ConnectionPage", () => {
     // No active key -> no masked URL, KeyPanel gets a null active id.
     expect(screen.getByText(/generate a key to reveal your personal mcp url/i)).toBeTruthy();
     expect(screen.getByTestId("key-panel").getAttribute("data-active-key-id")).toBe("");
+  });
+});
+
+describe("ConnectionPage — Google Search Console", () => {
+  it("marks each project connected or not and links to the connect route with its id", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [{ project_id: PROJECT_B.id }];
+    await renderPage();
+
+    const notConnected = rowOf(PROJECT_A.domain);
+    expect(within(notConnected).getByText("Not connected")).toBeTruthy();
+    const connectLink = within(notConnected).getByRole("link", { name: "Connect" });
+    expect(connectLink.getAttribute("href")).toBe(
+      `/api/gsc/connect?project_id=${PROJECT_A.id}`,
+    );
+
+    const connected = rowOf(PROJECT_B.domain);
+    expect(within(connected).getByText("Connected")).toBeTruthy();
+    const reconnectLink = within(connected).getByRole("link", { name: "Reconnect" });
+    expect(reconnectLink.getAttribute("href")).toBe(
+      `/api/gsc/connect?project_id=${PROJECT_B.id}`,
+    );
+  });
+
+  it("reads BOTH tenant tables with an explicit user_id filter (constitution NEVER #4)", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    connectionRows = [];
+    await renderPage();
+
+    expect(eqCalls).toContainEqual({ table: "projects", column: "user_id", value: "user-1" });
+    expect(eqCalls).toContainEqual({
+      table: "gsc_connections",
+      column: "user_id",
+      value: "user-1",
+    });
+    // Nothing is read WITHOUT that filter: every table touched is a user_id-scoped one.
+    const scoped = new Set(
+      eqCalls.filter((c) => c.column === "user_id" && c.value === "user-1").map((c) => c.table),
+    );
+    expect(scoped).toEqual(new Set(fromCalls));
+  });
+
+  it("no projects: points at the setup_project tool instead of an empty list", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [];
+    connectionRows = [];
+    await renderPage();
+
+    expect(
+      screen.getByText("No projects yet. Create one from your MCP client with the setup_project tool."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Connect" })).toBeNull();
+  });
+
+  it("does not read projects at all when there is no user", async () => {
+    getUser.mockResolvedValue({ data: { user: null } });
+    listKeys.mockResolvedValue([]);
+    render(await ConnectionPage());
+
+    expect(fromCalls).toEqual([]);
+    expect(
+      screen.getByText("No projects yet. Create one from your MCP client with the setup_project tool."),
+    ).toBeTruthy();
   });
 });
