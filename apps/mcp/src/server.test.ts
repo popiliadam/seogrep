@@ -7,6 +7,10 @@ import { createApp, type AppDeps } from "./server.ts";
 // Additive T5 import kept on its own line so every existing line above stays byte-identical.
 import { readPendingJobsBounded } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
+// Additive import for the fixed header-key endpoint specs, kept on its own line so every
+// existing line above stays byte-identical: the production tool set, used to prove both
+// routes advertise the same 16 tools.
+import { ALL_TOOLS } from "./tools/index.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate (no DB) that yields typed
@@ -563,6 +567,160 @@ describe("mcp gateway client IP extraction (throttle bucket key)", () => {
       } catch {
         /* socket file already gone */
       }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixed header-key endpoint (`POST /mcp`). Additive: every spec above stays
+// byte-unchanged. The personal-URL form (`/mcp/:key`) puts the key in the PATH,
+// which two launch channels cannot express — a proxy that forwards to ONE fixed
+// upstream can only pass user config as a header, and credential-in-URL is
+// discouraged because URLs land in logs, proxies and history. So the same MCP
+// handler is also mounted at a fixed `/mcp` that reads the key from a header.
+// These specs pin the two properties that matter: header extraction (precedence
+// and scheme case-insensitivity) and that the fixed route runs the IDENTICAL
+// security pipeline — same 401s, same format-gate-before-DB ordering, and ONE
+// shared per-IP budget, so switching routes buys an attacker nothing.
+// ---------------------------------------------------------------------------
+
+/** POST the FIXED /mcp endpoint (no path key) with arbitrary headers merged over the defaults. */
+const postFixedRpc = (
+  baseUrl: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<Response> =>
+  fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+
+const TOOLS_LIST = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} } as const;
+
+/** Names from a tools/list response body, for comparing the two routes' surfaces. */
+const toolNames = (body: { result: { tools: readonly { name: string }[] } }): readonly string[] =>
+  body.result.tools.map((tool) => tool.name);
+
+describe("mcp gateway fixed header-key endpoint", () => {
+  it("POST /mcp with x-api-key serves the SAME tool surface as the path form (all 16 tools)", async () => {
+    // Injecting the production tool set proves the fixed route reaches the real MCP
+    // handler, not a reduced one: both routes must advertise the identical 16 tools.
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const viaHeader = await postFixedRpc(app.baseUrl, { "x-api-key": VALID_KEY }, TOOLS_LIST);
+      expect(viaHeader.status).toBe(200);
+      const headerBody = await viaHeader.json();
+      expect(headerBody.result.tools).toHaveLength(16);
+
+      const viaPath = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(viaPath.status).toBe(200);
+      expect(toolNames(headerBody)).toEqual(toolNames(await viaPath.json()));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp with an `authorization: Bearer <key>` header authenticates", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postFixedRpc(
+        app.baseUrl,
+        { authorization: `Bearer ${VALID_KEY}` },
+        TOOLS_LIST,
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).result.tools).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp accepts a lowercase `bearer` scheme (scheme match is case-insensitive)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postFixedRpc(
+        app.baseUrl,
+        { authorization: `bearer ${VALID_KEY}` },
+        TOOLS_LIST,
+      );
+      expect(res.status).toBe(200);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp with BOTH headers present prefers x-api-key over authorization", async () => {
+    const seen: string[] = [];
+    const authenticate = vi.fn((key: string) => {
+      seen.push(key);
+      return Promise.resolve(key === VALID_KEY ? OK_DECISION : UNAUTHORIZED);
+    });
+    const app = await listen(appWith({ authenticate }));
+    try {
+      const res = await postFixedRpc(
+        app.baseUrl,
+        { "x-api-key": VALID_KEY, authorization: "Bearer sg_otherkey9999" },
+        TOOLS_LIST,
+      );
+      expect(res.status).toBe(200);
+      // The authenticator is the observation point: it must receive the x-api-key value.
+      expect(seen).toEqual([VALID_KEY]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("POST /mcp with NO key header returns 401 and never calls authenticate (no DB read)", async () => {
+    const authenticate = vi.fn(() => Promise.resolve(OK_DECISION));
+    const app = await listen(appWith({ authenticate }));
+    try {
+      const res = await postFixedRpc(app.baseUrl, {}, TOOLS_LIST);
+      expect(res.status).toBe(401); // 401, never 403 — a 403 reads as an init failure to scanners
+      const body = await res.json();
+      expect(body.error.code).toBe(-32001);
+      expect(body.jsonrpc).toBe("2.0");
+      expect(authenticate).not.toHaveBeenCalled(); // format gate rejects BEFORE any lookup
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([
+    ["x-api-key", { "x-api-key": "not-a-key" }],
+    ["authorization", { authorization: "Bearer not-a-key" }],
+    ["empty x-api-key", { "x-api-key": "" }],
+  ])("POST /mcp with a malformed key in %s returns 401, authenticate never called", async (
+    _label,
+    headers,
+  ) => {
+    const authenticate = vi.fn(() => Promise.resolve(OK_DECISION));
+    const app = await listen(appWith({ authenticate }));
+    try {
+      const res = await postFixedRpc(app.baseUrl, headers, TOOLS_LIST);
+      expect(res.status).toBe(401);
+      expect((await res.json()).error.code).toBe(-32001);
+      expect(authenticate).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(["GET", "DELETE"])("%s /mcp is 405 for a valid key header (parity with the path form)", async (method) => {
+    const app = await listen(appWith());
+    try {
+      const res = await fetch(`${app.baseUrl}/mcp`, {
+        method,
+        headers: { "x-api-key": VALID_KEY },
+      });
+      expect(res.status).toBe(405);
+      expect((await res.json()).error.code).toBe(-32000);
+    } finally {
+      await app.close();
     }
   });
 });
