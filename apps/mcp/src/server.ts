@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
+import { DEFAULT_MCP_URL_TEMPLATE, mcpUrlTemplate } from "@pseo/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -19,9 +20,17 @@ import {
 import { metrics } from "./metrics.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
 import { registerPrompts } from "./prompts.ts";
+import { SERVER_CARD_CACHE_CONTROL, SERVER_CARD_PATH, buildServerCard } from "./server-card.ts";
 
 /** Advertised MCP server identity. */
 const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
+
+/**
+ * Capabilities advertised on the handshake. Hoisted to a single const because the public
+ * capability card republishes them verbatim — a second literal would let the card and the
+ * real handshake drift apart.
+ */
+const SERVER_CAPABILITIES = { tools: {}, prompts: {} } as const;
 
 /** JSON-RPC error codes returned before a request reaches the MCP server. */
 const JSON_RPC_UNAUTHORIZED = -32001;
@@ -71,6 +80,15 @@ export interface AppDeps {
    * null instead of hanging or 5xx-ing the endpoint.
    */
   readonly pendingJobs?: () => Promise<number>;
+  /**
+   * The personal-URL template the PUBLIC capability card advertises. Decision D28 makes this
+   * shape env-driven (`MCP_URL_TEMPLATE`, a Fly secret) so it can change with ONE env edit;
+   * the production root below resolves it through @pseo/core's mcpUrlTemplate(), the SAME
+   * helper the dashboard renders from, so the card and the dashboard cannot advertise
+   * different URLs. Optional exactly like the deps above — DB-free unit tests omit it and the
+   * card falls back to the compiled-in default, which is what an unset env resolves to anyway.
+   */
+  readonly mcpUrlTemplate?: string;
 }
 
 /** res.locals key holding the resolved tenant context (set on the authenticated path). */
@@ -126,6 +144,10 @@ function buildDefaultDeps(): AppDeps {
     // aggregate (see countPendingJobs); the /status handler bounds it so a slow DB can
     // never hang the operator endpoint.
     pendingJobs: () => countPendingJobs(client),
+    // D28: the personal MCP URL shape comes from MCP_URL_TEMPLATE. Read HERE, at the
+    // composition root, alongside the other env-backed wiring — buildServerCard itself stays
+    // pure and never touches the environment.
+    mcpUrlTemplate: mcpUrlTemplate(),
   };
 }
 
@@ -255,7 +277,7 @@ function clientIpOf(req: Request): string {
  * JSON Schema from each tool's zod schema; registerPrompts wires the prompts surface.
  */
 function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Server {
-  const server = new Server(SERVER_INFO, { capabilities: { tools: {}, prompts: {} } });
+  const server = new Server(SERVER_INFO, { capabilities: SERVER_CAPABILITIES });
   registerAll(server, { ctx, tools });
   registerPrompts(server);
   return server;
@@ -388,6 +410,30 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // Liveness probe for Fly health checks and load balancers.
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  // Public MCP capability card — the answer to an auth-walled server being unscannable (see
+  // server-card.ts for why it exists and what it may disclose). It holds itself to /healthz's
+  // discipline: unauthenticated, ZERO database reads, and no throttle accounting. The payload
+  // is built ONCE here because the registry is static, so the handler does no work at all —
+  // it cannot be slow, cannot fail, and has nothing per-request to leak. Its path lives under
+  // /.well-known/, which cannot collide with `/mcp` or `/mcp/:key`, so the MCP auth chain
+  // (format gate -> per-IP throttle -> authenticate) is untouched and a scanner polling the
+  // card can never spend the flood budget that protects the real endpoints.
+  const serverCard = buildServerCard({
+    serverInfo: SERVER_INFO,
+    capabilities: SERVER_CAPABILITIES,
+    tools: deps.tools ?? [],
+    mcpUrlTemplate: deps.mcpUrlTemplate ?? DEFAULT_MCP_URL_TEMPLATE,
+  });
+  app.get(SERVER_CARD_PATH, (_req, res) => {
+    res
+      .set("Cache-Control", SERVER_CARD_CACHE_CONTROL)
+      // The card is a credential-free public document and the well-known discovery convention
+      // expects it to be readable cross-origin, so browser-based validators and directory
+      // tooling can fetch it. Nothing here is tenant-scoped, so `*` gives away nothing.
+      .set("Access-Control-Allow-Origin", "*")
+      .json(serverCard);
   });
 
   // Operator status signal — deliberately SEPARATE from /healthz. /healthz stays a trivial
