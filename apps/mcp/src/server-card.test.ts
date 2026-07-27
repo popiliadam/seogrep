@@ -14,7 +14,12 @@ const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
 const CAPABILITIES = { tools: {}, prompts: {} } as const;
 
 const card = () =>
-  buildServerCard({ serverInfo: SERVER_INFO, capabilities: CAPABILITIES, tools: ALL_TOOLS });
+  buildServerCard({
+    serverInfo: SERVER_INFO,
+    capabilities: CAPABILITIES,
+    tools: ALL_TOOLS,
+    mcpUrlTemplate: DEFAULT_MCP_URL_TEMPLATE,
+  });
 
 describe("buildServerCard", () => {
   it("serves at the well-known path the directory scanners probe", () => {
@@ -44,6 +49,7 @@ describe("buildServerCard", () => {
       serverInfo: SERVER_INFO,
       capabilities: CAPABILITIES,
       tools: [],
+      mcpUrlTemplate: DEFAULT_MCP_URL_TEMPLATE,
     });
     expect(empty.tools).toEqual([]);
   });
@@ -64,9 +70,29 @@ describe("buildServerCard", () => {
   });
 
   it("advertises the personal URL exactly as the one canonical template in @pseo/core", () => {
-    // Drift guard: the dashboard renders the personal URL from DEFAULT_MCP_URL_TEMPLATE, so
-    // the card must quote that same string rather than a second, separately-edited copy.
+    // Given the DEFAULT template (what an unset MCP_URL_TEMPLATE resolves to), the card must
+    // quote it verbatim rather than paraphrase it into a second, separately-edited copy.
     expect(card().authentication.description).toContain(DEFAULT_MCP_URL_TEMPLATE);
+  });
+
+  it("advertises the INJECTED template, so an MCP_URL_TEMPLATE change reaches the card (D28)", () => {
+    // The public-honesty guard behind decision D28: the URL shape is env-driven precisely so
+    // it can change with ONE env edit. If the card quoted a compiled-in constant instead, a
+    // template change would update the dashboard while the card kept advertising a stale,
+    // publicly-visible URL. Injecting a non-default template proves the card follows the env.
+    const injected = "https://example.test/gateway/{key}";
+    const built = buildServerCard({
+      serverInfo: SERVER_INFO,
+      capabilities: CAPABILITIES,
+      tools: ALL_TOOLS,
+      mcpUrlTemplate: injected,
+    });
+    expect(built.authentication.description).toContain(injected);
+    // The fixed (header-key) endpoint is DERIVED from that same template, never hardcoded.
+    expect(built.authentication.description).toContain("fixed endpoint https://example.test/gateway,");
+    // ...and no trace of the default survives, so nothing is quoting a stale constant.
+    expect(built.authentication.description).not.toContain(DEFAULT_MCP_URL_TEMPLATE);
+    expect(built.authentication.description).not.toContain("mcp.seogrep.com");
   });
 
   it("survives JSON round-tripping unchanged (it is served verbatim as a static document)", () => {

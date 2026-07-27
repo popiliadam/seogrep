@@ -1058,7 +1058,37 @@ describe("mcp gateway public server card", () => {
       expect(card.authentication.schemes).toEqual(["apiKey"]);
       expect(card.authentication.description).toContain("x-api-key");
       expect(card.authentication.description).toContain("https://mcp.seogrep.com/mcp/{key}");
-      expect(JSON.stringify(card).toLowerCase()).not.toContain("oauth2");
+      // The WHOLE serialized payload, case-insensitively — not just the auth block, and not
+      // just the exact string "oauth2". Tool descriptions are ordinary editable prose (two
+      // tool modules already discuss OAuth in their comments), so a description that picked
+      // the word up would re-create exactly the scanner misclassification this card avoids.
+      expect(JSON.stringify(card).toLowerCase()).not.toContain("oauth");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card is readable cross-origin (browser-based validators fetch it directly)", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const res = await fetchCard(app.baseUrl);
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the card advertises the URL template the APP was built with (D28 wiring, end to end)", async () => {
+    // The route-level half of the D28 guard: production resolves MCP_URL_TEMPLATE at the
+    // composition root and hands it to the card, so what the app was built with is what the
+    // public document says. Injecting a non-default template here proves that whole path.
+    const app = await listen(
+      appWith({ tools: ALL_TOOLS, mcpUrlTemplate: "https://example.test/gateway/{key}" }),
+    );
+    try {
+      const card = await (await fetchCard(app.baseUrl)).json();
+      expect(card.authentication.description).toContain("https://example.test/gateway/{key}");
+      expect(card.authentication.description).not.toContain("mcp.seogrep.com");
     } finally {
       await app.close();
     }
