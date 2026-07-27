@@ -43,6 +43,56 @@ describe("loadEnv", () => {
 });
 
 /**
+ * SUPABASE_DB_URL structural contract. A malformed value (a left-over `[YOUR-PASSWORD]`
+ * placeholder) once satisfied min(1), so the gateway booted and pg-boss only crashed later
+ * at runtime: the worker crash-looped, Fly stopped it, and the async pipeline was down while
+ * /status stayed green. These cases pin the boot-time rejection with the REAL prod name.
+ */
+const INVALID_DB_URLS = [
+  ["not a url", /SUPABASE_DB_URL must be a valid URL/],
+  ["http://host:5432/db", /SUPABASE_DB_URL must use the postgres:\/\/ or postgresql:\/\/ scheme/],
+  ["postgresql://user:[YOUR-PASSWORD]@host:5432/db", /SUPABASE_DB_URL must not contain/],
+  ["postgresql:///db", /SUPABASE_DB_URL must include a host/],
+  ["", /SUPABASE_DB_URL is required/],
+] as const;
+
+describe("SUPABASE_DB_URL structural validation", () => {
+  it.each([
+    "postgresql://user:pass@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres",
+    "postgresql://user:pass@db.example.supabase.co/postgres",
+  ])("accepts the prod-shaped connection string %s", (dbUrl) => {
+    expect(loadEnv({ ...completeEnv, SUPABASE_DB_URL: dbUrl }).SUPABASE_DB_URL).toBe(dbUrl);
+  });
+
+  it.each(INVALID_DB_URLS)("rejects %s at boot", (dbUrl, expected) => {
+    expect(() => loadEnv({ ...completeEnv, SUPABASE_DB_URL: dbUrl })).toThrowError(expected);
+  });
+
+  it("uses a distinct message per violated rule", () => {
+    const messages = INVALID_DB_URLS.map(([dbUrl]) => {
+      try {
+        loadEnv({ ...completeEnv, SUPABASE_DB_URL: dbUrl });
+        return "accepted";
+      } catch (error) {
+        return (error as Error).message;
+      }
+    });
+    expect(new Set(messages).size).toBe(messages.length);
+  });
+
+  it("still aggregates a malformed SUPABASE_DB_URL with another missing key in one error", () => {
+    const partial: Record<string, string> = {
+      ...completeEnv,
+      SUPABASE_DB_URL: "postgresql://user:[YOUR-PASSWORD]@host:5432/db",
+    };
+    delete partial.SUPABASE_URL;
+    expect(() => loadEnv(partial)).toThrowError(
+      /SUPABASE_URL: .*SUPABASE_DB_URL must not contain/s,
+    );
+  });
+});
+
+/**
  * Negative cases for the two fail-closed readers (signed lesson #5, 2026-07-18): a missing
  * secret must fail loudly and NAME the real prod variable, never degrade silently. These pin
  * the CURRENT (already-correct) behaviour of requireWebBaseUrl / requireTokenEncryptionKey as
