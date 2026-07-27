@@ -13,6 +13,8 @@ import type { Json } from "../db.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { createCrawlHandler } from "./handlers/crawl.ts";
+import { reconcileStuckJobs, type ReconcileOutcome } from "./reaper.ts";
+import { metrics } from "../metrics.ts";
 
 /**
  * pg-boss consumer + per-tool handler registry. Real tool handlers arrive in
@@ -165,10 +167,72 @@ export async function executeJob(message: JobMessage): Promise<void> {
 }
 
 /**
- * Start the queue consumer. Registers the pg-boss work loop for JOBS_QUEUE;
- * handlers registered via registerToolHandler route the actual tool runs.
+ * How often the worker sweeps for stuck jobs. Comfortably above the reaper's own 15-minute
+ * staleness threshold in cost (one bounded query per sweep) and well below the hours a
+ * refund used to wait for a human to run scripts/reconcile.mjs by hand.
  */
-export async function startWorker(): Promise<void> {
+const REAPER_INTERVAL_MS = 10 * 60_000;
+
+export interface StartWorkerOptions {
+  /** Sweep period (default REAPER_INTERVAL_MS). Tests pin it small. */
+  readonly reaperIntervalMs?: number;
+  /** The sweep itself (default the real reconcileStuckJobs) — the DB-free test seam. */
+  readonly reconcile?: () => Promise<ReconcileOutcome>;
+}
+
+/** The live sweep timer, or null when the worker is stopped. At most ONE ever exists. */
+let reaperTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * One sweep. NEVER rejects: a failure is logged and dropped so a broken sweep can neither
+ * kill the worker (an unhandled rejection would, under Node's default policy) nor cancel
+ * the timer — the next tick simply tries again. Only a COMPLETED sweep is counted, so
+ * /status's lastReaperRunAt going stale is an honest "sweeps are failing" signal.
+ */
+async function runReaperTick(reconcile: () => Promise<ReconcileOutcome>): Promise<void> {
+  try {
+    const outcome = await reconcile();
+    metrics.recordReaperRun({ released: outcome.released });
+  } catch (error) {
+    console.error("reaper run failed:", error);
+  }
+}
+
+/**
+ * Start the periodic stuck-job sweep. Called by startWorker once the consumer is up, and
+ * driven directly by the fast-lane spec (which has no boss/DB to start). Idempotent: an
+ * existing timer is cleared first, so a repeated start can never stack two sweeps. The
+ * timer is unref'd — it must never be the reason the process stays alive.
+ *
+ * A plain interval, deliberately: pg-boss scheduling would need a second queue whose
+ * message shape is not a JobMessage, and the sweep needs no durability (a missed tick is
+ * picked up by the next one, and the reaper is idempotent by construction).
+ */
+export function startReaperTimer(opts: StartWorkerOptions = {}): void {
+  stopReaperTimer();
+  const reconcile = opts.reconcile ?? reconcileStuckJobs;
+  const intervalMs = opts.reaperIntervalMs ?? REAPER_INTERVAL_MS;
+  reaperTimer = setInterval(() => {
+    void runReaperTick(reconcile);
+  }, intervalMs);
+  reaperTimer.unref();
+}
+
+/** Cancel the sweep timer if one is running. Safe to call when none is. */
+function stopReaperTimer(): void {
+  if (reaperTimer !== null) {
+    clearInterval(reaperTimer);
+    reaperTimer = null;
+  }
+}
+
+/**
+ * Start the queue consumer. Registers the pg-boss work loop for JOBS_QUEUE;
+ * handlers registered via registerToolHandler route the actual tool runs. Once the
+ * consumer is up, the periodic stuck-job reaper starts alongside it (see
+ * startReaperTimer) — the worker process is the one place that owns both.
+ */
+export async function startWorker(opts: StartWorkerOptions = {}): Promise<void> {
   registerBuiltinHandlers();
   const boss = await getBoss();
   await boss.work<JobMessage>(JOBS_QUEUE, async (jobs) => {
@@ -176,9 +240,14 @@ export async function startWorker(): Promise<void> {
       await executeJob(job.data);
     }
   });
+  startReaperTimer(opts);
 }
 
-/** Graceful stop for the SIGTERM path: drains in-flight work via pg-boss. */
+/**
+ * Graceful stop for the SIGTERM path: cancels the reaper sweep FIRST (so no new sweep
+ * opens while the queue drains), then drains in-flight work via pg-boss.
+ */
 export async function stopWorker(): Promise<void> {
+  stopReaperTimer();
   await stopBoss();
 }
