@@ -642,12 +642,19 @@ describe("crawlSite — robots.txt unreachable: honest cause + one automatic ret
     }
   });
 
-  it("waits the injected delay between the two attempts (the retry is not a tight loop)", async () => {
+  it("waits the configured delay between the two attempts (the retry is not a tight loop)", async () => {
+    // The sleep is INJECTED and asserted by value, so this pins the seam exactly without
+    // the suite ever really sleeping — no wall clock, nothing timing-dependent to flake.
     const site = await startScriptedRobotsSite([503, 503]);
+    const retrySleep = vi.fn(async () => {});
     try {
-      const started = Date.now();
-      await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 120 });
-      expect(Date.now() - started).toBeGreaterThanOrEqual(100); // the delay seam is honored
+      await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        robotsRetryDelayMs: 120,
+        robotsRetrySleep: retrySleep,
+      });
+      expect(retrySleep).toHaveBeenCalledTimes(1); // waited once — between the two attempts
+      expect(retrySleep).toHaveBeenCalledWith(120); // with the configured delay, not 0
       expect(robotsHits(site)).toBe(2);
     } finally {
       await site.close();

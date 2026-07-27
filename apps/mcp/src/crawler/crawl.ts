@@ -61,9 +61,15 @@ export interface CrawlOptions {
   /**
    * Pause before the ONE automatic robots.txt retry, ms (default 2_000). A blip (a
    * restarting origin, a dropped connection) should not cost the tenant a whole crawl,
-   * but the retry must not hammer a struggling site either. Tests pin it to 0. Test knob.
+   * but the retry must not hammer a struggling site either. Test knob.
    */
   robotsRetryDelayMs?: number;
+  /**
+   * The sleep the robots retry waits on (default: the module's real timer sleep). Injected
+   * so specs assert the delay seam is honored WITH ITS EXACT VALUE instead of measuring a
+   * wall clock — no test ever really sleeps, and no assertion depends on timing. Test knob.
+   */
+  robotsRetrySleep?: (ms: number) => Promise<void>;
   /**
    * DNS resolver the SSRF guard uses (origin gate + cross-origin redirect checks).
    * Defaults to node:dns/promises; injected in tests so DNS is never real. Test knob.
@@ -582,10 +588,11 @@ async function loadRobotsWithRetry(
   timeoutMs: number,
   lookup: LookupFn,
   retryDelayMs: number,
+  retrySleep: (ms: number) => Promise<void>,
 ): Promise<RobotsLoad> {
   const first = await loadRobots(origin, timeoutMs, lookup);
   if (first.kind === "ok") return first;
-  await sleep(retryDelayMs);
+  await retrySleep(retryDelayMs);
   return loadRobots(origin, timeoutMs, lookup);
 }
 
@@ -694,6 +701,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const timeBudgetMs = opts.timeBudgetMs ?? DEFAULT_TIME_BUDGET_MS;
   const crawlDelayCapMs = opts.crawlDelayCapMs ?? DEFAULT_CRAWL_DELAY_CAP_MS;
   const robotsRetryDelayMs = opts.robotsRetryDelayMs ?? DEFAULT_ROBOTS_RETRY_DELAY_MS;
+  const robotsRetrySleep = opts.robotsRetrySleep ?? sleep;
   const lookup = opts.lookup ?? defaultLookup;
   const prefixes = normalizeIncludePaths(opts.includePaths);
 
@@ -705,7 +713,13 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   if (gateReason !== null) return blockedOrigin(originUrl, gateReason, fetchedAt);
 
   // One automatic retry first — a blip must not cost a whole crawl (loadRobotsWithRetry).
-  const robotsLoad = await loadRobotsWithRetry(originUrl, pageTimeoutMs, lookup, robotsRetryDelayMs);
+  const robotsLoad = await loadRobotsWithRetry(
+    originUrl,
+    pageTimeoutMs,
+    lookup,
+    robotsRetryDelayMs,
+    robotsRetrySleep,
+  );
   if (robotsLoad.kind === "unreachable") {
     // RFC 9309: an unreachable robots.txt (5xx / network failure) = complete disallow.
     // Stop before fetching anything else — the sitemap included. The policy is UNCHANGED
