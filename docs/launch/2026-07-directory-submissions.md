@@ -38,10 +38,27 @@ re-use it verbatim — this is the most-seen sentence we will ship. Do not trunc
 
 ---
 
-## 1. Official MCP Registry — registry.modelcontextprotocol.io
+## 1. Official MCP Registry — registry.modelcontextprotocol.io ✅ **PUBLISHED 2026-07-27**
 
-**Mechanism:** CLI (`mcp-publisher`), no review queue, immediate. Namespace via DNS:
-`com.seogrep/seogrep`.
+Live: `com.seogrep/seogrep` v1.0.0 — verified in the registry API (title, description,
+websiteUrl and the `{key}` streamable-http remote all present). The exact published
+document is committed at `docs/launch/mcp-registry-server.json`.
+
+How it was done (for the next version bump — edit the file, bump `version`, re-run the
+last two commands; `mcp-publisher` is installed via Homebrew, v1.8.0):
+- Keypair: `openssl genpkey -algorithm ed25519 -out ~/seogrep-mcp-registry.pem` (private
+  key stays on the operator's machine, mode 600 — never in the repo or chat).
+- DNS TXT on the **apex** `seogrep.com` (added alongside the existing Google-verification
+  and ImprovMX SPF records — never replace those, it would break support@ email):
+  `v=MCPv1; k=ed25519; p=<base64 of the raw 32-byte public key>`
+  Public key: `openssl pkey -in <pem> -pubout -outform DER | tail -c 32 | base64`
+- `mcp-publisher login dns --domain seogrep.com --private-key "$(openssl pkey -in <pem> -outform DER | tail -c 32 | xxd -p -c 64)"`
+- `mcp-publisher validate` then `mcp-publisher publish`
+- Schema note: `init` templates the current schema (`2025-12-11`); the older `2025-09-29`
+  validates but prints a deprecation warning.
+
+**Mechanism (reference):** CLI (`mcp-publisher`), no review queue, immediate. Namespace via
+DNS: `com.seogrep/seogrep`.
 
 **HUMAN steps:**
 1. Chief generates an Ed25519 keypair locally (private key stays with human; never in chat).
@@ -73,7 +90,7 @@ re-use it verbatim — this is the most-seen sentence we will ship. Do not trunc
 Note: registry requires the resolved endpoint to be publicly reachable — our per-user URL
 template is the documented, sanctioned pattern for exactly this (`isSecret: true`).
 
-## 2. PulseMCP — pulsemcp.com
+## 2. PulseMCP — pulsemcp.com ⏳ **waiting on auto-ingest (published upstream 2026-07-27)**
 
 Auto-ingests the Official Registry daily, processes weekly. **Do nothing after #1.**
 If not listed after a week: fallback form `pulsemcp.com/submit` (single URL field —
