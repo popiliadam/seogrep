@@ -1,7 +1,8 @@
 "use server";
 
-import { Paddle } from "@paddle/paddle-node-sdk";
+import { Environment, Paddle } from "@paddle/paddle-node-sdk";
 import { redirect } from "next/navigation";
+import { resolvePaddleEnvironment } from "../../../lib/paddle-env";
 import { createClient } from "../../../lib/supabase/server";
 
 /**
@@ -41,7 +42,12 @@ export async function openCustomerPortal(): Promise<void> {
     throw new Error("No active subscription to manage");
   }
 
-  const paddle = new Paddle(apiKey);
+  // Same NEXT_PUBLIC_PADDLE_ENV the checkout overlay uses, so the portal is minted against the
+  // environment the subscription actually lives in. Unresolved -> no options, SDK default kept.
+  const environment = resolvePaddleEnvironment();
+  const paddle = environment
+    ? new Paddle(apiKey, { environment: Environment[environment] })
+    : new Paddle(apiKey);
   // The portal session is scoped to the subscription's customer; fetch the customer id first.
   const paddleSubscription = await paddle.subscriptions.get(subscriptionId);
   const session = await paddle.customerPortalSessions.create(paddleSubscription.customerId, [
