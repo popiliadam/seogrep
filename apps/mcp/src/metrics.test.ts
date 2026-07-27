@@ -8,9 +8,17 @@ import { createMetrics } from "./metrics.ts";
 // and rate-limiter specs use to make time deterministic.
 
 describe("metrics", () => {
-  it("starts at zero errors and zero uptime", () => {
+  it("starts at zero errors, zero uptime and no reaper run", () => {
     const m = createMetrics(() => 1_000);
-    expect(m.snapshot()).toEqual({ uptimeSeconds: 0, errorsSinceBoot: 0 });
+    // Exhaustive on purpose: an accidentally added/renamed snapshot field must fail here,
+    // because /status spreads the snapshot verbatim and this is its shape contract.
+    expect(m.snapshot()).toEqual({
+      uptimeSeconds: 0,
+      errorsSinceBoot: 0,
+      reaperRuns: 0,
+      reservesReleased: 0,
+      lastReaperRunAt: null, // null until the worker's first sweep — never a fake timestamp
+    });
   });
 
   it("recordServerError increments errorsSinceBoot", () => {
@@ -41,6 +49,37 @@ describe("metrics", () => {
     expect(Object.isFrozen(snap)).toBe(true);
     expect(() => {
       (snap as { errorsSinceBoot: number }).errorsSinceBoot = 99;
+    }).toThrow();
+  });
+
+  it("recordReaperRun accumulates runs and released reserves, stamping the injected clock", () => {
+    let now = Date.parse("2026-07-27T10:00:00.000Z");
+    const m = createMetrics(() => now);
+    m.recordReaperRun({ released: 2 });
+    now += 60_000; // the second sweep runs a minute later
+    m.recordReaperRun({ released: 3 });
+    const snap = m.snapshot();
+    expect(snap.reaperRuns).toBe(2);
+    expect(snap.reservesReleased).toBe(5); // cumulative, not last-run
+    expect(snap.lastReaperRunAt).toBe("2026-07-27T10:01:00.000Z");
+  });
+
+  it("a sweep that released nothing still counts as a run (the heartbeat)", () => {
+    const m = createMetrics(() => Date.parse("2026-07-27T10:00:00.000Z"));
+    m.recordReaperRun({ released: 0 });
+    const snap = m.snapshot();
+    expect(snap.reaperRuns).toBe(1);
+    expect(snap.reservesReleased).toBe(0);
+    expect(snap.lastReaperRunAt).toBe("2026-07-27T10:00:00.000Z");
+  });
+
+  it("returns a frozen snapshot after a reaper run too", () => {
+    const m = createMetrics(() => 0);
+    m.recordReaperRun({ released: 1 });
+    const snap = m.snapshot();
+    expect(Object.isFrozen(snap)).toBe(true);
+    expect(() => {
+      (snap as { reaperRuns: number }).reaperRuns = 99;
     }).toThrow();
   });
 

@@ -391,6 +391,23 @@ describe("mcp gateway /status endpoint", () => {
     }
   });
 
+  it("GET /status exposes the in-worker reaper counters", async () => {
+    // The reaper runs in the WORKER process; the web process only reports its own (zero)
+    // counters. They reach /status purely through the metrics.snapshot() spread — the route
+    // itself knows nothing about them.
+    const app = await listen(appWith({ pendingJobs: () => Promise.resolve(0) }));
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(typeof body.reaperRuns).toBe("number");
+      expect(typeof body.reservesReleased).toBe("number");
+      expect(body.lastReaperRunAt).toBeNull(); // never swept in a web process
+    } finally {
+      await app.close();
+    }
+  });
+
   it("a request that hits the 500 path increments errorsSinceBoot seen on a later /status", async () => {
     // metrics is a process singleton shared by every app in this file, so assert the DELTA
     // (before -> after) rather than an absolute count: robust to any 5xx another test logged.

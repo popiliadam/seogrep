@@ -13,12 +13,29 @@ export interface MetricsSnapshot {
   readonly uptimeSeconds: number;
   /** Count of 5xx server errors observed since this process booted. */
   readonly errorsSinceBoot: number;
+  /** Completed stuck-job reaper sweeps since boot (the reaper's heartbeat). */
+  readonly reaperRuns: number;
+  /** Credit reserves the reaper refunded since boot — cumulative, not per-run. */
+  readonly reservesReleased: number;
+  /** ISO timestamp of the last completed sweep; null before the first one. */
+  readonly lastReaperRunAt: string | null;
 }
 
-/** The counter surface: a writer (recordServerError) plus two pure readers. */
+/** What a completed reaper sweep reports to the counters (a slice of ReconcileOutcome). */
+export interface ReaperRunOutcome {
+  /** Reserves refunded by this sweep. */
+  readonly released: number;
+}
+
+/** The counter surface: two writers plus two pure readers. */
 export interface Metrics {
   /** Increment the since-boot server-error (5xx) count. */
   readonly recordServerError: () => void;
+  /**
+   * Record ONE successfully completed reaper sweep. A failed sweep is never recorded, so a
+   * stale lastReaperRunAt is an honest "the reaper is not completing" signal on /status.
+   */
+  readonly recordReaperRun: (outcome: ReaperRunOutcome) => void;
   /** Whole seconds since boot, derived from the construction clock. */
   readonly uptimeSeconds: () => number;
   /** An immutable snapshot of the current counters. */
@@ -40,13 +57,30 @@ function toWholeSeconds(elapsedMs: number): number {
 export function createMetrics(clock: () => number = Date.now): Metrics {
   const bootMs = clock();
   let errorsSinceBoot = 0;
+  let reaperRuns = 0;
+  let reservesReleased = 0;
+  // Held as epoch ms (the clock's own unit) and formatted only on read, so the same
+  // injectable clock drives both uptime and this stamp.
+  let lastReaperRunMs: number | null = null;
   const uptimeSeconds = (): number => toWholeSeconds(clock() - bootMs);
   return {
     recordServerError: () => {
       errorsSinceBoot += 1;
     },
+    recordReaperRun: (outcome) => {
+      reaperRuns += 1;
+      reservesReleased += outcome.released;
+      lastReaperRunMs = clock();
+    },
     uptimeSeconds,
-    snapshot: () => Object.freeze({ uptimeSeconds: uptimeSeconds(), errorsSinceBoot }),
+    snapshot: () =>
+      Object.freeze({
+        uptimeSeconds: uptimeSeconds(),
+        errorsSinceBoot,
+        reaperRuns,
+        reservesReleased,
+        lastReaperRunAt: lastReaperRunMs === null ? null : new Date(lastReaperRunMs).toISOString(),
+      }),
   };
 }
 
