@@ -7,7 +7,23 @@
 
 ### Faz 4 açılışı (2026-07-27 — bu oturum)
 - Kickoff (docs/plans/2026-07-21-faz4-kickoff.md) uygulandı: prod smoke YEŞİL (healthz ok · /status ok uptime ~5.6g/0 hata/pendingJobs 0 · seogrep.com 200 · verify 16/16 · PR #21 LICENSE MERGED) → üç audit yan yana sunuldu → **insan GO verdi** ("en iyi senaryo, şef önerisine göre devam").
-- Sıradaki: Faz 4 planı (`docs/plans/2026-07-27-faz4-launch.md`) — spec §9 A-E + aday-backlog + G-tablosu triyajı. Fiyat/kredi rakamları (NEVER#6) + Paddle live onboarding + yayın butonları İNSAN kapısı kalır.
+- Plan: `docs/plans/2026-07-27-faz4-launch.md` (triyaj dahil — MVP'ye girenler + gerekçeli ertelenenler).
+
+### Faz 4 ilerleme — dal `feat/faz4-launch` (PUSH/PR/MERGE İNSAN KAPISI)
+**Kod-tamam + hakem-onaylı (11):**
+- **T-A1** Paddle server-SDK environment switch (keşif bug'ı: `new Paddle(apiKey)` environment'sız → sandbox key'le LIVE API tabanı). Hakem taze Fable: para-yolu bayt-özdeş, 401-zero-side-effect korunuyor.
+- **T-A2** `docs/runbooks/paddle-live-cutover.md` — insan+şef live geçiş prosedürü (price-map server-env tuzağı + NEVER#3 canlı idempotency smoke + rollback).
+- **T-L1** `SUPABASE_DB_URL` yapı doğrulaması + `.trim()` (ders L1 KOD tarafı kapandı; imza insanda). Hakem bulgusu (boşluk-dolgulu URL `host:"base"` çöpüne dönüyordu) fix dalgasıyla kapatıldı.
+- **T-D1** Zamanlı reaper (worker içinde 10 dk) + `/status`'a reaper sayaçları + `goals/uptime.md`. Hakem: örtüşen tick'ler bile DB-arbitrajlı (`already settled`) — çift-iade imkânsız.
+- **T-S1** **A-C1 DNS-rebinding KAPANDI** (undici IP-pinning; kill-shot + TLS negatif kontrolü). Hakem: fix eskiden açık İKİ pencereyi kapatıyor (ilk hop + same-origin redirect hop'ları).
+- **T-U1** GSC banner (7 durum, sessiz yol kalmadı) + `/app/connection`'da proje×GSC-bağlantı listesi. Tenant izolasyonu 3 katmanda kanıtlı.
+- **T-U2** robots-5xx dürüst mesaj + tek retry. **Charge-clause bilinçli YAZILMADI** (kod iadeyi garanti etmiyor — hakem bunu zorunlu buldu). Fix dalgası: wall-clock assertion → injected-sleep.
+- **T-B1** Blog altyapısı + **sitemap 6 → 43 URL** (docs sayfaları artık listeli) + `/app` robots-disallow. *(hakemde)*
+- **T-C1** PH/HN/X launch taslakları · **T-C2** MCP dizin playbook'u (Resmî Registry birinci; T-C3 gereksinimi buradan çıktı) · **T-G1** `goals/purchase-flow-live.md`.
+- Devam: **T-C3** (sabit `/mcp` + `x-api-key` header-auth), **T-B2** (2 blog yazısı).
+- Süreç dersi adayı (imza bekler): paralel işçiler AYNI çalışma ağacında hayalet test-hatası üretir → worktree izolasyonu ya da `turbo --filter` kapısı.
+
+**İnsan kuyruğu (kod bunları beklemiyor):** dal push+PR+merge · Paddle LIVE onboarding + nihai fiyat oturumu (NEVER#6) + canlı $10 smoke · UptimeRobot kurulumu (`goals/evidence/uptime-monitor.txt`) · `MCP_SMOKE_URL` kalıcı set (ders L2) · mcp.so $39 kararı · Anthropic dizini için Team-org kararı + `mcp-review@anthropic.com` ön-teması · repo PRIVATE · OAuth verification · L1/L2 ders imzaları.
 
 ## Önceki faz durumu: 3.5 + CODEX-REMEDIATION (2026-07-21: Faz 3.5 [8 iş] + Codex çapraz-audit düzeltmesi [7 dalga]; verify+verify-db+goals **14/14**; İKİ whole-branch review READY-TO-MERGE; merge+deploy+0011 cloud-apply+T0 rotasyon TAMAMLANDI)
 
