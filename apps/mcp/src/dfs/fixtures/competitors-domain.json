@@ -1,0 +1,188 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.6124 sec.",
+  "cost": 0.132,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07281200-0000-0000-0000-fixture0004",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.5981 sec.",
+      "cost": 0.132,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "competitors_domain", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "competitors_domain",
+        "se_type": "google",
+        "target": "example.com",
+        "location_code": 2840,
+        "language_code": "en",
+        "limit": 1000,
+        "item_types": ["organic"],
+        "order_by": ["metrics.organic.count,desc"]
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "target": "example.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 47,
+          "items_count": 5,
+          "items": [
+            {
+              "se_type": "google",
+              "domain": "example.com",
+              "avg_position": 11.2,
+              "sum_position": 59494,
+              "intersections": 5312,
+              "full_domain_metrics": {
+                "organic": {
+                  "pos_1": 4,
+                  "pos_2_3": 11,
+                  "pos_4_10": 92,
+                  "pos_11_20": 240,
+                  "etv": 15234.5,
+                  "count": 5312,
+                  "estimated_paid_traffic_cost": 48120.75
+                }
+              },
+              "metrics": {
+                "organic": {
+                  "pos_1": 4,
+                  "pos_2_3": 11,
+                  "pos_4_10": 92,
+                  "pos_11_20": 240,
+                  "etv": 15234.5,
+                  "count": 5312,
+                  "estimated_paid_traffic_cost": 48120.75
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "domain": "rival-one.example",
+              "avg_position": 14.2,
+              "sum_position": 26128,
+              "intersections": 1840,
+              "full_domain_metrics": {
+                "organic": {
+                  "pos_1": 9,
+                  "pos_2_3": 24,
+                  "pos_4_10": 140,
+                  "pos_11_20": 388,
+                  "etv": 28110.9,
+                  "count": 9024,
+                  "estimated_paid_traffic_cost": 91044.2
+                }
+              },
+              "metrics": {
+                "organic": {
+                  "pos_1": 3,
+                  "pos_2_3": 8,
+                  "pos_4_10": 61,
+                  "pos_11_20": 155,
+                  "etv": 6120.4,
+                  "count": 1840,
+                  "estimated_paid_traffic_cost": 18220.6
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "domain": "rival-two.example",
+              "avg_position": 21.7,
+              "sum_position": 23913,
+              "intersections": 1102,
+              "full_domain_metrics": {
+                "organic": {
+                  "pos_1": 2,
+                  "pos_2_3": 7,
+                  "pos_4_10": 48,
+                  "pos_11_20": 190,
+                  "etv": 8402.1,
+                  "count": 3711,
+                  "estimated_paid_traffic_cost": 26410.0
+                }
+              },
+              "metrics": {
+                "organic": {
+                  "pos_1": 1,
+                  "pos_2_3": 2,
+                  "pos_4_10": 19,
+                  "pos_11_20": 84,
+                  "etv": 2044.8,
+                  "count": 1102,
+                  "estimated_paid_traffic_cost": 6210.4
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "domain": "rival-three.example",
+              "avg_position": null,
+              "sum_position": null,
+              "intersections": 640,
+              "full_domain_metrics": {
+                "organic": {
+                  "pos_1": 0,
+                  "pos_2_3": 1,
+                  "pos_4_10": 12,
+                  "pos_11_20": 66,
+                  "etv": 1180.3,
+                  "count": 1402,
+                  "estimated_paid_traffic_cost": 3980.1
+                }
+              },
+              "metrics": {
+                "organic": {
+                  "pos_1": 0,
+                  "pos_2_3": 1,
+                  "pos_4_10": 7,
+                  "pos_11_20": 40,
+                  "etv": 640.2,
+                  "count": 640,
+                  "estimated_paid_traffic_cost": 1802.7
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "domain": "rival-four.example",
+              "avg_position": 38.4,
+              "sum_position": 8064,
+              "intersections": 210,
+              "full_domain_metrics": {
+                "organic": {
+                  "pos_1": 0,
+                  "pos_2_3": 0,
+                  "pos_4_10": 3,
+                  "pos_11_20": 18,
+                  "etv": 204.6,
+                  "count": 588,
+                  "estimated_paid_traffic_cost": 610.9
+                }
+              },
+              "metrics": {
+                "organic": {
+                  "pos_1": 0,
+                  "pos_2_3": 0,
+                  "pos_4_10": 1,
+                  "pos_11_20": 9,
+                  "etv": 88.4,
+                  "count": 210,
+                  "estimated_paid_traffic_cost": 240.1
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

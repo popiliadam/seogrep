@@ -1,0 +1,89 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2946 sec.",
+  "cost": 0.0101,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07281200-0000-0000-0000-fixture0005",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.1879 sec.",
+      "cost": 0.0101,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "domain_rank_overview", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "domain_rank_overview",
+        "se_type": "google",
+        "target": "example.com",
+        "language_code": "en",
+        "location_code": 2840
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "target": "example.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 1,
+          "items_count": 1,
+          "items": [
+            {
+              "se_type": "google",
+              "location_code": 2840,
+              "language_code": "en",
+              "metrics": {
+                "organic": {
+                  "pos_1": 11,
+                  "pos_2_3": 28,
+                  "pos_4_10": 100,
+                  "pos_11_20": 135,
+                  "pos_21_30": 157,
+                  "pos_31_40": 174,
+                  "pos_41_50": 203,
+                  "pos_51_60": 220,
+                  "pos_61_70": 232,
+                  "pos_71_80": 202,
+                  "pos_81_90": 200,
+                  "pos_91_100": 126,
+                  "etv": 3055.741419672966,
+                  "count": 1788,
+                  "estimated_paid_traffic_cost": 15078.99657046888,
+                  "is_new": 661,
+                  "is_up": 757,
+                  "is_down": 418,
+                  "is_lost": 547
+                },
+                "paid": {
+                  "pos_1": 7,
+                  "pos_2_3": 4,
+                  "pos_4_10": 0,
+                  "pos_11_20": 0,
+                  "pos_21_30": 0,
+                  "pos_31_40": 0,
+                  "pos_41_50": 0,
+                  "pos_51_60": 0,
+                  "pos_61_70": 0,
+                  "pos_71_80": 0,
+                  "pos_81_90": 0,
+                  "pos_91_100": 0,
+                  "etv": 32.17799982428551,
+                  "count": 11,
+                  "estimated_paid_traffic_cost": 275.8384747505188,
+                  "is_new": 2,
+                  "is_up": 11,
+                  "is_down": 0,
+                  "is_lost": 0
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
