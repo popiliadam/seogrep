@@ -9,7 +9,7 @@ import {
   mcpUrlTemplate,
   tokenKeyBytes,
 } from "@pseo/core";
-import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
+import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
 import { revokeGoogleToken } from "../../../lib/gsc/revoke";
@@ -28,11 +28,16 @@ import { createClient } from "../../../lib/supabase/server";
 const CONNECTION_PATH = "/app/connection";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Cap on simultaneously-active keys per user, enforced when GENERATING a fresh key. Rotate is
-// deliberately EXEMPT: it is net-neutral on the active count (it mints one and revokes one,
-// create-first), so applying the cap there would wedge a user who is legitimately at the limit
-// and wants to roll their credential. The check is best-effort (a count read, not an atomic
-// constraint) — it bounds accidental/abusive growth, not a money or security invariant.
+// Cap on simultaneously-active keys per user, enforced on BOTH mint paths (M-22).
+//
+// Rotate used to be EXEMPT on the argument that it is net-neutral (mint one, revoke one). That
+// argument only holds while the OLD key is actually active — which the ownership check did not
+// require, so rotating an already-revoked id minted a key and revoked nothing: net +1, repeatable,
+// no ceiling. Liveness is now part of the ownership check and rotate consults the count before it
+// mints, so neither path can grow the active set past the cap.
+//
+// The check is best-effort (a count read, not an atomic constraint) — it bounds accidental/abusive
+// growth, not a money or security invariant.
 const MAX_ACTIVE_KEYS = 5;
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
@@ -57,16 +62,30 @@ async function requireUserId(): Promise<string> {
 }
 
 /**
- * Authorize a key mutation: the target must exist and belong to `userId`. Returns the
- * same opaque "Key not found" for a malformed id, a missing key, and another user's
- * key, so nothing about other users' keys leaks.
+ * Authorize a key mutation: the target must exist, belong to `userId`, and still be ACTIVE.
+ * Returns the same opaque "Key not found" for a malformed id, a missing key, another user's
+ * key, and a revoked one, so nothing about other users' keys leaks.
+ *
+ * LIVENESS is part of the authorization, not a nicety (M-22): a revoked key is not a
+ * credential anyone can still be holding, so rotating or re-revoking one is never a real
+ * request — and treating it as one is what let rotate mint without revoking anything.
+ *
+ * The lookup runs `listKeys` on the SERVICE client rather than the caller's RLS-scoped one:
+ * the explicit `user_id` filter it carries IS the tenant guard here (constitution NEVER #4),
+ * the same posture as the other service-role reads on this table (countActiveKeys). It also
+ * answers ownership and liveness in ONE round trip. The RSC render path keeps using the
+ * caller's own client, where RLS remains the scope.
  */
-async function assertOwnedBy(service: ServiceClient, keyId: string, userId: string): Promise<void> {
+async function assertActiveKeyOwnedBy(
+  service: ServiceClient,
+  keyId: string,
+  userId: string,
+): Promise<void> {
   if (!UUID_RE.test(keyId)) {
     throw new Error("Key not found");
   }
-  const owner = await getKeyOwner(service, keyId);
-  if (owner !== userId) {
+  const key = (await listKeys(service, userId)).find((candidate) => candidate.id === keyId);
+  if (!key || key.revokedAt !== null) {
     throw new Error("Key not found");
   }
 }
@@ -103,7 +122,19 @@ export async function createKeyAction(): Promise<GeneratedKeyResult> {
 export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyResult> {
   const userId = await requireUserId();
   const service = createServiceClient();
-  await assertOwnedBy(service, oldKeyId, userId);
+  await assertActiveKeyOwnedBy(service, oldKeyId, userId);
+  // Cap BEFORE the mint (M-22). The old key is required to be active above, so it is inside
+  // `activeKeys` and leaves the set when we revoke it: the post-rotation count is `activeKeys`
+  // itself. Refuse only when even that net-neutral mint would land above the cap — a user
+  // already over it — so a legitimate rotation AT the limit still goes through, and a refused
+  // one never creates a row it would then have to clean up.
+  const activeKeys = await countActiveKeys(service, userId);
+  if (activeKeys - 1 >= MAX_ACTIVE_KEYS) {
+    throw new Error(
+      `You have more than ${MAX_ACTIVE_KEYS} active API keys, the maximum. ` +
+        "Revoke one before rotating.",
+    );
+  }
   // Chef order: mint + insert the new key FIRST, then revoke the old one, so the user is
   // never left without a copyable key (a brief double-active window is acceptable).
   const issued = await issueKey(service, userId);
@@ -132,7 +163,7 @@ export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyRes
 export async function revokeKeyAction(keyId: string): Promise<void> {
   const userId = await requireUserId();
   const service = createServiceClient();
-  await assertOwnedBy(service, keyId, userId);
+  await assertActiveKeyOwnedBy(service, keyId, userId);
   await revokeKey(service, keyId);
   revalidatePath(CONNECTION_PATH);
 }
