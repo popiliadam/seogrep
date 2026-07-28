@@ -93,8 +93,9 @@ deletion of the stored token by emailing support@seogrep.com.
 4. İzin verilir → app'e dönüş: bağlantı "connected" durumu gösterilir.
 5. GSC verisinin KULLANIMI gösterilir: bir analiz/rapor çıktısında Search Console'dan gelen bölüm.
 6. (Opsiyonel kapanış) myaccount.google.com/permissions sayfasında SeoGrep erişiminin listelendiği
-   3 sn gösterilir (kullanıcı-taraflı iptal yolu). DİKKAT: üründe GSC-disconnect butonu YOK
-   (2026-07-28 tespiti; küçük iş olarak backlog'da) — videoda ve formda disconnect İDDİA EDİLMEZ.
+   3 sn gösterilir (kullanıcı-taraflı iptal yolu). GÜNCELLEME (2026-07-28 akşam): üründe Disconnect
+   artık VAR — /app/connection, token siler + Google revoke (Fable-hakemli). Başvuru video/gerekçe
+   istenmeden kapandığı için buradaki "disconnect iddia edilmez" uyarısı tarihsel nottur.
 
 ## Bekleme sırasında
 
