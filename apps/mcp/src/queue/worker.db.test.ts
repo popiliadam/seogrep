@@ -284,6 +284,35 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
   });
 
+  it("executeJob claim-path failure (M-01): recorded on the job, never an unhandled throw", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    let ran = false;
+    registerToolHandler("audit_tech", async () => {
+      ran = true;
+      return null;
+    });
+
+    // getJob and markJobRunning used to sit OUTSIDE executeJob's try, so a blip there escaped
+    // as a rejected promise: the jobs row stayed `queued` forever and the queue message was
+    // consumed. The row must carry the outcome instead — that is executeJob's whole contract.
+    const spy = vi.spyOn(boss, "getJob").mockRejectedValueOnce(new Error("jobs read timed out"));
+    try {
+      await expect(
+        executeJob({ jobId, userId, tool: "audit_tech", payload: {} }),
+      ).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(ran).toBe(false);
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain("jobs read timed out");
+    expect(await ledgerKinds(userId)).toEqual(["grant"]); // failed before any reserve
+  });
+
   it("executeJob with no registered handler marks the job failed", async () => {
     const userId = await makeUserId();
     const jobId = await makeQueuedJob(userId, "generate_report");

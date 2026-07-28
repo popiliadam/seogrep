@@ -93,11 +93,25 @@ function errorDetail(error: unknown): string {
 const COMMIT_FAILED_ERROR =
   "the tool ran but its credit charge could not be settled — the reserve is left open and reconciliation refunds it automatically; re-run the tool";
 
-/** The fail-mark for a withCredits rejection: honest for the commit shape, raw otherwise. */
+/** The fail-mark for a rejection inside executeJob: honest for the commit shape, raw otherwise. */
 function failureDetail(error: unknown): string {
   return isReserveCommitFailed(error)
     ? `${COMMIT_FAILED_ERROR} (${error.message})`
     : errorDetail(error);
+}
+
+/**
+ * failJob that cannot itself break executeJob's never-throws contract. The claim path is now
+ * inside the main try (M-01), and its most likely failure is the database being unreachable —
+ * in which case the recording write fails for the same reason. Log and give up rather than
+ * turning a recorded failure into an unhandled rejection that kills the worker.
+ */
+async function failJobSafely(jobId: string, detail: string): Promise<void> {
+  try {
+    await failJob(jobId, detail);
+  } catch (markError) {
+    console.error(`executeJob: could not record failure on job ${jobId}: ${errorDetail(markError)}`);
+  }
 }
 
 /**
@@ -120,49 +134,55 @@ export async function executeJob(message: JobMessage): Promise<void> {
     return;
   }
 
-  const job = await getJob(jobId);
-  if (!job) {
-    console.error(`executeJob: jobs row ${jobId} not found; dropping message`);
-    return;
-  }
-  if (job.user_id !== userId) {
-    // Tenant-isolation guard: the queue message's userId must match the jobs
-    // row's owner before the handler runs or any credit reserve opens. A
-    // mismatch means a forged/corrupted message or a caller that resolved
-    // job ownership incorrectly — fail closed instead of running (and
-    // potentially billing) someone else's job under the wrong identity.
-    // This runs BEFORE the claim so a mismatched delivery never even flips the
-    // row to running (started_at stays NULL).
-    console.error(`executeJob: job ${jobId} does not belong to message userId ${userId}; failing`);
-    await failJob(jobId, "job owner mismatch: refusing to execute under a different user_id");
-    return;
-  }
-
-  // Atomic claim: flip queued -> running ONLY if still queued (see markJobRunning). This is
-  // the single money-safe gate against double-reserve (B-I1): a redelivery or a second
-  // concurrent consumer that loses the race gets claimed=false and returns here, BEFORE any
-  // reserve opens. It replaces the old read-status-then-unconditional-mark, whose gap two
-  // concurrent deliveries could both slip through and each reserve credits.
-  const claimed = await markJobRunning(jobId);
-  if (!claimed) {
-    console.warn(`executeJob: job ${jobId} was not claimable (already claimed or not queued); skipping`);
-    return;
-  }
-
   let result: Json | null;
   try {
+    // The CLAIM PATH runs inside this try (M-01). getJob and markJobRunning used to sit
+    // outside it, so a blip in either escaped executeJob as a rejected promise: the message
+    // was consumed, nothing was recorded, and the row stayed `queued` forever — the exact
+    // shape the reaper's new queued lane also backstops. The jobs row is the source of truth
+    // for the outcome, so every failure from here on must land ON it.
+    const job = await getJob(jobId);
+    if (!job) {
+      console.error(`executeJob: jobs row ${jobId} not found; dropping message`);
+      return;
+    }
+    if (job.user_id !== userId) {
+      // Tenant-isolation guard: the queue message's userId must match the jobs
+      // row's owner before the handler runs or any credit reserve opens. A
+      // mismatch means a forged/corrupted message or a caller that resolved
+      // job ownership incorrectly — fail closed instead of running (and
+      // potentially billing) someone else's job under the wrong identity.
+      // This runs BEFORE the claim so a mismatched delivery never even flips the
+      // row to running (started_at stays NULL).
+      console.error(`executeJob: job ${jobId} does not belong to message userId ${userId}; failing`);
+      await failJob(jobId, "job owner mismatch: refusing to execute under a different user_id");
+      return;
+    }
+
+    // Atomic claim: flip queued -> running ONLY if still queued (see markJobRunning). This is
+    // the single money-safe gate against double-reserve (B-I1): a redelivery or a second
+    // concurrent consumer that loses the race gets claimed=false and returns here, BEFORE any
+    // reserve opens. It replaces the old read-status-then-unconditional-mark, whose gap two
+    // concurrent deliveries could both slip through and each reserve credits.
+    const claimed = await markJobRunning(jobId);
+    if (!claimed) {
+      console.warn(`executeJob: job ${jobId} was not claimable (already claimed or not queued); skipping`);
+      return;
+    }
+
     result = await withCredits({ userId }, { tool, jobId }, () =>
       handler({ jobId, userId, payload }),
     );
   } catch (error) {
-    // withCredits threw. Two shapes reach here, per guard.ts's contract:
-    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded failure),
-    //     recorded with the raw detail because that detail IS the story;
+    // Three shapes reach here:
+    //   • a claim-path error (getJob / markJobRunning) — no reserve ever opened;
+    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded
+    //     failure), recorded with the raw detail because that detail IS the story;
     //   • a commit_reserve failure — the guard leaves the reserve OPEN (money direction and
     //     reasoning in guard.ts), so this gets its own honest wording. That distinguishing
     //     signal (ReserveCommitFailedError) is the Faz-4 follow-up this comment used to ask
     //     for; the reserve is refunded by reaper.ts's ledger-keyed sweep, not left forever.
-    await failJob(jobId, failureDetail(error));
+    await failJobSafely(jobId, failureDetail(error));
     return;
   }
 
@@ -214,7 +234,11 @@ let reaperTimer: ReturnType<typeof setInterval> | null = null;
 async function runReaperTick(reconcile: () => Promise<ReconcileOutcome>): Promise<void> {
   try {
     const outcome = await reconcile();
-    metrics.recordReaperRun({ released: outcome.released });
+    // BOTH lanes count as refunds — the ledger lane's releases are real money returned, so
+    // leaving them out would under-report the one counter an operator reads as "refunds are
+    // happening". The heartbeat line below keeps its exact shape; the ledger lane writes its
+    // own `orphan reserve sweep:` line from reaper.ts whenever it finds something.
+    metrics.recordReaperRun({ released: outcome.released + outcome.orphanReleased });
     console.warn(
       `reaper sweep: scanned=${outcome.scanned} released=${outcome.released}` +
         ` alreadySettled=${outcome.alreadySettled} failed=${outcome.failed}` +
