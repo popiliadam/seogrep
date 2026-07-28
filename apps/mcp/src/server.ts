@@ -72,6 +72,13 @@ export interface AppDeps {
    */
   readonly tools?: readonly RegisteredTool[];
   /**
+   * Per-IP throttle for the PUBLIC `/status` endpoint, on its OWN accounting store —
+   * deliberately not `ipThrottle` above, so polling `/status` can never spend the flood
+   * budget that protects the MCP routes (the same separation the capability card keeps).
+   * Optional like the rest: DB-free unit tests omit it and `/status` answers ungated.
+   */
+  readonly statusThrottle?: RateLimiter;
+  /**
    * Backlog reader for the `/status` operator signal: the count of `queued`+`running`
    * jobs. Optional and injected exactly like ipThrottle above — the production root wires
    * the DB-backed countPendingJobs; DB-free unit tests omit it, in which case `/status`
@@ -146,6 +153,14 @@ function buildDefaultDeps(): AppDeps {
     // WAF/CDN — out of scope for beta. This shares the per-key limiter's accepted
     // per-process limitation (a multi-instance deployment throttles per instance).
     ipThrottle: createRateLimiter({ capacity: 240, refillPerSecond: 4, maxEntries: 10_000 }),
+    // Per-IP throttle for the PUBLIC /status endpoint, on its OWN store. Capacity/refill:
+    // 60 burst at 1/s is the same shape as the per-KEY allowance, far above any real
+    // consumer of this route (a monitor polls every 15-60s, a human refreshes by hand) while
+    // still capping what one anonymous IP can extract. The cache above is what bounds the
+    // DATABASE cost under a flood; this bounds the cheaper HTTP/serialisation cost.
+    // maxEntries bounds memory under an IP-rotating flood, exactly as on ipThrottle. A
+    // separate instance means separate accounting: /status must never spend the MCP budget.
+    statusThrottle: createRateLimiter({ capacity: 60, refillPerSecond: 1, maxEntries: 10_000 }),
     tools: ALL_TOOLS,
     // Backlog count for /status, over the SAME service client. Read-only, non-tenant
     // aggregate (see countPendingJobs). The signal is threaded through so the /status
@@ -552,11 +567,17 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // nothing per-user — so it is as safe to DISCLOSE as /healthz. Being anonymous, though, it
   // must also be cheap to ABUSE — a separate property, and the one it lacked: N anonymous
   // hits became N unindexed exact counts on the database auth, the queue and the ledger
-  // share. A short-TTL single-flight cache now fronts the bounded, CANCELLABLE read (N
-  // requests -> at most one query per TTL). Best-effort contract unchanged: on a slow or
-  // broken DB it degrades to pendingJobs:null and STILL answers ok:true.
+  // share. Three gates now stand in front, cheapest first: a per-IP throttle on its own
+  // budget (in-memory, zero I/O), then a short-TTL single-flight cache (N requests -> at
+  // most one query per TTL), and only then the bounded, CANCELLABLE read. Best-effort
+  // contract unchanged: on a slow or broken DB it degrades to null and STILL answers ok.
   const readCachedPendingJobs = createPendingJobsCache(deps.pendingJobs);
-  app.get("/status", async (_req, res) => {
+  app.get("/status", async (req, res) => {
+    // Throttle FIRST: a denied /status costs one in-memory token check and nothing else.
+    if (deps.statusThrottle && !deps.statusThrottle.tryConsume(clientIpOf(req))) {
+      res.status(429).json({ ok: false, error: "Rate limit exceeded" });
+      return;
+    }
     const pendingJobs = await readCachedPendingJobs();
     res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
   });

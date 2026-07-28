@@ -1228,8 +1228,8 @@ describe("mcp gateway security response headers (L-12)", () => {
 // Three properties close it, and each is pinned below:
 //   1. CANCELLATION — when the deadline wins, the underlying read is aborted, not orphaned.
 //   2. CACHE        — N concurrent requests cost at most ONE query (proven with a counter).
-//   3. THROTTLE     — a per-IP gate, on its own budget, before any read (next commit).
-// This commit lands (2). /healthz is deliberately excluded from all three (uptime probe).
+//   3. THROTTLE     — a per-IP gate, on its own budget, that answers before any read.
+// /healthz is deliberately excluded from all three (it is the live uptime probe).
 // ---------------------------------------------------------------------------
 
 describe("readPendingJobsBounded cancellation (H-05)", () => {
@@ -1360,8 +1360,58 @@ describe("mcp gateway /status flood resistance (H-05)", () => {
     }
   });
 
-  it("leaves /healthz un-cached and untouched (the uptime probe answers every time)", async () => {
-    const app = await listen(appWith());
+  it("throttles a per-IP /status flood with 429 and reads NOTHING once throttled", async () => {
+    let queries = 0;
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          queries += 1;
+          return Promise.resolve(0);
+        },
+        statusThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }),
+      }),
+    );
+    try {
+      const first = await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP });
+      expect(first.status).toBe(200);
+
+      const second = await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP });
+      expect(second.status).toBe(429);
+      expect((await second.json()).ok).toBe(false);
+
+      expect(queries).toBe(1); // the 429 never reached the backlog reader
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does NOT spend the MCP flood budget (a /status poll cannot lock out the real endpoint)", async () => {
+    // Same discipline as the capability card: the two gates keep SEPARATE accounting, so a
+    // scanner hammering /status can never exhaust the budget protecting /mcp.
+    const authenticate = vi.fn(() => Promise.resolve(UNAUTHORIZED));
+    const app = await listen(
+      appWith({
+        authenticate,
+        ipThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }),
+        statusThrottle: createRateLimiter({ capacity: 50, refillPerSecond: 0 }),
+      }),
+    );
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        expect((await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP })).status).toBe(200);
+      }
+      const mcp = await postRpcWith(app.baseUrl, "sg_statuskey001", FLOOD_IP, TOOLS_LIST);
+      expect(mcp.status).toBe(401); // reached the lookup — the MCP token was never spent
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves /healthz un-throttled and un-cached (the uptime probe must never 429)", async () => {
+    const app = await listen(
+      appWith({ statusThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }) }),
+    );
     try {
       for (let i = 0; i < 5; i += 1) {
         const res = await fetch(`${app.baseUrl}/healthz`, { headers: FLOOD_IP });
