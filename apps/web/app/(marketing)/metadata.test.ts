@@ -47,3 +47,20 @@ describe("marketing page metadata", () => {
     }
   });
 });
+
+// The two footer policies went effective on 28 July 2026, the same date as /refunds. Their <meta>
+// must not carry the pre-launch framing the pages themselves dropped: a search result that still
+// reads "draft" undoes the page that no longer does.
+const POLICIES = [
+  ["/terms", terms],
+  ["/privacy", privacy],
+] as const;
+
+describe("footer policy metadata", () => {
+  it("carries no draft or pre-launch framing", () => {
+    for (const [route, meta] of POLICIES) {
+      expect(meta.description as string, `${route} description`).not.toMatch(/\bdrafts?\b|before launch/i);
+      expect(meta.title as string, `${route} title`).not.toMatch(/\bdrafts?\b/i);
+    }
+  });
+});

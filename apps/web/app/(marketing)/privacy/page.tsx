@@ -9,19 +9,19 @@ export const metadata: Metadata = {
 const SECTIONS = [
   {
     heading: "What we collect",
-    body: "We collect the email address you use to join the waitlist or create an account, your account credentials (handled by our authentication provider), and the site data needed to run your analyses. Payments are handled by our payment provider — we never see your full card details.",
+    body: "We collect the email address you use to join the waitlist or create an account, your account credentials (handled by our authentication provider), and the site data needed to run your analyses. If you connect Google Search Console, we store that connection's Google refresh token encrypted at rest, and we ask Google for read-only access only — SeoGrep never requests permission to change your property. Payments are handled by Paddle, our merchant of record — we never see your full card details.",
   },
   {
     heading: "How we use it",
-    body: "We use your email to send waitlist and launch updates. Account and site data are used to run the crawls, audits, and analyses you request and to operate the service.",
+    body: "We use your email to send waitlist and launch updates, and account email such as the one-time welcome message. Account and site data are used to run the crawls, audits, and analyses you request and to operate the service.",
   },
   {
     heading: "Data retention",
-    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account. To have your data deleted, email us at support@seogrep.com and we will remove it.",
+    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account, and every report you generate also gets an unguessable public link so you can share it — anyone holding that link can open the report without signing in. To have your data deleted, email us at support@seogrep.com.",
   },
   {
     heading: "Processors we use",
-    body: "We use Supabase for authentication and our database (hosted in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision), Paddle as our merchant of record for payments and billing, Resend for transactional email and the email list, and PostHog for product analytics, hosted in the EU. These providers process data only to deliver those functions.",
+    body: "We use Supabase for authentication and our database, Netlify to host the website, and Fly.io to run the analysis service; the database and the analysis service both run in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision. Paddle is our merchant of record for payments and billing, Resend sends transactional email and holds the email list, and PostHog, hosted in the EU, receives product analytics keyed to a hashed identifier rather than your email address. When you connect Search Console we call Google's API with your read-only token, and keyword research — when that feature is switched on — sends the keywords you ask about to DataForSEO. These providers process data only to deliver those functions.",
   },
   {
     heading: "AI training",
@@ -29,7 +29,11 @@ const SECTIONS = [
   },
   {
     heading: "Your rights",
-    body: "You can request access to or deletion of your data. We honor GDPR and KVKK rights, including access and erasure.",
+    body: "You can request access to or deletion of your data by emailing support@seogrep.com. We honor GDPR and KVKK rights, including access and erasure. One exception is worth stating plainly: the credit ledger is append-only by design, so the entries showing what you bought and what you spent are kept as accounting records and are not erased along with the rest of your account.",
+  },
+  {
+    heading: "Changes to this policy",
+    body: "We may update this policy. When we do, the effective date at the top of this page changes.",
   },
   {
     heading: "Contact",
@@ -41,12 +45,12 @@ export default function Page() {
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
       <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Draft — this document will be finalized before launch.
+        Effective 28 July 2026 — applies to everyone who uses SeoGrep.
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Privacy Policy</h1>
       <p className="mt-4 text-base text-ink/60">
-        A plain-language summary of what SeoGrep collects and how it is handled during beta. This draft covers the
-        essentials while the full policy is being prepared.
+        A plain-language summary of what SeoGrep collects during beta, who it goes to, and what you can ask us to do
+        with it.
       </p>
       <div className="mt-12 flex flex-col gap-10">
         {SECTIONS.map((section) => (
