@@ -601,6 +601,72 @@ export const DOC_PROSE = {
     ],
   },
 
+  compare_competitors: {
+    lead:
+      "`compare_competitors` puts a domain side by side with its rivals on Google organic search — " +
+      "how many organic result pages each one appears in, where those appearances sit, and what " +
+      "that traffic is worth — powered by DataForSEO Labs. It works on **any public domain**, so it " +
+      "reads your own site or a competitor's the same way, and it needs no project setup. It is " +
+      "**synchronous**: the table comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Name up to **three competitors** yourself, or omit them and let DataForSEO pick the rivals it " +
+      "sees sharing the most organic result pages with your target. The reply says which of the two " +
+      "happened, and every row is labelled with where it came from — `target`, `found by " +
+      "DataForSEO`, or `supplied by you` — so a discovered rival is never mistaken for one you " +
+      "chose.\n\n" +
+      "Every domain in the table gets the same four lines, all read from DataForSEO's domain rank " +
+      "overview:\n\n" +
+      "- **Organic SERPs containing the domain** — how many organic result pages the domain appears " +
+      "in. It counts result pages, not keywords.\n" +
+      "- **Organic SERPs by position** — that same count split across the #1, #2-3, #4-10 and #11-20 " +
+      "bands, so a domain with many shallow rankings is easy to tell from one with a few strong " +
+      "ones.\n" +
+      "- **Estimated monthly organic traffic (ETV)** — DataForSEO's estimate of monthly visits, " +
+      "calculated from click-through rate and search volume. It is an estimate, not measured " +
+      "traffic.\n" +
+      "- **Estimated monthly cost of the same traffic as paid ads** — what buying that organic " +
+      "traffic through ads would be estimated to cost per month.\n\n" +
+      "A rival **found by DataForSEO** also carries its overlap with your target: how many " +
+      "**intersecting keywords** the two share, and the average position it holds *on those shared " +
+      "keywords* — not across its whole keyword set. A competitor you supplied carries no overlap " +
+      "figures, because no discovery request is made for it.\n\n" +
+      "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO has " +
+      "no value for is shown as `n/a` rather than as a zero, and a domain it holds no organic data " +
+      "for says so plainly.",
+    preExampleSections: [
+      {
+        heading: "Availability during beta",
+        body:
+          "Live DataForSEO data is **off during the beta**. While it is off, `compare_competitors` " +
+          "returns a clear _\"competitor comparisons are not yet enabled on this deployment\"_ " +
+          "message and **charges you nothing** — no credits are reserved or spent. SeoGrep never " +
+          "returns sample or placeholder figures dressed up as real data. Once live DataForSEO " +
+          "access is switched on, the same call starts returning real numbers.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> How does example.com compare with its " +
+      "competitors?\n\nOr name the rivals yourself:\n\n> Compare example.com against " +
+      "first-rival.com and second-rival.com.",
+    returns:
+      "A heading naming the target, the language and location the figures were read for, and where " +
+      "the compared rivals came from — then one block per domain with its metric lines, the target " +
+      "first. An input that is not a public domain — the target, or any competitor you named — is " +
+      "rejected before anything is charged, and while live data is off you get the \"not yet " +
+      "enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One comparison reads DataForSEO more than once: a competitor-discovery request (skipped " +
+          "when you name the competitors yourself) plus one rank overview per compared domain. It " +
+          "is a **flat price** either way, charged **once**, as a single tool call. If any of " +
+          "those requests fails, the whole call fails and **you are not charged** — a partial " +
+          "comparison is never billed.",
+      },
+    ],
+  },
+
   generate_report: {
     lead:
       "`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site) " +
