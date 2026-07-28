@@ -18,7 +18,7 @@
 
 ### Faz 4 merge + canlı doğrulama (2026-07-27)
 - **[PR #23](https://github.com/popiliadam/seogrep/pull/23) MERGED** @`afad10f` (34 commit, insan merge + dal silindi). Deploy MCP + CI: **success**.
-- Canlı: healthz ok · `/status` ok (taze boot → **T-L1 yapı doğrulaması canlı DB-URL'i kabul etti**) · Fly 2 web healthcheck-passing + worker started · seogrep.com 200 · **/blog + 2 yazı canlı** · sitemap **45 URL** · robots `/app` disallow · `make goals` **16/16**.
+- Canlı: healthz ok · `/status` ok (taze boot → **T-L1 yapı doğrulaması canlı DB-URL'i kabul etti**) · Fly 2 web healthcheck-passing + worker started · seogrep.com 200 · **/blog + 2 yazı canlı** · sitemap **45 URL** · robots `/app` disallow · `make goals` **16/16** *(kayıt: 16'nın 2'si — mcp-alive · trial-flow-e2e — MCP_SMOKE_URL set değilse healthz-only/SKIP yeşilidir; ders L2)*.
 - **Şef post-deploy keşfi → KAPANDI ([PR #24](https://github.com/popiliadam/seogrep/pull/24) merged @`b2ffb0c`):** reaper canlıda gözlenemiyordu (`MODE=worker` HTTP dinlemiyor, `/status` yalnız web process'inde, başarı yolu log atmıyordu → sayaçlar sonsuza dek 0/0/null; dört ayrı doküman bunu "`/status`'tan oku" diye yanlış anlatıyordu, biri örnek JSON'da `reaperRuns: 6` gösteriyordu). Süpürme başına heartbeat log + dört düzeltme.
 - **CANLI KANIT:** worker boot 09:51:34Z → ilk süpürme 10:01:41Z: `reaper sweep: scanned=0 released=0 alreadySettled=0 failed=0 orphanReserves=0`. Reaper canlılığı artık `flyctl logs -a seogrep-mcp | grep 'reaper sweep'` ile doğrulanıyor (~10 dk'da bir satır).
 
@@ -198,11 +198,14 @@ txn_01kykvp7t7b30w85n3zxhg35qv, ledger tek satır +400), iki dizinde yayında (R
 Registry `com.seogrep/seogrep` + Smithery `suleymanncapar/seogrep`), izleniyor (UptimeRobot +
 in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
 
->>> AÇIK TEK PR: #33 (canlı ödeme kanıtı) — insan merge etmeli.
+>>> PR #33 MERGE'LENDİ (main @957cdd4, 2026-07-28) — açık PR yok. Push kapısı düştü
+    (platinum-seo-engine plugin'i settings.local.json'da kapatıldı; "Everything up-to-date" kanıtlı).
 >>> İNSANIN ELİNDE (kod beklemiyor), öncelik sırasıyla:
-1. **MCP_SMOKE_URL bayat** — ~/.zshrc'de İPTAL EDİLMİŞ anahtar var (sg_JPVw44DF); güncel aktif
-   anahtar sg_5aouWsfC ile başlıyor. Bu yüzden `mcp-alive` + `trial-flow-e2e` FAIL veriyor.
-   PROD SORUNU DEĞİL — anahtar tazelenince 16/16 olur. (Ders L2'nin tam da uyardığı şey.)
+1. **MCP_SMOKE_URL bayat (2026-07-28 şef DB-doğruladı):** tek aktif anahtar sg_5aouWsfC (bugün
+   üretildi, last_used boş); zshrc'deki sg_JPVw44DF 07-27 iptal. Tam değer diskte YOK (DB hash+prefix
+   saklar); classifier şefin transkriptten secret çıkarmasını engelledi (doğru davranış) → İNSAN
+   chat'teki tek komutla tazeler, sonra şef probe-PASS kanıtlar. NOT: şef-Bash zshrc source etmez;
+   goals kanıtı `eval "$(grep '^export MCP_SMOKE_URL=' ~/.zshrc)"` önekiyle koşulur (yoksa SKIP-yeşili).
 2. **Paddle temizliği:** `LIVESMOKE0728` indirim kodunu arşivle · Checkout settings'te
    "Display discount field" işaretini tekrar KALDIR (test için açılmıştı).
 3. **Launch yayınları** — artık serbest (ödeme çalışıyor). Taslaklar hazır:
@@ -243,7 +246,8 @@ SIRAYLA OKU: PLAN.md (üstteki "Faz: 4" + "Faz 4 ilerleme" blokları) → CLAUDE
 
 DURUM: Faz 4 GO verildi (insan, 2026-07-27). Dal `feat/faz4-launch` @33 commit KOD-TAMAM.
 13 görev, her biri ayrı hakem-onaylı; final whole-branch review (taze Fable) **READY TO MERGE = YES** (0C/0I/3m).
-Seri kapılar: verify PASS · verify-db PASS (78) · make goals **16/16** (purchase-flow-live canlı 401'i
+Seri kapılar: verify PASS · verify-db PASS (78) · make goals **16/16** [kayıt: 2'si — mcp-alive ·
+trial-flow-e2e — MCP_SMOKE_URL'süz healthz-only/SKIP yeşili; ders L2] (purchase-flow-live canlı 401'i
 gerçekten doğruladı = NEVER#3 fail-closed kapısı makine-kanıtlı).
 
 >>> DAL PUSH EDİLMEDİ. İNSAN KAPISI: push (terminalden, `cd "…/pseo web saas"` önce) → PR → GitHub-UI merge
