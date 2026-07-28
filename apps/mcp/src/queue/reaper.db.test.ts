@@ -35,6 +35,27 @@ const COST = TOOL_COSTS.audit_tech; // 15 — a real priced tool
 const GRANT = 30;
 const TWENTY_MIN = 20 * 60_000;
 const ONE_MIN = 60_000;
+/**
+ * The ledger is append-only, so a spend_reserve row's created_at CANNOT be backdated the way
+ * jobs.started_at can. The ledger-keyed specs therefore move the CLOCK forward instead: at
+ * `now + 45 min` a reserve created this second is already past the 30-minute orphan cutoff.
+ * The jobs lane is neutralised in the same call with a 1-day olderThanMs (its cutoff lands in
+ * the real past, so it finds nothing), and `userId` scopes both lanes to the spec's own
+ * tenant — without it a future clock would sweep the open reserves of DB specs running in
+ * parallel worker processes and make the whole lane flaky.
+ */
+const FORTY_FIVE_MIN = 45 * 60_000;
+const ONE_DAY = 24 * 60 * 60_000;
+
+async function ledgerKinds(userId: string): Promise<string[]> {
+  const { data, error } = await service
+    .from("credit_ledger")
+    .select("kind")
+    .eq("user_id", userId)
+    .order("id", { ascending: true });
+  if (error || !data) throw new Error(`ledger select failed: ${error?.message ?? "no rows"}`);
+  return data.map((row) => row.kind);
+}
 
 async function makeUserId(): Promise<string> {
   const { data, error } = await service.auth.admin.createUser({
@@ -103,6 +124,35 @@ async function seedStuckJob(
   }
   if (stampReserve) await service.from("jobs").update({ reserve_id: data }).eq("id", jobId);
   return { userId, jobId, reserveId: data };
+}
+
+/**
+ * A ledger-only open reserve — the SYNC surface shape: opened through the real reserve_credits
+ * RPC against a traceability uuid, with NO jobs row behind it. Every jobs-keyed detection query
+ * (and the whole jobs lane of the reaper) is structurally blind to it.
+ */
+async function seedSyncReserve(): Promise<{ userId: string; reserveId: string }> {
+  const userId = await makeUserId();
+  await seedGrant(userId, GRANT);
+  const { data, error } = await service.rpc("reserve_credits", {
+    p_user_id: userId,
+    p_amount: COST,
+    p_tool: "audit_tech",
+    p_job_id: randomUUID(), // a traceability uuid, exactly like guard.ts's sync path
+  });
+  if (error || typeof data !== "string") {
+    throw new Error(`reserve_credits failed: ${error?.message ?? "no reserve id returned"}`);
+  }
+  return { userId, reserveId: data };
+}
+
+/** Sweep scoped to one tenant with the jobs lane neutralised — see FORTY_FIVE_MIN above. */
+async function sweepLedgerFor(userId: string, now: Date) {
+  return reconcileStuckJobs({
+    now: () => new Date(now.getTime() + FORTY_FIVE_MIN),
+    olderThanMs: ONE_DAY,
+    userId,
+  });
 }
 
 beforeAll(async () => {
@@ -241,5 +291,84 @@ describe("reconcileStuckJobs against the local stack", () => {
     expect((await getJob(broken.jobId))?.status).toBe("failed");
     expect(await creditBalance(service, healthy.userId)).toBe(GRANT); // refunded
     expect(await creditBalance(service, broken.userId)).toBe(GRANT); // already refunded, not double
+  });
+});
+
+/**
+ * H-01: the ledger-keyed orphan sweep. Every pre-existing detection path — the reaper's own
+ * candidate query and reconciliation.md §2a/§2b/§2c — starts from `jobs`, so an open reserve
+ * with NO jobs row (the sync surface) or with a jobs row that is no longer `running` (the
+ * async worker marks a commit failure `failed`) was invisible to all of them and held the
+ * user's credits forever. These specs drive the reserve through the REAL reserve_credits RPC
+ * and assert on the derived balance, which is the only thing the user actually feels.
+ */
+describe("ledger-keyed orphan reserve sweep (H-01)", () => {
+  it("(a) an aged reserve with NO jobs row is released exactly once and the balance returns", async () => {
+    const now = new Date();
+    const { userId } = await seedSyncReserve();
+    expect(await creditBalance(service, userId)).toBe(GRANT - COST); // debited, no result
+
+    const outcome = await sweepLedgerFor(userId, now);
+
+    expect(await creditBalance(service, userId)).toBe(GRANT); // made whole
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(outcome.orphanScanned).toBe(1);
+    expect(outcome.orphanReleased).toBe(1);
+    expect(outcome.scanned).toBe(0); // the jobs lane never saw it — that is the finding
+  });
+
+  it("(b) a second sweep is a no-op: no double refund", async () => {
+    const now = new Date();
+    const { userId } = await seedSyncReserve();
+    await sweepLedgerFor(userId, now);
+
+    const second = await sweepLedgerFor(userId, now);
+
+    expect(second.orphanScanned).toBe(0);
+    expect(second.orphanReleased).toBe(0);
+    expect(await creditBalance(service, userId)).toBe(GRANT); // still exactly one refund
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
+  });
+
+  it("(c) a YOUNG ledger-only reserve is untouched — a live sync tool must not be refunded", async () => {
+    const now = new Date();
+    const { userId } = await seedSyncReserve();
+
+    // Real clock, default 30-minute orphan cutoff: this reserve is seconds old.
+    const outcome = await reconcileStuckJobs({ now: () => now, userId });
+
+    expect(outcome.orphanScanned).toBe(0);
+    expect(outcome.orphanReleased).toBe(0);
+    expect(await creditBalance(service, userId)).toBe(GRANT - COST); // still held, correctly
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve"]);
+  });
+
+  it("(d) an open reserve whose jobs row is 'failed' is caught too (the commit-failure shape)", async () => {
+    const now = new Date();
+    const userId = await makeUserId();
+    await seedGrant(userId, GRANT);
+    const jobId = await insertRunningJob(userId, new Date(now.getTime() - TWENTY_MIN), null);
+    const reserve = await service.rpc("reserve_credits", {
+      p_user_id: userId,
+      p_amount: COST,
+      p_tool: "audit_tech",
+      p_job_id: jobId,
+    });
+    if (reserve.error || typeof reserve.data !== "string") {
+      throw new Error(`reserve_credits failed: ${reserve.error?.message ?? "no reserve id"}`);
+    }
+    // The worker's commit failed, so it marked the job failed and left the reserve open —
+    // out of `running`, hence out of reach of every jobs-keyed query in the repo.
+    await service
+      .from("jobs")
+      .update({ status: "failed", finished_at: now.toISOString(), error: "commit failed" })
+      .eq("id", jobId);
+    expect(await creditBalance(service, userId)).toBe(GRANT - COST);
+
+    const outcome = await sweepLedgerFor(userId, now);
+
+    expect(outcome.orphanReleased).toBe(1);
+    expect(await creditBalance(service, userId)).toBe(GRANT);
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
   });
 });

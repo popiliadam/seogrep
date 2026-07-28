@@ -52,6 +52,11 @@ try {
   console.log(`    of which already refunded (money returned):       ${outcome.alreadyReleased}`);
   console.log(`  failed (running -> failed):       ${outcome.failed}`);
   console.log(`  orphanReserves (via ledger.job_id): ${outcome.orphanReserves}`);
+  // The LEDGER lane (H-01): open reserves with no jobs row, or whose jobs row is no longer
+  // `running` — invisible to every jobs-keyed query. See reconciliation.md §2f.
+  console.log(`  ledger-only open reserves found:   ${outcome.orphanScanned}`);
+  console.log(`  ledger-only reserves refunded:     ${outcome.orphanReleased}`);
+  console.log(`  ledger-only settled mid-sweep:     ${outcome.orphanAlreadySettled}`);
   process.exit(0);
 } catch (error) {
   console.error(`reconcile failed: ${error instanceof Error ? error.message : String(error)}`);
