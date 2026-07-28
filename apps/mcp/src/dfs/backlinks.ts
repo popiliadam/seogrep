@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { assertWithinBudget, recordSpend } from "./budget.ts";
+import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -18,11 +18,12 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  * a failure on request 1 must not spend real money on requests 2 and 3.
  *
  * Budget accounting (budget.ts) follows the same shape as the other ports, adapted to the fan-out:
- *   - ONE pre-call gate before ANY HTTP, using a deliberate over-estimate for the WHOLE operation
- *     (ESTIMATED_BACKLINK_PROFILE_CALL_USD) — so a near-cap day refuses before spending a cent;
- *   - the REAL cost of each request is recorded individually, right after that request returns,
- *     from its own response `cost` and its own row count. A run that dies on request 2 therefore
- *     still has request 1's actual spend on the books.
+ *   - ONE reservation before ANY HTTP, for a deliberate over-estimate of the WHOLE operation
+ *     (ESTIMATED_BACKLINK_PROFILE_CALL_USD) — so a near-cap day refuses before spending a cent,
+ *     and the fleet-global counter carries that estimate from the instant it is booked;
+ *   - each request's REAL cost is accumulated as it returns, and the reservation is settled ONCE
+ *     with the total. A run that dies mid-fan-out leaves the reservation OPEN, so the day keeps
+ *     paying its full estimate — never less than the partial spend that really happened.
  *
  * The response ENVELOPE is identical across DataForSEO APIs, but the Backlinks payloads are their
  * own shapes (a flat summary object; `items[]` of `backlinks_referring_domain` /
@@ -43,7 +44,7 @@ export const DFS_BACKLINKS_ANCHORS_ENDPOINT =
  * ONLY by the pre-call budget gate. A deliberate over-estimate (DataForSEO's documented example
  * responses put the summary near $0.02 and a 1000-row list near $0.06 each, i.e. ~$0.144 for the
  * set) so the gate errs toward blocking. It is NOT a price claim: the REAL per-request costs are
- * read from each response's `cost` field and recorded after that request (budget.ts recordSpend).
+ * read from each response's `cost` field and settled after the fan-out (budget.ts settleSpend).
  */
 export const ESTIMATED_BACKLINK_PROFILE_CALL_USD = 0.3;
 
@@ -329,25 +330,30 @@ export interface LiveBacklinksOptions {
   readonly password: string;
   /** Injectable transport (default wraps global fetch) — tests pass a fake so no real HTTP runs. */
   readonly transport?: DfsTransport;
-  /** Clock (defaults to Date) for the budget day + recorded ts. */
-  readonly now?: () => Date;
-  /** Spend directory override (tests point it at a temp dir). */
-  readonly spendDir?: string;
+  /** Injectable spend counter (defaults to the DB-backed one) — specs pass a fake. */
+  readonly ledger?: SpendLedger;
 }
 
 /**
- * The real (paid) backlink-profile client. Per lookup: (1) ONE budget gate BEFORE any HTTP —
+ * The real (paid) backlink-profile client. Per lookup: (1) ONE reservation BEFORE any HTTP —
  * refuse if the whole-operation estimate would pass the daily cap; then, sequentially, POST each
- * of the three endpoints with Basic auth, parse it, and record THAT request's real cost.
+ * of the three endpoints with Basic auth, parse it, and accumulate THAT request's real cost; and
+ * finally settle the reservation with the total.
  */
 export function createLiveBacklinksClient(opts: LiveBacklinksOptions): BacklinksPort {
   const transport = opts.transport ?? defaultDfsTransport;
-  const now = opts.now ?? ((): Date => new Date());
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
-  const budgetCtx = { now, dir: opts.spendDir };
+  const ledger = opts.ledger ?? createDbSpendLedger();
 
-  /** POST one endpoint, parse it, and book its actual cost against today's budget. */
+  /** One fan-out's running real cost + row count, settled against the reservation at the end. */
+  interface Tally {
+    costUsd: number;
+    rows: number;
+  }
+
+  /** POST one endpoint, parse it, and add its actual cost to the operation's running tally. */
   async function runRequest<T>(
+    tally: Tally,
     endpoint: string,
     body: Record<string, unknown>,
     parse: (raw: unknown) => T,
@@ -363,26 +369,26 @@ export function createLiveBacklinksClient(opts: LiveBacklinksOptions): Backlinks
     }
     const raw: unknown = await response.json();
     const parsed = parse(raw);
-    recordSpend(
-      {
-        cost_usd: extractBacklinksCostUsd(raw) ?? ESTIMATED_BACKLINKS_REQUEST_USD,
-        endpoint,
-        count: rowCount(parsed),
-      },
-      budgetCtx,
-    );
+    tally.costUsd += extractBacklinksCostUsd(raw) ?? ESTIMATED_BACKLINKS_REQUEST_USD;
+    tally.rows += rowCount(parsed);
     return parsed;
   }
 
   return {
     enabled: true,
     async fetchBacklinkProfile(query) {
-      // (1) Pre-call gate for the WHOLE three-request operation — throws (and wakes the human)
-      // if it would pass the cap, before a single request is sent.
-      assertWithinBudget(ESTIMATED_BACKLINK_PROFILE_CALL_USD, budgetCtx);
+      // (1) ONE reservation for the WHOLE three-request operation — throws (and wakes the human)
+      // at the cap or when the counter is unreadable, before a single request is sent.
+      const reservation = await reserveSpend(
+        ESTIMATED_BACKLINK_PROFILE_CALL_USD,
+        DFS_BACKLINKS_SUMMARY_ENDPOINT,
+        ledger,
+      );
+      const tally: Tally = { costUsd: 0, rows: 0 };
 
       // (2) Sequential so a failure never pays for the requests that would have followed.
       const summary = await runRequest(
+        tally,
         DFS_BACKLINKS_SUMMARY_ENDPOINT,
         {
           target: query.target,
@@ -393,6 +399,7 @@ export function createLiveBacklinksClient(opts: LiveBacklinksOptions): Backlinks
         () => 1,
       );
       const referringDomains = await runRequest(
+        tally,
         DFS_BACKLINKS_REFERRING_DOMAINS_ENDPOINT,
         {
           target: query.target,
@@ -405,6 +412,7 @@ export function createLiveBacklinksClient(opts: LiveBacklinksOptions): Backlinks
         (list) => list.rows.length,
       );
       const anchors = await runRequest(
+        tally,
         DFS_BACKLINKS_ANCHORS_ENDPOINT,
         {
           target: query.target,
@@ -415,6 +423,10 @@ export function createLiveBacklinksClient(opts: LiveBacklinksOptions): Backlinks
         parseAnchorsResponse,
         (list) => list.rows.length,
       );
+
+      // (3) Settle once with the fan-out's real total; a throw above leaves the reservation
+      // open at its full estimate, which is never less than the partial spend that happened.
+      await settleSpend(reservation, tally.costUsd, tally.rows, ledger);
 
       return {
         target: summary.target,
