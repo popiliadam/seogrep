@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BACKLINKS_MAX_LIMIT,
   ESTIMATED_BACKLINKS_REQUEST_USD,
@@ -16,7 +13,7 @@ import {
   resolveDefaultBacklinksPort,
 } from "./backlinks.ts";
 import type { DfsTransport } from "./client.ts";
-import { readTodaySpendUsd } from "./budget.ts";
+import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
 import summaryFixture from "./fixtures/backlinks-summary.json";
 import referringDomainsFixture from "./fixtures/backlinks-referring-domains.json";
 import anchorsFixture from "./fixtures/backlinks-anchors.json";
@@ -27,9 +24,6 @@ import anchorsFixture from "./fixtures/backlinks-anchors.json";
  * env-resolution path only with pinned env sources. The three fixtures mirror the documented
  * /v3/backlinks/{summary,referring_domains,anchors}/live response shapes.
  */
-
-const FIXED_NOW = new Date("2026-07-28T12:00:00.000Z");
-const now = (): Date => FIXED_NOW;
 
 const QUERY = { target: "example.com", limit: BACKLINKS_MAX_LIMIT } as const;
 
@@ -53,12 +47,9 @@ function fixtureTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   });
 }
 
-let dir: string;
+let ledger: MemorySpendLedger;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "dfs-backlinks-"));
-});
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  ledger = createMemorySpendLedger();
 });
 
 describe("parseBacklinksSummaryResponse", () => {
@@ -236,8 +227,7 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
 
     const profile = await client.fetchBacklinkProfile({ target: "example.com", limit: 1000 });
@@ -280,17 +270,16 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
     expect(profile.top_anchors.rows).toHaveLength(3);
   });
 
-  it("records the REAL cost of each of the three requests (not the estimate)", async () => {
+  it("settles the reservation with the REAL cost of all three requests (not the estimate)", async () => {
     const client = createLiveBacklinksClient({
       login: "user@x.test",
       password: "pw",
       transport: fixtureTransport(),
-      now,
-      spendDir: dir,
+      ledger,
     });
     await client.fetchBacklinkProfile(QUERY);
     // 0.02003 + 0.06015 + 0.06012 — the three response `cost` fields, summed.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.1403, 5);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.1403, 5);
   });
 
   it("throws on a non-OK HTTP response instead of reporting an empty profile", async () => {
@@ -303,12 +292,12 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 402/);
-    // A failed request records no spend.
-    expect(readTodaySpendUsd({ now, dir })).toBe(0);
+    // A failed lookup leaves its reservation OPEN, so today keeps paying the FULL
+    // whole-operation estimate — never less than what the fleet may actually have spent.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
   });
 
   it("stops at the FIRST failure — a dead summary never pays for the other two requests", async () => {
@@ -321,8 +310,7 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(1);
@@ -341,13 +329,18 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // never reached anchors
-    // Only the summary request's real cost is recorded — DFS did charge for it.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.02003, 5);
+    // DFS charged for the summary ($0.02003). The reservation is never settled, so the day is
+    // charged the full $0.30 estimate instead: MORE than the true partial spend, which is the
+    // safe direction. (The pre-fix file ledger booked exactly $0.02003 and then handed the rest
+    // of the allowance back — cheaper on paper, but it under-counted a fleet that had already
+    // committed to the operation.)
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0.02003);
+    expect(ledger.rows()[0]?.actualUsd).toBeNull(); // still open
   });
 
   it("falls back to the per-request estimate when a response omits its cost", async () => {
@@ -365,27 +358,22 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
     await client.fetchBacklinkProfile(QUERY);
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(ESTIMATED_BACKLINKS_REQUEST_USD * 3, 5);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_BACKLINKS_REQUEST_USD * 3, 5);
   });
 
   it("refuses the WHOLE lookup BEFORE any HTTP when today's budget is already at the cap", async () => {
     // Pre-seed today's spend at $2.95; the pre-call whole-operation estimate would pass $3.00.
-    writeFileSync(
-      path.join(dir, "2026-07-28.jsonl"),
-      JSON.stringify({ ts: "x", cost_usd: 2.95, endpoint: "e", count: 1 }) + "\n",
-    );
+    ledger.seed(2.95);
     const transport = fixtureTransport();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const client = createLiveBacklinksClient({
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
 
     try {
@@ -402,11 +390,10 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       login: "user@x.test",
       password: "pw",
       transport: fixtureTransport(),
-      now,
-      spendDir: dir,
+      ledger,
     });
     await client.fetchBacklinkProfile(QUERY);
-    expect(ESTIMATED_BACKLINK_PROFILE_CALL_USD).toBeGreaterThan(readTodaySpendUsd({ now, dir }));
+    expect(ESTIMATED_BACKLINK_PROFILE_CALL_USD).toBeGreaterThan(await todaySpendUsd(ledger));
     expect(ESTIMATED_BACKLINK_PROFILE_CALL_USD).toBeLessThanOrEqual(0.5);
   });
 });

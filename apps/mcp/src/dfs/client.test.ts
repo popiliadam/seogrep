@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ESTIMATED_SEARCH_VOLUME_CALL_USD,
@@ -14,7 +11,7 @@ import {
 } from "./client.ts";
 // Additive M-14 import, on its own line so every existing line above stays byte-identical.
 import { DFS_REQUEST_TIMEOUT_MS, defaultDfsTransport } from "./client.ts";
-import { readTodaySpendUsd } from "./budget.ts";
+import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
 import fixtureResponse from "./fixtures/search-volume.json";
 
 /**
@@ -24,15 +21,11 @@ import fixtureResponse from "./fixtures/search-volume.json";
  * google_ads/search_volume/live response shape.
  */
 
-const FIXED_NOW = new Date("2026-07-19T12:00:00.000Z");
-const now = (): Date => FIXED_NOW;
-
-let dir: string;
+// The budget counter is a port (migration 0014 in production), so the priced path is driven
+// against an in-memory ledger here — no database, no network.
+let ledger: MemorySpendLedger;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "dfs-client-"));
-});
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  ledger = createMemorySpendLedger();
 });
 
 describe("parseSearchVolumeResponse", () => {
@@ -122,19 +115,13 @@ describe("resolveDefaultPort", () => {
 });
 
 describe("createLiveClient (fake transport — never real HTTP)", () => {
-  it("posts to DFS, parses rows, and records the response cost to the budget file", async () => {
+  it("posts to DFS, parses rows, and settles the reservation at the response cost", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
       json: async () => fixtureResponse,
     }));
-    const client = createLiveClient({
-      login: "user@x.test",
-      password: "pw",
-      transport,
-      now,
-      spendDir: dir,
-    });
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
 
     const rows = await client.fetchSearchVolume({
       keywords: ["seo software", "keyword research tool", "rank tracker"],
@@ -154,29 +141,22 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
         location_code: 2840,
       },
     ]);
-    // The REAL cost (0.075 from the response) was recorded, not the estimate.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.075, 5);
+    // The REAL cost (0.075 from the response) settled the reservation, not the estimate.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.075, 5);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.075, 5);
   });
 
   it("refuses the call BEFORE any HTTP when today's budget is already at the cap", async () => {
     // Pre-seed today's spend at $2.95; the pre-call estimate would pass $3.00.
-    writeFileSync(
-      path.join(dir, "2026-07-19.jsonl"),
-      JSON.stringify({ ts: "x", cost_usd: 2.95, endpoint: "e", count: 1 }) + "\n",
-    );
+    ledger.seed(2.95);
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
       json: async () => fixtureResponse,
     }));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const client = createLiveClient({
-      login: "user@x.test",
-      password: "pw",
-      transport,
-      now,
-      spendDir: dir,
-    });
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
 
     try {
       await expect(
