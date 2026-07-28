@@ -14,6 +14,7 @@ import { auditTechTool } from "./audit-tech.ts";
 import { auditSchemaTool } from "./audit-schema.ts";
 import { researchKeywordsTool } from "./research-keywords.ts";
 import { rankedKeywordsTool } from "./ranked-keywords.ts";
+import { analyzeBacklinksTool } from "./analyze-backlinks.ts";
 import { generateReportTool } from "./generate-report.ts";
 import { whatsNextTool } from "./whats-next.ts";
 
@@ -33,6 +34,7 @@ export { auditTechTool } from "./audit-tech.ts";
 export { auditSchemaTool } from "./audit-schema.ts";
 export { researchKeywordsTool } from "./research-keywords.ts";
 export { rankedKeywordsTool, makeRankedKeywordsTool } from "./ranked-keywords.ts";
+export { analyzeBacklinksTool, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
 export { generateReportTool, makeGenerateReportTool } from "./generate-report.ts";
 export { whatsNextTool, makeWhatsNextTool } from "./whats-next.ts";
 
@@ -57,6 +59,7 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   auditSchemaTool,
   researchKeywordsTool,
   rankedKeywordsTool,
+  analyzeBacklinksTool,
   generateReportTool,
   whatsNextTool,
 ];

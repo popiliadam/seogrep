@@ -109,10 +109,11 @@ function errorMessage(error: unknown): string {
 /**
  * D17 credit confirmation threshold — the SaaS analogue of the consent ledger: a call whose
  * ESTIMATED cost exceeds this many credits must be explicitly confirmed before it runs, so a
- * large batch can never silently drain a balance. No tool in TOOL_COSTS exceeds it today (the
- * priciest is 30), so this is a forward-looking guard for future bulk operations — the
- * over-threshold path is exercised by the pure unit tests with SYNTHETIC estimates, never by a
- * real registered tool (confirmationGate takes the estimate as an argument for exactly that).
+ * large batch can never silently drain a balance. No tool in TOOL_COSTS reaches it today (the
+ * whole table sits well below the threshold), so this is a forward-looking guard for future bulk
+ * operations — the over-threshold path is exercised by the pure unit tests with SYNTHETIC
+ * estimates, never by a real registered tool (confirmationGate takes the estimate as an argument
+ * for exactly that).
  */
 export const CONFIRMATION_THRESHOLD_CREDITS = 200;
 

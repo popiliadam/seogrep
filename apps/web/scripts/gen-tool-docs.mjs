@@ -550,6 +550,57 @@ export const DOC_PROSE = {
       "\"not yet enabled\" message instead — also free.",
   },
 
+  analyze_backlinks: {
+    lead:
+      "`analyze_backlinks` reports a domain's **backlink profile** — how many links point at it, " +
+      "which domains send them, and what anchor text those links use — powered by the DataForSEO " +
+      "Backlinks database. It works on **any public domain**, so it reads your own site or a " +
+      "competitor's the same way, and it needs no project setup. It is **synchronous**: the report " +
+      "comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Given a domain (a bare host or a full URL — it is canonicalized for you), it returns three " +
+      "sections:\n\n" +
+      "- **Profile summary** — total backlinks, referring domains (with the share that link " +
+      "**exclusively with dofollow** links), referring main domains, broken backlinks, the " +
+      "aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
+      "- **Top referring domains** — the domains linking to the target, most backlinks first, each " +
+      "with its own rank.\n" +
+      "- **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry " +
+      "no anchor text (image links) are labelled as such rather than hidden.\n\n" +
+      "Only **live** backlinks are counted — links that have since been lost are excluded. Each " +
+      "list header says how many rows you got and, when there are more than the `limit` you asked " +
+      "for, how many exist in total, so a truncated list never reads like the whole picture.",
+    preExampleSections: [
+      {
+        heading: "Availability during beta",
+        body:
+          "Live DataForSEO data is **off during the beta**. While it is off, `analyze_backlinks` " +
+          "returns a clear _\"backlink lookups are not yet enabled on this deployment\"_ message " +
+          "and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as real data. Once live DataForSEO access is " +
+          "switched on, the same call starts returning real numbers.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Analyze the backlink profile of competitor.com." +
+      "\n\nOr keep it short:\n\n> Show me the top 25 referring domains and anchors for example.com.",
+    returns:
+      "The profile summary, then the top referring domains (domain, backlink count, rank), then " +
+      "the top anchors (anchor text, backlink count) — each list headed by how many of the total " +
+      "are shown. A metric DataForSEO has no value for is shown as `n/a` rather than as a zero. " +
+      "An input that is not a public domain is rejected before anything is charged, and while " +
+      "live data is off you get the \"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One lookup reads three DataForSEO endpoints (summary, referring domains, anchors) and " +
+          "is charged **once**, as a single tool call. If any of the three fails, the whole call " +
+          "fails and **you are not charged** — a partial profile is never billed.",
+      },
+    ],
+  },
+
   generate_report: {
     lead:
       "`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site) " +
