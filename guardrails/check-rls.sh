@@ -1,29 +1,145 @@
 #!/usr/bin/env bash
-# rls-enabled goal predicate: every table created in packages/db/supabase/migrations/
-# must have BOTH "enable row level security" and "force row level security" statements
-# somewhere in the migrations directory. Exit 0 = all covered; exit 1 lists offenders.
-# (Grep-based, deliberately simple: table names are extracted from "create table" lines.)
+# rls-enabled goal predicate -- FINAL STATE, not migration history.
+#
+# Replays the migrations in lexical (= apply) order and tracks, per public table, the LAST
+# statement that touched RLS. A table is covered only if its FINAL state is BOTH
+# "enable row level security" AND "force row level security". A later DISABLE / NO FORCE
+# is therefore RED, which the previous grep-the-whole-history version could not see
+# (audit M-12: every synthetic later-weakening false-PASSed).
+#
+# Migrations dir: $1, else $MIGRATIONS_DIR, else the repo default. Parameterised so
+# guardrails/check-guards-selftest.sh can prove this gate actually goes red.
+# Exit 0 = every table ends ENABLE+FORCE; exit 1 lists offenders with file:line.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
+export LC_ALL=C
 
-MIGRATIONS_DIR="packages/db/supabase/migrations"
-[ -d "$MIGRATIONS_DIR" ] || { echo "check-rls: no migrations dir"; exit 1; }
+MIGRATIONS_DIR="${1:-${MIGRATIONS_DIR:-packages/db/supabase/migrations}}"
+[ -d "$MIGRATIONS_DIR" ] || { echo "check-rls: no migrations dir: $MIGRATIONS_DIR"; exit 1; }
 
-ALL_SQL="$(cat "$MIGRATIONS_DIR"/*.sql | tr '[:upper:]' '[:lower:]')"
+set -- "$MIGRATIONS_DIR"/*.sql
+[ -e "$1" ] || { echo "check-rls: no .sql migrations in $MIGRATIONS_DIR"; exit 1; }
 
-tables="$(printf '%s\n' "$ALL_SQL" | grep -Eo 'create table (if not exists )?public\.[a-z_]+' | sed -E 's/.*public\.//' | sort -u)"
+awk '
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
-fail=0
-for t in $tables; do
-  if ! printf '%s' "$ALL_SQL" | grep -Eq "alter table public\.$t enable row level security"; then
-    echo "check-rls: MISSING enable RLS for public.$t"
-    fail=1
-  fi
-  if ! printf '%s' "$ALL_SQL" | grep -Eq "alter table public\.$t force row level security"; then
-    echo "check-rls: MISSING force RLS for public.$t"
-    fail=1
-  fi
-done
+function tname(chunk,   q, t) {
+  q = index(chunk, "public.")
+  t = substr(chunk, q + 7)
+  gsub(/"/, "", t)
+  return t
+}
 
-[ "$fail" -eq 0 ] && echo "CHECK-RLS: PASS ($(printf '%s\n' "$tables" | wc -l | tr -d ' ') tables)"
-exit "$fail"
+# Remember a table in first-seen order so the report is deterministic.
+function note(t, f, l) {
+  if (!(t in known)) { known[t] = 1; ord[++nord] = t; cloc[t] = f ":" l }
+}
+
+function handle(s, f, l,   t) {
+  if (match(s, /^create table (if not exists )?public\.[a-z0-9_]+/)) {
+    t = tname(substr(s, RSTART, RLENGTH))
+    note(t, f, l)
+    made[t] = 1; cloc[t] = f ":" l
+    # A freshly created table has RLS off until an ALTER turns it on.
+    en[t] = 0; fo[t] = 0; enloc[t] = ""; foloc[t] = ""
+    return
+  }
+  if (match(s, /^drop table (if exists )?public\.[a-z0-9_]+/)) {
+    t = tname(substr(s, RSTART, RLENGTH))
+    delete made[t]; delete en[t]; delete fo[t]; delete enloc[t]; delete foloc[t]
+    return
+  }
+  if (match(s, /^alter table (only )?(if exists )?public\.[a-z0-9_]+/)) {
+    t = tname(substr(s, RSTART, RLENGTH))
+    # "no force" is checked first: it contains "force" as a substring.
+    if (s ~ / no force row level security/)   { note(t, f, l); fo[t] = 0; foloc[t] = f ":" l }
+    else if (s ~ / force row level security/) { note(t, f, l); fo[t] = 1; foloc[t] = f ":" l }
+    if (s ~ / disable row level security/)    { note(t, f, l); en[t] = 0; enloc[t] = f ":" l }
+    else if (s ~ / enable row level security/){ note(t, f, l); en[t] = 1; enloc[t] = f ":" l }
+    return
+  }
+}
+
+function addpart(part) {
+  if (stmt !~ /[^ \t]/ && part ~ /[^ \t]/) { sfile = FILENAME; sline = FNR }
+  stmt = stmt " " part
+}
+
+function flush(   s) {
+  s = stmt
+  gsub(/[ \t]+/, " ", s)
+  s = trim(s)
+  if (s != "") handle(s, sfile, sline)
+  stmt = ""; sfile = ""; sline = 0
+}
+
+# A statement never spans two files.
+FNR == 1 && NR > 1 { flush() }
+
+{
+  # Lowercase, strip -- and /* */ comments, then split into statements on ";".
+  line = tolower($0)
+  out = ""
+  i = 1
+  n = length(line)
+  while (i <= n) {
+    c2 = substr(line, i, 2)
+    if (inblock) {
+      if (c2 == "*/") { inblock = 0; i += 2 } else { i += 1 }
+      continue
+    }
+    if (c2 == "/*") { inblock = 1; i += 2; continue }
+    if (c2 == "--") { i = n + 1; continue }
+    out = out substr(line, i, 1)
+    i += 1
+  }
+  line = out
+  while ((p = index(line, ";")) > 0) {
+    addpart(substr(line, 1, p - 1))
+    flush()
+    line = substr(line, p + 1)
+  }
+  addpart(line)
+}
+
+END {
+  flush()
+  nfail = 0; ntab = 0
+  for (i = 1; i <= nord; i++) {
+    t = ord[i]
+    if (t in made) {
+      ntab++
+      if (en[t] != 1) {
+        if (enloc[t] != "")
+          printf "check-rls: FAIL public.%s - final state is DISABLE ROW LEVEL SECURITY (%s)\n", t, enloc[t]
+        else
+          printf "check-rls: FAIL public.%s - RLS never ENABLEd (table created at %s)\n", t, cloc[t]
+        nfail++
+      }
+      if (fo[t] != 1) {
+        if (foloc[t] != "")
+          printf "check-rls: FAIL public.%s - final state is NO FORCE ROW LEVEL SECURITY (%s)\n", t, foloc[t]
+        else
+          printf "check-rls: FAIL public.%s - RLS never FORCEd (table created at %s)\n", t, cloc[t]
+        nfail++
+      }
+    } else {
+      # Table not created by these migrations: only an explicit weakening is reported.
+      if (enloc[t] != "" && en[t] != 1) {
+        printf "check-rls: FAIL public.%s - RLS DISABLEd at %s (table not created in these migrations)\n", t, enloc[t]
+        nfail++
+      }
+      if (foloc[t] != "" && fo[t] != 1) {
+        printf "check-rls: FAIL public.%s - FORCE removed at %s (table not created in these migrations)\n", t, foloc[t]
+        nfail++
+      }
+    }
+  }
+  if (nfail > 0) {
+    printf "CHECK-RLS: FAIL (%d finding(s) across %d tables)\n", nfail, ntab
+    exit 1
+  }
+  printf "CHECK-RLS: PASS (%d tables, final state ENABLE + FORCE)\n", ntab
+  exit 0
+}
+' "$@"
