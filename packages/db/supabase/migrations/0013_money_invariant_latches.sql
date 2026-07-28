@@ -134,3 +134,37 @@ create trigger paddle_events_identity_immutable
 REVOKE DELETE, TRUNCATE ON public.paddle_events FROM anon, authenticated, service_role;
 -- Reverse: grant delete, truncate on public.paddle_events to service_role; (anon/authenticated
 -- never legitimately held either — do NOT restore them.)
+
+-- ===========================================================================
+-- (3) M-07 — users_profile.trial_granted_at becomes a ONE-WAY latch.
+--
+-- claim_trial's entire "exactly once" guarantee is `UPDATE ... WHERE trial_granted_at IS NULL`
+-- (0009:115-121). 0006:24 grants service_role table-wide UPDATE, so the lock was reversible:
+-- clearing the column re-armed the free trial and a second grant became claimable for the same
+-- user. Free credits are money, so the latch belongs in the DB, not in caller discipline.
+--
+-- One-way, not frozen: NULL -> value is the legitimate first claim and stays allowed, and the
+-- trigger is scoped by a WHEN clause so updates to any other column (notably the 0008
+-- welcomed_at lock) never even enter the function. Moving the stamp FORWARD is left allowed —
+-- it unlocks nothing; only clearing it or dating it backwards does.
+-- ===========================================================================
+
+create function public.reject_trial_lock_reversal() returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.trial_granted_at is null or new.trial_granted_at < old.trial_granted_at then
+    raise exception 'trial_granted_at is a one-way latch: the one-time trial lock cannot be cleared or moved backwards (locked at %, attempted %)', old.trial_granted_at, new.trial_granted_at;
+  end if;
+  return new;
+end;
+$$;
+-- Reverse: drop function public.reject_trial_lock_reversal() cascade;
+
+create trigger users_profile_trial_latch
+  before update on public.users_profile
+  for each row
+  when (old.trial_granted_at is not null and new.trial_granted_at is distinct from old.trial_granted_at)
+  execute function public.reject_trial_lock_reversal();
+-- Reverse: drop trigger users_profile_trial_latch on public.users_profile;

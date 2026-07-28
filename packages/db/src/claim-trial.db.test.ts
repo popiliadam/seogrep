@@ -33,15 +33,18 @@ requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 type ClaimTrialFunctions = {
   claim_trial: { Args: { p_user_id: string; p_amount: number }; Returns: boolean };
 };
-type TrialColumn = { trial_granted_at: string | null };
+/** The one-time lock columns added by 0006 (trial) and 0008 (welcome). */
+type ProfileLockColumns = { trial_granted_at: string | null; welcomed_at: string | null };
 type ClaimTrialDatabase = Omit<Database, "public"> & {
   public: Omit<Database["public"], "Functions" | "Tables"> & {
     Functions: ClaimTrialFunctions;
     Tables: Omit<Database["public"]["Tables"], "users_profile"> & {
       users_profile: {
-        Row: Database["public"]["Tables"]["users_profile"]["Row"] & TrialColumn;
-        Insert: Database["public"]["Tables"]["users_profile"]["Insert"] & Partial<TrialColumn>;
-        Update: Database["public"]["Tables"]["users_profile"]["Update"] & Partial<TrialColumn>;
+        Row: Database["public"]["Tables"]["users_profile"]["Row"] & ProfileLockColumns;
+        Insert: Database["public"]["Tables"]["users_profile"]["Insert"] &
+          Partial<ProfileLockColumns>;
+        Update: Database["public"]["Tables"]["users_profile"]["Update"] &
+          Partial<ProfileLockColumns>;
         Relationships: [];
       };
     };
@@ -180,5 +183,75 @@ describe("claim_trial against local Supabase", () => {
       .eq("id", userId);
     if (lockErr) throw new Error(lockErr.message);
     expect(await isLockedButCreditless(userId)).toBe(true);
+  });
+});
+
+/**
+ * trial_granted_at one-way latch (migration 0013, audit finding M-07).
+ *
+ * claim_trial's whole "exactly once" guarantee rests on `WHERE trial_granted_at IS NULL`.
+ * Migration 0006 grants service_role table-wide UPDATE on users_profile, so until 0013 the
+ * lock was reversible: clearing the column (a recovery script, a support fix, a compromised
+ * service writer) re-armed the free grant and a second trial could be minted for the same
+ * user. The DB now refuses to move the latch backwards, so the money invariant survives an
+ * app-layer mistake instead of depending on one.
+ */
+describe("trial_granted_at one-way latch against local Supabase", () => {
+  /** Attempt a raw service-role write of trial_granted_at; returns the PostgREST error message. */
+  async function forceTrialGrantedAt(userId: string, value: string | null): Promise<string | null> {
+    const { error } = await ext()
+      .from("users_profile")
+      .update({ trial_granted_at: value })
+      .eq("id", userId);
+    return error?.message ?? null;
+  }
+
+  it("rejects clearing the lock back to NULL; a re-claim is still refused and the grant stays single", async () => {
+    const userId = await makeUserId();
+    expect(await claimTrial(userId, TRIAL)).toBe(true);
+    const lockedAt = await trialGrantedAt(userId);
+    expect(lockedAt).toEqual(expect.any(String));
+
+    const message = await forceTrialGrantedAt(userId, null);
+    expect(message).not.toBeNull();
+    expect(message ?? "").toMatch(/one-way latch|cannot be cleared/i);
+
+    // The latch survived...
+    expect(await trialGrantedAt(userId)).toBe(lockedAt);
+    // ...so the free trial cannot be minted a second time, and the ledger holds exactly one.
+    expect(await claimTrial(userId, TRIAL)).toBe(false);
+    expect(await trialGrantRows(userId)).toHaveLength(1);
+  });
+
+  it("rejects moving the lock BACKWARDS in time (a stale timestamp is a cleared lock in slow motion)", async () => {
+    const userId = await makeUserId();
+    expect(await claimTrial(userId, TRIAL)).toBe(true);
+    const lockedAt = await trialGrantedAt(userId);
+
+    const message = await forceTrialGrantedAt(userId, "2000-01-01T00:00:00.000Z");
+    expect(message).not.toBeNull();
+    expect(message ?? "").toMatch(/one-way latch|cannot be cleared/i);
+    expect(await trialGrantedAt(userId)).toBe(lockedAt);
+  });
+
+  it("leaves every OTHER profile column writable (the latch did not freeze the row)", async () => {
+    const userId = await makeUserId();
+    expect(await claimTrial(userId, TRIAL)).toBe(true);
+
+    // welcomed_at (migration 0008) is a separate one-time lock flipped by the web app; a
+    // trial-scoped latch must not touch it.
+    const stamp = new Date().toISOString();
+    const { error } = await ext()
+      .from("users_profile")
+      .update({ welcomed_at: stamp })
+      .eq("id", userId);
+    expect(error).toBeNull();
+
+    const { data } = await ext()
+      .from("users_profile")
+      .select("welcomed_at")
+      .eq("id", userId)
+      .maybeSingle();
+    expect(new Date(data?.welcomed_at as string).toISOString()).toBe(stamp);
   });
 });
