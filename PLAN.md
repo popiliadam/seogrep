@@ -240,10 +240,14 @@ vendor-etiket disiplini iki hakem-FAIL'iyle oturdu. goals 16/16 tam ölçüm.
 kez soruldu), (3) insan "aç" deyince şef Fly'a DFS_LIVE=1 koyar → canlı smoke ≤$0.10 (dfs-budget
 kapısı) → üç tool'un gerçek-veri kanıtı → docs/pricing'e satış-görünürlüğü ayrı iş. Kapalıyken üçü
 dürüst hata + 0 kredi (satılabilir ama çalışmaz durumda DEĞİL — listede ama live-disabled mesajlı).
-Devam eden küçük işler: GSC Disconnect (işçi bitti → Fable hakemde; işçi bulgusu: migration 0006
-"DELETE granted to no one" ↔ canlı legacy-grant uyumsuzluğu → 0012 GRANT-parite migration'ı hakem
-onayıyla eklenecek, cloud-apply insan-onay kuyruğuna) · verify-goals SKIP-görünürlüğü (işçide) ·
-bayat "16 tools" metin süpürmesi (spec/launch/dizin) sırada.
+KÜÇÜK İŞLER KAPANDI (2026-07-28 gece): **GSC Disconnect ✅ CANLI** (Fable-hakemli; hakem-tarifli
+TEK-malformed düzeltmesi dahil; **0012 GRANT-parite migration repo'da @b1eb898 — CLOUD-APPLY İNSAN
+KUYRUĞUNDA**, canlıda no-op olduğu için acil değil) · **verify-goals SKIP-görünürlüğü ✅** (hakem
+Critical'i — exit-3 sentineli araç-erişilebilirdi, repo-clean sessiz-yeşile düşebilirdi — sentinel-97
+ile kapandı; deneme-2 hükmü "kapı zayıflamadı, güçlendi") · PROD_URL + MCP_SMOKE_URL kalıcı set →
+**İLK GERÇEK "16/16 PASS (0 skip)" koşusu** bu gece (önceki tüm 16/16'lar 2-4 kalemi görünmez
+skip'liydi — yeni koşucu bunu artık kendisi söylüyor). Kalan süpürme: bayat "16 tools" metinleri
+(spec/launch/dizin) + privacy'ye "disconnect from dashboard" güçlendirmesi (opsiyonel).
 NOT: spec/launch/dizin metinlerinde "16 tools" ibareleri bayatladı (Smithery server-card dahil) —
 temizlik dilimi bekliyor. Sonraki backlog: #7 audit_speed
 (+CrUX, BYO-key), #2 Scrapling, #5 büyük-site kademeleri, #6 import_crawl, #4 Tools vitrini,
