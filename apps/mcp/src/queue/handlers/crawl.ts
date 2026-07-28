@@ -68,8 +68,20 @@ export interface CrawlHandlerDeps {
  * tenant guard on the RLS-bypassing service client (constitution NEVER #4); a project
  * that is missing or belongs to another tenant both resolve to "not found" and abort
  * the crawl before a single request is made.
+ *
+ * DEFENCE IN DEPTH, NOT REDUNDANCY. Migration 0017 made `jobs.(user_id, project_id)` a
+ * composite FK onto `projects.(user_id, id)`, so the database now refuses a job row parented
+ * to ANOTHER tenant's project (SQLSTATE 23503) — the cross-tenant state this guard was written
+ * to catch can no longer be written. The guard stays and is still tested: the application layer
+ * must not depend on a constraint that a future migration, a restore, or a differently-migrated
+ * environment could be missing. `project_id` is also still nullable, so the no-project branch
+ * remains live (0017 nulls it via ON DELETE SET NULL when a parent project is deleted, and
+ * enqueueJob writes NULL for any tool called without a project).
+ *
+ * Exported for its DB spec: the cross-tenant branch can no longer be reached by seeding a row,
+ * so the spec drives this function with the in-memory job row that state would have produced.
  */
-async function resolveProjectOrigin(userId: string, job: JobRow): Promise<string> {
+export async function resolveProjectOrigin(userId: string, job: JobRow): Promise<string> {
   if (!job.project_id) {
     throw new Error("crawl_site: job has no project to crawl");
   }
