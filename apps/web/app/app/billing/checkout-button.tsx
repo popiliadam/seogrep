@@ -31,25 +31,40 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
   const [paddle, setPaddle] = useState<Paddle | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumping this re-runs the init effect — the "Try again" control, not just a re-render (L-08).
+  const [initAttempt, setInitAttempt] = useState(0);
+  const [initFailed, setInitFailed] = useState(false);
 
   useEffect(() => {
     if (!configured || !CLIENT_TOKEN || !ENVIRONMENT) {
       return;
     }
     let active = true;
+    setInitFailed(false);
     initializePaddle({ token: CLIENT_TOKEN, environment: ENVIRONMENT })
       .then((instance) => {
-        if (active && instance) {
-          setPaddle(instance);
+        if (!active) {
+          return;
         }
+        if (instance) {
+          setPaddle(instance);
+          return;
+        }
+        // Resolved WITHOUT an instance: Paddle.js is unusable, same user-visible outcome as a
+        // rejection. Previously this fell through silently and left the button disabled forever.
+        console.error("paddle init returned no instance");
+        setInitFailed(true);
       })
       .catch((caught) => {
         console.error("paddle init failed:", caught);
+        if (active) {
+          setInitFailed(true);
+        }
       });
     return () => {
       active = false;
     };
-  }, [configured]);
+  }, [configured, initAttempt]);
 
   const openCheckout = useCallback(() => {
     if (!paddle || !priceId) {
@@ -69,6 +84,39 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
       setPending(false);
     }
   }, [paddle, priceId, userId]);
+
+  const retryInit = useCallback(() => {
+    setPaddle(null);
+    setError(null);
+    setInitAttempt((attempt) => attempt + 1);
+  }, []);
+
+  // L-08: an init failure used to reach console.error ONLY, so the user faced a permanently
+  // disabled "Buy" button with no explanation and nothing to click. Say what happened and offer
+  // a real retry — the reason stays out of the UI (it is a Paddle/network internal), the log has it.
+  if (initFailed) {
+    return (
+      <div className="flex flex-col gap-1">
+        <button
+          type="button"
+          disabled
+          className="rounded-md bg-neutral-200 px-4 py-2 text-sm font-medium text-neutral-500"
+        >
+          {label}
+        </button>
+        <span role="alert" className="text-xs text-red-600">
+          Checkout could not load.
+        </span>
+        <button
+          type="button"
+          onClick={retryInit}
+          className="self-start text-xs font-medium text-neutral-700 underline hover:text-neutral-900"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   if (!configured) {
     return (
