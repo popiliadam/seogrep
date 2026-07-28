@@ -25,9 +25,11 @@ set -- "$MIGRATIONS_DIR"/*.sql
 awk -v q="'" '
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
-function tname(chunk,   q, t) {
-  q = index(chunk, "public.")
-  t = substr(chunk, q + 7)
+# Local is named z, not q: q is now the global quote character (see the -v above) and a
+# parameter of that name would silently shadow it for anything this function called.
+function tname(chunk,   z, t) {
+  z = index(chunk, "public.")
+  t = substr(chunk, z + 7)
   gsub(/"/, "", t)
   return t
 }
