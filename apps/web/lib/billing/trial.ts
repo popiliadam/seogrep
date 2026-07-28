@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { CREDIT_PACKAGES } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
 import type { Database } from "@pseo/db/types";
+import { captureSignup } from "../analytics";
 
 /**
  * One-time signup trial grant. Runs ONLY from server-only modules (it uses the service-role
@@ -54,4 +55,34 @@ export async function grantTrialCredits(userId: string): Promise<boolean> {
     throw new Error(`claim_trial failed: ${error.message}`);
   }
   return data === true;
+}
+
+/**
+ * Best-effort, retry-safe trial claim for every authenticated entry point (M-21).
+ *
+ * The auth callback link is SINGLE-USE: when its claim_trial hit a transient DB error the account
+ * was left verified, the token spent and the balance at zero, and password login goes straight to
+ * /app without ever re-claiming — a user permanently short of the advertised trial credits. So the
+ * claim is re-attempted on later entries instead of only at the callback.
+ *
+ * Two properties make that safe:
+ *   - Re-asking cannot DOUBLE-GRANT. `claim_trial` flips the lock and appends the grant in one
+ *     transaction guarded by `trial_granted_at IS NULL` (migration 0009), so the second and every
+ *     later call returns false without touching credit_ledger. The append-only ledger is never
+ *     written from here by any other path.
+ *   - Re-asking cannot BREAK THE PAGE. A failure is logged and swallowed, never rethrown: a
+ *     dashboard must not 500 because a bonus-credit retry lost a race with the database.
+ *
+ * captureSignup fires only when THIS call won the lock, so the one-time funnel event stays
+ * one-time no matter which entry point ends up granting.
+ */
+export async function ensureTrialGranted(userId: string): Promise<void> {
+  try {
+    if (await grantTrialCredits(userId)) {
+      await captureSignup(userId);
+    }
+  } catch (error) {
+    // Swallowed on purpose: the next authenticated entry retries the same idempotent claim.
+    console.error("trial claim failed (will retry on next entry):", error);
+  }
 }
