@@ -60,6 +60,22 @@ Haftalık compost: haftanın FAIL'lerinden ≤3 kural önerisi; insan imzalamada
 5. Env okuyan kod, PROD'un gerçek env adlarıyla negatif test edilir; lokal kapının kendi export'ları prod
    sözleşmesini maskeler (Faz 2 SUPABASE_URL incident'i — canlıda trial grant'i düşürdü).
 
+### İmzalı dersler (insan onayı 2026-07-28 — metin yetkisi şefe delege: "önerilere göre gidelim, izin veriyorum")
+
+6. Connection-string env'leri `min(1)` ile değil URL-YAPI ile doğrulanır; bozuk değer sessiz degradasyon
+   değil BOOT hatası üretir (Faz 4 `SUPABASE_DB_URL` vakası: pg-boss sessiz düştü, `/status` yeşil kaldı,
+   worker-down maskelendi).
+7. Yeşil kapı NE ölçtüğüyle raporlanır: env-koşullu SKIP'li kalemler (örn. `MCP_SMOKE_URL`) tam-ölçüm gibi
+   sunulmaz; smoke env'leri kalıcı set edilir ve şef kanıt koşusunda env'i AÇIKÇA yükler
+   (şef-Bash `~/.zshrc` source etmez).
+8. Paralel işçiler AYNI çalışma ağacında koşturulmaz — worktree izolasyonu ya da paket-scoped kapı
+   (`turbo --filter`); repo-geneli `verify.sh` yalnız seri anlarda (Faz 4'te üç hayalet-hata vakası).
+9. Gözlenebilirlik iddiası, o kanaldan FİİLEN okunarak kanıtlanmadan dokümana yazılmaz — metrik yazmak,
+   metriği okunabilir kılmaz (reaper sayaçları HTTP dinlemeyen worker'daydı; sınanmamış iddia 4 dokümana
+   kopyalanmıştı).
+10. Hipotezi test etmeden önce kendi araştırma çıktın YENİDEN okunur — cevap çoğu kez zaten eldeki
+    dokümandadır (Smithery server-card vakası).
+
 ## Komutlar
 
 `make verify` (kapı) · `make goals` (kalıcı hedefler) · `make dev` (web dev server)
