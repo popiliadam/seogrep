@@ -10,7 +10,7 @@ import {
   type JobMessage,
 } from "./boss.ts";
 import type { Json } from "../db.ts";
-import { withCredits } from "../credits/guard.ts";
+import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { createCrawlHandler } from "./handlers/crawl.ts";
 import { reconcileStuckJobs, type ReconcileOutcome } from "./reaper.ts";
@@ -85,6 +85,22 @@ function errorDetail(error: unknown): string {
 }
 
 /**
+ * Stamped when the tool ran but its charge could not settle (guard.ts's ReserveCommitFailedError).
+ * This is NOT the same story as a handler failure: the run produced a result the user never
+ * received, and the reserve is still holding their credits until the ledger-keyed sweep in
+ * reaper.ts refunds it. Say that, rather than pasting a raw PostgREST connection string.
+ */
+const COMMIT_FAILED_ERROR =
+  "the tool ran but its credit charge could not be settled — the reserve is left open and reconciliation refunds it automatically; re-run the tool";
+
+/** The fail-mark for a withCredits rejection: honest for the commit shape, raw otherwise. */
+function failureDetail(error: unknown): string {
+  return isReserveCommitFailed(error)
+    ? `${COMMIT_FAILED_ERROR} (${error.message})`
+    : errorDetail(error);
+}
+
+/**
  * Execute one queue message end to end. Never throws: the jobs row is the source
  * of truth for the outcome (succeeded/failed), so handler errors are recorded via
  * failJob and swallowed — with retryLimit 0 a boss-level failure would only
@@ -140,14 +156,13 @@ export async function executeJob(message: JobMessage): Promise<void> {
     );
   } catch (error) {
     // withCredits threw. Two shapes reach here, per guard.ts's contract:
-    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded failure);
-    //   • a commit_reserve failure — the guard deliberately did NOT release (work delivered, the
-    //     debit stands), leaving the reserve OPEN and visible via jobs.reserve_id for
-    //     reconciliation (reconciliation.md §2a/§2b).
-    // Both are recorded here with the raw detail. Giving the commit-failure case its own honest
-    // string (like the post-commit path below) needs a distinguishing signal from guard.ts and is
-    // a deliberate Faz-4 follow-up — not silently folded into a plain failure without one.
-    await failJob(jobId, errorDetail(error));
+    //   • a reserve or handler error — the guard RELEASED the reserve (a clean, refunded failure),
+    //     recorded with the raw detail because that detail IS the story;
+    //   • a commit_reserve failure — the guard leaves the reserve OPEN (money direction and
+    //     reasoning in guard.ts), so this gets its own honest wording. That distinguishing
+    //     signal (ReserveCommitFailedError) is the Faz-4 follow-up this comment used to ask
+    //     for; the reserve is refunded by reaper.ts's ledger-keyed sweep, not left forever.
+    await failJob(jobId, failureDetail(error));
     return;
   }
 

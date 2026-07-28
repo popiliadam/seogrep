@@ -186,6 +186,42 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
   });
 
+  it("executeJob commit failure (H-01): honest fail-mark, reserve left OPEN for reconciliation", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    registerToolHandler("audit_tech", async () => ({ audited: true }));
+
+    // The handler SUCCEEDS but commit_reserve cannot settle. Before H-01 the worker pasted the
+    // raw PostgREST string into jobs.error, so the user read a connection message for a run
+    // whose credits were silently still held.
+    const client = getServiceClient();
+    const realRpc = client.rpc.bind(client) as unknown as (
+      name: string,
+      args: unknown,
+    ) => Promise<unknown>;
+    const spy = vi.spyOn(client, "rpc").mockImplementation(((name: string, args: unknown) =>
+      name === "commit_reserve"
+        ? Promise.resolve({
+            data: null,
+            error: { message: "connection reset by peer", details: "", hint: "", code: "XX000" },
+          })
+        : realRpc(name, args)) as unknown as typeof client.rpc);
+    try {
+      await executeJob({ jobId, userId, tool: "audit_tech", payload: {} });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    // Honest: the charge did NOT settle, and reconciliation refunds the open reserve.
+    expect(job?.error).toContain("credit charge could not be settled");
+    expect(job?.error).toContain("connection reset by peer"); // cause kept for forensics
+    // The open-reserve shape: a debit with no settling row on either side.
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve"]);
+  });
+
   it("executeJob insufficient balance: failed with the DB error, only the grant in the ledger", async () => {
     const userId = await makeUserId();
     await seedGrant(userId, TOOL_COSTS.audit_onpage - 1);
