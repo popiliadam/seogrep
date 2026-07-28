@@ -68,6 +68,8 @@ function transactionEvent(overrides: {
   priceId?: string;
   userId?: string | null;
   transactionId?: string;
+  /** Item-level quantity — the real Paddle field, preserved verbatim through unmarshal. */
+  quantity?: number;
 }): Record<string, unknown> {
   const customData = overrides.userId === null ? null : { user_id: overrides.userId ?? USER_ID };
   return {
@@ -85,7 +87,7 @@ function transactionEvent(overrides: {
             unit_price: { amount: "1900", currency_code: "USD" },
             quantity: { minimum: 1, maximum: 1 },
           },
-          quantity: 1,
+          quantity: overrides.quantity ?? 1,
         },
       ],
       payments: [],
@@ -246,6 +248,30 @@ describe("POST /api/paddle/webhook", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "paddle webhook: PAID transaction recorded without credit",
       expect.objectContaining({ eventId: expect.any(String), reason: expect.any(String) }),
+    );
+    expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
+  it("a quantity>1 transaction is the SAME 500 + un-stamped path (never a short one-package grant)", async () => {
+    // M-02: the customer bought TWO of a package. Credit amounts are pinned per package and are
+    // never multiplied here (NEVER #6), so this cannot be granted — and it must not be closed
+    // either: it takes the B-C1 route (500, processed_at left NULL, loud trace) so Paddle keeps
+    // retrying and an operator can settle it, rather than the customer silently paying 2x for 1x.
+    const response = await POST(
+      signedRequest(transactionEvent({ transactionId: "txn_qty2", quantity: 2 })),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "paid transaction pending attribution",
+    });
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: PAID transaction recorded without credit",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        reason: expect.stringContaining("unsupported_quantity"),
+      }),
     );
     expect(capturePurchase).not.toHaveBeenCalled();
   });
