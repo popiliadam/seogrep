@@ -57,8 +57,9 @@ properties they select, solely to produce the SEO analyses and reports that the 
 requests. Access is read-only by design — SeoGrep never requests permission to modify
 a property. Refresh tokens are stored encrypted at rest; data is processed only on our
 service infrastructure, is never used for advertising, is never sold, and is never used
-to train AI models. Users can disconnect at any time from their dashboard, which
-deletes the stored token.
+to train AI models. Users can revoke SeoGrep's access at any time from their Google
+Account permissions page, which invalidates the stored refresh token, and can request
+deletion of the stored token by emailing support@seogrep.com.
 ```
 
 ## Demo video senaryosu (~2 dk, EN, unlisted YouTube; URL çubuğu HEP görünür)
@@ -69,7 +70,9 @@ deletes the stored token.
    webmasters.readonly izin metni EKRANDA OKUNUR halde bekletilir (3-5 sn).
 4. İzin verilir → app'e dönüş: bağlantı "connected" durumu gösterilir.
 5. GSC verisinin KULLANIMI gösterilir: bir analiz/rapor çıktısında Search Console'dan gelen bölüm.
-6. Kapanış: "Access is read-only; users can disconnect anytime" — disconnect butonu gösterilir.
+6. (Opsiyonel kapanış) myaccount.google.com/permissions sayfasında SeoGrep erişiminin listelendiği
+   3 sn gösterilir (kullanıcı-taraflı iptal yolu). DİKKAT: üründe GSC-disconnect butonu YOK
+   (2026-07-28 tespiti; küçük iş olarak backlog'da) — videoda ve formda disconnect İDDİA EDİLMEZ.
 
 ## Bekleme sırasında
 
