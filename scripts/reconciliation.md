@@ -250,6 +250,28 @@ far above the longest run of **any** tool, sync tools included, since this lane 
 > user got nothing and must not stay debited. Over-refunding a genuinely committed reserve is
 > structurally impossible: `release_reserve`'s advisory-locked settled-guard rejects it.
 
+### 2g. Jobs that were never delivered to a worker (M-01)
+
+`enqueueJob` inserts the `jobs` row and **then** sends the pg-boss message. If the process dies
+between the two, the row's own catch never runs and `retryLimit` is 0, so nothing replays it:
+the user watches the job sit `queued` forever. **No money is at stake** — a reserve only opens
+after the claim — but the row is a lie until someone closes it.
+
+```sql
+-- Jobs still queued long past any healthy queue delay: no message was ever delivered.
+select id as job_id, user_id, tool, created_at
+from public.jobs
+where status = 'queued'
+  and created_at < now() - interval '30 minutes'
+order by created_at asc;
+```
+
+`scripts/reconcile.mjs` fails exactly these (the reaper's **queued lane**), with the honest
+`reconciled: the job was never delivered to a worker; no credits were charged, re-run the
+tool`, under a compare-and-set on `status = 'queued'` so a worker that claims the row in the
+same instant wins. A non-empty result **while the worker is healthy** points at the enqueue
+path, not at the queue: check for worker crashes around each `created_at`.
+
 ---
 
 ## 3. Recovery

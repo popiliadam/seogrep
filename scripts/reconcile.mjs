@@ -57,6 +57,9 @@ try {
   console.log(`  ledger-only open reserves found:   ${outcome.orphanScanned}`);
   console.log(`  ledger-only reserves refunded:     ${outcome.orphanReleased}`);
   console.log(`  ledger-only settled mid-sweep:     ${outcome.orphanAlreadySettled}`);
+  // The QUEUED lane (M-01): rows inserted but never delivered to a worker. See §2g.
+  console.log(`  never-delivered queued jobs found: ${outcome.queuedScanned}`);
+  console.log(`  never-delivered queued -> failed:  ${outcome.queuedFailed}`);
   process.exit(0);
 } catch (error) {
   console.error(`reconcile failed: ${error instanceof Error ? error.message : String(error)}`);

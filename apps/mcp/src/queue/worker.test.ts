@@ -55,6 +55,11 @@ describe("in-worker stuck-job reaper", () => {
     alreadyReleased: 0,
     failed: released,
     orphanReserves: 0,
+    orphanScanned: 0,
+    orphanReleased: 0,
+    orphanAlreadySettled: 0,
+    queuedScanned: 0,
+    queuedFailed: 0,
   });
 
   /** The reaper heartbeat lines a console.warn spy saw, in call order (other warns ignored). */
@@ -172,6 +177,14 @@ describe("in-worker stuck-job reaper", () => {
       alreadyReleased: 0,
       failed: 4,
       orphanReserves: 5,
+      // The H-01 ledger lane reports on its own `orphan reserve sweep:` line (reaper.ts), so
+      // these stay out of the heartbeat and this spec keeps asserting its exact shape.
+      orphanScanned: 0,
+      orphanReleased: 0,
+      orphanAlreadySettled: 0,
+      // Same for the M-01 queued lane: its own `stuck queued sweep:` line, no money involved.
+      queuedScanned: 0,
+      queuedFailed: 0,
     };
     startReaperTimer({ reaperIntervalMs: 1_000, reconcile: async () => sweep });
 

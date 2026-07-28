@@ -15,6 +15,17 @@ import { getServiceClient } from "../db.ts";
  * per-user advisory lock in migration 0005, so a reserve the real worker committed
  * concurrently comes back "already settled" here and is skipped (no second settlement).
  *
+ * TWO LANES, because `jobs` cannot see every open reserve (H-01):
+ *
+ *   JOBS LANE   — aged `running` rows. Refunds their reserves and marks them failed.
+ *   LEDGER LANE — aged `spend_reserve` rows with NO matching spend_commit/spend_release,
+ *                 enumerated straight from credit_ledger and refunded REGARDLESS of whether a
+ *                 jobs row exists or what status it holds. This lane was missing: a SYNC
+ *                 surface tool has no jobs row at all, and the async worker marks a commit
+ *                 failure `failed`, so BOTH shapes were invisible to a `status = 'running'`
+ *                 scan — and to every detection query in reconciliation.md, which all started
+ *                 from a jobs JOIN. Their reserves held the user's credits forever.
+ *
  * This module NEVER writes the ledger directly: refunds go through the existing
  * release_reserve RPC (the only refund path, advisory-locked); everything else is table
  * reads and one status-guarded jobs UPDATE. guard.ts and the 0005 RPCs are untouched.
@@ -38,6 +49,21 @@ export const DEFAULT_OLDER_THAN_MINUTES = DEFAULT_OLDER_THAN_MS / 60_000;
 export const MIN_OLDER_THAN_MS = 2 * 60_000;
 /** The explicit opt-in that lets a caller go below MIN_OLDER_THAN_MS. Verbose on purpose. */
 export const UNSAFE_THRESHOLD_FLAG = "--i-accept-refunding-live-jobs";
+/**
+ * The LEDGER lane's staleness window. Deliberately much wider than the jobs lane's 15 minutes:
+ * this lane refunds on ledger evidence alone, so it must sit far above the longest run of ANY
+ * tool — including the SYNC surface tools, which have no jobs row to age and are bounded only
+ * by their HTTP call. 30 minutes is orders of magnitude past both, and the RPC's settled-guard
+ * still arbitrates every individual release.
+ */
+const DEFAULT_ORPHAN_OLDER_THAN_MS = 30 * 60_000;
+/**
+ * The QUEUED lane's staleness window. enqueueJob inserts the jobs row and THEN sends the
+ * pg-boss message; a process death between the two leaves a row no consumer will ever see, and
+ * its own catch cannot run. 30 minutes is far past any healthy queue delay, so a row still
+ * `queued` at that age was never delivered rather than merely waiting.
+ */
+const DEFAULT_QUEUED_OLDER_THAN_MS = 30 * 60_000;
 /** Bounded batch: at most this many stuck jobs per run. */
 const DEFAULT_LIMIT = 100;
 /** Stamped on a reconciled job whose open reserve WAS released (refunded). */
@@ -69,6 +95,13 @@ const RECONCILE_ERROR_NO_RESERVE =
  */
 const RECONCILE_ERROR_REFUNDED =
   "reconciled: worker did not finish; the reserve was already refunded, re-run the tool";
+/**
+ * Stamped on a job that sat `queued` past the queued window (M-01). It was never claimed, so
+ * no reserve ever opened and NOTHING was charged — the wording must not mention a refund or a
+ * reserve, because neither happened. Re-running is free of any prior debit.
+ */
+const RECONCILE_ERROR_NEVER_DELIVERED =
+  "reconciled: the job was never delivered to a worker; no credits were charged, re-run the tool";
 
 export interface ReconcileOptions {
   /** Reap running jobs whose started_at is older than this (default 15 min). */
@@ -77,6 +110,18 @@ export interface ReconcileOptions {
   now?: () => Date;
   /** Max jobs processed per run (default 100). */
   limit?: number;
+  /** Ledger-lane window: refund open spend_reserve rows older than this (default 30 min). */
+  orphanOlderThanMs?: number;
+  /** Queued-lane window: fail never-delivered `queued` rows older than this (default 30 min). */
+  queuedOlderThanMs?: number;
+  /**
+   * Restrict BOTH lanes to a single tenant. Reconciliation is a system-level sweep by default
+   * (that is what makes it a sweep), but a support ticket is about one user — reconciliation.md
+   * §2b already groups the impact per user — and scoping the sweep to them keeps an incident
+   * response from touching anyone else's money. It is also what makes the ledger-lane specs
+   * deterministic against a shared test database.
+   */
+  userId?: string;
   /**
    * Opt out of the MIN_OLDER_THAN_MS floor. Only an operator who has decided to accept
    * refunding jobs that may still be running should set this (see UNSAFE_THRESHOLD_FLAG).
@@ -161,6 +206,20 @@ export interface ReconcileOutcome {
   readonly alreadyReleased: number;
   readonly failed: number; // jobs transitioned running -> failed
   readonly orphanReserves: number; // open reserves found via ledger.job_id when reserve_id was NULL
+  /**
+   * The LEDGER lane (H-01). orphanScanned counts open reserves enumerated straight from
+   * credit_ledger — no jobs row required and no status consulted — and orphanReleased how many
+   * of them the release_reserve RPC actually refunded. orphanAlreadySettled is the narrow race
+   * where a reserve settled between the enumeration and the refund; the RPC catches it and no
+   * double refund occurs. These are DISJOINT from the jobs-lane counters above: a reserve the
+   * jobs lane refunded earlier in the same sweep is already settled and never enumerated here.
+   */
+  readonly orphanScanned: number;
+  readonly orphanReleased: number;
+  readonly orphanAlreadySettled: number;
+  /** The QUEUED lane (M-01): never-delivered rows found, and how many this run transitioned. */
+  readonly queuedScanned: number;
+  readonly queuedFailed: number;
 }
 
 function errorDetail(error: unknown): string {
@@ -257,25 +316,189 @@ async function warnRunningWithoutStart(client: ServiceClient, limit: number): Pr
   }
 }
 
+/** What the ledger lane did. */
+interface OrphanSweepOutcome {
+  readonly scanned: number;
+  readonly released: number;
+  readonly alreadySettled: number;
+}
+
+/**
+ * The LEDGER lane (H-01): refund every open reserve older than `cutoffIso`, keyed ONLY on
+ * credit_ledger — no jobs row required, no status consulted. This is the lane that reaches the
+ * two shapes nothing else could see: a SYNC surface reserve (no jobs row exists at all) and an
+ * async reserve whose job the worker already marked `failed` after a commit failure.
+ *
+ * MONEY DIRECTION — RELEASE. The reserve debited the user; a commit that never landed means
+ * withCredits threw, so the caller never received the result. Refunding is the only direction
+ * that leaves a user who received nothing whole. It cannot over-refund a genuinely committed
+ * reserve: release_reserve's own advisory-locked settled-guard rejects that with
+ * "already settled", which is why this lane can be one-directional and idempotent at once.
+ *
+ * Two reads, then the RPC. PostgREST has no NOT EXISTS, so the open set is computed app-side
+ * as a set difference — deliberately safe, because the app-side answer is only a CANDIDATE
+ * list: the authority on open-vs-settled stays release_reserve (the same reasoning as
+ * findJobReserves). A reserve that settles between the two reads simply comes back
+ * "already settled" and is skipped.
+ *
+ * Bounded by `limit`, oldest first, with a per-reserve catch so one bad reserve cannot abort
+ * the batch.
+ */
+async function sweepOrphanReserves(
+  client: ServiceClient,
+  cutoffIso: string,
+  limit: number,
+  userId?: string,
+): Promise<OrphanSweepOutcome> {
+  let candidateQuery = client
+    .from("credit_ledger")
+    .select("reserve_id")
+    .eq("kind", "spend_reserve")
+    .lt("created_at", cutoffIso)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (userId !== undefined) candidateQuery = candidateQuery.eq("user_id", userId);
+  const { data, error } = await candidateQuery;
+  if (error) {
+    throw new Error(`sweepOrphanReserves: candidate query failed: ${error.message}`);
+  }
+  const reserveIds = [
+    ...new Set((data ?? []).flatMap((row) => (row.reserve_id === null ? [] : [row.reserve_id]))),
+  ];
+  if (reserveIds.length === 0) return { scanned: 0, released: 0, alreadySettled: 0 };
+
+  const settled = await client
+    .from("credit_ledger")
+    .select("reserve_id")
+    .in("reserve_id", reserveIds)
+    .in("kind", ["spend_commit", "spend_release"]);
+  if (settled.error) {
+    throw new Error(`sweepOrphanReserves: settlement query failed: ${settled.error.message}`);
+  }
+  const closed = new Set((settled.data ?? []).map((row) => row.reserve_id));
+  const open = reserveIds.filter((id) => !closed.has(id));
+
+  let released = 0;
+  let alreadySettled = 0;
+  for (const reserveId of open) {
+    try {
+      const { error: releaseError } = await client.rpc("release_reserve", {
+        p_reserve_id: reserveId,
+      });
+      if (!releaseError) {
+        released++;
+        continue;
+      }
+      const message = releaseError.message ?? "";
+      if (message.includes("already settled")) {
+        // Settled between the two reads and the RPC — the guard did its job, no double refund.
+        alreadySettled++;
+      } else {
+        throw new Error(`release_reserve failed for ${reserveId}: ${message}`);
+      }
+    } catch (reserveError) {
+      // Per-reserve isolation, mirroring the per-job catch below: leave it for the next sweep.
+      console.error(
+        `sweepOrphanReserves: skipping reserve ${reserveId}: ${errorDetail(reserveError)}`,
+      );
+    }
+  }
+  if (open.length > 0) {
+    // Own greppable line — the jobs lane's `reaper sweep:` heartbeat keeps its exact shape.
+    console.warn(
+      `orphan reserve sweep: openFound=${open.length} released=${released}` +
+        ` alreadySettled=${alreadySettled}`,
+    );
+  }
+  return { scanned: open.length, released, alreadySettled };
+}
+
+/**
+ * The QUEUED lane (M-01): fail rows that were inserted but never delivered to a worker.
+ * enqueueJob writes the jobs row first and sends the pg-boss message second, so a process
+ * death in between leaves a row no consumer will ever pick up — the send's own catch cannot
+ * run, and retryLimit 0 means nothing replays it. Nothing was ever charged on this path (a
+ * reserve only opens after the claim), so this lane touches NO money: it only tells the user
+ * the truth instead of leaving them watching `queued` forever.
+ *
+ * Compare-and-set on `status = 'queued'`, so a worker that claims the row in the same instant
+ * wins and this update matches 0 rows.
+ */
+async function sweepStuckQueuedJobs(
+  client: ServiceClient,
+  cutoffIso: string,
+  nowIso: string,
+  limit: number,
+  userId?: string,
+): Promise<{ scanned: number; failed: number }> {
+  let query = client
+    .from("jobs")
+    .select("id")
+    .eq("status", "queued")
+    .lt("created_at", cutoffIso)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (userId !== undefined) query = query.eq("user_id", userId);
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`sweepStuckQueuedJobs: candidate query failed: ${error.message}`);
+  }
+  const candidates = data ?? [];
+
+  let failed = 0;
+  for (const job of candidates) {
+    try {
+      const update = await client
+        .from("jobs")
+        .update({
+          status: "failed",
+          finished_at: nowIso,
+          error: RECONCILE_ERROR_NEVER_DELIVERED,
+        })
+        .eq("id", job.id)
+        .eq("status", "queued")
+        .select("id");
+      if (update.error) {
+        throw new Error(update.error.message);
+      }
+      if (update.data && update.data.length > 0) failed++;
+    } catch (jobError) {
+      console.error(`sweepStuckQueuedJobs: skipping job ${job.id}: ${errorDetail(jobError)}`);
+    }
+  }
+  if (failed > 0) {
+    console.warn(`stuck queued sweep: scanned=${candidates.length} failed=${failed}`);
+  }
+  return { scanned: candidates.length, failed };
+}
+
 /**
  * Refund the open reserves of crashed jobs and mark those jobs failed. Each job is
  * handled independently (per-job catch): one bad job must never abort the batch.
  */
 export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<ReconcileOutcome> {
   const olderThanMs = opts?.olderThanMs ?? DEFAULT_OLDER_THAN_MS;
+  const orphanOlderThanMs = opts?.orphanOlderThanMs ?? DEFAULT_ORPHAN_OLDER_THAN_MS;
+  const queuedOlderThanMs = opts?.queuedOlderThanMs ?? DEFAULT_QUEUED_OLDER_THAN_MS;
+  const allowUnsafe = opts?.allowUnsafeThreshold ?? false;
   // Guard FIRST — before getServiceClient(), so an unsafe window is rejected without a client,
-  // without env, and above all without a single mutating statement (L-16).
-  assertSafeThreshold(olderThanMs, opts?.allowUnsafeThreshold ?? false, "reconcileStuckJobs");
+  // without env, and above all without a single mutating statement (L-16). Both lanes are
+  // checked: the ledger lane refunds on ledger evidence alone, so a short window there is at
+  // least as dangerous as one on the jobs lane.
+  assertSafeThreshold(olderThanMs, allowUnsafe, "reconcileStuckJobs");
+  assertSafeThreshold(orphanOlderThanMs, allowUnsafe, "reconcileStuckJobs orphanOlderThanMs");
+  assertSafeThreshold(queuedOlderThanMs, allowUnsafe, "reconcileStuckJobs queuedOlderThanMs");
 
   const client = getServiceClient();
   const limit = opts?.limit ?? DEFAULT_LIMIT;
+  const userId = opts?.userId;
   const now = opts?.now ?? (() => new Date());
   const nowDate = now();
   const cutoffIso = new Date(nowDate.getTime() - olderThanMs).toISOString();
 
   await warnRunningWithoutStart(client, limit);
 
-  const { data, error } = await client
+  let candidateQuery = client
     .from("jobs")
     .select("id, reserve_id")
     .eq("status", "running")
@@ -283,6 +506,8 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
     .lt("started_at", cutoffIso)
     .order("started_at", { ascending: true })
     .limit(limit);
+  if (userId !== undefined) candidateQuery = candidateQuery.eq("user_id", userId);
+  const { data, error } = await candidateQuery;
   if (error) {
     throw new Error(`reconcileStuckJobs: candidate query failed: ${error.message}`);
   }
@@ -383,6 +608,24 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
     }
   }
 
+  // The ledger lane runs LAST on purpose: every reserve the jobs lane just refunded is now
+  // settled, so it is filtered out below and this lane only sees what nothing else could reach.
+  const orphan = await sweepOrphanReserves(
+    client,
+    new Date(nowDate.getTime() - orphanOlderThanMs).toISOString(),
+    limit,
+    userId,
+  );
+
+  // The queued lane touches no money, so it runs last and cannot affect anything above it.
+  const queued = await sweepStuckQueuedJobs(
+    client,
+    new Date(nowDate.getTime() - queuedOlderThanMs).toISOString(),
+    nowDate.toISOString(),
+    limit,
+    userId,
+  );
+
   return {
     scanned: candidates.length,
     released,
@@ -391,5 +634,10 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
     alreadyReleased,
     failed,
     orphanReserves,
+    orphanScanned: orphan.scanned,
+    orphanReleased: orphan.released,
+    orphanAlreadySettled: orphan.alreadySettled,
+    queuedScanned: queued.scanned,
+    queuedFailed: queued.failed,
   };
 }

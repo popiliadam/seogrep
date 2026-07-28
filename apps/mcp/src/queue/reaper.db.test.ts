@@ -372,3 +372,57 @@ describe("ledger-keyed orphan reserve sweep (H-01)", () => {
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
   });
 });
+
+/**
+ * M-01: enqueueJob inserts the `jobs` row and THEN sends the pg-boss message. A process death
+ * between the two leaves a row nobody will ever consume — the catch that would mark it failed
+ * never runs, retryLimit is 0, and the reaper only scanned `running`. The user watched a job
+ * sit `queued` forever. Same clock/tenant scoping as the ledger lane above.
+ */
+describe("stuck queued job sweep (M-01)", () => {
+  async function insertQueuedJob(userId: string): Promise<string> {
+    const inserted = await service
+      .from("jobs")
+      .insert({ user_id: userId, tool: "audit_tech", status: "queued" })
+      .select("id")
+      .single();
+    if (inserted.error || !inserted.data) {
+      throw new Error(`jobs insert failed: ${inserted.error?.message ?? "no row"}`);
+    }
+    return inserted.data.id;
+  }
+
+  it("(e) an aged QUEUED job is failed with honest wording and the ledger stays empty", async () => {
+    const now = new Date();
+    const userId = await makeUserId();
+    await seedGrant(userId, GRANT);
+    const jobId = await insertQueuedJob(userId);
+
+    const outcome = await sweepLedgerFor(userId, now);
+
+    expect(outcome.queuedScanned).toBe(1);
+    expect(outcome.queuedFailed).toBe(1);
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain("never delivered");
+    expect(job?.finished_at).not.toBeNull();
+    expect(job?.started_at).toBeNull(); // it was never claimed, so nothing to undo
+    // No reserve ever opened on this path, so the wording must not imply one, and the
+    // ledger must be untouched beyond the seeded grant.
+    expect(job?.error).not.toContain("reserve");
+    expect(await ledgerKinds(userId)).toEqual(["grant"]);
+    expect(await creditBalance(service, userId)).toBe(GRANT);
+  });
+
+  it("(f) a YOUNG queued job is untouched — a worker may still be about to pick it up", async () => {
+    const now = new Date();
+    const userId = await makeUserId();
+    const jobId = await insertQueuedJob(userId);
+
+    const outcome = await reconcileStuckJobs({ now: () => now, userId });
+
+    expect(outcome.queuedScanned).toBe(0);
+    expect(outcome.queuedFailed).toBe(0);
+    expect((await getJob(jobId))?.status).toBe("queued");
+  });
+});
