@@ -20,7 +20,9 @@ MIGRATIONS_DIR="${1:-${MIGRATIONS_DIR:-packages/db/supabase/migrations}}"
 set -- "$MIGRATIONS_DIR"/*.sql
 [ -e "$1" ] || { echo "check-rls: no .sql migrations in $MIGRATIONS_DIR"; exit 1; }
 
-awk '
+# -v q: the single-quote character. The awk program below is a single-quoted shell block,
+# so the literal cannot appear inside it; string-literal tracking needs it (audit R4).
+awk -v q="'" '
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
 function tname(chunk,   q, t) {
@@ -30,13 +32,44 @@ function tname(chunk,   q, t) {
   return t
 }
 
+# Prefix the identifier that follows <pre> with "public." when it carries no schema of its
+# own: an unqualified name resolves through search_path, so SET search_path = public makes
+# "alter table credit_ledger" mean exactly "alter table public.credit_ledger" (audit R6).
+# A name that already names a schema keeps it and therefore stays out of scope, as before.
+function qualify(s, pre,   rest, tok, i, c, n) {
+  if (index(s, pre) != 1) return s
+  rest = substr(s, length(pre) + 1)
+  n = length(rest)
+  tok = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(rest, i, 1)
+    if (c ~ /[a-z0-9_"]/) tok = tok c; else break
+  }
+  if (tok == "" || substr(rest, i, 1) == ".") return s
+  return pre "public." rest
+}
+
+# ALTER TABLE [ IF EXISTS ] [ ONLY ] name is the keyword order PostgreSQL documents, and
+# the gate used to match ONLY before IF EXISTS only (audit R3). Strip whichever of the two
+# appear, in ANY order and any number of times, so the shapes below match one spelling.
+function normalize(s) {
+  while (sub(/^alter table (if exists|only) /, "alter table ", s)) { }
+  sub(/^create table if not exists /, "create table ", s)
+  sub(/^drop table if exists /, "drop table ", s)
+  s = qualify(s, "alter table ")
+  s = qualify(s, "create table ")
+  s = qualify(s, "drop table ")
+  return s
+}
+
 # Remember a table in first-seen order so the report is deterministic.
 function note(t, f, l) {
   if (!(t in known)) { known[t] = 1; ord[++nord] = t; cloc[t] = f ":" l }
 }
 
 function handle(s, f, l,   t) {
-  if (match(s, /^create table (if not exists )?public\.[a-z0-9_]+/)) {
+  s = normalize(s)
+  if (match(s, /^create table public\.[a-z0-9_]+/)) {
     t = tname(substr(s, RSTART, RLENGTH))
     note(t, f, l)
     made[t] = 1; cloc[t] = f ":" l
@@ -44,12 +77,12 @@ function handle(s, f, l,   t) {
     en[t] = 0; fo[t] = 0; enloc[t] = ""; foloc[t] = ""
     return
   }
-  if (match(s, /^drop table (if exists )?public\.[a-z0-9_]+/)) {
+  if (match(s, /^drop table public\.[a-z0-9_]+/)) {
     t = tname(substr(s, RSTART, RLENGTH))
     delete made[t]; delete en[t]; delete fo[t]; delete enloc[t]; delete foloc[t]
     return
   }
-  if (match(s, /^alter table (only )?(if exists )?public\.[a-z0-9_]+/)) {
+  if (match(s, /^alter table public\.[a-z0-9_]+/)) {
     t = tname(substr(s, RSTART, RLENGTH))
     # "no force" is checked first: it contains "force" as a substring.
     if (s ~ / no force row level security/)   { note(t, f, l); fo[t] = 0; foloc[t] = f ":" l }
@@ -75,22 +108,38 @@ function flush(   s) {
 
 # A statement never spans two files.
 FNR == 1 && NR > 1 { flush() }
+# ...and neither does a string literal or a block comment, so an unbalanced quote can
+# blind at most its own file instead of every migration that follows it.
+FNR == 1 { inblock = 0; instr = 0 }
 
 {
   # Lowercase, strip -- and /* */ comments, then split into statements on ";".
+  # String literals are tracked (q is the quote character, passed in with -v because this
+  # program lives in a single-quoted shell block) because two dashes INSIDE a literal start
+  # no comment: without this the rest of that line was dropped and a real statement sharing
+  # the line was swallowed (audit R4). A doubled quote inside a literal is an escape, and
+  # the toggle closes then reopens on it, which lands on the correct state.
   line = tolower($0)
   out = ""
   i = 1
   n = length(line)
   while (i <= n) {
-    c2 = substr(line, i, 2)
+    c = substr(line, i, 1)
     if (inblock) {
-      if (c2 == "*/") { inblock = 0; i += 2 } else { i += 1 }
+      if (substr(line, i, 2) == "*/") { inblock = 0; i += 2 } else { i += 1 }
       continue
     }
+    if (instr) {
+      if (c == q) instr = 0
+      out = out c
+      i += 1
+      continue
+    }
+    c2 = substr(line, i, 2)
     if (c2 == "/*") { inblock = 1; i += 2; continue }
     if (c2 == "--") { i = n + 1; continue }
-    out = out substr(line, i, 1)
+    if (c == q) instr = 1
+    out = out c
     i += 1
   }
   line = out
