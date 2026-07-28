@@ -230,14 +230,20 @@ AÇIK DİZİN İŞLERİ (isteğe bağlı): mcp.so ücretsiz katman (ücretli $39
 Glama connector (~15 dk) · Anthropic dizini (Team/Enterprise Claude org ŞART + mcp-review@
 anthropic.com ön-teması + T-C4 tool annotations).
 
-#10 DFS-DERİNLİK AİLESİ (2026-07-28): fiyatlar İMZALI 65/70/90 (docs/plans/2026-07-28-dfs10-fiyat-karari.md)
-· **dilim 1/3 ranked_keywords (65kr) CANLI @7ae8d69** (hakem PASS 0C/0I) · **dilim 2/3 analyze_backlinks
-(70kr) CANLI @a3692b6** (hakem deneme-1 FAIL: "dofollow" etiketi vendor `referring_domains_nofollow`
-tanımına aykırıydı [en-az-bir-nofollow ≠ yalnız-nofollow] → düzeltme "dofollow-only" etiketi → deneme-2
-PASS; kısmî-DFS-hatasında net-0 kesinti DB'de kanıtlı) · canlı yüzey **18 tool**, goals 16/16 tam ölçüm ·
-dilim 3 compare_competitors (90kr) işçide · DFS_LIVE hâlâ KAPALI (insan: DFS bakiye min $50 + Fly flag;
-kapalıyken tool dürüst hata, 0 kredi) · ufak iş sırada: GSC Disconnect butonu (chip; OAuth gerekçe metni
-şimdilik Google-taraflı iptali söylüyor — runbook düzeltildi @7cb3137).
+#10 DFS-DERİNLİK AİLESİ ✅ **3/3 TAMAM — CANLI YÜZEY 19 TOOL** (2026-07-28): fiyatlar İMZALI 65/70/90 ·
+ranked_keywords @7ae8d69 (hakem PASS 0C/0I) · analyze_backlinks @a3692b6 (hakem: dofollow-etiket
+dürüstlüğü FAIL→fix→PASS) · compare_competitors @bf70151 (hakem: docs count↔bant partition iddiası +
+kısa-akış net-0 kanıtı FAIL→fix→PASS). Üç dilimde de para-yolu gerçek DB'de satır-dizisi kanıtlı;
+vendor-etiket disiplini iki hakem-FAIL'iyle oturdu. goals 16/16 tam ölçüm.
+**ŞİMDİ DEĞER KAPISI İNSANDA — DFS_LIVE açılışı:** (1) dataforseo.com hesabına min $50 bakiye,
+(2) DFS şifre-rotasyonu önerisi (açılış ÖNCESİ; "dormant" ret-gerekçesi düşüyor — karar insanda, bir
+kez soruldu), (3) insan "aç" deyince şef Fly'a DFS_LIVE=1 koyar → canlı smoke ≤$0.10 (dfs-budget
+kapısı) → üç tool'un gerçek-veri kanıtı → docs/pricing'e satış-görünürlüğü ayrı iş. Kapalıyken üçü
+dürüst hata + 0 kredi (satılabilir ama çalışmaz durumda DEĞİL — listede ama live-disabled mesajlı).
+Devam eden küçük işler: GSC Disconnect (işçi bitti → Fable hakemde; işçi bulgusu: migration 0006
+"DELETE granted to no one" ↔ canlı legacy-grant uyumsuzluğu → 0012 GRANT-parite migration'ı hakem
+onayıyla eklenecek, cloud-apply insan-onay kuyruğuna) · verify-goals SKIP-görünürlüğü (işçide) ·
+bayat "16 tools" metin süpürmesi (spec/launch/dizin) sırada.
 NOT: spec/launch/dizin metinlerinde "16 tools" ibareleri bayatladı (Smithery server-card dahil) —
 temizlik dilimi bekliyor. Sonraki backlog: #7 audit_speed
 (+CrUX, BYO-key), #2 Scrapling, #5 büyük-site kademeleri, #6 import_crawl, #4 Tools vitrini,
