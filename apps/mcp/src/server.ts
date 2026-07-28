@@ -579,7 +579,15 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
       return;
     }
     const pendingJobs = await readCachedPendingJobs();
-    res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
+    // Fields are picked EXPLICITLY, not spread from metrics.snapshot() (L-02). The snapshot
+    // also carries the reaper counters, and those are recorded in the WORKER process — which
+    // runs no HTTP listener — while /status is answered by the WEB process, whose counters
+    // never see a sweep. Spread in, they were structurally 0/0/null forever: three fields
+    // that read as measurements and measured nothing. An explicit pick is what keeps a future
+    // counter from silently acquiring the same shape; the reaper's real heartbeat is the
+    // worker's per-sweep log (scripts/monitoring.md §4).
+    const { uptimeSeconds, errorsSinceBoot } = metrics.snapshot();
+    res.json({ ok: true, uptimeSeconds, errorsSinceBoot, pendingJobs });
   });
 
   // The MCP POST pipeline, shared VERBATIM by both endpoints below. The ONLY

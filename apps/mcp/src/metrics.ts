@@ -7,13 +7,21 @@
  * The module has no I/O and no dependency on the DB or env, so it is trivially testable.
  */
 
-/** An immutable point-in-time view of the counters, returned by Metrics.snapshot(). */
+/**
+ * An immutable point-in-time view of the counters, returned by Metrics.snapshot().
+ *
+ * NOT the `/status` payload (L-02). The reaper counters below are written only in the WORKER
+ * process, which runs no HTTP listener, so a web process reading them would report 0/0/null
+ * forever — `/status` therefore picks its fields explicitly rather than spreading this
+ * snapshot. They are read here by the worker's own specs; the operator-facing signal for
+ * reaper liveness is the worker's per-sweep log line (scripts/monitoring.md §4).
+ */
 export interface MetricsSnapshot {
   /** Whole seconds the process has been up (floored, never negative). */
   readonly uptimeSeconds: number;
   /** Count of 5xx server errors observed since this process booted. */
   readonly errorsSinceBoot: number;
-  /** Completed stuck-job reaper sweeps since boot (the reaper's heartbeat). */
+  /** Completed stuck-job reaper sweeps since boot, IN THIS PROCESS (the reaper's heartbeat). */
   readonly reaperRuns: number;
   /** Credit reserves the reaper refunded since boot — cumulative, not per-run. */
   readonly reservesReleased: number;
@@ -33,7 +41,8 @@ export interface Metrics {
   readonly recordServerError: () => void;
   /**
    * Record ONE successfully completed reaper sweep. A failed sweep is never recorded, so a
-   * stale lastReaperRunAt is an honest "the reaper is not completing" signal on /status.
+   * stale lastReaperRunAt is an honest "the reaper is not completing" signal — readable in
+   * the worker process that wrote it, NOT on /status (see MetricsSnapshot).
    */
   readonly recordReaperRun: (outcome: ReaperRunOutcome) => void;
   /** Whole seconds since boot, derived from the construction clock. */

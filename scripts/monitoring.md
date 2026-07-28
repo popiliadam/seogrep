@@ -29,9 +29,11 @@ separate `/status` route, which nothing uses as a liveness gate.
 `GET /status` returns:
 
 ```json
-{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0,
-  "reaperRuns": 0, "reservesReleased": 0, "lastReaperRunAt": null }
+{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0 }
 ```
+
+Those four fields are the **whole** payload — the route picks them explicitly, and the shape
+is pinned by spec (`server.test.ts`, exact key set).
 
 - **`uptimeSeconds`** — whole seconds since the web process booted.
 - **`errorsSinceBoot`** — count of internal-error (500) responses since boot, incremented at
@@ -40,12 +42,12 @@ separate `/status` route, which nothing uses as a liveness gate.
   effectively every realistic 500.
 - **`pendingJobs`** — jobs in `status in ('queued','running')` — the app's own view of queue
   backlog / stuck work. `null` when the count could not be read in time (see §4).
-- **`reaperRuns` / `reservesReleased` / `lastReaperRunAt`** — counters for the stuck-job reaper:
-  completed sweeps since boot, credit reserves refunded since boot (cumulative), and the ISO
-  timestamp of the last completed sweep. **On this endpoint they are always `0 / 0 / null`.**
-  The reaper runs inside the **worker** process, which starts no HTTP listener at all; `/status`
-  is served only by the **web** processes, whose in-memory counters never see a sweep. The
-  reaper's real heartbeat is the worker's log — see §4.
+**No reaper counters here — and that is deliberate.** `/status` used to carry `reaperRuns` /
+`reservesReleased` / `lastReaperRunAt`, and they were **structurally** `0 / 0 / null` forever:
+the reaper runs inside the **worker** process, which starts no HTTP listener at all, while
+`/status` is served only by the **web** processes, whose in-memory counters never see a sweep.
+Three fields that read as measurements and measured nothing, so they were removed rather than
+left to be misread. **The reaper's only real heartbeat is the worker's log — see §4.**
 
 **In-memory caveat (important):** `uptimeSeconds` and `errorsSinceBoot` are **in-memory and
 per-process**. They **reset to zero on every deploy/restart**, and in a multi-machine
@@ -166,7 +168,9 @@ free external uptime alert, without building an observability platform.
 minutes and logs one `reaper sweep:` line per sweep (§4). It is no longer on the deferred list
 below. Still not built: surfacing those counters on a *reachable* endpoint — the worker serves no
 HTTP, so cross-process metrics stay a `flyctl logs`-only affair for now (no committed phase;
-revisit if/when a dedicated observability platform is scoped).
+revisit if/when a dedicated observability platform is scoped). Until then `/status` does not
+carry them **at all**: an unmeasurable field printed next to measured ones is worse than an
+absent one, because it invites the operator to trust it (§3).
 
 Explicitly **out of scope** for this beta slice (audit **G4**):
 

@@ -403,18 +403,29 @@ describe("mcp gateway /status endpoint", () => {
     }
   });
 
-  it("GET /status exposes the in-worker reaper counters", async () => {
-    // The reaper runs in the WORKER process; the web process only reports its own (zero)
-    // counters. They reach /status purely through the metrics.snapshot() spread — the route
-    // itself knows nothing about them.
+  it("GET /status carries ONLY fields this process can actually measure (L-02)", async () => {
+    // The reaper runs in the WORKER process, which starts no HTTP listener; /status is
+    // answered by the WEB process, whose metrics singleton NEVER sees a sweep. So
+    // reaperRuns/reservesReleased/lastReaperRunAt were structurally 0/0/null here — three
+    // fields that looked like measurements and were not. They are gone from the response;
+    // the reaper's real heartbeat is the worker's per-sweep log (scripts/monitoring.md §4).
+    //
+    // Pinned as an EXACT key set rather than per-field type checks: that is the only shape
+    // assertion a future `...metrics.snapshot()` spread cannot silently slip a new
+    // unmeasurable field past.
     const app = await listen(appWith({ pendingJobs: () => Promise.resolve(0) }));
     try {
       const res = await fetch(`${app.baseUrl}/status`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(typeof body.reaperRuns).toBe("number");
-      expect(typeof body.reservesReleased).toBe("number");
-      expect(body.lastReaperRunAt).toBeNull(); // never swept in a web process
+      expect(Object.keys(body).sort()).toEqual([
+        "errorsSinceBoot",
+        "ok",
+        "pendingJobs",
+        "uptimeSeconds",
+      ]);
+      expect(typeof body.uptimeSeconds).toBe("number");
+      expect(typeof body.errorsSinceBoot).toBe("number");
     } finally {
       await app.close();
     }
