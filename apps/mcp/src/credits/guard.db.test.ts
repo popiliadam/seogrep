@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { isReserveCommitFailed, withCredits } from "./guard.ts";
+import { isReserveCommitFailed, withCredits, type ReserveCommitFailedError } from "./guard.ts";
 import { TOOL_COSTS } from "./costs.ts";
 import { getJob } from "../queue/boss.ts";
 import { getServiceClient } from "../db.ts";
@@ -106,6 +106,30 @@ function failCommitReserve(times: number): () => void {
     if (name === "commit_reserve" && remaining > 0) {
       remaining -= 1;
       return Promise.resolve(rpcFailure("connection reset by peer"));
+    }
+    return realRpc(name, args);
+  }) as unknown as typeof client.rpc);
+  return () => spy.mockRestore();
+}
+
+/**
+ * The LOST-RESPONSE race: the first commit_reserve REALLY LANDS in the database, and only its
+ * reply is lost on the way back. The guard's retry then meets the terminal "already settled" —
+ * the same string a genuinely settled-elsewhere reserve produces. Everything after the first
+ * call passes through untouched, so the retry talks to the real RPC.
+ */
+function loseFirstCommitResponse(): () => void {
+  const client = getServiceClient();
+  const realRpc = client.rpc.bind(client) as unknown as (
+    name: string,
+    args: unknown,
+  ) => Promise<unknown>;
+  let lost = false;
+  const spy = vi.spyOn(client, "rpc").mockImplementation((async (name: string, args: unknown) => {
+    if (name === "commit_reserve" && !lost) {
+      lost = true;
+      await realRpc(name, args); // the commit is COMMITTED...
+      return rpcFailure("socket hang up"); // ...and the caller never hears about it
     }
     return realRpc(name, args);
   }) as unknown as typeof client.rpc);
@@ -267,6 +291,64 @@ describe("withCredits against the local stack", () => {
     // The open-reserve shape H-01 is about: a debit with NO settling row on either side.
     expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve"]);
     expect(balanceOf(rows)).toBe(100 - TOOL_COSTS.crawl_site); // user is short, got nothing
+  });
+
+  it("(g) H-01 lost-response race: a commit that LANDED is a SUCCESS, not an open reserve", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 100);
+    const jobId = await makeJobId(userId, "crawl_site");
+
+    // commit_reserve succeeds in the database and its reply is lost; the retry then meets
+    // "already settled" — byte-identical to what a reserve settled by someone ELSE produces.
+    // Reading only that string, the guard used to declare a commit failure, and the worker
+    // promised the user "the reserve is left open and reconciliation refunds it
+    // automatically". Both are false: the reserve carries a spend_commit, so the ledger-keyed
+    // sweep correctly skips it and the promised refund NEVER arrives.
+    const restore = loseFirstCommitResponse();
+    try {
+      await expect(
+        withCredits({ userId }, { tool: "crawl_site", jobId }, async () => "delivered"),
+      ).resolves.toBe("delivered");
+    } finally {
+      restore();
+    }
+
+    const rows = await ledgerRows(userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(rows.filter((r) => r.kind === "spend_commit")).toHaveLength(1); // settled exactly once
+    expect(rows.some((r) => r.kind === "spend_release")).toBe(false); // and never refunded
+    expect(balanceOf(rows)).toBe(100 - TOOL_COSTS.crawl_site); // charged once, correctly
+  });
+
+  it("(h) H-01: a reserve RELEASED under the run still raises the typed error, no double settle", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 100);
+    const jobId = await makeJobId(userId, "crawl_site");
+
+    // The other half of the same "already settled" string: the reaper reaped this run while it
+    // was in flight (reaper.ts documents exactly this race). The money is already back, so this
+    // is a real commit failure — it must NOT be mistaken for the lost-response success above.
+    const failure: unknown = await withCredits(
+      { userId },
+      { tool: "crawl_site", jobId },
+      async () => {
+        const job = await getJob(jobId);
+        const release = await service.rpc("release_reserve", {
+          p_reserve_id: job?.reserve_id ?? "",
+        });
+        if (release.error) throw new Error(`release_reserve failed: ${release.error.message}`);
+        return "delivered";
+      },
+    ).then(
+      () => new Error("withCredits RESOLVED despite a released reserve"),
+      (error: unknown) => error,
+    );
+
+    expect(isReserveCommitFailed(failure), `unexpected failure: ${String(failure)}`).toBe(true);
+    expect((failure as ReserveCommitFailedError).disposition).toBe("refunded");
+    const rows = await ledgerRows(userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(balanceOf(rows)).toBe(100); // the refund stands; no second settlement
   });
 
   it("(d) a 0-credit tool never calls reserve: ledger stays empty even at zero balance", async () => {

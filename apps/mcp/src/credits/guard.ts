@@ -12,10 +12,13 @@ import { setJobReserve } from "../queue/boss.ts";
  *   cost 0            -> run fn directly; the ledger (and env/DB) is never touched.
  *   reserve -> fn ok  -> commit_reserve; exactly one commit row settles the spend.
  *   reserve -> fn err -> release_reserve, then rethrow fn's error unchanged.
- *   commit fails      -> retry a few times (most settlement failures are a blip), then throw
- *                        a TYPED ReserveCommitFailedError WITHOUT releasing here. The reserve
- *                        is left OPEN on purpose and the ledger-keyed orphan sweep in
- *                        reaper.ts REFUNDS it — see the money-direction note below.
+ *   commit fails      -> retry a few times (most settlement failures are a blip); if the RPC
+ *                        still will not confirm, READ THE LEDGER once to see what actually
+ *                        happened. A commit that landed and merely lost its reply is a
+ *                        SUCCESS. Otherwise throw a TYPED ReserveCommitFailedError carrying
+ *                        the reserve's real disposition, WITHOUT releasing here: an open
+ *                        reserve is refunded by the ledger-keyed sweep in reaper.ts — see the
+ *                        money-direction note below.
  *   release fails     -> retry the same way, then log loudly and still rethrow fn's ORIGINAL
  *                        error; the open reserve is left for that same sweep.
  *
@@ -77,17 +80,33 @@ async function reserve(
 }
 
 /**
+ * What the ledger says happened to a reserve the commit RPC would not confirm.
+ *   committed — the commit DID land (its reply was lost); this is a SUCCESS, not a failure.
+ *   refunded  — something released it (the reaper reaping this run); the money is already back.
+ *   open      — no settling row: the reconciliation sweep will refund it.
+ *   unknown   — the classifying read itself failed; promise the user NOTHING.
+ */
+export type ReserveDisposition = "committed" | "refunded" | "open" | "unknown";
+
+/**
  * The tool ran, but its reserve could not be settled: a DISTINGUISHABLE signal so callers
- * stop having to pattern-match a raw PostgREST string. The worker turns this into an honest
- * fail-mark, and it names the reserve the reconciliation sweep will refund.
+ * stop having to pattern-match a raw PostgREST string. `disposition` says what the ledger
+ * actually shows, so the worker's fail-mark can promise a refund ONLY when one is really
+ * coming — never as a blanket claim.
  */
 export class ReserveCommitFailedError extends Error {
   readonly reserveId: string;
+  readonly disposition: Exclude<ReserveDisposition, "committed">;
 
-  constructor(reserveId: string, detail: string) {
+  constructor(
+    reserveId: string,
+    detail: string,
+    disposition: Exclude<ReserveDisposition, "committed">,
+  ) {
     super(`commit_reserve failed: ${detail}`);
     this.name = "ReserveCommitFailedError";
     this.reserveId = reserveId;
+    this.disposition = disposition;
   }
 }
 
@@ -141,11 +160,49 @@ async function settle(
   return lastMessage;
 }
 
+/**
+ * Ask the LEDGER what became of a reserve the commit RPC would not confirm. Classification
+ * ONLY — a `select`, no RPC, no write: the money authority stays the advisory-locked 0005
+ * functions (constitution NEVER #2). The sibling reader in reaper.ts (settlementKind) does the
+ * same job for the reaper's fail-marks.
+ *
+ * This exists because "reserve already settled" is ONE string covering opposite realities: a
+ * commit that landed and lost its reply, and a reserve someone else released. Only the ledger
+ * tells them apart.
+ */
+async function readDisposition(reserveId: string): Promise<ReserveDisposition> {
+  const { data, error } = await getServiceClient()
+    .from("credit_ledger")
+    .select("kind")
+    .eq("reserve_id", reserveId)
+    .in("kind", ["spend_commit", "spend_release"]);
+  if (error) {
+    console.error(`reserve disposition read failed for ${reserveId}: ${error.message}`);
+    return "unknown";
+  }
+  const kinds = new Set((data ?? []).map((row) => row.kind));
+  if (kinds.has("spend_commit")) return "committed";
+  if (kinds.has("spend_release")) return "refunded";
+  return "open";
+}
+
+/**
+ * Settle the spend. An unconfirmed RPC is NOT the same as a failed one: a commit can land in
+ * the database and lose its reply, after which the retry meets the terminal "already settled".
+ * Treating that as a failure told the user their charge had not settled and that reconciliation
+ * would refund it — while the ledger held a spend_commit, so the sweep (correctly) skipped it
+ * and the promised refund never came. So when the RPC does not confirm, the ledger is read
+ * ONCE and gets the final word.
+ */
 async function commit(reserveId: string): Promise<void> {
   const message = await settle("commit_reserve", reserveId);
-  if (message !== null) {
-    throw new ReserveCommitFailedError(reserveId, message);
-  }
+  if (message === null) return;
+
+  const disposition = await readDisposition(reserveId);
+  // The charge really did settle — a lost response, not a lost charge. Return normally so the
+  // caller receives its result and the user is charged exactly once, which is the truth.
+  if (disposition === "committed") return;
+  throw new ReserveCommitFailedError(reserveId, message, disposition);
 }
 
 /** Release an open reserve; on failure log and swallow so the caller's error wins. */
