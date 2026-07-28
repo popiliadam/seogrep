@@ -575,3 +575,62 @@ açılmadı) ve H-06'nın politika kısmı (beta duruşu — ürün kararı).
 > **`DFS_LIVE` için kesin sıra: 0014 apply → deploy → `DFS_LIVE=1`.**
 > Ters sırada dört DFS tool'u da fail-closed reddeder (para harcamaz, hizmet vermez, wake basar).
 
+
+---
+
+## 16. H-03 kapanışı — hakemin mutasyon testi
+
+Bu audit'in çekirdek sorusu şuydu: *bir kapının yeşil olması, o kapının bir şey ölçtüğü anlamına gelir mi?*
+H-03'ün re-review'ı buna doğrudan cevap verdi.
+
+Hakem, düzeltmenin regression testinin "kırmızıydı" beyanını kabul etmedi ve **mutasyon testi** yaptı:
+lokal veritabanındaki `settle_dfs_spend` fonksiyonunu **düzeltme-öncesi gövdeyle geçici olarak
+değiştirip** spec'i koşturdu.
+
+| Fonksiyon gövdesi | Sonuç |
+|---|---|
+| Düzeltme-öncesi, izole spec | **0/15 geçti** (15/15 KIRMIZI) |
+| Düzeltme-öncesi, tam dosya | **0/5 geçti** (5/5 KIRMIZI) |
+| Düzeltilmiş, tam dosya | 3/3 + 1 YEŞİL |
+
+**20/20 deterministik kırmızı** — test tiyatro değil. Ayrıca üçüncü bir oturuma gün-kilidini tutturup
+iki settle'ı deterministik kuyruğa aldı (`pg_stat_activity` → **2 Lock waiter**, yani ikisi de
+kilit-öncesi okumasını `status='open'` görmüştü = tam bug penceresi): düzeltilmiş hâlde B
+`already settled` aldı, düzeltme-öncesi hâlde **ikisi de sessizce geçti**.
+
+Hakem iz bırakmadı: probe fonksiyonu drop edildi, `settle_dfs_spend` byte-birebir geri yüklendi
+(`pg_get_functiondef` diff'i boş), `git status` girişteki hâlinde.
+
+**Son NIT** — advisory kilit anahtarı `v_day::text` ile `DateStyle`'a bağlıydı (ölçüldü: aynı gün
+`ISO,MDY` → `-1268704674`, `German,DMY` → `1979816615`). `0005`'te bu sorun yok çünkü orada
+`uuid::text` locale-bağımsız. Pratikte erişilemez ama apply sonrası düzeltmesi yeni migration ister →
+`to_char(v_day,'YYYY-MM-DD')` ile kapatıldı (`768ea02`). Düzeltme sonrası üç `DateStyle`'da da tek
+anahtar: **`-1268704674` — yani ISO değerinin ta kendisi**, varsayılan yoldaki kilit anahtarı kaymadı.
+
+### Aynı hata sınıfı üç yerde birden vardı
+
+Bu turun en anlamlı örüntüsü: **"yeşil ama ölçmüyor"** kusuru bağımsız üç yerde bulundu ve üçü de kapandı.
+
+| Yer | Kusur | Şimdi |
+|---|---|---|
+| `check-rls.sh` / `check-append-only.sh` (M-12) | Geçmişe bakıyordu; 8/8 sentetik zayıflatma yeşil geçiyordu | Final-state hesaplıyor + 13 vakalık self-test + zorunlu CI job'ı |
+| `guardrails/dfs-budget.sh` (H-03) | Repo-göreli dizini okuyordu, prod `/tmp`'ye yazıyordu → daima "OK" | Gerçek defteri okuyor VEYA **açık SKIP-97**; sessiz yeşil imkânsız |
+| `goals/dfs-budget-guard.md` (H-03) | Ölçemediği hedefi tam-ölçüm PASS sayıyordu | Env yoksa `PASS (1 skip)` diyor, env varsa `0 skip` |
+
+---
+
+## 17. NİHAİ KAPI ÇIKTILARI (kesin)
+
+Dal `fix/hostile-audit-remediation`, **70 commit**, tüm düzeltme turlarından SONRA:
+
+| Kapı | Sonuç |
+|---|---|
+| Fresh `pnpm turbo run typecheck lint test build --force` | **16/16 · `Cached: 0 cached, 16 total`** |
+| Test sayısı | **1252** — taban 1081, **+171 yeni test** |
+| `make verify` | **PASS** (guardrail self-test 13/13 dahil) |
+| `make verify-db` | **PASS** — 62 + **115** = **177 DB testi** |
+| `make goals` | **16/16 PASS (0 skip)** — tam env |
+| Full-history gitleaks | **PASS** — `no leaks found` |
+| Generated docs sync | **PASS** — 19 tool sayfası |
+| `pnpm audit --prod` | **16 → 7**; **`next` advisory sayısı 0** |
+
