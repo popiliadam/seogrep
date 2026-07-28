@@ -634,3 +634,224 @@ Dal `fix/hostile-audit-remediation`, **70 commit**, tüm düzeltme turlarından 
 | Generated docs sync | **PASS** — 19 tool sayfası |
 | `pnpm audit --prod` | **16 → 7**; **`next` advisory sayısı 0** |
 
+
+---
+
+# İKİNCİ TUR (2026-07-29) — §18'den itibaren
+
+Bu bölüm §17'deki "70 commit" durumundan SONRA yapılan işi kaydeder. Dal artık **110 commit**
+(bu turda **+38**). Yöntem aynı: HEAD'e karşı yeniden doğrula → **KIRMIZI test önce** → asgari düzeltme
+→ **taze hakem** → deterministik kapı. Hiçbir bulgu hakem PASS'i olmadan FIXED sayılmadı.
+
+## 18. Bu turda kapanan bulgular
+
+| ID | Kök neden (tek cümle) | Kırmızı kanıtı | Hakem |
+|---|---|---|---|
+| **M-10** | Tüm FK'ler tek kolonlu; `unique (user_id, id)` yoktu → çapraz-kiracı satır DB'de yazılabiliyordu | 5 sahtecilik (B'nin job'ı A'nın project'inde vb.) **kabul edilip commit'lendi** | Fable FAIL → düzeltme → **kapandı** |
+| **M-15** | Disconnect, başarısız Google revoke'unu başarı gibi gösteriyordu; UI koşulsuz vaat ediyordu | `expected undefined to be 'unconfirmed'`; UI'da uyarı yok | Fable **PASS** (0C/0I) |
+| **T5** | Emeklilik sonrası açılamayan mühürde revoke ATLANIP satır siliniyordu | `expected undefined to be 'not_attempted'` | Fable **PASS** |
+| **M-17** | AES-GCM'de AAD yok → mühürlü token başka kiracının satırına taşınabiliyordu | Pre-fix: A'nın token'ı **B'nin satırından düz metin açıldı** | Fable **PASS** (0C/2I → kapatıldı) |
+| **M-19** | `crawl_site` job ID üretmeden ~35 sn keşif yapıyordu (audit 25-30 sn demişti; timeout **hop başınaydı**) | `expected 7 to be less than or equal to 4` | Fable **PASS** |
+| **M-22** | Rotation cap'i atlıyordu **ve** ölü key id'siyle her tekrar **net +1 aktif key, sınırsız** | Hakem reprodüksiyonu: **5→6→7→8, tavan yok** | Fable **PASS** |
+| **L-02** | `/status` reaper sayaçları yapısal olarak daima `0/0/null` | Tam anahtar kümesi assertion'ı | Fable **PASS** |
+| **L-10** | GSC OAuth'ta PKCE yok, state tek kullanımlık değil | Replay edilen state **KABUL EDİLDİ** ve kod exchange edildi | Fable **PASS** |
+| **L-18** | Dockerfile `pnpm dlx turbo@X` lockfile'a bağlı değildi | pnpm çözünürlüğü önce/sonra | Fable **PASS** — ⚠️ build grafiği KANITLANMADI |
+| **T1 → 0015** | `users_profile` üzerinde **TRUNCATE üç rolde de AÇIKTI** (DELETE zaten kapalıydı) | Tam zincir: truncate → yeniden insert → **ikinci trial, bakiye 800** | Fable **PASS** |
+| **T4** | GSC route'larında `url.origin` (request-Host) hata-redirect'i | `https://attacker.example/app?gsc=error`'a **302** | Fable **PASS** |
+| **T6** | Waitlist'te erişilemez `alreadyExisted` dalı + sözleşme fosili mock | Emekli mesaj render edildi | Fable **PASS** |
+| **T7** | Guardrail parser kaçakları R1/R2/R3/R4/R6 | Altı fixture eski kapıda **YEŞİL** | Fable **PASS** |
+| **T8** | Crawler tavanlarının TOPLAM byte bütçesi yoktu (~200 MB `jobs.result`) | 20 MB düz geçti; 30 ağır sayfa ~42 MB | Fable **PASS** |
+| **T9** | `trial.ts`/`welcome.ts` yorumları olgusal olarak yanlıştı | — (şef doğrudan) | — |
+
+### 18.1 Audit'te OLMAYAN, bu turda BULUNAN ve kapatılan
+
+| ID | Bulgu | Nasıl bulundu | Hakem |
+|---|---|---|---|
+| **T10 → 0016** | Aynı TRUNCATE deliği **yedi tabloda daha** açıktı; **`dfs_spend` üzerinden H-03'ün DFS bütçe SAYACI sıfırlanabiliyordu** | 0015 işçisi buldu, 0015 hakemi teyit edip **para açısını** ekledi | Fable **PASS** |
+| **R7 ailesi** | Tırnaklı tanımlayıcı · `E'a\'--b'` kaçış dizisi · nitelemesiz `reject_mutation` nötrlemesi — üçü de iki kapıda YEŞİL | T7 hakeminin kalıntı taraması | Fable FAIL → düzeltme → **ADDRESSED** |
+| **PKCE dikişi** | `deps.fetch` sarmalayıcısının string-body kontratı repoda pinli değildi → core'da masum bir refactor GSC'yi **prod'da** kırardı | L-10 hakeminin ZORUNLU takip işi | Fable **PASS** (0C/0I) |
+| **AAD harf-durumu** | AAD id'lerin METİN gösterimine bağlı; validator'lar harf-duyarsız, Postgres uuid'i kanonik küçük harfle saklıyor → karışık-harfli connect **kalıcı açılamaz satır** üretir | M-17 hakemi | W hakemi |
+| **Deploy sırası** | v3-öncesi kod bir v3 blob'unu **hiç açamıyor**; web/mcp bağımsız deploy oluyor; runbook susuyordu | M-17 hakemi | W hakemi |
+
+### 18.2 Bayat kapanış kaydı düzeltildi
+
+**T2 zaten kapalıydı.** §10'un takip tablosu, Şerit J'nin düzeltme turundan (`78f69cb`+`02061ff`,
+Fable re-review ADDRESSED) ÖNCE yazılmıştı. `guard.ts:174-205`'te dört-yönlü disposition HEAD'de mevcut.
+Takip listesi fiilen 9 değil 8 işti; bu turda **T3 hariç sekizi de kapandı.**
+
+## 19. Bu turun yöntem kazanımları
+
+### 19.1 Ölçmeden koruma eklemek de bir hata sınıfıdır
+
+M-10'un iş emrine bir **Faz 0 ölçüm zorunluluğu** kondu ve "ölçmeden koruma eklemek" iş emri ihlali
+ilan edildi. İşçi bunun karşılığını verdi: audit'in istediği `with check` policy'lerini **TİYATRO ilan
+edip YAPMADI**, üç bağımsız ölçümle:
+
+1. İfade bile edilemiyor — `WITH CHECK cannot be applied to SELECT or DELETE`, dokuz policy SELECT-only.
+2. `authenticated` **11 tablonun hiçbirinde** yazamıyor → `set role authenticated; insert` daha RLS'e
+   danışılmadan **GRANT katmanında** `permission denied` alıyor.
+3. Tek gerçek yazıcı `service_role` ve **`rolbypassrls = TRUE`** — ifade edilebilecek EN GÜÇLÜ RLS
+   (RESTRICTIVE deny-all) yürürlükteyken INSERT'ü **yine de indi**.
+
+Ek netlik: **`FORCE ROW LEVEL SECURITY` bu bypass'a karşı savunma değildir** — FORCE tablo *sahibinin*
+muafiyetini kaldırır, `BYPASSRLS` özniteliğini değil.
+
+> Sonuç: bu şemada **referential integrity, `service_role`'ü bağlayan TEK katmandır.** 0011 (CHECK)
+> ve 0013 (trigger) para tarafında zaten bu akıl yürütmeyi kullanıyordu; 0017 onu kiracı tarafına taşıdı.
+
+### 19.2 "Koşulmamış test hakkında akıl yürütme" ölçüm yerine geçmez
+
+M-10 işçisi `@pseo/mcp test:db`'yi paylaşılan Supabase yüzünden koşamadı ve riski **statik argümanla**
+sınırladı — dürüstçe "bu akıl yürütme, ölçüm değil" diye işaretleyerek. Hakem ağacın durulduğu anı
+yakalayıp **koştu**: `1 failed | 114 passed`. İkinci bir tenant-geçen spec vardı ve satır **yazıyordu**.
+
+Kırılan şey meşru bir ürün yolu değildi — savunma-derinliği testinin artık *imkânsız* fixture'ıydı.
+Ama hakemin hükmü doğruydu: **"kapı kırmızıyken done yok."** Bu, H-03 turunun dersinin kardeşi:
+orada "yeşil geçen test bir şey ölçmüyordu", burada "koşulmamış test hakkında akıl yürütme".
+
+### 19.3 Mutlak doğruluk kontrolü — göreli matrisin göremediği
+
+Eski-vs-yeni matrisi *göreli* bir şey söyler: "yeni kapı eskisinin yakaladığını kaçırmıyor". İkisi de
+aynı şeyi kaçırıyorsa matris **sessiz kalır**. R7 düzeltme turunda işçi 32 sentetiğini **postgres 17.6'nın
+gerçeğine** karşı koşturdu (`relrowsecurity`, `has_table_privilege`, canlı trigger sayısı, `prosrc` RAISE,
+canlı `set role authenticated; update` probe'u, psql apply exit kodu) → **64 verdict, 0 uyuşmazlık.**
+
+Bu ölçüm sayesinde sevkiyattaki parser'ın kaybının hakemin bulduğu 3 değil **10** olduğu ortaya çıktı;
+re-review'da hakem kendi setinde **13** ölçtü. Kusur sınıfı ilk bulgudan çok daha genişti.
+
+### 19.4 Düzeltmenin kendisi yeni bir kör nokta açabilir
+
+R7'nin ilk hâli, tırnaklı tanımlayıcıları tanımak için satırdaki çift tırnakları eşleştirip aradaki
+aralığı **orijinal harf durumuyla** geri enjekte ediyordu — ama tırnağın *tanımlayıcı sınırlayıcısı* mı
+yoksa **veri** mi olduğunu ayırt etmiyordu. Sonuç: iki veri-tırnağı arasına yazılmış **büyük harfli,
+çalışan** bir zayıflatma iki kapıya da görünmez oldu. İkinci vaka `GRANT UPDATE ON credit_ledger TO
+authenticated`'dı — yani **NEVER#2'nin birinci sınıf bulgusu sessizce yeşil.**
+
+Ön koşul egzotik değildi: postgres tırnaksız büyük harfi zaten katlıyor, **büyük harfli SQL bu repoda
+yerleşik stil** (kendi `healthy` fixture'ı öyle yazılmış), ve tetiklemek için **tek sayıda** veri-tırnağı
+yetiyor (`comment on table ... is $q$he said " hello$q$`).
+
+Ve kritik ikinci bulgu: eklenen self-test fixture'larının hiçbiri o **negatif uzayı** kapsamıyordu →
+bu sınıfın regresyonu self-test'i kırmızı yapmazdı. **Kapının kendisini sınayan mekanizmanın da kör
+noktası vardı.** Düzeltme turunda üç negatif-uzay fixture'ı eklendi ve kusurlu parser geri konunca
+self-test'in fiilen FAIL ettiği **iki bağımsız yolla** gösterildi.
+
+### 19.5 Aynı locale tuzağına iki kez düşülmedi
+
+M-17'nin harf-durumu düzeltmesinde `toLocaleLowerCase` **bilinçli reddedildi ve gerekçesi koda yazıldı**:
+Türkçe noktasız-i `I`'yı farklı katlar ve mührü başka makinede açılamaz yapardı. Bu, migration 0014'te
+advisory kilit anahtarının `DateStyle`'a bağlı olmasıyla **aynı sınıf** hatadır (§16'nın son NIT'i).
+
+### 19.6 Şefin analizini işçi düzeltti
+
+Şef "0017'den sonra `project not found` dalı üretimde erişilemez" dedi. İşçi bunu **kabul etmedi**:
+erişilemezlik `jobs` tablosu üzerinden geçerli, mutlak değil — bir **TOCTOU penceresi** kalıyor (job
+satırı belleğe okunur, sonra proje aranır) ve 0017 uygulanmamış her ortam o dala zaten ulaşıyor.
+**Guard'ın silinmek yerine korunmasının gerekçesi tam da budur:** uygulama katmanı, bir restore'da veya
+farklı migrate edilmiş bir ortamda bulunmayabilecek bir DB constraint'ine güvenmemeli.
+
+## 20. Kapı çıktıları — bu turun sonu
+
+| Kapı | Sonuç |
+|---|---|
+| `packages/core` test | **180** (tur başı 158 → 164 → 180) |
+| `apps/mcp` fast test | **699** (tur başı 694) |
+| `apps/mcp` test:db | **117** (tur başı 115, **biri KIRIKTI** → düzeltildi) |
+| `apps/web` test | **423** (tur başı 394) |
+| `packages/db` test:db | **78** (tur başı 62 → 64 → 69 → 78) |
+| `guardrails` self-test | **27 vaka / 25 zayıflatma**, PIPE'SIZ exit=0 (tur başı 13/11) |
+| `check-rls` / `check-append-only` | gerçek ağaç (0001..0017) exit=0 / exit=0 |
+| `goals/rls-enabled` · `goals/append-only-armor` | doğrudan koşuldu, ikisi de exit=0 (**SKIP değil**) |
+
+## 21. Bu turdan çıkan İNSAN KUYRUĞU eklemeleri
+
+Öncekiler (§9) **aynen geçerli**. Bunlar YENİ:
+
+1. **CLOUD-APPLY KUYRUĞU BÜYÜDÜ: 0013 → 0014 → 0015 → 0016 → 0017.**
+   - **0017 KOŞULSUZ DEĞİL:** üç `ADD CONSTRAINT` canlıda çapraz-kiracı satır varsa **23503 ile FAIL
+     eder ve migration ROLLBACK olur.** İnsan **apply'dan ÖNCE** ön-kontrol SQL'ini koşmalı
+     (migration §3'e gömülü; beklenen: üç satır, hepsi 0). Hakem sentetik ihlalle sınadı: yetim ve
+     çapraz-kiracı **iki şekli de** yakalıyor.
+   - **0016 apply SONRASI doğrulama SQL'i ZORUNLU** (hakem yazdı, üç sorgu): mevcut TRUNCATE kalıntısı ·
+     **farklı-grantor kalıntısı** · postgres default ACL'inde kalan `D` biti.
+     **Neden:** hakem deneyle kanıtladı — başka bir grantor'un verdiği TRUNCATE, 0016'nın revoke'undan
+     **SESSİZCE sağ çıkıyor** (uyarı yok). Tedavi: `revoke truncate on table public.<tbl> from <grantee>
+     granted by <grantor>;` — grantor `supabase_admin` ise SQL Editor yetmeyebilir → **eskalasyon**.
+2. **DEPLOY SIRASI — v3 mühür (M-17):** **`apps/mcp` ÖNCE, `apps/web` SONRA.** Ters sırada skew
+   penceresindeki her yeni bağlantı `pull_gsc_data`'da hata verir (kredi yanmaz, kendiliğinden iyileşir,
+   ama kullanıcıya görünür). **v3 TEK YÖNLÜ KAPIDIR:** v3 satırlar oluştuktan sonra `packages/core`
+   rollback'i o satırları **kalıcı okunamaz** yapar → reconnect. Detay: `docs/runbooks/secret-rotation.md` (e).
+3. **L-18 Dockerfile SMOKE'U MERGE ÖNCESİ ŞART.** Bu makinede kanıtlanamadı: hem işçi hem hakem denedi,
+   build base-image registry metadata'sında asıldı ve **değişen satıra hiç ulaşmadan** iptal edildi.
+   Ağın suçsuz olduğu ölçüldü (registry'ye ham istekler 0.3-0.5 sn). pnpm tarafı statik olarak tam
+   doğrulandı; **build grafiği doğrulanmadı.**
+4. **Park edilen commit-boyutu ihlalleri (bu turda eklenenler):** `cc1ced7`(270) · `de95cd3`(301) ·
+   `5e99171`(204) · `30ea609`(300) · `ebf260b`(283) · `041abd8`(390). Hepsi hakem incelemesinden geçti;
+   üçünün bölünemezlik savunması hakemce **ölçülerek** doğrulandı (`de95cd3` bisect'lenebilir bozuk ürün
+   üretirdi · `ebf260b` paylaşılan db-test helper'ı OLMADIĞI için ~55 satır duplikasyon isterdi ·
+   `041abd8` `owner` zorunlu parametre olduğundan ayrı inerse **repo derlenmiyor** — hakem TS2554 ile kanıtladı).
+5. **`0054e05`'in commit MESAJI ters yazılmış** (hakem ölçtü): bayat önek sayımı popülasyonu *gizlemez*,
+   **fazla raporlar** (yanlış alarm). Doküman düzeltmesinin kendisi DOĞRU. Mesaj düzeltmesi rebase = insan.
+6. **Test hijyeni takip işi:** `packages/db/src/ledger-repo.db.test.ts` "(e) concurrent reserves" literal
+   job id'ler (`c0..c4`, ayrıca `:110`'da `"j1"`) kullanıyor ve 0011'in `credit_ledger_one_reserve_per_job`
+   indeksi **GLOBAL** (user_id'ye scope'lu değil) → suite yalnız **taze reset'li** DB'de yeşil.
+   `verify-db.sh` daima reset ettiği için GERÇEK kapı etkilenmiyor, ama bu oturumda **iki yanlış-alarm
+   araştırmasına** mal oldu.
+
+## 22. NİHAİ SAYIM (§15 revizyonu)
+
+| | Önceki tur | **Bu tur sonu** |
+|---|---:|---:|
+| Audit bulgusu (toplam) | 54 | 54 |
+| **FIXED** | 29 | **37** |
+| Açık (teknik) | 25 | **17** |
+| Hakem-takip işi (T1-T9) | 9 açık | **8/9 kapandı** (yalnız T3 açık) |
+| Audit'te olmayan, bulunup kapatılan | 5 drift | **+5 yeni** (T10 · R7 ailesi · PKCE dikişi · AAD harf-durumu · deploy sırası) |
+
+**Bu turda kapanan audit bulguları:** M-10 · M-15 · M-17 · M-19 · M-22 · L-02 · L-10 · L-18.
+**Kapanan takip işleri:** T1 · T4 · T5 · T6 · T7 · T8 · T9 (+ T2 zaten kapalıydı, kayıt düzeltildi).
+
+### Kalan açık teknik bulgular (17)
+
+`H-06`(c teknik kısmı) · `M-03` · `M-04` · `M-05` (Paddle hattı, seri) · `M-13` · `M-20` · `M-24` ·
+`M-27` · `L-04` · `L-09` · `L-13` · `L-15` · `L-19` · `T3` · artı insan-kapılı `H-04` · `M-09` ·
+`M-25`/`M-26`/`D-04`/`D-05`/`D-08`.
+
+### Hüküm
+
+Kaynak audit'in **kod tarafındaki gerekçelerinin tamamı** önceki turda kapanmıştı; bu tur **kiracı
+izolasyonunu, kripto bağlamayı ve kapıların kendisini** ölçülebilir biçimde sertleştirdi. Üç yeni
+DB-katmanı zırhı (0015, 0016, 0017) ve bir kripto sürümü (v3) eklendi — **hepsi cloud'a uygulanana
+kadar yalnız repo'da.**
+
+Kalan en büyük teknik blok **Paddle hattıdır** (M-03/M-04/M-05, seri, canlı para yolu). Bu tur ona
+dokunmadı; sıradaki oturumun birinci işi odur.
+
+
+## 23. NİHAİ KAPI KOŞUSU — SERİ, ağaç durgunken (2026-07-29)
+
+Bu turun TÜM şeritleri ve hakemleri kapandıktan SONRA, paylaşılan ağaçta başka hiçbir iş koşmazken,
+şef tarafından seri olarak koşuldu. **Her exit kodu PIPE'SIZ ölçüldü** (imzalı ders: `cmd | tail`
+sonrası `$?` `tail`'in kodudur).
+
+| Kapı | Sonuç | Kanıt |
+|---|---|---|
+| Fresh `pnpm turbo run typecheck lint test build --force` | **exit=0** | `16 successful, 16 total` · **`Cached: 0 cached, 16 total`** — cache replay DEĞİL |
+| Test sayısı (fresh koşudan) | **1308** | core **180** · db 6 · mcp **699** · web **423** (tur başı 1252, **+56**) |
+| `make verify` | **exit=0** | `CHECK-GUARDS-SELFTEST: PASS (27 cases, 25 weakenings caught)` → `VERIFY: PASS` |
+| `make verify-db` | **exit=0** | `78` (packages/db) + `117` (apps/mcp) = **195 DB testi** → `VERIFY-DB: PASS` (tur başı 177) |
+| `make goals` | **16/16 PASS (0 skip)** | `MCP_SMOKE_URL` + `PROD_URL` + Supabase env AÇIKÇA yüklenerek (imzalı ders 7) |
+| Full-history gitleaks | **exit=0** | `525 commits scanned` · `no leaks found` |
+| Generated docs sync | **exit=0** | `19 tool pages in sync, meta + nav synced` |
+| `pnpm audit --prod` | **7 zafiyet** | **`next` advisory sayısı 0** — önceki turla AYNI; kalanlar audit'in "erişilebilir değil" diye ayırdıkları (sharp/libvips, postcss, js-yaml, fast-uri, @hono/node-server) |
+
+### Test hijyeni düzeltmesi — kanıtla
+
+`packages/db` süiti artık **reset'siz ardışık koşularda da** yeşil (§21 madde 6'daki takip işi kapandı,
+`0ba3e41`): üç ardışık `pnpm --filter @pseo/db test:db`, **hiçbiri arada reset almadan, üçü de 78/78**.
+Düzeltme öncesi ikinci koşu `(e) concurrent reserves`'te düşüyordu. Hiçbir assertion değişmedi; yalnız
+fixture id'leri her koşuda benzersizleşti.
+
+> **Dürüstlük notu:** `pnpm audit --prod` KIRMIZI (exit=1) ve bu rapor onu yeşil göstermiyor.
+> Kalan yedi kalem önceki turda da açıktı ve kaynak audit'in kendisi bunları "mevcut kullanımda
+> erişilebilir değil" diye ayırmıştı. Bu turda bu yüzeye DOKUNULMADI.
