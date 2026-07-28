@@ -197,6 +197,96 @@ describe("backward read: blobs sealed before v3 still open (no reconnect forced)
   });
 });
 
+/**
+ * M-17. The attack these specs close: `encrypted_refresh_token` used to be
+ * cryptographically anonymous, so anyone able to WRITE `gsc_connections` (a service_role
+ * key, a SQL-injection sink, a restored dump) could copy victim A's sealed blob into
+ * victim B's row and B's next pull would drive A's Google grant. Nothing in the crypto
+ * could notice. v3 authenticates the owning (user, project) alongside the ciphertext.
+ */
+describe("M-17: a seal opens ONLY for the row it was written for", () => {
+  const VICTIM_A: TokenOwner = {
+    userId: "aaaaaaaa-0000-4000-8000-00000000000a",
+    projectId: "11111111-0000-4000-8000-000000000011",
+  };
+  const VICTIM_B: TokenOwner = {
+    userId: "bbbbbbbb-0000-4000-8000-00000000000b",
+    projectId: "22222222-0000-4000-8000-000000000022",
+  };
+  const A_TOKEN = "1//VICTIM-A-GOOGLE-REFRESH-TOKEN";
+
+  it("ROW SWAP: A's sealed token planted in B's row does not open", () => {
+    // Exactly the attack: the bytea value is copied verbatim; only the row it is read
+    // from changes. Before v3 this returned A's plaintext refresh token.
+    const stolen = fromByteaHex(toByteaHex(encryptToken(A_TOKEN, KEY_A, VICTIM_A)));
+    expect(() => decryptToken(stolen, KEY_A, VICTIM_B)).toThrowError(OPAQUE_ERROR);
+    // ...and it still opens for its rightful row, so the fix costs A nothing.
+    expect(decryptToken(stolen, KEY_A, VICTIM_A)).toBe(A_TOKEN);
+  });
+
+  it.each([
+    ["the user alone (same project)", { userId: VICTIM_B.userId, projectId: VICTIM_A.projectId }],
+    ["the project alone (same user)", { userId: VICTIM_A.userId, projectId: VICTIM_B.projectId }],
+  ])("rejects a swap of %s — BOTH ids are load-bearing", (_label, owner) => {
+    const sealed = encryptToken(A_TOKEN, KEY_A, owner satisfies TokenOwner);
+    expect(() => decryptToken(sealed, KEY_A, VICTIM_A)).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("reports a mismatched owner with the SAME message as a wrong key — no id probing", () => {
+    // If a swap failed differently from a wrong key, an attacker holding a stolen blob
+    // could brute-force which row it belongs to through the error alone.
+    const sealed = encryptToken(A_TOKEN, KEY_A, VICTIM_A);
+    expect(() => decryptToken(sealed, KEY_A, VICTIM_B)).toThrowError(OPAQUE_ERROR);
+    expect(() => decryptToken(sealed, KEY_B, VICTIM_A)).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("DOWNGRADE: relabelling a v3 blob as v2 does not skip the binding", () => {
+    // The one move that would defeat a version-gated check: rewrite the version byte so
+    // the reader takes the no-AAD leg. The tag was computed OVER the AAD, so that leg
+    // cannot authenticate it either — GCM is the last word on every path.
+    const sealed = encryptToken(A_TOKEN, KEY_A, VICTIM_A);
+    expect(sealed[4]).toBe(3);
+    const downgraded = Buffer.from(sealed);
+    downgraded[4] = 2;
+    expect(() => decryptToken(downgraded, KEY_A, VICTIM_B)).toThrowError(OPAQUE_ERROR);
+    // Not even for the RIGHTFUL owner: a forged header is tampering, full stop.
+    expect(() => decryptToken(downgraded, KEY_A, VICTIM_A)).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("UPGRADE: relabelling a v2 blob as v3 does not manufacture a binding", () => {
+    const relabelled = fromByteaHex(V2_FIXTURE_HEX);
+    expect(relabelled[4]).toBe(2);
+    relabelled[4] = 3;
+    expect(() => decryptToken(relabelled, KEY_A, VICTIM_A)).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("encodes the owner canonically: no two id pairs can share a binding", () => {
+    // A delimiter-joined AAD would make ("ab","c") and ("a","bc") identical bytes and let
+    // one row's seal open another's. Length-prefixing is what rules that out.
+    const left = encryptToken(A_TOKEN, KEY_A, { userId: "ab", projectId: "c" });
+    expect(() => decryptToken(left, KEY_A, { userId: "a", projectId: "bc" })).toThrowError(
+      OPAQUE_ERROR,
+    );
+  });
+
+  it.each([
+    ["userId", { userId: "", projectId: VICTIM_A.projectId }],
+    ["projectId", { userId: VICTIM_A.userId, projectId: "" }],
+  ])("refuses to seal with an empty %s — never a silently unbound blob", (name, owner) => {
+    expect(() => encryptToken(A_TOKEN, KEY_A, owner satisfies TokenOwner)).toThrowError(
+      new RegExp(`owner ${name} must be a non-empty id`),
+    );
+  });
+
+  it("leaves the PRE-v3 formats openable under ANY owner — they carry no binding", () => {
+    // Honest statement of the residual exposure: v2/v1 rows stay swappable until their
+    // user reconnects. There is no re-seal path, so this is a shrinking population, not
+    // a solved one. Breaking them instead would log every existing customer out.
+    expect(decryptToken(fromByteaHex(V2_FIXTURE_HEX), KEY_A, VICTIM_B)).toBe(V2_FIXTURE_PLAIN);
+    expect(decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A, VICTIM_B)).toBe(V1_FIXTURE_PLAIN);
+  });
+});
+
 describe("decryptToken rejects the unopenable", () => {
   it("throws on a wrong key (GCM tag mismatch), without leaking the low-level error", () => {
     const sealed = encryptToken("secret", KEY_A, OWNER);
