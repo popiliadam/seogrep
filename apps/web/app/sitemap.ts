@@ -4,7 +4,7 @@ import { blogSource, source } from "../lib/source";
 
 type Entry = MetadataRoute.Sitemap[number];
 
-const ROUTES = ["", "/pricing", "/how-it-works", "/docs", "/blog", "/terms", "/privacy"] as const;
+const ROUTES = ["", "/pricing", "/how-it-works", "/docs", "/blog", "/terms", "/privacy", "/refunds"] as const;
 
 /**
  * Every indexable URL, not just the hand-listed routes: docs and blog pages come from the
