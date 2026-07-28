@@ -7,7 +7,7 @@ PLAN'a işlenir. MCP_SMOKE_URL set değilken SKIP (landing-live deseni).
 
 ## predicate
 ```predicate
-[ -z "${MCP_SMOKE_URL:-}" ] && exit 0
+[ -z "${MCP_SMOKE_URL:-}" ] && exit 97
 [ "$(curl -sf --max-time 20 -X POST "$MCP_SMOKE_URL" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -o '"inputSchema"' | wc -l | tr -d ' ')" = "19" ]
 curl -sf --max-time 20 -X POST "$MCP_SMOKE_URL" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_credit_balance","arguments":{}}}' | grep -qiE 'balance|credits'
 ```
