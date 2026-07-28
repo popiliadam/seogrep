@@ -80,3 +80,57 @@ $$;
 revoke execute on function public.process_paddle_purchase(text, uuid, bigint, text) from public, anon, authenticated;
 grant execute on function public.process_paddle_purchase(text, uuid, bigint, text) to service_role;
 -- Reverse: re-apply the 0007 body (drop the paddle_events precondition block).
+
+-- ===========================================================================
+-- (2) M-08 — paddle_events identity/audit columns become immutable.
+--
+-- paddle_events is two things at once: the idempotency key store (a replayed event_id must
+-- always resolve to the same already-processed row) and the forensic record of what Paddle
+-- actually sent. 0006:49-51 grants service_role table-wide UPDATE because the app must stamp
+-- processed_at — which incidentally allowed rewriting event_id (re-opening a closed event for
+-- a replay), event_type or payload (editing the audit trail after the fact).
+--
+-- This is DELIBERATELY NOT the 0002/0003 blanket armor (`REVOKE UPDATE` + reject_mutation on
+-- every op): processed_at MUST stay writable or markProcessed breaks. The trigger narrows the
+-- existing grant to exactly the one column the app legitimately writes. INSERT is untouched —
+-- every webhook delivery depends on it.
+--
+-- created_at is included for the same reason as payload: it is part of the forensic record,
+-- and no writer ever changes it (insertEvent upserts with ignoreDuplicates, i.e. ON CONFLICT
+-- DO NOTHING, so a retry never reaches UPDATE).
+-- ===========================================================================
+
+create function public.reject_paddle_event_identity_change() returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'paddle_events row is immutable: DELETE blocked (removing a processed event would re-open it for replay)';
+  end if;
+  if new.event_id is distinct from old.event_id
+    or new.event_type is distinct from old.event_type
+    or new.payload is distinct from old.payload
+    or new.created_at is distinct from old.created_at
+  then
+    raise exception 'paddle_events identity is immutable: only processed_at may change (event_id/event_type/payload/created_at are the idempotency key and audit record)';
+  end if;
+  return new;
+end;
+$$;
+-- Reverse: drop function public.reject_paddle_event_identity_change() cascade;
+
+create trigger paddle_events_identity_immutable
+  before update or delete on public.paddle_events
+  for each row execute function public.reject_paddle_event_identity_change();
+-- Reverse: drop trigger paddle_events_identity_immutable on public.paddle_events;
+
+-- Privilege layer under the trigger. UPDATE is NOT revoked (processed_at needs it) and INSERT
+-- is NOT revoked (0011:13-18). DELETE/TRUNCATE are revoked because nothing in the codebase
+-- deletes or truncates this table: on a migrations-built stack this is a no-op, but the cloud
+-- project still carries legacy auto-grants (the rebuild-parity gap 0012 documented in the
+-- other direction), so this is what actually closes the hole there. TRUNCATE needs the REVOKE
+-- specifically — a row-level trigger does not fire on TRUNCATE.
+REVOKE DELETE, TRUNCATE ON public.paddle_events FROM anon, authenticated, service_role;
+-- Reverse: grant delete, truncate on public.paddle_events to service_role; (anon/authenticated
+-- never legitimately held either — do NOT restore them.)
