@@ -401,10 +401,22 @@ describe("disconnectGscAction", () => {
     });
   });
 
+  /** Capture a server-side diagnostic instead of printing it into the test output. */
+  function captureConsole(level: "warn" | "error") {
+    return vi.spyOn(console, level).mockImplementation(() => {});
+  }
+
+  /** Every argument the diagnostic was given, flattened — what an operator would read. */
+  function logged(spy: ReturnType<typeof captureConsole>): string {
+    return spy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+  }
+
   // resetAllMocks (as in the key-action suite): the specs install their own revoke
   // implementations, which must not leak — nor may a call history — into the next test.
+  // restoreAllMocks additionally puts `console` back for the specs that spy on it.
   afterEach(() => {
     vi.resetAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     gscRows = [];
     gscTables = [];
@@ -456,8 +468,11 @@ describe("disconnectGscAction", () => {
     const row = linkedRow("user-1");
     gscRows = [row];
 
-    await disconnectGscAction(PROJECT);
+    const outcome = await disconnectGscAction(PROJECT);
 
+    // "revoked" is the ONE outcome that is a confirmed fact — Google acknowledged. It is
+    // what entitles the UI to stay silent instead of warning the user (M-15).
+    expect(outcome).toBe("revoked");
     // Google gets the opened plaintext — never the stored ciphertext.
     expect(revokeGoogleToken).toHaveBeenCalledWith(REFRESH_TOKEN);
     expect(revokeGoogleToken).not.toHaveBeenCalledWith(row.encrypted_refresh_token);
@@ -470,38 +485,59 @@ describe("disconnectGscAction", () => {
     expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
   });
 
-  it("still deletes locally when Google refuses the revoke (best-effort semantics)", async () => {
+  // M-15. The local deletion still happens — refusing to disconnect would trap the user —
+  // but the caller is told the Google-side grant is UNCONFIRMED, so the UI cannot claim
+  // "access revoked" on the strength of a call that failed.
+  it("reports `unconfirmed` when Google does not acknowledge, and still deletes locally", async () => {
     signedIn("user-1");
     gscRows = [linkedRow("user-1")];
+    const warn = captureConsole("warn");
     revokeGoogleToken.mockImplementation(async () => {
       gscOps.push("revoke");
       return false; // e.g. Google answered 400 invalid_token, or the request failed
     });
 
-    await expect(disconnectGscAction(PROJECT)).resolves.toBeUndefined();
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("unconfirmed");
 
     expect(gscOps).toEqual(["select", "revoke", "delete"]);
     expect(gscRows).toEqual([]);
+    // The operator gets the diagnosis, keyed to the row, and never the secret itself.
+    expect(logged(warn)).toMatch(/conn-1/);
+    expect(logged(warn)).toMatch(/not acknowledge/i);
+    expect(logged(warn)).not.toMatch(REFRESH_TOKEN);
   });
 
-  it("deletes without calling Google when the row holds no token", async () => {
+  it("deletes without calling Google when the row holds no token, and says so", async () => {
     signedIn("user-1");
     gscRows = [linkedRow("user-1", null)];
+    const warn = captureConsole("warn");
 
-    await disconnectGscAction(PROJECT);
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
 
     expect(revokeGoogleToken).not.toHaveBeenCalled();
     expect(gscRows).toEqual([]);
+    expect(logged(warn)).toMatch(/conn-1/);
+    expect(logged(warn)).toMatch(/skipped/i);
   });
 
-  it("an unopenable seal (rotated key) skips the revoke but still frees the user", async () => {
+  // T5, M-15's sibling: after a key retirement the seal will not open, so the revoke is
+  // never even ATTEMPTED. The row still goes (the user asked to disconnect) but the skip
+  // must be visible to an operator and must not be reported to the user as a revocation.
+  it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
     signedIn("user-1");
-    gscRows = [linkedRow("user-1", sealed(REFRESH_TOKEN, OTHER_KEY))];
+    const sealedWithRetiredKey = sealed(REFRESH_TOKEN, OTHER_KEY);
+    gscRows = [linkedRow("user-1", sealedWithRetiredKey)];
+    const error = captureConsole("error");
 
-    await disconnectGscAction(PROJECT);
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
 
     expect(revokeGoogleToken).not.toHaveBeenCalled();
     expect(gscRows).toEqual([]);
+    expect(logged(error)).toMatch(/conn-1/);
+    expect(logged(error)).toMatch(/skipped/i);
+    // Neither the sealed bytes nor the key may reach the log.
+    expect(logged(error)).not.toMatch(sealedWithRetiredKey);
+    expect(logged(error)).not.toMatch(OTHER_KEY);
   });
 
   it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {

@@ -169,16 +169,42 @@ export async function revokeKeyAction(keyId: string): Promise<void> {
 }
 
 /**
- * Open the sealed refresh token and ask Google to forget the grant.
+ * What Disconnect could establish about SeoGrep's grant at GOOGLE — the local deletion is a
+ * separate, always-performed half.
+ *
+ *   revoked       — Google acknowledged the revoke. The only CONFIRMED outcome.
+ *   unconfirmed   — we asked and Google did not acknowledge (refusal, outage, dead token).
+ *   not_attempted — we never asked: no stored token, or a seal that would not open (T5).
+ *
+ * The last two are the honest names for "we do not know", and no caller may turn either of
+ * them into a promise that access is gone (signed lesson 9 — the same disposition-follows-
+ * verified-state posture as the credit guard's commit classification).
+ */
+export type GscRevocationOutcome = "revoked" | "unconfirmed" | "not_attempted";
+
+/**
+ * Open the sealed refresh token and ask Google to forget the grant, reporting which of the
+ * three outcomes above actually happened.
  *
  * A MISSING or MALFORMED TOKEN_ENCRYPTION_KEY throws (signed lesson #5): that is a broken
  * deploy, and silently dropping the row while the Google-side grant lives on would turn a
  * config fault into a privacy fault. Everything AFTER the key is best-effort: an unopenable
  * ciphertext (rotated key, corrupt bytes) is a per-row fault, and trapping the user with an
  * undeletable connection would be worse than leaving one unusable token un-revoked — so we
- * log that we could not open it (never the ciphertext or the key) and let the deletion proceed.
+ * log that we could not open it (never the ciphertext or the key) and let the deletion
+ * proceed, with `not_attempted` telling the caller no revoke was ever tried.
+ *
+ * An already-dead token is deliberately NOT special-cased into a success. Google answers one
+ * with 400 invalid_token, which `revokeGoogleToken` collapses into the same `false` as an
+ * outage — and even a distinguishable 400 would only prove THIS token string is unusable,
+ * not that the grant is gone. Reporting `revoked` from it would be precisely the unverified
+ * promise this reports exist to prevent; a needless trip to Google's permissions page costs
+ * far less than a false all-clear.
  */
-async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
+async function revokeStoredToken(
+  encryptedTokenHex: string,
+  connectionId: string,
+): Promise<GscRevocationOutcome> {
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
   if (!encryptionKey) {
     throw new Error("Search Console is not configured; disconnect is unavailable");
@@ -192,10 +218,28 @@ async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
   try {
     refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey);
   } catch (caught) {
-    console.error("disconnectGscAction: stored token could not be opened, skipping revoke:", caught);
-    return;
+    // T5: the revoke is SKIPPED here, and the row still goes. Name the skip and key it to
+    // the row so an operator can find the grants a key retirement left live at Google —
+    // this used to be indistinguishable from a completed disconnect. Never the ciphertext
+    // or the key: the caught error carries neither.
+    console.error(
+      `disconnectGscAction: connection ${connectionId} — stored token could not be opened, ` +
+        "Google-side revoke SKIPPED (the grant may still be live at Google):",
+      caught,
+    );
+    return "not_attempted";
   }
-  await revokeGoogleToken(refreshToken);
+  if (await revokeGoogleToken(refreshToken)) {
+    return "revoked";
+  }
+  // warn, not error: `revokeGoogleToken` is expected to answer false for grants Google
+  // already dropped, so this is a routine unknown rather than a fault — but an unknown the
+  // operator (and, in different words, the user) must be able to see.
+  console.warn(
+    `disconnectGscAction: connection ${connectionId} — Google did not acknowledge the revoke; ` +
+      "reporting the grant as unconfirmed",
+  );
+  return "unconfirmed";
 }
 
 /**
@@ -210,8 +254,14 @@ async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
  * Order: revoke first, then delete. The revoke is best-effort — `revokeGoogleToken` never
  * throws (see its unit tests), so a Google outage or an already-dead token can never leave
  * the user stuck with a connection they asked us to drop.
+ *
+ * M-15: the RETURN VALUE is the point. The local half succeeded whenever this resolves, but
+ * only `revoked` means Google confirmed anything, and the caller owes the user wording that
+ * matches. Refusing the disconnect on a failed revoke would be the worse failure — it would
+ * leave the user unable to disconnect at all — so the honest shape is "delete, then say
+ * exactly what we know".
  */
-export async function disconnectGscAction(projectId: string): Promise<void> {
+export async function disconnectGscAction(projectId: string): Promise<GscRevocationOutcome> {
   const userId = await requireUserId();
   if (!UUID_RE.test(projectId)) {
     throw new Error("Connection not found");
@@ -221,9 +271,18 @@ export async function disconnectGscAction(projectId: string): Promise<void> {
   if (!connection) {
     throw new Error("Connection not found");
   }
+  let revocation: GscRevocationOutcome = "not_attempted";
   if (connection.encryptedTokenHex) {
-    await revokeStoredToken(connection.encryptedTokenHex);
+    revocation = await revokeStoredToken(connection.encryptedTokenHex, connection.id);
+  } else {
+    // A row without a token cannot revoke anything, and its grant at Google — if one is
+    // still live — is beyond our reach. Same honest report as an unopenable seal.
+    console.warn(
+      `disconnectGscAction: connection ${connection.id} — no stored token, ` +
+        "Google-side revoke SKIPPED",
+    );
   }
   await deleteGscConnection(service, { userId, projectId });
   revalidatePath(CONNECTION_PATH);
+  return revocation;
 }
