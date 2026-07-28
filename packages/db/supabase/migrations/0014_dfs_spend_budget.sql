@@ -86,6 +86,13 @@ grant execute on function public.dfs_spend_today_usd() to service_role;
 -- otherwise writes the reservation row before returning. Because the row is written inside the
 -- lock, a second caller entering the gate already sees this reservation — the vendor request
 -- that follows can no longer slip through a stale total.
+--
+-- The lock key is built with to_char(v_day, 'YYYY-MM-DD'), NOT v_day::text: date-to-text output
+-- follows the DateStyle GUC, so the same day hashes differently under 'ISO, MDY' (-1268704674)
+-- and 'German, DMY' (1979816615). Two sessions on different DateStyles would then take DIFFERENT
+-- locks for the SAME day and serialize against nothing. to_char pins the format, so the key is
+-- locale-independent. settle_dfs_spend below MUST build the key with the byte-identical
+-- expression — a key that disagrees between the two functions is the real hazard here.
 -- ---------------------------------------------------------------------------
 create function public.reserve_dfs_spend(
   p_estimated_usd numeric,
@@ -109,7 +116,7 @@ begin
 
   -- Serialize every reservation for this UTC day; released at transaction end. This lock is
   -- what makes the check and the booking indivisible (the 0005 reserve_credits pattern).
-  perform pg_advisory_xact_lock(hashtext('dfs_spend:' || v_day::text));
+  perform pg_advisory_xact_lock(hashtext('dfs_spend:' || to_char(v_day, 'YYYY-MM-DD')));
 
   select coalesce(sum(coalesce(actual_usd, estimated_usd)), 0)
     into v_spent
@@ -145,6 +152,10 @@ grant execute on function public.reserve_dfs_spend(numeric, text) to service_rol
 -- a fresh snapshot, so it sees a settlement another transaction has just committed). Deciding on
 -- the pre-lock read instead would let two concurrent settlements BOTH report success and let the
 -- last writer silently overwrite the recorded cost.
+--
+-- The lock key expression is byte-identical to reserve_dfs_spend's (see the note there): both
+-- must hash the SAME string for the SAME day, or the two functions serialize against different
+-- locks and the per-day lock stops meaning anything.
 -- ---------------------------------------------------------------------------
 create function public.settle_dfs_spend(
   p_reservation_id uuid,
@@ -169,7 +180,7 @@ begin
     raise exception 'unknown reservation: no dfs_spend row for id %', p_reservation_id;
   end if;
 
-  perform pg_advisory_xact_lock(hashtext('dfs_spend:' || v_day::text));
+  perform pg_advisory_xact_lock(hashtext('dfs_spend:' || to_char(v_day, 'YYYY-MM-DD')));
 
   if exists (
     select 1 from public.dfs_spend
