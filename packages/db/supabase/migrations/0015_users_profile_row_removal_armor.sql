@@ -1,0 +1,45 @@
+-- Migration 0015 (hostile-audit remediation): close the SECOND door to a repeat trial grant —
+-- removing the users_profile row, rather than editing it.
+--
+-- 0013 (3) latched `trial_granted_at` against reversal with a row-level BEFORE UPDATE trigger,
+-- on the reasoning that free credits are money and the latch belongs in the DB rather than in
+-- caller discipline. That closed the EDIT path and only the edit path. `claim_trial`
+-- (0009:105-127) upserts the profile row before it flips the lock, so a profile row that no
+-- longer exists is simply re-created — born with `trial_granted_at` NULL, with no prior value
+-- for the latch to compare against. The ledger does not catch it either: unlike the purchase
+-- path (0013 (1), and the `not exists` grant-once in process_paddle_purchase), claim_trial's
+-- `insert into public.credit_ledger` carries NO guard against an existing grant/trial row. So
+-- row removal mints a second trial, and the append-only ledger faithfully records both.
+--
+-- What was actually open (measured on a clean 0001-0014 local stack, not merely inferred for
+-- the cloud project):
+--
+--   role          | DELETE | TRUNCATE
+--   --------------+--------+---------
+--   anon          | false  | TRUE
+--   authenticated | false  | TRUE
+--   service_role  | false  | TRUE
+--
+-- DELETE was already withheld by 0006's deliberately narrow grants ("DELETE: granted to no
+-- one"), so revoking it is posture that costs nothing here and closes the legacy auto-grant on
+-- the cloud project — the rebuild-parity gap in the direction 0012 documented in reverse.
+-- TRUNCATE is the real hole, and it was open on BOTH stacks: the Supabase base role defaults
+-- hand out TRUNCATE/REFERENCES/TRIGGER even where the DML auto-grants were flipped off (0006
+-- describes the DML half of that flip and grants around it, which is why the TRUNCATE half went
+-- unnoticed). It is reachable by exactly the role the app runs as, and it walks straight past
+-- 0013: a row-level trigger does not fire on TRUNCATE, and neither does RLS apply to it. This
+-- is the same gap, for the same reason, that 0013 (2) had to answer on paddle_events with a
+-- REVOKE rather than with its trigger.
+--
+-- Additive and non-breaking. Nothing in the codebase deletes or truncates users_profile: the
+-- row is created by claim_trial's upsert and by the app's signup upsert, and account removal
+-- cascades from auth.users (users_profile_id_fkey ... ON DELETE CASCADE), which is unaffected
+-- by a table privilege on the referencing table. The privileges claim_trial genuinely needs —
+-- service_role SELECT/INSERT/UPDATE, the 0008 welcomed_at write, and authenticated SELECT
+-- under RLS — are untouched, and pinned as such by users-profile-privileges.db.test.ts.
+
+REVOKE DELETE, TRUNCATE ON public.users_profile FROM anon, authenticated, service_role;
+-- Reverse: this migration restores nothing on re-run and is safe to re-apply. To undo, note
+-- that anon/authenticated never legitimately held either privilege and service_role never held
+-- DELETE — so the only honest reversal is `grant truncate on public.users_profile to
+-- service_role;`, and that re-opens the repeat-trial door this migration exists to shut.
