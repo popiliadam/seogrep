@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { captureSignup } from "../../../lib/analytics";
 import { grantTrialCredits } from "../../../lib/billing/trial";
 import { sendWelcomeIfFirst } from "../../../lib/billing/welcome";
+import { resolveBaseUrl } from "../../../lib/site";
 import { createClient } from "../../../lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -34,12 +35,29 @@ export async function GET(request: Request): Promise<Response> {
   const tokenHash = url.searchParams.get("token_hash");
   const type = url.searchParams.get("type");
 
-  // Canonical origin for the same-app redirects below. url.origin is the request Host, which
-  // a proxy can let an attacker spoof, so the 302 Location must come from the canonical
-  // WEB_BASE_URL (A-I4), never the request. If WEB_BASE_URL is unset OR set-but-empty (broken
-  // deploy) we fall back to url.origin — `||`, not `??`, so "" also falls back — rather than
-  // strand a mid-auth user on a `new URL("/app", "")` 500.
-  const base = (process.env.WEB_BASE_URL || url.origin).replace(/\/+$/, "");
+  // Canonical origin for the same-app redirects below. url.origin is the request Host, which a
+  // proxy can let an attacker spoof, so the 302 Location must come from the canonical
+  // WEB_BASE_URL (A-I4), never the request.
+  //
+  // FAIL-CLOSED (L-06): an unset / empty / malformed WEB_BASE_URL is a CONFIGURATION ERROR, not a
+  // reason to fall back to url.origin. The old fallback meant a broken deploy behind a
+  // Host-forwarding proxy would hand a freshly authenticated user a redirect to the attacker's
+  // origin — "keep the user moving" is not worth an attacker-controlled redirect target.
+  //
+  // The check runs BEFORE the token is consumed, so the single-use code / OTP is NOT burned: the
+  // same email link still works once the deploy is fixed. The user sees a generic English message;
+  // the diagnostics (which env, what shape) stay in the server log.
+  const base = resolveBaseUrl(process.env.WEB_BASE_URL);
+  if (!base) {
+    console.error(
+      "auth callback refused: WEB_BASE_URL is not a usable absolute http(s) URL — refusing to " +
+        "derive the post-auth redirect from the request Host",
+    );
+    return new NextResponse("Sign-in is temporarily unavailable. Please try again later.", {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
 
   const supabase = await createClient();
   let userId: string | null = null;

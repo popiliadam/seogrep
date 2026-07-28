@@ -24,7 +24,14 @@ import { GET } from "./route";
 const BASE = "http://localhost:3457/auth/callback";
 
 describe("GET /auth/callback", () => {
+  // Since L-06 the canonical base is REQUIRED (no request-Host fallback), so these cases have to
+  // declare it. Stubbing the local origin keeps every expectation below byte-identical to the
+  // pre-L-06 suite — only the source of the base moved from the request to the env.
+  beforeEach(() => {
+    vi.stubEnv("WEB_BASE_URL", "http://localhost:3457");
+  });
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     vi.restoreAllMocks(); // console.error spies must not leak into other tests
   });
@@ -140,21 +147,59 @@ describe("GET /auth/callback — canonical redirect base (A-I4)", () => {
   });
 });
 
-describe("GET /auth/callback — empty WEB_BASE_URL falls back (W4 empty-env class)", () => {
+describe("GET /auth/callback — unusable WEB_BASE_URL fails CLOSED (L-06)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
-  // A SET-but-EMPTY WEB_BASE_URL ("") is the broken-deploy case `??` missed: "" is not nullish, so
-  // the base stayed "" and `new URL("/app", "")` threw a 500 mid-auth. `||` treats "" as absent and
-  // falls back to the request origin, keeping the user moving (signed lesson #5 — empty-env class).
-  it("redirects through the request origin (no 500) when WEB_BASE_URL is set but empty", async () => {
+  // SPEC CHANGE (L-06), tightening the previous "empty WEB_BASE_URL falls back to the request
+  // origin" expectation that used to live here. Falling back to url.origin means falling back to
+  // the request HOST: behind a proxy that forwards an attacker-controlled Host, a broken deploy
+  // (unset/empty/typo'd WEB_BASE_URL) would hand a freshly authenticated user a 302 to the
+  // attacker's origin. Keeping the user "moving" is not worth an attacker-controlled redirect
+  // target, so an unusable canonical base is now a CONFIGURATION ERROR, not a fallback.
+  //
+  // The check runs BEFORE the token is consumed, so the one-time code/OTP survives the outage and
+  // the same email link still works once the deploy is fixed.
+  function expectConfigFailure(response: Response): void {
+    expect(response.status).toBe(500);
+    expect(response.headers.get("location")).toBeNull(); // no redirect target AT ALL
+    expect(exchangeCodeForSession).not.toHaveBeenCalled(); // one-time code NOT consumed
+    expect(verifyOtp).not.toHaveBeenCalled();
+    expect(grantTrialCredits).not.toHaveBeenCalled();
+  }
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {
     vi.stubEnv("WEB_BASE_URL", "");
-    exchangeCodeForSession.mockResolvedValue({ data: { user: { id: "u1", email: null } }, error: null });
-    grantTrialCredits.mockResolvedValue(false);
-    const response = await GET(new Request(`${BASE}?code=abc`));
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expectConfigFailure(await GET(new Request(`${BASE}?code=abc`)));
+  });
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is unset", async () => {
+    vi.stubEnv("WEB_BASE_URL", undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expectConfigFailure(await GET(new Request(`${BASE}?token_hash=th1&type=signup`)));
+  });
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is not an absolute URL", async () => {
+    vi.stubEnv("WEB_BASE_URL", "seogrep.com");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expectConfigFailure(await GET(new Request(`${BASE}?code=abc`)));
+  });
+
+  it("never puts the request Host (or the env value) in the user-facing body", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await GET(
+      new Request("https://attacker.example/auth/callback?code=abc", {
+        headers: { host: "attacker.example" },
+      }),
+    );
+    const body = await response.text();
+    expect(body).not.toContain("attacker.example");
+    expect(body).not.toContain("WEB_BASE_URL");
+    expect(body).toMatch(/sign-?in/i); // generic English message, no diagnostics
   });
 });
