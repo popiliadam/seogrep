@@ -201,11 +201,12 @@ in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
 >>> PR #33 MERGE'LENDİ (main @957cdd4, 2026-07-28) — açık PR yok. Push kapısı düştü
     (platinum-seo-engine plugin'i settings.local.json'da kapatıldı; "Everything up-to-date" kanıtlı).
 >>> İNSANIN ELİNDE (kod beklemiyor), öncelik sırasıyla:
-1. **MCP_SMOKE_URL bayat (2026-07-28 şef DB-doğruladı):** tek aktif anahtar sg_5aouWsfC (bugün
-   üretildi, last_used boş); zshrc'deki sg_JPVw44DF 07-27 iptal. Tam değer diskte YOK (DB hash+prefix
-   saklar); classifier şefin transkriptten secret çıkarmasını engelledi (doğru davranış) → İNSAN
-   chat'teki tek komutla tazeler, sonra şef probe-PASS kanıtlar. NOT: şef-Bash zshrc source etmez;
-   goals kanıtı `eval "$(grep '^export MCP_SMOKE_URL=' ~/.zshrc)"` önekiyle koşulur (yoksa SKIP-yeşili).
+1. ~~MCP_SMOKE_URL~~ ✅ KAPANDI (2026-07-28): insan dashboard'dan rotate etti → yeni aktif anahtar
+   sg_9AcwTFcY; şef pano-değerini DB hash'iyle birebir doğrulayıp ~/.zshrc'ye yazdı (değer hiç
+   görüntülenmedi; eski anahtar izleri 0). KANIT: MCP_SMOKE_URL YÜKLÜYKEN make goals 16/16 + ham
+   probe'lar (serverInfo seogrep-mcp · tools/list inputSchema=16 · get_credit_balance "balance: 1405
+   credits") — "16/16" İLK KEZ 16 TAM ÖLÇÜM. KALICI NOT: şef-Bash zshrc source etmez → şef kanıt
+   koşusu daima `eval "$(grep '^export MCP_SMOKE_URL=' ~/.zshrc)"` önekiyle (yoksa 2 kalem SKIP-yeşili).
 2. ~~Paddle temizliği~~ ✅ (2026-07-28 insan bildirdi: LIVESMOKE0728 arşivlendi + discount field kapalı).
 3. **Launch yayınları** — artık serbest (ödeme çalışıyor). Taslaklar hazır:
    docs/launch/2026-07-launch-posts.md (PH · Show HN · X thread + publish checklist).
