@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
@@ -104,6 +105,19 @@ export function errorResult(text: string): ToolResult {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Entropy in a failure REFERENCE. 4 bytes = 8 hex chars: short enough for a human to read
+ * back out of a chat transcript, wide enough (4.3e9) that two failures a support thread is
+ * comparing are not plausibly the same reference. It is a correlation handle, not a secret
+ * and not a security control, so this is sized for legibility rather than unguessability.
+ */
+const FAILURE_REFERENCE_BYTES = 4;
+
+/** A fresh correlation handle linking one caller-visible failure to one server log line. */
+function newFailureReference(): string {
+  return randomBytes(FAILURE_REFERENCE_BYTES).toString("hex");
 }
 
 /**
@@ -275,7 +289,24 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       return await tool.run(deps.ctx, request.params.arguments);
     } catch (error) {
       // The guard has already released any reserve it opened before rethrowing.
-      return errorResult(`Tool "${tool.name}" failed: ${errorMessage(error)}`);
+      //
+      // The raw message is NOT echoed to the caller. Anything that escapes a handler is an
+      // UNEXPECTED failure, and those come from the layers that describe our internals:
+      // Postgres names the relation, an RPC names the function, a provider names its
+      // endpoint. Handing that to whoever holds an API key maps the schema for them.
+      //
+      // Instead the caller gets a stable, generic sentence plus a short REFERENCE, and the
+      // verbatim message is logged server-side under that same reference — so operator
+      // diagnosis is unchanged in power, just moved: the user quotes the reference, the
+      // operator greps it and reads the full error. Deliberate, honest tool errors are
+      // untouched: a tool that RETURNS errorResult(...) — the "live path is disabled"
+      // refusal, a worker's fail-mark — never reaches this catch.
+      const reference = newFailureReference();
+      console.error(`Tool "${tool.name}" failed [ref ${reference}]: ${errorMessage(error)}`);
+      return errorResult(
+        `Tool "${tool.name}" failed unexpectedly. The server logged the details under ` +
+          `reference ${reference} — quote it if you report this.`,
+      );
     }
   });
 }
