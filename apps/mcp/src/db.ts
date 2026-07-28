@@ -323,12 +323,22 @@ export function getServiceClient(): ServiceClient {
  * count over the jobs table — cheap at beta volume, and the `/status` caller bounds it with
  * a short timeout + best-effort `null` fallback regardless. Throws on a query error; the
  * caller degrades to `null` rather than failing `/status`.
+ *
+ * `signal` makes the read CANCELLABLE, which is what makes the caller's timeout honest: a
+ * bound that only abandons the ANSWER leaves the request running, so a flood of abandoned
+ * `/status` calls still piles unindexed counts onto the database every other subsystem
+ * shares. Passing the signal through to PostgREST tears the HTTP request down when the
+ * caller gives up. It is optional so the reader stays usable off the `/status` path.
  */
-export async function countPendingJobs(client: ServiceClient): Promise<number> {
-  const { count, error } = await client
+export async function countPendingJobs(
+  client: ServiceClient,
+  signal?: AbortSignal,
+): Promise<number> {
+  const query = client
     .from("jobs")
     .select("id", { count: "exact", head: true })
     .in("status", ["queued", "running"]);
+  const { count, error } = await (signal ? query.abortSignal(signal) : query);
   if (error) {
     throw new Error(`jobs pending count failed: ${error.message}`);
   }

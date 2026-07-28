@@ -15,6 +15,9 @@ import { ALL_TOOLS } from "./tools/index.ts";
 // Additive import for the JSON-only Accept specs, on its own line so every existing
 // line above stays byte-identical.
 import { negotiatedAccept } from "./server.ts";
+// Additive H-05 import, on its own line for the same reason: the DB-side backlog reader,
+// whose cancellation wiring the /status deadline depends on.
+import { countPendingJobs } from "./db.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate (no DB) that yields typed
@@ -1211,5 +1214,83 @@ describe("mcp gateway security response headers (L-12)", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-05 — the anonymous /status amplification. /status is unauthenticated and, before
+// this slice, ungated: every hit ran countPendingJobs, an EXACT count over `jobs` with
+// no index on `status`. The 1s bound capped only the ANSWER — the query underneath kept
+// running — so N concurrent anonymous requests became N concurrent full scans, and that
+// load landed on the same database the auth lookup, the queue and the credit ledger use.
+//
+// Three properties close it, and each is pinned below:
+//   1. CANCELLATION — when the deadline wins, the underlying read is aborted, not orphaned.
+//   2. CACHE        — N concurrent requests cost at most ONE query (next commit).
+//   3. THROTTLE     — a per-IP gate, on its own budget, before any read (commit after that).
+// This commit lands (1). /healthz is deliberately excluded from all three (uptime probe).
+// ---------------------------------------------------------------------------
+
+describe("readPendingJobsBounded cancellation (H-05)", () => {
+  it("ABORTS the underlying read when the deadline wins (the query is not orphaned)", async () => {
+    let aborted = false;
+    const hangUntilAborted = (signal: AbortSignal) =>
+      new Promise<number>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        });
+      });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await readPendingJobsBounded(hangUntilAborted, 20)).toBeNull();
+      expect(aborted).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("hands the reader a signal that is NOT aborted while it is still within the deadline", async () => {
+    let seen: AbortSignal | undefined;
+    const read = (signal: AbortSignal) => {
+      seen = signal;
+      return Promise.resolve(5);
+    };
+    expect(await readPendingJobsBounded(read, 1_000)).toBe(5);
+    expect(seen).toBeInstanceOf(AbortSignal);
+    expect(seen?.aborted).toBe(false);
+  });
+});
+
+describe("countPendingJobs cancellation wiring (H-05)", () => {
+  // The /status backlog reader is the one query the finding is about. Driven here against a
+  // hand-rolled fake builder — no database, no network — purely to prove the caller's signal
+  // reaches PostgREST, so an abandoned /status answer abandons its HTTP request too.
+
+  function fakeClient(signalSink: { signal?: AbortSignal }) {
+    const builder = {
+      select: () => builder,
+      in: () => builder,
+      abortSignal: (signal: AbortSignal) => {
+        signalSink.signal = signal;
+        return builder;
+      },
+      then: (resolve: (value: { count: number; error: null }) => unknown) =>
+        Promise.resolve({ count: 7, error: null }).then(resolve),
+    };
+    return { from: () => builder } as unknown as Parameters<typeof countPendingJobs>[0];
+  }
+
+  it("passes the caller's AbortSignal down to the query", async () => {
+    const sink: { signal?: AbortSignal } = {};
+    const controller = new AbortController();
+    expect(await countPendingJobs(fakeClient(sink), controller.signal)).toBe(7);
+    expect(sink.signal).toBe(controller.signal);
+  });
+
+  it("still works with no signal (the reader stays usable outside /status)", async () => {
+    const sink: { signal?: AbortSignal } = {};
+    expect(await countPendingJobs(fakeClient(sink))).toBe(7);
+    expect(sink.signal).toBeUndefined();
   });
 });

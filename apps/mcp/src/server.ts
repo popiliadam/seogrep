@@ -77,9 +77,9 @@ export interface AppDeps {
    * the DB-backed countPendingJobs; DB-free unit tests omit it, in which case `/status`
    * reports pendingJobs:null and no handler touches the database. The `/status` handler
    * always calls this through readPendingJobsBounded, so a slow/failing read degrades to
-   * null instead of hanging or 5xx-ing the endpoint.
+   * null instead of hanging or 5xx-ing the endpoint — and the deadline CANCELS it.
    */
-  readonly pendingJobs?: () => Promise<number>;
+  readonly pendingJobs?: PendingJobsReader;
   /**
    * The personal-URL template the PUBLIC capability card advertises. Decision D28 makes this
    * shape env-driven (`MCP_URL_TEMPLATE`, a Fly secret) so it can change with ONE env edit;
@@ -90,6 +90,12 @@ export interface AppDeps {
    */
   readonly mcpUrlTemplate?: string;
 }
+
+/**
+ * The `/status` backlog reader. It takes an AbortSignal because the endpoint's deadline
+ * must CANCEL the read, not merely stop waiting for it (see readPendingJobsBounded).
+ */
+export type PendingJobsReader = (signal: AbortSignal) => Promise<number>;
 
 /** res.locals key holding the resolved tenant context (set on the authenticated path). */
 const AUTH_CONTEXT_LOCAL = "authContext";
@@ -141,9 +147,10 @@ function buildDefaultDeps(): AppDeps {
     ipThrottle: createRateLimiter({ capacity: 240, refillPerSecond: 4, maxEntries: 10_000 }),
     tools: ALL_TOOLS,
     // Backlog count for /status, over the SAME service client. Read-only, non-tenant
-    // aggregate (see countPendingJobs); the /status handler bounds it so a slow DB can
-    // never hang the operator endpoint.
-    pendingJobs: () => countPendingJobs(client),
+    // aggregate (see countPendingJobs). The signal is threaded through so the /status
+    // deadline CANCELS the query rather than orphaning it, so an abandoned /status answer
+    // does not leave an unindexed count running against the shared database.
+    pendingJobs: (signal) => countPendingJobs(client, signal),
     // D28: the personal MCP URL shape comes from MCP_URL_TEMPLATE. Read HERE, at the
     // composition root, alongside the other env-backed wiring — buildServerCard itself stays
     // pure and never touches the environment.
@@ -172,16 +179,25 @@ const STATUS_PENDING_TIMEOUT_MS = 1_000;
  * directly with a short bound.
  */
 export async function readPendingJobsBounded(
-  read: (() => Promise<number>) | undefined,
+  read: PendingJobsReader | undefined,
   timeoutMs: number,
 ): Promise<number | null> {
   if (!read) return null;
+  // The deadline CANCELS the read; it does not merely stop waiting for it. Racing a
+  // promise only abandons the ANSWER — the query underneath keeps running, so an anonymous
+  // flood of abandoned /status calls still stacks unindexed counts onto the database the
+  // auth lookup, the queue and the ledger all share. Aborting tears the request down.
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
+    timer = setTimeout(() => {
+      controller.abort(new Error(`/status pendingJobs read exceeded ${timeoutMs}ms`));
+      resolve(null);
+    }, timeoutMs);
   });
   const counted = Promise.resolve()
-    .then(read) // deferred invocation: a synchronous throw in read becomes a rejection here
+    // deferred invocation: a synchronous throw in read becomes a rejection here
+    .then(() => read(controller.signal))
     .catch((error: unknown) => {
       console.warn(`/status pendingJobs read failed: ${errorMessage(error)}`);
       return null;
@@ -477,9 +493,10 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // and is NOT wired to any health check, so its DB read can never endanger liveness.
   // Unauthenticated on purpose: it exposes only COARSE, PROCESS-WIDE operational counts
   // (uptime, 5xx-since-boot, and the global queued+running backlog) — no tenant data and
-  // nothing per-user — so it is as safe to expose as /healthz. The backlog read is bounded
-  // and best-effort (readPendingJobsBounded): on a slow/broken DB it degrades to
-  // pendingJobs:null and STILL answers ok:true, so /status never hangs or returns 5xx.
+  // nothing per-user — so it is as safe to expose as /healthz. The backlog read is bounded,
+  // CANCELLABLE and best-effort (readPendingJobsBounded): on a slow/broken DB it degrades to
+  // pendingJobs:null and STILL answers ok:true, so /status never hangs or returns 5xx — and
+  // the deadline now tears the abandoned query down instead of leaving it running.
   app.get("/status", async (_req, res) => {
     const pendingJobs = await readPendingJobsBounded(deps.pendingJobs, STATUS_PENDING_TIMEOUT_MS);
     res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
