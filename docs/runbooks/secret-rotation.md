@@ -59,15 +59,24 @@ values before moving to the next.
 3. **Phase 2 — flip writes.** On both: `TOKEN_ENCRYPTION_ACTIVE_KEY_ID=2` → redeploy. Verify: a fresh
    `connect_gsc` round-trips (new rows seal under id 2) AND an old connection still pulls (read leg).
 4. **Retire the old key** — the step that actually contains a compromise: drop `1:<old>` from
-   `TOKEN_ENCRYPTION_KEYS` on both, leaving `2:<new>`. From that moment nothing sealed under key 1 opens
-   again, including every pre-v2 row; those users must re-connect.
+   `TOKEN_ENCRYPTION_KEYS` on both, leaving `2:<new>`. From that moment **nothing sealed under key 1 opens
+   again** — pre-v2 rows AND every v2 row stamped with key id 1; all of those users must re-connect.
+   **Count the SURVIVORS, not the v1 rows.** A row survives only if its `encrypted_refresh_token` starts
+   with the 6 bytes `53 47 53 4c 02 02` — magic `SGSL`, version `02`, **key id `02`** — i.e. it was written
+   after the Phase 2 flip. The reconnect population is *everything else*: rows with no magic at all (pre-v2)
+   **plus** every row whose 6th byte is `01`. Counting only "v1 rows" is the trap: on today's live
+   configuration `TOKEN_ENCRYPTION_KEYS` is unset, so the ring is `{1: TOKEN_ENCRYPTION_KEY}` and **every
+   row written today is v2 with key id 1** — a v1 count would come back ~zero and hide the entire
+   population that retiring key 1 is about to break.
    **There is NO automatic re-seal.** The only code path that writes a token is the connect-callback
    upsert (`apps/web/lib/gsc/store.ts`); `pull_gsc_data` reads and never writes back, and lazy re-seal is
-   deliberately not built. A v1 row therefore stays v1 **forever**, until that user manually reconnects.
-   So before retiring, count how many rows are still v1 and expect exactly that many reconnects: a v2 blob
-   begins with the bytes `53 47 53 4c 02` (ASCII `SGSL` + version); any other leading bytes mean v1.
-   Retire immediately on exposure — otherwise treat it as a planned reconnect wave, not something that
-   resolves itself by waiting.
+   deliberately not built. A key-id-1 row therefore stays key-id-1 **forever**, until that user manually
+   reconnects. Retire immediately on exposure — otherwise treat it as a planned reconnect wave, not
+   something that resolves itself by waiting.
+   Two caveats on the prefix count: the format is really decided by the GCM auth tag, not the magic bytes,
+   so a pre-v2 row whose random IV happens to open with those 6 bytes (≈1 in 2^48) would be miscounted as a
+   survivor; and because Disconnect deletes the row, a count taken now is an **upper bound** on the
+   reconnects you will actually owe.
 
 Notes:
 - With `TOKEN_ENCRYPTION_KEYS` unset the code derives `{1: TOKEN_ENCRYPTION_KEY}` and writes under id 1 —
