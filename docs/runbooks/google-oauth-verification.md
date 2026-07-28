@@ -32,16 +32,22 @@
 
 ## İnsan adımları (Console tıkları, sırayla)
 
-1. https://console.cloud.google.com → doğru proje (client "seogrep-web", hesap seogrep.app@gmail).
+> **HESAP GERÇEĞİ (2026-07-28 teyitli):** Seogrep Cloud projesinin sahibi **info@adstark.com.tr**
+> (eski kayıtlardaki "seogrep.app@gmail" YANLIŞ/yok). Tüm Console + Search Console-sahiplik işleri
+> info@adstark ile yapılır. seogrep.com'un SC domain-doğrulaması da bu hesaba TXT ile bağlandı
+> (brand-verification şartı). İki "seogrep" projesi tuzağı: doğrusu, Credentials'ında
+> `https://seogrep.com/api/gsc/callback` redirect'li "seogrep-web" client'ı olan proje.
+
+1. https://console.cloud.google.com → doğru proje (client "seogrep-web", hesap **info@adstark.com.tr**).
 2. **APIs & Services → OAuth consent screen** (yeni adı: Google Auth Platform → Branding/Audience):
-   - App name: `SeoGrep` · User support email: `seogrep.app@gmail.com` — DİKKAT: bu dropdown yalnız
+   - App name: `SeoGrep` · User support email: `info@adstark.com.tr` — DİKKAT: bu dropdown yalnız
      GİRİŞ YAPILAN hesabın adreslerini/gruplarını gösterir; support@seogrep.com bir Google hesabı
      değil (ImprovMX yönlendirmesi), burada ÇIKMAZ ve çıkmaması normaldir. Yanlış hesapla girildiyse
      (örn. başka işletme maili) sağ üstten seogrep.app@gmail.com'a geç — YENİ PROJE AÇMA, mevcut
      client canlı ürünü besliyor. · Logo yükle (512px; logo yüklemek brand review'u tetikler — normal).
    - App home page `https://seogrep.com` · Privacy `https://seogrep.com/privacy` · Terms
      `https://seogrep.com/terms` · Authorized domain `seogrep.com`.
-   - Developer contact: seogrep.app@gmail **+ support@seogrep.com** (Google yazışması buraya gelir).
+   - Developer contact: info@adstark.com.tr + support@seogrep.com (eski kayıt seogrep.app@gmail YANLIŞTI) **+ support@seogrep.com** (Google yazışması buraya gelir).
 3. **Scopes** ekranında `../auth/webmasters.readonly` listede olduğunu teyit et (yoksa "Add or remove
    scopes" ile ekle; non-sensitive openid/email/profile de listede kalsın).
 4. **Audience/Publishing status → PUBLISH APP** (Testing → In production). Sensitive scope olduğu
