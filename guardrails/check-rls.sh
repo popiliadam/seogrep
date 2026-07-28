@@ -22,8 +22,24 @@ set -- "$MIGRATIONS_DIR"/*.sql
 
 # -v q: the single-quote character. The awk program below is a single-quoted shell block,
 # so the literal cannot appear inside it; string-literal tracking needs it (audit R4).
-awk -v q="'" '
+# -v dq: the double-quote character, for unquoting quoted identifiers (audit R7).
+awk -v q="'" -v dq='"' '
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+
+# Index of the " that closes the quoted identifier opening at p, or 0 when this line has
+# none. A doubled "" inside a quoted identifier is an escaped quote, not the end.
+function dqend(s, p,   j, m) {
+  m = length(s)
+  j = p + 1
+  while (j <= m) {
+    if (substr(s, j, 1) == dq) {
+      if (substr(s, j + 1, 1) == dq) { j += 2; continue }
+      return j
+    }
+    j += 1
+  }
+  return 0
+}
 
 # Local is named z, not q: q is now the global quote character (see the -v above) and a
 # parameter of that name would silently shadow it for anything this function called.
@@ -112,15 +128,15 @@ function flush(   s) {
 FNR == 1 && NR > 1 { flush() }
 # ...and neither does a string literal or a block comment, so an unbalanced quote can
 # blind at most its own file instead of every migration that follows it.
-FNR == 1 { inblock = 0; instr = 0 }
+FNR == 1 { inblock = 0; instr = 0; estr = 0 }
 
 {
-  # Lowercase, strip -- and /* */ comments, then split into statements on ";".
+  # Lowercase, strip -- and /* */ comments, unquote quoted identifiers, then split into
+  # statements on ";".
   # String literals are tracked (q is the quote character, passed in with -v because this
   # program lives in a single-quoted shell block) because two dashes INSIDE a literal start
   # no comment: without this the rest of that line was dropped and a real statement sharing
-  # the line was swallowed (audit R4). A doubled quote inside a literal is an escape, and
-  # the toggle closes then reopens on it, which lands on the correct state.
+  # the line was swallowed (audit R4).
   line = tolower($0)
   out = ""
   i = 1
@@ -132,7 +148,18 @@ FNR == 1 { inblock = 0; instr = 0 }
       continue
     }
     if (instr) {
-      if (c == q) instr = 0
+      # Inside an E-string (a literal introduced by a bare E) a backslash escapes the NEXT
+      # character, so a backslash-quote pair does NOT end it, the two dashes that may
+      # follow are DATA, and the real statement sharing the line must not be dropped
+      # (audit c18). In a plain literal standard_conforming_strings makes the backslash an
+      # ordinary character, and escaping THERE would swallow live statements instead - so
+      # this is deliberately E-only rather than universal.
+      if (estr && c == "\\") { out = out c substr(line, i + 1, 1); i += 2; continue }
+      # A doubled quote inside a literal is an escaped quote, not the end of the string.
+      if (c == q) {
+        if (substr(line, i + 1, 1) == q) { out = out c q; i += 2; continue }
+        instr = 0
+      }
       out = out c
       i += 1
       continue
@@ -140,7 +167,31 @@ FNR == 1 { inblock = 0; instr = 0 }
     c2 = substr(line, i, 2)
     if (c2 == "/*") { inblock = 1; i += 2; continue }
     if (c2 == "--") { i = n + 1; continue }
-    if (c == q) instr = 1
+    if (c == q) {
+      instr = 1
+      # A leading E switches backslash escapes on, and that e must be a token of its own.
+      estr = (i > 1 && substr(line, i - 1, 1) == "e" &&
+              (i < 3 || substr(line, i - 2, 1) !~ /[a-z0-9_$]/)) ? 1 : 0
+      out = out c
+      i += 1
+      continue
+    }
+    if (c == dq) {
+      # Quoted identifier: PostgreSQL applies alter table public."credit_ledger" exactly
+      # like the bare word, while every shape below matches bare words only (audit R7).
+      # Unquote it - but ONLY when the closing quote is on this same line, so an unbalanced
+      # double quote keeps the old behaviour instead of blinding the rest of the file.
+      e = dqend(line, i)
+      if (e > 0) {
+        # The ORIGINAL characters are copied, not the folded ones: "Credit_Ledger" is a
+        # DIFFERENT table from credit_ledger in postgres. A mixed-case quoted name then
+        # matches no shape and is ignored exactly as before, whereas folding it would let a
+        # quoted ENABLE on some other table cancel a real DISABLE - a loss of coverage.
+        out = out substr($0, i + 1, e - i - 1)
+        i = e + 1
+        continue
+      }
+    }
     out = out c
     i += 1
   }
