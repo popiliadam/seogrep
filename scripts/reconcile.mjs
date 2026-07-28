@@ -17,9 +17,12 @@
 // parseReconcileArgs (unit-tested in apps/mcp/src/queue/reaper.test.ts), not here, so the CLI
 // and the library can never disagree about what is safe.
 //
-// Node floor: this imports the reaper's .ts directly, so it needs Node >=22.18 (or >=23)
-// with default type-stripping. Older Node exits with ERR_UNKNOWN_FILE_EXTENSION before any
-// DB call — safe (no money moves), but confusing mid-incident; upgrade Node if you see it.
+// Node floor: this imports the reaper's .ts directly (and the reaper imports ../db.ts), so it
+// needs Node >=22.18.0, the release that turned on type-stripping by default. Older Node exits
+// with ERR_UNKNOWN_FILE_EXTENSION before any DB call — safe (no money moves), but confusing
+// mid-incident. That is the SAME floor root package.json `engines.node` declares, on purpose:
+// a version the repo calls supported must be able to run the recovery script. Pinned against
+// drift by apps/web/lib/node-floor.test.ts.
 //
 // Exit 0 on success, 1 on any error.
 import { parseReconcileArgs, reconcileStuckJobs } from "../apps/mcp/src/queue/reaper.ts";

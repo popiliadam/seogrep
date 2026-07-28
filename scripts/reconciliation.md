@@ -284,9 +284,12 @@ node scripts/reconcile.mjs [--older-than-minutes=N]   # N defaults to 15
 ```
 
 > **Node floor:** `reconcile.mjs` imports the reaper's TypeScript directly, which needs
-> **Node ≥22.18 (or ≥23)** with default type-stripping. Older Node exits with
-> `ERR_UNKNOWN_FILE_EXTENSION` *before any DB call* — safe (no money moves), but confusing
-> mid-incident; upgrade Node if you hit it.
+> **Node ≥22.18.0** — the release that turned on type-stripping by default. Older Node exits
+> with `ERR_UNKNOWN_FILE_EXTENSION` *before any DB call* — safe (no money moves), but confusing
+> mid-incident; upgrade Node if you hit it. This is the repo-wide baseline: root
+> `package.json` declares the same `engines.node`, and CI and Netlify both build on the 22
+> line, whose current releases are all above it. `apps/web/lib/node-floor.test.ts` fails if
+> these three ever disagree again.
 
 What it does, per stuck job:
 
