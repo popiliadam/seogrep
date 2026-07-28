@@ -1,0 +1,84 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.1820 sec.",
+  "cost": 0.06012,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07281200-0000-0000-0000-fixture0005",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "1.1266 sec.",
+      "cost": 0.06012,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "anchors", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "anchors",
+        "target": "example.com",
+        "limit": 1000,
+        "backlinks_status_type": "live",
+        "order_by": ["backlinks,desc"]
+      },
+      "result": [
+        {
+          "target": "example.com",
+          "total_count": 83736,
+          "items_count": 3,
+          "items": [
+            {
+              "type": "backlinks_anchor",
+              "anchor": "example",
+              "rank": 277,
+              "backlinks": 4186,
+              "first_seen": "2019-01-16 05:58:32 +00:00",
+              "lost_date": null,
+              "backlinks_spam_score": 24,
+              "broken_backlinks": 21,
+              "broken_pages": 13,
+              "referring_domains": 835,
+              "referring_domains_nofollow": 146,
+              "referring_main_domains": 773,
+              "referring_pages": 3946,
+              "referring_pages_nofollow": 940
+            },
+            {
+              "type": "backlinks_anchor",
+              "anchor": "seo software",
+              "rank": 190,
+              "backlinks": 902,
+              "first_seen": "2020-06-04 14:11:07 +00:00",
+              "lost_date": null,
+              "backlinks_spam_score": 9,
+              "broken_backlinks": 2,
+              "broken_pages": 1,
+              "referring_domains": 214,
+              "referring_domains_nofollow": 30,
+              "referring_main_domains": 201,
+              "referring_pages": 902,
+              "referring_pages_nofollow": 88
+            },
+            {
+              "type": "backlinks_anchor",
+              "anchor": "",
+              "rank": 44,
+              "first_seen": "2018-09-22 19:40:12 +00:00",
+              "lost_date": null,
+              "backlinks_spam_score": 31,
+              "broken_backlinks": 0,
+              "broken_pages": 0,
+              "referring_domains": 58,
+              "referring_domains_nofollow": 12,
+              "referring_main_domains": 55,
+              "referring_pages": 214,
+              "referring_pages_nofollow": 40
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

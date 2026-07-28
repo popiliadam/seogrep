@@ -1,0 +1,65 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.7412 sec.",
+  "cost": 0.02003,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07281200-0000-0000-0000-fixture0003",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.7188 sec.",
+      "cost": 0.02003,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "summary", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "summary",
+        "target": "example.com",
+        "backlinks_status_type": "live",
+        "rank_scale": "one_thousand"
+      },
+      "result": [
+        {
+          "target": "example.com",
+          "first_seen": "2016-03-11 08:12:04 +00:00",
+          "lost_date": null,
+          "rank": 371,
+          "backlinks": 41245,
+          "backlinks_spam_score": 8,
+          "crawled_pages": 1840,
+          "info": {
+            "server": "nginx",
+            "cms": null,
+            "platform_type": ["cms"],
+            "ip_address": "93.184.216.34",
+            "country": "US",
+            "is_ip": false,
+            "target_spam_score": 4
+          },
+          "internal_links_count": 18422,
+          "external_links_count": 2043,
+          "broken_backlinks": 118,
+          "broken_pages": 12,
+          "referring_domains": 12372,
+          "referring_domains_nofollow": 1458,
+          "referring_main_domains": 11004,
+          "referring_main_domains_nofollow": 1301,
+          "referring_ips": 9877,
+          "referring_subnets": 7412,
+          "referring_pages": 38786,
+          "referring_pages_nofollow": 4120,
+          "referring_links_tld": { "com": 21044, "org": 5120, "net": 2011 },
+          "referring_links_types": { "anchor": 36666, "image": 214, "redirect": 1906 },
+          "referring_links_attributes": { "nofollow": 4120, "noopener": 2210, "sponsored": 88 },
+          "referring_links_platform_types": { "cms": 14022, "blogs": 9120, "news": 3004 },
+          "referring_links_semantic_locations": { "article": 12044, "section": 3110, "": 21002 },
+          "referring_links_countries": { "US": 18044, "DE": 3120, "": 12042 }
+        }
+      ]
+    }
+  ]
+}
