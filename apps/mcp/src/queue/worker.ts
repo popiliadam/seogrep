@@ -10,7 +10,11 @@ import {
   type JobMessage,
 } from "./boss.ts";
 import type { Json } from "../db.ts";
-import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
+import {
+  isReserveCommitFailed,
+  withCredits,
+  type ReserveCommitFailedError,
+} from "../credits/guard.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { createCrawlHandler } from "./handlers/crawl.ts";
 import { reconcileStuckJobs, type ReconcileOutcome } from "./reaper.ts";
@@ -87,16 +91,28 @@ function errorDetail(error: unknown): string {
 /**
  * Stamped when the tool ran but its charge could not settle (guard.ts's ReserveCommitFailedError).
  * This is NOT the same story as a handler failure: the run produced a result the user never
- * received, and the reserve is still holding their credits until the ledger-keyed sweep in
- * reaper.ts refunds it. Say that, rather than pasting a raw PostgREST connection string.
+ * received. What happens to their credits NEXT depends on the reserve's actual disposition, so
+ * each one gets its own sentence. A single blanket "reconciliation refunds it automatically"
+ * was a promise the code could not keep for every shape — the reaper skips a settled reserve,
+ * so a user told to expect a refund would have waited for one that never came.
  */
-const COMMIT_FAILED_ERROR =
-  "the tool ran but its credit charge could not be settled — the reserve is left open and reconciliation refunds it automatically; re-run the tool";
+const COMMIT_FAILED_PREFIX = "the tool ran but its credit charge could not be settled";
+const COMMIT_FAILED_BY_DISPOSITION: Record<
+  ReserveCommitFailedError["disposition"],
+  string
+> = {
+  // Verified open in the ledger: the sweep WILL find and refund it. A promise we can keep.
+  open: `${COMMIT_FAILED_PREFIX} — the reserve is still open and reconciliation refunds it automatically; re-run the tool`,
+  // Already released: the money is back now. Nothing further is coming, so do not imply it is.
+  refunded: `${COMMIT_FAILED_PREFIX} — the reserve had already been refunded, so you were not charged; re-run the tool`,
+  // The classifying read failed too. Promise NOTHING; point at the one path that can resolve it.
+  unknown: `${COMMIT_FAILED_PREFIX} and the reserve's final state could not be confirmed — contact support if your balance looks short`,
+};
 
 /** The fail-mark for a rejection inside executeJob: honest for the commit shape, raw otherwise. */
 function failureDetail(error: unknown): string {
   return isReserveCommitFailed(error)
-    ? `${COMMIT_FAILED_ERROR} (${error.message})`
+    ? `${COMMIT_FAILED_BY_DISPOSITION[error.disposition]} (${error.message})`
     : errorDetail(error);
 }
 

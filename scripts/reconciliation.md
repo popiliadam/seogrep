@@ -165,6 +165,24 @@ charge twice for the same intent — issue a **support credit** for the lost run
 is a support decision, never an automatic refund (the original charge is a valid settled
 commit).
 
+#### 2d-bis. The "commit landed but its reply was lost" shape
+
+`commit_reserve` can succeed **in the database** while its response is lost (a dropped socket,
+a proxy timeout). The guard's retry then meets `reserve already settled` — the *same* error a
+reserve released by someone else produces. This shape is now handled automatically: when the
+RPC will not confirm, the guard reads the ledger once and, on finding a `spend_commit`, treats
+the run as the **success it actually was**. The job ends `succeeded`, the user gets the result,
+and the charge stands — nothing lands in this section.
+
+It reaches §2d only when that classifying read **also** fails. The job is then marked failed
+with `… the reserve's final state could not be confirmed — contact support if your balance
+looks short`, and it is deliberately worded as **no promise**: a refund is not coming, because
+the reserve is committed and the ledger-keyed sweep (§2f) correctly skips settled reserves. The
+query above finds it. Handle it exactly like the rest of §2d — **re-run or support credit,
+never an automatic refund**. If you see this wording, also check the database's availability
+around `finished_at`: a failed *read* on top of a failed *write* means the stack was degraded,
+not just unlucky.
+
 ### 2e. Paid Paddle events not yet attributed (B-C1)
 
 A different money surface: the Paddle **webhook**, not the jobs/ledger. A paid
