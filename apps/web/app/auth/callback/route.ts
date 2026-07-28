@@ -81,11 +81,20 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.redirect(new URL("/login?error=auth", base));
   }
 
-  const trialNewlyGranted = await grantTrialCredits(userId);
-  if (trialNewlyGranted) {
-    // Fires exactly once per user — the trial lock IS the one-time signup gate.
-    // captureSignup is itself best-effort (never throws), so no try/catch needed here.
-    await captureSignup(userId);
+  // Best-effort trial grant (M-21). This link is SINGLE-USE: letting a transient claim_trial
+  // error escape as a 500 left the user with a verified account, a spent token and zero credits,
+  // and password login goes straight to /app without re-claiming. So a failure is logged and the
+  // redirect proceeds — /app's layout retries the same idempotent claim on arrival, and the
+  // migration-0009 CAS makes a double grant impossible however many times it is retried.
+  try {
+    const trialNewlyGranted = await grantTrialCredits(userId);
+    if (trialNewlyGranted) {
+      // Fires exactly once per user — the trial lock IS the one-time signup gate.
+      // captureSignup is itself best-effort (never throws), so no try/catch needed here.
+      await captureSignup(userId);
+    }
+  } catch (error) {
+    console.error("trial grant failed on callback (will retry on next /app entry):", error);
   }
 
   // Best-effort first-login welcome email — it must NEVER block auth. The module itself

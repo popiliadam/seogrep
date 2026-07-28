@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { ensureTrialGranted } from "../../lib/billing/trial";
 import { createClient } from "../../lib/supabase/server";
 
 const NAV_ITEMS = [
@@ -29,8 +30,16 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    redirect("/login");
+    return redirect("/login");
   }
+
+  // M-21 recovery point. The auth callback that normally grants the trial is single-use, so a
+  // transient failure there can only be repaired on a later authenticated entry — and password
+  // login comes straight here without passing through the callback at all. This is the one place
+  // every authenticated page goes through. The claim is idempotent (migration-0009 CAS: the
+  // second call returns false and appends nothing) and never throws, so re-asking on every render
+  // can neither double-grant nor 500 the dashboard.
+  await ensureTrialGranted(user.id);
 
   return (
     <div className="flex min-h-dvh flex-col">

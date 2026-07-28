@@ -104,6 +104,27 @@ describe("GET /auth/callback", () => {
     expect(captureSignup).toHaveBeenCalledWith("u3");
   });
 
+  // M-21: the callback link is single-use. If a transient claim_trial error escapes as a 500 the
+  // user has a VERIFIED account, a spent token and zero credits, and normal password login goes
+  // straight to /app without ever retrying. The grant failure must therefore not abort the
+  // callback — the user lands on /app, where the layout retries the (idempotent) claim.
+  it("still redirects to /app when the trial grant throws — the spent token must not strand the user", async () => {
+    exchangeCodeForSession.mockResolvedValue({
+      data: { user: { id: "u5", email: "u5@example.com" } },
+      error: null,
+    });
+    grantTrialCredits.mockRejectedValueOnce(new Error("deadlock detected"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await GET(new Request(`${BASE}?code=abc`));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+    expect(errorSpy).toHaveBeenCalled();
+    expect(captureSignup).not.toHaveBeenCalled(); // no grant => no funnel event yet
+    expect(sendWelcomeIfFirst).toHaveBeenCalledWith("u5", "u5@example.com"); // welcome unaffected
+  });
+
   it("does not capture signup_completed on a repeat callback (trial already granted, lock returns false)", async () => {
     exchangeCodeForSession.mockResolvedValue({
       data: { user: { id: "u4", email: "u4@example.com" } },
