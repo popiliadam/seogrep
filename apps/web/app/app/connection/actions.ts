@@ -1,10 +1,18 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { generateApiKey, mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
+import {
+  decryptToken,
+  fromByteaHex,
+  generateApiKey,
+  mcpUrlFor,
+  mcpUrlTemplate,
+} from "@pseo/core";
 import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
+import { revokeGoogleToken } from "../../../lib/gsc/revoke";
+import { deleteGscConnection, findGscConnection } from "../../../lib/gsc/store";
 import { createClient } from "../../../lib/supabase/server";
 
 /**
@@ -125,5 +133,60 @@ export async function revokeKeyAction(keyId: string): Promise<void> {
   const service = createServiceClient();
   await assertOwnedBy(service, keyId, userId);
   await revokeKey(service, keyId);
+  revalidatePath(CONNECTION_PATH);
+}
+
+/**
+ * Open the sealed refresh token and ask Google to forget the grant.
+ *
+ * A MISSING TOKEN_ENCRYPTION_KEY throws (signed lesson #5): that is a broken deploy, and
+ * silently dropping the row while the Google-side grant lives on would turn a config fault
+ * into a privacy fault. Everything AFTER the key is best-effort: an unopenable ciphertext
+ * (rotated/corrupt key) is a per-row fault, and trapping the user with an undeletable
+ * connection would be worse than leaving one unusable token un-revoked — so we log that we
+ * could not open it (never the ciphertext or the key) and let the deletion proceed.
+ */
+async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
+  const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw new Error("Search Console is not configured; disconnect is unavailable");
+  }
+  let refreshToken: string;
+  try {
+    refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey);
+  } catch (caught) {
+    console.error("disconnectGscAction: stored token could not be opened, skipping revoke:", caught);
+    return;
+  }
+  await revokeGoogleToken(refreshToken);
+}
+
+/**
+ * Disconnect one project from Search Console: revoke the grant at Google, then delete the
+ * stored connection (which is what removes the sealed refresh token). Both halves matter —
+ * without the revoke the user's myaccount.google.com entry would survive a "Disconnect".
+ *
+ * Ownership: the connection is addressed by (session user, project) and BOTH filters ride on
+ * the read AND the delete (NEVER #4), so another user's connection is never found, never
+ * deleted, and is reported with the same opaque message as a missing one.
+ *
+ * Order: revoke first, then delete. The revoke is best-effort — `revokeGoogleToken` never
+ * throws (see its unit tests), so a Google outage or an already-dead token can never leave
+ * the user stuck with a connection they asked us to drop.
+ */
+export async function disconnectGscAction(projectId: string): Promise<void> {
+  const userId = await requireUserId();
+  if (!UUID_RE.test(projectId)) {
+    throw new Error("Connection not found");
+  }
+  const service = createServiceClient();
+  const connection = await findGscConnection(service, { userId, projectId });
+  if (!connection) {
+    throw new Error("Connection not found");
+  }
+  if (connection.encryptedTokenHex) {
+    await revokeStoredToken(connection.encryptedTokenHex);
+  }
+  await deleteGscConnection(service, { userId, projectId });
   revalidatePath(CONNECTION_PATH);
 }
