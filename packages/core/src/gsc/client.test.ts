@@ -7,6 +7,8 @@ import {
   searchAnalyticsQuery,
   type FetchLike,
 } from "./client.js";
+// Additive M-14 import, on its own line so every existing line above stays byte-identical.
+import { GSC_QUERY_TIMEOUT_MS, GSC_TOKEN_TIMEOUT_MS } from "./client.js";
 
 /**
  * The Google client is bare `fetch` (no googleapis package — three REST endpoints do
@@ -182,5 +184,74 @@ describe("searchAnalyticsQuery", () => {
     expect(new Headers(init?.headers).get("content-type")).toMatch(/application\/json/);
     expect(JSON.parse(String(init?.body))).toEqual(body);
     expect(result).toEqual({ rows: [{ keys: ["seo"], clicks: 10 }] });
+  });
+});
+
+/**
+ * M-14 — application-level deadlines. Every Google call here is bare `fetch`, and bare
+ * `fetch` has NO default timeout: if Google (or anything between us and Google) holds the
+ * socket open, the awaiting caller waits forever. That caller is either the interactive
+ * OAuth callback or a credit-reserved MCP tool, so an un-deadlined call ties up a request
+ * slot until the platform kills it. These specs pin that a deadline is ALWAYS armed —
+ * never opt-in — and that it actually fires.
+ */
+describe("google client request deadlines (M-14)", () => {
+  /** A fetch that never resolves on its own; it settles only when the deadline aborts it. */
+  const hangingFetch: FetchLike = (_url, init) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+    });
+
+  it("arms a deadline on the token exchange", async () => {
+    const fetchMock = jsonFetch(200, { access_token: "ya29.x", expires_in: 1, token_type: "Bearer" });
+    await exchangeCodeForTokens(
+      { code: "c", redirectUri: "https://app.example.com/cb" },
+      { fetch: fetchMock, credentials: CREDENTIALS },
+    );
+    expect(fetchMock.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("arms a deadline on the refresh grant", async () => {
+    const fetchMock = jsonFetch(200, { access_token: "ya29.x", expires_in: 1, token_type: "Bearer" });
+    await refreshAccessToken("1//refresh", { fetch: fetchMock, credentials: CREDENTIALS });
+    expect(fetchMock.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("arms a deadline on sites.list", async () => {
+    const fetchMock = jsonFetch(200, {});
+    await listSites("ya29.access", { fetch: fetchMock });
+    expect(fetchMock.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("arms a deadline on searchAnalytics.query", async () => {
+    const fetchMock = jsonFetch(200, { rows: [] });
+    await searchAnalyticsQuery("ya29.access", "sc-domain:example.com", {}, { fetch: fetchMock });
+    expect(fetchMock.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("aborts a hung token exchange instead of waiting forever", async () => {
+    await expect(
+      exchangeCodeForTokens(
+        { code: "c", redirectUri: "https://app.example.com/cb" },
+        { fetch: hangingFetch, credentials: CREDENTIALS, timeoutMs: 10 },
+      ),
+    ).rejects.toThrowError(/timeout|abort/i);
+  });
+
+  it("aborts a hung searchAnalytics.query instead of holding the tool's slot forever", async () => {
+    await expect(
+      searchAnalyticsQuery("ya29.access", "sc-domain:example.com", {}, {
+        fetch: hangingFetch,
+        timeoutMs: 10,
+      }),
+    ).rejects.toThrowError(/timeout|abort/i);
+  });
+
+  it("gives the interactive OAuth path a TIGHTER deadline than the bulk data pull", async () => {
+    // The two call classes are not the same: a token exchange is a small POST a human is
+    // waiting on mid-redirect, while searchAnalytics.query is a real data pull that may
+    // legitimately run for many seconds. Pinned as a RELATION, not as magic numbers, so the
+    // values can be retuned without a spec rewrite — only the ordering is load-bearing.
+    expect(GSC_TOKEN_TIMEOUT_MS).toBeLessThan(GSC_QUERY_TIMEOUT_MS);
   });
 });
