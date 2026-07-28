@@ -32,7 +32,9 @@ MIGRATIONS_DIR="${1:-${MIGRATIONS_DIR:-packages/db/supabase/migrations}}"
 set -- "$MIGRATIONS_DIR"/*.sql
 [ -e "$1" ] || { echo "check-append-only: no .sql migrations in $MIGRATIONS_DIR"; exit 1; }
 
-awk -v armored="$ARMORED_TABLES" '
+# -v q: the single-quote character. The awk program below is a single-quoted shell block,
+# so the literal cannot appear inside it; string-literal tracking needs it (audit R4).
+awk -v armored="$ARMORED_TABLES" -v q="'" '
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
 
 function tname(chunk,   z, t) {
@@ -40,6 +42,73 @@ function tname(chunk,   z, t) {
   t = substr(chunk, z + 7)
   gsub(/"/, "", t)
   return t
+}
+
+# Prefix the identifier that follows <pre> with "public." when it carries no schema of its
+# own: an unqualified name resolves through search_path, so SET search_path = public makes
+# "alter table credit_ledger" mean exactly "alter table public.credit_ledger" (audit R6).
+# A name that already names a schema keeps it and therefore stays out of scope, as before.
+function qualify(s, pre,   rest, tok, i, c, n) {
+  if (index(s, pre) != 1) return s
+  rest = substr(s, length(pre) + 1)
+  n = length(rest)
+  tok = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(rest, i, 1)
+    if (c ~ /[a-z0-9_"]/) tok = tok c; else break
+  }
+  if (tok == "" || substr(rest, i, 1) == ".") return s
+  return pre "public." rest
+}
+
+# Same treatment for the table of a trigger statement, where the name follows " on ".
+function qualon(s,   p, pre, rest, tok, i, c, n) {
+  p = index(s, " on ")
+  if (p == 0) return s
+  pre = substr(s, 1, p + 3)
+  rest = substr(s, p + 4)
+  n = length(rest)
+  tok = ""
+  for (i = 1; i <= n; i++) {
+    c = substr(rest, i, 1)
+    if (c ~ /[a-z0-9_"]/) tok = tok c; else break
+  }
+  if (tok == "" || substr(rest, i, 1) == ".") return s
+  return pre "public." rest
+}
+
+# ALTER TABLE [ IF EXISTS ] [ ONLY ] name is the keyword order PostgreSQL documents, and
+# the gate used to match ONLY before IF EXISTS only (audit R3). Strip whichever of the two
+# appear, in ANY order and any number of times, so the shapes below match one spelling.
+function normalize(s) {
+  while (sub(/^alter table (if exists|only) /, "alter table ", s)) { }
+  sub(/^create table if not exists /, "create table ", s)
+  sub(/^drop table if exists /, "drop table ", s)
+  s = qualify(s, "alter table ")
+  s = qualify(s, "create table ")
+  s = qualify(s, "drop table ")
+  # The table of a trigger statement follows " on " instead of leading the statement.
+  if (s ~ /^create (or replace )?(constraint )?trigger /) s = qualon(s)
+  if (s ~ /^drop trigger /) s = qualon(s)
+  return s
+}
+
+# A dropped table takes its REVOKEs and its triggers with it, so a CREATE TABLE that
+# follows starts from default privileges and no trigger at all. Carrying the pre-DROP
+# state forward was a false GREEN (audit R2): forget everything known about the table.
+function forget(t,   r, v, k, nn, na) {
+  for (r = 1; r <= nrole; r++) {
+    for (v = 1; v <= nverb; v++) {
+      delete pv[t, roleord[r], verbs[v]]; delete pvloc[t, roleord[r], verbs[v]]
+    }
+  }
+  nn = split(tnames[t], na, " ")
+  for (k = 1; k <= nn; k++) {
+    delete trg[t, na[k]]; delete trgdis[t, na[k]]; delete trgok[t, na[k]]
+    delete trgknown[t, na[k]]; delete trgloc[t, na[k]]; delete trgkill[t, na[k]]
+  }
+  tnames[t] = ""
+  delete alldis[t]; delete alldisloc[t]
 }
 
 # Last GRANT/REVOKE wins, per (table, role, privilege).
@@ -58,7 +127,8 @@ function applypriv(t, roles, vlist, isg, f, l,   nr, ra, r, rr, nv, va, v) {
 }
 
 function handle(s, f, l,   t, nm, head, parts, np, isg, rest, privs, obj, roles,
-                           sep, vlist, pp, pa, oa, ob, tt, dis, q, q2, q3, no) {
+                           sep, vlist, pp, pa, oa, ob, tt, dis, qq, q2, q3, no) {
+  s = normalize(s)
   if (s ~ /^create (or replace )?function public\.reject_mutation *\(/) {
     fnexists = 1; fnloc = f ":" l
     fnraise = (s ~ /raise exception/) ? 1 : 0
@@ -68,14 +138,14 @@ function handle(s, f, l,   t, nm, head, parts, np, isg, rest, privs, obj, roles,
     fnexists = 0; fnraise = 0; fnloc = f ":" l
     return
   }
-  if (match(s, /^create table (if not exists )?public\.[a-z0-9_]+/)) {
+  if (match(s, /^create table public\.[a-z0-9_]+/)) {
     t = tname(substr(s, RSTART, RLENGTH))
-    if (t in arm) made[t] = 1
+    if (t in arm) { forget(t); made[t] = 1 }
     return
   }
-  if (match(s, /^drop table (if exists )?public\.[a-z0-9_]+/)) {
+  if (match(s, /^drop table public\.[a-z0-9_]+/)) {
     t = tname(substr(s, RSTART, RLENGTH))
-    if (t in arm) delete made[t]
+    if (t in arm) { forget(t); delete made[t] }
     return
   }
   if (match(s, /^create (or replace )?(constraint )?trigger [a-z0-9_]+/)) {
@@ -100,8 +170,8 @@ function handle(s, f, l,   t, nm, head, parts, np, isg, rest, privs, obj, roles,
     if (t in arm) { delete trg[t, nm]; trgkill[t, nm] = f ":" l }
     return
   }
-  if (s ~ /^alter table (only )?public\.[a-z0-9_]+ (disable|enable) trigger /) {
-    match(s, /^alter table (only )?public\.[a-z0-9_]+/)
+  if (s ~ /^alter table public\.[a-z0-9_]+ (disable|enable) trigger /) {
+    match(s, /^alter table public\.[a-z0-9_]+/)
     t = tname(substr(s, RSTART, RLENGTH))
     if (t in arm) {
       match(s, / trigger [a-z0-9_]+/)
@@ -115,15 +185,18 @@ function handle(s, f, l,   t, nm, head, parts, np, isg, rest, privs, obj, roles,
   if (s ~ /^grant / || s ~ /^revoke /) {
     isg = (s ~ /^grant /) ? 1 : 0
     rest = isg ? substr(s, 7) : substr(s, 8)
-    if (!isg) sub(/^grant option for /, "", rest)
-    q = index(rest, " on ")
-    if (q == 0) return
-    privs = substr(rest, 1, q - 1)
-    rest = substr(rest, q + 4)
-    if (isg) { q = index(rest, " to "); sep = 4 } else { q = index(rest, " from "); sep = 6 }
-    if (q == 0) return
-    obj = substr(rest, 1, q - 1)
-    roles = substr(rest, q + sep)
+    # REVOKE GRANT OPTION FOR <priv> only takes away the right to hand <priv> on to
+    # somebody else; the privilege ITSELF survives. Counting it as a REVOKE was a false
+    # GREEN that left UPDATE live on the ledger (audit R1), so it is now a no-op.
+    if (!isg && rest ~ /^grant option for /) return
+    qq = index(rest, " on ")
+    if (qq == 0) return
+    privs = substr(rest, 1, qq - 1)
+    rest = substr(rest, qq + 4)
+    if (isg) { qq = index(rest, " to "); sep = 4 } else { qq = index(rest, " from "); sep = 6 }
+    if (qq == 0) return
+    obj = substr(rest, 1, qq - 1)
+    roles = substr(rest, qq + sep)
     sub(/ with grant option$/, "", roles)
     sub(/ granted by .*$/, "", roles)
     sub(/ cascade$/, "", roles); sub(/ restrict$/, "", roles)
@@ -141,6 +214,9 @@ function handle(s, f, l,   t, nm, head, parts, np, isg, rest, privs, obj, roles,
       ob = trim(oa[q2]); sub(/^table /, "", ob)
       if (ob == "all tables in schema public") {
         for (q3 = 1; q3 <= narm; q3++) applypriv(armlist[q3], roles, vlist, isg, f, l)
+      } else if (ob ~ /^[a-z0-9_]+$/) {
+        # Unqualified object: search_path resolves it, so judge it as public (audit R6).
+        if (ob in arm) applypriv(ob, roles, vlist, isg, f, l)
       } else if (ob ~ /^public\.[a-z0-9_]+$/) {
         tt = ob; sub(/^public\./, "", tt)
         if (tt in arm) applypriv(tt, roles, vlist, isg, f, l)
@@ -175,24 +251,40 @@ BEGIN {
 
 # A statement never spans two files.
 FNR == 1 && NR > 1 { flush() }
+# ...and neither does a string literal or a block comment, so an unbalanced quote can
+# blind at most its own file instead of every migration that follows it.
+FNR == 1 { inblock = 0; instr = 0 }
 
 {
   # Lowercase, strip -- and /* */ comments, then split into statements on ";".
   # Dollar-quoted bodies are deliberately NOT treated as opaque: a GRANT hidden inside a
   # DO block still has to be seen.
+  # String literals ARE tracked (q is the quote character, passed in with -v because this
+  # program lives in a single-quoted shell block): two dashes INSIDE a literal start no
+  # comment, and dropping the rest of that line swallowed a real statement sharing it
+  # (audit R4). A doubled quote inside a literal is an escape, and the toggle closes then
+  # reopens on it, which lands on the correct state.
   line = tolower($0)
   out = ""
   i = 1
   n = length(line)
   while (i <= n) {
-    c2 = substr(line, i, 2)
+    c = substr(line, i, 1)
     if (inblock) {
-      if (c2 == "*/") { inblock = 0; i += 2 } else { i += 1 }
+      if (substr(line, i, 2) == "*/") { inblock = 0; i += 2 } else { i += 1 }
       continue
     }
+    if (instr) {
+      if (c == q) instr = 0
+      out = out c
+      i += 1
+      continue
+    }
+    c2 = substr(line, i, 2)
     if (c2 == "/*") { inblock = 1; i += 2; continue }
     if (c2 == "--") { i = n + 1; continue }
-    out = out substr(line, i, 1)
+    if (c == q) instr = 1
+    out = out c
     i += 1
   }
   line = out
