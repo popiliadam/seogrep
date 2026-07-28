@@ -1,7 +1,20 @@
-// Generated Supabase database types — do not edit by hand.
-// Source of truth: packages/db/supabase/migrations/*.sql applied to the cloud
-// project. Regenerate locally with `pnpm db:types` (needs local stack) or via
-// the Supabase MCP `generate_typescript_types` tool (cloud, chef flow).
+// Generated Supabase database types — DO NOT EDIT BY HAND.
+//
+// Source of truth: packages/db/supabase/migrations/*.sql, applied to the local Supabase stack.
+// Everything below this banner is the byte-for-byte output of:
+//
+//   node packages/db/scripts/gen-db-types.mjs
+//   (which runs `supabase gen types typescript --local --schema public --workdir packages/db`)
+//
+// Regenerate with that command after every migration. A hand edit here — or a migration that
+// lands without a regeneration — is caught by the drift gate:
+//
+//   node packages/db/scripts/gen-db-types.mjs --check
+//
+// which guardrails/verify-db.sh runs after it boots the stack and resets it to the committed
+// migrations. The gate byte-diffs a fresh generation against this file, so schema drift fails
+// the gate instead of production.
+
 export type Json =
   | string
   | number
@@ -11,11 +24,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   public: {
     Tables: {
       api_keys: {
@@ -24,6 +32,7 @@ export type Database = {
           id: string
           key_hash: string
           key_prefix: string
+          last_used_at: string | null
           revoked_at: string | null
           user_id: string
         }
@@ -32,6 +41,7 @@ export type Database = {
           id?: string
           key_hash: string
           key_prefix: string
+          last_used_at?: string | null
           revoked_at?: string | null
           user_id: string
         }
@@ -40,6 +50,7 @@ export type Database = {
           id?: string
           key_hash?: string
           key_prefix?: string
+          last_used_at?: string | null
           revoked_at?: string | null
           user_id?: string
         }
@@ -109,6 +120,7 @@ export type Database = {
         Row: {
           created_at: string
           encrypted_refresh_token: string | null
+          gsc_property: string | null
           id: string
           project_id: string
           user_id: string
@@ -116,6 +128,7 @@ export type Database = {
         Insert: {
           created_at?: string
           encrypted_refresh_token?: string | null
+          gsc_property?: string | null
           id?: string
           project_id: string
           user_id: string
@@ -123,6 +136,7 @@ export type Database = {
         Update: {
           created_at?: string
           encrypted_refresh_token?: string | null
+          gsc_property?: string | null
           id?: string
           project_id?: string
           user_id?: string
@@ -140,24 +154,39 @@ export type Database = {
       jobs: {
         Row: {
           created_at: string
+          error: string | null
+          finished_at: string | null
           id: string
           project_id: string | null
+          reserve_id: string | null
+          result: Json | null
+          started_at: string | null
           status: string
           tool: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          error?: string | null
+          finished_at?: string | null
           id?: string
           project_id?: string | null
+          reserve_id?: string | null
+          result?: Json | null
+          started_at?: string | null
           status?: string
           tool: string
           user_id: string
         }
         Update: {
           created_at?: string
+          error?: string | null
+          finished_at?: string | null
           id?: string
           project_id?: string | null
+          reserve_id?: string | null
+          result?: Json | null
+          started_at?: string | null
           status?: string
           tool?: string
           user_id?: string
@@ -220,23 +249,32 @@ export type Database = {
       reports: {
         Row: {
           created_at: string
+          html: string | null
           id: string
           job_id: string | null
           public_slug: string | null
+          title: string | null
+          tool: string | null
           user_id: string
         }
         Insert: {
           created_at?: string
+          html?: string | null
           id?: string
           job_id?: string | null
           public_slug?: string | null
+          title?: string | null
+          tool?: string | null
           user_id: string
         }
         Update: {
           created_at?: string
+          html?: string | null
           id?: string
           job_id?: string | null
           public_slug?: string | null
+          title?: string | null
+          tool?: string | null
           user_id?: string
         }
         Relationships: [
@@ -283,14 +321,20 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          trial_granted_at: string | null
+          welcomed_at: string | null
         }
         Insert: {
           created_at?: string
           id: string
+          trial_granted_at?: string | null
+          welcomed_at?: string | null
         }
         Update: {
           created_at?: string
           id?: string
+          trial_granted_at?: string | null
+          welcomed_at?: string | null
         }
         Relationships: []
       }
@@ -305,7 +349,30 @@ export type Database = {
       }
     }
     Functions: {
-      [_ in never]: never
+      claim_trial: {
+        Args: { p_amount: number; p_user_id: string }
+        Returns: boolean
+      }
+      commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined }
+      process_paddle_purchase: {
+        Args: {
+          p_amount: number
+          p_event_id: string
+          p_ref: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
+      release_reserve: { Args: { p_reserve_id: string }; Returns: undefined }
+      reserve_credits: {
+        Args: {
+          p_amount: number
+          p_job_id: string
+          p_tool: string
+          p_user_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never
@@ -438,3 +505,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
