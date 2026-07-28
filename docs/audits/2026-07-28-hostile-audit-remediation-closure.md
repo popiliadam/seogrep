@@ -497,3 +497,81 @@ rezervleri artık `jobs` tablosundan bağımsız, ledger-anahtarlı, idempotent 
 bulunuyor; ve kullanıcıya verilen mesaj artık **doğrulanmış** duruma bağlı — rezervin durumu
 okunamazsa hiçbir iade vaadi verilmiyor.
 
+
+---
+
+## 13. İkinci tur — kalan High'lar ve gateway (§5.1/§11 devamı)
+
+Bu bölüm, §12'deki sayımdan SONRA yapılan işi kaydeder. §5.3'te "OPEN" görünen yedi kalem burada kapandı.
+
+| ID | Kök neden | Regression testi | Hakem | Commit |
+|---|---|---|---|---|
+| **H-03** | Bütçe kapısı atomik/global/kalıcı değildi **ve** `dfs-budget.sh` prod defterini okumuyordu (§3.1) | Barrier (10 eşzamanlı gerçek PostgREST → 6 kabul/4 red, toplam **tam $3.00**), restart, iki-makine, fail-closed, tam-sınır | Fable **PASS** + 1 düzeltme turu | `7e8ad96`…`b94e397`, `b34f5d5` |
+| **H-05** | `Promise.race` yalnız cevabı kesiyor; indekssiz exact count koşmaya devam ediyordu | **25 eşzamanlı anonim `/status` → 25 tam-tarama** (şimdi **1**), sayaçla | Fable **PASS** | `b3eb34b`, `9bc9709`, `4aad8be` |
+| **H-07 / M-28** | `next@16.2.10` iki erişilebilir advisory taşıyordu | Fresh full gate; `pnpm audit` önce/sonra | — (kapı kanıtı) | `f2b651e` |
+| **M-14** | GSC/DFS/Resend bare fetch'lerinde deadline yoktu | Üç spec vitest 5 sn tavanına çarpıyordu (fetch hiç dönmüyordu) | Fable **PASS** | `7b387ab`, `84986fb` |
+| **L-03** | `registry.ts` `error.message`'ı tool çıktısına ekliyordu | Enjekte DB hatası çıktıda YOK + sunucu logunda VAR + korelasyon referansı | Fable **PASS** | `c923e15` |
+| **L-12** | MCP cevaplarında security header yok, `x-powered-by: Express` açık | Header'lar 401 dahil tüm yüzeylerde; `/healthz` gövdesi byte-özdeş | Fable **PASS** | `f8fa7d1` |
+
+### H-03 — hakemin bağımsız ölçümü
+
+Hakem işçi beyanına güvenmedi ve kendisi koştu:
+
+- **Atomiklik:** 10 eşzamanlı **gerçek** PostgREST çağrısı → 6 kabul / 4 red, toplam **tam $3.00**;
+  sonraki `$0.000001` dahi reddedildi.
+- **Kapının üç dalı canlı:** env'siz → **SKIP rc=97** (dürüst mesaj) · env'li → **gerçek RPC okuması**
+  (hakemin kendi test kalıntısı olan `$0.1500 @ 127.0.0.1:55321`'i ölçtü) · env var + bozuk key → **FAIL rc=1**.
+  **Sessiz yeşil imkânsız.**
+- **RLS:** yeni `dfs_spend` tablosu ENABLE + FORCE; `check-rls.sh` artık **11 tablo** PASS.
+- **`$3` değişmedi:** üç kaynakta da aynı (`budget.ts` / `dfs-budget.sh` / `0014`) + iki pin testi.
+
+### `make goals` artık NE ölçtüğünü söylüyor
+
+H-03 öncesi `dfs-budget-guard` hedefi **sessizce sahte bir tam-ölçüm PASS'ı** veriyordu. Şimdi:
+
+```
+Supabase env YOK  →  16/16 PASS (1 skip)   ← skip eden: dfs-budget-guard
+Supabase env VAR  →  16/16 PASS (0 skip)   ← gerçekten ölçüyor
+```
+
+İmzalı ders 7'nin ("yeşil kapı NE ölçtüğüyle raporlanır") kapının kendisine işlenmiş hâli.
+
+---
+
+## 14. NİHAİ KAPI ÇIKTILARI
+
+| Kapı | Sonuç |
+|---|---|
+| Fresh `pnpm turbo run typecheck lint test build --force` | **16/16 · `Cached: 0 cached`** |
+| Test sayısı | **1252** (core 158 · db 6 · mcp 694 · web 394) — taban 1081, **+171** |
+| `make verify` | **PASS** (guardrail self-test 13/13 dahil) |
+| `make verify-db` | **PASS** — 62 + **115** = **177 DB testi** |
+| `make goals` | **16/16 PASS (0 skip)** — tam env ile |
+| Full-history gitleaks | **PASS** — `no leaks found` |
+| Generated docs sync | **PASS** — 19 tool sayfası |
+| `pnpm audit --prod` | **16 → 7 zafiyet**; **`next` advisory sayısı: 0** (kalan: postcss ×3, sharp, js-yaml, fast-uri, @hono/node-server — audit'in "erişilebilir değil" diye ayırdıkları) |
+
+## 15. NİHAİ SAYIM (§12 revizyonu)
+
+**29 audit bulgusu FIXED:**
+H-01 · H-02 · **H-03** · **H-05** · **H-07** · M-01 · M-02 · M-06 · M-07 · M-08 · M-11 · M-12 ·
+**M-14** · M-16 · M-18 · M-21 · M-23 · **M-28** · L-01 · **L-03** · L-05 · L-06 · L-07 · L-08 ·
+L-11 · **L-12** · L-14 · L-16 · L-17
+Artı D-01, D-02, D-03, D-06, D-07.
+
+**Audit'in beş High'ının BEŞİ de teknik olarak kapandı** (H-01, H-02, H-03, H-05, H-07).
+Kalan iki High **kod değil karar**: H-04 (vendor credential rotasyonu — operatör kararı, yeniden
+açılmadı) ve H-06'nın politika kısmı (beta duruşu — ürün kararı).
+
+### Hüküm revizyonu
+
+§12'deki "NO-GO kalkmadı" hükmü **kısmen revize edilir**: kaynak audit'in NO-GO gerekçelerinden
+**kod tarafındakilerin tamamı kapandı.** Kalan gerekçeler artık iki kategoriden ibaret:
+
+1. **İnsan kararı:** H-04, H-06 politikası, M-09, M-26, M-25/D-04/D-08 legal metinler.
+2. **Cloud-apply:** 0012 + **0013** + **0014** uygulanmadan bu turun DB-tarafı kazanımları
+   (para mandalları, vendor bütçe sayacı) **canlıda YOKTUR.**
+
+> **`DFS_LIVE` için kesin sıra: 0014 apply → deploy → `DFS_LIVE=1`.**
+> Ters sırada dört DFS tool'u da fail-closed reddeder (para harcamaz, hizmet vermez, wake basar).
+
