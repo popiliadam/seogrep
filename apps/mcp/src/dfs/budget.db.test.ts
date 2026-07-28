@@ -21,9 +21,11 @@ import { createLiveClient, type DfsTransport } from "./client.ts";
  * the call. Plus the exact cap boundary and that the DB's cap is the app's $3.00.
  *
  * NEVER #5 holds: no DataForSEO traffic — the live-client spec drives an injected fake transport
- * and asserts it was never called. Self-cleaning (so it is re-runnable inside one UTC day): every
- * reservation it opens is settled back at $0.00, the honest cost of a call that never happened —
- * an ordinary reconciliation, not a privileged reset. Nothing here can DELETE a spend row.
+ * and asserts it was never called. Mostly self-cleaning, so it is re-runnable inside one UTC day:
+ * reservations are settled back at $0.00 (the honest cost of a call that never happened — an
+ * ordinary reconciliation, not a privileged reset; nothing here can DELETE a spend row). The two
+ * specs that must leave a settled cost behind keep it small, so a day absorbs ~20 repeat runs;
+ * past that the cap spec says plainly that it needs `supabase db reset`.
  */
 
 function requireEnv(name: string): string {
@@ -95,6 +97,35 @@ describe("the migration-0014 vendor-budget counter", () => {
 
     // This row is deliberately left settled at its real $0.075: the counter is append-and-settle,
     // never rewind. The cap spec below measures the remaining budget at runtime for that reason.
+    opened = [];
+  });
+
+  it("two CONCURRENT settlements of the same reservation: exactly one wins", async () => {
+    // The serialized double-settle above is the easy half. This is the racing half: the
+    // already-settled check must be re-read UNDER the per-day advisory lock (the 0005
+    // commit_reserve shape). Reading it BEFORE the lock lets both callers see 'open' and both
+    // report success, so the day's recorded cost becomes whichever write landed last with no
+    // trace that a second settlement ever happened.
+    const id = await reserveTracked(0.3, "double-settle");
+    const released = new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Two DIFFERENT costs, both micro: which one wins is irrelevant to the property being
+    // measured (exactly one settlement is accepted), and settling near zero keeps the spec
+    // re-runnable inside one UTC day instead of eating the day's budget every run.
+    const outcomes = await Promise.allSettled(
+      [0.000001, 0.000002].map(async (cost) => {
+        await released; // barrier: both settlements enter together
+        return ledger.settle(id, cost, 1);
+      }),
+    );
+
+    const won = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const lost = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(String((lost[0] as PromiseRejectedResult).reason)).toMatch(/already settled/i);
+    // Whichever won, the row is settled once and a third attempt is still refused.
+    await expect(ledger.settle(id, 0.000003, 1)).rejects.toThrow(/already settled/i);
     opened = [];
   });
 

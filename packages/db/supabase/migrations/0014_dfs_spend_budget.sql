@@ -59,6 +59,7 @@ immutable
 set search_path = ''
 as $$ select 3.0::numeric $$;
 
+revoke execute on function public.dfs_daily_budget_usd() from public, anon, authenticated;
 grant execute on function public.dfs_daily_budget_usd() to service_role;
 
 -- ---------------------------------------------------------------------------
@@ -137,6 +138,13 @@ grant execute on function public.reserve_dfs_spend(numeric, text) to service_rol
 -- under the same per-day lock so a settlement can never interleave with a reservation's read.
 -- Raises on an unknown or already-settled reservation, so a double settle cannot quietly rewrite
 -- the day's total.
+--
+-- Shape follows 0005 commit_reserve EXACTLY, and the order matters: the first SELECT only finds
+-- WHICH day's lock to take, and its answer is stale the moment the lock is contended. The
+-- open/settled DECISION is therefore re-read UNDER the lock (READ COMMITTED gives that statement
+-- a fresh snapshot, so it sees a settlement another transaction has just committed). Deciding on
+-- the pre-lock read instead would let two concurrent settlements BOTH report success and let the
+-- last writer silently overwrite the recorded cost.
 -- ---------------------------------------------------------------------------
 create function public.settle_dfs_spend(
   p_reservation_id uuid,
@@ -148,13 +156,12 @@ set search_path = ''
 as $$
 declare
   v_day date;
-  v_status text;
 begin
   if p_actual_usd is null or p_actual_usd < 0 then
     raise exception 'invalid actual cost: DataForSEO settlement must be zero or positive (got %)', p_actual_usd;
   end if;
 
-  select spend_day, status into v_day, v_status
+  select spend_day into v_day
   from public.dfs_spend
   where id = p_reservation_id;
 
@@ -164,7 +171,10 @@ begin
 
   perform pg_advisory_xact_lock(hashtext('dfs_spend:' || v_day::text));
 
-  if v_status <> 'open' then
+  if exists (
+    select 1 from public.dfs_spend
+    where id = p_reservation_id and status <> 'open'
+  ) then
     raise exception 'reservation already settled: dfs_spend row % is not open', p_reservation_id;
   end if;
 
