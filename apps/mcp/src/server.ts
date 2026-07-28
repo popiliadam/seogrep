@@ -194,6 +194,31 @@ export async function readPendingJobsBounded(
 }
 
 /**
+ * Baseline security headers, set on EVERY response this gateway emits. This is a public,
+ * internet-facing HTTP surface whose most-fetched routes (the capability card, `/status`,
+ * the 401/405 rejections) are unauthenticated, so the hardening belongs at the app level
+ * rather than per-route — a route added later inherits it by construction.
+ *
+ *   X-Content-Type-Options    — every response here is JSON; nosniff stops a browser from
+ *                               re-interpreting an error body as HTML/script.
+ *   Referrer-Policy           — the PERSONAL endpoint carries the API key in the URL PATH,
+ *                               so a referrer header leaving this origin would carry the
+ *                               credential with it. no-referrer is the only safe value.
+ *   X-Frame-Options / CSP     — nothing here is meant to be framed; both are sent because
+ *     frame-ancestors            X-Frame-Options is what older browsers honour and
+ *                               frame-ancestors is what current ones do.
+ *
+ * Headers only: no status code, body or route behaviour changes — `/healthz` in particular
+ * answers exactly as before (it is the live uptime probe).
+ */
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "frame-ancestors 'none'",
+};
+
+/**
  * Return `rawKey` when it has the sg_ format, or send a 401 JSON-RPC error and
  * return null. The caller supplies the raw candidate (a path param or a header
  * value), both `string | undefined`, so a MISSING key fails this same gate — the
@@ -405,6 +430,15 @@ async function handleMcpRequest(
  */
 export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   const app = express();
+  // Do not advertise the framework: `X-Powered-By: Express` tells a scanner which stack
+  // (and therefore which CVE list) to aim at, and buys a client nothing.
+  app.disable("x-powered-by");
+  // Baseline hardening on every response, mounted BEFORE any route so no surface can be
+  // added past it (see SECURITY_HEADERS for the per-header rationale).
+  app.use((_req, res, next) => {
+    res.set(SECURITY_HEADERS);
+    next();
+  });
   app.use(express.json());
 
   // Liveness probe for Fly health checks and load balancers.

@@ -1138,3 +1138,78 @@ describe("mcp gateway public server card does not spend the per-IP throttle", ()
     }
   });
 });
+
+describe("mcp gateway security response headers (L-12)", () => {
+  // The gateway is a PUBLIC, unauthenticated-by-default HTTP surface, so every answer it
+  // emits — MCP dispatch, the 401/405 rejections, the operator signal and the capability
+  // card alike — carries the same baseline hardening: no framework advertisement
+  // (x-powered-by), no MIME sniffing, no referrer leakage of a path-form key, and no
+  // framing. Asserted on the REAL routes rather than on a header constant, so a route that
+  // bypasses the middleware would fail here.
+
+  it("never advertises the Express stack on an MCP response", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(res.headers.get("x-powered-by")).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("sets nosniff, referrer-policy and anti-framing headers on an MCP response", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("hardens the unauthenticated 401 rejection too (a bad key still gets the headers)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, "not-a-key", TOOLS_LIST);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-powered-by")).toBeNull();
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("hardens the public /status and capability-card surfaces", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const status = await fetch(`${app.baseUrl}/status`);
+      expect(status.headers.get("x-powered-by")).toBeNull();
+      expect(status.headers.get("x-content-type-options")).toBe("nosniff");
+
+      const card = await fetchCard(app.baseUrl);
+      expect(card.headers.get("x-powered-by")).toBeNull();
+      expect(card.headers.get("x-content-type-options")).toBe("nosniff");
+      // Hardening is additive: the card keeps the cache + CORS headers it exists to serve.
+      expect(card.headers.get("access-control-allow-origin")).toBe("*");
+      expect(card.headers.get("cache-control")).toBe("public, max-age=300");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves /healthz's status code and body byte-identical (the uptime monitor's contract)", async () => {
+    // Hardening adds RESPONSE HEADERS only. /healthz is the live uptime probe, so its
+    // status and payload must be exactly what they were before this slice.
+    const app = await listen(appWith());
+    try {
+      const res = await fetch(`${app.baseUrl}/healthz`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(JSON.stringify({ ok: true }));
+    } finally {
+      await app.close();
+    }
+  });
+});
