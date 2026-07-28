@@ -74,6 +74,16 @@ describe("privacy page", () => {
     expect(text).toMatch(/read-only access only/i);
   });
 
+  it("commits to the Google API Services User Data Policy, including Limited Use", () => {
+    // Google's sensitive-scope verification (webmasters.readonly) checks the privacy policy for this
+    // disclosure by name; it is also a real promise the running system keeps — GSC data only feeds
+    // the user's own analyses (packages/core/src/gsc/client.ts) and never leaves the service.
+    const text = renderedText();
+    expect(text).toContain("Google API Services User Data Policy");
+    expect(text).toMatch(/Limited Use/);
+    expect(text).toMatch(/never used for advertising/i);
+  });
+
   it("keeps PostHog honest: a hashed identifier, not the email address", () => {
     // joinWaitlist sends sha256(email) as distinct_id (packages/core/src/waitlist/waitlist.ts:47).
     expect(renderedText()).toMatch(/hashed identifier/i);

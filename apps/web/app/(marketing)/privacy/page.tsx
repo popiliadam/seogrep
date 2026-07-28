@@ -24,6 +24,10 @@ const SECTIONS = [
     body: "We use Supabase for authentication and our database, Netlify to host the website, and Fly.io to run the analysis service; the database and the analysis service both run in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision. Paddle is our merchant of record for payments and billing, Resend sends transactional email and holds the email list, and PostHog, hosted in the EU, receives product analytics keyed to a hashed identifier rather than your email address. When you connect Search Console we call Google's API with your read-only token, and keyword research — when that feature is switched on — sends the keywords you ask about to DataForSEO. These providers process data only to deliver those functions.",
   },
   {
+    heading: "Google user data",
+    body: "SeoGrep's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements. In practice, your Search Console data is fetched with your read-only token only to run the analyses and reports you ask for, is stored only on the infrastructure named above that runs the service, is never used for advertising, and is never sold.",
+  },
+  {
     heading: "AI training",
     body: "Your site data is never used to train AI models.",
   },
