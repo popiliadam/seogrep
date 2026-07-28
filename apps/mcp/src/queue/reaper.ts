@@ -25,6 +25,19 @@ import { getServiceClient } from "../db.ts";
  * job that is genuinely still running is never reaped.
  */
 const DEFAULT_OLDER_THAN_MS = 15 * 60_000;
+/** The 15-minute default, in the minutes the CLI speaks. */
+export const DEFAULT_OLDER_THAN_MINUTES = DEFAULT_OLDER_THAN_MS / 60_000;
+/**
+ * HARD FLOOR on the staleness window (L-16). Reaping a job releases its reserve and marks it
+ * failed, so a window shorter than the longest tool runtime reaps LIVE work: the crawl time
+ * budget alone is 90s, so 2 minutes is the lowest window that cannot hit a healthy job. The
+ * CLI used to accept any finite positive number, so `--older-than-minutes=.15` — a plausible
+ * typo for `15` — silently became a NINE SECOND window and a mutating sweep over running jobs.
+ * Going below this is a deliberate act, not a typo: it needs allowUnsafeThreshold.
+ */
+export const MIN_OLDER_THAN_MS = 2 * 60_000;
+/** The explicit opt-in that lets a caller go below MIN_OLDER_THAN_MS. Verbose on purpose. */
+export const UNSAFE_THRESHOLD_FLAG = "--i-accept-refunding-live-jobs";
 /** Bounded batch: at most this many stuck jobs per run. */
 const DEFAULT_LIMIT = 100;
 /** Stamped on a reconciled job whose open reserve WAS released (refunded). */
@@ -64,6 +77,72 @@ export interface ReconcileOptions {
   now?: () => Date;
   /** Max jobs processed per run (default 100). */
   limit?: number;
+  /**
+   * Opt out of the MIN_OLDER_THAN_MS floor. Only an operator who has decided to accept
+   * refunding jobs that may still be running should set this (see UNSAFE_THRESHOLD_FLAG).
+   */
+  allowUnsafeThreshold?: boolean;
+}
+
+/**
+ * Validate the staleness window BEFORE anything else happens — in particular before
+ * getServiceClient(), so a bad threshold is a pure, DB-free, env-free rejection rather than a
+ * sweep that has already started mutating rows. Throws with the offending value named.
+ */
+function assertSafeThreshold(olderThanMs: number, allowUnsafe: boolean, what: string): void {
+  if (!Number.isFinite(olderThanMs) || olderThanMs <= 0) {
+    throw new Error(`${what}: the staleness window must be a positive number (got ${olderThanMs}ms)`);
+  }
+  if (olderThanMs < MIN_OLDER_THAN_MS && !allowUnsafe) {
+    throw new Error(
+      `${what}: a ${olderThanMs}ms window is below the ${MIN_OLDER_THAN_MS}ms floor` +
+        ` — a window shorter than the longest tool runtime reaps LIVE jobs. Pass` +
+        ` allowUnsafeThreshold (CLI: ${UNSAFE_THRESHOLD_FLAG}) if that is genuinely intended.`,
+    );
+  }
+}
+
+const OLDER_THAN_FLAG = "--older-than-minutes=";
+
+/** What the reconcile CLI resolved from argv. */
+export interface ReconcileArgs {
+  readonly olderThanMinutes: number;
+  readonly allowUnsafeThreshold: boolean;
+}
+
+/**
+ * Parse scripts/reconcile.mjs's argv — pure, side-effect free and exported so the rejection
+ * rules are unit-testable without a database (L-16). The CLI used to do `Number(...)` plus a
+ * `> 0` check inline, which happily accepted `.15` (nine seconds). Every rejection throws;
+ * the caller turns that into an exit code.
+ */
+export function parseReconcileArgs(argv: readonly string[]): ReconcileArgs {
+  let olderThanMinutes = DEFAULT_OLDER_THAN_MINUTES;
+  let allowUnsafeThreshold = false;
+  let raw: string | null = null;
+
+  for (const arg of argv) {
+    if (arg === UNSAFE_THRESHOLD_FLAG) {
+      allowUnsafeThreshold = true;
+    } else if (arg.startsWith(OLDER_THAN_FLAG)) {
+      raw = arg.slice(OLDER_THAN_FLAG.length);
+    } else {
+      throw new Error(`unknown argument: ${arg} (expected ${OLDER_THAN_FLAG}N)`);
+    }
+  }
+
+  if (raw !== null) {
+    // Number("") is 0 and Number(" ") is 0, so an empty value falls into the positive check
+    // below rather than silently meaning "reap everything".
+    olderThanMinutes = Number(raw);
+  }
+  // Reuse the ONE floor implementation so the CLI and the library can never drift apart.
+  assertSafeThreshold(
+    olderThanMinutes * 60_000,
+    allowUnsafeThreshold,
+    `invalid ${OLDER_THAN_FLAG}${raw ?? olderThanMinutes}`,
+  );
+  return { olderThanMinutes, allowUnsafeThreshold };
 }
 
 export interface ReconcileOutcome {
@@ -183,8 +262,12 @@ async function warnRunningWithoutStart(client: ServiceClient, limit: number): Pr
  * handled independently (per-job catch): one bad job must never abort the batch.
  */
 export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<ReconcileOutcome> {
-  const client = getServiceClient();
   const olderThanMs = opts?.olderThanMs ?? DEFAULT_OLDER_THAN_MS;
+  // Guard FIRST — before getServiceClient(), so an unsafe window is rejected without a client,
+  // without env, and above all without a single mutating statement (L-16).
+  assertSafeThreshold(olderThanMs, opts?.allowUnsafeThreshold ?? false, "reconcileStuckJobs");
+
+  const client = getServiceClient();
   const limit = opts?.limit ?? DEFAULT_LIMIT;
   const now = opts?.now ?? (() => new Date());
   const nowDate = now();

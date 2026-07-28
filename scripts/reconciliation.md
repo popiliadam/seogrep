@@ -266,9 +266,13 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
   NOT "reserve released". Find these with **§2c** and handle by manual review / a support
   credit grant.
 - **The 15-minute threshold** must exceed the longest job runtime (the crawl time budget
-  is 90s) so a job that is genuinely still running is never reaped. Lower it below the max
-  runtime only if you accept the risk of refunding a live job (which would then fail when
-  its own commit hits `already settled`).
+  is 90s) so a job that is genuinely still running is never reaped. A **hard 2-minute floor**
+  now enforces that: `--older-than-minutes` below 2 is REJECTED (exit 1, before any DB
+  connection or mutation) unless you also pass `--i-accept-refunding-live-jobs`. This closes
+  the typo path — `--older-than-minutes=.15` used to be accepted as a *nine-second* window and
+  would have swept live work. With the override the CLI prints a warning and proceeds; you are
+  then accepting refunds of jobs that may still be running (each such job later fails when its
+  own commit hits `already settled`).
 
 ---
 
