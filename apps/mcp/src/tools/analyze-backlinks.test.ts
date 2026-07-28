@@ -55,7 +55,7 @@ describe("formatBacklinkProfile", () => {
     expect(formatBacklinkProfile(FULL_PROFILE)).toBe(
       'Backlink profile for "example.com":\n' +
         "• Backlinks: 41,245\n" +
-        "• Referring domains: 12,372 (10,914 dofollow, 88%)\n" +
+        "• Referring domains: 12,372 — 10,914 dofollow-only (88%)\n" +
         "• Referring main domains: 11,004\n" +
         "• Broken backlinks: 118\n" +
         "• Backlink spam score: 8\n" +

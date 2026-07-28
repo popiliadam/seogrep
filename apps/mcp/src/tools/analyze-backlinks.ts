@@ -66,9 +66,9 @@ const inputSchema = z.object({
 type AnalyzeBacklinksInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
-  "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow share, " +
-  "spam score, plus the top referring domains and anchor texts. Works on any public domain, " +
-  `including a competitor's. Synchronous — returns a report immediately. Costs ` +
+  "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow-only " +
+  "share, spam score, plus the top referring domains and anchor texts. Works on any public " +
+  `domain, including a competitor's. Synchronous — returns a report immediately. Costs ` +
   `${TOOL_COSTS.analyze_backlinks} credits. Live DataForSEO data is off during beta; while it ` +
   "is off this tool returns a clear 'not yet enabled' error and charges nothing.";
 
@@ -88,18 +88,23 @@ function metric(value: number | null): string {
 }
 
 /**
- * "12,372 (10,914 dofollow, 88%)" — the dofollow clause is added ONLY when both counts are
- * present and the total is positive; otherwise the bare count is shown rather than a made-up
- * ratio. DataForSEO's `referring_domains_nofollow` counts domains that link with nofollow links
- * ONLY, so the remainder is exactly the domains passing at least one dofollow link.
+ * "12,372 — 10,914 dofollow-only (88%)". The clause is added ONLY when both counts are present
+ * and the total is positive; otherwise the bare count is shown rather than a made-up ratio.
+ *
+ * The label is deliberately "dofollow-only", not "dofollow". DataForSEO documents
+ * `referring_domains_nofollow` as the domains pointing AT LEAST ONE nofollow link at the target
+ * — NOT the domains that link exclusively with nofollow. Subtracting it therefore yields the
+ * domains carrying NO nofollow link at all, which is a STRICTER set than "passes at least one
+ * dofollow link": a domain that links twice, once dofollow and once nofollow, is excluded here.
+ * Calling that number "dofollow" would overstate it, so the renderer names exactly what it is.
  */
 function renderReferringDomainsMetric(summary: BacklinkSummary): string {
   const { referring_domains: total, referring_domains_nofollow: nofollow } = summary;
   if (total === null) return "n/a";
   if (nofollow === null || total <= 0 || nofollow > total) return thousands(total);
-  const dofollow = total - nofollow;
-  const share = Math.round((dofollow / total) * 100);
-  return `${thousands(total)} (${thousands(dofollow)} dofollow, ${share}%)`;
+  const dofollowOnly = total - nofollow;
+  const share = Math.round((dofollowOnly / total) * 100);
+  return `${thousands(total)} — ${thousands(dofollowOnly)} dofollow-only (${share}%)`;
 }
 
 /** The header for a truncatable list — honest about how much of the total is shown. */

@@ -84,7 +84,11 @@ export interface BacklinkSummary {
   readonly backlinks: number | null;
   readonly backlinks_spam_score: number | null;
   readonly referring_domains: number | null;
-  /** Referring domains that link with nofollow links ONLY — the dofollow complement. */
+  /**
+   * DataForSEO: the number of referring domains pointing AT LEAST ONE nofollow link at the
+   * target. It is NOT a count of nofollow-only domains, so `referring_domains` minus this is
+   * the domains that link with NO nofollow link at all — see the tool's renderer.
+   */
   readonly referring_domains_nofollow: number | null;
   readonly referring_main_domains: number | null;
   readonly broken_backlinks: number | null;

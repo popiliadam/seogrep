@@ -1,6 +1,6 @@
 ---
 title: analyze_backlinks
-description: "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow share, spam score, plus the top referring domains and anchor texts…"
+description: "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow-only share, spam score, plus the top referring domains and anchor…"
 ---
 
 **Cost:** 70 credits.
@@ -11,7 +11,7 @@ description: "Analyze a domain's backlink profile — total backlinks, referring
 
 Given a domain (a bare host or a full URL — it is canonicalized for you), it returns three sections:
 
-- **Profile summary** — total backlinks, referring domains (with the share that pass **dofollow** links), referring main domains, broken backlinks, the aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.
+- **Profile summary** — total backlinks, referring domains (with the share that link **exclusively with dofollow** links), referring main domains, broken backlinks, the aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.
 - **Top referring domains** — the domains linking to the target, most backlinks first, each with its own rank.
 - **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry no anchor text (image links) are labelled as such rather than hidden.
 

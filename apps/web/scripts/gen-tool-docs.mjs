@@ -560,9 +560,9 @@ export const DOC_PROSE = {
     whatItDoes:
       "Given a domain (a bare host or a full URL — it is canonicalized for you), it returns three " +
       "sections:\n\n" +
-      "- **Profile summary** — total backlinks, referring domains (with the share that pass " +
-      "**dofollow** links), referring main domains, broken backlinks, the aggregate backlink spam " +
-      "score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
+      "- **Profile summary** — total backlinks, referring domains (with the share that link " +
+      "**exclusively with dofollow** links), referring main domains, broken backlinks, the " +
+      "aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
       "- **Top referring domains** — the domains linking to the target, most backlinks first, each " +
       "with its own rank.\n" +
       "- **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry " +
