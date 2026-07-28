@@ -30,11 +30,14 @@ describe("POST /api/waitlist", () => {
     return () => resetWaitlistDepsForTest();
   });
 
-  it("returns 200 with the record id for a valid signup", async () => {
+  it("records a valid signup and answers a fixed, information-free envelope", async () => {
     const response = await POST(jsonRequest({ email: "ada@example.com", source: "hero" }));
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ ok: true, id: "wl_1" });
+    // Exact shape, not toMatchObject: the point of L-05 is that NOTHING else rides along.
+    // The signup itself is still proven by the store, where it belongs.
+    await expect(response.json()).resolves.toEqual({ ok: true });
     expect(store.contacts).toHaveLength(1);
+    expect(store.contacts[0]).toMatchObject({ id: "wl_1", email: "ada@example.com", source: "hero" });
   });
 
   it("returns 400 for an invalid email", async () => {
@@ -53,6 +56,30 @@ describe("POST /api/waitlist", () => {
     const response = await POST(jsonRequest(null));
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ ok: false });
+  });
+
+  it("answers a repeat address exactly as it answers a new one (L-05)", async () => {
+    const ip = "198.51.100.20";
+    const first = await POST(jsonRequest({ email: "repeat@example.com" }, ip));
+    const second = await POST(jsonRequest({ email: "repeat@example.com" }, ip));
+
+    expect([first.status, second.status]).toEqual([200, 200]);
+    // The store DID see the address twice and knows it already existed…
+    expect(store.contacts).toHaveLength(1);
+    // …but an anonymous caller cannot tell the two responses apart, so the endpoint is no
+    // longer a membership oracle, and no Resend contact id ever reaches the wire.
+    const [firstBody, secondBody] = await Promise.all([first.json(), second.json()]);
+    expect(firstBody).toEqual({ ok: true });
+    expect(secondBody).toEqual(firstBody);
+  });
+
+  it("answers a honeypot submission exactly as it answers a real one (L-05)", async () => {
+    const real = await POST(jsonRequest({ email: "real@example.com" }, "198.51.100.21"));
+    const trapped = await POST(
+      jsonRequest({ email: "bot@spam.com", website: "https://spam" }, "198.51.100.22"),
+    );
+    expect(trapped.status).toBe(real.status);
+    await expect(trapped.json()).resolves.toEqual(await real.json());
   });
 
   it("caps how many provider calls one flooding IP can spend (M-23)", async () => {
