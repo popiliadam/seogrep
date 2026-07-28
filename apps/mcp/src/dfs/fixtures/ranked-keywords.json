@@ -1,0 +1,144 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.4312 sec.",
+  "cost": 0.132,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "07281200-0000-0000-0000-fixture0002",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.4188 sec.",
+      "cost": 0.132,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "ranked_keywords", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "ranked_keywords",
+        "se_type": "google",
+        "target": "example.com",
+        "location_code": 2840,
+        "language_code": "en",
+        "limit": 1000
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "target": "example.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 5312,
+          "items_count": 3,
+          "metrics": {
+            "organic": {
+              "pos_1": 4,
+              "pos_2_3": 11,
+              "pos_4_10": 92,
+              "pos_11_20": 240,
+              "etv": 15234.5,
+              "count": 5312
+            }
+          },
+          "items": [
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "seo software",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00",
+                  "competition": 0.88,
+                  "competition_level": "HIGH",
+                  "cpc": 9.87,
+                  "search_volume": 22200
+                }
+              },
+              "ranked_serp_element": {
+                "se_type": "google",
+                "check_url": "https://www.google.com/search?q=seo%20software",
+                "serp_item": {
+                  "se_type": "google",
+                  "type": "organic",
+                  "rank_group": 3,
+                  "rank_absolute": 4,
+                  "domain": "example.com",
+                  "title": "SEO Software for Growing Teams — Example",
+                  "url": "https://example.com/seo-software",
+                  "etv": 1180.4
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "keyword research tool",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00",
+                  "competition": 0.55,
+                  "competition_level": "MEDIUM",
+                  "cpc": 6.42,
+                  "search_volume": 12100
+                }
+              },
+              "ranked_serp_element": {
+                "se_type": "google",
+                "check_url": "https://www.google.com/search?q=keyword%20research%20tool",
+                "serp_item": {
+                  "se_type": "google",
+                  "type": "organic",
+                  "rank_group": 7,
+                  "rank_absolute": 9,
+                  "domain": "example.com",
+                  "title": "Keyword Research Tool — Example",
+                  "url": "https://example.com/keyword-research",
+                  "etv": 410.2
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "rank tracker",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00",
+                  "competition": 0.22,
+                  "competition_level": "LOW",
+                  "cpc": 4.1,
+                  "search_volume": null
+                }
+              },
+              "ranked_serp_element": {
+                "se_type": "google",
+                "check_url": "https://www.google.com/search?q=rank%20tracker",
+                "serp_item": {
+                  "se_type": "google",
+                  "type": "organic",
+                  "rank_group": 18,
+                  "rank_absolute": 21,
+                  "domain": "example.com",
+                  "title": "Rank Tracker — Example",
+                  "url": null,
+                  "etv": 12.7
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
