@@ -1,10 +1,9 @@
 // @vitest-environment node
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   codeChallengeS256,
   createCodeVerifier,
-  fetchWithCodeVerifier,
   matchesNonce,
   parsePkceCookie,
   readCookie,
@@ -14,8 +13,13 @@ import {
 /**
  * Unit specs for the PKCE primitives. The route specs prove the two handlers USE them; these
  * prove the pieces themselves hold: a challenge that really is the digest of its verifier, a
- * cookie that round-trips, a parser that fails closed, and a token request that actually
- * carries `code_verifier` on the wire.
+ * cookie that round-trips, and a parser that fails closed.
+ *
+ * Getting the verifier ONTO THE WIRE is no longer this module's job — it is a parameter of
+ * @pseo/core's `exchangeCodeForTokens`, specced there against the real request body
+ * ("exchangeCodeForTokens — PKCE code_verifier" in packages/core/src/gsc/client.test.ts).
+ * The callback route spec still pins that this app hands the cookie's verifier to that
+ * parameter, and drives the REAL client with it to prove it survives the package boundary.
  */
 
 describe("createCodeVerifier", () => {
@@ -80,61 +84,5 @@ describe("matchesNonce", () => {
     expect(matchesNonce("abc-123", "abc-124")).toBe(false);
     expect(matchesNonce("abc-123", "abc-1234")).toBe(false); // differing length must not throw
     expect(matchesNonce("", "abc-123")).toBe(false);
-  });
-});
-
-describe("fetchWithCodeVerifier", () => {
-  const CORE_BODY =
-    "grant_type=authorization_code&code=auth-code&redirect_uri=https%3A%2F%2Fapp.example.com%2Fapi%2Fgsc%2Fcallback" +
-    "&client_id=cid.apps.googleusercontent.com&client_secret=super-secret";
-
-  it("adds code_verifier to the token POST and preserves every other parameter", async () => {
-    const base = vi.fn(async () => new Response("{}"));
-    const wrapped = fetchWithCodeVerifier("the-verifier", base);
-
-    await wrapped("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: CORE_BODY,
-    });
-
-    const [url, init] = base.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://oauth2.googleapis.com/token");
-    const sent = new URLSearchParams(String(init.body));
-    expect(sent.get("code_verifier")).toBe("the-verifier");
-    expect(sent.get("grant_type")).toBe("authorization_code");
-    expect(sent.get("code")).toBe("auth-code");
-    expect(sent.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
-    expect(sent.get("client_id")).toBe("cid.apps.googleusercontent.com");
-    expect(sent.get("client_secret")).toBe("super-secret"); // passed through, never reshaped
-    expect(init.method).toBe("POST");
-  });
-
-  it("keeps the client's own init (headers, abort signal) untouched", async () => {
-    const base = vi.fn(async () => new Response("{}"));
-    const signal = AbortSignal.timeout(5_000);
-    await fetchWithCodeVerifier("v", base)("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      signal,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: "grant_type=authorization_code",
-    });
-    const [, init] = base.mock.calls[0] as unknown as [string, RequestInit];
-    expect(init.signal).toBe(signal);
-    expect(init.headers).toEqual({ "content-type": "application/x-www-form-urlencoded" });
-  });
-
-  // If @pseo/core ever stops sending a form-encoded string, the verifier would silently stop
-  // riding along. Google answers a challenged code with invalid_grant when the verifier is
-  // missing, so the flow breaks either way — this throw names the reason.
-  it("throws instead of exchanging without PKCE when the body is not a form string", async () => {
-    const base = vi.fn(async () => new Response("{}"));
-    expect(() =>
-      fetchWithCodeVerifier("v", base)("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        body: new FormData(),
-      }),
-    ).toThrow(/form-encoded/i);
-    expect(base).not.toHaveBeenCalled();
   });
 });

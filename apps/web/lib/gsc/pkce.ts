@@ -1,5 +1,4 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { FetchLike } from "@pseo/core";
 
 /**
  * PKCE (RFC 7636) for the GSC OAuth link-out, and the one-time carrier that makes the signed
@@ -103,28 +102,11 @@ export function matchesNonce(fromCookie: string, fromState: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/**
- * Add `code_verifier` to the token request @pseo/core's `exchangeCodeForTokens` is about to
- * POST, through the injectable `fetch` that client already exposes.
- *
- * WHY A WRAPPER. `exchangeCodeForTokens` builds its own body from a fixed parameter set with
- * no verifier field, and packages/ is outside this change. The seam it does offer is `deps
- * .fetch`, so the verifier is added there. The wrapper touches nothing else: it re-serializes
- * the same form (client_secret included, unread and unlogged) with one parameter added, and
- * keeps the method, headers, and timeout signal the client set. FOLLOW-UP: give
- * `exchangeCodeForTokens` a `codeVerifier` parameter of its own and delete this.
- *
- * It THROWS if the body is not the form-encoded string the client documents. Google rejects an
- * exchange that omits the verifier after a challenge was issued, so a silent drop would break
- * the link anyway — failing here names the cause instead of surfacing an opaque invalid_grant.
+/*
+ * NOTE — getting the verifier onto the wire is deliberately NOT this module's job. It reaches
+ * Google as `exchangeCodeForTokens`'s own `codeVerifier` parameter (see the callback route). A
+ * `fetchWithCodeVerifier` wrapper used to live here and splice it into the request body through
+ * the client's injectable `fetch`, because that client had no verifier parameter to pass it to.
+ * That follow-up is done and the wrapper is gone: the body's wire format is no longer an
+ * unwritten contract this file depends on.
  */
-export function fetchWithCodeVerifier(codeVerifier: string, base?: FetchLike): FetchLike {
-  return (url, init) => {
-    if (typeof init?.body !== "string") {
-      throw new Error("PKCE: the token request body was not the expected form-encoded string");
-    }
-    const form = new URLSearchParams(init.body);
-    form.set("code_verifier", codeVerifier);
-    return (base ?? fetch)(url, { ...init, body: form.toString() });
-  };
-}

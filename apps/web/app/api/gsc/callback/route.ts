@@ -4,7 +4,6 @@ import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pse
 import { createClient } from "../../../../lib/supabase/server";
 import { matchGscProperty } from "../../../../lib/gsc/oauth";
 import {
-  fetchWithCodeVerifier,
   matchesNonce,
   parsePkceCookie,
   PKCE_COOKIE,
@@ -165,10 +164,15 @@ export async function GET(request: Request): Promise<Response> {
     // (5) Exchange the code. redirect_uri MUST match the one used at connect time, and the
     // PKCE verifier from the cookie must match the challenge sent at connect time — without it
     // Google refuses the code, which is exactly what stops an injected code being redeemed here.
-    const tokens = await exchangeCodeForTokens(
-      { code, redirectUri: `${base}/api/gsc/callback` },
-      { fetch: fetchWithCodeVerifier(pkce.verifier) },
-    );
+    // The verifier is a plain parameter of the client: it used to be spliced into the request
+    // body through the injectable `fetch`, which quietly made that body's wire format a
+    // contract between packages — one an ordinary refactor inside the client could have broken
+    // here and nowhere else, visible only in production.
+    const tokens = await exchangeCodeForTokens({
+      code,
+      redirectUri: `${base}/api/gsc/callback`,
+      codeVerifier: pkce.verifier,
+    });
 
     // (6) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
     const encryptedTokenHex = tokens.refreshToken

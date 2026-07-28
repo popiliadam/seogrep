@@ -109,12 +109,13 @@ describe("GET /api/gsc/callback", () => {
       "https://app.example.com/app?gsc=connected&property=matched",
     );
 
-    // Code exchanged with the redirect_uri that matches the one used at connect time, plus the
-    // PKCE-carrying fetch (its contents are asserted in the code_verifier spec below).
-    expect(exchangeCodeForTokens).toHaveBeenCalledWith(
-      { code: "auth-code", redirectUri: "https://app.example.com/api/gsc/callback" },
-      { fetch: expect.any(Function) },
-    );
+    // Code exchanged with the redirect_uri that matches the one used at connect time, and the
+    // PKCE verifier from the cookie (that it reaches the wire is asserted in the spec below).
+    expect(exchangeCodeForTokens).toHaveBeenCalledWith({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
+    });
 
     // The store received the SEALED token (never the plaintext), and it decrypts back.
     const write = upsertGscConnection.mock.calls[0]![1] as {
@@ -138,30 +139,34 @@ describe("GET /api/gsc/callback", () => {
    * check it against. The PKCE verifier rides in the same cookie, binding the code at Google.
    */
   it("sends the PKCE code_verifier from the cookie to the token endpoint", async () => {
-    const captured: RequestInit[] = [];
-    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
-      captured.push(init);
-      return new Response("{}");
-    });
-
     await GET(callbackUrl({ code: "auth-code", state: validState() }));
 
-    const [params, deps] = exchangeCodeForTokens.mock.calls[0] as unknown as [
-      unknown,
-      { fetch: (url: string, init: RequestInit) => Promise<Response> },
-    ];
-    expect(params).toEqual({ code: "auth-code", redirectUri: "https://app.example.com/api/gsc/callback" });
+    const [params] = exchangeCodeForTokens.mock.calls[0] as unknown as [unknown];
+    expect(params).toEqual({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
+    });
 
-    // Drive the fetch the route handed the client with the client's own body shape: the
-    // verifier must actually be on the wire, not merely in scope.
-    await deps.fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      body: "grant_type=authorization_code&code=auth-code&client_secret=s",
+    // ...and those params really do put the verifier on the wire, not merely in scope: the
+    // REAL @pseo/core client (the mock above only stands in for the route's call) is driven
+    // with exactly what the route passed, over an injected fetch — zero network, NEVER #5.
+    // This is the spec that fails if the client's request body ever stops carrying the
+    // parameter, which is the regression the deleted `fetchWithCodeVerifier` wrapper could
+    // only have suffered silently in production.
+    const core = await vi.importActual<typeof import("@pseo/core")>("@pseo/core");
+    const captured: RequestInit[] = [];
+    await core.exchangeCodeForTokens(params as Parameters<typeof core.exchangeCodeForTokens>[0], {
+      credentials: { clientId: "cid.apps.googleusercontent.com", clientSecret: SECRET },
+      fetch: async (_url: string, init?: RequestInit) => {
+        captured.push(init!);
+        return new Response("{}");
+      },
     });
     const sent = new URLSearchParams(String(captured[0]!.body));
     expect(sent.get("code_verifier")).toBe(VERIFIER);
     expect(sent.get("code")).toBe("auth-code");
-    vi.unstubAllGlobals();
+    expect(sent.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
   });
 
   it("REFUSES a state presented a second time (no one-time cookie left), code not exchanged", async () => {
@@ -319,10 +324,11 @@ describe("GET /api/gsc/callback", () => {
     const location = new URL((await GET(spoofed)).headers.get("location")!);
     expect(location.origin).toBe("https://app.example.com");
     expect(location.href).toBe("https://app.example.com/app?gsc=connected&property=matched");
-    expect(exchangeCodeForTokens).toHaveBeenCalledWith(
-      { code: "auth-code", redirectUri: "https://app.example.com/api/gsc/callback" },
-      { fetch: expect.any(Function) },
-    );
+    expect(exchangeCodeForTokens).toHaveBeenCalledWith({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
+    });
   });
 });
 
