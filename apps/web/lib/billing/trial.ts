@@ -1,8 +1,6 @@
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { CREDIT_PACKAGES } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
-import type { Database } from "@pseo/db/types";
 import { captureSignup } from "../analytics";
 
 /**
@@ -25,29 +23,13 @@ import { captureSignup } from "../analytics";
  * idempotent already-granted no-op (every subsequent callback).
  */
 
-// claim_trial is not in the generated types.ts yet (that file is regenerated from the cloud
-// project in the chef flow). This overlay keeps the rpc() call typed until then — the same
-// fenced `as unknown as` cast pattern used by packages/db ledger-repo. The one unavoidable cast
-// is fenced into fns() below (the whole client is never loosened to `any`).
-type TrialFunctions = {
-  claim_trial: { Args: { p_user_id: string; p_amount: number }; Returns: boolean };
-};
-
-type TrialDatabase = Omit<Database, "public"> & {
-  public: Omit<Database["public"], "Functions"> & { Functions: TrialFunctions };
-};
-
-function fns(client: SupabaseClient<Database>): SupabaseClient<TrialDatabase> {
-  return client as unknown as SupabaseClient<TrialDatabase>;
-}
-
 export async function grantTrialCredits(userId: string): Promise<boolean> {
   const service = createServiceClient();
 
   // Atomic lock + grant in one transaction (see the RPC's own comment in migration 0009). No
   // separate INSERT to leave dangling: an error rolls the whole call back, so there is no
   // partial (locked-but-creditless) state for a retry to trip over.
-  const { data, error } = await fns(service).rpc("claim_trial", {
+  const { data, error } = await service.rpc("claim_trial", {
     p_user_id: userId,
     p_amount: CREDIT_PACKAGES.trial.credits,
   });
