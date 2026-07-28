@@ -1,11 +1,10 @@
 # Runbook — Google OAuth verification başvurusu
 
-> Amaç: OAuth consent screen'i Testing → **In production** + sensitive-scope doğrulaması.
-> Neden acil: **Testing modda refresh token'lar 7 günde expire olur** — GSC bağlantıları her hafta
-> kopuyor. Verification tamamlanınca hem bu biter hem "unverified app" uyarı ekranı kalkar hem
-> 100-test-kullanıcı sınırı kalkar. Başvuru tıkları İNSAN işi; şef metinleri hazırladı (aşağıda).
-> Süre beklentisi: brand doğrulaması günler; sensitive-scope incelemesi tipik ~3-7 iş günü,
-> haftalara uzayabilir. İnceleme sürerken ürün Testing modda çalışmaya devam eder.
+> Amaç: OAuth consent screen'i Testing → **In production** (PUBLISH) + **marka onayı** (brand
+> verification). Neden acil: **Testing modda refresh token'lar 7 günde expire olur** — GSC
+> bağlantıları her hafta kopuyor; PUBLISH bunu anında bitirir (inceleme sonucu beklenmez).
+> Scope non-sensitive sınıfında olduğundan (aşağıda kanıt) veri-erişim incelemesi YOK; kalan tek
+> inceleme marka onayı (günler mertebesi). Başvuru tıkları İNSAN işi; şef metinleri hazırladı.
 
 ## Kapsam gerçeği (koddan + Console'dan doğrulanmış)
 
@@ -26,7 +25,7 @@
 | Privacy Policy URL | ✅ https://seogrep.com/privacy |
 | **Privacy'de Google API Services User Data Policy / Limited Use beyanı** | ✅ bu commit'le eklendi ("Google user data" bölümü) |
 | Terms URL | ✅ https://seogrep.com/terms |
-| Authorized domain doğrulaması | ✅ seogrep.com (Search Console TXT, Faz 3) |
+| Authorized domain doğrulaması | ⚠️ brand-check reddetti (2026-07-28): proje sahibi info@adstark, seogrep.com'un SC-sahibi DEĞİLDİ → Domain-property TXT (Netlify DNS) ile info@adstark'a bağlanıyor |
 | Destek e-postası | ✅ support@seogrep.com |
 | Demo video | ⏳ insan çeker (senaryo aşağıda) |
 
@@ -43,17 +42,20 @@
    - App name: `SeoGrep` · User support email: `info@adstark.com.tr` — DİKKAT: bu dropdown yalnız
      GİRİŞ YAPILAN hesabın adreslerini/gruplarını gösterir; support@seogrep.com bir Google hesabı
      değil (ImprovMX yönlendirmesi), burada ÇIKMAZ ve çıkmaması normaldir. Yanlış hesapla girildiyse
-     (örn. başka işletme maili) sağ üstten seogrep.app@gmail.com'a geç — YENİ PROJE AÇMA, mevcut
+     (örn. kişisel gmail) sağ üstten proje sahibi hesaba (info@adstark.com.tr) geç — YENİ PROJE AÇMA, mevcut
      client canlı ürünü besliyor. · Logo yükle (512px; logo yüklemek brand review'u tetikler — normal).
    - App home page `https://seogrep.com` · Privacy `https://seogrep.com/privacy` · Terms
      `https://seogrep.com/terms` · Authorized domain `seogrep.com`.
-   - Developer contact: info@adstark.com.tr + support@seogrep.com (eski kayıt seogrep.app@gmail YANLIŞTI) **+ support@seogrep.com** (Google yazışması buraya gelir).
+   - Developer contact: `info@adstark.com.tr` + `support@seogrep.com` (Google yazışması bu ikisine gelir).
 3. **Scopes** ekranında `../auth/webmasters.readonly` listede olduğunu teyit et (yoksa "Add or remove
    scopes" ile ekle; non-sensitive openid/email/profile de listede kalsın).
-4. **Audience/Publishing status → PUBLISH APP** (Testing → In production). Sensitive scope olduğu
-   için Console verification'a yönlendirir → **Prepare for verification** akışını başlat.
-5. Verification formu: scope gerekçesi + demo video linki iste(ye)cek → aşağıdaki hazır metinleri
-   yapıştır, video linkini ekle → **Submit**.
+4. **Audience/Publishing status → PUBLISH APP** (Testing → In production) — token-ölümünü bitiren
+   adım; incelemeden bağımsız, hemen yapılır.
+5. **Verification Center → Submit** = MARKA onayı (logo/isim/domain-sahiplik). 2026-07-28 ilk tur
+   bulguları: (a) seogrep.com sahipliği proje hesabında değil → SC Domain-property TXT'siyle
+   info@adstark'a bağla; (b) isim-eşleşme uyarısı (muhtemelen a'nın yan etkisi). Düzeltince
+   "I have fixed the issues → Request re-verification". Video/scope-gerekçesi bu akışta İSTENMEZ
+   (arşivde hazır).
 6. Google'dan gelen her e-postayı (ek bilgi/red/onay) şefe aynen yapıştır — cevap taslağını şef yazar.
 
 ## Yapıştırmalık — scope justification (EN)
