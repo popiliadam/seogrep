@@ -92,6 +92,42 @@ export type Database = {
         }
         Relationships: []
       }
+      dfs_spend: {
+        Row: {
+          actual_usd: number | null
+          created_at: string
+          endpoint: string
+          estimated_usd: number
+          id: string
+          row_count: number | null
+          settled_at: string | null
+          spend_day: string
+          status: string
+        }
+        Insert: {
+          actual_usd?: number | null
+          created_at?: string
+          endpoint: string
+          estimated_usd: number
+          id?: string
+          row_count?: number | null
+          settled_at?: string | null
+          spend_day: string
+          status?: string
+        }
+        Update: {
+          actual_usd?: number | null
+          created_at?: string
+          endpoint?: string
+          estimated_usd?: number
+          id?: string
+          row_count?: number | null
+          settled_at?: string | null
+          spend_day?: string
+          status?: string
+        }
+        Relationships: []
+      }
       events: {
         Row: {
           created_at: string
@@ -354,6 +390,8 @@ export type Database = {
         Returns: boolean
       }
       commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined }
+      dfs_daily_budget_usd: { Args: never; Returns: number }
+      dfs_spend_today_usd: { Args: never; Returns: number }
       process_paddle_purchase: {
         Args: {
           p_amount: number
@@ -372,6 +410,18 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      reserve_dfs_spend: {
+        Args: { p_endpoint: string; p_estimated_usd: number }
+        Returns: string
+      }
+      settle_dfs_spend: {
+        Args: {
+          p_actual_usd: number
+          p_reservation_id: string
+          p_row_count: number
+        }
+        Returns: undefined
       }
     }
     Enums: {
