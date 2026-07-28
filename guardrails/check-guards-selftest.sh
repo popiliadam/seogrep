@@ -20,10 +20,13 @@ export LC_ALL=C
 FIXTURES="guardrails/fixtures"
 HEALTHY="$FIXTURES/healthy"
 
-# Deleting a fixture must not silently shrink the self-test: these eleven are the
-# weakenings the gates are REQUIRED to catch, so their absence is a failure. The last six
-# are the residual parser leaks the M-12 referee found (R1/R2/R3/R4/R6) - each one was a
-# measured false GREEN before the parsers learned to read the statement properly.
+# Deleting a fixture must not silently shrink the self-test: these sixteen are the
+# weakenings the gates are REQUIRED to catch, so their absence is a failure.
+#   * rows 6-11 are the residual parser leaks the M-12 referee found (R1/R2/R3/R4/R6);
+#   * rows 12-16 are the R7 family the follow-up referee found (quoted identifiers, E''
+#     escape strings, unqualified reject_mutation) plus the TRAP that guards the last fix.
+# Each one was a measured false GREEN before the parsers learned to read the statement
+# properly - except -unqual-only-definition, which was and must stay RED (see below).
 REQUIRED_FIXTURES="
 weakened-rls-disable
 weakened-rls-noforce
@@ -36,11 +39,17 @@ weakened-append-unqualified
 weakened-rls-alter-if-exists-only
 weakened-rls-dashes-in-string
 weakened-rls-unqualified
+weakened-rls-quoted-ident
+weakened-rls-estring-escape
+weakened-append-quoted-ident
+weakened-append-unqual-function
+weakened-append-unqual-only-definition
 "
 
 # RED alone is not enough: a gate that reddens for the WRONG reason still hides the
 # weakening it was pointed at. For every leak fixture the finding text is pinned here, so
 # an accidental red counts as a FAIL. Empty = colour-only assertion (the older fixtures).
+# A fixture may pin SEVERAL findings, one per line; every one of them must appear.
 expected_finding() {
   case "$1" in
     weakened-append-revoke-grant-option)
@@ -49,7 +58,18 @@ expected_finding() {
       printf '%s' 'public.credit_ledger - UPDATE is never REVOKEd from service_role' ;;
     weakened-append-unqualified)
       printf '%s' 'trigger credit_ledger_append_only: DISABLED' ;;
-    weakened-rls-alter-if-exists-only|weakened-rls-dashes-in-string|weakened-rls-unqualified)
+    weakened-append-quoted-ident)
+      printf '%s\n%s' 'trigger credit_ledger_append_only: DISABLED' \
+                      'public.events - UPDATE is GRANTed to authenticated' ;;
+    weakened-append-unqual-function)
+      printf '%s' 'public.reject_mutation() no longer RAISEs' ;;
+    # The trap for the c22 fix: the tree's only reject_mutation definition is unqualified
+    # AND it raises. A static reader cannot prove an unqualified CREATE landed in public,
+    # so "not defined" is the RIGHT answer - and the naive c22 fix turns it GREEN.
+    weakened-append-unqual-only-definition)
+      printf '%s' 'public.reject_mutation() is not defined in the final state' ;;
+    weakened-rls-alter-if-exists-only|weakened-rls-dashes-in-string|weakened-rls-unqualified|\
+    weakened-rls-quoted-ident|weakened-rls-estring-escape)
       printf '%s' 'public.credit_ledger - final state is DISABLE ROW LEVEL SECURITY' ;;
     *) printf '' ;;
   esac
@@ -80,15 +100,20 @@ assert() {
   fi
   text="$(expected_finding "$label")"
   if [ -n "$text" ]; then
-    case "$out" in
-      *"$text"*) ;;
-      *)
-        printf 'selftest: FAIL %-44s %-22s -> RED for the wrong reason (no %s)\n' \
-          "$label" "$gate" "$text"
-        printf '%s\n' "$out" | sed 's/^/               | /'
-        bad=$((bad + 1))
-        return ;;
-    esac
+    while IFS= read -r want_text; do
+      [ -n "$want_text" ] || continue
+      case "$out" in
+        *"$want_text"*) ;;
+        *)
+          printf 'selftest: FAIL %-44s %-22s -> RED for the wrong reason (no %s)\n' \
+            "$label" "$gate" "$want_text"
+          printf '%s\n' "$out" | sed 's/^/               | /'
+          bad=$((bad + 1))
+          return ;;
+      esac
+    done <<EOF
+$text
+EOF
   fi
   printf 'selftest: ok   %-44s %-22s -> %s\n' "$label" "$gate" "$got"
 }
@@ -134,8 +159,8 @@ done
 
 # A floor on the fixture count, so wholesale deletion cannot quietly shrink the harness.
 # Raise it whenever fixtures are added; never lower it to make a run pass.
-if [ "$found" -lt 17 ]; then
-  echo "selftest: FAIL only $found weakened fixtures found (at least 17 required)"
+if [ "$found" -lt 22 ]; then
+  echo "selftest: FAIL only $found weakened fixtures found (at least 22 required)"
   bad=$((bad + 1))
 fi
 
