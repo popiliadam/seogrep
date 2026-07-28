@@ -238,9 +238,9 @@ describe("registerAll", () => {
 
 /**
  * D17 credit confirmation threshold — the SaaS analogue of the consent ledger. No tool in
- * TOOL_COSTS exceeds the threshold today (the priciest is 30), so the OVER-threshold behaviour
- * is proven here with SYNTHETIC estimates passed straight to the pure gate — TOOL_COSTS is never
- * touched. The registry wires confirmationGate(name, TOOL_COSTS[name], rawInput) before dispatch,
+ * TOOL_COSTS reaches the threshold today (the whole table sits well below it), so the
+ * OVER-threshold behaviour is proven here with SYNTHETIC estimates passed straight to the pure
+ * gate — TOOL_COSTS is never touched. The registry wires confirmationGate(name, TOOL_COSTS[name], rawInput) before dispatch,
  * so a triggered gate returns BEFORE withCredits and settles nothing (zero ledger by construction).
  */
 describe("D17 threshold — evaluateConfirmation (pure rule)", () => {
