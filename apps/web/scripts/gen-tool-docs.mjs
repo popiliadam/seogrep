@@ -166,8 +166,9 @@ export function renderToolPage(toolMeta, cost, prose) {
 export const NON_TOOL_ALLOWLIST = [];
 
 /**
- * Verify the tools-reference meta.json `pages` match ALL_TOOLS by name AND order (16-tool surface
- * pin). Non-tool pages on the allowlist are ignored. Returns { ok, errors }.
+ * Verify the tools-reference meta.json `pages` match ALL_TOOLS by name AND order (the tool-surface
+ * pin — derived from the registry, so it carries no hardcoded tool count). Non-tool pages on the
+ * allowlist are ignored. Returns { ok, errors }.
  */
 export function checkToolsMetaSync(toolNames, metaPages) {
   const expected = toolNames.map(deriveSlug);
@@ -508,6 +509,45 @@ export const DOC_PROSE = {
       "A table with one row per keyword — search volume, CPC, and competition — plus a total-volume " +
       "summary line. While live data is off, it returns the \"not yet enabled\" message instead and " +
       "charges nothing.",
+  },
+
+  ranked_keywords: {
+    lead:
+      "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +
+      "with its position, monthly search volume, and the exact URL that ranks — powered by " +
+      "DataForSEO Labs. It works on **any public domain**, so it reads your own site or a " +
+      "competitor's the same way, and it needs no project setup. It is **synchronous**: the table " +
+      "comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Given a domain (a bare host or a full URL — it is canonicalized for you), it returns one row " +
+      "per ranked keyword:\n\n" +
+      "- **Keyword** — the query the domain ranks for.\n" +
+      "- **Position** — where it ranks in the organic results.\n" +
+      "- **Search volume** — average monthly Google searches for that keyword.\n" +
+      "- **URL** — the page on the domain that holds the ranking.\n\n" +
+      "Only **organic** results are counted — paid placements are excluded. The header line says " +
+      "how many rows you got and, when the domain ranks for more than the `limit` you asked for, " +
+      "how many it ranks for in total, so a truncated list never reads like the whole picture.",
+    preExampleSections: [
+      {
+        heading: "Availability during beta",
+        body:
+          "Live DataForSEO data is **off during the beta**. While it is off, `ranked_keywords` " +
+          "returns a clear _\"ranked-keyword lookups are not yet enabled on this deployment\"_ " +
+          "message and **charges you nothing** — no credits are reserved or spent. SeoGrep never " +
+          "returns sample or placeholder figures dressed up as real data. Once live DataForSEO " +
+          "access is switched on, the same call starts returning real numbers.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> What keywords does competitor.com rank for?\n\n" +
+      "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.",
+    returns:
+      "A table with one row per ranked keyword — keyword, position, search volume, and the ranking " +
+      "URL — under a header saying how many of the domain's ranked keywords are shown. A domain " +
+      "with no organic rankings on record is reported as such. An input that is not a public " +
+      "domain is rejected before anything is charged, and while live data is off you get the " +
+      "\"not yet enabled\" message instead — also free.",
   },
 
   generate_report: {

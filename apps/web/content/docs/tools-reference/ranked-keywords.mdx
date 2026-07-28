@@ -1,0 +1,46 @@
+---
+title: ranked_keywords
+description: "List the Google organic keywords a domain already ranks for — keyword, position, monthly search volume, and the ranking URL. Works on any public domain…"
+---
+
+**Cost:** 65 credits.
+
+`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each with its position, monthly search volume, and the exact URL that ranks — powered by DataForSEO Labs. It works on **any public domain**, so it reads your own site or a competitor's the same way, and it needs no project setup. It is **synchronous**: the table comes back immediately, with no background job to poll.
+
+## What it does
+
+Given a domain (a bare host or a full URL — it is canonicalized for you), it returns one row per ranked keyword:
+
+- **Keyword** — the query the domain ranks for.
+- **Position** — where it ranks in the organic results.
+- **Search volume** — average monthly Google searches for that keyword.
+- **URL** — the page on the domain that holds the ranking.
+
+Only **organic** results are counted — paid placements are excluded. The header line says how many rows you got and, when the domain ranks for more than the `limit` you asked for, how many it ranks for in total, so a truncated list never reads like the whole picture.
+
+## Availability during beta
+
+Live DataForSEO data is **off during the beta**. While it is off, `ranked_keywords` returns a clear _"ranked-keyword lookups are not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data. Once live DataForSEO access is switched on, the same call starts returning real numbers.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> What keywords does competitor.com rank for?
+
+Or narrow it down:
+
+> Show me the top 50 keywords example.com ranks for.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `target` | string | Yes | The domain to look up, e.g. "example.com" or "https://example.com". |
+| `limit` | integer | No | How many ranked keywords to return (1–1000, default 1000). |
+| `language_code` | string | No | Language code (default 'en'). |
+| `location_code` | integer | No | DataForSEO location code (default 2840 = United States). |
+
+### Returns
+
+A table with one row per ranked keyword — keyword, position, search volume, and the ranking URL — under a header saying how many of the domain's ranked keywords are shown. A domain with no organic rankings on record is reported as such. An input that is not a public domain is rejected before anything is charged, and while live data is off you get the "not yet enabled" message instead — also free.
