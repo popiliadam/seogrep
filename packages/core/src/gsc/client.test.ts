@@ -255,3 +255,105 @@ describe("google client request deadlines (M-14)", () => {
     expect(GSC_TOKEN_TIMEOUT_MS).toBeLessThan(GSC_QUERY_TIMEOUT_MS);
   });
 });
+
+/**
+ * PKCE (RFC 7636) on the authorization_code exchange. The verifier is a FIRST-CLASS
+ * parameter here, deliberately: apps/web previously injected it by wrapping `deps.fetch`
+ * and re-serializing the body this module had just built, which made the "the body is a
+ * form-encoded string" contract implicit, unpinned, and breakable by an innocent refactor
+ * inside this file — a break that would only ever surface as `invalid_grant` in PROD.
+ * Owning the parameter here puts the contract in the type system instead.
+ *
+ * Two properties are pinned below:
+ *   1. BACKWARD COMPATIBILITY — with no verifier the body is BYTE-IDENTICAL to what this
+ *      module sent before the parameter existed. That exact string is the pin; a change to
+ *      the parameter set, their order, or the encoding fails here rather than at Google.
+ *   2. The verifier, when given, is actually ON THE WIRE under URLSearchParams encoding.
+ */
+describe("exchangeCodeForTokens — PKCE code_verifier", () => {
+  /** Today's body, byte for byte, for CREDENTIALS + this code/redirectUri. */
+  const BODY_WITHOUT_VERIFIER =
+    "grant_type=authorization_code&code=auth-code" +
+    "&redirect_uri=https%3A%2F%2Fapp.example.com%2Fapi%2Fgsc%2Fcallback" +
+    "&client_id=test-client-id.apps.googleusercontent.com&client_secret=test-secret-XYZ";
+
+  const okTokens = { access_token: "ya29.access", expires_in: 3599, token_type: "Bearer" };
+
+  async function exchange(
+    params: { code: string; redirectUri: string; codeVerifier?: string },
+  ): Promise<ReturnType<typeof jsonFetch>> {
+    const fetchMock = jsonFetch(200, okTokens);
+    await exchangeCodeForTokens(params, { fetch: fetchMock, credentials: CREDENTIALS });
+    return fetchMock;
+  }
+
+  it("sends a BYTE-IDENTICAL body when no verifier is given (backward-compat pin)", async () => {
+    const fetchMock = await exchange({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+    });
+    expect(String(fetchMock.mock.calls[0]![1]?.body)).toBe(BODY_WITHOUT_VERIFIER);
+  });
+
+  it("treats an explicitly-undefined verifier as absent (same byte-identical body)", async () => {
+    const fetchMock = await exchange({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: undefined,
+    });
+    expect(String(fetchMock.mock.calls[0]![1]?.body)).toBe(BODY_WITHOUT_VERIFIER);
+    expect(bodyParams(fetchMock.mock.calls[0]!).has("code_verifier")).toBe(false);
+  });
+
+  it("puts the verifier on the wire and preserves every other parameter", async () => {
+    const fetchMock = await exchange({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    });
+    const params = bodyParams(fetchMock.mock.calls[0]!);
+    expect(params.get("code_verifier")).toBe("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk");
+    expect(params.get("grant_type")).toBe("authorization_code");
+    expect(params.get("code")).toBe("auth-code");
+    expect(params.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
+    expect(params.get("client_id")).toBe(CREDENTIALS.clientId);
+    expect(params.get("client_secret")).toBe(CREDENTIALS.clientSecret);
+  });
+
+  it("keeps method, content-type, and the M-14 deadline armed when a verifier rides along", async () => {
+    // The old fetch wrapper had to hand the client's own init back untouched; now there is no
+    // wrapper to get that wrong, but the request shape is still pinned so a verifier can never
+    // be added at the cost of the deadline (M-14) or the form content-type.
+    const fetchMock = await exchange({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: "the-verifier",
+    });
+    const init = fetchMock.mock.calls[0]![1];
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/x-www-form-urlencoded");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("form-encodes a verifier containing reserved characters (URLSearchParams semantics)", async () => {
+    // A conforming RFC 7636 verifier is unreserved base64url, but the parameter must not
+    // depend on that: anything handed in has to survive the round trip unmangled.
+    const hostile = "a+b/c=d&e=f%20g ~h_-.i";
+    const fetchMock = await exchange({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: hostile,
+    });
+    const raw = String(fetchMock.mock.calls[0]![1]?.body);
+    expect(raw).toContain("code_verifier=a%2Bb%2Fc%3Dd%26e%3Df%2520g+%7Eh_-.i");
+    expect(bodyParams(fetchMock.mock.calls[0]!).get("code_verifier")).toBe(hostile);
+    // The added parameter must not corrupt its neighbours.
+    expect(bodyParams(fetchMock.mock.calls[0]!).get("client_secret")).toBe(CREDENTIALS.clientSecret);
+  });
+
+  it("never puts a code_verifier on a refresh grant (the two grants stay separate)", async () => {
+    const fetchMock = jsonFetch(200, okTokens);
+    await refreshAccessToken("1//stored-refresh", { fetch: fetchMock, credentials: CREDENTIALS });
+    expect(bodyParams(fetchMock.mock.calls[0]!).has("code_verifier")).toBe(false);
+  });
+});

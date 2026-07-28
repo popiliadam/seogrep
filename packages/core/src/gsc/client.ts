@@ -162,13 +162,30 @@ async function postToken(
  * Exchange a one-time authorization code for a token set (the OAuth callback's first
  * step). `redirectUri` must match the value used to obtain the code. Returns the access
  * token plus — on first consent — the long-lived refresh token to seal at rest.
+ *
+ * `codeVerifier` is the PKCE (RFC 7636) secret whose S256 digest was sent as the
+ * `code_challenge` at authorize time. Pass it whenever a challenge was issued: Google then
+ * redeems the code ONLY against that verifier, which is what stops an attacker's own code
+ * being injected into a victim's callback. It is a first-class parameter rather than
+ * something a caller splices into the body through the `deps.fetch` seam — that seam made
+ * the body's wire format an implicit contract between packages, so a harmless refactor in
+ * here (a `URLSearchParams` object instead of a string, say) would have broken the live
+ * link and shown up only in production as `invalid_grant`.
+ *
+ * OMITTING it is fully supported and leaves the request BYTE-IDENTICAL to the pre-PKCE
+ * one — pinned by an exact-string spec — so a non-PKCE caller is unaffected.
  */
 export function exchangeCodeForTokens(
-  params: { code: string; redirectUri: string },
+  params: { code: string; redirectUri: string; codeVerifier?: string },
   deps: TokenDeps = {},
 ): Promise<GoogleTokenSet> {
+  const grant = {
+    grant_type: "authorization_code",
+    code: params.code,
+    redirect_uri: params.redirectUri,
+  };
   return postToken(
-    { grant_type: "authorization_code", code: params.code, redirect_uri: params.redirectUri },
+    params.codeVerifier ? { ...grant, code_verifier: params.codeVerifier } : grant,
     deps,
   );
 }
