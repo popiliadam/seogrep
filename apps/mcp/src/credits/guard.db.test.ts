@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
-import { withCredits } from "./guard.ts";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { isReserveCommitFailed, withCredits } from "./guard.ts";
 import { TOOL_COSTS } from "./costs.ts";
 import { getJob } from "../queue/boss.ts";
 import { getServiceClient } from "../db.ts";
@@ -80,6 +80,36 @@ async function ledgerRows(userId: string): Promise<LedgerRow[]> {
 
 function balanceOf(rows: LedgerRow[]): number {
   return rows.reduce((sum, row) => sum + row.delta, 0);
+}
+
+/** A PostgREST-shaped failure, as the guard sees it in `{ error }`. */
+function rpcFailure(message: string): { data: null; error: Record<string, string> } {
+  return {
+    data: null,
+    error: { message, details: "", hint: "", code: "XX000", name: "PostgrestError" },
+  };
+}
+
+/**
+ * Make the next `times` commit_reserve calls fail transiently; every other RPC passes
+ * through to the real database. The guard reads its client from the getServiceClient
+ * singleton on each call, so spying on that one instance is enough. Returns the restore fn.
+ */
+function failCommitReserve(times: number): () => void {
+  const client = getServiceClient();
+  const realRpc = client.rpc.bind(client) as unknown as (
+    name: string,
+    args: unknown,
+  ) => Promise<unknown>;
+  let remaining = times;
+  const spy = vi.spyOn(client, "rpc").mockImplementation(((name: string, args: unknown) => {
+    if (name === "commit_reserve" && remaining > 0) {
+      remaining -= 1;
+      return Promise.resolve(rpcFailure("connection reset by peer"));
+    }
+    return realRpc(name, args);
+  }) as unknown as typeof client.rpc);
+  return () => spy.mockRestore();
 }
 
 beforeAll(async () => {
@@ -186,6 +216,52 @@ describe("withCredits against the local stack", () => {
     rows = await ledgerRows(userId);
     expect(rows.filter((r) => r.kind === "spend_commit")).toHaveLength(1);
     expect(balanceOf(rows)).toBe(cost); // commit is zero-delta: still exactly one run spent
+  });
+
+  it("(e) H-01: a TRANSIENT commit failure is retried, so the charge settles normally", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 100);
+    const jobId = await makeJobId(userId, "crawl_site");
+
+    // Two blips, then the real RPC. Without a retry this run would end in a permanently
+    // open reserve for a failure that healed by itself milliseconds later.
+    const restore = failCommitReserve(2);
+    try {
+      await expect(
+        withCredits({ userId }, { tool: "crawl_site", jobId }, async () => "delivered"),
+      ).resolves.toBe("delivered");
+    } finally {
+      restore();
+    }
+
+    const rows = await ledgerRows(userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(balanceOf(rows)).toBe(100 - TOOL_COSTS.crawl_site);
+  });
+
+  it("(f) H-01: a PERSISTENT commit failure throws a DISTINGUISHABLE error, reserve left open", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 100);
+    const jobId = await makeJobId(userId, "crawl_site");
+
+    // Every attempt fails. The guard must NOT release here (it cannot tell this apart from a
+    // handler failure at the ledger level) — it raises a typed signal so the worker can stamp
+    // an honest fail-mark, and the reserve stays OPEN for the ledger-keyed orphan sweep.
+    const restore = failCommitReserve(Number.MAX_SAFE_INTEGER);
+    try {
+      await withCredits({ userId }, { tool: "crawl_site", jobId }, async () => "delivered");
+      throw new Error("expected withCredits to throw on a persistent commit failure");
+    } catch (error) {
+      expect(isReserveCommitFailed(error)).toBe(true);
+      expect((error as Error).message).toContain("commit_reserve failed");
+    } finally {
+      restore();
+    }
+
+    const rows = await ledgerRows(userId);
+    // The open-reserve shape H-01 is about: a debit with NO settling row on either side.
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve"]);
+    expect(balanceOf(rows)).toBe(100 - TOOL_COSTS.crawl_site); // user is short, got nothing
   });
 
   it("(d) a 0-credit tool never calls reserve: ledger stays empty even at zero balance", async () => {
