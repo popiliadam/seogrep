@@ -181,3 +181,84 @@ export async function settleSpend(
 export async function todaySpendUsd(ledger: SpendLedger): Promise<number> {
   return ledger.todayUsd();
 }
+
+/** One booking in the in-memory ledger below. */
+export interface MemorySpendRow {
+  readonly id: string;
+  readonly endpoint: string;
+  readonly estimatedUsd: number;
+  /** null while the reservation is still open. */
+  readonly actualUsd: number | null;
+  readonly rowCount: number | null;
+}
+
+/** The in-memory ledger's spec-facing surface: seed a day, inspect it, break it. */
+export interface MemorySpendLedger extends SpendLedger {
+  /** Book already-settled spend, i.e. "today has already cost this much". */
+  seed(usd: number, endpoint?: string): void;
+  /** Every booking so far, open and settled. */
+  rows(): readonly MemorySpendRow[];
+  /** Make every subsequent operation reject with `error` (null restores it). */
+  breakWith(error: Error | null): void;
+}
+
+/**
+ * TEST-ONLY in-memory SpendLedger, same contract as the DB one (createDbSpendLedger):
+ * reservations count at their estimate, settlements replace it with the real cost, and the cap
+ * is refused with the same wording the migration-0014 RPC raises. Production never resolves to
+ * it — the same TEST-ONLY posture as createMockResearchPort in client.ts. Its atomicity is not a
+ * simulation: the check and the booking happen in one synchronous stretch of a single-threaded
+ * event loop, exactly as the DB does them inside one advisory lock.
+ */
+export function createMemorySpendLedger(cap: number = DAILY_BUDGET_USD): MemorySpendLedger {
+  let rows: readonly MemorySpendRow[] = [];
+  let failure: Error | null = null;
+  let issued = 0;
+
+  const committedUsd = (): number =>
+    rows.reduce((sum, row) => sum + (row.actualUsd ?? row.estimatedUsd), 0);
+
+  return {
+    seed(usd, endpoint = "seed") {
+      issued += 1;
+      rows = [
+        ...rows,
+        { id: `mem-${issued}`, endpoint, estimatedUsd: usd, actualUsd: usd, rowCount: 0 },
+      ];
+    },
+    rows: () => rows,
+    breakWith(error) {
+      failure = error;
+    },
+    async reserve(estimatedUsd, endpoint) {
+      if (failure) throw failure;
+      const spent = committedUsd();
+      if (spent + estimatedUsd > cap) {
+        throw new Error(
+          `DataForSEO daily budget exceeded: today's spend ($${spent.toFixed(4)}) plus this ` +
+            `call's estimate ($${estimatedUsd.toFixed(4)}) would pass the $${cap.toFixed(2)} ` +
+            `cap. Refusing the call.`,
+        );
+      }
+      issued += 1;
+      const id = `mem-${issued}`;
+      rows = [...rows, { id, endpoint, estimatedUsd, actualUsd: null, rowCount: null }];
+      return id;
+    },
+    async settle(reservationId, actualUsd, rowCount) {
+      if (failure) throw failure;
+      const target = rows.find((row) => row.id === reservationId);
+      if (!target) {
+        throw new Error(`unknown reservation: no dfs_spend row for id ${reservationId}`);
+      }
+      if (target.actualUsd !== null) {
+        throw new Error(`reservation already settled: dfs_spend row ${reservationId} is not open`);
+      }
+      rows = rows.map((row) => (row.id === reservationId ? { ...row, actualUsd, rowCount } : row));
+    },
+    async todayUsd() {
+      if (failure) throw failure;
+      return committedUsd();
+    },
+  };
+}
