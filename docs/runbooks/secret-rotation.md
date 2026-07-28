@@ -15,7 +15,10 @@
 - After a Fly change, confirm with `flyctl secrets list --app seogrep-mcp` — the **Digest** column
   changes (never by printing the value).
 - After the full round, run the smoke: `curl -s https://mcp.seogrep.com/healthz` → `{"ok":true}`;
-  `/status` → `ok` + a numeric `pendingJobs`; a real MCP `tools/list` with the new smoke key → 16 tools;
+  `/status` → `ok` + a numeric `pendingJobs`; a real MCP `tools/list` with the new smoke key → the full
+  tool surface (**19** today — never hardcode a stale number when re-running this: the source of truth is
+  `ALL_TOOLS` in `apps/mcp/src/tools/index.ts`, mirrored one-file-per-tool under
+  `apps/web/content/docs/tools-reference/`);
   a crawl job completes (proves pg-boss reconnected); Netlify: fresh signup + `/login` +
   `connect_gsc` start.
 
@@ -77,5 +80,6 @@ Notes:
 
 ## Verification (goes to the ledger)
 - `flyctl secrets list --app seogrep-mcp`: digests changed for the rotated Fly secrets.
-- healthz `{"ok":true}` · `/status` ok · real-client `tools/list` = 16 tools · crawl job completes.
+- healthz `{"ok":true}` · `/status` ok · real-client `tools/list` = the full tool surface (19 today; count
+  `ALL_TOOLS`, do not trust this number after a tool ships) · crawl job completes.
 - Netlify: fresh signup + `/login` + `connect_gsc` all work.
