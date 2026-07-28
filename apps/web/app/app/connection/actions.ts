@@ -7,6 +7,7 @@ import {
   generateApiKey,
   mcpUrlFor,
   mcpUrlTemplate,
+  tokenKeyBytes,
 } from "@pseo/core";
 import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
@@ -139,18 +140,23 @@ export async function revokeKeyAction(keyId: string): Promise<void> {
 /**
  * Open the sealed refresh token and ask Google to forget the grant.
  *
- * A MISSING TOKEN_ENCRYPTION_KEY throws (signed lesson #5): that is a broken deploy, and
- * silently dropping the row while the Google-side grant lives on would turn a config fault
- * into a privacy fault. Everything AFTER the key is best-effort: an unopenable ciphertext
- * (rotated/corrupt key) is a per-row fault, and trapping the user with an undeletable
- * connection would be worse than leaving one unusable token un-revoked — so we log that we
- * could not open it (never the ciphertext or the key) and let the deletion proceed.
+ * A MISSING or MALFORMED TOKEN_ENCRYPTION_KEY throws (signed lesson #5): that is a broken
+ * deploy, and silently dropping the row while the Google-side grant lives on would turn a
+ * config fault into a privacy fault. Everything AFTER the key is best-effort: an unopenable
+ * ciphertext (rotated key, corrupt bytes) is a per-row fault, and trapping the user with an
+ * undeletable connection would be worse than leaving one unusable token un-revoked — so we
+ * log that we could not open it (never the ciphertext or the key) and let the deletion proceed.
  */
 async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
   if (!encryptionKey) {
     throw new Error("Search Console is not configured; disconnect is unavailable");
   }
+  // Validate the key SHAPE outside the try below. `decryptToken` would raise the very same
+  // check from INSIDE it, where a mis-provisioned key (wrong length / non-hex) would be
+  // misread as a per-row seal problem and delete the row without ever revoking. Same class
+  // of fault as a missing key, so it takes the same fail-closed exit.
+  tokenKeyBytes(encryptionKey);
   let refreshToken: string;
   try {
     refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey);

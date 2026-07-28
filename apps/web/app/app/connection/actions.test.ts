@@ -451,6 +451,20 @@ describe("disconnectGscAction", () => {
     expect(gscRows).toEqual([]);
   });
 
+  it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {
+    signedIn("user-1");
+    // Present but mis-provisioned (63 hex chars). This is a CONFIG fault, not the per-row
+    // "seal won't open" case below — it must not fall through to a revoke-less deletion.
+    vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY.slice(0, 63));
+    gscRows = [linkedRow("user-1")];
+
+    await expect(disconnectGscAction(PROJECT)).rejects.toThrow(/64 hex characters/i);
+
+    expect(revokeGoogleToken).not.toHaveBeenCalled();
+    expect(gscOps).toEqual(["select"]);
+    expect(gscRows).toHaveLength(1);
+  });
+
   it("fails CLOSED when TOKEN_ENCRYPTION_KEY is missing: nothing revoked, nothing deleted", async () => {
     signedIn("user-1");
     vi.stubEnv("TOKEN_ENCRYPTION_KEY", "");
