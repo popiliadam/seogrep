@@ -1178,14 +1178,16 @@ export function boundCrawlResult(result: CrawlResult): CrawlResult {
     bytes += size;
     pages.push(page);
   }
-  const droppedPages = result.pages.length - pages.length;
+  // Counted against `capped`, NOT result.pages: pages lost to the 100-page COUNT cap were not
+  // lost to size, and folding them into this number would overstate what the budget did.
+  const budgetDropped = capped.length - pages.length;
 
   const notes: SkippedUrl[] = [];
   if (dropped > 0) notes.push({ url: skipped[0]?.url ?? "", reason: skipOverflowReason(dropped) });
   // Only the BYTE budget is reported here: dropping past MAX_PAGES_PERSISTED is the crawler's
   // own contract (max_urls <= 100), so a note fires only when pages were actually lost to size.
-  if (pages.length < capped.length) {
-    notes.push({ url: capped[0]?.url ?? "", reason: resultBudgetDropReason(droppedPages) });
+  if (budgetDropped > 0) {
+    notes.push({ url: capped[0]?.url ?? "", reason: resultBudgetDropReason(budgetDropped) });
   }
   return { pages, skipped: [...skipped, ...notes], fetchedAt: result.fetchedAt };
 }

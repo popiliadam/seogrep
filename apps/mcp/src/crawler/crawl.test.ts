@@ -593,6 +593,21 @@ describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", 
     // Never silent: the drop is reported once, in the skip list the user already reads.
     expect(bounded.skipped.at(-1)?.reason).toMatch(/byte budget/i);
     expect(bounded.skipped.at(-1)?.reason).toMatch(/12000000/);
+    // The count is what the BUDGET dropped, not what the 100-page count cap dropped.
+    expect(bounded.skipped.at(-1)?.reason).toContain(`${20 - bounded.pages.length} crawled`);
+  });
+
+  it("attributes only the BYTE-budget drops to the byte budget, not the page-count cap", () => {
+    // 150 heavy pages: the count cap takes 50, then the budget takes most of the remaining
+    // 100. The note must count only the latter — a number that folded in the count cap's 50
+    // would tell the operator the crawl was ~50 pages bigger than it was.
+    const heavy = (i: number) => ({ ...page(i), title: "t".repeat(1_000_000) });
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 150 }, (_, i) => heavy(i)),
+      skipped: [],
+      fetchedAt: AT,
+    });
+    expect(bounded.skipped.at(-1)?.reason).toContain(`${100 - bounded.pages.length} crawled`);
   });
 });
 
