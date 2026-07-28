@@ -9,9 +9,9 @@ koşar (ders L2 sınıfı maske önlenir). PROD_URL unset'te tümü SKIP.
 
 ## predicate
 ```predicate
-[ -z "${PROD_URL:-}" ] && exit 3
+[ -z "${PROD_URL:-}" ] && exit 97
 [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$PROD_URL/api/paddle/webhook" -H 'content-type: application/json' -d '{}')" = "401" ]
-[ ! -f goals/evidence/purchase-flow-live.txt ] && exit 3
+[ ! -f goals/evidence/purchase-flow-live.txt ] && exit 97
 grep -q "txn_" goals/evidence/purchase-flow-live.txt
 ```
 

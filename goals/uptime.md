@@ -7,7 +7,7 @@ Evidence dosyası (goals/evidence/uptime-monitor.txt) insan monitör kurulumunun
 
 ## predicate
 ```predicate
-[ ! -f goals/evidence/uptime-monitor.txt ] && exit 3
+[ ! -f goals/evidence/uptime-monitor.txt ] && exit 97
 curl -sf --max-time 15 https://mcp.seogrep.com/healthz | grep -q '"ok":true'
 curl -sf --max-time 15 https://mcp.seogrep.com/status | grep -q '"ok":true'
 ```
