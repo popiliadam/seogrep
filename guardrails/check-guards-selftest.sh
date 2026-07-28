@@ -20,11 +20,17 @@ export LC_ALL=C
 FIXTURES="guardrails/fixtures"
 HEALTHY="$FIXTURES/healthy"
 
-# Deleting a fixture must not silently shrink the self-test: these sixteen are the
+# Deleting a fixture must not silently shrink the self-test: these nineteen are the
 # weakenings the gates are REQUIRED to catch, so their absence is a failure.
 #   * rows 6-11 are the residual parser leaks the M-12 referee found (R1/R2/R3/R4/R6);
 #   * rows 12-16 are the R7 family the follow-up referee found (quoted identifiers, E''
-#     escape strings, unqualified reject_mutation) plus the TRAP that guards the last fix.
+#     escape strings, unqualified reject_mutation) plus the TRAP that guards the last fix;
+#   * rows 17-19 are the NEGATIVE SPACE of that R7 quoted-identifier reader. Rows 12-16 all
+#     hand the reader a WELL-FORMED quoted identifier, so they only ever exercise the path
+#     where it is supposed to fire. They therefore could not - and did not - catch the
+#     reader firing where it must NOT: on DATA double quotes, which made an UPPERCASE
+#     weakening between them invisible to both gates. A new-code path needs fixtures on
+#     BOTH sides of its condition; these three are the other side.
 # Each one was a measured false GREEN before the parsers learned to read the statement
 # properly - except -unqual-only-definition, which was and must stay RED (see below).
 REQUIRED_FIXTURES="
@@ -44,6 +50,9 @@ weakened-rls-estring-escape
 weakened-append-quoted-ident
 weakened-append-unqual-function
 weakened-append-unqual-only-definition
+weakened-rls-dq-data-quotes
+weakened-append-dq-data-quotes
+weakened-rls-dq-data-quote-pairs-ident
 "
 
 # RED alone is not enough: a gate that reddens for the WRONG reason still hides the
@@ -68,8 +77,11 @@ expected_finding() {
     # so "not defined" is the RIGHT answer - and the naive c22 fix turns it GREEN.
     weakened-append-unqual-only-definition)
       printf '%s' 'public.reject_mutation() is not defined in the final state' ;;
+    weakened-append-dq-data-quotes)
+      printf '%s' 'public.credit_ledger - UPDATE is GRANTed to authenticated' ;;
     weakened-rls-alter-if-exists-only|weakened-rls-dashes-in-string|weakened-rls-unqualified|\
-    weakened-rls-quoted-ident|weakened-rls-estring-escape)
+    weakened-rls-quoted-ident|weakened-rls-estring-escape|weakened-rls-dq-data-quotes|\
+    weakened-rls-dq-data-quote-pairs-ident)
       printf '%s' 'public.credit_ledger - final state is DISABLE ROW LEVEL SECURITY' ;;
     *) printf '' ;;
   esac
@@ -159,8 +171,8 @@ done
 
 # A floor on the fixture count, so wholesale deletion cannot quietly shrink the harness.
 # Raise it whenever fixtures are added; never lower it to make a run pass.
-if [ "$found" -lt 22 ]; then
-  echo "selftest: FAIL only $found weakened fixtures found (at least 22 required)"
+if [ "$found" -lt 25 ]; then
+  echo "selftest: FAIL only $found weakened fixtures found (at least 25 required)"
   bad=$((bad + 1))
 fi
 

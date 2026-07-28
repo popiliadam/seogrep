@@ -1,0 +1,12 @@
+-- SYNTHETIC WEAKENING - never applied. Layered on top of fixtures/healthy by
+-- check-guards-selftest.sh. NEGATIVE SPACE of the R7 quoted-identifier reader, append-only
+-- side: the same two DATA double quotes, with CLAUDE.md NEVER #2 as the target instead of
+-- RLS. An UPDATE grant on the ledger is this gate's first-class finding, and the first R7
+-- reader let an UPPERCASE one through untouched (see the sibling rls fixture for why).
+--
+-- Measured on postgres 17.6 (isolated container): the whole file applies cleanly
+-- (psql exit 0, no error) and leaves
+-- has_table_privilege('authenticated','public.credit_ledger','UPDATE') = true - the ledger
+-- is writable by an ordinary logged-in role.
+-- check-append-only.sh MUST go RED on this.
+comment on table public.events is $q$he said " hello$q$; GRANT UPDATE ON public.credit_ledger TO authenticated; comment on table public.events is $q$ and " bye$q$;
