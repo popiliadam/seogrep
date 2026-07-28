@@ -93,11 +93,31 @@ export interface ParsedHtml {
   readonly h1s: string[];
   readonly canonical: string | null;
   readonly robotsMeta: string | null;
-  /** Absolute, deduped href targets (non-http(s) schemes dropped). */
+  /** Absolute, deduped href targets (non-http(s) schemes dropped), capped per page. */
   readonly links: string[];
   readonly wordCount: number;
+  /** True when the page carried more links than MAX_LINKS_PER_PAGE (the rest were dropped). */
+  readonly linksTruncated: boolean;
   /** Schema.org @type names from JSON-LD blocks ([] when none/malformed). */
   readonly jsonLdTypes: string[];
+}
+
+/**
+ * Per-RECORD ceilings (H-02). The 2 MB body ceiling bounds what we READ; these bound what
+ * one page may become. Without them a bounded body still explodes downstream: 2 MB of
+ * "<h1></h1>" is ~200k headings, one <title> may carry the whole 2 MB, and 100 such pages
+ * are persisted verbatim into jobs.result. Every number here is far above any real page —
+ * a document with >1000 links or >100 h1s is already pathological, and 2000 characters is
+ * ~10x the longest useful title/description and above the practical URL length.
+ */
+const MAX_LINKS_PER_PAGE = 1_000;
+const MAX_H1S_PER_PAGE = 100;
+const MAX_JSONLD_TYPES = 100;
+const MAX_FIELD_CHARS = 2_000;
+
+/** Clamp a stored text field, marking the cut so a truncated value never reads as complete. */
+function clampField(value: string): string {
+  return value.length <= MAX_FIELD_CHARS ? value : `${value.slice(0, MAX_FIELD_CHARS)}…`;
 }
 
 /** Resolve `href` against `baseUrl`, keeping only http(s); null if invalid. */
@@ -115,12 +135,13 @@ function textOf(html: string): string {
   return decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
-/** First capture group of `re` in `html`, entity-decoded; null if absent or blank. */
+/** First capture group of `re` in `html`, entity-decoded and clamped; null if absent/blank. */
 function firstGroup(re: RegExp, html: string): string | null {
   const match = re.exec(html);
   const group = match?.[1];
   if (group === undefined) return null;
-  return decodeEntities(group).trim() || null;
+  const value = decodeEntities(group).trim();
+  return value ? clampField(value) : null;
 }
 
 /** Parse a tag's attribute string into a lower-cased name -> value map (first wins). */
@@ -153,8 +174,8 @@ export function parseJsonLdTypes(html: string): string[] {
   const types: string[] = [];
   const seen = new Set<string>();
   const add = (value: unknown): void => {
-    if (typeof value !== "string") return;
-    const name = value.trim();
+    if (typeof value !== "string" || types.length >= MAX_JSONLD_TYPES) return;
+    const name = clampField(value.trim());
     if (name && !seen.has(name)) {
       seen.add(name);
       types.push(name);
@@ -210,34 +231,46 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   for (const m of content.matchAll(/<meta\b([^>]*)>/gi)) {
     const a = parseAttrs(m[1] ?? "");
     const name = (a.name ?? a.property ?? "").toLowerCase();
-    if (name === "description" && metaDescription === null) metaDescription = a.content?.trim() || null;
-    if (name === "robots" && robotsMeta === null) robotsMeta = a.content?.trim() || null;
+    const value = a.content?.trim();
+    if (name === "description" && metaDescription === null) metaDescription = value ? clampField(value) : null;
+    if (name === "robots" && robotsMeta === null) robotsMeta = value ? clampField(value) : null;
   }
 
   let canonical: string | null = null;
   for (const m of content.matchAll(/<link\b([^>]*)>/gi)) {
     const a = parseAttrs(m[1] ?? "");
     if ((a.rel ?? "").toLowerCase().split(/\s+/).includes("canonical") && a.href) {
-      canonical = resolveUrl(a.href, baseUrl);
+      // An over-long URL is DROPPED, never clamped: a truncated URL is not a shorter
+      // answer, it is a wrong one.
+      const resolved = resolveUrl(a.href, baseUrl);
+      canonical = resolved !== null && resolved.length <= MAX_FIELD_CHARS ? resolved : null;
       break;
     }
   }
 
   const h1s: string[] = [];
   for (const m of content.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)) {
+    if (h1s.length >= MAX_H1S_PER_PAGE) break;
     const text = textOf(m[1] ?? "");
-    if (text) h1s.push(text);
+    if (text) h1s.push(clampField(text));
   }
 
   const links: string[] = [];
   const seen = new Set<string>();
+  let linksTruncated = false;
   for (const m of content.matchAll(/<a\b([^>]*)>/gi)) {
+    if (links.length >= MAX_LINKS_PER_PAGE) {
+      // BREAK, do not filter afterwards: matchAll is lazy, so stopping here means the rest
+      // of a link-flooded document is never scanned or turned into strings.
+      linksTruncated = true;
+      break;
+    }
     const href = parseAttrs(m[1] ?? "").href;
     const abs = href ? resolveUrl(href, baseUrl) : null;
     // Normalize link targets (drop fragment / trailing slash) so same-page anchors
     // collapse and the field matches the crawler's dedupe key.
     const norm = abs ? normalizeUrl(abs) : null;
-    if (norm && !seen.has(norm)) {
+    if (norm && norm.length <= MAX_FIELD_CHARS && !seen.has(norm)) {
       seen.add(norm);
       links.push(norm);
     }
@@ -250,7 +283,17 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   // not the script-stripped `content` above.
   const jsonLdTypes = parseJsonLdTypes(html);
 
-  return { title, metaDescription, h1s, canonical, robotsMeta, links, wordCount, jsonLdTypes };
+  return {
+    title,
+    metaDescription,
+    h1s,
+    canonical,
+    robotsMeta,
+    links,
+    wordCount,
+    linksTruncated,
+    jsonLdTypes,
+  };
 }
 
 /**
@@ -344,6 +387,30 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 const MAX_HTML_BYTES = 2_000_000;
 const MAX_SITEMAP_BYTES = 8_000_000;
 const MAX_ROBOTS_BYTES = 512 * 1024;
+
+/**
+ * Discovery ceilings (H-02). The BFS queue exists ONLY to choose the next <= maxUrls pages,
+ * so 5000 candidates is already 50x more than the 100-page contract can ever consume — past
+ * that it is ballast that grows with every link-flooded page. skipped[] needs its own bound
+ * because the queue is DRAINED into it when a limit is hit: an unbounded queue meant an
+ * unbounded skip list AND an unbounded jobs.result row. 500 entries is 5x the page cap, and
+ * whatever exceeds it is reported as one honest summary line rather than dropped in silence.
+ */
+const MAX_QUEUE_URLS = 5_000;
+const MAX_SKIPPED = 500;
+/**
+ * Room RESERVED inside MAX_SKIPPED for the ceiling notes the crawl appends at the end (skip
+ * overflow, link flood, queue full). Reserving it here is what keeps those notes from being
+ * the entries a later bound trims away — the whole point of them is that they survive.
+ */
+const MAX_CEILING_NOTES = 3;
+const MAX_SKIPPED_LISTED = MAX_SKIPPED - MAX_CEILING_NOTES;
+/** Hard ceiling on the pages a persisted result may carry (== the tool's own 100-URL cap). */
+const MAX_PAGES_PERSISTED = 100;
+
+/** The one spelling of the skip-list overflow line, shared by the crawl and the bound. */
+const skipOverflowReason = (dropped: number): string =>
+  `skip list truncated at ${MAX_SKIPPED} entries; ${dropped} more URL(s) were skipped but not listed`;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -687,6 +754,9 @@ async function loadSitemapSeeds(
   const seeds: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string): void => {
+    // Stop ACCUMULATING at the limit, rather than collecting everything and slicing at the
+    // end: the slice bounded the answer, not the memory it took to produce it.
+    if (seeds.length >= limit) return;
     let u: URL;
     try {
       u = new URL(raw);
@@ -834,8 +904,28 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const pages: PageRecord[] = [];
   const skipped: SkippedUrl[] = [];
   let fetches = 0;
+  // H-02 counters: what the ceilings dropped, reported ONCE at the end instead of one
+  // entry per casualty (which is how skipped[] became the memory problem in the first place).
+  let skippedDropped = 0;
+  let linkFloodedPages = 0;
+  let queueFull = false;
+
+  /** Record a skip, bounded: past the listing ceiling only the DROP COUNT is kept. */
+  const addSkip = (url: string, reason: string): void => {
+    if (skipped.length >= MAX_SKIPPED_LISTED) {
+      skippedDropped++;
+      return;
+    }
+    skipped.push({ url, reason });
+  };
 
   const enqueue = (link: string): void => {
+    // The queue only exists to choose the next <= maxUrls pages; beyond MAX_QUEUE_URLS
+    // candidates it is pure ballast that can never be fetched.
+    if (queue.length >= MAX_QUEUE_URLS) {
+      queueFull = true;
+      return;
+    }
     let u: URL;
     try {
       u = new URL(link);
@@ -854,11 +944,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
   while (queue.length > 0) {
     if (pages.length >= maxUrls) {
-      for (const url of queue.splice(0)) skipped.push({ url, reason: "max URL limit reached" });
+      for (const url of queue.splice(0)) addSkip(url, "max URL limit reached");
       break;
     }
     if (Date.now() - started >= timeBudgetMs) {
-      for (const url of queue.splice(0)) skipped.push({ url, reason: "time budget exhausted" });
+      for (const url of queue.splice(0)) addSkip(url, "time budget exhausted");
       break;
     }
 
@@ -868,7 +958,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
     const target = new URL(url);
     if (!robots.isAllowed(target.pathname + target.search)) {
-      skipped.push({ url, reason: "blocked by robots.txt" });
+      addSkip(url, "blocked by robots.txt");
       continue;
     }
 
@@ -877,28 +967,25 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
     const outcome = await fetchPage(url, originUrl, pageTimeoutMs, lookup);
     if (outcome.kind === "timeout") {
-      skipped.push({ url, reason: "timeout" });
+      addSkip(url, "timeout");
       continue;
     }
     if (outcome.kind === "too-many-redirects") {
-      skipped.push({ url, reason: "too many redirects" });
+      addSkip(url, "too many redirects");
       continue;
     }
     if (outcome.kind === "off-origin-redirect") {
-      skipped.push({ url, reason: `off-origin redirect to ${outcome.target}` });
+      addSkip(url, `off-origin redirect to ${outcome.target}`);
       continue;
     }
     if (outcome.kind === "too-large") {
       // Honest, actionable, and never silent: the tenant is told the page was too big and
       // by which bound, rather than seeing it vanish or come back half-parsed.
-      skipped.push({
-        url,
-        reason: `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`,
-      });
+      addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
       continue;
     }
     if (outcome.kind === "error") {
-      skipped.push({ url, reason: `fetch failed: ${outcome.message}` });
+      addSkip(url, `fetch failed: ${outcome.message}`);
       continue;
     }
 
@@ -910,18 +997,18 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
         // without it, a sitemap URL that redirects to a crawled page reads as a coverage
         // gap. Benign — the reason string marks it as a redirect, not a failure.
-        skipped.push({ url, reason: "redirects to already-crawled URL" });
+        addSkip(url, "redirects to already-crawled URL");
         continue;
       }
       visited.add(finalUrl);
       const finalTarget = new URL(finalUrl);
       if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
-        skipped.push({ url: finalUrl, reason: "blocked by robots.txt" });
+        addSkip(finalUrl, "blocked by robots.txt");
         continue;
       }
     }
     if (!isHtml(outcome.contentType)) {
-      skipped.push({ url: finalUrl, reason: `non-HTML (${outcome.contentType || "unknown"})` });
+      addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
       continue;
     }
 
@@ -932,10 +1019,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     try {
       parsed = parseHtml(outcome.body, finalUrl);
     } catch (error) {
-      skipped.push({
-        url: finalUrl,
-        reason: `parse failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
     pages.push({
@@ -951,10 +1035,52 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       jsonLdTypes: parsed.jsonLdTypes,
       issues: computeIssues(parsed),
     });
+    if (parsed.linksTruncated) linkFloodedPages++;
     parsed.links.forEach(enqueue);
   }
 
-  return { pages, skipped, fetchedAt };
+  // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
+  // they can never be the entries that get dropped. Nothing is trimmed silently.
+  const notes: SkippedUrl[] = [];
+  if (skippedDropped > 0) notes.push({ url: rootSeed, reason: skipOverflowReason(skippedDropped) });
+  if (linkFloodedPages > 0) {
+    notes.push({
+      url: rootSeed,
+      reason:
+        `${linkFloodedPages} page(s) carried more than ${MAX_LINKS_PER_PAGE} links; ` +
+        `only the first ${MAX_LINKS_PER_PAGE} of each were recorded and queued`,
+    });
+  }
+  if (queueFull) {
+    notes.push({
+      url: rootSeed,
+      reason:
+        `link queue limit reached (${MAX_QUEUE_URLS} URLs); further discovered links were ` +
+        "not queued — narrow the crawl with include_paths to cover them",
+    });
+  }
+  return { pages, skipped: [...skipped, ...notes], fetchedAt };
+}
+
+/**
+ * Bound a CrawlResult to what may be PERSISTED into jobs.result (H-02). crawlSite already
+ * holds itself to these ceilings, so on the real crawler this is the identity — it exists
+ * because the queue handler must not have to TRUST its (injectable) crawl function with the
+ * size of a DB row. Pure: returns a new result, mutates nothing.
+ */
+export function boundCrawlResult(result: CrawlResult): CrawlResult {
+  const skipped = result.skipped
+    .slice(0, MAX_SKIPPED)
+    .map((s) => (s.reason.length <= MAX_FIELD_CHARS ? s : { ...s, reason: clampField(s.reason) }));
+  const dropped = result.skipped.length - skipped.length;
+  return {
+    pages: result.pages.slice(0, MAX_PAGES_PERSISTED),
+    skipped:
+      dropped > 0
+        ? [...skipped, { url: skipped[0]?.url ?? "", reason: skipOverflowReason(dropped) }]
+        : skipped,
+    fetchedAt: result.fetchedAt,
+  };
 }
 
 // --- Free pre-discovery (site-size estimate) ------------------------------------

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  boundCrawlResult,
   computeIssues,
   crawlSite,
   estimateSiteSize,
@@ -477,6 +478,129 @@ describe("crawlSite — hostile response sizes (H-02)", () => {
       const result = await crawlSite(site.origin, { maxUrls: 2, crawlDelayCapMs: 0 });
       expect(result.pages.length).toBeGreaterThan(0);
       expect(site.bytesWritten.get("/sitemap.xml") ?? 0).toBeLessThan(11_000_000);
+    } finally {
+      await site.close();
+    }
+  });
+});
+
+// --- H-02: per-record ceilings (what ONE page may contribute to the result) -------
+// A 2 MB body ceiling does not bound the ARRAYS and FIELDS a page is turned into: 2 MB of
+// "<h1></h1>" is ~200k headings, and a single <title> may carry the whole 2 MB. Persisted
+// 100 pages deep into jobs.result, that is the same OOM by another route.
+
+describe("parseHtml — per-record ceilings (H-02)", () => {
+  it("caps the links materialized from one page", () => {
+    const anchors = Array.from({ length: 20_000 }, (_, i) => `<a href="/p/${i}">l</a>`).join("");
+    const parsed = parseHtml(`<html><body>${anchors}</body></html>`, BASE);
+    expect(parsed.links).toHaveLength(1_000);
+    expect(parsed.linksTruncated).toBe(true);
+  });
+
+  it("does not flag an ordinary page as truncated", () => {
+    const parsed = parseHtml('<html><body><a href="/a">a</a></body></html>', BASE);
+    expect(parsed.links).toEqual(["https://site.test/a"]);
+    expect(parsed.linksTruncated).toBe(false);
+  });
+
+  it("caps the h1 list", () => {
+    expect(parseHtml(`<body>${"<h1>h</h1>".repeat(5_000)}</body>`, BASE).h1s).toHaveLength(100);
+  });
+
+  it("clamps a page-sized <title> / meta description instead of storing it whole", () => {
+    const big = "t".repeat(500_000);
+    const parsed = parseHtml(
+      `<html><head><title>${big}</title><meta name="description" content="${big}"></head></html>`,
+      BASE,
+    );
+    expect(parsed.title?.length).toBeLessThan(2_100);
+    expect(parsed.metaDescription?.length).toBeLessThan(2_100);
+  });
+
+  it("drops an absurdly long href rather than storing a truncated (wrong) URL", () => {
+    const href = `/${"x".repeat(5_000)}`;
+    const parsed = parseHtml(
+      `<html><body><a href="${href}">x</a><a href="/ok">y</a></body></html>`,
+      BASE,
+    );
+    expect(parsed.links).toEqual(["https://site.test/ok"]);
+  });
+
+  it("caps the JSON-LD type list", () => {
+    const nodes = Array.from({ length: 5_000 }, (_, i) => `{"@type":"T${i}"}`).join(",");
+    const html = `<script type="application/ld+json">[${nodes}]</script>`;
+    expect(parseJsonLdTypes(html)).toHaveLength(100);
+  });
+});
+
+describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", () => {
+  const page = (i: number) => ({
+    url: `https://x.test/${i}`,
+    status: 200,
+    title: "t",
+    metaDescription: "d",
+    h1s: ["h"],
+    canonical: null,
+    robotsMeta: null,
+    links: [],
+    wordCount: 1,
+    jsonLdTypes: [],
+    issues: [],
+  });
+  const AT = "2026-07-28T00:00:00.000Z";
+
+  it("caps pages and replaces the skipped tail with ONE summary line", () => {
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 250 }, (_, i) => page(i)),
+      skipped: Array.from({ length: 900 }, (_, i) => ({ url: `https://x.test/s${i}`, reason: "timeout" })),
+      fetchedAt: AT,
+    });
+    expect(bounded.pages).toHaveLength(100);
+    expect(bounded.skipped).toHaveLength(501);
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/400 more/i);
+  });
+
+  it("clamps an absurdly long skip reason", () => {
+    const bounded = boundCrawlResult({
+      pages: [],
+      skipped: [{ url: "https://x.test/a", reason: "x".repeat(50_000) }],
+      fetchedAt: AT,
+    });
+    expect(bounded.skipped[0]?.reason.length).toBeLessThan(2_100);
+  });
+
+  it("leaves an ordinary result untouched", () => {
+    const result = { pages: [page(1)], skipped: [{ url: "https://x.test/s", reason: "timeout" }], fetchedAt: AT };
+    expect(boundCrawlResult(result)).toEqual(result);
+  });
+});
+
+describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () => {
+  it("bounds skipped[] and states ONCE how many were dropped", async () => {
+    // One page, 2000 links: the queue drain would otherwise copy every one of them into
+    // skipped[]. The per-page link ceiling trims it to 1000, and skipped[] caps that.
+    const site = await startHostileSite({ linkCount: 2_000 });
+    try {
+      const result = await crawlSite(site.origin + "/links", { maxUrls: 1, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.links).toHaveLength(1_000);
+      expect(result.skipped.length).toBeLessThanOrEqual(500);
+      expect(result.skipped.filter((s) => /more URL/i.test(s.reason))).toHaveLength(1);
+      // The truncated link list is reported, not swallowed.
+      expect(result.skipped.filter((s) => /more than 1000 links/i.test(s.reason))).toHaveLength(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("bounds the BFS queue and says so exactly once", async () => {
+    // Every page links to 2000 more, so BFS discovery grows by ~1000 per page. Eight pages
+    // in, an unbounded queue would be holding ~8000 URLs it can never fetch.
+    const site = await startHostileSite({ linkCount: 2_000 });
+    try {
+      const result = await crawlSite(site.origin + "/links", { maxUrls: 8, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(8);
+      expect(result.skipped.filter((s) => /queue limit/i.test(s.reason))).toHaveLength(1);
     } finally {
       await site.close();
     }
