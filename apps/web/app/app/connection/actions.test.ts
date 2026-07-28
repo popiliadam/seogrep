@@ -384,12 +384,15 @@ describe("disconnectGscAction", () => {
   const PROJECT = "33333333-3333-4333-8333-333333333333";
   const REFRESH_TOKEN = "1//the-refresh-token";
 
-  /** Seal a token exactly the way the OAuth callback stored it (real crypto). */
-  function sealed(token: string, keyHex = ENC_KEY): string {
-    return toByteaHex(encryptToken(token, keyHex));
+  /**
+   * Seal a token exactly the way the OAuth callback stored it (real crypto): v3 binds the
+   * blob to the row's own (user, project), so the owner is part of sealing, not a detail.
+   */
+  function sealed(token: string, ownerUserId: string, keyHex = ENC_KEY): string {
+    return toByteaHex(encryptToken(token, keyHex, { userId: ownerUserId, projectId: PROJECT }));
   }
 
-  function linkedRow(userId: string, token: string | null = sealed(REFRESH_TOKEN)): GscRow {
+  function linkedRow(userId: string, token: string | null = sealed(REFRESH_TOKEN, userId)): GscRow {
     return { id: "conn-1", user_id: userId, project_id: PROJECT, encrypted_refresh_token: token };
   }
 
@@ -525,7 +528,7 @@ describe("disconnectGscAction", () => {
   // must be visible to an operator and must not be reported to the user as a revocation.
   it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
     signedIn("user-1");
-    const sealedWithRetiredKey = sealed(REFRESH_TOKEN, OTHER_KEY);
+    const sealedWithRetiredKey = sealed(REFRESH_TOKEN, "user-1", OTHER_KEY);
     gscRows = [linkedRow("user-1", sealedWithRetiredKey)];
     const error = captureConsole("error");
 

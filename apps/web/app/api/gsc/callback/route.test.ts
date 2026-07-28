@@ -128,7 +128,10 @@ describe("GET /api/gsc/callback", () => {
     expect(write.projectId).toBe(PROJECT);
     expect(write.gscProperty).toBe("sc-domain:example.com");
     expect(write.encryptedTokenHex).not.toContain("1//the-refresh-token");
-    expect(decryptToken(fromByteaHex(write.encryptedTokenHex), ENC_KEY)).toBe("1//the-refresh-token");
+    expect(decryptToken(fromByteaHex(write.encryptedTokenHex), ENC_KEY, {
+      userId: USER,
+      projectId: PROJECT,
+    })).toBe("1//the-refresh-token");
   });
 
   /**

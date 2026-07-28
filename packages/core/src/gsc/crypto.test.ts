@@ -1,19 +1,38 @@
 import { createCipheriv } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { decryptToken, encryptToken, fromByteaHex, toByteaHex, tokenKeyBytes } from "./crypto.js";
+import {
+  decryptToken,
+  encryptToken,
+  fromByteaHex,
+  toByteaHex,
+  tokenKeyBytes,
+  type TokenOwner,
+} from "./crypto.js";
 
 /**
  * Crypto is the armor around the most sensitive value we store (a Google refresh
  * token), so these specs pin the security-load-bearing behavior: round-trip fidelity,
- * non-determinism, tamper/wrong-key rejection, key-format validation, the exact v2
- * on-the-wire layout, and — the one that cannot be re-derived once broken — that blobs
- * written by the PRE-v2 implementation still open. All local — zero network, zero
- * secrets that resemble real keys.
+ * non-determinism, tamper/wrong-key rejection, key-format validation, the exact v3
+ * on-the-wire layout, that a seal only opens for the ROW IT WAS WRITTEN FOR, and — the
+ * ones that cannot be re-derived once broken — that blobs written by the v2 and PRE-v2
+ * implementations still open. All local — zero network, zero secrets that resemble
+ * real keys.
  */
 
 // Two DISTINCT 64-hex (32-byte) keys. Unmistakably test values, never real.
 const KEY_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const KEY_B = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+/**
+ * The `gsc_connections` row these fixtures belong to. v3 binds a seal to exactly this
+ * pair, so it is an input to every seal AND every open in this file. The pre-v3 fixtures
+ * were sealed with no binding at all and open under ANY owner — that is precisely the
+ * backward compatibility being pinned, and precisely the hole v3 closes going forward.
+ */
+const OWNER: TokenOwner = {
+  userId: "aaaaaaaa-0000-4000-8000-0000000000a1",
+  projectId: "bbbbbbbb-0000-4000-8000-0000000000b1",
+};
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -61,7 +80,7 @@ function sealLegacy(plain: string, keyHex: string, iv: Buffer): Buffer {
 const OPAQUE_ERROR = /^failed to decrypt token: wrong key or corrupt ciphertext$/;
 
 /** Opening the frozen legacy blob — the read a broken keyring must never quietly alter. */
-const openV1Fixture = (): string => decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A);
+const openV1Fixture = (): string => decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A, OWNER);
 
 /** Point the keyring at an explicit ring, or at nothing (the zero-env-change path). */
 function setKeyring(ring: string | undefined, activeKeyId?: string): void {
@@ -83,20 +102,20 @@ describe("encryptToken / decryptToken round-trip", () => {
     ["unicode + emoji", "gençlik 🌱 プロパティ"],
     ["a long value", "x".repeat(4096)],
   ])("seals and opens %s", (_label, plain) => {
-    expect(decryptToken(encryptToken(plain, KEY_A), KEY_A)).toBe(plain);
+    expect(decryptToken(encryptToken(plain, KEY_A, OWNER), KEY_A, OWNER)).toBe(plain);
   });
 
   it("produces different ciphertext each call (fresh random IV), both decrypting back", () => {
-    const a = encryptToken("same-token", KEY_A);
-    const b = encryptToken("same-token", KEY_A);
+    const a = encryptToken("same-token", KEY_A, OWNER);
+    const b = encryptToken("same-token", KEY_A, OWNER);
     expect(a.equals(b)).toBe(false); // semantic security: no deterministic output
-    expect(decryptToken(a, KEY_A)).toBe("same-token");
-    expect(decryptToken(b, KEY_A)).toBe("same-token");
+    expect(decryptToken(a, KEY_A, OWNER)).toBe("same-token");
+    expect(decryptToken(b, KEY_A, OWNER)).toBe("same-token");
   });
 
   it("lays out the sealed buffer as header(6) || iv(12) || tag(16) || ciphertext", () => {
     const plain = "layout-probe";
-    const sealed = encryptToken(plain, KEY_A);
+    const sealed = encryptToken(plain, KEY_A, OWNER);
     // Empty-plaintext ciphertext is 0 bytes, so the plaintext's UTF-8 length is the
     // ciphertext length under a stream cipher like GCM (no padding).
     expect(sealed.length).toBe(
@@ -106,29 +125,41 @@ describe("encryptToken / decryptToken round-trip", () => {
 
   it("never leaves the plaintext recoverable from the raw ciphertext bytes", () => {
     const plain = "SUPER-SECRET-REFRESH";
-    const sealed = encryptToken(plain, KEY_A);
+    const sealed = encryptToken(plain, KEY_A, OWNER);
     expect(sealed.toString("utf8")).not.toContain(plain);
     expect(sealed.toString("latin1")).not.toContain(plain);
   });
 });
 
-describe("v2 wire format (self-describing header)", () => {
-  it("stamps MAGIC || version 2 || active key id in the first 6 bytes", () => {
-    const sealed = encryptToken("header-probe", KEY_A);
+describe("v3 wire format (self-describing header, owner-bound body)", () => {
+  it("stamps MAGIC || version 3 || active key id in the first 6 bytes", () => {
+    const sealed = encryptToken("header-probe", KEY_A, OWNER);
     // Without an explicit keyring the active id is 1 (the derived legacy slot).
-    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0201`);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0301`);
+  });
+
+  it("costs NOTHING over v2 on the wire — the binding lives in the tag, not the bytes", () => {
+    const sealed = encryptToken(V2_FIXTURE_PLAIN, KEY_A, OWNER);
+    expect(sealed.length).toBe(fromByteaHex(V2_FIXTURE_HEX).length);
+  });
+
+  it("never stores the owner ids it is bound to (they come from the row, not the blob)", () => {
+    const sealed = encryptToken("owner-leak-probe", KEY_A, OWNER);
+    expect(sealed.toString("latin1")).not.toContain(OWNER.userId);
+    expect(sealed.toString("latin1")).not.toContain(OWNER.projectId);
+    expect(sealed.toString("hex")).not.toContain(Buffer.from(OWNER.userId).toString("hex"));
   });
 
   it("still fits the unchanged bytea column: same \\x hex text form, +6 bytes", () => {
-    const sealed = encryptToken(V1_FIXTURE_PLAIN, KEY_A);
+    const sealed = encryptToken(V1_FIXTURE_PLAIN, KEY_A, OWNER);
     expect(sealed.length).toBe(fromByteaHex(V1_FIXTURE_HEX).length + HEADER_BYTES);
-    expect(decryptToken(fromByteaHex(toByteaHex(sealed)), KEY_A)).toBe(V1_FIXTURE_PLAIN);
+    expect(decryptToken(fromByteaHex(toByteaHex(sealed)), KEY_A, OWNER)).toBe(V1_FIXTURE_PLAIN);
   });
 });
 
-describe("dual read: blobs sealed before v2 still open", () => {
+describe("backward read: blobs sealed before v3 still open (no reconnect forced)", () => {
   it("opens the PINNED v1 fixture written by the pre-v2 implementation", () => {
-    expect(decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A)).toBe(V1_FIXTURE_PLAIN);
+    expect(decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A, OWNER)).toBe(V1_FIXTURE_PLAIN);
   });
 
   it("proves that fixture is genuinely legacy (no v2 magic, v1 length math)", () => {
@@ -140,7 +171,7 @@ describe("dual read: blobs sealed before v2 still open", () => {
   });
 
   it("opens the PINNED v2 fixture — the shape every live connection is stored in", () => {
-    expect(decryptToken(fromByteaHex(V2_FIXTURE_HEX), KEY_A)).toBe(V2_FIXTURE_PLAIN);
+    expect(decryptToken(fromByteaHex(V2_FIXTURE_HEX), KEY_A, OWNER)).toBe(V2_FIXTURE_PLAIN);
   });
 
   it("proves that fixture is genuinely v2 (magic + version byte 2, v2 length math)", () => {
@@ -162,32 +193,32 @@ describe("dual read: blobs sealed before v2 still open", () => {
     ]);
     expect(iv).toHaveLength(IV_BYTES);
     const forged = sealLegacy("collision-probe", KEY_A, iv);
-    expect(decryptToken(forged, KEY_A)).toBe("collision-probe");
+    expect(decryptToken(forged, KEY_A, OWNER)).toBe("collision-probe");
   });
 });
 
 describe("decryptToken rejects the unopenable", () => {
   it("throws on a wrong key (GCM tag mismatch), without leaking the low-level error", () => {
-    const sealed = encryptToken("secret", KEY_A);
-    expect(() => decryptToken(sealed, KEY_B)).toThrowError(/wrong key or corrupt/i);
+    const sealed = encryptToken("secret", KEY_A, OWNER);
+    expect(() => decryptToken(sealed, KEY_B, OWNER)).toThrowError(/wrong key or corrupt/i);
   });
 
   it("throws when a single ciphertext byte is flipped (tamper detection)", () => {
-    const sealed = encryptToken("secret", KEY_A);
+    const sealed = encryptToken("secret", KEY_A, OWNER);
     const tampered = Buffer.from(sealed);
     tampered[tampered.length - 1] ^= 0x01;
-    expect(() => decryptToken(tampered, KEY_A)).toThrowError(/wrong key or corrupt/i);
+    expect(() => decryptToken(tampered, KEY_A, OWNER)).toThrowError(/wrong key or corrupt/i);
   });
 
   it("throws when the auth tag is altered", () => {
-    const sealed = encryptToken("secret", KEY_A);
+    const sealed = encryptToken("secret", KEY_A, OWNER);
     const tampered = Buffer.from(sealed);
     tampered[IV_BYTES] ^= 0xff; // first tag byte
-    expect(() => decryptToken(tampered, KEY_A)).toThrowError(/wrong key or corrupt/i);
+    expect(() => decryptToken(tampered, KEY_A, OWNER)).toThrowError(/wrong key or corrupt/i);
   });
 
   it("throws a clear error on a truncated buffer (shorter than iv+tag)", () => {
-    expect(() => decryptToken(Buffer.alloc(10), KEY_A)).toThrowError(/corrupt/i);
+    expect(() => decryptToken(Buffer.alloc(10), KEY_A, OWNER)).toThrowError(/corrupt/i);
   });
 });
 
@@ -199,32 +230,32 @@ describe("key-format validation", () => {
     ["non-hex characters", "z".repeat(64)],
     ["empty", ""],
   ])("encryptToken throws naming TOKEN_ENCRYPTION_KEY for %s", (_label, badKey) => {
-    expect(() => encryptToken("x", badKey)).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
+    expect(() => encryptToken("x", badKey, OWNER)).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
   });
 
   it("decryptToken also validates the key format up front", () => {
-    const sealed = encryptToken("x", KEY_A);
-    expect(() => decryptToken(sealed, "nope")).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
+    const sealed = encryptToken("x", KEY_A, OWNER);
+    expect(() => decryptToken(sealed, "nope", OWNER)).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
   });
 
   it("accepts an upper-case hex key (case-insensitive)", () => {
     const upper = KEY_A.toUpperCase();
-    expect(decryptToken(encryptToken("ok", upper), upper)).toBe("ok");
+    expect(decryptToken(encryptToken("ok", upper, OWNER), upper, OWNER)).toBe("ok");
   });
 });
 
 describe("bytea hex serialization (DB boundary)", () => {
   it("round-trips a sealed buffer through the \\x hex text form", () => {
-    const sealed = encryptToken("db-round-trip", KEY_A);
+    const sealed = encryptToken("db-round-trip", KEY_A, OWNER);
     const hex = toByteaHex(sealed);
     expect(hex.startsWith("\\x")).toBe(true);
     expect(fromByteaHex(hex).equals(sealed)).toBe(true);
     // End to end: encrypt -> hex -> parse -> decrypt.
-    expect(decryptToken(fromByteaHex(hex), KEY_A)).toBe("db-round-trip");
+    expect(decryptToken(fromByteaHex(hex), KEY_A, OWNER)).toBe("db-round-trip");
   });
 
   it("tolerates a bare hex string with no \\x prefix", () => {
-    const sealed = encryptToken("no-prefix", KEY_A);
+    const sealed = encryptToken("no-prefix", KEY_A, OWNER);
     const bare = sealed.toString("hex");
     expect(fromByteaHex(bare).equals(sealed)).toBe(true);
   });
@@ -249,21 +280,21 @@ describe("tokenKeyBytes (the shared 64-hex key-format check, reused by the state
 
 describe("keyring: rotation without touching a single stored row", () => {
   it("ZERO-ENV-CHANGE path: with no keyring vars set, the lone key is id 1 and active", () => {
-    const sealed = encryptToken("derived-path", KEY_A);
-    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0201`);
-    expect(decryptToken(sealed, KEY_A)).toBe("derived-path");
+    const sealed = encryptToken("derived-path", KEY_A, OWNER);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0301`);
+    expect(decryptToken(sealed, KEY_A, OWNER)).toBe("derived-path");
   });
 
   it("an empty/whitespace TOKEN_ENCRYPTION_KEYS is 'unset', not a broken ring", () => {
     setKeyring("   ");
-    expect(decryptToken(encryptToken("still-works", KEY_A), KEY_A)).toBe("still-works");
+    expect(decryptToken(encryptToken("still-works", KEY_A, OWNER), KEY_A, OWNER)).toBe("still-works");
   });
 
   it("seals under the ACTIVE key id and stamps it in the header", () => {
     setKeyring(`1:${KEY_A},2:${KEY_B}`, "2");
-    const sealed = encryptToken("rotated", KEY_A);
-    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0202`);
-    expect(decryptToken(sealed, KEY_A)).toBe("rotated");
+    const sealed = encryptToken("rotated", KEY_A, OWNER);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0302`);
+    expect(decryptToken(sealed, KEY_A, OWNER)).toBe("rotated");
   });
 
   it("reads BOTH keys mid-rotation: v1 rows under the old key still open", () => {
@@ -273,15 +304,15 @@ describe("keyring: rotation without touching a single stored row", () => {
 
   it("a single-key ring needs no ACTIVE id — that key is the active one", () => {
     setKeyring(`7:${KEY_B}`);
-    const sealed = encryptToken("solo", KEY_A);
-    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0207`);
-    expect(decryptToken(sealed, KEY_A)).toBe("solo");
+    const sealed = encryptToken("solo", KEY_A, OWNER);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0307`);
+    expect(decryptToken(sealed, KEY_A, OWNER)).toBe("solo");
   });
 
   it("RETIRES a v2 key: a blob sealed under id 1 stops opening once 1 leaves the ring", () => {
-    const sealed = encryptToken("compromised-key-era", KEY_A);
+    const sealed = encryptToken("compromised-key-era", KEY_A, OWNER);
     setKeyring(`2:${KEY_B}`);
-    expect(() => decryptToken(sealed, KEY_A)).toThrowError(OPAQUE_ERROR);
+    expect(() => decryptToken(sealed, KEY_A, OWNER)).toThrowError(OPAQUE_ERROR);
   });
 
   it("RETIRES the legacy key: the pinned v1 fixture stops opening once it leaves the ring", () => {
@@ -291,11 +322,11 @@ describe("keyring: rotation without touching a single stored row", () => {
 
   it("an UNKNOWN key id yields the SAME opaque message — no keyring probing", () => {
     setKeyring(`9:${KEY_B}`);
-    const sealed = encryptToken("sealed-under-9", KEY_A);
+    const sealed = encryptToken("sealed-under-9", KEY_A, OWNER);
     setKeyring(`1:${KEY_A}`);
     // Anchored: byte-identical to the wrong-key message, so nothing hints that id 9 once
     // existed or that the header parsed at all.
-    expect(() => decryptToken(sealed, KEY_A)).toThrowError(OPAQUE_ERROR);
+    expect(() => decryptToken(sealed, KEY_A, OWNER)).toThrowError(OPAQUE_ERROR);
   });
 });
 
@@ -312,13 +343,13 @@ describe("keyring structural validation (boot error, never silent degradation)",
     ["one good, one broken", `1:${KEY_A},2:nope`],
   ])("rejects %s — reads and writes BOTH stop, no fallback to the lone key", (_label, ring) => {
     setKeyring(ring);
-    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
+    expect(() => encryptToken("x", KEY_A, OWNER)).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
     expect(openV1Fixture).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
   });
 
   it("never echoes key material in the failure message", () => {
     setKeyring(`1:${KEY_A},1:${KEY_B}`);
-    const seal = (): Buffer => encryptToken("x", KEY_A);
+    const seal = (): Buffer => encryptToken("x", KEY_A, OWNER);
     expect(seal).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
     expect(seal).not.toThrowError(KEY_A); // substring match: the value must not appear
     expect(seal).not.toThrowError(KEY_B);
@@ -326,7 +357,7 @@ describe("keyring structural validation (boot error, never silent degradation)",
 
   it("demands an explicit ACTIVE id once the ring holds more than one key", () => {
     setKeyring(`1:${KEY_A},2:${KEY_B}`);
-    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
+    expect(() => encryptToken("x", KEY_A, OWNER)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
   });
 
   it.each([
@@ -334,11 +365,11 @@ describe("keyring structural validation (boot error, never silent degradation)",
     ["is not a number", `1:${KEY_A}`, "primary"],
   ])("throws when TOKEN_ENCRYPTION_ACTIVE_KEY_ID %s", (_label, ring, active) => {
     setKeyring(ring, active);
-    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
+    expect(() => encryptToken("x", KEY_A, OWNER)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
   });
 
   it("rejects an ACTIVE id other than 1 while no ring is configured", () => {
     setKeyring(undefined, "3");
-    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
+    expect(() => encryptToken("x", KEY_A, OWNER)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
   });
 });

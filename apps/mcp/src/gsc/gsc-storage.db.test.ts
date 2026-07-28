@@ -82,7 +82,7 @@ describe("gsc_connections encrypted-at-rest storage", () => {
     const projectId = await makeProject(userId, "encrypted.example.com");
     const plaintext = `1//0-super-secret-refresh-${randomUUID()}`;
 
-    const sealed = encryptToken(plaintext, KEY);
+    const sealed = encryptToken(plaintext, KEY, { userId, projectId });
     const { error } = await service.from("gsc_connections").insert({
       user_id: userId,
       project_id: projectId,
@@ -99,7 +99,7 @@ describe("gsc_connections encrypted-at-rest storage", () => {
     expect(stored).not.toContain(Buffer.from(plaintext, "utf8").toString("hex"));
 
     // ...and it decrypts back to exactly the original token.
-    expect(decryptToken(fromByteaHex(stored!), KEY)).toBe(plaintext);
+    expect(decryptToken(fromByteaHex(stored!), KEY, { userId, projectId })).toBe(plaintext);
   });
 
   it("upserts the connection: a second link for the same (user, project) replaces the token, one row", async () => {
@@ -111,7 +111,7 @@ describe("gsc_connections encrypted-at-rest storage", () => {
     await service.from("gsc_connections").insert({
       user_id: userId,
       project_id: projectId,
-      encrypted_refresh_token: toByteaHex(encryptToken(first, KEY)),
+      encrypted_refresh_token: toByteaHex(encryptToken(first, KEY, { userId, projectId })),
       gsc_property: null,
     });
 
@@ -127,7 +127,7 @@ describe("gsc_connections encrypted-at-rest storage", () => {
     await service
       .from("gsc_connections")
       .update({
-        encrypted_refresh_token: toByteaHex(encryptToken(second, KEY)),
+        encrypted_refresh_token: toByteaHex(encryptToken(second, KEY, { userId, projectId })),
         gsc_property: "sc-domain:upsert.example.com",
       })
       .eq("id", existing.data!.id as string);
@@ -140,7 +140,7 @@ describe("gsc_connections encrypted-at-rest storage", () => {
       .eq("project_id", projectId);
     expect(rows.error).toBeNull();
     expect(rows.data).toHaveLength(1);
-    expect(decryptToken(fromByteaHex(rows.data![0]!.encrypted_refresh_token as string), KEY)).toBe(
+    expect(decryptToken(fromByteaHex(rows.data![0]!.encrypted_refresh_token as string), KEY, { userId, projectId })).toBe(
       second,
     );
     expect(rows.data![0]!.gsc_property).toBe("sc-domain:upsert.example.com");
@@ -155,7 +155,7 @@ describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", 
     const first = await service.from("gsc_connections").insert({
       user_id: userId,
       project_id: projectId,
-      encrypted_refresh_token: toByteaHex(encryptToken(`1//a-${randomUUID()}`, KEY)),
+      encrypted_refresh_token: toByteaHex(encryptToken(`1//a-${randomUUID()}`, KEY, { userId, projectId })),
       gsc_property: null,
     });
     expect(first.error).toBeNull();
@@ -165,7 +165,7 @@ describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", 
     const second = await service.from("gsc_connections").insert({
       user_id: userId,
       project_id: projectId,
-      encrypted_refresh_token: toByteaHex(encryptToken(`1//b-${randomUUID()}`, KEY)),
+      encrypted_refresh_token: toByteaHex(encryptToken(`1//b-${randomUUID()}`, KEY, { userId, projectId })),
       gsc_property: null,
     });
     expect(second.error?.code).toBe("23505");
@@ -186,7 +186,7 @@ describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", 
     await service.from("gsc_connections").insert({
       user_id: userId,
       project_id: projectId,
-      encrypted_refresh_token: toByteaHex(encryptToken(t1, KEY)),
+      encrypted_refresh_token: toByteaHex(encryptToken(t1, KEY, { userId, projectId })),
       gsc_property: null,
     });
 
@@ -197,7 +197,7 @@ describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", 
       {
         user_id: userId,
         project_id: projectId,
-        encrypted_refresh_token: toByteaHex(encryptToken(t2, KEY)),
+        encrypted_refresh_token: toByteaHex(encryptToken(t2, KEY, { userId, projectId })),
         gsc_property: "sc-domain:merge.example.com",
       },
       { onConflict: "user_id,project_id" },
@@ -210,7 +210,7 @@ describe("gsc_connections (user_id, project_id) uniqueness — migration 0010", 
       .eq("user_id", userId)
       .eq("project_id", projectId);
     expect(rows.data).toHaveLength(1);
-    expect(decryptToken(fromByteaHex(rows.data![0]!.encrypted_refresh_token as string), KEY)).toBe(
+    expect(decryptToken(fromByteaHex(rows.data![0]!.encrypted_refresh_token as string), KEY, { userId, projectId })).toBe(
       t2,
     );
     expect(rows.data![0]!.gsc_property).toBe("sc-domain:merge.example.com");

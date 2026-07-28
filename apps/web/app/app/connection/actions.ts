@@ -8,6 +8,7 @@ import {
   mcpUrlFor,
   mcpUrlTemplate,
   tokenKeyBytes,
+  type TokenOwner,
 } from "@pseo/core";
 import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
@@ -204,6 +205,7 @@ export type GscRevocationOutcome = "revoked" | "unconfirmed" | "not_attempted";
 async function revokeStoredToken(
   encryptedTokenHex: string,
   connectionId: string,
+  owner: TokenOwner,
 ): Promise<GscRevocationOutcome> {
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
   if (!encryptionKey) {
@@ -216,7 +218,7 @@ async function revokeStoredToken(
   tokenKeyBytes(encryptionKey);
   let refreshToken: string;
   try {
-    refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey);
+    refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey, owner);
   } catch (caught) {
     // T5: the revoke is SKIPPED here, and the row still goes. Name the skip and key it to
     // the row so an operator can find the grants a key retirement left live at Google —
@@ -273,7 +275,13 @@ export async function disconnectGscAction(projectId: string): Promise<GscRevocat
   }
   let revocation: GscRevocationOutcome = "not_attempted";
   if (connection.encryptedTokenHex) {
-    revocation = await revokeStoredToken(connection.encryptedTokenHex, connection.id);
+    // The (user, project) below is the SAME pair the row was found by, so a v3 seal that
+    // truly belongs to this row opens and one planted from elsewhere does not — in which
+    // case the outcome is the existing `not_attempted`, not a crash.
+    revocation = await revokeStoredToken(connection.encryptedTokenHex, connection.id, {
+      userId,
+      projectId,
+    });
   } else {
     // A row without a token cannot revoke anything, and its grant at Google — if one is
     // still live — is beyond our reach. Same honest report as an unopenable seal.

@@ -88,7 +88,7 @@ async function seedConnection(
   const { error } = await service.from("gsc_connections").insert({
     user_id: userId,
     project_id: projectId,
-    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY)),
+    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, projectId })),
     gsc_property: property,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);

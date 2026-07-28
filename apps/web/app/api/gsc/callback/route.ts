@@ -174,9 +174,17 @@ export async function GET(request: Request): Promise<Response> {
       codeVerifier: pkce.verifier,
     });
 
-    // (6) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
+    // (6) Seal the refresh token at rest, BOUND to the row it is about to occupy (M-17).
+    // The signed state carries the same (user, project) the upsert below keys on, so the
+    // seal and its future reads agree by construction — and a blob copied into any other
+    // row stops opening, because the ids it was authenticated with no longer match.
     const encryptedTokenHex = tokens.refreshToken
-      ? toByteaHex(encryptToken(tokens.refreshToken, encryptionKey))
+      ? toByteaHex(
+          encryptToken(tokens.refreshToken, encryptionKey, {
+            userId: state.user_id,
+            projectId: state.project_id,
+          }),
+        )
       : null;
 
     // (7) Match the project domain to a verified property. A listing failure is non-fatal:

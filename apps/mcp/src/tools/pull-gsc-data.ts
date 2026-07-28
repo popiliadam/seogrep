@@ -133,7 +133,15 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
       }
 
       const encryptionKey = deps.encryptionKey ?? requireTokenEncryptionKey();
-      const refreshToken = decryptToken(fromByteaHex(connection.encrypted_refresh_token), encryptionKey);
+      // Open the seal against the SAME (user, project) the row was loaded by (M-17). A v3
+      // blob authenticates only under its own row's ids, so a token planted into this row
+      // from another user's connection fails here instead of driving their Google grant.
+      // The throw releases the credit reserve, exactly like the other "nothing to pull" exits.
+      const refreshToken = decryptToken(
+        fromByteaHex(connection.encrypted_refresh_token),
+        encryptionKey,
+        { userId: ctx.userId, projectId: project_id },
+      );
 
       // A Google failure here THROWS -> released, never charged.
       const pull = await runPull({
