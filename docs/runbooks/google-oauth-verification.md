@@ -30,8 +30,11 @@
 
 1. https://console.cloud.google.com → doğru proje (client "seogrep-web", hesap seogrep.app@gmail).
 2. **APIs & Services → OAuth consent screen** (yeni adı: Google Auth Platform → Branding/Audience):
-   - App name: `SeoGrep` · User support email: `support@seogrep.com` · Logo yükle (512px; logo
-     yüklemek brand review'u tetikler — normal).
+   - App name: `SeoGrep` · User support email: `seogrep.app@gmail.com` — DİKKAT: bu dropdown yalnız
+     GİRİŞ YAPILAN hesabın adreslerini/gruplarını gösterir; support@seogrep.com bir Google hesabı
+     değil (ImprovMX yönlendirmesi), burada ÇIKMAZ ve çıkmaması normaldir. Yanlış hesapla girildiyse
+     (örn. başka işletme maili) sağ üstten seogrep.app@gmail.com'a geç — YENİ PROJE AÇMA, mevcut
+     client canlı ürünü besliyor. · Logo yükle (512px; logo yüklemek brand review'u tetikler — normal).
    - App home page `https://seogrep.com` · Privacy `https://seogrep.com/privacy` · Terms
      `https://seogrep.com/terms` · Authorized domain `seogrep.com`.
    - Developer contact: seogrep.app@gmail **+ support@seogrep.com** (Google yazışması buraya gelir).

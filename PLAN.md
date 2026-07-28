@@ -226,9 +226,12 @@ AÇIK DİZİN İŞLERİ (isteğe bağlı): mcp.so ücretsiz katman (ücretli $39
 Glama connector (~15 dk) · Anthropic dizini (Team/Enterprise Claude org ŞART + mcp-review@
 anthropic.com ön-teması + T-C4 tool annotations).
 
-ERTELENMİŞ ÜRÜN BACKLOG'U (launch-sonrası ilk dilim önerisi): **#10 DFS-derinlik araç ailesi**
-(analyze_backlinks / compare_competitors / ranked_keywords — sıfır altyapı, "veri katmanını satın al"
-ekseni; yeni paralı tool = FİYAT KAPISI insanda, DFS_LIVE açılışı gerekir). Sonra #7 audit_speed
+#10 DFS-DERİNLİK AİLESİ BAŞLADI (2026-07-28): fiyatlar İMZALI 65/70/90 (docs/plans/
+2026-07-28-dfs10-fiyat-karari.md) · **dilim 1/3 ranked_keywords (65kr) CANLI @7ae8d69** (işçi Opus +
+Fable hakem PASS 0C/0I; canlı yüzey 17 tool, goals 16/16 tam ölçüm) · dilim 2 analyze_backlinks (70kr)
+sırada · DFS_LIVE hâlâ KAPALI (insan: DFS bakiye min $50 + Fly flag; kapalıyken tool dürüst hata, 0 kredi).
+NOT: spec/launch/dizin metinlerinde "16 tools" ibareleri bayatladı (Smithery server-card dahil) —
+temizlik dilimi bekliyor. Sonraki backlog: #7 audit_speed
 (+CrUX, BYO-key), #2 Scrapling, #5 büyük-site kademeleri, #6 import_crawl, #4 Tools vitrini,
 G8 rapor silme/slug-iptali. Detay: docs/plans/2026-07-27-faz4-launch.md triyaj tablosu.
 
