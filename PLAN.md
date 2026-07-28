@@ -210,10 +210,13 @@ in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
 3. **Launch yayınları** — artık serbest (ödeme çalışıyor). Taslaklar hazır:
    docs/launch/2026-07-launch-posts.md (PH · Show HN · X thread + publish checklist).
    Show HN'deki "agent-orchestration ile inşa edildi" paragrafı = yayın-anı insan kararı.
-4. ~~repo PRIVATE~~ ✅ (2026-07-28, gh-doğrulu: visibility=PRIVATE) · **Google OAuth verification =
-   AKTİF İŞ** — rehber + yapıştırmalık metinler: docs/runbooks/google-oauth-verification.md
-   (insan: Console tıkları + demo video. Asıl aciliyet: Testing modda refresh token 7 günde ölüyor,
-   GSC bağlantıları haftalık kopuyor).
+4. repo: **GEÇİCİ PUBLIC'e dönüldü** (2026-07-28 akşam, insan kararı — private'ta Actions billing
+   bloğu ["payments have failed"] TÜM CI'ı öldürdü; şef gh ile çevirdi. Plan: dakika reset'i ~1
+   Ağustos → private'a dönüş; DİKKAT: "payments failed" bloğu reset'le kendiliğinden kalkmayabilir,
+   dönüşten önce Billing & plans'ta ödeme fix'i gerekebilir. Spec 4 gün yine klonlanabilir = bilinen
+   bedel) · **Google OAuth verification = AKTİF İŞ** — rehber + yapıştırmalık metinler:
+   docs/runbooks/google-oauth-verification.md (insan: Console tıkları + demo video. Asıl aciliyet:
+   Testing modda refresh token 7 günde ölüyor, GSC bağlantıları haftalık kopuyor).
 5. ~~Ders imzaları~~ ✅ İMZALANDI (2026-07-28 — insan metin yetkisini şefe delege etti: "önerilere
    göre gidelim, izin veriyorum"; CLAUDE.md "İmzalı dersler" 6-10: env-URL-yapı · yeşil-kapı-ne-ölçtü ·
    paralel-ağaç-izolasyonu · gözlenebilirlik-kanalı · araştırmanı-yeniden-oku).
