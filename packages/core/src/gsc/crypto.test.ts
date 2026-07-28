@@ -34,6 +34,19 @@ const V1_FIXTURE_HEX =
   "8b20631fcb7f060cc0bc66f21fe5debe53be708f9ca8";
 
 /**
+ * A blob produced by the v2 implementation (`magic || version 2 || key id || iv || tag ||
+ * ct`, NO additional authenticated data), captured from the shipped build and frozen here
+ * the same way. EVERY Search Console connection live in production today is one of these,
+ * and none of them is bound to its row — so this fixture is the standing spec for "an
+ * existing customer's connection still opens". Nothing in this file can re-derive it once
+ * the writer moves on, which is exactly why it is pinned before the writer moves.
+ */
+const V2_FIXTURE_PLAIN = "1//v2-headered-refresh-token";
+const V2_FIXTURE_HEX =
+  "5347534c020147a51a20ff89b903a780280346780ed170b7cb58cddceacb21de" +
+  "61c3ccc95d8593c6c4cd2211b4f4f46032512d0fc955255e2c83a2af012b";
+
+/**
  * Seal in the LEGACY v1 layout with a caller-chosen IV. Used to forge the one input the
  * random-IV path cannot produce: a genuine v1 blob whose first bytes impersonate the v2
  * header.
@@ -123,6 +136,18 @@ describe("dual read: blobs sealed before v2 still open", () => {
     expect(blob.subarray(0, 4).toString("hex")).not.toBe(MAGIC_HEX);
     expect(blob.length).toBe(
       IV_BYTES + TAG_BYTES + Buffer.byteLength(V1_FIXTURE_PLAIN, "utf8"),
+    );
+  });
+
+  it("opens the PINNED v2 fixture — the shape every live connection is stored in", () => {
+    expect(decryptToken(fromByteaHex(V2_FIXTURE_HEX), KEY_A)).toBe(V2_FIXTURE_PLAIN);
+  });
+
+  it("proves that fixture is genuinely v2 (magic + version byte 2, v2 length math)", () => {
+    const blob = fromByteaHex(V2_FIXTURE_HEX);
+    expect(blob.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0201`);
+    expect(blob.length).toBe(
+      HEADER_BYTES + IV_BYTES + TAG_BYTES + Buffer.byteLength(V2_FIXTURE_PLAIN, "utf8"),
     );
   });
 
