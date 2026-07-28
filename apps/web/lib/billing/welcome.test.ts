@@ -74,6 +74,33 @@ describe("sendWelcomeIfFirst", () => {
     );
   });
 
+  // L-07 (same empty-env class as the signup redirect): "" is not nullish, so `?? SITE_URL`
+  // never fired and the welcome mail shipped RELATIVE links ("/app/connection") that are dead
+  // in an inbox. An empty/malformed value must fall back to the canonical SITE_URL.
+  it("falls back to the canonical SITE_URL when NEXT_PUBLIC_SITE_URL is set but empty", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    createServiceClientMock.mockReturnValue(
+      mockClient({ data: [{ id: "u1" }], error: null }).client,
+    );
+    await sendWelcomeIfFirst("u1", "user@example.com");
+    expect(welcomeEmailMock).toHaveBeenCalledWith({
+      dashboardUrl: "https://seogrep.com/app/connection",
+      docsUrl: "https://seogrep.com/docs",
+    });
+  });
+
+  it("falls back to the canonical SITE_URL when NEXT_PUBLIC_SITE_URL is not an absolute URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "seogrep.com");
+    createServiceClientMock.mockReturnValue(
+      mockClient({ data: [{ id: "u1" }], error: null }).client,
+    );
+    await sendWelcomeIfFirst("u1", "user@example.com");
+    expect(welcomeEmailMock).toHaveBeenCalledWith({
+      dashboardUrl: "https://seogrep.com/app/connection",
+      docsUrl: "https://seogrep.com/docs",
+    });
+  });
+
   it("does not send when welcomed_at is already set (no row returned)", async () => {
     createServiceClientMock.mockReturnValue(mockClient({ data: [], error: null }).client);
     await sendWelcomeIfFirst("u1", "user@example.com");

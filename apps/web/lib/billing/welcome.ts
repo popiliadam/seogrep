@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail, welcomeEmail } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
 import type { Database } from "@pseo/db/types";
-import { SITE_URL } from "../site";
+import { SITE_URL, resolveBaseUrl } from "../site";
 
 /**
  * One-time first-login welcome email (Resend transactional). Runs ONLY from
@@ -78,7 +78,9 @@ export async function sendWelcomeIfFirst(userId: string, email: string): Promise
   }
 
   // Lock flipped -> send exactly once. A throw here leaves welcomed_at set (no retry).
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? SITE_URL;
+  // resolveBaseUrl, not `??`: a set-but-empty / malformed NEXT_PUBLIC_SITE_URL must be treated
+  // as ABSENT, otherwise the welcome mail ships relative links that are dead in an inbox (L-07).
+  const base = resolveBaseUrl(process.env.NEXT_PUBLIC_SITE_URL) ?? SITE_URL;
   const { subject, html } = welcomeEmail({
     dashboardUrl: `${base}/app/connection`,
     docsUrl: `${base}/docs`,

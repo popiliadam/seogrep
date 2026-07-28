@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { resolveBaseUrl } from "../../lib/site";
 import { createClient } from "../../lib/supabase/client";
 
 type Mode = "login" | "signup";
@@ -26,7 +27,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
     const supabase = createClient();
     try {
       if (mode === "signup") {
-        const base = process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+        // resolveBaseUrl, not `??`: a set-but-empty / malformed NEXT_PUBLIC_SITE_URL must be
+        // treated as ABSENT so the confirmation link stays absolute (L-07).
+        const base = resolveBaseUrl(process.env.NEXT_PUBLIC_SITE_URL) ?? window.location.origin;
         const { error } = await supabase.auth.signUp({
           email,
           password,
