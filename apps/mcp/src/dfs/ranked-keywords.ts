@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import { assertWithinBudget, recordSpend } from "./budget.ts";
-import type { DfsTransport } from "./client.ts";
+import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
  * DataForSEO Labs "Google Ranked Keywords" adapter (mock-first) — the SECOND paid-API port,
@@ -211,11 +211,6 @@ export interface LiveRankedKeywordsOptions {
   readonly spendDir?: string;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
-  return { ok: res.ok, status: res.status, json: () => res.json() };
-};
-
 /**
  * The real (paid) ranked-keywords client. Each call: (1) budget gate BEFORE spending — refuse if
  * the estimate would pass the daily cap; (2) POST the query with Basic auth, restricted to
@@ -225,7 +220,7 @@ const defaultTransport: DfsTransport = async (url, init) => {
 export function createLiveRankedKeywordsClient(
   opts: LiveRankedKeywordsOptions,
 ): RankedKeywordsPort {
-  const transport = opts.transport ?? defaultTransport;
+  const transport = opts.transport ?? defaultDfsTransport;
   const now = opts.now ?? ((): Date => new Date());
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
   const budgetCtx = { now, dir: opts.spendDir };

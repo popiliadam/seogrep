@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import { assertWithinBudget, recordSpend } from "./budget.ts";
-import type { DfsTransport } from "./client.ts";
+import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
  * DataForSEO **Backlinks** adapter (mock-first) — the THIRD paid-API port, written to the same
@@ -335,18 +335,13 @@ export interface LiveBacklinksOptions {
   readonly spendDir?: string;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
-  return { ok: res.ok, status: res.status, json: () => res.json() };
-};
-
 /**
  * The real (paid) backlink-profile client. Per lookup: (1) ONE budget gate BEFORE any HTTP —
  * refuse if the whole-operation estimate would pass the daily cap; then, sequentially, POST each
  * of the three endpoints with Basic auth, parse it, and record THAT request's real cost.
  */
 export function createLiveBacklinksClient(opts: LiveBacklinksOptions): BacklinksPort {
-  const transport = opts.transport ?? defaultTransport;
+  const transport = opts.transport ?? defaultDfsTransport;
   const now = opts.now ?? ((): Date => new Date());
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
   const budgetCtx = { now, dir: opts.spendDir };

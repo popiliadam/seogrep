@@ -177,8 +177,33 @@ export interface LiveClientOptions {
   readonly spendDir?: string;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
+/**
+ * Application deadline (ms) on every live DataForSEO request. Bare `fetch` has NO default
+ * timeout, so without this a provider holding the socket open keeps a credit-RESERVED tool
+ * call waiting indefinitely: the reserve stays open, the request slot stays held, and the
+ * caller only finds out when the platform kills the whole request.
+ *
+ * 30s, not the 3s used by the interactive adapters (email/send.ts, the PostHog capture):
+ * this is a PAID data endpoint whose live calls legitimately run for seconds, so a tight
+ * deadline would abort healthy work and spend budget for nothing. It is still a bound —
+ * chosen to sit inside the platform request timeout so WE give up first and release the
+ * slot, rather than being cut off from outside.
+ */
+export const DFS_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The ONE default transport for every DataForSEO port (search volume here, plus ranked
+ * keywords, backlinks and competitors, which import it). Shared deliberately: four
+ * byte-identical copies meant a deadline — or any future transport concern — had to be
+ * remembered in four places. Injected fake transports bypass it entirely, so tests stay
+ * offline (constitution NEVER #5).
+ */
+export const defaultDfsTransport = async (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string },
+  timeoutMs: number = DFS_REQUEST_TIMEOUT_MS,
+): Promise<DfsHttpResponse> => {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   return { ok: res.ok, status: res.status, json: () => res.json() };
 };
 
@@ -188,7 +213,7 @@ const defaultTransport: DfsTransport = async (url, init) => {
  * (4) record the REAL cost (response `cost`, else the estimate) to today's spend file.
  */
 export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
-  const transport = opts.transport ?? defaultTransport;
+  const transport = opts.transport ?? defaultDfsTransport;
   const now = opts.now ?? ((): Date => new Date());
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
   const budgetCtx = { now, dir: opts.spendDir };

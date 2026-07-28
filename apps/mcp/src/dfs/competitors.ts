@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import { assertWithinBudget, recordSpend } from "./budget.ts";
-import type { DfsTransport } from "./client.ts";
+import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
  * DataForSEO Labs **competitor comparison** adapter (mock-first) — the FOURTH paid-API port,
@@ -413,11 +413,6 @@ export interface LiveCompetitorsOptions {
   readonly spendDir?: string;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
-  return { ok: res.ok, status: res.status, json: () => res.json() };
-};
-
 /**
  * The real (paid) comparison client. Per lookup: (1) ONE budget gate BEFORE any HTTP, sized to the
  * flow that is about to run; (2) the discovery request, ONLY when the caller named no rivals;
@@ -425,7 +420,7 @@ const defaultTransport: DfsTransport = async (url, init) => {
  * booked right after it returns, so a mid-fan-out failure leaves exactly the true spend on record.
  */
 export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): CompetitorsPort {
-  const transport = opts.transport ?? defaultTransport;
+  const transport = opts.transport ?? defaultDfsTransport;
   const now = opts.now ?? ((): Date => new Date());
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
   const budgetCtx = { now, dir: opts.spendDir };
