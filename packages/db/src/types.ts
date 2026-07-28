@@ -179,11 +179,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "gsc_connections_project_id_fkey"
-            columns: ["project_id"]
-            isOneToOne: false
+            foreignKeyName: "gsc_connections_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: true
             referencedRelation: "projects"
-            referencedColumns: ["id"]
+            referencedColumns: ["user_id", "id"]
           },
         ]
       }
@@ -229,11 +229,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "jobs_project_id_fkey"
-            columns: ["project_id"]
+            foreignKeyName: "jobs_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
             isOneToOne: false
             referencedRelation: "projects"
-            referencedColumns: ["id"]
+            referencedColumns: ["user_id", "id"]
           },
         ]
       }
@@ -315,11 +315,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "reports_job_id_fkey"
-            columns: ["job_id"]
+            foreignKeyName: "reports_user_id_job_id_fkey"
+            columns: ["user_id", "job_id"]
             isOneToOne: false
             referencedRelation: "jobs"
-            referencedColumns: ["id"]
+            referencedColumns: ["user_id", "id"]
           },
         ]
       }
