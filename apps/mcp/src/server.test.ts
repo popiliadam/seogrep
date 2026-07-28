@@ -15,8 +15,9 @@ import { ALL_TOOLS } from "./tools/index.ts";
 // Additive import for the JSON-only Accept specs, on its own line so every existing
 // line above stays byte-identical.
 import { negotiatedAccept } from "./server.ts";
-// Additive H-05 import, on its own line for the same reason: the DB-side backlog reader,
-// whose cancellation wiring the /status deadline depends on.
+// Additive H-05 imports, each on its own line for the same reason: the /status backlog
+// cache, and the DB-side reader whose cancellation wiring it depends on.
+import { createPendingJobsCache } from "./server.ts";
 import { countPendingJobs } from "./db.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
@@ -1226,9 +1227,9 @@ describe("mcp gateway security response headers (L-12)", () => {
 //
 // Three properties close it, and each is pinned below:
 //   1. CANCELLATION — when the deadline wins, the underlying read is aborted, not orphaned.
-//   2. CACHE        — N concurrent requests cost at most ONE query (next commit).
-//   3. THROTTLE     — a per-IP gate, on its own budget, before any read (commit after that).
-// This commit lands (1). /healthz is deliberately excluded from all three (uptime probe).
+//   2. CACHE        — N concurrent requests cost at most ONE query (proven with a counter).
+//   3. THROTTLE     — a per-IP gate, on its own budget, before any read (next commit).
+// This commit lands (2). /healthz is deliberately excluded from all three (uptime probe).
 // ---------------------------------------------------------------------------
 
 describe("readPendingJobsBounded cancellation (H-05)", () => {
@@ -1259,6 +1260,117 @@ describe("readPendingJobsBounded cancellation (H-05)", () => {
     expect(await readPendingJobsBounded(read, 1_000)).toBe(5);
     expect(seen).toBeInstanceOf(AbortSignal);
     expect(seen?.aborted).toBe(false);
+  });
+});
+
+describe("createPendingJobsCache (H-05 — one query, not N)", () => {
+  let ms = 0;
+  const now = () => ms;
+
+  it("collapses CONCURRENT reads into a single query (single-flight)", async () => {
+    let queries = 0;
+    const read = () => {
+      queries += 1;
+      return new Promise<number>((resolve) => setTimeout(() => resolve(9), 20));
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000 });
+    const results = await Promise.all(Array.from({ length: 20 }, () => cache()));
+    expect(results).toEqual(Array.from({ length: 20 }, () => 9));
+    expect(queries).toBe(1);
+  });
+
+  it("serves a SEQUENTIAL read from cache while the entry is fresh", async () => {
+    let queries = 0;
+    ms = 0;
+    const read = () => {
+      queries += 1;
+      return Promise.resolve(4);
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000, now });
+    expect(await cache()).toBe(4);
+    ms += 4_999;
+    expect(await cache()).toBe(4);
+    expect(queries).toBe(1);
+  });
+
+  it("re-reads once the TTL has expired (the signal stays live, it is not frozen)", async () => {
+    let queries = 0;
+    ms = 0;
+    const read = () => {
+      queries += 1;
+      return Promise.resolve(queries);
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000, now });
+    expect(await cache()).toBe(1);
+    ms += 5_001;
+    expect(await cache()).toBe(2);
+    expect(queries).toBe(2);
+  });
+
+  it("caches the DEGRADED null too, so a slow DB is not re-queried on every hit", async () => {
+    // Worst exactly when the DB is unwell: an uncached null is re-queried by every hit.
+    let queries = 0;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const read = (signal: AbortSignal) => {
+        queries += 1;
+        return new Promise<number>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      };
+      const cache = createPendingJobsCache(read, { timeoutMs: 10, ttlMs: 5_000 });
+      expect(await cache()).toBeNull();
+      expect(await cache()).toBeNull();
+      expect(await cache()).toBeNull();
+      expect(queries).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("never queries at all when no reader is wired", async () => {
+    const cache = createPendingJobsCache(undefined, { timeoutMs: 1_000, ttlMs: 5_000 });
+    expect(await cache()).toBeNull();
+  });
+});
+
+describe("mcp gateway /status flood resistance (H-05)", () => {
+  const FLOOD_IP = { "fly-client-ip": "203.0.113.9" };
+
+  it("N concurrent anonymous /status requests cost at most ONE backlog query", async () => {
+    let queries = 0; // the finding, measured end to end: uncached, this counter reads 25
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          queries += 1;
+          return new Promise<number>((resolve) => setTimeout(() => resolve(2), 20));
+        },
+      }),
+    );
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 25 }, () => fetch(`${app.baseUrl}/status`)),
+      );
+      expect(responses.every((res) => res.status === 200)).toBe(true);
+      const bodies = await Promise.all(responses.map((res) => res.json()));
+      expect(bodies.every((body) => body.pendingJobs === 2)).toBe(true);
+      expect(queries).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves /healthz un-cached and untouched (the uptime probe answers every time)", async () => {
+    const app = await listen(appWith());
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const res = await fetch(`${app.baseUrl}/healthz`, { headers: FLOOD_IP });
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe(JSON.stringify({ ok: true }));
+      }
+    } finally {
+      await app.close();
+    }
   });
 });
 

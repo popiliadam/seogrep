@@ -76,8 +76,9 @@ export interface AppDeps {
    * jobs. Optional and injected exactly like ipThrottle above — the production root wires
    * the DB-backed countPendingJobs; DB-free unit tests omit it, in which case `/status`
    * reports pendingJobs:null and no handler touches the database. The `/status` handler
-   * always calls this through readPendingJobsBounded, so a slow/failing read degrades to
-   * null instead of hanging or 5xx-ing the endpoint — and the deadline CANCELS it.
+   * reaches it only through the bounded, cancellable, short-TTL cache built in createApp,
+   * so a slow/failing read degrades to null instead of hanging or 5xx-ing the endpoint —
+   * and an anonymous flood can never multiply into a flood of queries.
    */
   readonly pendingJobs?: PendingJobsReader;
   /**
@@ -148,8 +149,9 @@ function buildDefaultDeps(): AppDeps {
     tools: ALL_TOOLS,
     // Backlog count for /status, over the SAME service client. Read-only, non-tenant
     // aggregate (see countPendingJobs). The signal is threaded through so the /status
-    // deadline CANCELS the query rather than orphaning it, so an abandoned /status answer
-    // does not leave an unindexed count running against the shared database.
+    // deadline CANCELS the query rather than orphaning it; createApp additionally puts a
+    // short-TTL single-flight cache in front, so a flood of anonymous /status hits cannot
+    // multiply into a flood of unindexed counts.
     pendingJobs: (signal) => countPendingJobs(client, signal),
     // D28: the personal MCP URL shape comes from MCP_URL_TEMPLATE. Read HERE, at the
     // composition root, alongside the other env-backed wiring — buildServerCard itself stays
@@ -207,6 +209,60 @@ export async function readPendingJobsBounded(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * Short TTL (ms) on the `/status` backlog answer — the load-bearing half of the flood fix:
+ * N anonymous requests inside one window cost ONE query instead of N. 5s is chosen against
+ * how the endpoint is really consumed (a dashboard or a human refresh, on a 15-60s rhythm),
+ * so a real reader never sees the staleness while an attacker's request rate is decoupled
+ * from the database's query rate.
+ */
+const STATUS_PENDING_CACHE_TTL_MS = 5_000;
+
+/** Tuning knobs for the `/status` backlog cache. Omitted values take the production ones. */
+export interface PendingJobsCacheOptions {
+  readonly timeoutMs?: number;
+  readonly ttlMs?: number;
+  readonly now?: () => number; // injectable clock in ms (Date.now); tests pin it
+}
+
+/**
+ * Wrap the backlog reader in a short-TTL, SINGLE-FLIGHT cache: the answer `/status` serves.
+ * Two independent multipliers go away — single-flight collapses CONCURRENT hits onto one
+ * in-flight read, the TTL collapses SEQUENTIAL ones — bounding the endpoint's database cost
+ * at one query per TTL no matter the request rate. That is what turns an unauthenticated
+ * route over an unindexed exact count from an amplifier into a fixed cost.
+ *
+ * The degraded `null` is cached too, deliberately: the amplification is WORST precisely when
+ * the database is unwell, so re-issuing a timing-out query per request would kick it while
+ * it is down. Reads still go through readPendingJobsBounded, so its guarantees (never hang,
+ * never throw, abort on deadline) hold unchanged for each real read.
+ */
+export function createPendingJobsCache(
+  read: PendingJobsReader | undefined,
+  options: PendingJobsCacheOptions = {},
+): () => Promise<number | null> {
+  const timeoutMs = options.timeoutMs ?? STATUS_PENDING_TIMEOUT_MS;
+  const ttlMs = options.ttlMs ?? STATUS_PENDING_CACHE_TTL_MS;
+  const now = options.now ?? Date.now;
+  let cached: { readonly value: number | null; readonly atMs: number } | null = null;
+  let inFlight: Promise<number | null> | null = null;
+  return () => {
+    if (cached !== null && now() - cached.atMs < ttlMs) return Promise.resolve(cached.value);
+    if (inFlight !== null) return inFlight; // a read is already out — join it, do not add one
+    const settled = readPendingJobsBounded(read, timeoutMs)
+      .then((value) => {
+        cached = { value, atMs: now() };
+        return value;
+      })
+      // Non-rejecting by contract; this arm only stops a future change there from wedging
+      // the cache with a permanently in-flight read.
+      .catch(() => null)
+      .finally(() => (inFlight = null));
+    inFlight = settled;
+    return settled;
+  };
 }
 
 /**
@@ -493,12 +549,15 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // and is NOT wired to any health check, so its DB read can never endanger liveness.
   // Unauthenticated on purpose: it exposes only COARSE, PROCESS-WIDE operational counts
   // (uptime, 5xx-since-boot, and the global queued+running backlog) — no tenant data and
-  // nothing per-user — so it is as safe to expose as /healthz. The backlog read is bounded,
-  // CANCELLABLE and best-effort (readPendingJobsBounded): on a slow/broken DB it degrades to
-  // pendingJobs:null and STILL answers ok:true, so /status never hangs or returns 5xx — and
-  // the deadline now tears the abandoned query down instead of leaving it running.
+  // nothing per-user — so it is as safe to DISCLOSE as /healthz. Being anonymous, though, it
+  // must also be cheap to ABUSE — a separate property, and the one it lacked: N anonymous
+  // hits became N unindexed exact counts on the database auth, the queue and the ledger
+  // share. A short-TTL single-flight cache now fronts the bounded, CANCELLABLE read (N
+  // requests -> at most one query per TTL). Best-effort contract unchanged: on a slow or
+  // broken DB it degrades to pendingJobs:null and STILL answers ok:true.
+  const readCachedPendingJobs = createPendingJobsCache(deps.pendingJobs);
   app.get("/status", async (_req, res) => {
-    const pendingJobs = await readPendingJobsBounded(deps.pendingJobs, STATUS_PENDING_TIMEOUT_MS);
+    const pendingJobs = await readCachedPendingJobs();
     res.json({ ok: true, ...metrics.snapshot(), pendingJobs });
   });
 
