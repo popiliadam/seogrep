@@ -51,8 +51,20 @@ separate `/status` route, which nothing uses as a liveness gate.
 per-process**. They **reset to zero on every deploy/restart**, and in a multi-machine
 deployment each machine has its own counters (the request you happen to hit answers with
 that machine's numbers). They are a cheap "is it getting worse right now" signal, **not** a
-durable metric. `pendingJobs` is not in-memory — it is read live from the database on each
-call — but is still a point-in-time count, not a time series.
+durable metric. `pendingJobs` is not in-memory — it comes from the database — but it is **served
+from a short-lived cache**, so it can be a few seconds stale, and it is still a point-in-time
+count, not a time series.
+
+**Two behaviours added by the H-05 hardening — know them before you read a `/status` response:**
+
+- **`pendingJobs` is cached for a few seconds** and concurrent callers share one in-flight read.
+  This is deliberate: the count is an unindexed exact scan of `jobs`, so before the cache an
+  anonymous flood turned into one full scan per request and the load landed on auth, the queue
+  and credit settlement. Treat the number as "correct within the last few seconds", not as live.
+- **`/status` can now answer `429`.** It is per-IP throttled. A `429` means *you* are polling too
+  fast — it is **not** an outage signal and must never page anyone. If a monitor gets a `429`,
+  slow the monitor down; the liveness gate is `/healthz`, which is **not** throttled and is
+  unaffected by any of this.
 
 ---
 
@@ -120,7 +132,9 @@ up and finished quickly by the worker.
   ~1s (DB slow or down), `/status` returns **`"pendingJobs": null`** and still answers
   `"ok": true`. `null` means "couldn't read the backlog right now," **not** "zero backlog" —
   fall back to `flyctl logs` and the reconciliation runbook. `/status` never hangs or 5xx-es
-  on a slow DB by design: it is an operator signal, not a liveness gate.
+  on a slow DB by design: it is an operator signal, not a liveness gate. Since H-05 the read is
+  also **cancelled** when it passes that deadline, instead of being abandoned to keep running
+  against the database — the old behaviour was what made an anonymous flood expensive.
 
 **Automatic reaping (Faz 4 — now live).** The worker process sweeps for stuck jobs **every 10
 minutes** on its own (`REAPER_INTERVAL_MS` in `apps/mcp/src/queue/worker.ts`, running the same
