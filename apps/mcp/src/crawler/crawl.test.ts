@@ -574,6 +574,26 @@ describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", 
     const result = { pages: [page(1)], skipped: [{ url: "https://x.test/s", reason: "timeout" }], fetchedAt: AT };
     expect(boundCrawlResult(result)).toEqual(result);
   });
+
+  it("enforces the TOTAL byte budget the per-record ceilings cannot see (T8)", () => {
+    // 20 pages, each ~1 MB and each comfortably INSIDE every per-record ceiling — the point
+    // is that those ceilings MULTIPLY (100 x 1000 links x 2000 chars is ~200 MB) and no
+    // per-record rule can see the product. 100 pages is a page count, not a size.
+    // boundCrawlResult must not have to TRUST its (injectable) crawl fn with a DB row's size.
+    const heavy = (i: number) => ({ ...page(i), title: "t".repeat(1_000_000) });
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 20 }, (_, i) => heavy(i)),
+      skipped: [],
+      fetchedAt: AT,
+    });
+    // Under the 12 MB budget — pinned as a literal so widening it is a deliberate spec edit.
+    expect(Buffer.byteLength(JSON.stringify(bounded.pages), "utf8")).toBeLessThanOrEqual(12_000_000);
+    expect(bounded.pages.length).toBeGreaterThan(0); // bounded, not emptied
+    expect(bounded.pages.length).toBeLessThan(20);
+    // Never silent: the drop is reported once, in the skip list the user already reads.
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/byte budget/i);
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/12000000/);
+  });
 });
 
 describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () => {
@@ -602,6 +622,31 @@ describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () =
       const result = await crawlSite(site.origin + "/links", { maxUrls: 8, crawlDelayCapMs: 0 });
       expect(result.pages).toHaveLength(8);
       expect(result.skipped.filter((s) => /queue limit/i.test(s.reason))).toHaveLength(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("stops ACCUMULATING at the total result byte budget, before maxUrls (T8)", async () => {
+    // The adversarial-maximal shape: every page is individually legal (1000 links, each URL
+    // under the 2000-char field ceiling) yet is a ~1.4 MB RECORD. 30 of them would be ~40 MB
+    // held in memory and then persisted whole into jobs.result — on the 512 MB machine in
+    // apps/mcp/fly.toml, with JSON.stringify roughly doubling the peak. The budget must bite
+    // BEFORE maxUrls does, and must bite during accumulation (not by trimming 40 MB after).
+    const site = await startHostileSite({ linkCount: 1_000, heavyLinkChars: 1_400 });
+    try {
+      const result = await crawlSite(site.origin + "/heavy", { maxUrls: 30, crawlDelayCapMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // bounded, never emptied
+      expect(result.pages.length).toBeLessThan(30); // the budget bit first, not maxUrls
+      expect(Buffer.byteLength(JSON.stringify(result.pages), "utf8")).toBeLessThanOrEqual(
+        12_000_000,
+      );
+      // Honest, never silent: the page that did not fit and every still-queued URL are
+      // recorded, with a reason that names the bound and what to change.
+      const budgetSkips = result.skipped.filter((s) => /result byte budget/i.test(s.reason));
+      expect(budgetSkips.length).toBeGreaterThan(0);
+      expect(budgetSkips[0]?.reason).toMatch(/12000000/);
+      expect(budgetSkips[0]?.reason).toMatch(/include_paths|max_urls/);
     } finally {
       await site.close();
     }

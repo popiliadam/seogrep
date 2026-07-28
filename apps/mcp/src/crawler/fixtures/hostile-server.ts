@@ -8,6 +8,9 @@
  *              in the headers can bound it;
  *  - /links    a page carrying an absurd number of unique same-origin links;
  *  - /p/<id>   the link targets — each is itself link-rich, so BFS discovery keeps growing;
+ *  - /heavy, /h/<id>  the same link flood with LONG (but legal) paths, so each page is a
+ *              legitimately large RECORD rather than merely a large body — the shape that
+ *              multiplies the per-record ceilings into a huge jobs.result (T8);
  *  - /sitemap.xml a <urlset> with an absurd number of <loc>s (opt-in via `locCount`).
  *
  * Test infrastructure only: it makes ZERO outbound requests; the crawler reaches it over
@@ -26,6 +29,12 @@ export interface HostileOptions {
   chunkedBytes?: number;
   /** Unique same-origin links every /links and /p/<id> page carries (default 2000). */
   linkCount?: number;
+  /**
+   * Filler characters padded into every /h/ link path (default 1400 — under the crawler's
+   * 2000-char field ceiling, so the links are RECORDED rather than dropped). This is what
+   * makes each /heavy page a ~linkCount x 1400-char record.
+   */
+  heavyLinkChars?: number;
   /** <loc> entries /sitemap.xml carries; 0 (the default) serves 404 so BFS is used. */
   locCount?: number;
 }
@@ -48,6 +57,19 @@ function linkPage(prefix: string, count: number): string {
   const anchors: string[] = [];
   for (let i = 0; i < count; i++) anchors.push(`<a href="${prefix}${i}">l</a>`);
   return `${HTML_HEAD}<h1>Links</h1>${anchors.join("")}${HTML_TAIL}`;
+}
+
+/**
+ * A page with `count` links under a FIXED /h/ prefix whose paths are padded to `padChars`.
+ * The prefix is fixed (not derived from the requesting path) on purpose: every /h/ page then
+ * emits the SAME link set, so BFS finds `count` distinct pages that are each individually
+ * legal and individually within every per-record ceiling — and collectively enormous.
+ */
+function heavyLinkPage(count: number, padChars: number): string {
+  const pad = "h".repeat(padChars);
+  const anchors: string[] = [];
+  for (let i = 0; i < count; i++) anchors.push(`<a href="/h/${pad}${i}">l</a>`);
+  return `${HTML_HEAD}<h1>Heavy</h1>${anchors.join("")}${HTML_TAIL}`;
 }
 
 /** A <urlset> with `count` same-origin <loc>s. */
@@ -88,6 +110,7 @@ export function startHostileSite(options: HostileOptions = {}): Promise<HostileS
   const bombBytes = options.bombBytes ?? 20_000_000;
   const chunkedBytes = options.chunkedBytes ?? 30_000_000;
   const linkCount = options.linkCount ?? 2_000;
+  const heavyLinkChars = options.heavyLinkChars ?? 1_400;
   const locCount = options.locCount ?? 0;
   const requested: string[] = [];
   const bytesWritten = new Map<string, number>();
@@ -149,6 +172,19 @@ export function startHostileSite(options: HostileOptions = {}): Promise<HostileS
       filler ??= Buffer.concat([Buffer.from(HTML_HEAD), Buffer.alloc(chunkedBytes, 0x61)]);
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); // no content-length
       streamBody(res, filler, wrote);
+      return;
+    }
+    if (path === "/heavy" || path.startsWith("/h/")) {
+      // ONE cached body: every /h/ page is byte-identical (fixed prefix), so this costs
+      // one build no matter how many the crawler walks.
+      let body = pages.get("/heavy");
+      if (body === undefined) {
+        body = Buffer.from(heavyLinkPage(linkCount, heavyLinkChars));
+        pages.set("/heavy", body);
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      wrote(body.length);
+      res.end(body);
       return;
     }
     if (path === "/links" || path.startsWith("/p/")) {

@@ -408,9 +408,50 @@ const MAX_SKIPPED_LISTED = MAX_SKIPPED - MAX_CEILING_NOTES;
 /** Hard ceiling on the pages a persisted result may carry (== the tool's own 100-URL cap). */
 const MAX_PAGES_PERSISTED = 100;
 
+/**
+ * TOTAL byte ceiling on the pages one crawl accumulates (T8) — the ONE bound here that does
+ * not multiply.
+ *
+ * Every ceiling above bounds ONE thing: one body (2 MB), one page's links (1000), one field
+ * (2000 chars), one result's page COUNT (100). Their PRODUCT is invisible to all of them: a
+ * page carrying 1000 links of 2000 characters is individually legal at ~2 MB, and 100 such
+ * pages are ~200 MB of strings that JSON.stringify then roughly doubles at the moment of
+ * persisting — on the 512 MB machine in apps/mcp/fly.toml that is the whole machine, and a
+ * jobs.result row nobody can read back.
+ *
+ * 12 MB is ~2 orders of magnitude above any real 100-page crawl (a fat real page record is a
+ * few KB) while leaving the adversarial case bounded. skipped[] is bounded separately and
+ * independently (MAX_SKIPPED x the field ceilings, ~2 MB worst case), so a whole persisted
+ * result stays under ~14 MB.
+ */
+const MAX_RESULT_BYTES = 12_000_000;
+
 /** The one spelling of the skip-list overflow line, shared by the crawl and the bound. */
 const skipOverflowReason = (dropped: number): string =>
   `skip list truncated at ${MAX_SKIPPED} entries; ${dropped} more URL(s) were skipped but not listed`;
+
+/**
+ * The tenant-visible reason a URL was not crawled because the result hit MAX_RESULT_BYTES.
+ * Honest and actionable: it names the bound, says the page was NOT read, and says what to
+ * change. Shared by the crawl (per URL, like the other two limit paths) and the bound.
+ */
+const RESULT_BUDGET_REASON =
+  `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); this URL was not ` +
+  "included — narrow the crawl with include_paths or a lower max_urls to cover it";
+
+/** The bound's one-line summary when it had to DROP already-crawled pages to fit the budget. */
+const resultBudgetDropReason = (dropped: number): string =>
+  `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); ${dropped} crawled ` +
+  "page(s) were dropped from the stored result — narrow the crawl with include_paths " +
+  "or a lower max_urls to cover them";
+
+/**
+ * UTF-8 byte size of a value's JSON encoding — the exact unit the persisted jobs.result row
+ * is measured in, so the budget bounds the real thing rather than a proxy for it.
+ */
+function jsonByteSize(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -946,6 +987,8 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   let skippedDropped = 0;
   let linkFloodedPages = 0;
   let queueFull = false;
+  // T8: what the accumulated pages have cost so far, in the unit they will be PERSISTED in.
+  let resultBytes = 0;
 
   /** Record a skip, bounded: past the listing ceiling only the DROP COUNT is kept. */
   const addSkip = (url: string, reason: string): void => {
@@ -1059,7 +1102,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
-    pages.push({
+    const record: PageRecord = {
       url: finalUrl,
       status: outcome.status,
       title: parsed.title,
@@ -1071,7 +1114,19 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       wordCount: parsed.wordCount,
       jsonLdTypes: parsed.jsonLdTypes,
       issues: computeIssues(parsed),
-    });
+    };
+    // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
+    // point is never to hold the 200 MB in the first place. The page that does not fit is
+    // recorded as skipped (never silently dropped) and the crawl stops here, draining the
+    // queue exactly as the maxUrls and time-budget limits do.
+    const recordBytes = jsonByteSize(record);
+    if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
+      addSkip(finalUrl, RESULT_BUDGET_REASON);
+      for (const url of queue.splice(0)) addSkip(url, RESULT_BUDGET_REASON);
+      break;
+    }
+    resultBytes += recordBytes;
+    pages.push(record);
     if (parsed.linksTruncated) linkFloodedPages++;
     parsed.links.forEach(enqueue);
   }
@@ -1110,14 +1165,29 @@ export function boundCrawlResult(result: CrawlResult): CrawlResult {
     .slice(0, MAX_SKIPPED)
     .map((s) => (s.reason.length <= MAX_FIELD_CHARS ? s : { ...s, reason: clampField(s.reason) }));
   const dropped = result.skipped.length - skipped.length;
-  return {
-    pages: result.pages.slice(0, MAX_PAGES_PERSISTED),
-    skipped:
-      dropped > 0
-        ? [...skipped, { url: skipped[0]?.url ?? "", reason: skipOverflowReason(dropped) }]
-        : skipped,
-    fetchedAt: result.fetchedAt,
-  };
+
+  // The page COUNT cap first, then the total BYTE budget (T8) — 100 pages is a count, and a
+  // count cannot bound a size. Accumulate while under budget rather than measuring the whole
+  // array, so an oversized page stops the walk instead of being measured into it.
+  const capped = result.pages.slice(0, MAX_PAGES_PERSISTED);
+  const pages: PageRecord[] = [];
+  let bytes = 0;
+  for (const page of capped) {
+    const size = jsonByteSize(page);
+    if (bytes + size > MAX_RESULT_BYTES) break;
+    bytes += size;
+    pages.push(page);
+  }
+  const droppedPages = result.pages.length - pages.length;
+
+  const notes: SkippedUrl[] = [];
+  if (dropped > 0) notes.push({ url: skipped[0]?.url ?? "", reason: skipOverflowReason(dropped) });
+  // Only the BYTE budget is reported here: dropping past MAX_PAGES_PERSISTED is the crawler's
+  // own contract (max_urls <= 100), so a note fires only when pages were actually lost to size.
+  if (pages.length < capped.length) {
+    notes.push({ url: capped[0]?.url ?? "", reason: resultBudgetDropReason(droppedPages) });
+  }
+  return { pages, skipped: [...skipped, ...notes], fetchedAt: result.fetchedAt };
 }
 
 // --- Free pre-discovery (site-size estimate) ------------------------------------
