@@ -37,6 +37,8 @@ fi
 # Re-apply migrations from scratch so tests see a known-clean schema.
 "$SUPABASE" db reset --workdir packages/db
 
+node packages/db/scripts/gen-db-types.mjs --check # drift gate: committed types.ts == freshly generated
+
 # Export connection variables from the running stack under the names the tests read
 # (createServiceClient reads SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY; the RLS test
 # also needs SUPABASE_ANON_KEY). Values come from the local stack — never hardcoded.
