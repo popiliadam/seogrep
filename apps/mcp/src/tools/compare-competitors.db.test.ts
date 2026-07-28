@@ -27,7 +27,9 @@ import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
  *       ends where it started — a failed comparison is never billed;
  *   (e)-(g) the fan-out cases specific to this tool: one comparison is up to FIVE paid requests,
  *       so a dead DISCOVERY, a dead FIRST rank overview, and a dead LAST rank overview must each
- *       bill exactly as much as a failure on request one — nothing. A partial table is never sold.
+ *       bill exactly as much as a failure on request one — nothing. A partial table is never sold;
+ *   (h) the same refund on the OTHER branch: with competitors supplied there is no discovery
+ *       request at all, so the short fan-out gets its own partial-failure proof.
  * No real DataForSEO call happens here (NEVER #5): the serving paths use fixture-backed mock
  * ports, the failure paths fake transports, and the disabled path never fetches at all.
  */
@@ -123,6 +125,30 @@ function portFailingAtRequest(failFrom: 1 | 2 | 5, spendDir: string): Competitor
     return { ok: true, status: 200, json: async () => body };
   };
   return createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, spendDir });
+}
+
+/**
+ * The SHORT flow's partial failure: the caller named the competitors, so NO discovery request is
+ * sent and the fan-out is rank overviews only — the second of which dies here. The endpoints it
+ * saw are recorded so the spec can prove the discovery request really never happened, rather than
+ * assuming it from the request count.
+ */
+function suppliedFlowPortFailingAtSecond(spendDir: string): {
+  readonly port: CompetitorsPort;
+  readonly seen: readonly string[];
+} {
+  const seen: string[] = [];
+  const transport: DfsTransport = async (url) => {
+    seen.push(url);
+    if (seen.length >= 2) {
+      return { ok: false, status: 500, json: async () => ({}) };
+    }
+    return { ok: true, status: 200, json: async () => rankOverviewFixture };
+  };
+  return {
+    port: createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, spendDir }),
+    seen,
+  };
 }
 
 const scratchDir = (): string => `${process.env.TMPDIR ?? "/tmp"}/dfs-competitors-db-${randomUUID()}`;
@@ -237,4 +263,34 @@ describe("compare_competitors credit path against the local stack", () => {
       expect(await jobCount(ctx.userId)).toBe(0);
     });
   }
+
+  it("(h) the SHORT flow (competitors supplied, no discovery) also bills ZERO when a request dies", async () => {
+    // The fan-out cases above all run the DISCOVERY branch. This is the other branch: naming the
+    // competitors skips the discovery request entirely, so the partial-failure refund has to hold
+    // on a fan-out that never had a discovery request to fail at.
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 300);
+    const { port, seen } = suppliedFlowPortFailingAtSecond(scratchDir());
+    const tool = makeCompareCompetitorsTool({ port });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(
+        tool.run(ctx, { target: "example.com", competitors: ["rival.com", "second.net"] }),
+      ).rejects.toThrow(/HTTP 500/);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // The short flow really was short: no discovery request was ever sent, and the run died on
+    // the SECOND rank overview — after the first had already been paid for.
+    expect(seen.some((url) => url.includes("/competitors_domain/live"))).toBe(false);
+    expect(seen).toHaveLength(2);
+    expect(seen.every((url) => url.includes("/domain_rank_overview/live"))).toBe(true);
+
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(balanceOf(rows)).toBe(300); // net zero — a half-built comparison is never billed
+    expect(await jobCount(ctx.userId)).toBe(0);
+  });
 });
