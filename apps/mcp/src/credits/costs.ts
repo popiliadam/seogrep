@@ -2,8 +2,9 @@
  * Per-tool credit costs (v0). These literals are the single source of truth for
  * what each MCP tool charges, and they are pinned by a byte-for-byte test.
  *
- * Human-approved: PR #12 merge sign-off; ranked_keywords and analyze_backlinks added at the
- * prices signed off in docs/plans/2026-07-28-dfs10-fiyat-karari.md. CLAUDE.md NEVER #6 —
+ * Human-approved: PR #12 merge sign-off; ranked_keywords, analyze_backlinks and
+ * compare_competitors added at the prices signed off in
+ * docs/plans/2026-07-28-dfs10-fiyat-karari.md. CLAUDE.md NEVER #6 —
  * price / credit cost / package figures do not change without human approval across
  * code + docs + pricing.
  * The credit guard (withCredits) reads the reserve amount from this table; a cost of
@@ -20,6 +21,7 @@ export const TOOL_COSTS = {
   research_keywords: 25,
   ranked_keywords: 65,
   analyze_backlinks: 70,
+  compare_competitors: 90,
   find_quick_wins: 10,
   detect_cannibalization: 10,
   analyze_content_decay: 10,
