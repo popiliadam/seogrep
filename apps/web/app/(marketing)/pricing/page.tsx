@@ -30,7 +30,7 @@ export default function Page() {
         <div className="flex flex-col items-start gap-6">
           <p className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-accent-strong">
             <span aria-hidden="true" className="h-0.5 w-6 rounded-full bg-accent" />
-            Beta pricing — numbers may change before launch
+            Beta pricing — current plans and credit costs
           </p>
           <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-5xl">Pricing that runs on credits</h1>
           <p className="max-w-2xl text-lg text-ink/70">
@@ -50,7 +50,7 @@ export default function Page() {
           <div className="mt-8 overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <caption className="mb-4 text-left text-sm text-ink/60">
-                Draft costs — we calibrate against real usage before launch.
+                Current credit costs — what each run spends from your balance.
               </caption>
               <thead>
                 <tr className="border-b border-ink/15">
