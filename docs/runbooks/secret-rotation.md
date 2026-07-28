@@ -102,6 +102,28 @@ no lazy upgrade on read** — a v2 row stays v2 forever until that user clicks D
 If the remaining v2 population has to end on a schedule, the only honest lever is asking those users to
 reconnect. Count them the same way as above: magic `53 47 53 4c` with 5th byte `02`.
 
+**Deploy the MCP READER before the web WRITER, and treat v3 as one-way.**
+`apps/web` (Netlify) and `apps/mcp` (Fly) deploy independently from the same monorepo and each bundle
+their own copy of `@pseo/core`, so the two can run different seal versions at the same time. Only
+`apps/web` **writes** a token (the connect-callback upsert); the cross-app **reader** is `apps/mcp`'s
+`pull_gsc_data`. So:
+
+1. **Order.** Ship `apps/mcp` first, confirm it is live, then ship `apps/web`. In the reverse order every
+   connection made during the skew window is a v3 row that the old MCP cannot open: `pull_gsc_data` fails
+   until MCP catches up. Nothing is lost and no credit is charged (the failure throws, so the guard
+   releases the reserve), and it heals itself the moment MCP deploys — but it is a user-visible error on a
+   connection the user just made, so do not leave the window open.
+2. **One-way.** Code older than v3 cannot open a v3 blob **at all** — this is not "opens but unbound".
+   Measured against the currently deployed `main`: its `decryptToken(sealed, keyHex)` takes no owner and
+   parses no header, so it reads a v3 header as the start of the IV and the GCM tag refuses. Once v3 rows
+   exist, **rolling `@pseo/core` back makes exactly those rows permanently unopenable** — the affected
+   users must reconnect; there is no re-seal path (see above). A rollback is therefore a decision about
+   how many connections you are willing to break, not a free undo. Count the v3 rows first: magic
+   `53 47 53 4c` with 5th byte `03`.
+
+`apps/web` is internally consistent either way — it is both the writer and the disconnect-time reader, and
+it deploys as one unit.
+
 Notes:
 - With `TOKEN_ENCRYPTION_KEYS` unset the code derives `{1: TOKEN_ENCRYPTION_KEY}` and writes under id 1 —
   that is today's live configuration and needs no action.
