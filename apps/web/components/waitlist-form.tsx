@@ -5,7 +5,7 @@ import { useId, useState } from "react";
 type FormState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "success"; alreadyExisted: boolean }
+  | { status: "success" }
   | { status: "error"; message: string };
 
 export function WaitlistForm({ source }: { source: string }) {
@@ -26,12 +26,16 @@ export function WaitlistForm({ source }: { source: string }) {
           website: String(form.get("website") ?? ""),
         }),
       });
-      const data = (await response.json()) as { ok: boolean; alreadyExisted?: boolean; error?: string };
+      // /api/waitlist answers an accepted signup with a fixed, information-free `{ ok: true }`
+      // (L-05) — no provider id, no membership flag — so there is exactly one success state to
+      // render. Reading a flag back out of the body would rebuild, in the UI, the membership
+      // oracle the endpoint deliberately gave up.
+      const data = (await response.json()) as { ok: boolean; error?: string };
       if (!response.ok || !data.ok) {
         setState({ status: "error", message: data.error ?? "Something went wrong. Please try again." });
         return;
       }
-      setState({ status: "success", alreadyExisted: data.alreadyExisted ?? false });
+      setState({ status: "success" });
     } catch {
       setState({ status: "error", message: "Network error. Please try again." });
     }
@@ -40,9 +44,7 @@ export function WaitlistForm({ source }: { source: string }) {
   if (state.status === "success") {
     return (
       <p role="status" className="text-base font-medium">
-        {state.alreadyExisted
-          ? "You're already on the list — we'll be in touch at launch."
-          : "You're on the list. We'll email you when SeoGrep opens."}
+        You&apos;re on the list. We&apos;ll email you when SeoGrep opens.
       </p>
     );
   }
