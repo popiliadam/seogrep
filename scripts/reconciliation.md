@@ -374,8 +374,8 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
 Since Faz 4 (T-D1) the reaper also runs **automatically inside the worker process**: an
 in-worker sweep every 10 minutes (`REAPER_INTERVAL_MS`, `apps/mcp/src/queue/worker.ts`)
 calls the same `reconcileStuckJobs()`. The worker starts no HTTP listener, so its outcomes do
-**not** reach `/status` (that endpoint is served by the web process, which always reports zeros
-for the reaper counters); each completed sweep logs one line instead —
+**not** reach `/status` — which is exactly why that endpoint no longer carries reaper counters
+at all (L-02); each completed sweep logs one line instead —
 `flyctl logs --app seogrep-mcp | grep 'reaper sweep'`, expected every ~10 min — see
 `scripts/monitoring.md` §4. Errors are logged (`reaper run failed:`), never fatal; safety is
 unchanged because at-most-once release stays arbitrated by the `release_reserve` RPC, not the
