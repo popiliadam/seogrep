@@ -206,15 +206,17 @@ in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
    saklar); classifier şefin transkriptten secret çıkarmasını engelledi (doğru davranış) → İNSAN
    chat'teki tek komutla tazeler, sonra şef probe-PASS kanıtlar. NOT: şef-Bash zshrc source etmez;
    goals kanıtı `eval "$(grep '^export MCP_SMOKE_URL=' ~/.zshrc)"` önekiyle koşulur (yoksa SKIP-yeşili).
-2. **Paddle temizliği:** `LIVESMOKE0728` indirim kodunu arşivle · Checkout settings'te
-   "Display discount field" işaretini tekrar KALDIR (test için açılmıştı).
+2. ~~Paddle temizliği~~ ✅ (2026-07-28 insan bildirdi: LIVESMOKE0728 arşivlendi + discount field kapalı).
 3. **Launch yayınları** — artık serbest (ödeme çalışıyor). Taslaklar hazır:
    docs/launch/2026-07-launch-posts.md (PH · Show HN · X thread + publish checklist).
    Show HN'deki "agent-orchestration ile inşa edildi" paragrafı = yayın-anı insan kararı.
-4. **repo PRIVATE** (GitHub billing) · **Google OAuth verification** (haftalar sürer, erken başlat).
-5. **Dört ders imzası** (CLAUDE.md'ye otonom YAZILMADI, metinler hazır):
-   L1 env-URL · L2 MCP_SMOKE_URL · paralel-ağaç hayalet-hataları · gözlenebilirlik-kanalı.
-   (+ yeni aday: "kendi araştırmanı, hipotezini test etmeden önce yeniden oku" — Smithery vakası.)
+4. ~~repo PRIVATE~~ ✅ (2026-07-28, gh-doğrulu: visibility=PRIVATE) · **Google OAuth verification =
+   AKTİF İŞ** — rehber + yapıştırmalık metinler: docs/runbooks/google-oauth-verification.md
+   (insan: Console tıkları + demo video. Asıl aciliyet: Testing modda refresh token 7 günde ölüyor,
+   GSC bağlantıları haftalık kopuyor).
+5. ~~Ders imzaları~~ ✅ İMZALANDI (2026-07-28 — insan metin yetkisini şefe delege etti: "önerilere
+   göre gidelim, izin veriyorum"; CLAUDE.md "İmzalı dersler" 6-10: env-URL-yapı · yeşil-kapı-ne-ölçtü ·
+   paralel-ağaç-izolasyonu · gözlenebilirlik-kanalı · araştırmanı-yeniden-oku).
 
 AÇIK DİZİN İŞLERİ (isteğe bağlı): mcp.so ücretsiz katman (ücretli $39 REDDEDİLDİ, tekrar sorma) ·
 Glama connector (~15 dk) · Anthropic dizini (Team/Enterprise Claude org ŞART + mcp-review@
