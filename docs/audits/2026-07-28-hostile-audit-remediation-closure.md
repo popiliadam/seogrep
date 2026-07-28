@@ -455,3 +455,45 @@ Bunlar bu turun hakemlerinin bulduğu, iş emirlerinin DIŞINDA kalan gerçek ka
 | gitleaks / docs-sync | **PASS** ✅ |
 | `pnpm audit --prod` | **KIRMIZI (9 high / 7 moderate)** — H-07 yapılmadı ❌ |
 
+
+---
+
+## 12. Nihai sayım ve hüküm
+
+### Sayım
+
+| | Sayı |
+|---|---:|
+| Audit bulgusu (toplam) | 54 |
+| Güncel HEAD'e karşı **yeniden doğrulanan** | 53 (+ H-04 salt-kayıt) |
+| **NOT REPRODUCIBLE** | **0** |
+| **FIXED** (done_when ✅ + taze hakem PASS + kapı yeşil) | **22** |
+| HUMAN BLOCKED | 7 (H-04, M-09, M-25, M-26, H-06'nın politika kısmı, D-04/D-05/D-08 metinleri, cloud-apply) |
+| OPEN (doğrulandı, bu turda düzeltilmedi) | kalan |
+| Ek drift maddesi FIXED | 5 (D-01, D-02, D-03, D-06, D-07) |
+
+**FIXED listesi:** H-01 · H-02 · M-01 · M-02 · M-06 · M-07 · M-08 · M-11 · M-12 · M-16 · M-18 ·
+M-21 · M-23 · L-01 · L-05 · L-06 · L-07 · L-08 · L-11 · L-14 · L-16 · L-17
+
+Kapanan her kalem için elde: gerçek `dosya:satır` kanıtı, **kırmızı-önce** test çıktısı, bağımsız
+hakem hükmü ve deterministik kapı sonucu. Sığ bir "hepsine dokun" turu 54 satırlık bir tablo üretirdi
+ama hiçbirinin gerçekten kapandığını iddia edemezdi.
+
+### Hüküm
+
+**Kaynak audit'in NO-GO hükmü KALKMADI.** Dört High'ın ikisi kapandı (H-01, H-02), dördü açık:
+
+- **H-03** — DFS bütçe kapısı hâlâ atomik/global/kalıcı değil **ve** doğrulama onu daha kötü buldu:
+  kapı üretimin yazdığı defteri okumuyor (§3.1). `DFS_LIVE` açılışının ön koşulu.
+- **H-05** — public `/status` amplifikatörü açık.
+- **H-06** — signup/Sybil yüzeyi; politika kısmı insan kararı.
+- **H-07 / M-28** — Next.js advisory'leri; yükseltme **GO** doğrulandı ama koşulmadı.
+
+Ayrıca bu turun para kazanımlarının bir kısmı — migration 0013'ün üç mandalı (M-06, M-07, M-08) —
+**cloud'a uygulanana kadar yalnız repo'da mevcuttur; canlıda henüz yoktur.**
+
+Buna karşılık para bütünlüğü tarafı ölçülebilir biçimde sertleşti. Özellikle **H-01**: açık kredi
+rezervleri artık `jobs` tablosundan bağımsız, ledger-anahtarlı, idempotent ve tek yönlü bir sweep ile
+bulunuyor; ve kullanıcıya verilen mesaj artık **doğrulanmış** duruma bağlı — rezervin durumu
+okunamazsa hiçbir iade vaadi verilmiyor.
+
