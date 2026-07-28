@@ -40,12 +40,30 @@
 2. Netlify: set `GOOGLE_CLIENT_SECRET` = new → redeploy.
 3. Verify `connect_gsc` starts, then delete the old secret in Google. (`GOOGLE_CLIENT_ID` is public.)
 
-### (d) Token encryption key — `TOKEN_ENCRYPTION_KEY` (new 64-hex)  · Netlify + Fly, SAME value
-1. `openssl rand -hex 32`.
-2. Precondition (makes it free): confirm `gsc_connections` has 0 live rows — no encrypted tokens to lose.
-3. Fly: `flyctl secrets set TOKEN_ENCRYPTION_KEY=<new> --app seogrep-mcp`; Netlify: set the **same**
-   value → Trigger redeploy (both sides must match or token decrypt fails).
-4. Verify a fresh `connect_gsc` round-trips (encrypt on web, decrypt on mcp).
+### (d) Token encryption key — keyring rotation  · Netlify + Fly, SAME values
+**No precondition.** The old "confirm `gsc_connections` has 0 live rows" step is gone: since the v2 seal
+format (`packages/core/src/gsc/crypto.ts`) every stored blob names the key id that opens it, so a rotation
+neither loses live connections nor depends on the table being empty. Leave `TOKEN_ENCRYPTION_KEY` set
+throughout — it still signs the OAuth `state` — and set each phase on **both** platforms with **identical**
+values before moving to the next.
+
+1. `openssl rand -hex 32` → the new key.
+2. **Phase 1 — read new, still write old.** On both: `TOKEN_ENCRYPTION_KEYS=1:<old>,2:<new>` and
+   `TOKEN_ENCRYPTION_ACTIVE_KEY_ID=1`. Fly: `flyctl secrets set …`; Netlify: set → Trigger redeploy.
+   Verify: an EXISTING connection still pulls (`pull_gsc_data`) and a fresh `connect_gsc` round-trips.
+3. **Phase 2 — flip writes.** On both: `TOKEN_ENCRYPTION_ACTIVE_KEY_ID=2` → redeploy. Verify: a fresh
+   `connect_gsc` round-trips (new rows seal under id 2) AND an old connection still pulls (read leg).
+4. **Retire the old key** — the step that actually contains a compromise: drop `1:<old>` from
+   `TOKEN_ENCRYPTION_KEYS` on both, leaving `2:<new>`. From that moment nothing sealed under key 1 opens
+   again, including every pre-v2 row; those users must re-connect. Do it immediately on exposure,
+   otherwise after connections have naturally re-sealed.
+
+Notes:
+- With `TOKEN_ENCRYPTION_KEYS` unset the code derives `{1: TOKEN_ENCRYPTION_KEY}` and writes under id 1 —
+  that is today's live configuration and needs no action.
+- A malformed `TOKEN_ENCRYPTION_KEYS` (entries must be `<id>:<64 hex>`, comma separated, ids 1-255) throws
+  on the first seal/open rather than falling back to the lone key: `connect_gsc` and `pull_gsc_data` fail
+  loudly instead of degrading quietly. If either breaks right after a phase, check the ring's shape first.
 
 ### (e) DataForSEO password — `DATAFORSEO_PASSWORD`  · Fly
 1. DataForSEO dashboard → reset API password.
