@@ -2,6 +2,21 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import Page, { metadata } from "./page";
 
+/**
+ * The honesty guards below assert what the copy must NOT say, so they would pass vacuously on an
+ * empty render. Every one of them goes through here: an anchor heading plus a length floor means a
+ * page that rendered nothing fails loudly instead of looking green.
+ */
+function renderedText(): string {
+  const { container } = render(<Page />);
+  const text = container.textContent ?? "";
+  expect(text, "empty render — the negative guards below would pass vacuously").toContain(
+    "14-day refund window",
+  );
+  expect(text.length, "page rendered far less copy than the policy has").toBeGreaterThan(1000);
+  return text;
+}
+
 describe("refunds page", () => {
   it("renders the policy h1", () => {
     render(<Page />);
@@ -36,14 +51,26 @@ describe("refunds page", () => {
     expect(screen.getByText(/no refund for the remainder of that period/i)).toBeDefined();
   });
 
+  it("keeps a cancellation path for subscribers the portal button never renders for", () => {
+    // billing/page.tsx gates the portal on PADDLE_API_KEY && status === "active" exactly, so
+    // past_due/paused subscribers see no button — the copy must not send them to a dead end.
+    render(<Page />);
+    expect(screen.getByText(/cancel with Paddle directly/i)).toBeDefined();
+  });
+
+  it("states how long an approved refund takes to land, hedged on the bank", () => {
+    render(<Page />);
+    expect(screen.getByText(/funds usually appear within 5.10 business days/i)).toBeDefined();
+    expect(screen.getByText(/depending on your bank/i)).toBeDefined();
+  });
+
   it("promises no pro-rata refund the billing system cannot give (honesty pin)", () => {
-    const { container } = render(<Page />);
-    expect(container.textContent).not.toMatch(/pro[-\s]?rata/i);
+    // Catches "prorated"/"pro-rated" too — the /pro[-\s]?rata/i first cut did not.
+    expect(renderedText()).not.toMatch(/pro[-\s]?rat(a|ed)/i);
   });
 
   it("claims no automatic credit clawback — there is no refund handler in the webhook", () => {
-    const { container } = render(<Page />);
-    expect(container.textContent).not.toMatch(/clawed back|automatically removed|reversed automatically/i);
+    expect(renderedText()).not.toMatch(/clawed back|automatically removed|reversed automatically/i);
   });
 
   it("reuses the site's real trial claim instead of inventing one", () => {

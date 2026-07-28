@@ -25,7 +25,7 @@ const SECTIONS = [
   },
   {
     heading: "Cancelling a subscription",
-    body: "You can cancel at any time from the Billing page in your dashboard, which opens Paddle's billing portal. Your plan stays active until the end of the period you have already paid for, and there is no refund for the remainder of that period. Nothing is charged after it ends.",
+    body: "You can cancel at any time. The Billing page in your dashboard opens Paddle's billing portal, and that button appears only while a subscription is active — if you do not see it, email support@seogrep.com or cancel with Paddle directly using the details on your receipt. Your plan stays active until the end of the period you have already paid for, and there is no refund for the remainder of that period. Nothing is charged after it ends.",
   },
   {
     heading: "Free trial",
@@ -33,7 +33,7 @@ const SECTIONS = [
   },
   {
     heading: "How to request a refund",
-    body: "Email support@seogrep.com from the address on your account, include the Paddle order or transaction reference from your receipt, and tell us what went wrong. We reply within 5 business days. You can also take the request straight to Paddle.",
+    body: "Email support@seogrep.com from the address on your account, include the Paddle order or transaction reference from your receipt, and tell us what went wrong. We reply within 5 business days. You can also take the request straight to Paddle. Once a refund is approved, Paddle issues it and the funds usually appear within 5–10 business days, depending on your bank.",
   },
   {
     heading: "Your statutory rights",
