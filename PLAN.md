@@ -3,7 +3,18 @@
 > Şef her oturuma buradan başlar. Format: faz · biten · sıradaki 3 iş · blokajlar · insan kuyruğu.
 > Master spec: `docs/specs/2026-07-pseo-saas-design.md` · Faz 0: `docs/plans/2026-07-10-faz0-system-setup.md` · Faz 1: `docs/plans/2026-07-10-faz1-vitrin.md`
 
-## Faz: 4 (LAUNCH) — **DAL MERGE'Lİ + DEPLOY'LU + CANLI-DOĞRULANMIŞ (2026-07-27)** · Faz 0-3.5 KAPALI
+## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
+
+### 🎉 2026-07-28 — Paddle LIVE ve ilk gerçek satış
+- **Paddle hesap doğrulaması aynı gün onaylandı** (beklenen en uzun kuyruk kapandı). Sole Trader/TR; payout Halkbank ticari hesap, **wire** (Payoneer değil — muhasebe izi Paddle→banka doğrudan kalsın diye). Vergi/fatura tarafı mali müşavire bırakıldı (şef tavsiye vermedi, sorulacak 6 maddeyi listeledi).
+- **Katalog + checkout + webhook** canlıda; 10 Netlify env sandbox→live güncellendi.
+- **İLK GERÇEK SATIŞ:** `credit_ledger` **tek satır** `purchase +400` · `txn_01kykvp7t7b30w85n3zxhg35qv` · olay `processed_at` dolu.
+- **İdempotency planlanandan güçlü kanıtlandı:** aynı olay **5+ kez** teslim edilmeye çalışıldı (ilk denemeler yanlış secret → **401, sıfır DB yazması**; düzeltme sonrası 200), ledger'da yine **tek satır** → NEVER#3 canlıda mühürlendi.
+- **`make goals`: `purchase-flow-live` ✅ + `uptime` ✅ = spec §9 çıkış kriteri KARŞILANDI.**
+- Şefin panelde yakaladığı iki para/güven riski: Paddle'da **max quantity 999.999** (kredi fiyat-kimliğine sabit, adete çarpmıyor → 3 adet alan 3× öder 1× kredi alırdı) → **max 1**; **statement descriptor "SULEYMANC"** (müşteri ekstrede tanımaz → chargeback) → **"SEOGREP"**.
+- Aynı gün merge: **#30** refunds · **#31** terms+privacy "Effective" (gizlilikteki **yanlış erasure sözü** düzeltildi) · **#32** pricing draft-costs temizliği · **#33** canlı kanıt.
+
+## Önceki durum: Faz 4 kod tarafı (2026-07-27)
 
 ### Faz 4 merge + canlı doğrulama (2026-07-27)
 - **[PR #23](https://github.com/popiliadam/seogrep/pull/23) MERGED** @`afad10f` (34 commit, insan merge + dal silindi). Deploy MCP + CI: **success**.
@@ -175,7 +186,54 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — 2026-07-27, Faz 4 dal KOD-TAMAM)
+## Oturum devir notu (HANDOFF — 2026-07-28, ÜRÜN CANLI PARA ALIYOR)
+
+```
+Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (üstteki "🎉 2026-07-28" bloğu) → CLAUDE.md → contract.md
+→ ledger .superpowers/sdd/progress.md (en alt: "FAZ 4 CIKIS KRITERI KARSILANDI").
+
+DURUM: **Faz 4 çıkış kriteri KARŞILANDI.** Ürün canlı para alıyor (ilk gerçek satış
+txn_01kykvp7t7b30w85n3zxhg35qv, ledger tek satır +400), iki dizinde yayında (Resmî MCP
+Registry `com.seogrep/seogrep` + Smithery `suleymanncapar/seogrep`), izleniyor (UptimeRobot +
+in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
+
+>>> AÇIK TEK PR: #33 (canlı ödeme kanıtı) — insan merge etmeli.
+>>> İNSANIN ELİNDE (kod beklemiyor), öncelik sırasıyla:
+1. **MCP_SMOKE_URL bayat** — ~/.zshrc'de İPTAL EDİLMİŞ anahtar var (sg_JPVw44DF); güncel aktif
+   anahtar sg_5aouWsfC ile başlıyor. Bu yüzden `mcp-alive` + `trial-flow-e2e` FAIL veriyor.
+   PROD SORUNU DEĞİL — anahtar tazelenince 16/16 olur. (Ders L2'nin tam da uyardığı şey.)
+2. **Paddle temizliği:** `LIVESMOKE0728` indirim kodunu arşivle · Checkout settings'te
+   "Display discount field" işaretini tekrar KALDIR (test için açılmıştı).
+3. **Launch yayınları** — artık serbest (ödeme çalışıyor). Taslaklar hazır:
+   docs/launch/2026-07-launch-posts.md (PH · Show HN · X thread + publish checklist).
+   Show HN'deki "agent-orchestration ile inşa edildi" paragrafı = yayın-anı insan kararı.
+4. **repo PRIVATE** (GitHub billing) · **Google OAuth verification** (haftalar sürer, erken başlat).
+5. **Dört ders imzası** (CLAUDE.md'ye otonom YAZILMADI, metinler hazır):
+   L1 env-URL · L2 MCP_SMOKE_URL · paralel-ağaç hayalet-hataları · gözlenebilirlik-kanalı.
+   (+ yeni aday: "kendi araştırmanı, hipotezini test etmeden önce yeniden oku" — Smithery vakası.)
+
+AÇIK DİZİN İŞLERİ (isteğe bağlı): mcp.so ücretsiz katman (ücretli $39 REDDEDİLDİ, tekrar sorma) ·
+Glama connector (~15 dk) · Anthropic dizini (Team/Enterprise Claude org ŞART + mcp-review@
+anthropic.com ön-teması + T-C4 tool annotations).
+
+ERTELENMİŞ ÜRÜN BACKLOG'U (launch-sonrası ilk dilim önerisi): **#10 DFS-derinlik araç ailesi**
+(analyze_backlinks / compare_competitors / ranked_keywords — sıfır altyapı, "veri katmanını satın al"
+ekseni; yeni paralı tool = FİYAT KAPISI insanda, DFS_LIVE açılışı gerekir). Sonra #7 audit_speed
+(+CrUX, BYO-key), #2 Scrapling, #5 büyük-site kademeleri, #6 import_crawl, #4 Tools vitrini,
+G8 rapor silme/slug-iptali. Detay: docs/plans/2026-07-27-faz4-launch.md triyaj tablosu.
+
+BİLİNEN, KASITLI DURUMLAR (yeniden açma): DFS şifresi rotate EDİLMEDİ (dormant, DFS_LIVE off) ·
+mcp.so $39 reddedildi · Paddle iadesi ledger'a DOKUNMAZ (refund handler yok; /refunds politikası
+bunu dürüstçe anlatıyor) · erasure: credit_ledger append-only + ON DELETE RESTRICT, kullanıcı
+hard-delete edilemez, /privacy bunu açıkça söylüyor (erasure runbook'u YAZILMADI — takip işi).
+
+ORTAM: git push + gh pr merge = İNSAN (plugin outward-gate + harness classifier; şef yapamaz).
+gh pr create · gh api · flyctl secrets · curl-GET · Supabase MCP execute_sql(READ) ŞEFE AÇIK.
+Prod: main canlı · Netlify (web) · Fly seogrep-mcp nrt (web+worker) · Supabase dvtqlxwnhdzveytqgksd.
+```
+
+## Önceki devir notu (2026-07-27, Faz 4 dal KOD-TAMAM)
 
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
