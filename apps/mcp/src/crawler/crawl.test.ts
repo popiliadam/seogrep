@@ -1,11 +1,12 @@
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   boundCrawlResult,
   computeIssues,
   crawlSite,
   estimateSiteSize,
+  PRE_DISCOVERY_BUDGET_MS,
   matchesIncludePaths,
   normalizeIncludePaths,
   normalizeUrl,
@@ -974,6 +975,89 @@ describe("estimateSiteSize", () => {
   it("degrades to null for an invalid / non-http origin (no throw)", async () => {
     expect(await estimateSiteSize("not a url")).toEqual({ pages: null, source: "unknown" });
     expect(await estimateSiteSize("ftp://example.com")).toEqual({ pages: null, source: "unknown" });
+  });
+});
+
+// --- estimateSiteSize's TOTAL wall-clock deadline (M-19) ------------------------
+// This estimate runs on the crawl_site REQUEST path, before a job id exists, so its cost
+// is time the caller sits and waits. Per-fetch timeouts alone do not bound it: they
+// MULTIPLY over the fetch sequence (root sitemap + up to 5 children + the homepage
+// fallback = 7 x DEFAULT_ESTIMATE_TIMEOUT_MS ~= 35 s). The budget is the ONE bound that
+// does not multiply. Loopback fixture only — ZERO external calls.
+
+describe("estimateSiteSize — total discovery deadline (M-19)", () => {
+  /**
+   * A sitemap INDEX pointing at five children that NEVER answer (the socket is held open
+   * until the crawler's own timeout fires). Every other path hangs too, so the homepage
+   * fallback would pay a full timeout as well. This is the shape that made the request
+   * path pay one per-fetch timeout per hop.
+   */
+  async function startHangingSitemapIndex(): Promise<{
+    origin: string;
+    requested: string[];
+    close: () => Promise<void>;
+  }> {
+    const requested: string[] = [];
+    const sockets = new Set<Socket>();
+    let origin = "";
+    const server = createServer((req, res) => {
+      requested.push(req.url ?? "");
+      if (req.url === "/sitemap.xml") {
+        const children = Array.from(
+          { length: 5 },
+          (_, i) => `<sitemap><loc>${origin}/child-${i}.xml</loc></sitemap>`,
+        ).join("");
+        res.writeHead(200, { "content-type": "application/xml" });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex>${children}</sitemapindex>`);
+        return;
+      }
+      // Deliberately no response: the request hangs until the crawler aborts it.
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return {
+      origin,
+      requested,
+      close: async () => {
+        for (const socket of sockets) socket.destroy(); // hung sockets would block close()
+        await new Promise<void>((resolve, reject) =>
+          server.close((err) => (err ? reject(err) : resolve())),
+        );
+      },
+    };
+  }
+
+  it("stops the fetch sequence at budgetMs instead of paying one timeout per hop", async () => {
+    const site = await startHangingSitemapIndex();
+    try {
+      // Without a total budget: 5 hanging children x 500 ms + the hanging homepage = ~3 s.
+      // With one: the root sitemap answers instantly, then hops are clamped to what the
+      // 600 ms budget leaves and the rest are never emitted.
+      const started = Date.now();
+      const est = await estimateSiteSize(site.origin, { timeoutMs: 500, budgetMs: 600 });
+      const elapsed = Date.now() - started;
+
+      // Degrades honestly — nothing was discovered, so it claims nothing.
+      expect(est).toEqual({ pages: null, source: "unknown" });
+      // The hop count is the timing-independent proof: 1 (sitemap) + 7 without the budget,
+      // at most a couple of children with it. A deadline that only raced the promise would
+      // leave the remaining hops running and this count unchanged.
+      expect(site.requested.length).toBeLessThanOrEqual(4);
+      expect(elapsed).toBeLessThan(1_500);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("defaults the budget to PRE_DISCOVERY_BUDGET_MS — the bound the crawl_site tool inherits", () => {
+    // crawl_site injects estimateSiteSize with only includePaths, so the DEFAULT is what
+    // bounds the tool call. Pinned here as a literal so the request-path ceiling cannot be
+    // widened silently.
+    expect(PRE_DISCOVERY_BUDGET_MS).toBe(8_000);
   });
 });
 

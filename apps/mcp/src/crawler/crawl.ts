@@ -738,11 +738,41 @@ async function loadRobotsWithRetry(
 }
 
 /**
+ * A TOTAL wall-clock budget shared by a SEQUENCE of fetches (M-19). Per-fetch timeouts bound
+ * one hop; over a hop sequence they multiply, and the product is what a caller waits on. A
+ * deadline is checked BEFORE each hop and clamps that hop's own timeout to what is left, so
+ * the sequence can neither overrun the budget nor leave orphaned requests running past it
+ * (which is exactly what a Promise.race around the whole thing would do).
+ *
+ * `null` means NO deadline — the crawl path, which already has its own whole-crawl
+ * timeBudgetMs, passes null and is therefore byte-identical to before.
+ */
+type Deadline = { readonly remainingMs: () => number } | null;
+
+/** Open a deadline `budgetMs` from now. */
+function deadlineIn(budgetMs: number): Deadline {
+  const endsAt = Date.now() + budgetMs;
+  return { remainingMs: () => endsAt - Date.now() };
+}
+
+/**
+ * The timeout ONE hop may spend: its own timeout, clamped to whatever the deadline leaves.
+ * A return value <= 0 means the budget is spent and the hop must NOT be emitted.
+ */
+function hopTimeout(deadline: Deadline, timeoutMs: number): number {
+  return deadline === null ? timeoutMs : Math.min(timeoutMs, deadline.remainingMs());
+}
+
+/**
  * Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. When
  * `prefixes` is non-empty, only same-origin locs whose pathname is in scope are kept — an
  * empty `prefixes` (the default) filters nothing, so the crawl's existing behavior is
  * byte-identical. The guarded fetchText path (incl. its cross-origin redirect checks) is
  * unchanged; scoping is a pure post-fetch filter.
+ *
+ * `deadline` (default null = none) bounds the WHOLE root+children sequence rather than each
+ * hop: an exhausted budget returns the seeds found so far, which is a FLOOR — honest for
+ * every consumer here, since both callers already treat the count as approximate.
  */
 async function loadSitemapSeeds(
   origin: URL,
@@ -750,6 +780,7 @@ async function loadSitemapSeeds(
   limit: number,
   lookup: LookupFn,
   prefixes: readonly string[] = [],
+  deadline: Deadline = null,
 ): Promise<string[]> {
   const seeds: string[] = [];
   const seen = new Set<string>();
@@ -772,9 +803,11 @@ async function loadSitemapSeeds(
     }
   };
 
+  const rootTimeout = hopTimeout(deadline, timeoutMs);
+  if (rootTimeout <= 0) return seeds;
   const root = await fetchText(
     new URL("/sitemap.xml", origin).toString(),
-    timeoutMs,
+    rootTimeout,
     lookup,
     MAX_SITEMAP_BYTES,
   );
@@ -783,6 +816,10 @@ async function loadSitemapSeeds(
   parsed.urls.forEach(add);
   for (const child of parsed.sitemaps.slice(0, 5)) {
     if (seeds.length >= limit) break;
+    // Budget check BEFORE the hop: an exhausted deadline stops expansion here, so the
+    // remaining children are never requested at all.
+    const childTimeout = hopTimeout(deadline, timeoutMs);
+    if (childTimeout <= 0) break;
     // SSRF guard: child-sitemap locs are tenant-controlled input on a hosted
     // service — never let them point our fetcher off the crawl origin (e.g. at
     // cloud metadata endpoints). Off-origin or unparsable children are skipped.
@@ -793,7 +830,7 @@ async function loadSitemapSeeds(
       continue;
     }
     if (!sameOrigin(childUrl, origin)) continue;
-    const res = await fetchText(child, timeoutMs, lookup, MAX_SITEMAP_BYTES);
+    const res = await fetchText(child, childTimeout, lookup, MAX_SITEMAP_BYTES);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
   return seeds.slice(0, limit);
@@ -1097,6 +1134,26 @@ const ESTIMATE_SITEMAP_LIMIT = 5_000;
 /** Default wall-clock budget for each fetch in the free pre-discovery, ms. */
 const DEFAULT_ESTIMATE_TIMEOUT_MS = 5_000;
 
+/**
+ * The TOTAL wall-clock ceiling on pre-discovery (M-19), and the one number that decides how
+ * long a crawl_site call can sit there before it hands back a job id.
+ *
+ * WHY it is needed on top of DEFAULT_ESTIMATE_TIMEOUT_MS: the per-fetch timeout bounds ONE
+ * hop, and pre-discovery is a SEQUENCE of them — the root sitemap, up to 5 children, then the
+ * homepage fallback. Seven hops x 5 s is ~35 s of a caller staring at nothing, because this
+ * runs on the REQUEST path (the tool must decide whether to enqueue at all, so it cannot be
+ * deferred to the worker without opening the worker's credit reserve for a crawl the caller
+ * may still decline).
+ *
+ * Overrun is SAFE, never a money event: pre-discovery reads no ledger, and a budget-truncated
+ * count is a FLOOR, so at worst a large site is not flagged and the caller is charged the same
+ * flat TOOL_COSTS.crawl_site they would have paid after confirming. It can never overstate.
+ *
+ * HONEST LIMIT: this bounds the FETCH sequence. DNS resolution inside the SSRF origin gate is
+ * the OS resolver's own timeout and is not covered here.
+ */
+export const PRE_DISCOVERY_BUDGET_MS = 8_000;
+
 /** Count distinct same-origin, in-scope links in `html` (a homepage-size floor). Pure. */
 function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly string[]): number {
   const { links } = parseHtml(html, normalizeUrl(originUrl.toString()));
@@ -1128,14 +1185,26 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
  *    `<loc>`s -> source "sitemap";
  *  - otherwise the homepage's same-origin, in-scope links as a rough floor -> source "homepage";
  *  - `includePaths` scopes the count exactly as it scopes the crawl.
+ *
+ * It is also BOUNDED IN TOTAL by `budgetMs` (default PRE_DISCOVERY_BUDGET_MS) — see that
+ * constant for why a per-fetch timeout is not enough on the request path. An exhausted budget
+ * simply stops emitting hops, so the answer is whatever was discovered by then: a floor, never
+ * an overstatement.
  */
 export async function estimateSiteSize(
   origin: string,
-  opts: { lookup?: LookupFn; timeoutMs?: number; includePaths?: string[] } = {},
+  opts: {
+    lookup?: LookupFn;
+    timeoutMs?: number;
+    includePaths?: string[];
+    /** Total wall clock for the whole discovery sequence, ms. Test knob. */
+    budgetMs?: number;
+  } = {},
 ): Promise<SiteSizeEstimate> {
   const lookup = opts.lookup ?? defaultLookup;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ESTIMATE_TIMEOUT_MS;
   const prefixes = normalizeIncludePaths(opts.includePaths);
+  const deadline = deadlineIn(opts.budgetMs ?? PRE_DISCOVERY_BUDGET_MS);
 
   let originUrl: URL;
   try {
@@ -1153,13 +1222,15 @@ export async function estimateSiteSize(
       return { pages: null, source: "unknown" };
     }
 
-    // Guarded sitemap count (reuses loadSitemapSeeds' fetchText + bounded index expansion).
+    // Guarded sitemap count (reuses loadSitemapSeeds' fetchText + bounded index expansion),
+    // sharing THIS call's deadline so root + children cannot outspend the total budget.
     const sitemapSeeds = await loadSitemapSeeds(
       originUrl,
       timeoutMs,
       ESTIMATE_SITEMAP_LIMIT,
       lookup,
       prefixes,
+      deadline,
     );
     if (sitemapSeeds.length > 0) {
       return { pages: sitemapSeeds.length, source: "sitemap" };
@@ -1169,7 +1240,11 @@ export async function estimateSiteSize(
     // The homepage is HTML, so it gets the page ceiling. A body at the ceiling yields a
     // link count from the bounded prefix — which is exactly what this estimate claims to
     // be (a floor), so truncation never overstates the site's size.
-    const home = await fetchText(rootSeedOf(originUrl), timeoutMs, lookup, MAX_HTML_BYTES);
+    // This is the LAST hop, and it too runs only on what the budget still allows: a
+    // sitemap sequence that spent the whole budget leaves nothing to discover with.
+    const homeTimeout = hopTimeout(deadline, timeoutMs);
+    if (homeTimeout <= 0) return { pages: null, source: "unknown" };
+    const home = await fetchText(rootSeedOf(originUrl), homeTimeout, lookup, MAX_HTML_BYTES);
     if (!home || home.status !== 200 || !home.body) {
       return { pages: null, source: "unknown" };
     }
