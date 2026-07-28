@@ -1,5 +1,5 @@
 import { createCipheriv } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptToken, encryptToken, fromByteaHex, toByteaHex, tokenKeyBytes } from "./crypto.js";
 
 /**
@@ -43,6 +43,25 @@ function sealLegacy(plain: string, keyHex: string, iv: Buffer): Buffer {
   const ciphertext = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
 }
+
+/** The ONE message every unopenable buffer produces. ANCHORED: it must not gain detail. */
+const OPAQUE_ERROR = /^failed to decrypt token: wrong key or corrupt ciphertext$/;
+
+/** Opening the frozen legacy blob — the read a broken keyring must never quietly alter. */
+const openV1Fixture = (): string => decryptToken(fromByteaHex(V1_FIXTURE_HEX), KEY_A);
+
+/** Point the keyring at an explicit ring, or at nothing (the zero-env-change path). */
+function setKeyring(ring: string | undefined, activeKeyId?: string): void {
+  vi.stubEnv("TOKEN_ENCRYPTION_KEYS", ring);
+  vi.stubEnv("TOKEN_ENCRYPTION_ACTIVE_KEY_ID", activeKeyId);
+}
+
+// Every spec starts from a bare environment, so the default path under test is the one
+// production runs today: no keyring vars set at all.
+beforeEach(() => {
+  vi.unstubAllEnvs();
+  setKeyring(undefined);
+});
 
 describe("encryptToken / decryptToken round-trip", () => {
   it.each([
@@ -200,5 +219,101 @@ describe("tokenKeyBytes (the shared 64-hex key-format check, reused by the state
     ["empty", ""],
   ])("throws naming TOKEN_ENCRYPTION_KEY for %s", (_label, badKey) => {
     expect(() => tokenKeyBytes(badKey)).toThrowError(/TOKEN_ENCRYPTION_KEY.*64 hex/s);
+  });
+});
+
+describe("keyring: rotation without touching a single stored row", () => {
+  it("ZERO-ENV-CHANGE path: with no keyring vars set, the lone key is id 1 and active", () => {
+    const sealed = encryptToken("derived-path", KEY_A);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0201`);
+    expect(decryptToken(sealed, KEY_A)).toBe("derived-path");
+  });
+
+  it("an empty/whitespace TOKEN_ENCRYPTION_KEYS is 'unset', not a broken ring", () => {
+    setKeyring("   ");
+    expect(decryptToken(encryptToken("still-works", KEY_A), KEY_A)).toBe("still-works");
+  });
+
+  it("seals under the ACTIVE key id and stamps it in the header", () => {
+    setKeyring(`1:${KEY_A},2:${KEY_B}`, "2");
+    const sealed = encryptToken("rotated", KEY_A);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0202`);
+    expect(decryptToken(sealed, KEY_A)).toBe("rotated");
+  });
+
+  it("reads BOTH keys mid-rotation: v1 rows under the old key still open", () => {
+    setKeyring(`1:${KEY_A},2:${KEY_B}`, "2");
+    expect(openV1Fixture()).toBe(V1_FIXTURE_PLAIN);
+  });
+
+  it("a single-key ring needs no ACTIVE id — that key is the active one", () => {
+    setKeyring(`7:${KEY_B}`);
+    const sealed = encryptToken("solo", KEY_A);
+    expect(sealed.subarray(0, HEADER_BYTES).toString("hex")).toBe(`${MAGIC_HEX}0207`);
+    expect(decryptToken(sealed, KEY_A)).toBe("solo");
+  });
+
+  it("RETIRES a v2 key: a blob sealed under id 1 stops opening once 1 leaves the ring", () => {
+    const sealed = encryptToken("compromised-key-era", KEY_A);
+    setKeyring(`2:${KEY_B}`);
+    expect(() => decryptToken(sealed, KEY_A)).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("RETIRES the legacy key: the pinned v1 fixture stops opening once it leaves the ring", () => {
+    setKeyring(`2:${KEY_B}`);
+    expect(openV1Fixture).toThrowError(OPAQUE_ERROR);
+  });
+
+  it("an UNKNOWN key id yields the SAME opaque message — no keyring probing", () => {
+    setKeyring(`9:${KEY_B}`);
+    const sealed = encryptToken("sealed-under-9", KEY_A);
+    setKeyring(`1:${KEY_A}`);
+    // Anchored: byte-identical to the wrong-key message, so nothing hints that id 9 once
+    // existed or that the header parsed at all.
+    expect(() => decryptToken(sealed, KEY_A)).toThrowError(OPAQUE_ERROR);
+  });
+});
+
+describe("keyring structural validation (boot error, never silent degradation)", () => {
+  it.each([
+    ["no colon", "garbage"],
+    ["non-hex key", `1:${"z".repeat(64)}`],
+    ["63-hex key", `1:${"0".repeat(63)}`],
+    ["missing key", "1:"],
+    ["missing id", `:${KEY_A}`],
+    ["id 0", `0:${KEY_A}`],
+    ["id above 255", `256:${KEY_A}`],
+    ["duplicate id", `1:${KEY_A},1:${KEY_B}`],
+    ["one good, one broken", `1:${KEY_A},2:nope`],
+  ])("rejects %s — reads and writes BOTH stop, no fallback to the lone key", (_label, ring) => {
+    setKeyring(ring);
+    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
+    expect(openV1Fixture).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
+  });
+
+  it("never echoes key material in the failure message", () => {
+    setKeyring(`1:${KEY_A},1:${KEY_B}`);
+    const seal = (): Buffer => encryptToken("x", KEY_A);
+    expect(seal).toThrowError(/TOKEN_ENCRYPTION_KEYS/);
+    expect(seal).not.toThrowError(KEY_A); // substring match: the value must not appear
+    expect(seal).not.toThrowError(KEY_B);
+  });
+
+  it("demands an explicit ACTIVE id once the ring holds more than one key", () => {
+    setKeyring(`1:${KEY_A},2:${KEY_B}`);
+    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
+  });
+
+  it.each([
+    ["names a key outside the ring", `1:${KEY_A}`, "2"],
+    ["is not a number", `1:${KEY_A}`, "primary"],
+  ])("throws when TOKEN_ENCRYPTION_ACTIVE_KEY_ID %s", (_label, ring, active) => {
+    setKeyring(ring, active);
+    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
+  });
+
+  it("rejects an ACTIVE id other than 1 while no ring is configured", () => {
+    setKeyring(undefined, "3");
+    expect(() => encryptToken("x", KEY_A)).toThrowError(/TOKEN_ENCRYPTION_ACTIVE_KEY_ID/);
   });
 });

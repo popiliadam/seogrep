@@ -54,8 +54,20 @@ const MIN_V2_BYTES = HEADER_BYTES + MIN_SEALED_BYTES;
 const KEY_HEX_LENGTH = 64;
 /** The id the single TOKEN_ENCRYPTION_KEY occupies when no explicit keyring is set. */
 const LEGACY_KEY_ID = 1;
+/** Key ids live in the header's single byte; 0 is reserved so "absent" stays distinct. */
+const MIN_KEY_ID = 1;
+const MAX_KEY_ID = 255;
+
+/** `"1:<64hex>,2:<64hex>"` — every key that may DECRYPT — and the one id that ENCRYPTS. */
+const KEYRING_ENV = "TOKEN_ENCRYPTION_KEYS";
+const ACTIVE_KEY_ID_ENV = "TOKEN_ENCRYPTION_ACTIVE_KEY_ID";
 
 const KEY_HEX_RE = /^[0-9a-fA-F]{64}$/;
+const KEYRING_ENTRY_RE = /^(\d{1,3}):([0-9a-fA-F]{64})$/;
+const KEY_ID_RE = /^\d{1,3}$/;
+
+/** The subset of the environment this module reads. Injectable so it stays testable. */
+export type TokenKeyEnv = Readonly<Record<string, string | undefined>>;
 
 /**
  * The set of keys a buffer may be opened with, plus the one it gets sealed with. Every
@@ -88,15 +100,79 @@ export function tokenKeyBytes(keyHex: string): Buffer {
 }
 
 /**
- * Build the keyring `keyHex` stands for: a single key in the legacy slot (id 1), active.
+ * Parse `TOKEN_ENCRYPTION_KEYS`. Structure, not length: anything but `<id>:<64 hex>` is a
+ * configuration error, and that THROWS rather than degrading to the single legacy key — a
+ * ring that silently loses a key is how live tokens become unreadable (signed lesson #6).
+ * Messages carry the entry position only, never the value.
  */
-function resolveKeyring(keyHex: string): TokenKeyring {
-  const key = tokenKeyBytes(keyHex);
-  return Object.freeze({
-    activeKeyId: LEGACY_KEY_ID,
-    activeKey: key,
-    keys: new Map([[LEGACY_KEY_ID, key]]),
+function parseKeyring(spec: string): Map<number, Buffer> {
+  const keys = new Map<number, Buffer>();
+  spec.split(",").forEach((entry, index) => {
+    const [, idText, keyHex] = KEYRING_ENTRY_RE.exec(entry.trim()) ?? [];
+    if (idText === undefined || keyHex === undefined) {
+      throw new Error(
+        `${KEYRING_ENV} entry #${index + 1} is malformed: expected "<id>:<${KEY_HEX_LENGTH} hex characters>"`,
+      );
+    }
+    const id = Number(idText);
+    if (id < MIN_KEY_ID || id > MAX_KEY_ID) {
+      throw new Error(
+        `${KEYRING_ENV} entry #${index + 1} has key id ${id}: ids must be ${MIN_KEY_ID}-${MAX_KEY_ID}`,
+      );
+    }
+    if (keys.has(id)) throw new Error(`${KEYRING_ENV} declares key id ${id} more than once`);
+    keys.set(id, Buffer.from(keyHex, "hex"));
   });
+  return keys;
+}
+
+/** Pick the one key that seals new tokens. Ambiguity is an error, never a guess. */
+function selectActiveKey(
+  keys: ReadonlyMap<number, Buffer>,
+  activeRaw: string | undefined,
+  explicitRing: boolean,
+): { id: number; key: Buffer } {
+  if (activeRaw === undefined || activeRaw === "") {
+    const entries = [...keys.entries()];
+    const only = entries.length === 1 ? entries[0] : undefined;
+    if (only === undefined) {
+      throw new Error(`${ACTIVE_KEY_ID_ENV} must say which ${KEYRING_ENV} key seals new tokens`);
+    }
+    return { id: only[0], key: only[1] };
+  }
+  if (!KEY_ID_RE.test(activeRaw)) {
+    throw new Error(`${ACTIVE_KEY_ID_ENV} must be a key id number (${MIN_KEY_ID}-${MAX_KEY_ID})`);
+  }
+  const id = Number(activeRaw);
+  const key = keys.get(id);
+  if (key === undefined) {
+    throw new Error(
+      explicitRing
+        ? `${ACTIVE_KEY_ID_ENV}=${id} names a key that is not in ${KEYRING_ENV}`
+        : `${ACTIVE_KEY_ID_ENV}=${id} is set but ${KEYRING_ENV} is not — the lone TOKEN_ENCRYPTION_KEY is key id ${LEGACY_KEY_ID}`,
+    );
+  }
+  return { id, key };
+}
+
+/**
+ * Resolve the keyring in force. The DEFAULT path needs no env change at all: with
+ * `TOKEN_ENCRYPTION_KEYS` absent the ring is `{1: TOKEN_ENCRYPTION_KEY}` — the key handed
+ * in — and id 1 is active, so every existing deploy starts writing v2 with no coordinated
+ * Netlify+Fly update. Rotation is then purely additive: add key 2 to the ring on both
+ * sides, then flip the active id.
+ *
+ * When `TOKEN_ENCRYPTION_KEYS` IS set it is the whole authority — the passed key is still
+ * format-checked (it also signs OAuth state) but is NOT added to the ring, which is
+ * exactly what makes retiring a compromised key possible.
+ */
+export function resolveTokenKeyring(keyHex: string, env: TokenKeyEnv = process.env): TokenKeyring {
+  const legacyKey = tokenKeyBytes(keyHex);
+  const spec = env[KEYRING_ENV]?.trim();
+  const explicitRing = spec !== undefined && spec !== "";
+  const keys = explicitRing ? parseKeyring(spec) : new Map([[LEGACY_KEY_ID, legacyKey]]);
+  const active = selectActiveKey(keys, env[ACTIVE_KEY_ID_ENV]?.trim(), explicitRing);
+  return Object.freeze({ activeKeyId: active.id, activeKey: active.key, keys });
 }
 
 /**
@@ -150,7 +226,7 @@ function openV1(sealed: Buffer, keyring: TokenKeyring): string | null {
  * non-deterministic by design. Only v2 is ever written.
  */
 export function encryptToken(plain: string, keyHex: string): Buffer {
-  const keyring = resolveKeyring(keyHex);
+  const keyring = resolveTokenKeyring(keyHex);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv("aes-256-gcm", keyring.activeKey, iv);
   const ciphertext = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
@@ -165,7 +241,7 @@ export function encryptToken(plain: string, keyHex: string): Buffer {
  * from outside, so a caller learns nothing about the keyring.
  */
 export function decryptToken(sealed: Buffer, keyHex: string): string {
-  const keyring = resolveKeyring(keyHex);
+  const keyring = resolveTokenKeyring(keyHex);
   if (sealed.length < MIN_SEALED_BYTES) {
     throw new Error(
       `encrypted token is corrupt: expected at least ${MIN_SEALED_BYTES} bytes, got ${sealed.length}`,
