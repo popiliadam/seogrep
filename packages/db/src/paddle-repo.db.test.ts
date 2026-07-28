@@ -163,6 +163,26 @@ describe("paddle-repo against local Supabase", () => {
     expect((await getEventProcessed(service, eventB))?.processedAt).toEqual(expect.any(String));
   });
 
+  it("refuses to grant when the event_id has no paddle_events row (no unbacked purchase)", async () => {
+    // M-08 armor's sibling: migration 0013 makes the event row a PRECONDITION of the grant.
+    // Before it, the RPC inserted the ledger row first and then UPDATEd an event that matched
+    // zero rows, so a service bug / recovery script / operator passing a wrong p_event_id
+    // minted credits with no webhook evidence behind them. The webhook route always inserts
+    // the event before calling this RPC, so the legitimate path is unaffected.
+    const userId = await makeUserId();
+    const ref = `txn_${randomUUID()}`;
+    const ghostEventId = `evt_${randomUUID()}`; // deliberately NEVER inserted
+
+    await expect(
+      processPaddlePurchase(service, { eventId: ghostEventId, userId, amount: 1000, ref }),
+    ).rejects.toThrow(/unknown paddle event/i);
+
+    // Rollback proof: the refusal leaves NOTHING behind — no purchase row for the ref, and
+    // no phantom event row either.
+    expect(await purchaseRows(ref)).toHaveLength(0);
+    expect(await getEventProcessed(service, ghostEventId)).toBeNull();
+  });
+
   it("process_paddle_purchase rejects a non-positive amount without writing", async () => {
     const userId = await makeUserId();
     const ref = `txn_${randomUUID()}`;
