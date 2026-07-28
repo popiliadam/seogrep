@@ -32,6 +32,21 @@ describe("security header rules", () => {
     expect(headerValue(GLOBAL_SOURCE, "x-frame-options")).toBe("DENY");
   });
 
+  it("does not leak full URLs to third parties (Referrer-Policy)", () => {
+    expect(headerValue(GLOBAL_SOURCE, "referrer-policy")).toBe("strict-origin-when-cross-origin");
+  });
+
+  it("denies powerful features the product never uses (Permissions-Policy)", () => {
+    const policy = headerValue(GLOBAL_SOURCE, "permissions-policy");
+    expect(policy).toBeDefined();
+    for (const feature of ["camera=()", "microphone=()", "geolocation=()"]) {
+      expect(policy).toContain(feature);
+    }
+    // payment=() would disable the Payment Request API that the Paddle checkout overlay uses
+    // for Apple/Google Pay — denying it here would break paid conversion.
+    expect(policy).not.toContain("payment=()");
+  });
+
   it("keeps the strict C-S1 report CSP intact (frame hardening must not dilute it)", () => {
     const reportCsp = headerValue(REPORT_SOURCE, "content-security-policy");
     expect(reportCsp).toBeDefined();

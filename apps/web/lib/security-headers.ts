@@ -49,6 +49,13 @@ export const SECURITY_HEADER_RULES: readonly HeaderRule[] = [
     headers: [
       { key: "Content-Security-Policy", value: GLOBAL_CSP },
       { key: "X-Frame-Options", value: "DENY" },
+      // Full URLs (which can carry a report slug or a query) never leave the origin; same-origin
+      // navigation keeps the full referrer, cross-origin gets the bare origin, HTTPS->HTTP none.
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      // Deny the powerful features this product never asks for, so an injected/embedded frame
+      // cannot prompt for them in our name. NOT payment=(): the Paddle checkout overlay uses the
+      // Payment Request API for Apple/Google Pay, and denying it would break paid conversion.
+      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
     ],
   },
   {
