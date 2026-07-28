@@ -17,6 +17,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       pull_gsc_data: 5,
       research_keywords: 25,
       ranked_keywords: 65,
+      analyze_backlinks: 70,
       find_quick_wins: 10,
       detect_cannibalization: 10,
       analyze_content_decay: 10,
@@ -28,8 +29,8 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
     });
   });
 
-  it("has exactly 17 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(17);
+  it("has exactly 18 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(18);
   });
 
   it("exposes only non-negative integer costs", () => {
