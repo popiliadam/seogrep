@@ -248,15 +248,20 @@ describe("withCredits against the local stack", () => {
     // handler failure at the ledger level) — it raises a typed signal so the worker can stamp
     // an honest fail-mark, and the reserve stays OPEN for the ledger-keyed orphan sweep.
     const restore = failCommitReserve(Number.MAX_SAFE_INTEGER);
-    try {
-      await withCredits({ userId }, { tool: "crawl_site", jobId }, async () => "delivered");
-      throw new Error("expected withCredits to throw on a persistent commit failure");
-    } catch (error) {
-      expect(isReserveCommitFailed(error)).toBe(true);
-      expect((error as Error).message).toContain("commit_reserve failed");
-    } finally {
-      restore();
-    }
+    // Capture the rejection rather than asserting inside a catch: a catch would also swallow
+    // the "it resolved" sentinel and report it as a confusing type mismatch.
+    const failure: unknown = await withCredits(
+      { userId },
+      { tool: "crawl_site", jobId },
+      async () => "delivered",
+    ).then(
+      () => new Error("withCredits RESOLVED despite a persistent commit failure"),
+      (error: unknown) => error,
+    );
+    restore();
+
+    expect(isReserveCommitFailed(failure), `unexpected failure: ${String(failure)}`).toBe(true);
+    expect(String(failure)).toContain("commit_reserve failed");
 
     const rows = await ledgerRows(userId);
     // The open-reserve shape H-01 is about: a debit with NO settling row on either side.
