@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "../../../../lib/supabase/server";
 import { buildConsentUrl } from "../../../../lib/gsc/oauth";
+import { resolveBaseUrl } from "../../../../lib/site";
 import { freshStatePayload, signState } from "../../../../lib/gsc/state";
 
 /**
@@ -18,8 +19,8 @@ export const runtime = "nodejs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function redirect(path: string, origin: string): NextResponse {
-  return NextResponse.redirect(new URL(path, origin));
+function redirect(path: string, base: string): NextResponse {
+  return NextResponse.redirect(new URL(path, base));
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -29,14 +30,25 @@ export async function GET(request: Request): Promise<Response> {
   // Canonical origin for every SAME-APP redirect below. url.origin is the request Host, which
   // a proxy can let an attacker spoof, so internal 302 Locations must be built from the
   // canonical WEB_BASE_URL (A-I4) — the same origin the OAuth redirect_uri already uses —
-  // never from the request. WEB_BASE_URL missing = broken deploy: fail closed (signed lesson
-  // #5). url.origin is the fallback for that ONE error page only, since no canonical base exists.
-  const webBaseUrl = process.env.WEB_BASE_URL;
-  if (!webBaseUrl) {
-    console.error("gsc connect: WEB_BASE_URL not configured");
-    return redirect("/app?gsc=error", url.origin);
+  // never from the request.
+  //
+  // FAIL-CLOSED (T4, the shape L-06 set for the auth callback): an unset / empty / malformed
+  // WEB_BASE_URL is a CONFIGURATION ERROR, not a reason to send the error page through
+  // url.origin. That last fallback was still Host-derived, so a broken deploy behind a
+  // Host-forwarding proxy answered with a 302 to the attacker's origin — precisely when
+  // nothing else was working either. There is no redirect target we can trust here, so we
+  // emit none: a generic English message to the user, the diagnostics to the log.
+  const base = resolveBaseUrl(process.env.WEB_BASE_URL);
+  if (!base) {
+    console.error(
+      "gsc connect refused: WEB_BASE_URL is not a usable absolute http(s) URL — refusing to " +
+        "derive a redirect from the request Host",
+    );
+    return new NextResponse("Search Console is temporarily unavailable. Please try again later.", {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
-  const base = webBaseUrl.replace(/\/+$/, "");
 
   const supabase = await createClient();
   const {

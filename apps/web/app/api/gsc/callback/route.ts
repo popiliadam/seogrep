@@ -3,6 +3,7 @@ import { createServiceClient } from "@pseo/db/server";
 import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pseo/core";
 import { createClient } from "../../../../lib/supabase/server";
 import { matchGscProperty } from "../../../../lib/gsc/oauth";
+import { resolveBaseUrl } from "../../../../lib/site";
 import { upsertGscConnection } from "../../../../lib/gsc/store";
 import { verifyState } from "../../../../lib/gsc/state";
 
@@ -26,8 +27,8 @@ import { verifyState } from "../../../../lib/gsc/state";
  */
 export const runtime = "nodejs";
 
-function redirect(path: string, origin: string): NextResponse {
-  return NextResponse.redirect(new URL(path, origin));
+function redirect(path: string, base: string): NextResponse {
+  return NextResponse.redirect(new URL(path, base));
 }
 
 function errorMessage(error: unknown): string {
@@ -36,21 +37,31 @@ function errorMessage(error: unknown): string {
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const origin = url.origin;
   const code = url.searchParams.get("code");
   const stateParam = url.searchParams.get("state") ?? "";
   const googleError = url.searchParams.get("error");
 
-  // (1) Canonical origin for every SAME-APP redirect below. origin (the request Host) is
+  // (1) Canonical origin for every SAME-APP redirect below. The request Host is
   // proxy-spoofable, so internal 302 Locations are built from the canonical WEB_BASE_URL
-  // (A-I4), never the request. WEB_BASE_URL missing = broken deploy: fail closed (signed
-  // lesson #5); origin is the fallback for that ONE error page, where no canonical base exists.
-  const webBaseUrl = process.env.WEB_BASE_URL;
-  if (!webBaseUrl) {
-    console.error("gsc callback: WEB_BASE_URL not configured");
-    return redirect("/app?gsc=error", origin);
+  // (A-I4), never the request.
+  //
+  // FAIL-CLOSED (T4, the shape L-06 set for the auth callback): an unset / empty / malformed
+  // WEB_BASE_URL is a CONFIGURATION ERROR. The old url.origin fallback on this one error page
+  // was still the request Host, so a broken deploy behind a Host-forwarding proxy handed the
+  // user returning from Google a 302 to the attacker's origin. We emit no redirect target at
+  // all. The check runs BEFORE the exchange, so the one-time code is not burned: the user can
+  // reconnect once the deploy is fixed.
+  const base = resolveBaseUrl(process.env.WEB_BASE_URL);
+  if (!base) {
+    console.error(
+      "gsc callback refused: WEB_BASE_URL is not a usable absolute http(s) URL — refusing to " +
+        "derive a redirect from the request Host",
+    );
+    return new NextResponse("Search Console is temporarily unavailable. Please try again later.", {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
-  const base = webBaseUrl.replace(/\/+$/, "");
 
   // The remaining OAuth/encryption secrets must be present too; a missing one fails loudly,
   // not degrade (signed lesson #5). GOOGLE_CLIENT_SECRET is only presence-checked here — it is

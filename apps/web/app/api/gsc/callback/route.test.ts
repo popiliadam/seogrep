@@ -215,13 +215,6 @@ describe("GET /api/gsc/callback", () => {
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
-  it("fails closed when WEB_BASE_URL is unset (falls back to request origin — no canonical base)", async () => {
-    vi.stubEnv("WEB_BASE_URL", "");
-    const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
-    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
-  });
-
   it("still connects when sites.list fails (property stays null, token still sealed)", async () => {
     listSites.mockRejectedValue(new Error("403"));
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
@@ -247,5 +240,66 @@ describe("GET /api/gsc/callback", () => {
       code: "auth-code",
       redirectUri: "https://app.example.com/api/gsc/callback",
     });
+  });
+});
+
+/**
+ * SPEC CHANGE (T4), replacing "fails closed when WEB_BASE_URL is unset (falls back to request
+ * origin — no canonical base)", which asserted a 307 to `http://localhost:3457/app?gsc=error`.
+ * "Fails closed" was the label; the behaviour was a redirect built from the REQUEST HOST, the
+ * last Host-derived target left in this route. Behind a Host-forwarding proxy a broken deploy
+ * therefore 302'd the returning user to the attacker's origin. Now the L-06 shape: 500, no
+ * Location, no code exchanged, diagnostics in the log only.
+ */
+describe("GET /api/gsc/callback — unusable WEB_BASE_URL fails CLOSED (T4)", () => {
+  beforeEach(() => {
+    stubEnv();
+    getUser.mockResolvedValue({ data: { user: { id: USER } } });
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  async function expectConfigFailure(response: Response): Promise<void> {
+    expect(response.status).toBe(500);
+    expect(response.headers.get("location")).toBeNull();
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled(); // one-time code NOT burned
+    expect(upsertGscConnection).not.toHaveBeenCalled();
+  }
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is unset", async () => {
+    vi.stubEnv("WEB_BASE_URL", undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("returns a 500 config error when WEB_BASE_URL is not an absolute URL", async () => {
+    vi.stubEnv("WEB_BASE_URL", "seogrep.com");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("never puts the request Host (or the env name) in the user-facing body", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const url = new URL("https://attacker.example/api/gsc/callback");
+    url.searchParams.set("code", "auth-code");
+    url.searchParams.set("state", validState());
+    const response = await GET(
+      new Request(url, { headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" } }),
+    );
+    const body = await response.text();
+    expect(response.headers.get("location")).toBeNull();
+    expect(body).not.toContain("attacker.example");
+    expect(body).not.toContain("WEB_BASE_URL");
+    expect(body).toMatch(/search console/i);
   });
 });

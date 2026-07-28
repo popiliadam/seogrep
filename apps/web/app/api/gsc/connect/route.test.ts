@@ -95,15 +95,6 @@ describe("GET /api/gsc/connect", () => {
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
   });
 
-  it("fails closed when WEB_BASE_URL is unset (no canonical base to redirect through)", async () => {
-    stubEnv();
-    vi.stubEnv("WEB_BASE_URL", "");
-    signedIn();
-    // Falls back to the request origin for this one error page only — no canonical base exists.
-    const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
-  });
-
   it("routes internal redirects through the canonical WEB_BASE_URL, not a spoofed request Host", async () => {
     // Models a proxy forwarding an attacker-controlled Host into request.url: url.origin is the
     // attacker's, yet the internal 302 must carry the canonical origin, never the spoofed one.
@@ -116,5 +107,69 @@ describe("GET /api/gsc/connect", () => {
     const location = new URL((await GET(spoofed)).headers.get("location")!);
     expect(location.origin).toBe("https://app.example.com");
     expect(location.href).toBe("https://app.example.com/app?gsc=unknown_project");
+  });
+});
+
+/**
+ * SPEC CHANGE (T4), replacing "fails closed when WEB_BASE_URL is unset (no canonical base to
+ * redirect through)", which asserted a 307 to `http://localhost:3457/app?gsc=error` — the
+ * REQUEST origin. That was the one surviving Host-derived redirect target in this route, and
+ * the old case pinned it, so it could not survive the fix. A proxy forwarding an
+ * attacker-controlled Host turns that error page into a 302 to the attacker's origin exactly
+ * when the deploy is already broken. Same fail-closed shape L-06 established for the auth
+ * callback: 500, no Location at all, diagnostics to the log only.
+ */
+describe("GET /api/gsc/connect — unusable WEB_BASE_URL fails CLOSED (T4)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  async function expectConfigFailure(response: Response): Promise<void> {
+    expect(response.status).toBe(500);
+    expect(response.headers.get("location")).toBeNull(); // no redirect target AT ALL
+    expect(maybeSingle).not.toHaveBeenCalled(); // no DB round-trip on a broken deploy
+  }
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {
+    stubEnv();
+    vi.stubEnv("WEB_BASE_URL", "");
+    signedIn();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`)));
+  });
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is unset", async () => {
+    stubEnv();
+    vi.stubEnv("WEB_BASE_URL", undefined);
+    signedIn();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`)));
+  });
+
+  it("returns a 500 config error when WEB_BASE_URL is not an absolute URL", async () => {
+    stubEnv();
+    vi.stubEnv("WEB_BASE_URL", "seogrep.com");
+    signedIn();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`)));
+  });
+
+  it("never puts the request Host (or the env name) in the user-facing body", async () => {
+    stubEnv();
+    vi.stubEnv("WEB_BASE_URL", "");
+    signedIn();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await GET(
+      new Request(`https://attacker.example/api/gsc/connect?project_id=${PROJECT_ID}`, {
+        headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
+      }),
+    );
+    const body = await response.text();
+    expect(response.headers.get("location")).toBeNull();
+    expect(body).not.toContain("attacker.example");
+    expect(body).not.toContain("WEB_BASE_URL");
+    expect(body).toMatch(/search console/i); // generic English message, no diagnostics
   });
 });
