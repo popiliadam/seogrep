@@ -44,6 +44,33 @@ describe("parseSitemap", () => {
   });
 });
 
+/**
+ * H-02: the parser used to materialize EVERY <loc> match. A hostile (or merely enormous)
+ * sitemap could therefore turn a few megabytes of XML into millions of strings on a 512 MB
+ * machine. The ceiling BREAKS the scan — matchAll is a lazy iterator, so the tail of the
+ * document is never even examined.
+ */
+describe("parseSitemap — <loc> ceiling", () => {
+  it("stops at the default ceiling on a million-<loc> document", () => {
+    const xml = `<urlset>${"<loc>/a</loc>".repeat(1_000_000)}</urlset>`;
+    expect(parseSitemap(xml).urls).toHaveLength(50_000);
+  });
+
+  it("honours an explicit lower ceiling", () => {
+    expect(parseSitemap(`<urlset>${"<loc>/a</loc>".repeat(100)}</urlset>`, 10).urls).toHaveLength(10);
+  });
+
+  it("applies the same ceiling to a <sitemapindex>", () => {
+    const xml = `<sitemapindex>${"<loc>/s</loc>".repeat(100)}</sitemapindex>`;
+    expect(parseSitemap(xml, 5).sitemaps).toHaveLength(5);
+  });
+
+  it("leaves an ordinary sitemap completely untouched", () => {
+    const xml = "<urlset><loc>https://x.test/a</loc><loc>https://x.test/b</loc></urlset>";
+    expect(parseSitemap(xml).urls).toEqual(["https://x.test/a", "https://x.test/b"]);
+  });
+});
+
 describe("decodeEntities — malformed numeric references", () => {
   it("keeps out-of-range references verbatim instead of throwing (hex and decimal)", () => {
     // 0x110000 / 1114112 are one past the Unicode max; fromCodePoint would throw.
