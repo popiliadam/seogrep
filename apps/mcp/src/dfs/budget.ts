@@ -1,135 +1,183 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
+import { getServiceClient, type ServiceClient } from "../db.ts";
 
 /**
- * DataForSEO daily dev-budget guard (the app side of guardrails/dfs-budget.sh).
+ * DataForSEO daily vendor-budget guard (the app side of guardrails/dfs-budget.sh).
  *
- * The constitution caps live DataForSEO dev-smoke spend at $3.00/day (CLAUDE.md NEVER #5).
- * Every LIVE call records its cost as one JSONL line in
- *   guardrails/.dfs-spend/<YYYY-MM-DD>.jsonl   (gitignored)
- * and every live call FIRST asserts that its estimated cost would not push today's total
- * past the cap. Crossing the cap wakes the human (contract wake class: money / outside
- * world) rather than silently degrading — the same tripwire the shell guard enforces.
+ * The constitution caps live DataForSEO spend at $3.00/day (CLAUDE.md NEVER #5). That cap is
+ * only real if the counter behind it is ATOMIC, GLOBAL, DURABLE and FAIL-CLOSED, so the counter
+ * is a database table (migration 0014), not a file:
  *
- * There is NO live call in test or CI (constitution NEVER #5): these functions are pure
- * filesystem accounting, exercised here with an injected directory + clock so they never
- * touch the real spend tree. The day boundary is UTC to match the guard script's `date -u`.
+ *   ATOMIC      — reserve_dfs_spend checks the day's total AND writes the booking inside ONE
+ *                 per-day advisory lock, so the window between "am I under the cap?" and the
+ *                 vendor request is closed. Concurrent callers see each other's reservations.
+ *   GLOBAL      — one row set for the whole fleet. apps/mcp/fly.toml runs `web` and `worker` as
+ *                 separate machines; both now spend against the same counter.
+ *   DURABLE     — a restart or redeploy changes nothing; the day's total lives in Postgres.
+ *   FAIL-CLOSED — if the counter cannot be read or written, NO call goes out. The previous
+ *                 file-backed version counted every read error as $0.00 spent.
+ *
+ * Flow per vendor operation: reserveSpend() BEFORE the request (the reservation counts against
+ * the day at its ESTIMATE from the instant it is written), then settleSpend() after it with the
+ * REAL cost the vendor reported. A reservation that is never settled keeps costing its estimate,
+ * so a crashed or failed flow errs toward refusing the next call.
+ *
+ * This is VENDOR spend, not user credits: it never touches credit_ledger (constitution NEVER #2).
+ * There is NO live call in test or CI (NEVER #5) — the ledger is a port, and specs inject a fake
+ * or drive the real RPCs against a local stack (budget.db.test.ts).
  */
 
-/** Sanctioned daily cap for live DataForSEO dev-smoke spend (USD). CLAUDE.md NEVER #5. */
+/**
+ * Sanctioned daily cap for live DataForSEO spend (USD). CLAUDE.md NEVER #5.
+ * The DB holds the authoritative copy (public.dfs_daily_budget_usd); budget.db.test.ts pins the
+ * two together so they cannot drift.
+ */
 export const DAILY_BUDGET_USD = 3.0;
 
-/**
- * Default spend directory: <repo-root>/guardrails/.dfs-spend. Resolved relative to this
- * module so it is stable regardless of the process cwd, from both src (tsx) and dist
- * (built) — apps/mcp/{src,dist}/dfs are both four levels below the repo root.
- */
-const DEFAULT_SPEND_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../../../guardrails/.dfs-spend",
-);
-
-/** Injected spend-accounting context. Tests pin both; production omits both. */
-export interface SpendContext {
-  /** Clock (defaults to Date). Fixes the UTC day and the recorded ts. */
-  readonly now?: () => Date;
-  /** Spend directory (defaults to the repo's guardrails/.dfs-spend). */
-  readonly dir?: string;
-}
-
-/** One recorded live-call spend. */
-export interface SpendEntry {
-  readonly cost_usd: number;
+/** An open booking against today's budget: written BEFORE the vendor request, settled after it. */
+export interface SpendReservation {
+  readonly id: string;
   readonly endpoint: string;
-  readonly count: number;
+  readonly estimatedUsd: number;
 }
 
 /**
- * Directory precedence: injected ctx.dir (tests) → DFS_BUDGET_DIR env (real prod name —
- * the Fly image is root-owned and the process is non-root, so the repo-relative default
- * is unwritable in the container; fly.toml sets DFS_BUDGET_DIR=/tmp/dfs-spend) → the
- * repo-relative default (local dev). T16 live-smoke EACCES incident, 2026-07-20.
+ * The fleet-global spend counter, as a port. The production implementation is the migration-0014
+ * RPC trio; specs inject a fake so no test needs a database or a network.
  */
-function resolveDir(ctx: SpendContext): string {
-  return ctx.dir ?? process.env.DFS_BUDGET_DIR ?? DEFAULT_SPEND_DIR;
+export interface SpendLedger {
+  /** Book `estimatedUsd` against today. Resolves to the reservation id, or REJECTS at the cap. */
+  reserve(estimatedUsd: number, endpoint: string): Promise<string>;
+  /** Reconcile an open reservation with the real cost. Rejects if unknown or already settled. */
+  settle(reservationId: string, actualUsd: number, rowCount: number): Promise<void>;
+  /** Today's committed spend (USD): open reservations at estimate, settled ones at real cost. */
+  todayUsd(): Promise<number>;
 }
 
-/** UTC day stamp (YYYY-MM-DD) — matches the guard script's `date -u +%F`. */
-function dayStamp(now: () => Date): string {
-  return now().toISOString().slice(0, 10);
+/** The DB error text reserve_dfs_spend raises at the cap — the one refusal that is not a fault. */
+const OVER_BUDGET_MARKER = "daily budget exceeded";
+
+/** True when a ledger rejection is the cap itself rather than an infrastructure failure. */
+function isOverBudget(message: string): boolean {
+  return message.toLowerCase().includes(OVER_BUDGET_MARKER);
 }
 
-function spendFilePath(ctx: SpendContext): string {
-  const now = ctx.now ?? ((): Date => new Date());
-  return path.join(resolveDir(ctx), `${dayStamp(now)}.jsonl`);
+/** A PostgREST error surface, narrowed to the field this module reports. */
+function rpcErrorMessage(error: { message?: string } | null): string | null {
+  return error ? (error.message ?? "unknown RPC error") : null;
 }
 
 /**
- * Sum today's recorded spend (USD). A missing file means no live call happened today, so
- * the total is 0. Blank and malformed lines are ignored defensively (the guard script sums
- * the same cost_usd field), so a single bad line never blocks the whole read.
+ * The production ledger: the migration-0014 RPCs over the service-role client. Every method
+ * REJECTS on any RPC error — translating a failure into "nothing spent" is the fail-open hole
+ * this replaces, so the error is passed up and the caller refuses the vendor request.
  */
-export function readTodaySpendUsd(ctx: SpendContext = {}): number {
-  let raw: string;
-  try {
-    raw = readFileSync(spendFilePath(ctx), "utf8");
-  } catch {
-    return 0;
-  }
-  let total = 0;
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as { cost_usd?: unknown };
-      if (typeof parsed.cost_usd === "number" && Number.isFinite(parsed.cost_usd)) {
-        total += parsed.cost_usd;
+export function createDbSpendLedger(client?: ServiceClient): SpendLedger {
+  const db = (): ServiceClient => client ?? getServiceClient();
+  return {
+    async reserve(estimatedUsd, endpoint) {
+      const { data, error } = await db().rpc("reserve_dfs_spend", {
+        p_estimated_usd: estimatedUsd,
+        p_endpoint: endpoint,
+      });
+      const message = rpcErrorMessage(error);
+      if (message !== null) throw new Error(message);
+      if (typeof data !== "string" || data === "") {
+        throw new Error("reserve_dfs_spend returned no reservation id");
       }
-    } catch {
-      // Ignore a malformed line rather than fail the whole gate.
-    }
-  }
-  return total;
+      return data;
+    },
+    async settle(reservationId, actualUsd, rowCount) {
+      const { error } = await db().rpc("settle_dfs_spend", {
+        p_reservation_id: reservationId,
+        p_actual_usd: actualUsd,
+        p_row_count: rowCount,
+      });
+      const message = rpcErrorMessage(error);
+      if (message !== null) throw new Error(message);
+    },
+    async todayUsd() {
+      const { data, error } = await db().rpc("dfs_spend_today_usd");
+      const message = rpcErrorMessage(error);
+      if (message !== null) throw new Error(message);
+      const total = Number(data);
+      if (!Number.isFinite(total)) {
+        throw new Error(`dfs_spend_today_usd returned a non-numeric total: ${String(data)}`);
+      }
+      return total;
+    },
+  };
 }
 
 /**
- * Fail-closed budget gate, called BEFORE every live call. If today's spend plus this
- * call's estimated cost would exceed the daily cap, log a loud WAKE-THE-HUMAN line
- * (contract wake class) and throw a clear English error so the call is refused. Under the
- * cap, it returns quietly. The real per-call cost is recorded AFTER the call by recordSpend.
+ * Fail-closed pre-call gate AND booking, in one step. Called BEFORE every live DataForSEO
+ * request. Two ways to say no, both of which refuse the call:
+ *   - at the cap        — a loud WAKE-THE-HUMAN line (contract wake class: money / outside world)
+ *   - ledger unreadable — no call goes out; an uncountable spend is treated as unaffordable
+ * Returns the reservation the caller must settle once the real cost is known.
  */
-export function assertWithinBudget(estimatedCostUsd: number, ctx: SpendContext = {}): void {
-  const spent = readTodaySpendUsd(ctx);
-  const projected = spent + estimatedCostUsd;
-  if (projected > DAILY_BUDGET_USD) {
+export async function reserveSpend(
+  estimatedCostUsd: number,
+  endpoint: string,
+  ledger: SpendLedger,
+): Promise<SpendReservation> {
+  let id: string;
+  try {
+    id = await ledger.reserve(estimatedCostUsd, endpoint);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (isOverBudget(detail)) {
+      console.error(
+        `WAKE THE HUMAN — DataForSEO daily budget guard tripped: an estimated ` +
+          `$${estimatedCostUsd.toFixed(4)} call to ${endpoint} would exceed the ` +
+          `$${DAILY_BUDGET_USD.toFixed(2)} cap. Live call refused ` +
+          `(contract wake class: money / outside world). Ledger said: ${detail}`,
+      );
+      throw new Error(detail);
+    }
     console.error(
-      `WAKE THE HUMAN — DataForSEO daily budget guard tripped: today $${spent.toFixed(4)} ` +
-        `+ estimated $${estimatedCostUsd.toFixed(4)} would exceed the $${DAILY_BUDGET_USD.toFixed(2)} ` +
-        `cap. Live call refused (contract wake class: money / outside world).`,
+      `WAKE THE HUMAN — DataForSEO budget ledger is unreachable, so today's spend cannot be ` +
+        `counted. Refusing the live call to ${endpoint} rather than spending blind ` +
+        `(contract wake class: money / outside world). Ledger said: ${detail}`,
     );
     throw new Error(
-      `DataForSEO daily budget exceeded: today's spend ($${spent.toFixed(2)}) plus this call's ` +
-        `estimate ($${estimatedCostUsd.toFixed(2)}) would pass the $${DAILY_BUDGET_USD.toFixed(2)} ` +
-        `cap. Refusing the call.`,
+      `DataForSEO budget ledger unavailable: today's spend could not be counted, so the live ` +
+        `call was refused (fail-closed). Cause: ${detail}`,
+    );
+  }
+  return { id, endpoint, estimatedUsd: estimatedCostUsd };
+}
+
+/**
+ * Reconcile a reservation with the REAL cost the vendor reported, AFTER the request.
+ *
+ * Deliberately does NOT throw: by the time this runs the money is already spent and the caller
+ * is holding paid data, so failing here would throw away a call the business has been billed for
+ * without making the budget any safer. An unsettled reservation keeps counting at its estimate,
+ * which is the conservative direction — the honest residual limit is that a call whose REAL cost
+ * came in ABOVE its estimate is under-counted until the day rolls over, so the failure is logged
+ * as a wake line rather than swallowed.
+ */
+export async function settleSpend(
+  reservation: SpendReservation,
+  actualCostUsd: number,
+  rowCount: number,
+  ledger: SpendLedger,
+): Promise<void> {
+  try {
+    await ledger.settle(reservation.id, actualCostUsd, rowCount);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `WAKE THE HUMAN — DataForSEO spend reservation ${reservation.id} (${reservation.endpoint}) ` +
+        `could not be settled at its real cost $${actualCostUsd.toFixed(4)}; it stays OPEN and ` +
+        `keeps costing today's budget its $${reservation.estimatedUsd.toFixed(4)} estimate. ` +
+        `Spend above that estimate is UNDER-COUNTED until the UTC day rolls over ` +
+        `(contract wake class: money / outside world). Ledger said: ${detail}`,
     );
   }
 }
 
-/**
- * Append one live-call spend to today's JSONL file, creating the directory on first write.
- * Called AFTER a successful live call with the real cost (from the DFS response) when
- * available, else the pre-call estimate.
- */
-export function recordSpend(entry: SpendEntry, ctx: SpendContext = {}): void {
-  const now = ctx.now ?? ((): Date => new Date());
-  const dir = resolveDir(ctx);
-  mkdirSync(dir, { recursive: true });
-  const line = JSON.stringify({
-    ts: now().toISOString(),
-    cost_usd: entry.cost_usd,
-    endpoint: entry.endpoint,
-    count: entry.count,
-  });
-  appendFileSync(path.join(dir, `${dayStamp(now)}.jsonl`), `${line}\n`);
+/** Today's committed DataForSEO spend (USD). Throws if the counter cannot be read. */
+export async function todaySpendUsd(ledger: SpendLedger): Promise<number> {
+  return ledger.todayUsd();
 }

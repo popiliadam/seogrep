@@ -250,6 +250,16 @@ export type Database = {
       };
       commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
       release_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
+      // The migration-0014 DataForSEO vendor-budget RPCs (dfs/budget.ts). VENDOR spend, not
+      // user credits — a separate counter with its own per-day advisory lock. The dfs_spend
+      // table itself is deliberately NOT modelled above: it carries no user_id (it is operator
+      // accounting, not tenant data), and the app reaches it only through these functions.
+      reserve_dfs_spend: { Args: { p_estimated_usd: number; p_endpoint: string }; Returns: string };
+      settle_dfs_spend: {
+        Args: { p_reservation_id: string; p_actual_usd: number; p_row_count: number };
+        Returns: undefined;
+      };
+      dfs_spend_today_usd: { Args: Record<string, never>; Returns: number };
     };
     Enums: {
       [_ in never]: never;
