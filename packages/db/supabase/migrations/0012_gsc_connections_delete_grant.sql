@@ -1,0 +1,11 @@
+-- 0012: gsc_connections DELETE grant — rebuild paritesi (GSC Disconnect, 2026-07-28)
+--
+-- 0006_users_profile_trial_and_grants.sql bu tablonun grant satirinda yalniz select/insert/update
+-- verip durusu "DELETE: granted to no one" diye belgelemisti. BU MIGRATION O DURUSU BILINCLI OLARAK
+-- GECERSIZ KILAR (supersedes 0006 "DELETE: granted to no one"): /app/connection Disconnect eylemi
+-- service_role ile kullanicinin KENDI baglanti satirini siler (deleteGscConnection, user_id +
+-- project_id filtreli). RLS posture DEGISMIYOR: authenticated/anon icin yazma/silme izni yok
+-- (SELECT-only policy surer), service_role zaten BYPASSRLS. Canli DB'de legacy auto-grant DELETE'i
+-- fiilen veriyordu; GRANT idempotent — canlida no-op, migration'lardan sifirdan kurulan stack'te
+-- parite duzeltmesi. (Fable hakem onayi: 2026-07-28, GSC Disconnect review'u icinde.)
+grant delete on table public.gsc_connections to service_role;
