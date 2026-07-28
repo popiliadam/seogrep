@@ -326,6 +326,25 @@ const DEFAULT_ROBOTS_RETRY_DELAY_MS = 2_000;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * Ceilings on how much DECOMPRESSED body the crawler will hold for ONE response. The URL
+ * count (100) and the wall clock (90 s) bound how MANY answers we take, not how big one may
+ * be — and Content-Length cannot supply that bound: it describes WIRE bytes (a gzip bomb is
+ * ~20 KB on the wire and 20 MB in memory) and a chunked response carries no length at all.
+ * So the crawler counts bytes off the body reader and CANCELS the transfer at the ceiling.
+ *
+ * Sizing, against the 512 MB machine in apps/mcp/fly.toml: the crawl is SEQUENTIAL, so
+ * exactly one body is in flight at a time and the live cost is that body plus the
+ * accumulated result (bounded separately). 2 MB is ~20x a large real HTML document. 8 MB
+ * lets a legitimately large sitemap through — it already carries ~150k <loc>s, far more than
+ * either the 100-URL crawl or the 5000-URL estimate can consume, so the sitemaps.org 50 MB
+ * file limit is deliberately NOT honoured on a shared 512 MB machine. robots.txt gets the
+ * RFC 9309 §2.5 parse limit (a crawler MAY cap parsing at >= 500 KiB and ignore the rest).
+ */
+const MAX_HTML_BYTES = 2_000_000;
+const MAX_SITEMAP_BYTES = 8_000_000;
+const MAX_ROBOTS_BYTES = 512 * 1024;
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function sameOrigin(a: URL, b: URL): boolean {
@@ -348,12 +367,51 @@ type FetchOutcome =
   | FetchOk
   | { readonly kind: "timeout" }
   | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "too-large"; readonly limitBytes: number }
   | { readonly kind: "too-many-redirects" }
   | { readonly kind: "off-origin-redirect"; readonly target: string };
 
 /** Release the per-hop pinned dispatchers a chain opened (bodies are consumed by now). */
 async function destroyAll(dispatchers: readonly Dispatcher[]): Promise<void> {
   await Promise.allSettled(dispatchers.map((d) => d.destroy()));
+}
+
+/** A body read that either completed or stopped at its ceiling. */
+interface CappedBody {
+  readonly text: string;
+  /** True when `maxBytes` would have been exceeded and the rest was CANCELLED. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Read a response body as text, counting DECOMPRESSED bytes and cancelling the transfer the
+ * moment `maxBytes` would be exceeded. undici inflates Content-Encoding before this stream,
+ * so what is counted here is exactly what would land in memory. Cancelling (rather than
+ * abandoning) releases the socket instead of letting a hostile server keep pushing.
+ *
+ * Chunks are collected and joined ONCE — never `text += chunk` — so a body that runs to the
+ * ceiling costs O(maxBytes), not O(maxBytes^2). A read that rejects (abort, socket reset)
+ * propagates to the caller's existing failure path unchanged.
+ */
+async function readCappedText(res: Response, maxBytes: number): Promise<CappedBody> {
+  if (!res.body) return { text: "", truncated: false };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done || value === undefined) break;
+    if (total + value.byteLength > maxBytes) {
+      // The overflowing chunk is dropped whole rather than sliced: a partial chunk buys
+      // nothing here and could end in a half-decoded multi-byte sequence.
+      await reader.cancel().catch(() => undefined);
+      return { text: chunks.join(""), truncated: true };
+    }
+    total += value.byteLength;
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  return { text: chunks.join("") + decoder.decode(), truncated: false };
 }
 
 /**
@@ -413,7 +471,12 @@ async function fetchPage(
         await res.body?.cancel();
         return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
       }
-      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: await res.text() };
+      // A page over the ceiling is REFUSED, not truncated: half a document parses into
+      // misleading signals (a "missing title" that is only missing because we stopped
+      // reading). The caller records it as skipped with an honest reason instead.
+      const capped = await readCappedText(res, MAX_HTML_BYTES);
+      if (capped.truncated) return { kind: "too-large", limitBytes: MAX_HTML_BYTES };
+      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: capped.text };
     }
     return { kind: "too-many-redirects" };
   } catch (error) {
@@ -472,11 +535,17 @@ async function validateRedirectTarget(target: URL, lookup: LookupFn): Promise<bo
  * CALLER CONTRACT: the INITIAL url's host is the caller's responsibility to validate —
  * crawlSite vets the crawl origin before any fetchText. fetchText validates cross-origin
  * REDIRECT hops only.
+ *
+ * `maxBytes` bounds the DECOMPRESSED body (see the ceilings above). Unlike a page, a text
+ * resource over its ceiling is TRUNCATED rather than refused, because the prefix is still
+ * the useful answer: RFC 9309 §2.5 prescribes exactly this for robots.txt, and a sitemap
+ * prefix at 8 MB already carries far more <loc>s than any crawl or estimate can consume.
  */
 async function fetchText(
   url: string,
   timeoutMs: number,
   lookup: LookupFn,
+  maxBytes: number,
 ): Promise<{ status: number; body: string } | null> {
   let requestedOrigin: URL;
   try {
@@ -517,7 +586,7 @@ async function fetchText(
         current = next.toString();
         continue;
       }
-      return { status: res.status, body: await res.text() };
+      return { status: res.status, body: (await readCappedText(res, maxBytes)).text };
     }
     return null; // exceeded MAX_REDIRECTS -> unreachable
   } catch {
@@ -567,7 +636,12 @@ const ROBOTS_UNREACHABLE_REASON: Record<RobotsUnreachableCause, string> = {
  * blocked pin) is `network`.
  */
 async function loadRobots(origin: URL, timeoutMs: number, lookup: LookupFn): Promise<RobotsLoad> {
-  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs, lookup);
+  const res = await fetchText(
+    new URL("/robots.txt", origin).toString(),
+    timeoutMs,
+    lookup,
+    MAX_ROBOTS_BYTES,
+  );
   if (res === null) return { kind: "unreachable", cause: "network" };
   if (res.status >= 500) return { kind: "unreachable", cause: "server_error" };
   return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
@@ -628,7 +702,12 @@ async function loadSitemapSeeds(
     }
   };
 
-  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs, lookup);
+  const root = await fetchText(
+    new URL("/sitemap.xml", origin).toString(),
+    timeoutMs,
+    lookup,
+    MAX_SITEMAP_BYTES,
+  );
   if (!root || root.status !== 200) return seeds;
   const parsed = parseSitemap(root.body);
   parsed.urls.forEach(add);
@@ -644,7 +723,7 @@ async function loadSitemapSeeds(
       continue;
     }
     if (!sameOrigin(childUrl, origin)) continue;
-    const res = await fetchText(child, timeoutMs, lookup);
+    const res = await fetchText(child, timeoutMs, lookup, MAX_SITEMAP_BYTES);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
   return seeds.slice(0, limit);
@@ -809,6 +888,15 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       skipped.push({ url, reason: `off-origin redirect to ${outcome.target}` });
       continue;
     }
+    if (outcome.kind === "too-large") {
+      // Honest, actionable, and never silent: the tenant is told the page was too big and
+      // by which bound, rather than seeing it vanish or come back half-parsed.
+      skipped.push({
+        url,
+        reason: `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`,
+      });
+      continue;
+    }
     if (outcome.kind === "error") {
       skipped.push({ url, reason: `fetch failed: ${outcome.message}` });
       continue;
@@ -952,7 +1040,10 @@ export async function estimateSiteSize(
     }
 
     // No usable sitemap -> the homepage's in-scope same-origin links as a rough floor.
-    const home = await fetchText(rootSeedOf(originUrl), timeoutMs, lookup);
+    // The homepage is HTML, so it gets the page ceiling. A body at the ceiling yields a
+    // link count from the bounded prefix — which is exactly what this estimate claims to
+    // be (a floor), so truncation never overstates the site's size.
+    const home = await fetchText(rootSeedOf(originUrl), timeoutMs, lookup, MAX_HTML_BYTES);
     if (!home || home.status !== 200 || !home.body) {
       return { pages: null, source: "unknown" };
     }

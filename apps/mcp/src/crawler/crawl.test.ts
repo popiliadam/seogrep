@@ -12,6 +12,7 @@ import {
   parseJsonLdTypes,
   type CrawlResult,
 } from "./crawl.ts";
+import { startHostileSite } from "./fixtures/hostile-server.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 import type { LookupFn } from "./ssrf.ts";
 
@@ -413,6 +414,69 @@ describe("crawlSite — limits and edge behavior", () => {
       expect(result.skipped.find((s) => s.url === normalizeUrl(site.origin + "/redirect-loop"))?.reason).toMatch(
         /redirect/i,
       );
+    } finally {
+      await site.close();
+    }
+  });
+});
+
+// --- H-02: hostile response SIZE limits ----------------------------------------
+// The crawler bounded URL COUNT and WALL CLOCK but nothing about how big a single answer
+// may be, on a 512 MB machine (apps/mcp/fly.toml). These drive the hostile fixture over
+// loopback — ZERO external calls — and pin that every hostile shape stops at a fixed
+// ceiling instead of being drained into memory.
+
+describe("crawlSite — hostile response sizes (H-02)", () => {
+  const skipFor = (result: CrawlResult, url: string): string | undefined =>
+    result.skipped.find((s) => s.url === url)?.reason;
+
+  it("cancels a gzip bomb instead of inflating it (Content-Length is not a bound)", async () => {
+    // ~20 KB on the wire, 20 MB once undici inflates it: the Content-Length header is
+    // truthful and still useless, so the ceiling MUST count decompressed bytes.
+    const site = await startHostileSite({ bombBytes: 20_000_000 });
+    try {
+      const result = await crawlSite(site.origin + "/bomb", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(skipFor(result, normalizeUrl(site.origin + "/bomb"))).toMatch(/body exceeded/i);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("caps a body served with NO Content-Length and stops reading it early", async () => {
+    // Chunked transfer: nothing in the headers says how big this is. The crawler must
+    // count as it reads and cancel — proven by how little the server managed to push.
+    const site = await startHostileSite({ chunkedBytes: 30_000_000 });
+    try {
+      const result = await crawlSite(site.origin + "/chunked", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(skipFor(result, normalizeUrl(site.origin + "/chunked"))).toMatch(/body exceeded/i);
+      // Far short of the 30 MB on offer: the body was cancelled, not drained.
+      expect(site.bytesWritten.get("/chunked") ?? 0).toBeLessThan(10_000_000);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("still crawls a normal page — the ceiling does not fire on ordinary bodies", async () => {
+    const site = await startHostileSite({ chunkedBytes: 100_000 });
+    try {
+      const result = await crawlSite(site.origin + "/chunked", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.title).toBe("Hostile");
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("caps an oversized sitemap body and still crawls what it seeded", async () => {
+    // ~16 MB of <loc>s. The sitemap ceiling must stop the read well before the end, and
+    // the crawl must still run on the seeds the bounded prefix yielded.
+    const site = await startHostileSite({ locCount: 400_000 });
+    try {
+      const result = await crawlSite(site.origin, { maxUrls: 2, crawlDelayCapMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(site.bytesWritten.get("/sitemap.xml") ?? 0).toBeLessThan(11_000_000);
     } finally {
       await site.close();
     }
