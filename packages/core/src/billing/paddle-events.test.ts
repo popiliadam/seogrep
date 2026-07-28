@@ -103,6 +103,107 @@ describe("ledgerCommandFor — transaction.completed", () => {
   });
 });
 
+describe("ledgerCommandFor — transaction.completed cardinality & quantity (M-02)", () => {
+  /**
+   * A signed transaction.completed can legitimately carry SEVERAL items and a per-item
+   * quantity > 1 (Paddle's checkout supports both). Granting one pinned package for such an
+   * event splits the money from the credits — the customer pays for N and receives 1. The
+   * credit AMOUNT is a human-signed figure (NEVER #6), so multiplying it here is not ours to
+   * decide: both shapes fail closed to record_only, which the route turns into a LOUD,
+   * retryable 500 (B-C1) instead of a silent short-grant.
+   */
+
+  it("record_only when TWO items match the price map — never grant one package for a multi-package purchase", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_multi",
+        items: [
+          { price: { id: "pri_starter" }, quantity: 1 },
+          { price: { id: "pri_topup_10" }, quantity: 1 },
+        ],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("multiple_matching_items"),
+    });
+  });
+
+  it("record_only when the matched item's quantity is 2 — credits are pinned, never multiplied", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_qty2",
+        items: [{ price: { id: "pri_topup_10" }, quantity: 2 }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("unsupported_quantity"),
+    });
+  });
+
+  it("quantity 1 is the ordinary single purchase — behaviour UNCHANGED", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_qty1",
+        items: [{ price: { id: "pri_starter" }, quantity: 1 }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.starter.credits,
+      ref: "txn_qty1",
+      packageKey: "starter",
+    });
+  });
+
+  it("an absent quantity field still purchases (defaults to one) — behaviour UNCHANGED", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_noqty",
+        items: [{ price: { id: "pri_starter" } }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.starter.credits,
+      ref: "txn_noqty",
+      packageKey: "starter",
+    });
+  });
+
+  it("an UNMATCHED extra item does not block the single matched purchase", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_mixed",
+        items: [
+          { price: { id: "pri_unknown" }, quantity: 1 },
+          { price: { id: "pri_pro" }, quantity: 1 },
+        ],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.pro.credits,
+      ref: "txn_mixed",
+      packageKey: "pro",
+    });
+  });
+});
+
 describe("ledgerCommandFor — subscription.*", () => {
   it("maps subscription.created to a subscription upsert command", () => {
     const command = ledgerCommandFor(

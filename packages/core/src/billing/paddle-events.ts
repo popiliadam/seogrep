@@ -9,9 +9,10 @@ import { CREDIT_PACKAGES, type PackageKey } from "./packages.js";
  *
  * The load-bearing rule: a purchase AMOUNT is the pinned CREDIT_PACKAGES figure for the
  * matched package, NEVER a number read from the event body (NEVER #6). Anything we cannot
- * confidently attribute — unmapped price, missing/invalid user_id, missing ref, unknown
- * status, unhandled type — becomes `record_only`, which the route stores for audit and
- * marks processed (no side effect, no retry storm).
+ * confidently attribute — unmapped price, missing/invalid user_id, missing ref, several matched
+ * items, quantity > 1, unknown status, unhandled type — becomes `record_only`, which the route
+ * stores for audit and marks processed (no side effect, no retry storm); the one exception is a
+ * paid transaction.completed, which the route keeps retryable instead (B-C1).
  */
 
 /** Subscription status — mirror of the subscriptions.status CHECK constraint (migration 0001). */
@@ -59,7 +60,18 @@ const SUBSCRIPTION_EVENT_TYPES = new Set([
 const userIdSchema = z.object({ user_id: z.uuid() });
 
 const itemsSchema = z
-  .array(z.object({ price: z.object({ id: z.string() }).nullish() }).nullish())
+  .array(
+    z
+      .object({
+        price: z.object({ id: z.string() }).nullish(),
+        // Paddle's per-item quantity, carried verbatim through unmarshal. Nullish-tolerant:
+        // an absent quantity means one (the field only appears on entities that can be
+        // multiplied), and a non-numeric one fails the parse into record_only rather than
+        // being coerced.
+        quantity: z.number().nullish(),
+      })
+      .nullish(),
+  )
   .nullish();
 
 const transactionSchema = z.object({
@@ -80,19 +92,30 @@ function recordOnly(reason: string): LedgerCommand {
   return { kind: "record_only", reason };
 }
 
+interface MatchedItem {
+  readonly key: PackageKey;
+  /** The item's quantity; an absent/null quantity is one. */
+  readonly quantity: number;
+}
+
+/** EVERY item whose price id resolves to a package via the priceMap, in event order. */
+function matchedItems(
+  items: z.infer<typeof itemsSchema>,
+  priceMap: Record<string, PackageKey>,
+): readonly MatchedItem[] {
+  return (items ?? []).flatMap((item) => {
+    const priceId = item?.price?.id;
+    const key = priceId ? priceMap[priceId] : undefined;
+    return key ? [{ key, quantity: item?.quantity ?? 1 }] : [];
+  });
+}
+
 /** First item price id that resolves to a package via the priceMap, else null. */
 function matchPackage(
   items: z.infer<typeof itemsSchema>,
   priceMap: Record<string, PackageKey>,
 ): PackageKey | null {
-  for (const item of items ?? []) {
-    const priceId = item?.price?.id;
-    const key = priceId ? priceMap[priceId] : undefined;
-    if (key) {
-      return key;
-    }
-  }
-  return null;
+  return matchedItems(items, priceMap)[0]?.key ?? null;
 }
 
 function transactionCommand(
@@ -107,16 +130,32 @@ function transactionCommand(
   if (!userId) {
     return recordOnly("transaction.completed: missing or invalid customData.user_id");
   }
-  const packageKey = matchPackage(parsed.data.items, priceMap);
-  if (!packageKey) {
+  const matches = matchedItems(parsed.data.items, priceMap);
+  const matched = matches[0];
+  if (!matched) {
     return recordOnly("transaction.completed: no item price matched the price map");
+  }
+  // A signed transaction may legitimately carry several packages, or one package bought N
+  // times. Either way ONE pinned amount would under-credit what was actually paid for, and the
+  // amount itself is a human-signed figure we may not multiply (NEVER #6). Fail closed: the
+  // route turns a transaction.completed record_only into a loud, retryable 500 (B-C1), so the
+  // event stays open for an operator instead of being silently short-granted and closed.
+  if (matches.length > 1) {
+    return recordOnly(
+      `transaction.completed: multiple_matching_items (${matches.length}) — a multi-package transaction cannot be granted as one package`,
+    );
+  }
+  if (matched.quantity !== 1) {
+    return recordOnly(
+      `transaction.completed: unsupported_quantity (${matched.quantity}) — credit amounts are pinned per package and are never multiplied`,
+    );
   }
   return {
     kind: "purchase",
     userId,
-    amount: CREDIT_PACKAGES[packageKey].credits,
+    amount: CREDIT_PACKAGES[matched.key].credits,
     ref: parsed.data.id,
-    packageKey,
+    packageKey: matched.key,
   };
 }
 
