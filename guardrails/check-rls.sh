@@ -179,14 +179,27 @@ FNR == 1 { inblock = 0; instr = 0; estr = 0 }
     if (c == dq) {
       # Quoted identifier: PostgreSQL applies alter table public."credit_ledger" exactly
       # like the bare word, while every shape below matches bare words only (audit R7).
-      # Unquote it - but ONLY when the closing quote is on this same line, so an unbalanced
-      # double quote keeps the old behaviour instead of blinding the rest of the file.
+      # Unquote it - under TWO restrictions, each one a loss guard:
+      #
+      #   1. the closing quote must be on this same line, so an unbalanced double quote
+      #      keeps the pre-R7 behaviour instead of blinding the rest of the file;
+      #   2. what sits between the two quotes must be a PLAIN LOWERCASE IDENTIFIER.
+      #      Without this, ANY two double quotes on a line were paired - DATA quotes
+      #      included - and the span between them was re-injected from $0, i.e. with its
+      #      ORIGINAL case. Postgres folds unquoted upper case, so an UPPERCASE weakening
+      #      parked between two data quotes (in a $$-quoted body, say) still executes while
+      #      becoming invisible to the lower-cased shapes below: a silent-green path this
+      #      gate did NOT have before R7 (audit hz-01 / hz-02). The identifier a real
+      #      quoted name carries always passes this test; a data quote almost never does.
+      #
+      # The guard reads $0, not the folded line, so it is also the mixed-case guard:
+      # "Credit_Ledger" is a DIFFERENT relation from credit_ledger in postgres, it fails
+      # ^[a-z0-9_]+$, and it therefore stays quoted and matches no shape - exactly as
+      # before R7. Folding it instead would let a quoted ENABLE on some other table cancel
+      # a real DISABLE. Since the span that passes is all-lowercase by construction,
+      # copying it from $0 and from the folded line are byte-identical.
       e = dqend(line, i)
-      if (e > 0) {
-        # The ORIGINAL characters are copied, not the folded ones: "Credit_Ledger" is a
-        # DIFFERENT table from credit_ledger in postgres. A mixed-case quoted name then
-        # matches no shape and is ignored exactly as before, whereas folding it would let a
-        # quoted ENABLE on some other table cancel a real DISABLE - a loss of coverage.
+      if (e > 0 && substr($0, i + 1, e - i - 1) ~ /^[a-z0-9_]+$/) {
         out = out substr($0, i + 1, e - i - 1)
         i = e + 1
         continue
