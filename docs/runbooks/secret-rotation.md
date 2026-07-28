@@ -44,9 +44,11 @@
 3. Verify `connect_gsc` starts, then delete the old secret in Google. (`GOOGLE_CLIENT_ID` is public.)
 
 ### (d) Token encryption key — keyring rotation  · Netlify + Fly, SAME values
-**No precondition.** The old "confirm `gsc_connections` has 0 live rows" step is gone: since the v2 seal
-format (`packages/core/src/gsc/crypto.ts`) every stored blob names the key id that opens it, so a rotation
-neither loses live connections nor depends on the table being empty. Leave `TOKEN_ENCRYPTION_KEY` set
+**No precondition.** The old "confirm `gsc_connections` has 0 live rows" step is gone. Since the v2 seal
+format (`packages/core/src/gsc/crypto.ts`) a **v2 blob carries the id of the key that opens it**;
+**pre-v2 (v1) rows carry no id at all and are opened by trying the ring's keys in turn**. Either way a row
+stays readable as long as its key is in the ring, so a rotation neither loses live connections nor depends
+on the table being empty. Leave `TOKEN_ENCRYPTION_KEY` set
 throughout — it still signs the OAuth `state` — and set each phase on **both** platforms with **identical**
 values before moving to the next.
 
@@ -58,8 +60,14 @@ values before moving to the next.
    `connect_gsc` round-trips (new rows seal under id 2) AND an old connection still pulls (read leg).
 4. **Retire the old key** — the step that actually contains a compromise: drop `1:<old>` from
    `TOKEN_ENCRYPTION_KEYS` on both, leaving `2:<new>`. From that moment nothing sealed under key 1 opens
-   again, including every pre-v2 row; those users must re-connect. Do it immediately on exposure,
-   otherwise after connections have naturally re-sealed.
+   again, including every pre-v2 row; those users must re-connect.
+   **There is NO automatic re-seal.** The only code path that writes a token is the connect-callback
+   upsert (`apps/web/lib/gsc/store.ts`); `pull_gsc_data` reads and never writes back, and lazy re-seal is
+   deliberately not built. A v1 row therefore stays v1 **forever**, until that user manually reconnects.
+   So before retiring, count how many rows are still v1 and expect exactly that many reconnects: a v2 blob
+   begins with the bytes `53 47 53 4c 02` (ASCII `SGSL` + version); any other leading bytes mean v1.
+   Retire immediately on exposure — otherwise treat it as a planned reconnect wave, not something that
+   resolves itself by waiting.
 
 Notes:
 - With `TOKEN_ENCRYPTION_KEYS` unset the code derives `{1: TOKEN_ENCRYPTION_KEY}` and writes under id 1 —
