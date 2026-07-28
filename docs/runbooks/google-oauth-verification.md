@@ -7,12 +7,16 @@
 > Süre beklentisi: brand doğrulaması günler; sensitive-scope incelemesi tipik ~3-7 iş günü,
 > haftalara uzayabilir. İnceleme sürerken ürün Testing modda çalışmaya devam eder.
 
-## Kapsam gerçeği (koddan doğrulanmış)
+## Kapsam gerçeği (koddan + Console'dan doğrulanmış)
 
-- Sensitive scope: **`https://www.googleapis.com/auth/webmasters.readonly`** — tek sensitive scope
-  (`packages/core/src/gsc/client.ts:23`). Restricted scope YOK (Gmail/Drive yok) → güvenlik denetimi
-  (CASA) GEREKMEZ, standart verification yeter.
-- Sign-in tarafı (Supabase Auth üzerinden `openid email profile`) non-sensitive; incelemeye takılmaz.
+- Tek scope: **`https://www.googleapis.com/auth/webmasters.readonly`** (`packages/core/src/gsc/client.ts:23`).
+- **DÜZELTME (2026-07-28, Console Data Access ekranı kanıt):** Google bu scope'u artık
+  **NON-SENSITIVE** sınıflıyor ("Your sensitive scopes: No rows"). Sonuç: veri-erişim incelemesi
+  (demo video + scope gerekçesi isteyen süreç) BU APP İÇİN GEREKMİYOR; kalan yalnız (1) PUBLISH
+  (Testing→In production — 7-gün token ölümünü bitiren adım, scope sınıfından bağımsız) ve
+  (2) **marka onayı** (logo yüklendiği için; Verification Center → Submit).
+- Aşağıdaki video senaryosu + gerekçe metni ARŞİV: Google ileride sınıfı değiştirir ya da ek bilgi
+  isterse hazır. Restricted scope YOK → CASA hiçbir durumda gerekmez.
 
 ## Ön-koşullar — durum (2026-07-28)
 
