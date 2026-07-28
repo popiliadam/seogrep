@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 vi.mock("server-only", () => ({}));
@@ -8,7 +8,31 @@ vi.mock("@pseo/db/server", () => ({
   createServiceClient: () => serviceClient(),
 }));
 
+/**
+ * The public lookup reads the caller address off the request to key its per-IP budget.
+ * `clientIp` is the address the test is pretending to be; `headersAvailable` simulates a
+ * call from outside any request scope, where next/headers throws.
+ */
+let clientIp: string | null = null;
+let headersAvailable = true;
+vi.mock("next/headers", () => ({
+  headers: async () => {
+    if (!headersAvailable) throw new Error("`headers` was called outside a request scope");
+    return new Headers(clientIp === null ? {} : { "x-nf-client-connection-ip": clientIp });
+  },
+}));
+
 import { fetchPublicReportBySlug, listReports } from "./reports";
+
+beforeEach(() => {
+  clientIp = null;
+  headersAvailable = true;
+});
+
+/** Counts service-role client constructions, i.e. actual trips to Supabase. */
+function countDatabaseReads(): number {
+  return serviceClient.mock.calls.length;
+}
 
 type QueryResult = { data: unknown; error: unknown };
 
@@ -109,5 +133,101 @@ describe("fetchPublicReportBySlug", () => {
   it("throws when the read errors", async () => {
     singleServiceClient({ data: null, error: { message: "db down" } });
     await expect(fetchPublicReportBySlug("x")).rejects.toThrow(/fetchPublicReportBySlug failed: db down/);
+  });
+});
+
+describe("fetchPublicReportBySlug flood controls (L-14)", () => {
+  it("reads the database once for a slug already known to be missing", async () => {
+    singleServiceClient({ data: null, error: null });
+    clientIp = "198.51.100.40";
+
+    const before = countDatabaseReads();
+    expect(await fetchPublicReportBySlug("cachedmiss1")).toBeNull();
+    expect(await fetchPublicReportBySlug("cachedmiss1")).toBeNull();
+    expect(await fetchPublicReportBySlug("cachedmiss1")).toBeNull();
+    expect(countDatabaseReads() - before).toBe(1);
+  });
+
+  it("re-reads a slug that DOES resolve, so a revoked report stops serving at once", async () => {
+    singleServiceClient({ data: { title: "Live", html: "<main>live</main>" }, error: null });
+    clientIp = "198.51.100.41";
+
+    const before = countDatabaseReads();
+    const first = await fetchPublicReportBySlug("liveslug1");
+    const second = await fetchPublicReportBySlug("liveslug1");
+    expect(first).toEqual({ title: "Live", html: "<main>live</main>" });
+    expect(second).toEqual(first);
+    expect(countDatabaseReads() - before).toBe(2);
+  });
+
+  it("caps the database reads one caller can spend on distinct unknown slugs", async () => {
+    singleServiceClient({ data: null, error: null });
+    clientIp = "198.51.100.42";
+
+    const attempts = 200;
+    const before = countDatabaseReads();
+    for (let index = 0; index < attempts; index += 1) {
+      expect(await fetchPublicReportBySlug(`floodslug${index}`)).toBeNull();
+    }
+    const reads = countDatabaseReads() - before;
+    expect(reads).toBeGreaterThan(0);
+    expect(reads).toBeLessThan(attempts);
+  });
+
+  it("keeps a fresh budget per caller address", async () => {
+    singleServiceClient({ data: null, error: null });
+
+    clientIp = "198.51.100.43";
+    for (let index = 0; index < 200; index += 1) {
+      await fetchPublicReportBySlug(`noisyslug${index}`);
+    }
+
+    clientIp = "198.51.100.44";
+    const before = countDatabaseReads();
+    await fetchPublicReportBySlug("quietslug1");
+    expect(countDatabaseReads() - before).toBe(1);
+  });
+
+  it("does not cache a MISS forever — the slug is re-read once the entry ages out", async () => {
+    vi.useFakeTimers();
+    try {
+      singleServiceClient({ data: null, error: null });
+      clientIp = "198.51.100.45";
+
+      const before = countDatabaseReads();
+      expect(await fetchPublicReportBySlug("agingslug1")).toBeNull();
+      expect(await fetchPublicReportBySlug("agingslug1")).toBeNull();
+      expect(countDatabaseReads() - before).toBe(1);
+
+      vi.advanceTimersByTime(120_000);
+      expect(await fetchPublicReportBySlug("agingslug1")).toBeNull();
+      expect(countDatabaseReads() - before).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still resolves the report when there is no request scope to read an address from", async () => {
+    singleServiceClient({ data: { title: "Scriptable", html: "<main>ok</main>" }, error: null });
+    headersAvailable = false;
+
+    await expect(fetchPublicReportBySlug("noscopeslug1")).resolves.toEqual({
+      title: "Scriptable",
+      html: "<main>ok</main>",
+    });
+  });
+
+  it("does not cache a MISS caused by a failed read", async () => {
+    clientIp = "198.51.100.46";
+    singleServiceClient({ data: null, error: { message: "db down" } });
+    await expect(fetchPublicReportBySlug("erroredslug1")).rejects.toThrow(/db down/);
+
+    singleServiceClient({ data: { title: "Back", html: "<main>back</main>" }, error: null });
+    const before = countDatabaseReads();
+    await expect(fetchPublicReportBySlug("erroredslug1")).resolves.toEqual({
+      title: "Back",
+      html: "<main>back</main>",
+    });
+    expect(countDatabaseReads() - before).toBe(1);
   });
 });
