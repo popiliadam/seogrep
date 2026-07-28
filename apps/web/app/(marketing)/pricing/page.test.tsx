@@ -65,6 +65,22 @@ describe("pricing page", () => {
     expect(screen.queryByText(/most popular/i)).toBeNull();
   });
 
+  // Paddle is live and the catalogue is created from these exact figures, so the page may not
+  // frame them as provisional again — binding terms point here for the plan numbers.
+  it("frames the prices as effective, never as draft or pre-launch", () => {
+    const { container } = render(<Page />);
+    const rendered = container.textContent ?? "";
+    expect(rendered).not.toMatch(/draft/i);
+    expect(rendered).not.toMatch(/before launch/i);
+    // …and the effective figures still render, so the framing fix can't quietly drop them.
+    for (const text of ["$19", "$49", "$149", "1,000", "3,500", "12,000", "200 credits"]) {
+      expect(screen.getAllByText(new RegExp(text.replace("$", "\\$"))).length).toBeGreaterThan(0);
+    }
+    for (const text of ["$10", "$25", "$50", "400 credits", "1,100 credits", "2,400 credits"]) {
+      expect(screen.getAllByText(text).length).toBeGreaterThan(0);
+    }
+  });
+
   it("notes the crawl page cap and focused large-site path filters", () => {
     render(<Page />);
     expect(screen.getByText(/covers up to 100 pages for 20 credits/i)).toBeTruthy();
