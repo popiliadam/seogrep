@@ -215,9 +215,13 @@ in-worker reaper + /status). `make goals` = purchase-flow-live ✅ uptime ✅.
    bloğu ["payments have failed"] TÜM CI'ı öldürdü; şef gh ile çevirdi. Plan: dakika reset'i ~1
    Ağustos → private'a dönüş; DİKKAT: "payments failed" bloğu reset'le kendiliğinden kalkmayabilir,
    dönüşten önce Billing & plans'ta ödeme fix'i gerekebilir. Spec 4 gün yine klonlanabilir = bilinen
-   bedel) · **Google OAuth verification = AKTİF İŞ** — rehber + yapıştırmalık metinler:
-   docs/runbooks/google-oauth-verification.md (insan: Console tıkları + demo video. Asıl aciliyet:
-   Testing modda refresh token 7 günde ölüyor, GSC bağlantıları haftalık kopuyor).
+   bedel) · ~~Google OAuth verification~~ ✅ **TAMAMLANDI (2026-07-28, tek günde):** scope Console'da
+   non-sensitive sınıflı çıktı (veri-erişim incelemesi/video GEREKMEDİ) · marka onayı ilk turda
+   sahiplik reddi → DNS'siz çözüm: suleymanncapar@gmail (SC verified-owner) → Users&permissions →
+   info@adstark'a **Owner delegasyonu** → re-verification GEÇTİ · Publish branding (marka consent'te
+   CANLI) · Audience **In production** → 7-gün refresh-token ölümü BİTTİ, 100-kullanıcı sınırı kalktı.
+   HESAP GERÇEĞİ: Cloud proje sahibi **info@adstark.com.tr** (eski kayıtlardaki seogrep.app@gmail
+   HAYALETTİ — yok). Süreç arşivi: docs/runbooks/google-oauth-verification.md.
 5. ~~Ders imzaları~~ ✅ İMZALANDI (2026-07-28 — insan metin yetkisini şefe delege etti: "önerilere
    göre gidelim, izin veriyorum"; CLAUDE.md "İmzalı dersler" 6-10: env-URL-yapı · yeşil-kapı-ne-ölçtü ·
    paralel-ağaç-izolasyonu · gözlenebilirlik-kanalı · araştırmanı-yeniden-oku).

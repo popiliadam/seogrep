@@ -1,5 +1,15 @@
 # Runbook — Google OAuth verification başvurusu
 
+## ✅ SONUÇ — TAMAMLANDI (2026-07-28, tek günde)
+
+Zincir: scope beyanı (Data Access; Console `webmasters.readonly`'yi non-sensitive sınıfladı →
+veri-erişim incelemesi/video GEREKMEDİ) → marka onayı ilk tur RED (proje sahibi info@adstark,
+seogrep.com'un SC sahibi değildi + isim-eşleşme yan-bulgusu) → DNS'siz çözüm: suleymanncapar@gmail
+(verified-owner) SC Users&permissions'tan info@adstark'a **Owner** delegasyonu → re-verification
+GEÇTİ → **Publish branding** (marka consent'te canlı) → Audience **PUBLISH APP → In production**.
+Net kazanım: 7-gün refresh-token ölümü bitti · 100-kullanıcı sınırı kalktı · SeoGrep adı+logo
+consent'te. Aşağısı süreç arşividir.
+
 > Amaç: OAuth consent screen'i Testing → **In production** (PUBLISH) + **marka onayı** (brand
 > verification). Neden acil: **Testing modda refresh token'lar 7 günde expire olur** — GSC
 > bağlantıları her hafta kopuyor; PUBLISH bunu anında bitirir (inceleme sonucu beklenmez).
