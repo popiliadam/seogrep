@@ -152,6 +152,10 @@ function renderOverlap(row: ComparisonRow): string {
  * is "estimated organic monthly traffic ... calculated as the product of CTR and search volume
  * values" (an estimate, so it is labelled as one); `estimated_paid_traffic_cost` is the "estimated
  * cost of converting organic search traffic into paid ... estimated monthly cost USD".
+ *
+ * The band line is labelled "(top 20)" because it is NOT a partition of `count`: DataForSEO bands
+ * positions all the way to #91-100, and only the first four bands are rendered, so the four
+ * numbers do not add up to the total above them.
  */
 function renderMetrics(metrics: DomainOrganicMetrics): string {
   if (Object.values(metrics).every((value) => value === null)) {
@@ -159,7 +163,8 @@ function renderMetrics(metrics: DomainOrganicMetrics): string {
   }
   return [
     `  - Organic SERPs containing the domain: ${metric(metrics.count)}`,
-    `  - Organic SERPs by position — #1: ${metric(metrics.pos_1)} · #2-3: ${metric(metrics.pos_2_3)}` +
+    `  - Organic SERPs by position (top 20) — #1: ${metric(metrics.pos_1)}` +
+      ` · #2-3: ${metric(metrics.pos_2_3)}` +
       ` · #4-10: ${metric(metrics.pos_4_10)} · #11-20: ${metric(metrics.pos_11_20)}`,
     `  - Estimated monthly organic traffic (ETV): ${metric(metrics.etv)}`,
     `  - Estimated monthly cost of the same traffic as paid ads: ${money(metrics.estimated_paid_traffic_cost)}`,

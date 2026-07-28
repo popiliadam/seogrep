@@ -92,13 +92,13 @@ describe("formatCompetitorComparison", () => {
         "shares with the target:\n\n" +
         "• example.com (target)\n" +
         "  - Organic SERPs containing the domain: 1,788\n" +
-        "  - Organic SERPs by position — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
+        "  - Organic SERPs by position (top 20) — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
         "  - Estimated monthly organic traffic (ETV): 3,056\n" +
         "  - Estimated monthly cost of the same traffic as paid ads: $15,079\n\n" +
         "• rival-one.example (found by DataForSEO) — 1,840 intersecting keywords, average " +
         "position 14.2 on them\n" +
         "  - Organic SERPs containing the domain: 9,024\n" +
-        "  - Organic SERPs by position — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
+        "  - Organic SERPs by position (top 20) — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
         "  - Estimated monthly organic traffic (ETV): 28,111\n" +
         "  - Estimated monthly cost of the same traffic as paid ads: $91,044",
     );

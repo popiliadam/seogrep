@@ -618,9 +618,10 @@ export const DOC_PROSE = {
       "overview:\n\n" +
       "- **Organic SERPs containing the domain** — how many organic result pages the domain appears " +
       "in. It counts result pages, not keywords.\n" +
-      "- **Organic SERPs by position** — that same count split across the #1, #2-3, #4-10 and #11-20 " +
-      "bands, so a domain with many shallow rankings is easy to tell from one with a few strong " +
-      "ones.\n" +
+      "- **Organic SERPs by position (top 20)** — how those appearances distribute across the " +
+      "top-20 bands: #1, #2-3, #4-10 and #11-20. Positions beyond #20 are counted in the total " +
+      "above but are not banded here, so the bands do not add up to it — they show how much of a " +
+      "domain's presence is near the top.\n" +
       "- **Estimated monthly organic traffic (ETV)** — DataForSEO's estimate of monthly visits, " +
       "calculated from click-through rate and search volume. It is an estimate, not measured " +
       "traffic.\n" +
