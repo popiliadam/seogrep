@@ -278,6 +278,55 @@ describe("M-17: a seal opens ONLY for the row it was written for", () => {
     );
   });
 
+  /**
+   * UUID CASE: the binding is on the IDENTITY, not on the text an id happened to arrive in.
+   *
+   * Every validator that guards these ids is case-INSENSITIVE — pull_gsc_data's `z.uuid()`,
+   * and the `/^[0-9a-f]{8}-…/i` regexes in the connect route and the connection actions all
+   * accept `A1B2…` — while Postgres stores `uuid` in canonical LOWERCASE. So a connect flow
+   * started with a mixed-case project_id seals under an UPPERCASE AAD and lands in a row that
+   * reads back lowercase: every later read rebuilds the lowercase AAD and the connection can
+   * never be opened again. Fail-CLOSED and no cross-tenant leak (a differently-cased id is
+   * still the same tenant), but the connection is bricked — pull_gsc_data errors and
+   * disconnect deletes the row while Google's grant stays live.
+   *
+   * Case-folding both fields inside the AAD is byte-compatible with every v3 row already
+   * written, because those were all sealed from canonical ids.
+   */
+  it("CASE: an id's letter case does not change the binding (validators are case-insensitive)", () => {
+    const upper: TokenOwner = {
+      userId: VICTIM_A.userId.toUpperCase(),
+      projectId: VICTIM_A.projectId.toUpperCase(),
+    };
+    // Sealed from what the request carried, opened with what the DB stored.
+    const sealedUpper = encryptToken(A_TOKEN, KEY_A, upper);
+    expect(decryptToken(sealedUpper, KEY_A, VICTIM_A)).toBe(A_TOKEN);
+    // ...and the other direction, so neither side is privileged.
+    const sealedLower = encryptToken(A_TOKEN, KEY_A, VICTIM_A);
+    expect(decryptToken(sealedLower, KEY_A, upper)).toBe(A_TOKEN);
+    // One field mixed-cased is the realistic shape of the bug, and must behave the same.
+    const mixed: TokenOwner = { userId: upper.userId, projectId: VICTIM_A.projectId };
+    expect(decryptToken(encryptToken(A_TOKEN, KEY_A, mixed), KEY_A, VICTIM_A)).toBe(A_TOKEN);
+  });
+
+  it("CASE: folding case does not weaken the binding — a DIFFERENT id still fails", () => {
+    // The fix must not collapse distinct owners: case-insensitivity is not id-insensitivity.
+    const sealed = encryptToken(A_TOKEN, KEY_A, VICTIM_A);
+    expect(() => decryptToken(sealed, KEY_A, VICTIM_B)).toThrowError(OPAQUE_ERROR);
+    expect(() =>
+      decryptToken(sealed, KEY_A, {
+        userId: VICTIM_B.userId.toUpperCase(),
+        projectId: VICTIM_A.projectId,
+      }),
+    ).toThrowError(OPAQUE_ERROR);
+    // Case folding must not make the length-prefixing redundant either (the ("ab","c") /
+    // ("a","bc") collision this suite already rules out, now in mixed case).
+    const left = encryptToken(A_TOKEN, KEY_A, { userId: "AB", projectId: "c" });
+    expect(() => decryptToken(left, KEY_A, { userId: "a", projectId: "BC" })).toThrowError(
+      OPAQUE_ERROR,
+    );
+  });
+
   it("leaves the PRE-v3 formats openable under ANY owner — they carry no binding", () => {
     // Honest statement of the residual exposure: v2/v1 rows stay swappable until their
     // user reconnects. There is no re-seal path, so this is a shrinking population, not

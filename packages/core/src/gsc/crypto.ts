@@ -127,12 +127,27 @@ function aadField(name: string, value: string): Buffer {
  * The exact bytes AES-GCM authenticates alongside the ciphertext. Never stored: the caller
  * rebuilds it from the row being read, so a blob moved to another row is authenticated
  * against THAT row's ids and fails.
+ *
+ * CASE-FOLDED, and that is load-bearing. The AAD must bind the row's IDENTITY, not the text
+ * an id happened to arrive in. Postgres stores `uuid` in canonical lowercase, but every
+ * validator these ids pass through is case-INSENSITIVE — `z.uuid()` in pull_gsc_data and the
+ * `/^[0-9a-f]{8}-…/i` regexes in the connect route and the connection actions all accept
+ * `A1B2…`. Without folding, a connect flow started with a mixed-case project_id would seal
+ * under an uppercase AAD into a row that reads back lowercase, and every later read would
+ * rebuild the lowercase AAD: the connection could never be opened again (fail-closed, no
+ * cross-tenant leak, but permanently bricked). Folding is byte-compatible with every v3 row
+ * already written — those were all sealed from canonical, already-lowercase ids.
+ *
+ * `toLowerCase` and not `toLocaleLowerCase`: the mapping must not depend on the host locale
+ * (the Turkish dotless-i would fold `I` differently and make a seal unopenable on another
+ * machine). Case-insensitive is not id-insensitive — distinct ids stay distinct, and the
+ * length-prefixing above still rules out any two pairs sharing a binding.
  */
 function ownerAad(owner: TokenOwner): Buffer {
   return Buffer.concat([
     Buffer.from(AAD_CONTEXT, "ascii"),
-    aadField("userId", owner.userId),
-    aadField("projectId", owner.projectId),
+    aadField("userId", owner.userId.toLowerCase()),
+    aadField("projectId", owner.projectId.toLowerCase()),
   ]);
 }
 
