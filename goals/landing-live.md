@@ -1,10 +1,10 @@
 # goal: landing-live
 created: 2026-07-10
-kaynak: Faz 1 İş A — canlı site markayı servis ediyor. Deploy öncesi SKIP (PROD_URL set değilken exit 0); ilk prod deploy insan kapısından geçince anlam kazanır.
+kaynak: Faz 1 İş A — canlı site markayı servis ediyor. Deploy öncesi SKIP (PROD_URL set değilken exit 3); ilk prod deploy insan kapısından geçince anlam kazanır.
 
 ## predicate
 ```predicate
-[ -z "${PROD_URL:-}" ] && exit 0; curl -sf --max-time 15 "$PROD_URL" | grep -q SeoGrep
+[ -z "${PROD_URL:-}" ] && exit 3; curl -sf --max-time 15 "$PROD_URL" | grep -q SeoGrep
 ```
 
 ## on-violation
