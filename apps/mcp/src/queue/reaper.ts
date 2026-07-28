@@ -45,6 +45,17 @@ const RECONCILE_ERROR_SETTLED =
  */
 const RECONCILE_ERROR_NO_RESERVE =
   "reconciled: worker did not finish; no open reserve to release, re-run the tool";
+/**
+ * Stamped on a reconciled job whose reserve had ALREADY BEEN REFUNDED before this sweep
+ * (released=0, alreadyReleased>0): an earlier sweep — or the guard's own release — put the
+ * money back, but the jobs row never flipped out of `running`. release_reserve reports this
+ * with the very same "already settled" error it raises for a COMMITTED reserve, so before
+ * L-01 this case was stamped with the SETTLED wording and told a user whose credits were
+ * already back that a charge stood and to contact support. The money is home; re-running is
+ * the correct guidance.
+ */
+const RECONCILE_ERROR_REFUNDED =
+  "reconciled: worker did not finish; the reserve was already refunded, re-run the tool";
 
 export interface ReconcileOptions {
   /** Reap running jobs whose started_at is older than this (default 15 min). */
@@ -59,6 +70,16 @@ export interface ReconcileOutcome {
   readonly scanned: number; // stuck candidates found
   readonly released: number; // reserves refunded
   readonly alreadySettled: number; // reserves settled concurrently (skipped, no double-refund)
+  /**
+   * The alreadySettled split (L-01). `release_reserve` reports a COMMITTED and an already
+   * REFUNDED reserve with one indistinguishable "already settled" error; the ledger is read
+   * back to tell them apart. alreadyCommitted counts the standing charges (a human owes the
+   * user a decision), alreadyReleased the reserves whose money is already home. An
+   * unreadable settlement folds into alreadyCommitted — the conservative bucket — so the
+   * invariant alreadyCommitted + alreadyReleased === alreadySettled always holds.
+   */
+  readonly alreadyCommitted: number;
+  readonly alreadyReleased: number;
   readonly failed: number; // jobs transitioned running -> failed
   readonly orphanReserves: number; // open reserves found via ledger.job_id when reserve_id was NULL
 }
@@ -92,6 +113,45 @@ async function findJobReserves(client: ServiceClient, jobId: string): Promise<st
     if (row.reserve_id !== null) ids.add(row.reserve_id);
   }
   return [...ids];
+}
+
+/** Which ledger row closed a reserve — the two shapes release_reserve reports identically. */
+type SettlementKind = "committed" | "released" | "unknown";
+
+/**
+ * Read back WHICH row settled `reserveId` (L-01). `release_reserve` raises the same
+ * "reserve already settled" for a committed reserve (the charge stands) and for an already
+ * refunded one (the money is back); the error alone cannot tell them apart, and the ledger is
+ * the only place the difference is recorded.
+ *
+ * Deliberately read AFTER the RPC has spoken, never before: the advisory-locked
+ * release_reserve stays the sole authority on open-vs-settled (the TOCTOU reasoning on
+ * findJobReserves above). This read only LABELS a settlement the RPC has already refused to
+ * touch, so it can race with nothing. An unreadable answer returns "unknown", and the caller
+ * treats unknown as the conservative "committed" shape rather than promising a refund.
+ *
+ * Not tenant-filtered, like the sibling reads in this module: reconciliation is a system-level
+ * sweep across every tenant by construction, and `reserve_id` is a server-minted uuid that
+ * never comes from caller input.
+ */
+async function settlementKind(client: ServiceClient, reserveId: string): Promise<SettlementKind> {
+  const { data, error } = await client
+    .from("credit_ledger")
+    .select("kind")
+    .eq("reserve_id", reserveId)
+    .in("kind", ["spend_commit", "spend_release"]);
+  if (error) {
+    console.error(
+      `reconcileStuckJobs: settlement lookup for reserve ${reserveId} failed: ${error.message}`,
+    );
+    return "unknown";
+  }
+  const kinds = new Set((data ?? []).map((row) => row.kind));
+  // 0005 makes the two mutually exclusive, so at most one is present; a commit still wins
+  // explicitly — money taken outranks money returned when labelling.
+  if (kinds.has("spend_commit")) return "committed";
+  if (kinds.has("spend_release")) return "released";
+  return "unknown";
 }
 
 /**
@@ -147,6 +207,8 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
 
   let released = 0;
   let alreadySettled = 0;
+  let alreadyCommitted = 0;
+  let alreadyReleased = 0;
   let failed = 0;
   let orphanReserves = 0;
 
@@ -156,7 +218,8 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
       // Per-job tally (for the honest fail-mark string below); the global counters keep
       // their existing semantics untouched.
       let jobReleased = 0;
-      let jobAlreadySettled = 0;
+      let jobAlreadyCommitted = 0;
+      let jobAlreadyReleased = 0;
 
       // Release FIRST, then conditional-fail. Rationale: if we failed the job first and
       // the real worker then committed, we would have a job that is BOTH failed AND
@@ -175,9 +238,19 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
         const message = releaseError.message ?? "";
         if (message.includes("already settled")) {
           // The real worker committed/released concurrently under the advisory lock — the
-          // settlement stands; re-releasing would double-refund. Skip.
+          // settlement stands; re-releasing would double-refund. Skip. WHICH settlement it
+          // was decides the user-facing wording, so read the ledger back (L-01): "committed"
+          // means the charge stands, "released" means the money is already home. An
+          // unreadable answer folds into the conservative committed bucket, keeping
+          // alreadyCommitted + alreadyReleased === alreadySettled.
           alreadySettled++;
-          jobAlreadySettled++;
+          if ((await settlementKind(client, reserveId)) === "released") {
+            alreadyReleased++;
+            jobAlreadyReleased++;
+          } else {
+            alreadyCommitted++;
+            jobAlreadyCommitted++;
+          }
         } else if (message.includes("unknown reserve")) {
           // No spend_reserve row for this id — a data anomaly, nothing to refund.
           console.warn(`reconcileStuckJobs: unknown reserve ${reserveId} on job ${job.id}; nothing to refund`);
@@ -189,19 +262,24 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
         }
       }
 
-      // Honest fail-mark, three-way — the stamped wording must match what actually happened:
-      //  - a refund happened (released>0)                  → RELEASED ("reserve released, re-run")
-      //  - nothing released but a reserve had settled       → SETTLED  (charged; needs a human)
+      // Honest fail-mark, four-way — the stamped wording must match what actually happened:
+      //  - a refund happened here (released>0)              → RELEASED ("reserve released, re-run")
+      //  - a reserve was already COMMITTED                  → SETTLED  (charged; needs a human)
+      //  - a reserve was already RELEASED (L-01)            → REFUNDED (money home; re-run)
       //  - no reserve at all (crashed before any opened)    → NO_RESERVE (nothing to release, re-run)
-      // The settled shape must NOT claim a refund; the no-reserve shape must NOT claim a
+      // The settled shape must NOT claim a refund; the refunded shape must NOT send a user
+      // whose money is already back to support; the no-reserve shape must NOT claim a
       // "reserve released" that never occurred. Money direction is untouched — this only
-      // selects the fail-mark string.
+      // selects the fail-mark string. Committed is checked FIRST: a standing charge is the
+      // outcome a human must see even in the (index-prevented) event of a mixed job.
       const reconcileError =
         jobReleased > 0
           ? RECONCILE_ERROR_RELEASED
-          : jobAlreadySettled > 0
+          : jobAlreadyCommitted > 0
             ? RECONCILE_ERROR_SETTLED
-            : RECONCILE_ERROR_NO_RESERVE;
+            : jobAlreadyReleased > 0
+              ? RECONCILE_ERROR_REFUNDED
+              : RECONCILE_ERROR_NO_RESERVE;
 
       // Conditional fail: flip to failed ONLY while the row is still `running`. The status
       // guard prevents clobbering a job the real worker completed concurrently (that job
@@ -222,5 +300,13 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
     }
   }
 
-  return { scanned: candidates.length, released, alreadySettled, failed, orphanReserves };
+  return {
+    scanned: candidates.length,
+    released,
+    alreadySettled,
+    alreadyCommitted,
+    alreadyReleased,
+    failed,
+    orphanReserves,
+  };
 }

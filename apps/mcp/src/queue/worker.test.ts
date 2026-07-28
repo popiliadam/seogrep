@@ -51,6 +51,8 @@ describe("in-worker stuck-job reaper", () => {
     scanned: released,
     released,
     alreadySettled: 0,
+    alreadyCommitted: 0,
+    alreadyReleased: 0,
     failed: released,
     orphanReserves: 0,
   });
@@ -163,6 +165,11 @@ describe("in-worker stuck-job reaper", () => {
       scanned: 3,
       released: 1,
       alreadySettled: 2,
+      // The L-01 breakdown of alreadySettled. It is deliberately NOT in the heartbeat line:
+      // the operator's liveness signal keeps its exact shape; the split is reported by
+      // scripts/reconcile.mjs, where the committed-vs-refunded distinction is acted on.
+      alreadyCommitted: 2,
+      alreadyReleased: 0,
       failed: 4,
       orphanReserves: 5,
     };

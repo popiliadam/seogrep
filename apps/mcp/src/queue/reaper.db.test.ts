@@ -163,6 +163,30 @@ describe("reconcileStuckJobs against the local stack", () => {
     expect(job?.error).not.toContain("reserve released");
   });
 
+  it("already-REFUNDED (L-01): a released reserve is NOT reported as a standing charge", async () => {
+    const now = new Date();
+    const { userId, jobId, reserveId } = await seedStuckJob(TWENTY_MIN, now, true);
+    // The money already went BACK: a previous sweep (or the guard) released the reserve, but
+    // the jobs row never flipped out of `running`. release_reserve raises the very same
+    // "already settled" here as it does for a COMMITTED reserve — the L-01 root cause.
+    const release = await service.rpc("release_reserve", { p_reserve_id: reserveId });
+    if (release.error) throw new Error(`release_reserve failed: ${release.error.message}`);
+    expect(await creditBalance(service, userId)).toBe(GRANT); // refunded already
+
+    const outcome = await reconcileStuckJobs({ now: () => now });
+
+    expect(outcome.alreadyReleased).toBe(1); // refunded, NOT a standing charge
+    expect(outcome.alreadyCommitted).toBe(0);
+    expect(outcome.alreadySettled).toBe(1); // the preserved total still counts it once
+    expect(outcome.released).toBe(0); // never refunded twice
+    expect(await creditBalance(service, userId)).toBe(GRANT); // invariant: no double refund
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    // The user's money is back — telling them a charge stands and to contact support is a lie.
+    expect(job?.error).toContain("refunded");
+    expect(job?.error).not.toContain("contact support");
+  });
+
   it("orphan reserve: an open reserve found via ledger.job_id when jobs.reserve_id is NULL", async () => {
     const now = new Date();
     // stampReserve=false → reserve_id NULL, the crash-before-setJobReserve window.

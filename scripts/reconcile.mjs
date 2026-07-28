@@ -30,6 +30,11 @@ try {
   console.log(`  scanned (stuck candidates found): ${outcome.scanned}`);
   console.log(`  released (reserves refunded):     ${outcome.released}`);
   console.log(`  alreadySettled (skipped, no dbl): ${outcome.alreadySettled}`);
+  // The L-01 split. release_reserve reports a standing charge and an already-refunded
+  // reserve with the same "already settled" error; only alreadyCommitted needs a human
+  // (see reconciliation.md §2c/§2d) — alreadyReleased is money already back with the user.
+  console.log(`    of which committed (charge STANDS, needs review): ${outcome.alreadyCommitted}`);
+  console.log(`    of which already refunded (money returned):       ${outcome.alreadyReleased}`);
   console.log(`  failed (running -> failed):       ${outcome.failed}`);
   console.log(`  orphanReserves (via ledger.job_id): ${outcome.orphanReserves}`);
   process.exit(0);
