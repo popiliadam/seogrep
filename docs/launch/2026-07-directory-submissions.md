@@ -104,12 +104,29 @@ registry record (the 98-char description above).
   template, use `https://seogrep.com` and explain the per-user URL in the draft step)
 - Name: `SeoGrep`
 
-**`[HUMAN-MONEY]` decision:** free tier = queued review, nofollow link, random placement.
-$39 one-time = instant publish, Verified badge, **dofollow** link from a DR-72 site with
-self-reported 2.2M visitors/yr. Chief's recommendation: **pay it** — for an SEO product
-the dofollow backlink alone likely justifies $39. Human decides (real money).
+**`[HUMAN-MONEY]` decision — DECLINED 2026-07-27.** The operator declined the $39 paid
+tier. **Do not re-prompt.** The free tier stays available and is what we use if/when this
+listing is submitted: queued review, nofollow link, random placement — no Verified badge,
+no instant publish. Revisit only if the operator raises it.
 
-## 4. Smithery — smithery.ai ⏸️ **draft started 2026-07-27, paused for a server fix**
+*(Context: the paid tier was $39 one-time for instant publish + Verified badge + a dofollow
+link from a DR-72 site, self-reported 2.2M visitors/yr.)*
+
+## 4. Smithery — smithery.ai ✅ **PUBLISHED 2026-07-27**
+
+Live as `suleymanncapar/seogrep`; gateway `seogrep--suleymanncapar.run.tools`. The scan log
+reads `Using .well-known/mcp/server-card.json: (16 tools)` and the public listing shows
+`apiKey (header)` plus all 16 tools with their real descriptions — no invented OAuth flow.
+(Their internal build log prints "OAuth required"; that is Smithery's generic auth bucket
+and does NOT appear on the public page. Re-check it after any listing change.)
+
+Two server-side blockers had to be cleared first, both now live and proven:
+1. **JSON-only `Accept` returned 406.** The MCP SDK transport demands `text/event-stream` on
+   POST even though we set `enableJsonResponse: true` and never stream. Fixed in PR #27
+   (`negotiatedAccept`) — a JSON-only client now gets 200 + `serverInfo`.
+2. **An auth-walled server cannot be scanned at all.** Fixed in PR #28 by serving the
+   capability card at `/.well-known/mcp/server-card.json`, generated from the tool registry.
+   That card is what the successful scan actually consumed.
 
 What the flow actually asks for (walked it end to end):
 1. `smithery.ai/new` → **Namespace/Server ID**: the namespace is your username; we used
