@@ -3,9 +3,10 @@ import type { createServiceClient } from "@pseo/db/server";
 
 /**
  * The gsc_connections write path: a tenant-scoped read-then-update/insert (scoped by
- * user_id + project_id — constitution NEVER #4). The refresh token is ALREADY sealed by the
- * caller (crypto.encryptToken -> toByteaHex); this module only persists the opaque bytea and
- * the resolved property — it never sees plaintext.
+ * user_id + project_id — constitution NEVER #4), plus the read + delete the disconnect
+ * action needs. The refresh token is ALREADY sealed by the caller (crypto.encryptToken ->
+ * toByteaHex); this module only persists/returns the opaque bytea and the resolved
+ * property — it never sees plaintext.
  *
  * Google returns a refresh token only on first consent (even with prompt=consent it can
  * be omitted if one was issued before), so `encryptedTokenHex === null` means "no NEW
@@ -127,4 +128,67 @@ export async function upsertGscConnection(
     throw new Error(`gsc_connections insert failed: ${error.message}`);
   }
   return "inserted";
+}
+
+/**
+ * The tenant coordinates of ONE connection. A connection is addressed by (user, project) —
+ * never by a client-supplied row id — so the lookup IS the ownership check.
+ */
+export interface GscConnectionRef {
+  readonly userId: string;
+  readonly projectId: string;
+}
+
+/** A stored connection: its row id and the sealed token (null when none was ever stored). */
+export interface StoredGscConnection {
+  readonly id: string;
+  readonly encryptedTokenHex: string | null;
+}
+
+/**
+ * Read the caller's connection for one project. Both tenant filters are applied (NEVER #4),
+ * so another user's row is not "found and refused" — it is simply absent, indistinguishable
+ * from an unlinked project. The sealed token is returned as the opaque bytea text; only the
+ * caller (which holds TOKEN_ENCRYPTION_KEY) can open it.
+ */
+export async function findGscConnection(
+  client: ServiceClient,
+  ref: GscConnectionRef,
+): Promise<StoredGscConnection | null> {
+  const db = client as unknown as SupabaseClient<GscConnectionsDatabase>;
+  const { data, error } = await db
+    .from("gsc_connections")
+    .select("id, encrypted_refresh_token")
+    .eq("user_id", ref.userId)
+    .eq("project_id", ref.projectId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`gsc_connections lookup failed: ${error.message}`);
+  }
+  return data ? { id: data.id, encryptedTokenHex: data.encrypted_refresh_token } : null;
+}
+
+/**
+ * Delete the caller's connection for one project — the disconnect path. The DELETE carries
+ * BOTH tenant filters (NEVER #4): even with a forged project_id the statement can only ever
+ * match a row owned by `userId`, so it is safe independently of the caller's own checks.
+ *
+ * The ROW goes, not just the token column: the page derives "connected" from the row's
+ * existence, and dropping the row is also what actually removes the sealed refresh token
+ * from storage. Errors throw so the UI reports a failure instead of claiming a disconnect
+ * that never happened.
+ */
+export async function deleteGscConnection(
+  client: ServiceClient,
+  ref: GscConnectionRef,
+): Promise<void> {
+  const db = client as unknown as SupabaseClient<GscConnectionsDatabase>;
+  const { error } = await db
+    .from("gsc_connections")
+    .delete()
+    .eq("user_id", ref.userId)
+    .eq("project_id", ref.projectId);
+  if (error) {
+    throw new Error(`gsc_connections delete failed: ${error.message}`);
+  }
 }

@@ -52,12 +52,32 @@ vi.mock("./actions", () => ({
   createKeyAction: vi.fn(),
   rotateKeyAction: vi.fn(),
   revokeKeyAction: vi.fn(),
+  disconnectGscAction: vi.fn(),
 }));
 // Stub the client island so the page test focuses on the RSC's list + masked URL, and
 // surfaces which activeKeyId the page computed and hands down.
 vi.mock("./key-panel", () => ({
   KeyPanel: (p: { activeKeyId: string | null }) => (
     <div data-testid="key-panel" data-active-key-id={p.activeKeyId ?? ""} />
+  ),
+}));
+// Same treatment for the per-row island: the stub surfaces WHICH project the page bound it
+// to and whether it was handed a real server action.
+vi.mock("./disconnect-button", () => ({
+  DisconnectButton: (p: {
+    projectId: string;
+    domain: string;
+    disconnectGscAction: (projectId: string) => Promise<void>;
+  }) => (
+    <button
+      type="button"
+      data-testid="disconnect"
+      data-project-id={p.projectId}
+      data-domain={p.domain}
+      data-has-action={typeof p.disconnectGscAction === "function"}
+    >
+      Disconnect
+    </button>
   ),
 }));
 
@@ -149,6 +169,34 @@ describe("ConnectionPage — Google Search Console", () => {
     expect(reconnectLink.getAttribute("href")).toBe(
       `/api/gsc/connect?project_id=${PROJECT_B.id}`,
     );
+  });
+
+  it("offers Disconnect on the CONNECTED row only, bound to that project", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [{ project_id: PROJECT_B.id }];
+    await renderPage();
+
+    // Nothing to unlink on a project that was never linked.
+    expect(within(rowOf(PROJECT_A.domain)).queryByTestId("disconnect")).toBeNull();
+
+    const disconnect = within(rowOf(PROJECT_B.domain)).getByTestId("disconnect");
+    expect(disconnect.getAttribute("data-project-id")).toBe(PROJECT_B.id);
+    expect(disconnect.getAttribute("data-domain")).toBe(PROJECT_B.domain);
+    expect(disconnect.getAttribute("data-has-action")).toBe("true");
+  });
+
+  it("after the connection is gone the row reads Not connected + Connect, with no Disconnect", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_B];
+    connectionRows = []; // the state a successful disconnect leaves behind
+    await renderPage();
+
+    const row = rowOf(PROJECT_B.domain);
+    expect(within(row).getByText("Not connected")).toBeTruthy();
+    expect(within(row).getByRole("link", { name: "Connect" })).toBeTruthy();
+    expect(within(row).queryByText("Connected")).toBeNull();
+    expect(within(row).queryByTestId("disconnect")).toBeNull();
   });
 
   it("reads BOTH tenant tables with an explicit user_id filter (constitution NEVER #4)", async () => {

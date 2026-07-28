@@ -2,7 +2,13 @@ import { mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import { listKeys } from "@pseo/db/api-keys-repo";
 import { formatDate } from "../../../lib/format";
 import { createClient } from "../../../lib/supabase/server";
-import { createKeyAction, revokeKeyAction, rotateKeyAction } from "./actions";
+import {
+  createKeyAction,
+  disconnectGscAction,
+  revokeKeyAction,
+  rotateKeyAction,
+} from "./actions";
+import { DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
 
 /** One project row with the only GSC fact this page shows: is it linked or not. */
@@ -103,7 +109,8 @@ export default async function ConnectionPage() {
         <h2 className="text-sm font-medium">Google Search Console</h2>
         <p className="text-sm text-neutral-600">
           Link a project to Search Console so its tools can read your real query and click
-          data. Connecting sends you to Google and back.
+          data. Connecting sends you to Google and back. Disconnecting revokes SeoGrep&apos;s
+          access at Google and deletes the stored token.
         </p>
         {projects.length === 0 ? (
           <p className="text-sm text-neutral-600">
@@ -135,6 +142,16 @@ export default async function ConnectionPage() {
                   >
                     {project.connected ? "Reconnect" : "Connect"}
                   </a>
+                  {/* Only a linked project can be unlinked. Disconnect revokes the grant at
+                      Google and deletes the stored token, so this row re-renders as
+                      "Not connected" + Connect. */}
+                  {project.connected ? (
+                    <DisconnectButton
+                      projectId={project.id}
+                      domain={project.domain}
+                      disconnectGscAction={disconnectGscAction}
+                    />
+                  ) : null}
                 </span>
               </li>
             ))}
