@@ -19,6 +19,18 @@ jobs:
           cache: pnpm
       - run: bash guardrails/verify.sh
 
+  # DB-less static schema gates. Deterministic (bash + awk only: no node, no secrets,
+  # no network, no Supabase stack), so they are cheap enough to be their own required
+  # job instead of hiding inside verify. check-guards-selftest.sh is what proves the
+  # other two can still go red.
+  static-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: bash guardrails/check-rls.sh
+      - run: bash guardrails/check-append-only.sh
+      - run: bash guardrails/check-guards-selftest.sh
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
