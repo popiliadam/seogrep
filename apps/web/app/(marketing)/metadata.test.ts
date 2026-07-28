@@ -3,6 +3,7 @@ import { metadata as howItWorks } from "./how-it-works/page";
 import { metadata as landing } from "./page";
 import { metadata as pricing } from "./pricing/page";
 import { metadata as privacy } from "./privacy/page";
+import { metadata as refunds } from "./refunds/page";
 import { metadata as terms } from "./terms/page";
 
 // Audit G2: the 5 marketing pages set only `title` and inherited the root 178-char description, so
@@ -13,6 +14,7 @@ const PAGES = [
   ["/how-it-works", howItWorks],
   ["/terms", terms],
   ["/privacy", privacy],
+  ["/refunds", refunds],
 ] as const;
 
 describe("marketing page metadata", () => {

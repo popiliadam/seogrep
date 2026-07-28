@@ -21,7 +21,7 @@ vi.mock("../lib/source", () => ({
 
 import sitemap from "./sitemap";
 
-const STATIC_ROUTES = ["", "/pricing", "/how-it-works", "/docs", "/terms", "/privacy"] as const;
+const STATIC_ROUTES = ["", "/pricing", "/how-it-works", "/docs", "/terms", "/privacy", "/refunds"] as const;
 
 describe("sitemap", () => {
   it("still lists every static marketing route", () => {
@@ -29,6 +29,11 @@ describe("sitemap", () => {
     for (const route of STATIC_ROUTES) {
       expect(urls, `missing ${route || "/"}`).toContain(`${SITE_URL}${route}`);
     }
+  });
+
+  it("lists the refund policy exactly once, absolute (Paddle requires it published and linked)", () => {
+    const urls = sitemap().map((entry) => entry.url);
+    expect(urls.filter((url) => url === `${SITE_URL}/refunds`)).toHaveLength(1);
   });
 
   it("lists the blog index too", () => {
