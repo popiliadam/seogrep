@@ -32,7 +32,7 @@ re-use it verbatim — this is the most-seen sentence we will ship. Do not trunc
 - **Verify 401-not-403:** unauthenticated MCP requests must return **401** (Smithery's
   scanner treats 403 as init failure). Check our auth path's status code during T-C3.
 - **(Deferred, pre-Anthropic only) T-C4 tool annotations:** every tool needs `title` +
-  `readOnlyHint`/`destructiveHint`, names ≤64 chars, no read/write mixing. Our 16 tools
+  `readOnlyHint`/`destructiveHint`, names ≤64 chars, no read/write mixing. Our 19 tools
   are single-purpose (no catch-all), so this is additive metadata. Do when the human
   decides to pursue the Anthropic listing.
 
@@ -116,7 +116,10 @@ link from a DR-72 site, self-reported 2.2M visitors/yr.)*
 
 Live as `suleymanncapar/seogrep`; gateway `seogrep--suleymanncapar.run.tools`. The scan log
 reads `Using .well-known/mcp/server-card.json: (16 tools)` and the public listing shows
-`apiKey (header)` plus all 16 tools with their real descriptions — no invented OAuth flow.
+`apiKey (header)` plus all 19 tools with their real descriptions — no invented OAuth flow.
+**Note (2026-07-28):** the scan-log quote above is Smithery's real 2026-07-27 scan output,
+preserved verbatim; the tool surface has since grown to 19 — this listing is now stale and
+needs a rescan to reflect it.
 (Their internal build log prints "OAuth required"; that is Smithery's generic auth bucket
 and does NOT appear on the public page. Re-check it after any listing change.)
 
@@ -194,7 +197,7 @@ non-GitHub hosted servers (research confidence: inferred; their FAQ page was unr
   support support@seogrep.com; slug `seogrep` — PERMANENT once published).
 
 **Review-readiness checklist (chief prepares, human executes):**
-- [ ] T-C4 tool annotations shipped (title + readOnlyHint/destructiveHint ×16, names ≤64).
+- [ ] T-C4 tool annotations shipped (title + readOnlyHint/destructiveHint ×19, names ≤64).
 - [ ] Reviewer test account provisioned WITH real data (crawl history + report) — "fully
       populated account" is required wording; an empty trial fails.
 - [ ] Privacy policy already live ✓ (covers collection/usage/retention/contact — re-read

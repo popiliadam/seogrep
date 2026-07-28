@@ -28,7 +28,7 @@ Hi PH — maker here.
 SeoGrep started from a simple observation: the place I actually *work* on my site is an
 AI coding agent, not an SEO dashboard. So instead of another dashboard, SeoGrep is an MCP
 server. You add one personal URL to Claude (or Cursor, Windsurf, any MCP client) and your
-agent gets 16 SEO tools: crawl a site, run on-page / technical / structured-data audits,
+agent gets 19 SEO tools: crawl a site, run on-page / technical / structured-data audits,
 pull your own Google Search Console data (quick wins, cannibalization, content decay),
 and turn it all into a shareable report.
 
@@ -100,7 +100,7 @@ The workflow, end to end, in chat:
 "set up my site" → "crawl it" → "audit on-page + schema" → "what should I fix first?"
 → "make me a report I can send"
 
-16 tools. One MCP URL. No dashboard tab-switching.
+19 tools. One MCP URL. No dashboard tab-switching.
 
 **Post 3:**
 We dogfood it. Before launch, SeoGrep's own audit caught our site missing canonicals on
