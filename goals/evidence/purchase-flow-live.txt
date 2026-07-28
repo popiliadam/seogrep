@@ -1,0 +1,24 @@
+purchase-flow-live — canlı ödeme kanıtı
+
+tarih    : 2026-07-28
+ortam    : Paddle LIVE (NEXT_PUBLIC_PADDLE_ENV=production), gerçek kart, gerçek para
+ürün     : SeoGrep Credit Top-up $10, tek-kullanımlık $8 indirim kodu ile $2.00 ödendi
+           (indirim testi zayıflatmaz: kredi verme fiyat kimliğine bağlı, tutara değil)
+
+SONUC:
+- transaction  : txn_01kykvp7t7b30w85n3zxhg35qv
+- event_id     : evt_01kykwm6k9xxz5dqs97zt2yy5y
+- paddle_events: transaction.completed, processed_at 2026-07-28 08:38:40Z (islendi)
+- credit_ledger : TEK satir — kind=purchase, delta=+400, 2026-07-28 08:38:40Z
+- /app bakiyesi : +400
+
+IDEMPOTENCY — planlanandan guclu kanit:
+Ayni olay Paddle tarafindan 5+ kez teslim edilmeye calisildi. Ilk denemeler
+PADDLE_WEBHOOK_SECRET uyusmadigi icin 401 "invalid signature" aldi ve HICBIR
+veritabani yazmasi yapilmadi (fail-closed: 401 yolunda service client bile kurulmaz).
+Secret duzeltilip redeploy edilince sonraki teslimat 200 {"status":"ok"} dondu.
+Coklu teslimata ragmen ledger'da TEK satir kaldi => NEVER#3 (imza dogrulamasi +
+event_id idempotency) CANLIDA kanitlandi.
+
+NOT (bilinen, kasitli): Paddle iadesi bu satiri geri almaz — refund handler yok,
+credit_ledger append-only. /refunds politikasi bunu aynen boyle anlatiyor.
