@@ -3,6 +3,14 @@ import { createServiceClient } from "@pseo/db/server";
 import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pseo/core";
 import { createClient } from "../../../../lib/supabase/server";
 import { matchGscProperty } from "../../../../lib/gsc/oauth";
+import {
+  fetchWithCodeVerifier,
+  matchesNonce,
+  parsePkceCookie,
+  PKCE_COOKIE,
+  PKCE_COOKIE_PATH,
+  readCookie,
+} from "../../../../lib/gsc/pkce";
 import { resolveBaseUrl } from "../../../../lib/site";
 import { upsertGscConnection } from "../../../../lib/gsc/store";
 import { verifyState } from "../../../../lib/gsc/state";
@@ -16,19 +24,36 @@ import { verifyState } from "../../../../lib/gsc/state";
  *      status (a signed-in user returns to /app; an anonymous visitor goes to /login);
  *   3. verify the state signature + expiry, then re-check the LIVE session matches its
  *      user_id (a leaked state alone cannot bind a project to another signed-in user);
- *   4. exchange the code for tokens — the client_secret is server-side inside the client
- *      module and is NEVER logged or returned;
- *   5. SEAL the refresh token (AES-256-GCM) before it touches the DB — plaintext never
+ *   4. require the ONE-TIME flow cookie issued beside that state, which makes a stateless
+ *      state single-use and carries the PKCE verifier (a replay arrives without it);
+ *   5. exchange the code for tokens, sending that verifier — the client_secret is server-side
+ *      inside the client module and is NEVER logged or returned;
+ *   6. SEAL the refresh token (AES-256-GCM) before it touches the DB — plaintext never
  *      reaches storage or a log;
- *   6. list the account's properties and match the project domain to one;
- *   7. upsert the connection and redirect to /app with a status.
+ *   7. list the account's properties and match the project domain to one;
+ *   8. upsert the connection and redirect to /app with a status.
  *
  * No redirect target is ever read from the request. Node runtime: crypto + token exchange.
  */
 export const runtime = "nodejs";
 
+/**
+ * Consume the one-time flow cookie. EVERY exit from this handler passes through here — success,
+ * refusal, or broken deploy — because the flow that issued the cookie is over either way, and a
+ * cookie that survives one exit path is a cookie a replay can still present. Clearing it is what
+ * turns the stateless state into a single-use one.
+ *
+ * Not gated on the cookie having verified: a hostile request to this route can therefore wipe an
+ * in-flight cookie, but whoever can make a browser hit the callback can equally make it hit
+ * connect and start over, so the only cost is a restart.
+ */
+function endFlow(response: NextResponse): NextResponse {
+  response.cookies.set(PKCE_COOKIE, "", { httpOnly: true, sameSite: "lax", path: PKCE_COOKIE_PATH, maxAge: 0 });
+  return response;
+}
+
 function redirect(path: string, base: string): NextResponse {
-  return NextResponse.redirect(new URL(path, base));
+  return endFlow(NextResponse.redirect(new URL(path, base)));
 }
 
 function errorMessage(error: unknown): string {
@@ -57,10 +82,12 @@ export async function GET(request: Request): Promise<Response> {
       "gsc callback refused: WEB_BASE_URL is not a usable absolute http(s) URL — refusing to " +
         "derive a redirect from the request Host",
     );
-    return new NextResponse("Search Console is temporarily unavailable. Please try again later.", {
-      status: 500,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
+    return endFlow(
+      new NextResponse("Search Console is temporarily unavailable. Please try again later.", {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      }),
+    );
   }
 
   // The remaining OAuth/encryption secrets must be present too; a missing one fails loudly,
@@ -99,6 +126,21 @@ export async function GET(request: Request): Promise<Response> {
   if (googleError) {
     return redirect("/app?gsc=denied", base);
   }
+
+  // (4) ONE-TIME + PKCE (L-10). The state's signature proves who asked; it cannot prove this is
+  // the FIRST time it has been presented, because there is no record of it anywhere. The cookie
+  // minted beside it is that record, held by the browser and destroyed by endFlow above — so a
+  // state captured from a Referer, a proxy log, or a shared screen arrives the second time with
+  // no cookie and stops here. The nonce match is what ties this cookie to THIS state rather than
+  // to any other flow the same browser may have open, and the verifier it carries is what Google
+  // will weigh against the challenge issued at connect time.
+  const pkce = parsePkceCookie(readCookie(request.headers.get("cookie"), PKCE_COOKIE));
+  if (!pkce || !matchesNonce(pkce.nonce, state.nonce)) {
+    // Never log the state or the verifier — just the fact and the shape of the failure.
+    console.error("gsc callback: state arrived without its one-time flow cookie (replay, or an expired flow)");
+    return redirect("/app?gsc=error", base);
+  }
+
   if (!code) {
     return redirect("/app?gsc=error", base);
   }
@@ -120,18 +162,20 @@ export async function GET(request: Request): Promise<Response> {
     }
     const domain = (project as { domain: string }).domain;
 
-    // (4) Exchange the code. redirect_uri MUST match the one used at connect time.
-    const tokens = await exchangeCodeForTokens({
-      code,
-      redirectUri: `${base}/api/gsc/callback`,
-    });
+    // (5) Exchange the code. redirect_uri MUST match the one used at connect time, and the
+    // PKCE verifier from the cookie must match the challenge sent at connect time — without it
+    // Google refuses the code, which is exactly what stops an injected code being redeemed here.
+    const tokens = await exchangeCodeForTokens(
+      { code, redirectUri: `${base}/api/gsc/callback` },
+      { fetch: fetchWithCodeVerifier(pkce.verifier) },
+    );
 
-    // (5) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
+    // (6) Seal the refresh token at rest. Absent on re-consent -> null (keep any stored one).
     const encryptedTokenHex = tokens.refreshToken
       ? toByteaHex(encryptToken(tokens.refreshToken, encryptionKey))
       : null;
 
-    // (6) Match the project domain to a verified property. A listing failure is non-fatal:
+    // (7) Match the project domain to a verified property. A listing failure is non-fatal:
     // the connection (token) still stands; the property is simply left unmatched.
     let gscProperty: string | null = null;
     try {
@@ -140,7 +184,7 @@ export async function GET(request: Request): Promise<Response> {
       console.error("gsc callback: sites.list failed (property left unmatched):", errorMessage(listError));
     }
 
-    // (7) Persist and route to the dashboard with a status the /app page renders.
+    // (8) Persist and route to the dashboard with a status the /app page renders.
     const outcome = await upsertGscConnection(service, {
       userId: state.user_id,
       projectId: state.project_id,

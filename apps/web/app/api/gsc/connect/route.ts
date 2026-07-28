@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "../../../../lib/supabase/server";
 import { buildConsentUrl } from "../../../../lib/gsc/oauth";
+import {
+  codeChallengeS256,
+  createCodeVerifier,
+  PKCE_COOKIE,
+  PKCE_COOKIE_PATH,
+  serializePkceCookie,
+} from "../../../../lib/gsc/pkce";
 import { resolveBaseUrl } from "../../../../lib/site";
-import { freshStatePayload, signState } from "../../../../lib/gsc/state";
+import { freshStatePayload, signState, STATE_TTL_SECONDS } from "../../../../lib/gsc/state";
 
 /**
  * Step 1 of the GSC OAuth link-out. A signed-in user arrives here (via the connect_gsc
@@ -89,11 +96,32 @@ export async function GET(request: Request): Promise<Response> {
     return redirect("/app?gsc=unknown_project", base);
   }
 
-  const state = signState(freshStatePayload(user.id, projectId), encryptionKey);
+  // Mint the state AND the per-flow secret together (L-10). Only the S256 DIGEST of the
+  // verifier goes to Google; the verifier itself, plus the state's nonce, stay in an httpOnly
+  // cookie this origin alone can read. The callback demands that cookie and destroys it, which
+  // is what makes an otherwise-stateless state single-use — and PKCE then binds the returned
+  // code to this browser, so a code injected into someone else's callback cannot be redeemed.
+  const payload = freshStatePayload(user.id, projectId);
+  const codeVerifier = createCodeVerifier();
   const consentUrl = buildConsentUrl({
     clientId,
     redirectUri: `${base}/api/gsc/callback`,
-    state,
+    state: signState(payload, encryptionKey),
+    codeChallenge: codeChallengeS256(codeVerifier),
   });
-  return NextResponse.redirect(consentUrl);
+
+  const response = NextResponse.redirect(consentUrl);
+  response.cookies.set(PKCE_COOKIE, serializePkceCookie(payload.nonce, codeVerifier), {
+    httpOnly: true, // script-invisible: an XSS cannot lift the verifier
+    // Tied to the CANONICAL origin's scheme, not to a NODE_ENV guess: if the app is served over
+    // https the cookie must never be sent in clear, and on a plain-http local origin a Secure
+    // cookie would simply be dropped by some browsers, breaking the flow for no gain.
+    secure: base.startsWith("https://"),
+    // Lax, not Strict: the return from Google is a cross-site top-level GET, and Strict would
+    // withhold the cookie exactly then. Lax still keeps it off cross-site subrequests.
+    sameSite: "lax",
+    path: PKCE_COOKIE_PATH,
+    maxAge: STATE_TTL_SECONDS, // outlives nothing: it dies with the state it is bound to
+  });
+  return response;
 }
