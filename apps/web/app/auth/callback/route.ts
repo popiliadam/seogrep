@@ -86,8 +86,13 @@ export async function GET(request: Request): Promise<Response> {
   // and password login goes straight to /app without re-claiming. So a failure is logged and the
   // redirect proceeds — /app's layout retries the same idempotent claim on arrival, and the
   // migration-0009 CAS makes a double grant impossible however many times it is retried.
+  //
+  // `email` here is the identity provider's own record for this user — it came back from
+  // exchangeCodeForSession / verifyOtp above, never from the request — which is what the H-06
+  // mailbox dimension requires. When the provider returned none it is null and the claim
+  // fails OPEN (granted as before) rather than denying an advertised trial.
   try {
-    const trialNewlyGranted = await grantTrialCredits(userId);
+    const trialNewlyGranted = await grantTrialCredits(userId, email);
     if (trialNewlyGranted) {
       // Fires exactly once per user — the trial lock IS the one-time signup gate.
       // captureSignup is itself best-effort (never throws), so no try/catch needed here.

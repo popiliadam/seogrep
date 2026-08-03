@@ -39,7 +39,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   // every authenticated page goes through. The claim is idempotent (migration-0009 CAS: the
   // second call returns false and appends nothing) and never throws, so re-asking on every render
   // can neither double-grant nor 500 the dashboard.
-  await ensureTrialGranted(user.id);
+  //
+  // H-06: the SECOND grant path must carry the mailbox dimension too, or it is a bypass — a
+  // farmer would simply skip the callback and let this retry hand out the unguarded trial.
+  // getUser() re-validates against the auth server (not a decoded cookie), so `user.email` is
+  // the identity provider's address, not a client claim. A user without one grants as before.
+  await ensureTrialGranted(user.id, user.email ?? null);
 
   return (
     <div className="flex min-h-dvh flex-col">
