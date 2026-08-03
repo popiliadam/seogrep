@@ -1,6 +1,7 @@
 import { mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import { listKeys } from "@pseo/db/api-keys-repo";
 import { formatDate } from "../../../lib/format";
+import { mcpHeaderEndpoint } from "../../../lib/mcp-endpoint";
 import { createClient } from "../../../lib/supabase/server";
 import {
   createKeyAction,
@@ -73,9 +74,11 @@ export default async function ConnectionPage() {
   const keys = user ? await listKeys(supabase, user.id) : [];
   const projects = user ? await listProjectConnections(supabase, user.id) : [];
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
-  const maskedMcpUrl = activeKey
-    ? mcpUrlFor(`${activeKey.keyPrefix}…`, mcpUrlTemplate())
-    : null;
+  // ONE read of the template feeds both forms the server accepts, so they can never point at
+  // different hosts: the personal URL below, and the key-free endpoint header auth uses (L-15).
+  const urlTemplate = mcpUrlTemplate();
+  const maskedMcpUrl = activeKey ? mcpUrlFor(`${activeKey.keyPrefix}…`, urlTemplate) : null;
+  const headerEndpoint = mcpHeaderEndpoint(urlTemplate);
 
   return (
     <section className="flex flex-col gap-6">
@@ -100,6 +103,7 @@ export default async function ConnectionPage() {
 
       <KeyPanel
         activeKeyId={activeKey?.id ?? null}
+        headerEndpoint={headerEndpoint}
         createKeyAction={createKeyAction}
         rotateKeyAction={rotateKeyAction}
         revokeKeyAction={revokeKeyAction}
