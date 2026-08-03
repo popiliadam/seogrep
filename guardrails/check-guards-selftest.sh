@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-test for the two DB-less static gates: check-rls.sh and check-append-only.sh.
+# Self-test for the static gates: check-rls.sh, check-append-only.sh and check-licenses.sh.
 # A guard that never fails proves nothing (M-12: both gates false-PASSed every synthetic
 # weakening because they searched migration HISTORY instead of FINAL STATE). This harness
 # runs each gate against synthetic migration trees and asserts the COLOUR of the answer.
@@ -11,6 +11,12 @@
 #   weakened-rls-*     -> guardrails/check-rls.sh          must go RED
 #   weakened-append-*  -> guardrails/check-append-only.sh  must go RED
 # fixtures/healthy alone must be GREEN for BOTH gates.
+#
+# check-licenses.sh is composed differently: its fixtures are whole `pnpm licenses list
+# --prod --json` SNAPSHOTS under guardrails/fixtures/licenses/, one file per case, asserted
+# explicitly below rather than through the weakened-*/ loop. Snapshots (not a live pnpm call)
+# are what keep this harness install-free. They carry name/versions/license only - the fields
+# the gate reads - not the paths/homepage/description pnpm also emits.
 #
 # Needs no database, no network and no node_modules. Exit 0 = every case behaved.
 set -uo pipefail
@@ -83,6 +89,17 @@ expected_finding() {
     weakened-rls-quoted-ident|weakened-rls-estring-escape|weakened-rls-dq-data-quotes|\
     weakened-rls-dq-data-quote-pairs-ident)
       printf '%s' 'public.credit_ledger - final state is DISABLE ROW LEVEL SECURITY' ;;
+    # Pinning the text is also what makes a DELETED licence snapshot a failure: a missing file
+    # makes the gate exit 1, which would otherwise read as a correct RED.
+    licenses-copyleft)
+      printf '%s\n%s' 'evil-copyleft@1.0.0 - GPL-3.0-only' 'mystery-pkg@0.1.0 - Unknown' ;;
+    licenses-or-all-denied)
+      printf '%s' 'dual-copyleft@2.0.0 - (GPL-3.0-only OR AGPL-3.0-only)' ;;
+    licenses-and-mixed)
+      printf '%s\n%s' 'mixed-and@1.0.0 - (MIT AND GPL-3.0-only)' \
+                      'nested-and@3.0.0 - ((MIT OR Apache-2.0) AND GPL-3.0-only)' ;;
+    licenses-exception-drift)
+      printf '%s\n%s' 'argparse@2.0.1 - GPL-3.0-only' 'lightningcss-linux-x64-gnu@1.32.0 - GPL-3.0-only' ;;
     *) printf '' ;;
   esac
 }
@@ -152,6 +169,24 @@ done
 healthy_dir="$(compose healthy)" || { echo "selftest: FAIL cannot compose healthy"; exit 1; }
 assert "healthy" check-rls.sh "$healthy_dir" green
 assert "healthy" check-append-only.sh "$healthy_dir" green
+
+# Licence gate (audit M-27). Two GREEN cases and four RED ones:
+#   * healthy-darwin  - today's real outside-allowlist set, the shape a laptop installs;
+#   * healthy-linux   - the SAME families under their linux binary names. Exceptions are
+#     globs precisely so ubuntu CI does not redden on @img/sharp-libvips-linux-x64 and
+#     lightningcss-linux-x64-gnu; without this case that claim would be untested;
+#   * or-all-denied / and-mixed - the SPDX expression reader. "(A OR B)" must pass only when
+#     a branch is allowed, "(A AND B)" only when every branch is. healthy-* covers the
+#     positive OR side ((MIT OR CC0-1.0)); these two are the negative space of that reader;
+#   * exception-drift - an exception is <name>+<licence>, not a blanket pass for a name: the
+#     excepted argparse/lightningcss relicensed to GPL-3.0-only must redden.
+LIC="$FIXTURES/licenses"
+assert "licenses-healthy-darwin"  check-licenses.sh "$LIC/healthy-darwin.json"     green
+assert "licenses-healthy-linux"   check-licenses.sh "$LIC/healthy-linux.json"      green
+assert "licenses-copyleft"        check-licenses.sh "$LIC/bad-copyleft.json"       red
+assert "licenses-or-all-denied"   check-licenses.sh "$LIC/bad-or-all-denied.json"  red
+assert "licenses-and-mixed"       check-licenses.sh "$LIC/bad-and-mixed.json"      red
+assert "licenses-exception-drift" check-licenses.sh "$LIC/bad-exception-drift.json" red
 
 found=0
 for d in "$FIXTURES"/weakened-*/; do

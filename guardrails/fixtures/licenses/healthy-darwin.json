@@ -1,0 +1,15 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "Apache-2.0": [{ "name": "@img/sharp-darwin-arm64", "versions": ["0.34.5"], "license": "Apache-2.0" }],
+  "ISC": [{ "name": "semver", "versions": ["7.7.3"], "license": "ISC" }],
+  "BSD-3-Clause": [{ "name": "source-map", "versions": ["0.7.6"], "license": "BSD-3-Clause" }],
+  "LGPL-3.0-or-later": [{ "name": "@img/sharp-libvips-darwin-arm64", "versions": ["1.2.4"], "license": "LGPL-3.0-or-later" }],
+  "MPL-2.0": [
+    { "name": "lightningcss", "versions": ["1.32.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-darwin-arm64", "versions": ["1.32.0"], "license": "MPL-2.0" }
+  ],
+  "Python-2.0": [{ "name": "argparse", "versions": ["2.0.1"], "license": "Python-2.0" }],
+  "CC-BY-4.0": [{ "name": "caniuse-lite", "versions": ["1.0.30001806"], "license": "CC-BY-4.0" }],
+  "0BSD": [{ "name": "tslib", "versions": ["2.8.1"], "license": "0BSD" }],
+  "(MIT OR CC0-1.0)": [{ "name": "type-fest", "versions": ["5.8.0"], "license": "(MIT OR CC0-1.0)" }]
+}

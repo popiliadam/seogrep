@@ -1,0 +1,6 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "(GPL-3.0-only OR AGPL-3.0-only)": [
+    { "name": "dual-copyleft", "versions": ["2.0.0"], "license": "(GPL-3.0-only OR AGPL-3.0-only)" }
+  ]
+}

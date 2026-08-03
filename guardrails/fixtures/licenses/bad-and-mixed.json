@@ -1,0 +1,9 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "(MIT AND GPL-3.0-only)": [
+    { "name": "mixed-and", "versions": ["1.0.0"], "license": "(MIT AND GPL-3.0-only)" }
+  ],
+  "((MIT OR Apache-2.0) AND GPL-3.0-only)": [
+    { "name": "nested-and", "versions": ["3.0.0"], "license": "((MIT OR Apache-2.0) AND GPL-3.0-only)" }
+  ]
+}
