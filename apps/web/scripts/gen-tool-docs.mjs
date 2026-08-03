@@ -343,9 +343,14 @@ export const DOC_PROSE = {
     postReturnsSections: [
       {
         heading: "Limitations (v0)",
+        // The 3-day offset below is GSC_FRESHNESS_LAG_DAYS in apps/mcp/src/gsc-data/windows.ts,
+        // which is the single source of truth for the behavior. Keep this wording in step with it.
         body:
-          "- Search Console finalizes data with a ~2–3 day delay, so the most recent day or two of the " +
-          "current window can be partial.\n" +
+          "- Search Console finalizes a day's data with a ~2–3 day delay, and reports a day it has " +
+          "not finalized as **zero** rather than as missing. Both windows therefore end **3 days " +
+          "before today** instead of running up to it, so recent traffic is never miscounted as a " +
+          "collapse that did not happen. The trade-off: the newest 3 days are not analyzed, so a " +
+          "genuine drop surfaces here up to 3 days after it begins.\n" +
           "- A single page of up to 5,000 `(query, page)` rows is fetched per window; a very large " +
           "property is truncated to the top rows Google returns.",
       },
