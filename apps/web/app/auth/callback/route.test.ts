@@ -10,7 +10,7 @@ vi.mock("../../../lib/supabase/server", () => ({
   createClient: async () => ({ auth: { exchangeCodeForSession, verifyOtp } }),
 }));
 vi.mock("../../../lib/billing/trial", () => ({
-  grantTrialCredits: (userId: string) => grantTrialCredits(userId),
+  grantTrialCredits: (userId: string, email: string | null) => grantTrialCredits(userId, email),
 }));
 vi.mock("../../../lib/billing/welcome", () => ({
   sendWelcomeIfFirst: (userId: string, email: string) => sendWelcomeIfFirst(userId, email),
@@ -46,7 +46,7 @@ describe("GET /auth/callback", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost:3457/app");
     expect(exchangeCodeForSession).toHaveBeenCalledWith("abc");
-    expect(grantTrialCredits).toHaveBeenCalledWith("u1");
+    expect(grantTrialCredits).toHaveBeenCalledWith("u1", "u1@example.com");
     expect(sendWelcomeIfFirst).toHaveBeenCalledWith("u1", "u1@example.com");
     expect(captureSignup).toHaveBeenCalledWith("u1");
   });
@@ -61,8 +61,23 @@ describe("GET /auth/callback", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost:3457/app");
     expect(verifyOtp).toHaveBeenCalledWith({ type: "magiclink", token_hash: "th1" });
+    // H-06: the verifyOtp branch is a SECOND source of the address inside this one route, so it
+    // must forward it too — the provider's record, never anything from the request.
+    expect(grantTrialCredits).toHaveBeenCalledWith("u2", "u2@example.com");
     expect(sendWelcomeIfFirst).toHaveBeenCalledWith("u2", "u2@example.com");
     expect(captureSignup).toHaveBeenCalledWith("u2");
+  });
+
+  // Fail open: the provider returning no address must not cost the user their advertised trial.
+  it("still claims the trial (with a null address) when the provider returns no email", async () => {
+    exchangeCodeForSession.mockResolvedValue({ data: { user: { id: "u6" } }, error: null });
+    grantTrialCredits.mockResolvedValue(true);
+
+    const response = await GET(new Request(`${BASE}?code=abc`));
+
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+    expect(grantTrialCredits).toHaveBeenCalledWith("u6", null);
+    expect(sendWelcomeIfFirst).not.toHaveBeenCalled(); // no address to send to
   });
 
   it("redirects exchange/verify failures to /login?error=auth without granting, welcoming, or capturing signup", async () => {
@@ -99,7 +114,7 @@ describe("GET /auth/callback", () => {
     const response = await GET(new Request(`${BASE}?code=abc`));
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost:3457/app");
-    expect(grantTrialCredits).toHaveBeenCalledWith("u3");
+    expect(grantTrialCredits).toHaveBeenCalledWith("u3", "u3@example.com");
     expect(errorSpy).toHaveBeenCalledWith("welcome email failed:", expect.any(Error));
     expect(captureSignup).toHaveBeenCalledWith("u3");
   });
@@ -133,7 +148,7 @@ describe("GET /auth/callback", () => {
     grantTrialCredits.mockResolvedValue(false);
     const response = await GET(new Request(`${BASE}?code=abc`));
     expect(response.status).toBe(307);
-    expect(grantTrialCredits).toHaveBeenCalledWith("u4");
+    expect(grantTrialCredits).toHaveBeenCalledWith("u4", "u4@example.com");
     expect(captureSignup).not.toHaveBeenCalled();
   });
 });
