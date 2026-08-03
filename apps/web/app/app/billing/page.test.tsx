@@ -25,6 +25,8 @@ vi.mock("../../../lib/supabase/server", () => ({
   },
 }));
 vi.mock("./actions", () => ({ openCustomerPortal: vi.fn() }));
+// Same reason: CheckoutButton reaches the M-05 mint action, whose module is server-only.
+vi.mock("./attribution-action", () => ({ mintCheckoutAttribution: vi.fn(async () => null) }));
 
 import BillingPage from "./page";
 

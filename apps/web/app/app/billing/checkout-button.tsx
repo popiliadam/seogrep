@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { initializePaddle, type Environments, type Paddle } from "@paddle/paddle-js";
 import { resolvePaddleEnvironment } from "../../../lib/paddle-env";
+import { mintCheckoutAttribution } from "./attribution-action";
 
 interface CheckoutButtonProps {
   /** Paddle price id for this package, or null when it is not configured. */
@@ -25,6 +26,12 @@ const ENVIRONMENT: Environments | undefined = resolvePaddleEnvironment();
  * Paddle.js and opens the overlay for the given price, passing the SERVER-provided user_id as
  * customData so the webhook can attribute the purchase (the id is never sourced from the client
  * for anything trust-bearing).
+ *
+ * M-05: customData is editable from this page while the overlay is open, so the id alone proves
+ * nothing. A server action mints a signed attribution token at click time and it rides along under
+ * `attribution_token` — the literal key here has to match ATTRIBUTION_CUSTOM_DATA_KEY in
+ * lib/billing/attribution, which is a server-only module and so cannot be imported into this
+ * client component; checkout-button.test.tsx asserts the two agree.
  */
 export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButtonProps) {
   const configured = Boolean(priceId && CLIENT_TOKEN && ENVIRONMENT);
@@ -66,16 +73,28 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
     };
   }, [configured, initAttempt]);
 
-  const openCheckout = useCallback(() => {
+  const openCheckout = useCallback(async () => {
     if (!paddle || !priceId) {
       return;
     }
     setError(null);
     setPending(true);
     try {
+      // M-05: customData is settable from this page, so user_id alone cannot be tenant authority.
+      // The server action re-derives the id from the validated session and signs it; the webhook
+      // trusts the SIGNED subject. A mint that fails or returns nothing must NEVER cost a sale —
+      // checkout still opens, and the webhook's grace path accepts (and reports) the absence.
+      let attributionToken: string | null = null;
+      try {
+        attributionToken = await mintCheckoutAttribution();
+      } catch (caught) {
+        console.error("paddle attribution mint failed; opening checkout unsigned:", caught);
+      }
       paddle.Checkout.open({
         items: [{ priceId, quantity: 1 }],
-        customData: { user_id: userId },
+        customData: attributionToken
+          ? { user_id: userId, attribution_token: attributionToken }
+          : { user_id: userId },
       });
     } catch (caught) {
       console.error("paddle checkout open failed:", caught);
@@ -138,7 +157,9 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
       <button
         type="button"
         disabled={pending || !paddle}
-        onClick={openCheckout}
+        onClick={() => {
+          void openCheckout();
+        }}
         className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
         {label}

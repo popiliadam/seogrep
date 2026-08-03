@@ -3,10 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const initializePaddle = vi.fn();
 const open = vi.fn();
+/** The server action that mints the M-05 attribution token — stubbed, never really called. */
+const mintCheckoutAttribution = vi.fn<() => Promise<string | null>>();
 
 vi.mock("@paddle/paddle-js", () => ({
   initializePaddle: (options: unknown) => initializePaddle(options),
 }));
+vi.mock("./attribution-action", () => ({
+  mintCheckoutAttribution: () => mintCheckoutAttribution(),
+}));
+vi.mock("server-only", () => ({}));
+
+import { ATTRIBUTION_CUSTOM_DATA_KEY } from "../../../lib/billing/attribution";
 
 /**
  * NEXT_PUBLIC_* are read at MODULE scope (they are build-time inlined in production), so every
@@ -28,6 +36,7 @@ const CONFIGURED_ENV = {
 describe("CheckoutButton", () => {
   beforeEach(() => {
     vi.spyOn(console, "error").mockImplementation(() => {});
+    mintCheckoutAttribution.mockResolvedValue("v1.signed.token");
   });
   afterEach(() => {
     cleanup();
@@ -84,10 +93,70 @@ describe("CheckoutButton", () => {
     expect(screen.queryByRole("alert")).toBeNull(); // the error clears on recovery
 
     fireEvent.click(buy);
-    expect(open).toHaveBeenCalledWith({
-      items: [{ priceId: "pri_1", quantity: 1 }],
-      customData: { user_id: "u1" }, // server-provided id, never client-sourced
-    });
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith({
+        items: [{ priceId: "pri_1", quantity: 1 }],
+        customData: {
+          user_id: "u1", // server-provided id, never client-sourced
+          // ...and, since customData is editable from this page, a server-signed token the
+          // webhook can actually verify the id against (M-05).
+          [ATTRIBUTION_CUSTOM_DATA_KEY]: "v1.signed.token",
+        },
+      }),
+    );
+  });
+
+  it("M-05: the token key the overlay sends is the one the webhook reads", async () => {
+    // The client cannot import the server-only attribution module, so the literal key in
+    // checkout-button.tsx is duplicated. This is the seam that keeps the two from drifting.
+    initializePaddle.mockResolvedValue({ Checkout: { open } });
+    const CheckoutButton = await loadButton(CONFIGURED_ENV);
+    render(<CheckoutButton priceId="pri_1" userId="u1" />);
+
+    const buy = await screen.findByRole<HTMLButtonElement>("button", { name: "Buy" });
+    await waitFor(() => expect(buy.disabled).toBe(false));
+    fireEvent.click(buy);
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    const [firstCall] = open.mock.calls as Array<[{ customData: Record<string, unknown> }]>;
+    expect(Object.keys(firstCall?.[0].customData ?? {})).toContain(ATTRIBUTION_CUSTOM_DATA_KEY);
+  });
+
+  it("a mint FAILURE never blocks the sale — checkout opens unsigned (grace covers it)", async () => {
+    mintCheckoutAttribution.mockRejectedValue(new Error("action unreachable"));
+    initializePaddle.mockResolvedValue({ Checkout: { open } });
+    const CheckoutButton = await loadButton(CONFIGURED_ENV);
+    render(<CheckoutButton priceId="pri_1" userId="u1" />);
+
+    const buy = await screen.findByRole<HTMLButtonElement>("button", { name: "Buy" });
+    await waitFor(() => expect(buy.disabled).toBe(false));
+    fireEvent.click(buy);
+
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith({
+        items: [{ priceId: "pri_1", quantity: 1 }],
+        customData: { user_id: "u1" }, // no token key at all, rather than a broken one
+      }),
+    );
+    expect(screen.queryByRole("alert")).toBeNull(); // and the customer sees no error
+  });
+
+  it("a null mint (no session / no key material) also opens checkout unsigned", async () => {
+    mintCheckoutAttribution.mockResolvedValue(null);
+    initializePaddle.mockResolvedValue({ Checkout: { open } });
+    const CheckoutButton = await loadButton(CONFIGURED_ENV);
+    render(<CheckoutButton priceId="pri_1" userId="u1" />);
+
+    const buy = await screen.findByRole<HTMLButtonElement>("button", { name: "Buy" });
+    await waitFor(() => expect(buy.disabled).toBe(false));
+    fireEvent.click(buy);
+
+    await waitFor(() =>
+      expect(open).toHaveBeenCalledWith({
+        items: [{ priceId: "pri_1", quantity: 1 }],
+        customData: { user_id: "u1" },
+      }),
+    );
   });
 
   it("enables the Buy button and passes the server user id when init succeeds first time", async () => {
