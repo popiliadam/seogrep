@@ -113,10 +113,16 @@ export function readAttributionToken(eventData: unknown, at: Date): AttributionC
     return { status: "invalid", reason: "no_signing_key" };
   }
   const parts = raw.split(".");
-  if (parts.length !== 4 || parts[0] !== TOKEN_VERSION) {
+  const [version, subject, expires, signature] = parts;
+  if (
+    parts.length !== 4 ||
+    version !== TOKEN_VERSION ||
+    subject === undefined ||
+    expires === undefined ||
+    signature === undefined
+  ) {
     return { status: "invalid", reason: "malformed" };
   }
-  const [, subject, expires, signature] = parts;
   if (!equalsConstantTime(signature, sign(`${TOKEN_VERSION}.${subject}.${expires}`, key))) {
     return { status: "invalid", reason: "bad_signature" };
   }
