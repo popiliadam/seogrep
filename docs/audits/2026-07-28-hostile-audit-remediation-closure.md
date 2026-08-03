@@ -855,3 +855,270 @@ fixture id'leri her koşuda benzersizleşti.
 > **Dürüstlük notu:** `pnpm audit --prod` KIRMIZI (exit=1) ve bu rapor onu yeşil göstermiyor.
 > Kalan yedi kalem önceki turda da açıktı ve kaynak audit'in kendisi bunları "mevcut kullanımda
 > erişilebilir değil" diye ayırmıştı. Bu turda bu yüzeye DOKUNULMADI.
+
+
+---
+---
+
+# ÜÇÜNCÜ TUR (2026-08-03) — §24'ten itibaren
+
+Bu bölüm `ac4565d` ("37/54 fixed") durumundan SONRA yapılan işi kaydeder. Önceki 23 bölüm
+**değiştirilmedi**; kaynak audit dosyasına da dokunulmadı.
+
+## 24. Yöntem — bu turda ne değişti
+
+Önceki iki turun yöntemi korundu (HEAD'e karşı yeniden doğrula → KIRMIZI test önce → asgari
+düzeltme → taze hakem → deterministik kapı). Üç ekleme yapıldı:
+
+1. **Doğrulama, düzeltmeden AYRI ajanlara verildi.** Kalan 13 teknik bulgu, iki salt-okunur
+   ajan tarafından güncel HEAD'e karşı yeniden doğrulandı; bu ajanların **yazma ve test koşma
+   yetkisi yoktu**, böylece aynı ağaçtaki işçi şeritlerinin ölçümünü bozamadılar (imzalı ders 8).
+   Bu, audit'in üç iddiasını düzeltti — aşağıda §25.
+2. **Her iş emrine "ölçmeden koruma ekleme" yasağı kondu** (ikinci turun 19.1 dersi kalıcılaştı).
+   Karşılığını M-04'te verdi: işçi istenen DB kısıtını **ölçerek reddetti** ve gerekçesini
+   hakem bağımsız olarak deneyle doğruladı.
+3. **Hakemlere "işçinin kendi mutasyon kanıtını kabul etme" talimatı verildi.** Üç vakada hakem
+   kendi bağımsız ölçümünü kurdu ve ikisinde işçinin kaçırdığı deliği buldu.
+
+## 25. Doğrulamanın audit'i DÜZELTTİĞİ noktalar
+
+Bu üç madde kaynak audit'in yazdığından farklıdır ve kayda geçirilir. Audit dosyası
+değiştirilmemiştir; düzeltme burada yaşar.
+
+### 25.1 T3 — mekanizma yanlış tarif edilmiş
+
+Audit `PostgrestVersion`in "14.5 → 12'ye sessizce düştüğünü" söylüyor. **Depoda hiçbir yerde `12`
+yoktur.** `a782f27` tiplerî `supabase gen types --local` ile yeniden üretti ve `__InternalSupabase`
+bloğunun **tamamı kayboldu**; geriye `Omit<Database, "__InternalSupabase">` boşa düştü.
+
+Sonuç aynı ama etki audit'in yazdığından geniş: `PostgrestVersion` `undefined` olunca yalnız
+`.maxAffected()` değil, **`SpreadOnManyEnabled` de aynı şekilde kapanıyor** — yani many-to-many
+spread select'ler (`select("a, ...b(*)")`) de tip hatası veriyor. Audit bu ikinci sonucu atlamış.
+
+Bu turda ölçülen gerçek sürüm: **`14.14`** — iki bağımsız kanaldan (`/rest/v1/` üzerindeki
+`Server:` başlığı ve OpenAPI kökünün `info.version` alanı). `"14.5"` ileriye kopyalanmadı.
+
+### 25.2 L-15 — kısmen çürütüldü
+
+Audit "API key URL'de taşınıyor" diyor. Doğrulama, iddianın büyük kısmının **zaten kapalı**
+olduğunu gösterdi: header auth (`x-api-key`) mevcut, kodda zaten tercih ediliyor, **iki ayrı
+doküman sayfasında anlatılıyor**, ve uygulama tarafı log redaksiyonu doğru (`safeKeyPrefix`;
+`apps/mcp/src` içinde ham anahtar loglayan tek satır yok). Açık olan tek şey dashboard'un,
+düz-metin anahtarın göründüğü tek anda **yalnız URL biçimini** sunmasıydı. Bulgu o kadarına
+indirgendi ve additive olarak kapatıldı.
+
+### 25.3 M-24 — bulgunun yönü ters
+
+Audit "vaat edilen 90 günlük retention uygulanmıyor" diyor. Üç yüzey ayrıldı:
+
+| Yüzey | Ne diyor |
+|---|---|
+| İç spec `docs/specs/…:126` | "crawl ham verisi 90 gün" |
+| **Kullanıcıya dönük** `data-retention.mdx:15` + privacy sayfası | "during beta, retained **while your account is active**" |
+| Kod | hiçbir yaş-tabanlı temizlik yok |
+
+Yani **kod ile kullanıcıya verilen yazılı söz UYUŞUYOR**; bayat olan iç spec'tir. 90 günlük
+silmeyi uygulamak, kullanıcıya verilmiş sözü **bozmak** olurdu — bulgunun ima ettiğinin tersi.
+Operatör kararıyla (2026-08-03) spec gerçeğe hizalandı; 90 gün beta-sonrası taahhüt olarak
+kaydedildi.
+
+## 26. Operatör kararları (bu turda alındı)
+
+Hiçbiri şef tarafından varsayılmadı; her biri açıkça soruldu ve cevaplandı.
+
+| Konu | Karar | Sonuç |
+|---|---|---|
+| **M-09** negatif bakiye politikası | **B — sıkılaştır + açık kaçış kapısı** | 0019 trigger'ı; `override:` önekli `reason` bilinçli operatör düzeltmesine izin verir |
+| **H-06** beta duruşu | **c — yalnız teknik sertleştirme** | Ürün duruşuna dokunulmadı; CAPTCHA/`enable_signup` Supabase panosu = insan |
+| **M-26** fiyat yayını | **Yayınla** | İmzalı 65/70/90 bağlayıcı sayfaya eklendi; **hiçbir rakam değişmedi** |
+| **L-09** metin kapsamı | **Yalnız üç olgusal cümle** | Ticari duruş, Terms/Privacy, kredi-süresi cümlesi (3 yerde) dokunulmadı |
+| **M-24** retention | **a — iç spec'i gerçeğe hizala** | Kullanıcı verisi silinmedi, yazılı söz korundu |
+| **L-13** rapor yaşam döngüsü | **Yalnız revoke** | Migration YOK; cloud-apply kuyruğu bu madde için büyümedi |
+| **L-04** mimari drift | **İstisnayı belgele — metin insan imzasında** | Taşıma yapılmadı; önerilen anayasa metni insana sunuldu |
+
+## 27. ANA TABLO — 54 audit ID'sinin tamamı
+
+Durum sözlüğü: **FIXED** = done_when karşılandı + taze hakem PASS + ilgili deterministik kapı yeşil ·
+**PARTIAL** = teknik yarısı kapandı, kalan yarısı açıkça adlandırıldı · **HUMAN BLOCKED** = ilerlemek
+insan kararı/eylemi gerektiriyor, sessizce DONE sayılamaz · **NOT REPRODUCIBLE** = kaynak+test
+kanıtıyla çürütüldü (bu audit'te hiç oluşmadı; üç bulgunun *gerekçesi* düzeltildi — §25 — ama hiçbiri
+"geçersiz" ilan edilmedi).
+
+Tur 1-2'de kapanan 37 bulgunun kanıt zincirleri §5.1, §11 ve §18'dedir; burada tekrar edilmez.
+
+### 27.1 High (7)
+
+| ID | Durum | Kök neden | Regression testi | Hakem | Commit | Kalan risk |
+|---|---|---|---|---|---|---|
+| H-01 | FIXED (tur 1) | Açık rezervi bulan tek yol `jobs.status='running'`; sync yolda satır yok | Ledger-anahtarlı sweep; jobs satırsız eski rezerv → tam 1 release | Fable PASS | §11 | — |
+| H-02 | FIXED (tur 1) | URL/süre sınırlı, BOYUT sınırsız | gzip bombası, CL'siz 30 MB chunked, 1M `<loc>` | Fable PASS | §5.1 | T8 toplam-bütçe tur 2'de kapandı |
+| H-03 | FIXED (tur 1) | Bütçe kapısı atomik/kalıcı/global değil + yanlış defteri okuyor | Mutasyon testi; 0014 DB sayacı | Fable PASS | §16 | Cloud-apply bekliyor |
+| H-04 | **HUMAN BLOCKED** | Açığa çıkmış DataForSEO vendor parolası rotasyonsuz | — (kod değil) | — | — | **Fonlama + `DFS_LIVE=1` öncesi rotasyon ŞART.** Operatör daha önce reddetti (dormant gerekçesi); o gerekçe fonlama anında düşer |
+| H-05 | FIXED (tur 1) | `/status` iptal edilmeyen exact count | N eşzamanlı istek → tek okuma | Fable PASS | §5.1 | — |
+| H-06 | **PARTIAL** | Vitrin private-beta, `/signup` açık; trial kilidi yalnız `auth.uid` | Aynı posta kutusundan 400 kredi → 200; yanlış-pozitif yönü 40 saldırgan çiftle sınandı | Fable PASS (0C) | `0f7baae` `3e29431` `f6003bc` `a2378f9` | **Üretimde bugün hiçbir şey değişmiyor** — caller wiring yapılmadı, boyut uykuda. Ayrıca: 0020-öncesi trial'ların fingerprint'i yok · proton/Apple alan adları ayrı fingerprint · disposable KASTEN bloklanmıyor · sahip olunan/catch-all alan adı sınırsız farm eder · gerçek kapı (CAPTCHA/`enable_signup`) Supabase panosunda |
+| H-07 | FIXED (tur 1) | `next@16.2.10` iki erişilebilir advisory | `pnpm audit` `next` advisory 0 | Fable PASS | §13 | — |
+
+### 27.2 Medium (28)
+
+| ID | Durum | Kök neden | Regression testi | Hakem | Commit | Kalan risk |
+|---|---|---|---|---|---|---|
+| M-01 | FIXED (tur 1) | insert-then-send arası ölüm → sonsuz `queued` | Eski queued → failed, ledger BOŞ | Fable PASS | §11 | — |
+| M-02 | FIXED (tur 1) | Item şeması `quantity` taşımıyor | 4 core vakası | Fable PASS | §5.1 | — |
+| **M-03** | **FIXED** | Paddle olaylarında sıralama alanı ne saklanıyor ne karşılaştırılıyor; `upsertSubscription` koşulsuz overwrite | Canlı şema probu: fix öncesi *"RESURRECTED. status=active"*; 6 DB + 4 core testi kırmızıydı | **Fable PASS** (0C) | `77e5f04` `a279680` `fb302b8` `8b1fc89` | 0018 cloud-apply bekliyor; canlı satırlarda watermark NULL → ilk tarihli olay kazanır (kendiliğinden iyileşir) |
+| **M-04** | **FIXED** | Portal `.limit(1)` ile keyfi tek aboneliği yönetiyor; sayfa aktif aboneye düz "Buy" gösteriyor | 2 abonelik → ikisi de portala; `.limit(1)`'e dönüş = 3 test kırmızı | **Fable PASS** (0C/0I) | `0883fa7` `e85e4ec` `5c20cfc` `3a8de96` | DB kısıtı BİLİNÇLİ eklenmedi — hakem deneyle doğruladı: unique ihlali → 23505 → 500 → **ödemiş müşteri abonelik satırsız kalır** |
+| **M-05** | **FIXED** | `customData.user_id` client'ta değiştirilebilirken service-role yazılarına otorite | Sahte customData kimliği ledger tenant'ı oluyordu; 14 düşmanca token şekli grace'te kredilendi | **Fable PASS** (0C) | `216f5c6`…`d7317b3` | Enforcement varsayılan KAPALI; açma prosedürü §28'de — **yenilemeler için steady-state değil** |
+| M-06 | FIXED (tur 1) | Purchase RPC event satırı doğrulamıyor | Hayalet eventId → REJECT | Fable PASS | §5.1 | 0013 cloud-apply |
+| M-07 | FIXED (tur 1) | Trial kilidi sıfırlanabilir | NULL'a döndürme REDDEDİLİR | Fable PASS | §5.1 | 0013 cloud-apply |
+| M-08 | FIXED (tur 1) | `paddle_events` kimlik kolonları UPDATE'e açık | 3 negatif + 1 pozitif | Fable PASS | §5.1 | 0013 cloud-apply |
+| **M-09** | **FIXED** | `adjust` deltası sınırsız; test bu gevşekliği OLUMLU pinliyordu | Kilit çıkarılınca 8/8 kabul → bakiye **-140**; kilitle 3/8 → 10 | **Fable PASS** (0C) | `6d696e2` `d493dc3` | Koruma yalnız `adjust`'a bakar — ham `spend_reserve` yazıcısı hâlâ negatife sürükleyebilir (testle pinli) |
+| M-10 | FIXED (tur 2) | Tek kolonlu FK'ler; `unique(user_id,id)` yok | 5 sahtecilik kabul ediliyordu | Fable PASS | §18 | 0017 cloud-apply ÖN-KONTROL ister |
+| M-11 | FIXED (tur 1) | `types.ts` bayat, `SCHEMA_VERSION=0` | Byte-diff drift kapısı | Opus PASS | §5.1 | — |
+| M-12 | FIXED (tur 1) | Statik kapılar migration GEÇMİŞİNE bakıyordu | 42 vakalık self-test | Fable PASS | §5.1 | — |
+| **M-13** | **FIXED** | Deploy CI'a bağlı değil; cloud şema hazırlığı bağı yok | `require-ci` 11 senaryoda fail-closed; `/status` probu 25 eşzamanlı istek = 1 ölçüm | **Opus + Fable PASS** | `e207b39` `22eb244` `4241dcf` `acf75eb` | `enforce_admins`/`strict`/required-check listesi = **insan GitHub ayarı** |
+| M-14 | FIXED (tur 1) | Dış çağrılarda deadline yok | AbortSignal testleri | Fable PASS | §5.1 | — |
+| M-15 | FIXED (tur 2) | Başarısız revoke başarı gibi gösteriliyordu | `expected undefined to be 'unconfirmed'` | Fable PASS | §18 | — |
+| M-16 | FIXED (tur 1) | Mühür formatında key-version yok | v1 geriye-uyum + v2 round-trip | Fable (2 tur) | §5.1 | — |
+| M-17 | FIXED (tur 2) | AES-GCM'de AAD yok | A'nın token'ı B'nin satırından açılıyordu | Fable PASS | §18 | **v3 TEK YÖNLÜ**; deploy sırası mcp→web |
+| M-18 | FIXED (tur 1) | IPv6 elle denylist, sonda `return false` | 300k fuzz | Fable PASS | §5.1 | — |
+| M-19 | FIXED (tur 2) | Job ID'siz ~35 sn keşif | `expected 7 to be <= 4` | Fable PASS | §18 | — |
+| **M-20** | **FIXED** | Analiz penceresi bugünde bitiyor; finalize olmamış günler gerçek sıfır sayılıyor | Eski kodda 36 hayalet-çöküş → yeni kodda **0**; 50.820 senaryoda kalıcı kaçırma 0 | **Opus PASS** | `65bed75` `1bdb892` `c39a71d` `f314c6e` `6e6fef0` | Gerçek gecikme ≥6 güne çıkarsa hayalet geri gelir — doküman artık bunu SINIRLI ifade ediyor |
+| M-21 | FIXED (tur 1) | Trial RPC hatası hesabı kredisiz bırakıyor | `ensureTrialGranted` retry | Fable PASS | §5.1 | — |
+| M-22 | FIXED (tur 2) | Rotation cap'i atlıyor | Hakem: 5→6→7→8, tavan yok | Fable PASS | §18 | — |
+| M-23 | FIXED (tur 1) | Waitlist'te yalnız honeypot | Sınır aşımında mock delta = 0 | Fable PASS | §11 | — |
+| **M-24** | **FIXED (yön düzeltilerek)** | İÇ SPEC bayat — kod ve kullanıcıya dönük söz zaten uyuşuyordu (§25.3) | — (doküman) | — | `e1c9e14` | `jobs.result` sınırsız büyür — kapasite/maliyet insan kuyruğunda |
+| M-25 | **HUMAN BLOCKED** | Silme vaadi ile append-only ledger istisnası çelişiyor | — | — | — | KVKK/GDPR metni; operatör kapsamı "yalnız üç olgusal cümle" olarak sınırladı |
+| **M-26** | **FIXED** | Bağlayıcı pricing sayfası 13 ücretli tool'dan 3'ünü hiç göstermiyordu; kapı TUTARLILIK ölçüyor, KAPSAM ölçmüyordu | Kapsam testi kırmızıyken eski tutarlılık testleri YEŞİLDİ | **Opus + Fable PASS** | `5f4b711` `c3823e6` | Eşit-fiyatlı grup satırına eklenen yeni tool satır etiketinde adlandırılmaz (ölçüldü, Minor) |
+| **M-27** | **FIXED** | Lisans allowlist'i kapısız; 7 paket dışarıda | Kapı boş girdiye `PASS (0 packages)` diyordu → floor 150; 42 vakalık self-test | **Opus PASS** (2 tur) | `bf23410` `5d27e59` `ab36749` `074daa5` | 6 istisnanın **onayı insanda**; `licenses` job'ı ubuntu'da hiç koşmadı |
+| M-28 | FIXED (tur 1) | Next internal Server Function disclosure | `pnpm audit` `next` 0 | Fable PASS | §13 | — |
+
+### 27.3 Low (19)
+
+| ID | Durum | Kök neden | Hakem | Commit | Kalan risk |
+|---|---|---|---|---|---|
+| L-01 | FIXED (tur 1) | Reaper refund/commit ayırmıyordu | Fable PASS | §11 | — |
+| L-02 | FIXED (tur 2) | `/status` reaper sayaçları yapısal olarak 0/0/null | Fable PASS | §18 | — |
+| L-03 | FIXED (tur 1) | Internal exception metni tool çıktısında | Fable PASS | §5.1 | — |
+| **L-04** | **HUMAN BLOCKED** | DFS client'ları `packages/core` yerine `apps/mcp/src/dfs/` (NEVER#5 konum şartı) | — | — | Ölçüm: taşıma 600-900 satır ve core'a Supabase sokar. NEVER#5'in ÖZÜ zaten sağlanıyor. **Önerilen anayasa metni operatöre sunuldu, imza bekliyor** |
+| L-05 | FIXED (tur 1) | Waitlist üyeliği sorgulanabiliyordu | Fable PASS | §11 | — |
+| L-06 | FIXED (tur 1) | Auth callback Host-origin fallback | Fable PASS | §5.1 | `WEB_BASE_URL` her ortamda ŞART |
+| L-07 | FIXED (tur 1) | Boş `NEXT_PUBLIC_SITE_URL` | Fable PASS | §5.1 | — |
+| L-08 | FIXED (tur 1) | Paddle init hatası sessiz | Fable PASS | §5.1 | — |
+| **L-09** | **FIXED** | Üç cümle canlı checkout ile çelişiyordu (biri audit'te YOK) | **Opus PASS** | `5ac43f4` | Ticari duruş metinleri KASTEN dokunulmadı (operatör kapsamı) |
+| L-10 | FIXED (tur 2) | PKCE yok, state tek kullanımlık değil | Fable PASS | §18 | — |
+| L-11 | FIXED (tur 1) | Frame protection yok | Fable PASS | §5.1 | — |
+| L-12 | FIXED (tur 1) | MCP security header yok | Fable PASS | §5.1 | — |
+| **L-13** | **FIXED (revoke)** | Public rapor linkinin iptal yolu yok | **Fable PASS** | `3b78ce7` `b80aa31` `7d194d6` | Kalıcı SİLME yapılmadı (operatör kararı); migration/DELETE grant eklenmedi |
+| L-14 | FIXED (tur 1) | Public report lookup rate/cache'siz | Fable PASS | §11 | — |
+| **L-15** | **FIXED (daraltılarak)** | Audit'in büyük kısmı ZATEN kapalıydı (§25.2); tek gerçek boşluk dashboard | **Opus PASS** | `d536dec` | URL biçimi bilinçli korundu (D28); varsayılanı değiştirmek ürün kararı |
+| L-16 | FIXED (tur 1) | CLI `.15` typo'sunu 9 sn sayıyordu | Fable PASS | §11 | — |
+| L-17 | FIXED (tur 1) | Node engine drift | Fable PASS | §11 | — |
+| L-18 | FIXED (tur 2) | Dockerfile `pnpm dlx turbo@X` | Fable PASS | §18 | **Build grafiği KANITLANMADI** — merge öncesi smoke şart |
+| **L-19** | **FIXED** | `og:url` ana sayfaya sabit; login/signup indekslenebilir; coverage config yok | **Opus PASS** | `dc7f641` | Lighthouse hâlâ 3 URL ve **CI'da hiç koşmuyor** — kapsam genişletme açık |
+
+## 28. NİHAİ KAPI KOŞUSU (2026-08-03) — seri, ağaç durgunken
+
+Tüm şeritler ve hakemler kapandıktan SONRA, başka hiçbir iş koşmazken, şef tarafından seri koşuldu.
+**Her exit kodu PIPE'SIZ ölçüldü.**
+
+| Kapı | Sonuç | Kanıt |
+|---|---|---|
+| Fresh `pnpm turbo run typecheck lint test build --force` | **exit=0** | `16 successful, 16 total` · **`Cached: 0 cached, 16 total`** — cache replay DEĞİL |
+| Test sayısı (o fresh koşudan) | **1487** | core 207 · db 12 · mcp 733 · web 535 (tur başı 1308, **+179**) |
+| `make verify` | **exit=0** | `CHECK-GUARDS-SELFTEST: PASS (42 cases, 25 weakenings caught)` · `CHECK-RLS: PASS (12 tables)` · `CHECK-APPEND-ONLY: PASS` · `CHECK-LICENSES: PASS (397 >= floor 150)` → `VERIFY: PASS` |
+| `make verify-db` | **exit=0** | 105 (packages/db) + 117 (apps/mcp) = **222 DB testi** (tur başı 195) → `VERIFY-DB: PASS` |
+| `make goals` | **16/16 PASS (0 skip)** · exit=0 | Env AÇIKÇA yüklendi ve koşudan önce doğrulandı: `MCP_SMOKE_URL=SET PROD_URL=SET SUPABASE_URL=SET` (imzalı ders 7) |
+| Full-history gitleaks | **exit=0** | `581 commits scanned` · 3,70 MB · `no leaks found` |
+| Generated docs sync | **exit=0** | `19 tool pages in sync, meta + nav synced` |
+| `pnpm audit --prod` | **KIRMIZI — exit=1, 8 zafiyet** | Aşağıdaki dürüstlük notu |
+
+> **Dürüstlük notu — `pnpm audit` kırmızıdır ve bu rapor onu yeşil göstermiyor.**
+> `next` advisory sayısı **0** (H-07/M-28 tur 1'de kapandı). Kalan sekizin tamamı kaynak audit'in
+> kendisinin *"mevcut kullanımda erişilebilirliği kanıtlanmayanlar"* diye ayırdığı ailelerdir:
+> `sharp`/libvips, `postcss` (dört ayrı advisory), `js-yaml`, `fast-uri`, `@hono/node-server`.
+> Sayı önceki turun **7'sinden 8'e çıktı**. Bu turda **hiçbir bağımlılık değiştirilmedi ve
+> lockfile'a dokunulmadı** — artış, mevcut bir pakete karşı YENİ yayımlanan bir postcss
+> advisory'sinden gelir, bu turun ürettiği bir gerileme değildir. Bu yüzey bu turda kasten
+> ele alınmadı.
+
+## 29. Şefin kendi hataları (kayda geçirildi)
+
+Bu deponun geleneği: hakemlerin bulduğu kadar şefin kendi hataları da yazılır.
+
+1. **`test:db`yi kapının dışından koştum ve 11 süit çöktü.** Sebep gerçek bir kusur değil,
+   `SUPABASE_URL`'in yüklenmemesiydi — devir notu bu tuzağı AÇIKÇA belgeliyordu ve yine de düştüm.
+   Hiçbir assertion'a ulaşılmadı; yanlış okunsaydı "migration düzeltmesi bir şeyi bozdu" gibi
+   görünürdü. Ders: `test:db` **yalnız** `make verify-db` üzerinden koşulur.
+2. **0018 landing'inde `SCHEMA_VERSION` bump'ı gözden kaçtı** — ama benim değil, bir şeridin.
+   Yakalayan da kapı değil, BAŞKA bir şeridin işçisiydi (statik okumayla). İşçi ve hakem `test:db`
+   koştu (84/84 yeşil), ben taban koşumu 0018'den ÖNCE yapmıştım; kırık assertion `packages/db`'nin
+   **hızlı** paketindeydi ve üçümüzden hiçbiri onu koşmadı. **Üç yeşil ölçüm, hiçbiri kırık iddiayı
+   kapsamıyordu.** Bundan sonraki her migration iş emrine "SCHEMA_VERSION'ı bump et" done_when
+   maddesi kondu.
+
+## 30. İNSAN KUYRUĞU — birleşik ve öncelikli
+
+§9 ve §21'deki maddeler **aynen geçerlidir**. Bu turun eklediği/değiştirdiği:
+
+1. **CLOUD-APPLY KUYRUĞU: 0013 → 0014 → 0015 → 0016 → 0017 → 0018 → 0019 → 0020.**
+   Bu turda **üç migration** eklendi. Sıra ve şerhler:
+   - **0017 KOŞULSUZ DEĞİL** — apply'dan ÖNCE gömülü ön-kontrol SQL'i koşulmalı (üç satır, hepsi 0).
+   - **0016 apply SONRASI doğrulama SQL'i ZORUNLU** (farklı-grantor TRUNCATE kalıntısı sessizce sağ kalır).
+   - **0020, 0009'a bağımlıdır** (0009'un yarattığı `claim_trial(uuid,bigint)`'i DROP eder, idempotent değil).
+   - **`DFS_LIVE` sırası:** 0014 **ve** 0016 apply → deploy → `DFS_LIVE=1`.
+2. **H-04 — DataForSEO vendor parolası.** Fonlama ve `DFS_LIVE=1` öncesi rotasyon ŞART. Operatör
+   bunu daha önce "dormant" gerekçesiyle reddetti; **o gerekçe fonlama anında düşer**. Değer
+   istemeyen doğrulama: insan panelden değiştirir, `flyctl secrets list` çıktısındaki **digest**
+   değişimi doğrulanır. Secret değeri hiçbir aşamada okunmaz.
+3. **M-05 enforcement'ı açma prosedürü** (`scripts/paddle-smoke.md` → "Attribution enforcement"):
+   deploy'da bayrağı SET ETMEYİN · `reason: "absent"` sıfıra insin · `custom_data_user_id_mismatch`
+   canlı saldırı sinyalidir · sonra `PADDLE_ATTRIBUTION_ENFORCE=1` · geri alma tek env, Paddle retry'ı
+   birikimi kendiliğinden iyileştirir · **`PADDLE_WEBHOOK_SECRET` rotasyonu saklı token'ları da geçersizler.**
+4. **H-06 caller wiring** — `apps/web` hâlâ `claim_trial`'ı 2 argümanla çağırıyor, yani **posta-kutusu
+   boyutu üretimde uykuda**. Bu slice inmeden H-06'nın teknik yarısı bile canlıda etkili değildir.
+5. **Branch protection** (ölçüldü: `contexts:[gitleaks, verify, verify-db]`, `strict:false`,
+   `enforce_admins:false`): `static-guards` ve `licenses` job'larını required listeye ekleyin;
+   `strict` ve `enforce_admins` açın.
+6. **L-18 Dockerfile smoke'u merge öncesi ŞART** (build grafiği hâlâ kanıtlanmadı).
+7. **L-04 anayasa metni** — önerilen NEVER#5 istisna metni operatöre sunuldu, **imza bekliyor**.
+8. **M-25 / D-04** silme-vs-append-only hukuk metni · **M-27**'nin 6 lisans istisnasının ratifikasyonu.
+9. **Küçük takipler:** `.env.example`'a `PADDLE_ATTRIBUTION_ENFORCE=` yorumlu satırı ·
+   `apps/web/lib/reports.ts:~108`'de aynı sınıftan üçüncü bayat yorum · Lighthouse CI'da hiç koşmuyor.
+10. **Park edilen commit-boyutu ihlalleri (bu tur):** `fb302b8`(285) · `6d696e2`(384) ·
+    H-06 core commit'i(340) · 0020 commit'i(256). Hepsi hakem incelemesinden geçti; bölünemezlikleri
+    gerekçelendirildi (bölünürse ya kırık ara commit ya kullanılmayan migration numarası).
+
+## 31. NİHAİ SAYIM
+
+| | Devralınan (`ac4565d`) | **Bu tur sonu** |
+|---|---:|---:|
+| Audit bulgusu (toplam) | 54 | 54 |
+| **FIXED** | 37 | **50** |
+| **PARTIAL** | — | **1** (H-06) |
+| **HUMAN BLOCKED** | 3 | **3** (H-04 · M-25 · L-04) |
+| NOT REPRODUCIBLE | 0 | **0** |
+| Test (fresh koşu) | 1308 | **1487** |
+| DB testi | 195 | **222** |
+| Guardrail self-test | 27 vaka | **42 vaka** |
+| Migration | 0017'ye kadar | **0020**'ye kadar |
+
+**Bu turda kapanan:** M-03 · M-04 · M-05 · M-09 · M-13 · M-20 · M-24 · M-26 · M-27 · L-09 · L-13 ·
+L-15 · L-19 · D-05 · T3 (+ H-06 kısmi).
+
+## 32. HÜKÜM
+
+Kaynak audit'in **kod tarafındaki gerekçelerinin tamamı** kapandı. Bu tur para bütünlüğünü üç yerde
+daha sertleştirdi (Paddle olay sıralaması, çoklu abonelik, negatif bakiye mandalı), kiracı
+atfını kriptografik olarak bağladı (M-05) ve **kapıların kendisini** ölçülebilir hale getirdi
+(lisans kapısı, gerçek-migration kontrolleri, deploy↔CI bağı, şema hazırlık probu).
+
+Buna karşılık **kaynak audit'in NO-GO hükmü kısmen ayaktadır**, ve bunu yumuşatmıyorum:
+
+- **Kontrolsüz yeni kullanıcı alımı için hâlâ NO-GO.** H-06'nın teknik zemini indi ama **caller
+  wiring yapılmadığı için üretimde bugün hiçbir şey değişmiyor**; gerçek kabul kapısı
+  (CAPTCHA / `enable_signup`) Supabase panosundadır ve koda kapalıdır.
+- **Canlı para için kod tarafı hazır, ama kazanımların ÇOĞU henüz canlıda YOK.** 0013→0020 arası
+  **sekiz migration** cloud'a uygulanmadı. Uygulanana kadar M-06/M-07/M-08 mandalları, M-10 kiracı
+  zırhı, H-03 bütçe sayacı, M-03 sıralaması ve M-09 negatif-bakiye kapısı **yalnız repo'dadır**.
+- **`DFS_LIVE` açılmamalıdır** — H-04 rotasyonu yapılmadı ve 0014+0016 uygulanmadı.
+
+Bu dal `main`'e **merge EDİLMEDİ ve PUSH EDİLMEDİ**; ikisi de insan kapısıdır.
