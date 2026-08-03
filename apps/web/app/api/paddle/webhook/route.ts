@@ -1,5 +1,5 @@
 import { Environment, Paddle } from "@paddle/paddle-node-sdk";
-import { ledgerCommandFor, type PackageKey } from "@pseo/core";
+import { isSubscriptionEventType, ledgerCommandFor, type PackageKey } from "@pseo/core";
 import type { Json } from "@pseo/db/types";
 import {
   getEventProcessed,
@@ -27,7 +27,11 @@ import { resolvePaddleEnvironment } from "../../../../lib/paddle-env";
  *     exception: it stays retryable — 500 + processed_at NULL, never stamped (B-C1). An unexpected
  *     error is likewise 500 and leaves processed_at NULL so Paddle retries.
  *
- * Node runtime: unmarshal needs Node crypto. Secrets are never logged — only event_id + message.
+ * Node runtime: unmarshal needs Node crypto. Neither the payload nor a secret is ever logged —
+ * only the event id, the event type and a reason. Two channels, kept apart: console.error means
+ * money may have been lost (B-C1) or the handler failed; console.warn means an event was HANDLED
+ * without changing state (a refused stale subscription apply, a subscription record_only), which
+ * is recoverable but must not be silent — see warnSubscription below.
  */
 export const runtime = "nodejs";
 
@@ -54,6 +58,21 @@ function buildPriceMap(): Record<string, PackageKey> {
 
 function json(body: Record<string, unknown>, status: number): Response {
   return Response.json(body, { status });
+}
+
+/**
+ * The ONE shape for "a subscription event did not change subscription state". Ids and a reason
+ * only — never the body, never a secret (the route header's standing discipline): the event id is
+ * the join key into paddle_events, which already stores the payload under the DB's access
+ * controls, so nothing is lost by keeping it out of stdout.
+ */
+function warnSubscription(
+  message: string,
+  eventId: string,
+  eventType: string,
+  reason: string,
+): void {
+  console.warn(message, { eventId, eventType, reason });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -129,12 +148,12 @@ export async function POST(request: Request): Promise<Response> {
         }
         break;
       }
-      case "subscription":
+      case "subscription": {
         // The DB decides whether this event is newer than what is stored (migration 0018) and
         // returns false when it refuses a stale one. That refusal is a HANDLED outcome, not a
         // failure: the event is genuinely done with, so it is still stamped processed and
         // answered 200 — re-delivering it would only be refused again.
-        await upsertSubscription(service, {
+        const applied = await upsertSubscription(service, {
           userId: command.userId,
           paddleSubscriptionId: command.paddleSubscriptionId,
           plan: command.plan,
@@ -142,8 +161,23 @@ export async function POST(request: Request): Promise<Response> {
           currentPeriodEnd: command.currentPeriodEnd,
           occurredAt: command.occurredAt,
         });
+        if (!applied) {
+          // Handled, but NOT invisible. A subscription whose stored watermark is ahead of reality
+          // (an event dated far in the future, say) refuses every legitimate event that follows,
+          // and until now emitted zero signal: boolean discarded, stamped, 200, silence. warn and
+          // not error, exactly as elsewhere in this app — a routine, recoverable outcome the
+          // operator still has to be able to see, not a fault. Recovery is a service_role
+          // `update public.subscriptions set occurred_at = null where …`.
+          warnSubscription(
+            "paddle webhook: subscription event NOT applied (refused as not-newest)",
+            eventId,
+            event.eventType,
+            "stale, tied or unorderable — apply_subscription_event refused it (migration 0018)",
+          );
+        }
         await markProcessed(service, eventId);
         break;
+      }
       case "record_only":
         if (event.eventType === "transaction.completed") {
           // B-C1: a PAID transaction we could not attribute — unmapped price (server env drift)
@@ -161,6 +195,18 @@ export async function POST(request: Request): Promise<Response> {
             reason: command.reason,
           });
           return json({ error: "paid transaction pending attribution" }, 500);
+        }
+        if (isSubscriptionEventType(event.eventType)) {
+          // A SUBSCRIPTION event the translation could not turn into a command — unmapped price,
+          // missing occurred_at, unknown status. Still informational (retrying cannot help), but
+          // it means a plan change did not land, so it gets the same one-line signal as a refusal
+          // instead of the silence it used to get. Event types we never handle at all stay quiet.
+          warnSubscription(
+            "paddle webhook: subscription event recorded WITHOUT applying",
+            eventId,
+            event.eventType,
+            command.reason,
+          );
         }
         // Every OTHER record_only is genuinely informational (an unhandled / non-purchase event we
         // only log) — retrying is pointless. Store for audit; stamp so a retry is a cheap

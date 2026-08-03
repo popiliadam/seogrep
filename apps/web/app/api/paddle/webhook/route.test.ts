@@ -55,9 +55,20 @@ const processPaddlePurchaseMock = vi.mocked(processPaddlePurchase);
 const upsertSubscriptionMock = vi.mocked(upsertSubscription);
 const createServiceClientMock = vi.mocked(createServiceClient);
 
-// Route console.error output is silenced + captured for the whole file; calls are cleared per
-// test (clearAllMocks in afterEach), so "was / was not logged" assertions stay isolated.
+// Route console output is silenced + captured for the whole file; calls are cleared per test
+// (clearAllMocks in afterEach), so "was / was not logged" assertions stay isolated.
+// error = the money-loss trace (B-C1) and unexpected failures. warn = a HANDLED outcome the
+// operator still has to be able to see (M-03 follow-up). The channels are deliberately separate
+// so "leaves no money-loss trace" keeps meaning exactly what it meant before.
 const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+/** Every argument of every console.warn/console.error call, flattened to one searchable string. */
+function allLoggedText(): string {
+  return [...consoleWarnSpy.mock.calls, ...consoleErrorSpy.mock.calls]
+    .map((call) => call.map((arg) => JSON.stringify(arg)).join(" "))
+    .join("\n");
+}
 
 // Fake, unmistakably-not-real secret. NEVER a real key value in a fixture.
 const SECRET = "test_secret_pdl_ntfset_deadbeef";
@@ -102,6 +113,8 @@ function subscriptionEvent(overrides: {
   status?: string;
   /** Paddle's event-level occurred_at — the M-03 ordering key. */
   occurredAt?: string;
+  /** Payload-body field used as a "did the log leak the body?" marker. */
+  customerId?: string;
 }): Record<string, unknown> {
   return {
     event_id: `evt_${randomUUID()}`,
@@ -110,7 +123,7 @@ function subscriptionEvent(overrides: {
     data: {
       id: overrides.subscriptionId ?? "sub_1",
       status: overrides.status ?? "active",
-      customer_id: "ctm_1",
+      customer_id: overrides.customerId ?? "ctm_1",
       address_id: "add_1",
       currency_code: "USD",
       collection_mode: "automatic",
@@ -329,7 +342,112 @@ describe("POST /api/paddle/webhook", () => {
     );
     expect(response.status).toBe(200);
     expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    // Handled, so NOT a money-loss trace — the error channel stays clean, as before.
     expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("the refused subscription apply emits ONE structured warn line (eventId + reason)", async () => {
+    // M-03 follow-up. The refusal was operationally INVISIBLE: the boolean was discarded, the
+    // event was stamped, 200 was answered and nothing was logged — so a subscription frozen by a
+    // bad watermark (e.g. an occurred_at far in the future) emitted zero signal until a customer
+    // complained. Recovery is easy once you know: the event id joins straight to the stored
+    // paddle_events row, whose payload has everything else.
+    upsertSubscriptionMock.mockResolvedValue(false);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event NOT applied (refused as not-newest)",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        eventType: "subscription.updated",
+        reason: expect.stringContaining("stale"),
+      }),
+    );
+  });
+
+  it("an APPLIED subscription event stays silent (the warn is a signal, not a heartbeat)", async () => {
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("a subscription record_only logs its reason (a plan event that never applies is not silent)", async () => {
+    // The `record_only` half of the same blind spot: a subscription event the pure translation
+    // could not turn into a command — an unmapped price, a missing occurred_at, an unknown status
+    // — was recorded, stamped and answered 200 with no trace at all.
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({ eventType: "subscription.updated", priceId: "pri_unmapped" }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event recorded WITHOUT applying",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        eventType: "subscription.updated",
+        reason: expect.stringContaining("no item price matched"),
+      }),
+    );
+  });
+
+  it("a missing occurred_at (record_only) names that reason in the log", async () => {
+    const event = subscriptionEvent({ eventType: "subscription.updated" });
+    delete (event as { occurred_at?: unknown }).occurred_at;
+    const response = await POST(signedRequest(event));
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event recorded WITHOUT applying",
+      expect.objectContaining({ reason: expect.stringContaining("occurred_at") }),
+    );
+  });
+
+  it("an UNHANDLED non-subscription event type stays silent (no log noise for informational events)", async () => {
+    const response = await POST(
+      signedRequest({
+        event_id: `evt_${randomUUID()}`,
+        event_type: "customer.updated",
+        occurred_at: "2026-07-18T00:00:00Z",
+        data: { id: "ctm_1", email: "someone@example.test" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("NEITHER subscription log line carries the payload or the webhook secret", async () => {
+    // The file's standing discipline (route header): only the event id + a message ever reach a
+    // log. The id is the join key into paddle_events, which already holds the body — so the body
+    // never needs to be duplicated into stdout, where it would outlive the DB's access controls.
+    const marker = "ctm_PAYLOAD_MARKER_MUST_NOT_BE_LOGGED";
+
+    upsertSubscriptionMock.mockResolvedValue(false);
+    await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated", customerId: marker })),
+    );
+    await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.updated",
+          priceId: "pri_unmapped",
+          customerId: marker,
+        }),
+      ),
+    );
+
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(2); // both paths spoke...
+    const logged = allLoggedText();
+    expect(logged).not.toContain(marker); // ...and neither leaked the body,
+    expect(logged).not.toContain(SECRET); // nor the signing secret,
+    expect(logged).not.toContain(USER_ID); // nor the customer's identity.
   });
 
   it("an unexpected processing error is a 500 (leaves the event un-stamped for Paddle retry)", async () => {
