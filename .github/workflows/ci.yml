@@ -31,6 +31,23 @@ jobs:
       - run: bash guardrails/check-append-only.sh
       - run: bash guardrails/check-guards-selftest.sh
 
+  # Dependency-licence policy (contract.md: MIT/Apache-2/ISC/BSD + recorded exceptions).
+  # Cannot join static-guards: that job is deliberately node-free, and `pnpm licenses list`
+  # reads the INSTALLED STORE, so it needs pnpm/action-setup + setup-node + a real install.
+  # Runs on ubuntu, so it sees the LINUX optional binaries a darwin laptop never installs —
+  # which is why the exceptions in check-licenses.sh are name globs, not exact names.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash guardrails/check-licenses.sh
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
