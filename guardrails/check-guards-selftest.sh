@@ -115,10 +115,18 @@ expected_finding() {
                               '@evil/lightningcss-linux-x64@9.9.9 - MPL-2.0' \
                               'evil-lightningcss-linux-x64@9.9.9 - MPL-2.0' \
                               '@img/sharp-libvips-attacker-pkg@9.9.9 - LGPL-3.0-or-later' ;;
-    # GREEN content pins — see the note above expected_finding.
+    # GREEN content pins — see the note above expected_finding. Whole lines, REASON INCLUDED:
+    # pinning only name@version (licence) left the prose free to drift into something factually
+    # false about the package, which is precisely what the smuggle output demonstrated. All six
+    # distinct reason strings appear here, so replacing them wholesale cannot survive.
     licenses-healthy-darwin)
-      printf '%s\n%s' 'exception tslib@2.8.1 (0BSD)' \
-                      'exception lightningcss-darwin-arm64@1.32.0 (MPL-2.0)' ;;
+      printf '%s\n%s\n%s\n%s\n%s\n%s' \
+        'exception @img/sharp-libvips-darwin-arm64@1.2.4 (LGPL-3.0-or-later) - prebuilt libvips binary, via sharp <- next image optimisation' \
+        'exception argparse@2.0.1 (Python-2.0) - via js-yaml <- fumadocs-core; permissive, GPL-compatible' \
+        'exception caniuse-lite@1.0.30001806 (CC-BY-4.0) - via next; browser-support DATA, not code' \
+        'exception lightningcss-darwin-arm64@1.32.0 (MPL-2.0) - platform binary of the lightningcss entry above' \
+        'exception lightningcss@1.32.0 (MPL-2.0) - via vite <- fumadocs-mdx; file-level copyleft, unmodified' \
+        'exception tslib@2.8.1 (0BSD) - via @supabase/* and sharp; see the wording-bug note above' ;;
     licenses-healthy-linux)
       printf '%s\n%s' 'exception @img/sharp-libvips-linux-x64@1.2.4 (LGPL-3.0-or-later)' \
                       'exception lightningcss-linux-x64-gnu@1.32.0 (MPL-2.0)' ;;
@@ -227,25 +235,96 @@ assert "licenses-empty"             check-licenses.sh "$LIC/bad-empty.json"     
 LICENSES_MIN=100 \
 assert "licenses-below-floor"       check-licenses.sh "$LIC/healthy-darwin.json"     red
 
-# Retiring an exception by simply WIDENING the allowlist kept the self-test green while the
-# exception printout silently emptied — the policy eroding with no signal. contract.md's set is
-# therefore pinned HERE as well: the two must agree, and disagreement is a FAIL that points at
-# contract.md, which is the human's text authority, not at the gate.
-POLICY_SET="Apache-2.0 BSD-2-Clause BSD-3-Clause ISC MIT"
-gate_set="$(awk -v q="'" '
-  $0 == "ALLOWLIST=" q { f = 1; next }
-  f && $0 == q { exit }
-  f && NF { print }
-' guardrails/check-licenses.sh | sort | tr '\n' ' ')"
-gate_set="${gate_set% }"
+# STRUCTURAL PINS. Everything above measures BEHAVIOUR through fixtures. These measure the
+# gate's own constants, which no fixture can reach: a one-token edit to any of them widens the
+# policy while every behavioural case stays green. Widening the ALLOWLIST retires an exception
+# and silently empties the exception printout; widening EXCEPTIONS launders a package outright;
+# lowering the live floor buys back the PASS-having-measured-nothing. Each pin forces the edit
+# into TWO files so weakening reads as a deliberate act in the diff.
+pin() { # pin <label> <expected> <actual>
+  cases=$((cases + 1))
+  if [ "$2" = "$3" ]; then
+    printf 'selftest: ok   %-44s %-22s -> PINNED\n' "$1" "check-licenses.sh"
+    return
+  fi
+  printf 'selftest: FAIL %-44s %-22s -> drifted\n' "$1" "check-licenses.sh"
+  printf '               | expected: [%s]\n' "$2"
+  printf '               | actual:   [%s]\n' "$3"
+  bad=$((bad + 1))
+}
+
+# Lines of a single-quoted NAME='...' block in check-licenses.sh.
+block() {
+  awk -v q="'" -v name="$1" '
+    $0 == name "=" q { f = 1; next }
+    f && $0 == q { exit }
+    f && NF { print }
+  ' guardrails/check-licenses.sh
+}
+oneline() { sort | tr '\n' ' '; }
+
+# contract.md is READ here, not paraphrased: pinning only the gate would leave a human
+# NARROWING the policy line silently more restrictive than the gate. Empty = the line moved,
+# which is itself a FAIL telling you both ends need revisiting.
+policy="$(sed -n 's/.*lisans kontrolü (\([^)]*\)).*/\1/p' contract.md | head -1)"
+pin "licenses-contract-policy-line" "MIT/Apache-2/ISC/BSD" "$policy"
+
+# ...and ALLOWLIST is that shorthand spelled out in SPDX identifiers. The mapping
+# (Apache-2 -> Apache-2.0, BSD -> both BSD identifiers) is the one human-maintained bridge
+# between the two, which is why BOTH ends are pinned rather than just this one.
+allow="$(block ALLOWLIST | oneline)"
+pin "licenses-allowlist-pin" "Apache-2.0 BSD-2-Clause BSD-3-Clause ISC MIT " "$allow"
+
+# EXCEPTIONS pinned as glob|licence pairs — reasons stay free prose, pinned instead through the
+# green content assertions above. The gate itself rejects a leading-* blanket at runtime, but a
+# glob with a literal prefix (a*|MPL-2.0) passes that shape check and no fixture can catch it,
+# so the SET is what gets pinned. A new exception is a policy act; it costs two files.
+exc_want="$(oneline <<'EOF'
+@img/sharp-libvips-darwin-*|LGPL-3.0-or-later
+@img/sharp-libvips-linux-*|LGPL-3.0-or-later
+@img/sharp-libvips-linuxmusl-*|LGPL-3.0-or-later
+argparse|Python-2.0
+caniuse-lite|CC-BY-4.0
+lightningcss-android-*|MPL-2.0
+lightningcss-darwin-*|MPL-2.0
+lightningcss-freebsd-*|MPL-2.0
+lightningcss-linux-*|MPL-2.0
+lightningcss-win32-*|MPL-2.0
+lightningcss|MPL-2.0
+tslib|0BSD
+EOF
+)"
+pin "licenses-exceptions-pin" "$exc_want" "$(block EXCEPTIONS | cut -d'|' -f1,2 | oneline)"
+
+# The live floor's VALUE has no behavioural coverage by construction — no fixture reaches the
+# live branch, so 150 -> 1 would pass every case above. Pinned as a lower bound, not equality:
+# raising it is always safe, lowering it is the erosion direction. 150 because the largest
+# single-workspace-member scope below web is mcp at 128, so any floor <= 128 stops catching a
+# member-scope collapse.
+live_min="$(awk -F= '$1 == "LIVE_MIN_PACKAGES" { print $2; exit }' guardrails/check-licenses.sh)"
+case "$live_min" in
+  ''|*[!0-9]*) pin "licenses-live-floor-pin" ">= 150" "not a number: [$live_min]" ;;
+  *) if [ "$live_min" -ge 150 ]; then pin "licenses-live-floor-pin" ">= 150" ">= 150"
+     else pin "licenses-live-floor-pin" ">= 150" "$live_min"; fi ;;
+esac
+
+# The gate's blanket-glob rejection fires at RUNTIME and no fixture can reach it — EXCEPTIONS
+# is a literal inside the gate, and the pin above is what stops one being added. Deleting the
+# rejection was therefore a behaviour-preserving mutation. Reach it the way the migration
+# fixtures reach theirs: compose a synthetic variant of the gate in $TMP. The fixture path is
+# absolute because the composed copy resolves its own directory, not the repo's.
+blanket_gate="$TMP/check-licenses-blanket.sh"
+awk -v q="'" '{ print } $0 == "EXCEPTIONS=" q { print "*|MPL-2.0|synthetic blanket entry" }' \
+  guardrails/check-licenses.sh > "$blanket_gate"
 cases=$((cases + 1))
-if [ "$gate_set" = "$POLICY_SET" ]; then
-  printf 'selftest: ok   %-44s %-22s -> %s\n' "licenses-allowlist-pin" "check-licenses.sh" "PINNED"
+b_out="$(bash "$blanket_gate" "$PWD/$LIC/healthy-darwin.json" 2>&1)"; b_rc=$?
+case "$b_out" in *"has no literal prefix"*) b_ok=1 ;; *) b_ok=0 ;; esac
+if [ "$b_rc" -ne 0 ] && [ "$b_ok" -eq 1 ]; then
+  printf 'selftest: ok   %-44s %-22s -> RED\n' "licenses-blanket-glob" "check-licenses.sh"
 else
-  printf 'selftest: FAIL %-44s %-22s -> allowlist drifted from the contract.md policy set\n' \
-    "licenses-allowlist-pin" "check-licenses.sh"
-  printf '               | gate:        [%s]\n' "$gate_set"
-  printf '               | contract.md: [%s]\n' "$POLICY_SET"
+  printf 'selftest: FAIL %-44s %-22s -> blanket exception glob not rejected (exit %d)\n' \
+    "licenses-blanket-glob" "check-licenses.sh" "$b_rc"
+  printf '%s\n' "$b_out" | sed 's/^/               | /'
   bad=$((bad + 1))
 fi
 
