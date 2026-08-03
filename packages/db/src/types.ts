@@ -328,6 +328,7 @@ export type Database = {
           created_at: string
           current_period_end: string | null
           id: string
+          occurred_at: string | null
           paddle_subscription_id: string | null
           plan: string
           status: string
@@ -337,6 +338,7 @@ export type Database = {
           created_at?: string
           current_period_end?: string | null
           id?: string
+          occurred_at?: string | null
           paddle_subscription_id?: string | null
           plan: string
           status: string
@@ -346,6 +348,7 @@ export type Database = {
           created_at?: string
           current_period_end?: string | null
           id?: string
+          occurred_at?: string | null
           paddle_subscription_id?: string | null
           plan?: string
           status?: string
@@ -385,6 +388,17 @@ export type Database = {
       }
     }
     Functions: {
+      apply_subscription_event: {
+        Args: {
+          p_current_period_end: string
+          p_occurred_at: string
+          p_paddle_subscription_id: string
+          p_plan: string
+          p_status: string
+          p_user_id: string
+        }
+        Returns: boolean
+      }
       claim_trial: {
         Args: { p_amount: number; p_user_id: string }
         Returns: boolean
