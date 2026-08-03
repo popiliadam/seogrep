@@ -100,11 +100,13 @@ function subscriptionEvent(overrides: {
   priceId?: string;
   subscriptionId?: string;
   status?: string;
+  /** Paddle's event-level occurred_at — the M-03 ordering key. */
+  occurredAt?: string;
 }): Record<string, unknown> {
   return {
     event_id: `evt_${randomUUID()}`,
     event_type: overrides.eventType ?? "subscription.created",
-    occurred_at: "2026-07-18T00:00:00Z",
+    occurred_at: overrides.occurredAt ?? "2026-07-18T00:00:00Z",
     data: {
       id: overrides.subscriptionId ?? "sub_1",
       status: overrides.status ?? "active",
@@ -293,7 +295,13 @@ describe("POST /api/paddle/webhook", () => {
 
   it("subscription.created upserts subscription state and marks the event processed", async () => {
     const response = await POST(
-      signedRequest(subscriptionEvent({ eventType: "subscription.created", subscriptionId: "sub_9" })),
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.created",
+          subscriptionId: "sub_9",
+          occurredAt: "2026-07-18T09:30:00Z",
+        }),
+      ),
     );
     expect(response.status).toBe(200);
     expect(upsertSubscriptionMock).toHaveBeenCalledWith(expect.anything(), {
@@ -302,10 +310,26 @@ describe("POST /api/paddle/webhook", () => {
       plan: "pro",
       status: "active",
       currentPeriodEnd: "2026-08-01T00:00:00Z",
+      // M-03: the event's OWN occurred_at is threaded all the way to the repo, so the DB can
+      // refuse a subscription event that happened before the state already stored.
+      occurredAt: "2026-07-18T09:30:00Z",
     });
     expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
     expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
+  it("a subscription event the DB refuses as STALE is still a 200 and still stamped processed", async () => {
+    // apply_subscription_event returns false when the event occurred before what is stored.
+    // That is a handled outcome, not a failure: retrying would only be refused again, so the
+    // event must be closed rather than left open for Paddle's ~3-day retry window.
+    upsertSubscriptionMock.mockResolvedValue(false);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it("an unexpected processing error is a 500 (leaves the event un-stamped for Paddle retry)", async () => {

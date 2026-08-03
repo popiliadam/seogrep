@@ -106,7 +106,10 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const command = ledgerCommandFor(
-      { eventType: event.eventType, data: event.data },
+      // occurredAt is the event's ORDERING key (M-03): Paddle guarantees delivery, not order, so
+      // a subscription.updated that happened earlier can arrive after the cancel that happened
+      // later — with its own event_id, so the idempotency gate above cannot catch it.
+      { eventType: event.eventType, data: event.data, occurredAt: event.occurredAt },
       buildPriceMap(),
     );
 
@@ -127,12 +130,17 @@ export async function POST(request: Request): Promise<Response> {
         break;
       }
       case "subscription":
+        // The DB decides whether this event is newer than what is stored (migration 0018) and
+        // returns false when it refuses a stale one. That refusal is a HANDLED outcome, not a
+        // failure: the event is genuinely done with, so it is still stamped processed and
+        // answered 200 — re-delivering it would only be refused again.
         await upsertSubscription(service, {
           userId: command.userId,
           paddleSubscriptionId: command.paddleSubscriptionId,
           plan: command.plan,
           status: command.status,
           currentPeriodEnd: command.currentPeriodEnd,
+          occurredAt: command.occurredAt,
         });
         await markProcessed(service, eventId);
         break;
