@@ -105,7 +105,11 @@ else
   # -r is stated EXPLICITLY so the workspace scope is this script's decision rather than a pnpm
   # default that can change under us. Measured identical to the bare form today (397 = 397).
   SPDX_JSON="$(pnpm licenses list -r --prod --json)"
-  MIN_PACKAGES="${LICENSES_MIN:-$LIVE_MIN_PACKAGES}"
+  # NOT env-overridable, matching check-append-only.sh: "an env-overridable scope would be a
+  # way to shrink the gate". LICENSES_MIN=1 in front of a live run used to buy back exactly the
+  # PASS-having-measured-nothing this floor exists to stop. The self-test drives the comparison
+  # through the snapshot branch above, so nothing needs the override here.
+  MIN_PACKAGES="$LIVE_MIN_PACKAGES"
 fi
 export SPDX_JSON ALLOWLIST EXCEPTIONS MIN_PACKAGES
 
@@ -135,6 +139,17 @@ const exceptions = lines(process.env.EXCEPTIONS).map(l => {
   const f = l.split("|");
   return { glob: f[0].trim(), lic: f[1].trim(), reason: f.slice(2).join("|").trim() };
 });
+
+// An exception names a package FAMILY. A leading * makes it a blanket that quietly launders
+// every package carrying the pinned licence, so the list is rejected outright rather than
+// applied - loudly, at every run, not only when the self-test happens to hold a fixture for
+// that licence.
+const blanket = exceptions.filter(x => x.glob === "" || x.glob.startsWith("*"));
+if (blanket.length) {
+  for (const x of blanket) console.log("check-licenses: FAIL exception glob \"" + x.glob + "\" has no literal prefix - an exception names a family, never a blanket");
+  console.log("CHECK-LICENSES: FAIL (malformed exception list)");
+  process.exit(1);
+}
 
 // <glob> -> anchored regexp. Every metacharacter except * is escaped, so a family prefix such
 // as @img/sharp-libvips-* matches the darwin AND the linux member and nothing else.
