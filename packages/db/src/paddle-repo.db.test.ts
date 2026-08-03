@@ -450,3 +450,66 @@ describe("paddle-repo against local Supabase", () => {
     expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z");
   });
 });
+
+/**
+ * M-04. The audit asked whether a per-user "only one active subscription" invariant should exist.
+ * The answer measured here is NO, and this suite pins the schema that decision rests on: the DB
+ * deliberately accepts several active subscriptions for one user, because Paddle does. The app
+ * layer (billing page + customer-portal action) is what has to represent them honestly, and it
+ * now does; a partial unique index would instead make the webhook throw on a subscription the
+ * customer genuinely paid for. See the migration note in 0018 for the ordering rules that DO
+ * apply per subscription.
+ */
+describe("subscriptions: more than one ACTIVE row per user is legal (M-04)", () => {
+  it("two distinct paddle subscriptions for the same user both persist as active", async () => {
+    const userId = await makeUserId();
+    const first = `sub_${randomUUID()}`;
+    const second = `sub_${randomUUID()}`;
+
+    const a = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: first,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T10:00:00.000Z",
+    });
+    const b = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: second,
+      plan: "agency",
+      status: "active",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T11:00:00.000Z",
+    });
+
+    // Both APPLIED — the second is not refused, and it does not overwrite the first: the
+    // conflict target is paddle_subscription_id, and these are two different subscriptions.
+    expect(a).toBe(true);
+    expect(b).toBe(true);
+    expect((await subscriptionRow(first)).plan).toBe("starter");
+    expect((await subscriptionRow(second)).plan).toBe("agency");
+
+    const { data, error } = await service
+      .from("subscriptions")
+      .select("paddle_subscription_id")
+      .eq("user_id", userId)
+      .eq("status", "active");
+    if (error) throw new Error(`active subscriptions query failed: ${error.message}`);
+    expect(data?.map((row) => row.paddle_subscription_id).sort()).toEqual([first, second].sort());
+  });
+
+  it("a direct INSERT of a second active row for the same user is accepted by the TABLE itself", async () => {
+    // The measurement behind the decision, asserted rather than assumed, and independent of the
+    // RPC above: nothing on public.subscriptions constrains (user_id, status). If a future
+    // migration adds a per-user partial unique index, this test goes red and forces the question
+    // to be re-opened WITH the app code — instead of the webhook discovering it in production,
+    // where the failure mode is a customer who paid and got no subscription row.
+    const userId = await makeUserId();
+    const { error } = await service.from("subscriptions").insert([
+      { user_id: userId, paddle_subscription_id: `sub_${randomUUID()}`, plan: "pro", status: "active" },
+      { user_id: userId, paddle_subscription_id: `sub_${randomUUID()}`, plan: "pro", status: "active" },
+    ]);
+    expect(error).toBeNull();
+  });
+});
