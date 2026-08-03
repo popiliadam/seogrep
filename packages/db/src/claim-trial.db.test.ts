@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createServiceClient } from "./server.js";
@@ -253,5 +253,185 @@ describe("trial_granted_at one-way latch against local Supabase", () => {
       .eq("id", userId)
       .maybeSingle();
     expect(new Date(data?.welcomed_at as string).toISOString()).toBe(stamp);
+  });
+});
+
+/**
+ * The MAILBOX dimension (migration 0020, audit finding H-06).
+ *
+ * Everything above answers "has this UID claimed?". Nothing above answers "has this MAILBOX
+ * claimed?" — and plus-aliasing (RFC 5233 sub-addressing) mints UIDs for free. Measured on a
+ * clean 0001-0019 stack before the fix: `x@gmail.com` and `x+free2@gmail.com` each returned
+ * true and the ledger held TWO grant/trial rows — 400 credits from one real inbox.
+ *
+ * 0020 gives the trial a second dimension keyed on a fingerprint the caller supplies. THE
+ * NORMALISATION RULES ARE NOT UNDER TEST HERE: which addresses share a fingerprint is decided
+ * and tested by packages/core (`trial-identity.test.ts`), deliberately, so a money decision has
+ * one source of truth rather than a PL/pgSQL re-implementation. What is under test here is what
+ * the DB does once two accounts arrive carrying the same fingerprint — and, just as important,
+ * that a caller supplying NONE still gets the exact 0009 behaviour.
+ */
+describe("claim_trial mailbox dimension (migration 0020) against local Supabase", () => {
+  /**
+   * Stand-in for packages/core `trialEmailIdentity().fingerprint`: the same shape (SHA-256
+   * hex), freshly generated per case so tests cannot collide through a shared mailbox.
+   */
+  function mailboxFingerprint(): string {
+    return createHash("sha256").update(randomUUID()).digest("hex");
+  }
+
+  /** claim_trial via the NEW calling convention (a fingerprint is supplied). */
+  async function claimForMailbox(
+    userId: string,
+    fingerprint: string,
+    options: { domain?: string; disposable?: boolean } = {},
+  ): Promise<boolean> {
+    const { data, error } = await service.rpc("claim_trial", {
+      p_user_id: userId,
+      p_amount: TRIAL,
+      p_email_fingerprint: fingerprint,
+      p_email_domain: options.domain,
+      p_disposable_domain: options.disposable,
+    });
+    if (error) throw new Error(`claim_trial (mailbox) failed: ${error.message}`);
+    if (typeof data !== "boolean") throw new Error("claim_trial did not return a boolean");
+    return data;
+  }
+
+  async function claimRow(fingerprint: string) {
+    const { data, error } = await service
+      .from("trial_claims")
+      .select("user_id, email_domain, disposable_domain, collision_count, last_collision_at")
+      .eq("email_fingerprint", fingerprint)
+      .maybeSingle();
+    if (error) throw new Error(`trial_claims read failed: ${error.message}`);
+    return data;
+  }
+
+  it("refuses a second account on the SAME mailbox and leaves exactly ONE trial in the ledger", async () => {
+    const fingerprint = mailboxFingerprint();
+    const first = await makeUserId();
+    const second = await makeUserId();
+
+    expect(await claimForMailbox(first, fingerprint)).toBe(true);
+    expect(await claimForMailbox(second, fingerprint)).toBe(false);
+
+    // The whole point: one mailbox, one trial — across two distinct auth uids.
+    expect(await trialGrantRows(first)).toEqual([{ delta: TRIAL }]);
+    expect(await trialGrantRows(second)).toHaveLength(0);
+    expect((await claimRow(fingerprint))?.user_id).toBe(first);
+  });
+
+  it("leaves the refused claimant completely untouched — no lock, so never locked-but-creditless", async () => {
+    // The mailbox claim is taken BEFORE the trial_granted_at UPDATE precisely so this holds.
+    // Refusing after the lock would commit the inconsistent state 0009 exists to prevent.
+    const fingerprint = mailboxFingerprint();
+    expect(await claimForMailbox(await makeUserId(), fingerprint)).toBe(true);
+
+    const refused = await makeUserId();
+    expect(await claimForMailbox(refused, fingerprint)).toBe(false);
+    expect(await trialGrantedAt(refused)).toBeNull();
+    expect(await isLockedButCreditless(refused)).toBe(false);
+  });
+
+  it("BACKWARD COMPATIBILITY: the 0009 two-argument call behaves exactly as it did before", async () => {
+    // This is the guarantee the untouched apps/web caller depends on until a later slice wires
+    // it: with no fingerprint the mailbox dimension is skipped entirely, so two accounts that
+    // WOULD share a mailbox each still receive a trial — the pre-0020 behaviour, unchanged.
+    const a = await makeUserId();
+    const b = await makeUserId();
+
+    expect(await claimTrial(a, TRIAL)).toBe(true); // first claim grants
+    expect(await claimTrial(a, TRIAL)).toBe(false); // still idempotent
+    expect(await claimTrial(b, TRIAL)).toBe(true); // still per-uid, not per-mailbox
+
+    expect(await trialGrantRows(a)).toEqual([{ delta: TRIAL }]);
+    expect(await trialGrantRows(b)).toEqual([{ delta: TRIAL }]);
+    expect(await isLockedButCreditless(a)).toBe(false);
+    expect(await isLockedButCreditless(b)).toBe(false);
+  });
+
+  it("does not touch a DIFFERENT mailbox (the false-positive direction at the DB layer)", async () => {
+    // Two fingerprints = two real people. Both must receive the trial they were advertised;
+    // over-blocking is the failure mode that costs a legitimate user 200 credits.
+    const first = await makeUserId();
+    const second = await makeUserId();
+    expect(await claimForMailbox(first, mailboxFingerprint())).toBe(true);
+    expect(await claimForMailbox(second, mailboxFingerprint())).toBe(true);
+    expect(await trialGrantRows(first)).toHaveLength(1);
+    expect(await trialGrantRows(second)).toHaveLength(1);
+  });
+
+  it("grants exactly once when two accounts on one mailbox claim CONCURRENTLY", async () => {
+    const fingerprint = mailboxFingerprint();
+    const a = await makeUserId();
+    const b = await makeUserId();
+    const [first, second] = await Promise.all([
+      claimForMailbox(a, fingerprint),
+      claimForMailbox(b, fingerprint),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect([...(await trialGrantRows(a)), ...(await trialGrantRows(b))]).toHaveLength(1);
+  });
+
+  it("RECORDS the disposable-domain signal and still GRANTS the trial", async () => {
+    // Deliberate product posture: a curated disposable list has real false positives, and
+    // denying a legitimate user their advertised trial is worse than granting one to a
+    // throwaway address. The operator gets visibility; the user is never silently denied.
+    const fingerprint = mailboxFingerprint();
+    const userId = await makeUserId();
+
+    expect(
+      await claimForMailbox(userId, fingerprint, {
+        domain: "mailinator.com",
+        disposable: true,
+      }),
+    ).toBe(true);
+
+    expect(await trialGrantRows(userId)).toEqual([{ delta: TRIAL }]); // NOT denied
+    const row = await claimRow(fingerprint);
+    expect(row?.disposable_domain).toBe(true); // ...and the signal is recorded
+    expect(row?.email_domain).toBe("mailinator.com"); // ...with the domain, so a false
+    // positive is diagnosable in packages/core instead of being an anonymous count.
+  });
+
+  it("counts OTHER accounts' collisions but not the holder's own re-claim", async () => {
+    const fingerprint = mailboxFingerprint();
+    const holder = await makeUserId();
+    expect(await claimForMailbox(holder, fingerprint)).toBe(true);
+    expect((await claimRow(fingerprint))?.collision_count).toBe(0);
+
+    expect(await claimForMailbox(await makeUserId(), fingerprint)).toBe(false);
+    expect(await claimForMailbox(await makeUserId(), fingerprint)).toBe(false);
+    // A fingerprint with many collisions is farming; one with a single collision may be a real
+    // person the normaliser wrongly merged — which is exactly what the operator needs to see.
+    expect((await claimRow(fingerprint))?.collision_count).toBe(2);
+    expect((await claimRow(fingerprint))?.last_collision_at).toEqual(expect.any(String));
+
+    expect(await claimForMailbox(holder, fingerprint)).toBe(false); // idempotent no-op...
+    expect((await claimRow(fingerprint))?.collision_count).toBe(2); // ...and not a collision
+    expect(await trialGrantRows(holder)).toHaveLength(1);
+  });
+
+  it("treats an EMPTY fingerprint as absent, so a mis-computing caller cannot lock everyone out", async () => {
+    // If '' were a real mailbox, the first caller that failed to compute one would claim it and
+    // every later such caller would be refused their trial forever.
+    const a = await makeUserId();
+    const b = await makeUserId();
+    expect(await claimForMailbox(a, "")).toBe(true);
+    expect(await claimForMailbox(b, "")).toBe(true);
+    expect(await claimRow("")).toBeNull(); // nothing was recorded under the empty mailbox
+  });
+
+  it("refuses DELETE on trial_claims to the app role — removing a row would re-arm the mailbox", async () => {
+    // The same reasoning 0015 applied to users_profile: the row IS the lock. Behavioural, not a
+    // catalog read — this drives the verb the app role would actually use.
+    const fingerprint = mailboxFingerprint();
+    expect(await claimForMailbox(await makeUserId(), fingerprint)).toBe(true);
+
+    const { error } = await service.from("trial_claims").delete().eq("email_fingerprint", fingerprint);
+    expect(error).not.toBeNull();
+    expect(error?.message ?? "").toMatch(/permission denied/i);
+    expect(await claimRow(fingerprint)).not.toBeNull(); // the lock survived the attempt
   });
 });
