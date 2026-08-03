@@ -11,6 +11,7 @@ import { CREDIT_PACKAGES } from "@pseo/core";
  * idempotency -> command -> repo end to end, with only the persistence stubbed.
  */
 
+vi.mock("server-only", () => ({}));
 vi.mock("@pseo/db/server", () => ({ createServiceClient: vi.fn(() => ({})) }));
 vi.mock("@pseo/db/paddle-repo", () => ({
   insertEvent: vi.fn(),
@@ -46,6 +47,10 @@ import {
   upsertSubscription,
 } from "@pseo/db/paddle-repo";
 import { createServiceClient } from "@pseo/db/server";
+import {
+  ATTRIBUTION_CUSTOM_DATA_KEY,
+  mintAttributionToken,
+} from "../../../../lib/billing/attribution";
 import { POST } from "./route";
 
 const insertEventMock = vi.mocked(insertEvent);
@@ -73,6 +78,33 @@ function allLoggedText(): string {
 // Fake, unmistakably-not-real secret. NEVER a real key value in a fixture.
 const SECRET = "test_secret_pdl_ntfset_deadbeef";
 const USER_ID = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
+/** Every fixture's occurred_at, so token expiry is pinned to fixture data and not to the clock. */
+const OCCURRED_AT = "2026-07-18T00:00:00Z";
+
+/**
+ * M-05. Post-deploy, EVERY overlay carries a signed attribution token, so a token-bearing event is
+ * the representative fixture and each attribution edge (no token, forged token, expired token,
+ * mismatched id) gets its own named test below rather than riding along invisibly on all of them.
+ * `attributionToken: null` reproduces the pre-deploy overlay exactly.
+ */
+function tokenFor(userId: string, mintedAt: string = OCCURRED_AT): string {
+  const token = mintAttributionToken(userId, new Date(mintedAt));
+  if (!token) {
+    throw new Error("fixture could not mint an attribution token");
+  }
+  return token;
+}
+
+function customDataFor(
+  userId: string,
+  token: string | null | undefined,
+  mintedAt: string = OCCURRED_AT,
+): Record<string, unknown> {
+  if (token === null) {
+    return { user_id: userId }; // the pre-deploy overlay: user_id only
+  }
+  return { user_id: userId, [ATTRIBUTION_CUSTOM_DATA_KEY]: token ?? tokenFor(userId, mintedAt) };
+}
 
 function transactionEvent(overrides: {
   eventId?: string;
@@ -81,12 +113,17 @@ function transactionEvent(overrides: {
   transactionId?: string;
   /** Item-level quantity — the real Paddle field, preserved verbatim through unmarshal. */
   quantity?: number;
+  /** undefined = a valid token for the named user; null = no token at all; string = verbatim. */
+  attributionToken?: string | null;
 }): Record<string, unknown> {
-  const customData = overrides.userId === null ? null : { user_id: overrides.userId ?? USER_ID };
+  const customData =
+    overrides.userId === null
+      ? null
+      : customDataFor(overrides.userId ?? USER_ID, overrides.attributionToken);
   return {
     event_id: overrides.eventId ?? `evt_${randomUUID()}`,
     event_type: "transaction.completed",
-    occurred_at: "2026-07-18T00:00:00Z",
+    occurred_at: OCCURRED_AT,
     data: {
       id: overrides.transactionId ?? "txn_123",
       status: "completed",
@@ -115,11 +152,14 @@ function subscriptionEvent(overrides: {
   occurredAt?: string;
   /** Payload-body field used as a "did the log leak the body?" marker. */
   customerId?: string;
+  /** undefined = a valid token for USER_ID; null = no token at all; string = verbatim. */
+  attributionToken?: string | null;
 }): Record<string, unknown> {
+  const occurredAt = overrides.occurredAt ?? OCCURRED_AT;
   return {
     event_id: `evt_${randomUUID()}`,
     event_type: overrides.eventType ?? "subscription.created",
-    occurred_at: overrides.occurredAt ?? "2026-07-18T00:00:00Z",
+    occurred_at: occurredAt,
     data: {
       id: overrides.subscriptionId ?? "sub_1",
       status: overrides.status ?? "active",
@@ -129,7 +169,7 @@ function subscriptionEvent(overrides: {
       collection_mode: "automatic",
       billing_cycle: { interval: "month", frequency: 1 },
       current_billing_period: { starts_at: "2026-07-01T00:00:00Z", ends_at: "2026-08-01T00:00:00Z" },
-      custom_data: { user_id: USER_ID },
+      custom_data: customDataFor(USER_ID, overrides.attributionToken, occurredAt),
       items: [{ price: { id: overrides.priceId ?? "pri_pro" } }],
     },
   };
@@ -212,8 +252,11 @@ describe("POST /api/paddle/webhook", () => {
   });
 
   it("missing PADDLE_WEBHOOK_SECRET is a fail-closed 500 with no side effects", async () => {
+    // Fixture takes no token: with the secret gone there is nothing to mint one with, which is
+    // the same reason the route refuses to process at all — it fail-closes before any of this.
+    const event = transactionEvent({ attributionToken: null });
     vi.stubEnv("PADDLE_WEBHOOK_SECRET", "");
-    const response = await POST(signedRequest(transactionEvent({})));
+    const response = await POST(signedRequest(event));
     expect(response.status).toBe(500);
     expectNoRepoWrites();
   });

@@ -10,6 +10,12 @@ import {
 } from "@pseo/db/paddle-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { capturePurchase } from "../../../../lib/analytics";
+import {
+  attributionEnforced,
+  attributionReferenceTime,
+  decideTenant,
+  readAttributionToken,
+} from "../../../../lib/billing/attribution";
 import { resolvePaddleEnvironment } from "../../../../lib/paddle-env";
 
 /**
@@ -29,9 +35,16 @@ import { resolvePaddleEnvironment } from "../../../../lib/paddle-env";
  *
  * Node runtime: unmarshal needs Node crypto. Neither the payload nor a secret is ever logged —
  * only the event id, the event type and a reason. Two channels, kept apart: console.error means
- * money may have been lost (B-C1) or the handler failed; console.warn means an event was HANDLED
- * without changing state (a refused stale subscription apply, a subscription record_only), which
- * is recoverable but must not be silent — see warnSubscription below.
+ * money may have been lost (B-C1), the handler failed, or an event was REFUSED; console.warn means
+ * an event was HANDLED but something an operator has to be able to see happened (a refused stale
+ * subscription apply, a subscription record_only, an attribution token that did not verify) —
+ * recoverable, but not silent. See warnSubscription / warnAttribution below.
+ *
+ * M-05: `custom_data.user_id` is a CLIENT-settable claim, so it is not tenant authority. The
+ * checkout mints a signed attribution token (lib/billing/attribution) and the VERIFIED subject
+ * wins here. Grace is the default: a missing or unverifiable token is still accepted and reported,
+ * because customers are mid-checkout across every deploy. PADDLE_ATTRIBUTION_ENFORCE turns that
+ * into a refusal — see the attribution block below.
  */
 export const runtime = "nodejs";
 
@@ -73,6 +86,16 @@ function warnSubscription(
   reason: string,
 ): void {
   console.warn(message, { eventId, eventType, reason });
+}
+
+/**
+ * The ONE shape for "this event's tenant was not proved by a token" (M-05). Same discipline: ids
+ * and a reason code only — never the payload, never the token itself (a token is bearer material
+ * for one checkout), never the user id. `reason` is the countable field: `absent` is the expected
+ * shape of an overlay opened before the token shipped, anything else is an anomaly.
+ */
+function warnAttribution(eventId: string, eventType: string, reason: string): void {
+  console.warn("paddle webhook: attribution NOT verified", { eventId, eventType, reason });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -132,19 +155,52 @@ export async function POST(request: Request): Promise<Response> {
       buildPriceMap(),
     );
 
+    // M-05 tenant authority. Only the two commands that NAME a tenant need it; record_only writes
+    // no tenant state. The reference instant is the event's own occurred_at (vendor-attested,
+    // inside the verified body), so Paddle's ~3-day retry window cannot expire a token that was
+    // valid when the customer actually paid.
+    let tenantUserId: string | null = null;
+    if (command.kind === "purchase" || command.kind === "subscription") {
+      const decision = decideTenant(
+        readAttributionToken(event.data, attributionReferenceTime(event.occurredAt)),
+        command.userId,
+        attributionEnforced(),
+      );
+      if (decision.outcome === "refuse") {
+        // Enforcement is ON and the token did not verify. Refuse WITHOUT writing state and
+        // WITHOUT stamping: exactly the B-C1 shape, so a mis-set flag or a key rotation can never
+        // silently close a paid event — processed_at stays NULL, Paddle keeps retrying, and
+        // turning the flag back off heals the whole backlog.
+        console.error("paddle webhook: attribution REFUSED (enforcement on)", {
+          eventId,
+          eventType: event.eventType,
+          reason: decision.reason,
+        });
+        return json({ error: "attribution refused" }, 500);
+      }
+      if (decision.signal) {
+        warnAttribution(eventId, event.eventType, decision.signal);
+      }
+      tenantUserId = decision.userId;
+    }
+
     switch (command.kind) {
       case "purchase": {
+        // tenantUserId is the decided tenant — the SIGNED subject when a token verified, the body
+        // claim only under grace. `?? command.userId` is a type-level floor: the block above
+        // always sets it for a purchase command.
+        const userId = tenantUserId ?? command.userId;
         // Grant + stamp processed_at in ONE transaction (migration 0007), ref-idempotent.
         const granted = await processPaddlePurchase(service, {
           eventId,
-          userId: command.userId,
+          userId,
           amount: command.amount,
           ref: command.ref,
         });
         // Only a REAL (non-duplicate) grant fires the funnel event — a ref already
         // credited (idempotent retry) returns false and must not double-count.
         if (granted) {
-          await capturePurchase(command.userId, command.packageKey);
+          await capturePurchase(userId, command.packageKey);
         }
         break;
       }
@@ -154,7 +210,7 @@ export async function POST(request: Request): Promise<Response> {
         // failure: the event is genuinely done with, so it is still stamped processed and
         // answered 200 — re-delivering it would only be refused again.
         const applied = await upsertSubscription(service, {
-          userId: command.userId,
+          userId: tenantUserId ?? command.userId, // decided tenant — see the purchase case
           paddleSubscriptionId: command.paddleSubscriptionId,
           plan: command.plan,
           status: command.status,
