@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeContentDecay } from "./content-decay.ts";
+import { analyzeContentDecay, DECAY_MIN_DROP_RATIO } from "./content-decay.ts";
 import { SAMPLE_PULL, gscRow, pullData } from "./fixtures.ts";
 import { GSC_FRESHNESS_LAG_DAYS, computeWindows, type DateRange } from "./windows.ts";
 import type { PullData } from "./types.ts";
@@ -94,21 +94,21 @@ describe("analyzeContentDecay", () => {
  * into unfinalized days again. The thresholds are NOT under test here (they are pinned above);
  * the WINDOW is.
  */
-describe("analyzeContentDecay over Search Console's freshness lag (M-20)", () => {
-  const REFERENCE = new Date("2026-07-17T00:00:00Z");
-  const PAGE = "https://shop.test/steady";
-  const MS_PER_DAY = 86_400_000;
+const MS_PER_DAY = 86_400_000;
+const REFERENCE = new Date("2026-07-17T00:00:00Z");
+const PAGE = "https://shop.test/steady";
 
-  /** The UTC days (YYYY-MM-DD) an inclusive range covers. */
-  function daysIn(range: DateRange): string[] {
-    const days: string[] = [];
-    const last = Date.parse(`${range.end_date}T00:00:00Z`);
-    for (let t = Date.parse(`${range.start_date}T00:00:00Z`); t <= last; t += MS_PER_DAY) {
-      days.push(new Date(t).toISOString().slice(0, 10));
-    }
-    return days;
+/** The UTC days (YYYY-MM-DD) an inclusive range covers. */
+function daysIn(range: DateRange): string[] {
+  const days: string[] = [];
+  const last = Date.parse(`${range.end_date}T00:00:00Z`);
+  for (let t = Date.parse(`${range.start_date}T00:00:00Z`); t <= last; t += MS_PER_DAY) {
+    days.push(new Date(t).toISOString().slice(0, 10));
   }
+  return days;
+}
 
+describe("analyzeContentDecay over Search Console's freshness lag (M-20)", () => {
   /** The newest day Search Console has finalized as of REFERENCE. */
   const lastFinalized = new Date(REFERENCE.getTime() - GSC_FRESHNESS_LAG_DAYS * MS_PER_DAY)
     .toISOString()
@@ -163,5 +163,87 @@ describe("analyzeContentDecay over Search Console's freshness lag (M-20)", () =>
     expect(decays[0]?.page).toBe(PAGE);
     expect(decays[0]?.current_clicks).toBeLessThan(decays[0]!.previous_clicks);
     expect(decays[0]?.drop_ratio).toBeGreaterThan(0.8);
+  });
+});
+
+/**
+ * M-20, made durable. The bounded claim in the public docs — "measured against lags of up to 5
+ * days, no unfinalized day is read as a traffic collapse" (tools-reference/pull-gsc-data.mdx) —
+ * rested on numbers that existed only in a transcript: no committed artifact backed them. Signed
+ * lesson 9: a behaviour claim is not durable until something that RUNS measures it. This is that
+ * something, and it states the SAME bound the doc does.
+ *
+ * The distinction the sweep turns on: GSC_FRESHNESS_LAG_DAYS is how far back WE end the window,
+ * which is fixed. How far behind Search Console ACTUALLY is, is not ours to choose. Only the
+ * difference — `actualLag - GSC_FRESHNESS_LAG_DAYS` days, call it k — lands inside the current
+ * window unfinalized, so a perfectly stable page reads as a k/days drop. That clears the 30%
+ * relative threshold once k >= 0.3 * days, and the shortest window the tool accepts (days=7) is
+ * therefore the worst case: k=2 is 28.6% and survives, k=3 is 42.9% and does not.
+ *
+ * Pure sweep over computeWindows + analyzeContentDecay: no I/O, no wall clock, no fixtures.
+ */
+describe("analyzeContentDecay across the documented freshness-lag band (M-20)", () => {
+  /** The largest ACTUAL Search Console lag the public docs claim protection through. */
+  const MAX_PROTECTED_LAG_DAYS = 5;
+  /** Well above DECAY_MIN_ABS_DROP, so the absolute threshold never masks a ratio failure. */
+  const DAILY_CLICKS = 500;
+
+  /**
+   * One perfectly stable page — the same clicks every day, forever — reported the way Search
+   * Console reports it when it is `actualLagDays` behind: a day inside the window contributes
+   * its real clicks once finalized and 0 before then. Any decay found here is manufactured.
+   */
+  function stablePull(days: number, actualLagDays: number): PullData {
+    const windows = computeWindows(REFERENCE, days);
+    const lastFinalized = new Date(REFERENCE.getTime() - actualLagDays * MS_PER_DAY)
+      .toISOString()
+      .slice(0, 10);
+    const reported = (range: DateRange): number =>
+      daysIn(range).reduce((sum, day) => sum + (day <= lastFinalized ? DAILY_CLICKS : 0), 0);
+    return {
+      days,
+      current: {
+        ...windows.current,
+        rows: [gscRow({ query: "q", page: PAGE, clicks: reported(windows.current) })],
+      },
+      previous: {
+        ...windows.previous,
+        rows: [gscRow({ query: "q", page: PAGE, clicks: reported(windows.previous) })],
+      },
+    };
+  }
+
+  it("flags nothing for a stable page at ANY lag 0..5 and ANY window 7..90", () => {
+    for (let actualLag = 0; actualLag <= MAX_PROTECTED_LAG_DAYS; actualLag += 1) {
+      for (let days = 7; days <= 90; days += 1) {
+        expect(
+          analyzeContentDecay(stablePull(days, actualLag)),
+          `actualLag=${actualLag} days=${days}`,
+        ).toEqual([]);
+      }
+    }
+  });
+
+  it("names the boundary explicitly: one day past the band, the same page IS flagged", () => {
+    // The guard is bounded and the docs say so. Pinning where it ENDS is what stops "up to 5
+    // days" from quietly being read as a promise about 6 — and it is the second half of the
+    // regression alarm: shrink the lag constant or lose the window shift and the band closes
+    // in, which the sweep above catches. Widen nothing silently either way.
+    expect(analyzeContentDecay(stablePull(7, MAX_PROTECTED_LAG_DAYS))).toEqual([]);
+
+    const overrun = analyzeContentDecay(stablePull(7, MAX_PROTECTED_LAG_DAYS + 1));
+    expect(overrun).toHaveLength(1);
+    expect(overrun[0]?.page).toBe(PAGE);
+    // 3 of the 7 current days unfinalized: a 42.9% phantom drop, over the 30% threshold.
+    expect(overrun[0]?.drop_ratio).toBeCloseTo(3 / 7, 10);
+  });
+
+  it("derives that bound from the constants rather than restating the number", () => {
+    // Where 5 comes from: the window offset, plus however many unfinalized days the relative
+    // threshold still tolerates in the SHORTEST window. Cut GSC_FRESHNESS_LAG_DAYS to 2 and this
+    // expects 4 — so the doc's figure and the code's real behaviour cannot drift apart in silence.
+    const shortestWindow = 7;
+    const toleratedUnfinalizedDays = Math.ceil(DECAY_MIN_DROP_RATIO * shortestWindow) - 1;
+    expect(GSC_FRESHNESS_LAG_DAYS + toleratedUnfinalizedDays).toBe(MAX_PROTECTED_LAG_DAYS);
   });
 });
