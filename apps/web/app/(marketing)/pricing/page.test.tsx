@@ -28,6 +28,9 @@ describe("pricing page", () => {
       ["Quick-win, cannibalization, or decay scan", "10"],
       ["Full on-page + technical + schema audit", "50"],
       ["Keyword research (100 keywords)", "25"],
+      ["Ranked keywords (per domain)", "65"],
+      ["Backlink profile (per domain)", "70"],
+      ["Competitor comparison (per domain)", "90"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -50,12 +53,81 @@ describe("pricing page", () => {
       ["Quick-win, cannibalization, or decay scan", TOOL_COSTS.find_quick_wins],
       ["Full on-page + technical + schema audit", auditBundle],
       ["Keyword research (100 keywords)", TOOL_COSTS.research_keywords],
+      ["Ranked keywords (per domain)", TOOL_COSTS.ranked_keywords],
+      ["Backlink profile (per domain)", TOOL_COSTS.analyze_backlinks],
+      ["Competitor comparison (per domain)", TOOL_COSTS.compare_competitors],
       ["Monthly report", TOOL_COSTS.generate_report],
     ];
     for (const [label, cost] of expected) {
       const row = screen.getByText(label).closest("tr");
       if (row === null) throw new Error(`no credit-cost row rendered for "${label}"`);
       expect(within(row).getByText(String(cost))).toBeTruthy();
+    }
+  });
+
+  // COVERAGE, not consistency. The assertion above only checks that the rows the page DOES show
+  // carry the right numbers — which is why it stayed green while ranked_keywords, analyze_backlinks
+  // and compare_competitors were missing from the page entirely (M-26): a row that isn't rendered
+  // can't disagree with anything. This map declares which row represents each PAID tool, so a new
+  // non-zero TOOL_COSTS entry that nobody puts on the page fails here instead of drifting off it.
+  const PAID_TOOL_ROW: Readonly<Partial<Record<keyof typeof TOOL_COSTS, string>>> = {
+    pull_gsc_data: "GSC pull (90 days)",
+    crawl_site: "Site crawl (up to 100 URLs)",
+    // Grouped row — the three discovery scans share one price, pinned equal above.
+    find_quick_wins: "Quick-win, cannibalization, or decay scan",
+    detect_cannibalization: "Quick-win, cannibalization, or decay scan",
+    analyze_content_decay: "Quick-win, cannibalization, or decay scan",
+    // Grouped row — the audit bundle is these three summed, pinned above.
+    audit_onpage: "Full on-page + technical + schema audit",
+    audit_tech: "Full on-page + technical + schema audit",
+    audit_schema: "Full on-page + technical + schema audit",
+    research_keywords: "Keyword research (100 keywords)",
+    ranked_keywords: "Ranked keywords (per domain)",
+    analyze_backlinks: "Backlink profile (per domain)",
+    compare_competitors: "Competitor comparison (per domain)",
+    generate_report: "Monthly report",
+  };
+
+  /**
+   * The coverage rule itself, taking the costs table as an argument so it can also be run against a
+   * SYNTHETIC one — that is how the test below PROVES the guard bites, instead of trusting that it
+   * would. Throws on the first paid tool that no rendered row accounts for. Requires a prior render.
+   */
+  function assertEveryPaidToolIsListed(costs: Readonly<Record<string, number>>): void {
+    for (const [tool, cost] of Object.entries(costs)) {
+      if (cost === 0) continue; // free tools spend no credits, so the table has nothing to say
+      const label = PAID_TOOL_ROW[tool as keyof typeof TOOL_COSTS];
+      if (label === undefined) {
+        throw new Error(
+          `TOOL_COSTS.${tool} costs ${cost} credits but no pricing-page row is declared for it — ` +
+            "add a row (or declare it part of an existing grouped row) so the binding page shows it.",
+        );
+      }
+      if (screen.getByText(label).closest("tr") === null) {
+        throw new Error(`no credit-cost row rendered for "${label}" (declared for ${tool})`);
+      }
+    }
+  }
+
+  it("puts EVERY paid tool in TOOL_COSTS on the page — none may drift off it (M-26)", () => {
+    render(<Page />);
+    expect(() => assertEveryPaidToolIsListed(TOOL_COSTS)).not.toThrow();
+  });
+
+  it("…and that rule bites: a NEW paid tool nobody put on the page fails it", () => {
+    render(<Page />);
+    expect(() => assertEveryPaidToolIsListed({ ...TOOL_COSTS, brand_new_paid_tool: 42 })).toThrow(
+      /brand_new_paid_tool costs 42 credits but no pricing-page row is declared/,
+    );
+    // A new FREE tool is not a pricing-page concern, so it must NOT fail the same rule.
+    expect(() => assertEveryPaidToolIsListed({ ...TOOL_COSTS, brand_new_free_tool: 0 })).not.toThrow();
+  });
+
+  it("declares no pricing row for a tool that is free or no longer exists", () => {
+    for (const tool of Object.keys(PAID_TOOL_ROW)) {
+      expect(TOOL_COSTS[tool as keyof typeof TOOL_COSTS], `${tool} is declared but not a paid tool`).toBeGreaterThan(
+        0,
+      );
     }
   });
 

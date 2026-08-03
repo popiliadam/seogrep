@@ -8,12 +8,19 @@ export const metadata: Metadata = {
     "SeoGrep pricing: start free, then credit-based plans and pay-as-you-go top-ups. Pay for the SEO work you run, not per seat.",
 };
 
+// Every PAID tool in apps/mcp TOOL_COSTS is represented here — either by its own row or as a
+// declared member of a grouped row (the three discovery scans share one price; the audit row is
+// on-page + technical + schema summed). page.test.tsx asserts both directions: each listed number
+// matches TOOL_COSTS, and no paid tool is missing from this table.
 const CREDIT_COSTS = [
   { action: "GSC pull (90 days)", cost: "5" },
   { action: "Site crawl (up to 100 URLs)", cost: "20" },
   { action: "Quick-win, cannibalization, or decay scan", cost: "10" },
   { action: "Full on-page + technical + schema audit", cost: "50" },
   { action: "Keyword research (100 keywords)", cost: "25" },
+  { action: "Ranked keywords (per domain)", cost: "65" },
+  { action: "Backlink profile (per domain)", cost: "70" },
+  { action: "Competitor comparison (per domain)", cost: "90" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 
