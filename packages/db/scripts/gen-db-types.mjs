@@ -44,11 +44,99 @@ export const HEADER = `// Generated Supabase database types — DO NOT EDIT BY H
 // which guardrails/verify-db.sh runs after it boots the stack and resets it to the committed
 // migrations. The gate byte-diffs a fresh generation against this file, so schema drift fails
 // the gate instead of production.
+//
+// ONE thing below is not from the CLI: the \`__InternalSupabase.PostgrestVersion\` block, which the
+// generator splices in (see scripts/gen-db-types.mjs, POSTGREST_VERSION). The CLI stopped emitting
+// it and supabase-js reads it to decide which client methods type-check. It is spliced rather than
+// hand-edited so that writing and \`--check\` agree by construction.
 `;
+
+/**
+ * The PostgREST version declared to supabase-js, and the one line in this pipeline a human is
+ * expected to review.
+ *
+ * WHY IT EXISTS AT ALL. Commit a782f27 regenerated types.ts from \`supabase gen types --local\` and
+ * the whole \`__InternalSupabase\` block DISAPPEARED — the CLI no longer emits it. (It was not
+ * "lowered 14.5 -> 12": there is no 12 anywhere. The block is simply absent, and the only trace
+ * left behind is the now-vacuous \`Omit<Database, "__InternalSupabase">\` further down the file.)
+ * Because the generator renders CLI output verbatim and \`--check\` byte-diffs it, the drift gate
+ * then LOCKED THE LOSS IN: hand-restoring the block in types.ts turns verify-db red.
+ *
+ * WHAT THE LOSS COSTS, verified against @supabase/postgrest-js@2.110.7:
+ *
+ *   type IsPostgrest13<V> = V extends \`13\${string}\` ? true : false
+ *   type IsPostgrest14<V> = V extends \`14\${string}\` ? true : false
+ *   type IsPostgrestVersionGreaterThan12<V> = IsPostgrest13<V> extends true ? true
+ *                                          : IsPostgrest14<V> extends true ? true : false
+ *   type MaxAffectedEnabled<V>   = IsPostgrestVersionGreaterThan12<V> extends true ? true : false
+ *   type SpreadOnManyEnabled<V>  = IsPostgrestVersionGreaterThan12<V> extends true ? true : false
+ *
+ * With the block absent, \`ClientOptions['PostgrestVersion']\` resolves to \`undefined\`, both gates
+ * go false, and TWO things break at the type level: \`.maxAffected()\` resolves to
+ * \`InvalidMethodError<'maxAffected method only available on postgrest 13+'>\`, and — the half that
+ * is easy to miss, because it is gated by the same predicate — many-to-many spread selects
+ * (\`select("a, ...b(*)")\`) resolve to a \`SelectQueryError\` instead of a row type. Neither is an
+ * active bug today (\`maxAffected(\` appears nowhere in the repo); both are traps the next person to
+ * reach for them would hit with an error message that points at PostgREST rather than at this file.
+ *
+ * HOW THE VALUE WAS MEASURED — not copied forward from the old \`"14.5"\`, which came from the CLOUD
+ * project while the local CLI is pinned separately. Against the running local stack (2026-08-03):
+ *
+ *   $ curl -sSI "$SUPABASE_URL/rest/v1/" | grep -i '^server:'
+ *   Server: postgrest/14.14
+ *   $ curl -sS "$SUPABASE_URL/rest/v1/" | jq -r .info.version
+ *   14.14
+ *
+ * Both channels agree, so the stack runs PostgREST 14.14 and that is what is pinned. The gates
+ * above are PREFIX tests on the major version, so "14.5" and "14.14" are equivalent to
+ * supabase-js — but "14.5" would be a false statement about this stack, and the point of a pin is
+ * that it is true. postgrest-version-pin.db.test.ts re-measures the live stack on every DB run and
+ * fails if the major drifts away from this constant, so the pin cannot quietly rot.
+ */
+export const POSTGREST_VERSION = "14.14";
+
+/** Where the block goes: immediately inside the generated \`Database\` type, ahead of \`public\`. */
+const DATABASE_ANCHOR = "export type Database = {";
+
+/**
+ * Splice \`__InternalSupabase\` into a raw \`supabase gen types\` payload (pure).
+ *
+ * The inserted text reproduces the CLI's own historical formatting (two comment lines, two-space
+ * indent, no trailing semicolons) so that if a future CLI starts emitting the block again the
+ * output is byte-identical and this function can simply be deleted. If the payload ALREADY carries
+ * the block it is returned untouched — the CLI is then authoritative, and any disagreement with
+ * POSTGREST_VERSION surfaces as a \`--check\` failure for a human to look at, which is the correct
+ * place for that decision.
+ *
+ * Throws rather than returning an un-spliced payload if the anchor is missing: silently producing
+ * a types.ts without the pin is exactly the failure this whole exercise exists to undo.
+ */
+export function withInternalSupabase(generated, version = POSTGREST_VERSION) {
+  if (generated.includes("__InternalSupabase:")) return generated;
+
+  const at = generated.indexOf(DATABASE_ANCHOR);
+  if (at === -1) {
+    throw new Error(
+      `gen-db-types: could not find \`${DATABASE_ANCHOR}\` in the CLI output, so the ` +
+        "__InternalSupabase pin could not be spliced. The generator's output shape changed — " +
+        "fix the anchor rather than shipping types.ts without the PostgrestVersion block.",
+    );
+  }
+
+  const block =
+    "\n  // Allows to automatically instantiate createClient with right options" +
+    "\n  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)" +
+    "\n  __InternalSupabase: {" +
+    `\n    PostgrestVersion: ${JSON.stringify(version)}` +
+    "\n  }";
+  const cut = at + DATABASE_ANCHOR.length;
+  return generated.slice(0, cut) + block + generated.slice(cut);
+}
 
 /** The full file content for a given raw \`supabase gen types\` payload (pure). */
 export function renderTypesFile(generated) {
-  return `${HEADER}${generated.startsWith("\n") ? "" : "\n"}${generated}`;
+  const pinned = withInternalSupabase(generated);
+  return `${HEADER}${pinned.startsWith("\n") ? "" : "\n"}${pinned}`;
 }
 
 /**

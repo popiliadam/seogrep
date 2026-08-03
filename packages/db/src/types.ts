@@ -14,6 +14,11 @@
 // which guardrails/verify-db.sh runs after it boots the stack and resets it to the committed
 // migrations. The gate byte-diffs a fresh generation against this file, so schema drift fails
 // the gate instead of production.
+//
+// ONE thing below is not from the CLI: the `__InternalSupabase.PostgrestVersion` block, which the
+// generator splices in (see scripts/gen-db-types.mjs, POSTGREST_VERSION). The CLI stopped emitting
+// it and supabase-js reads it to decide which client methods type-check. It is spliced rather than
+// hand-edited so that writing and `--check` agree by construction.
 
 export type Json =
   | string
@@ -24,6 +29,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.14"
+  }
   public: {
     Tables: {
       api_keys: {
