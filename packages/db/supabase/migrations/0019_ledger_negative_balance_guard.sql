@@ -91,8 +91,18 @@ as $$
 declare
   v_balance bigint;
 begin
-  -- Serialize against every other money decision for this user; released at transaction end.
-  -- Same key as public.reserve_credits (0005) and public.process_paddle_purchase (0007).
+  -- Serialize against the other PER-USER money decisions; released at transaction end.
+  -- Same key space as the 0005 trio (reserve_credits / commit_reserve / release_reserve), which
+  -- also lock hashtext(user). Measured: an in-flight unmarked adjust blocks reserve_credits, which
+  -- is exactly the point of sharing the key.
+  --
+  -- NOT shared with process_paddle_purchase (0007): that one locks
+  -- hashtext('paddle_purchase:' || p_ref) — a per-REF key, deliberately, so two deliveries of the
+  -- same purchase serialize while unrelated purchases do not. So a purchase does NOT serialize
+  -- against this guard. That is safe in one direction only, and the reason is worth stating: a
+  -- purchase is a CREDIT, so racing it can only make this guard read a lower balance and refuse
+  -- conservatively — it can never make it accept something it should have refused. A refusal is a
+  -- loud error the operator retries; a wrong acceptance would be silent money.
   perform pg_advisory_xact_lock(hashtext(new.user_id::text));
 
   select coalesce(sum(delta), 0) into v_balance
