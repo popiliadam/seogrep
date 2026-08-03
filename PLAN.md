@@ -199,6 +199,56 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
+## Oturum devir notu (HANDOFF — 2026-08-03, REMEDIATION ÜÇÜNCÜ TUR — **KOD TARAFI BİTTİ**)
+
+```
+Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
+→ docs/audits/2026-07-28-hostile-audit-remediation-closure.md ← ESAS BELGE, artık **32 bölüm**
+   §27 = 54 ID'lik ANA TABLO · §30 insan kuyruğu · §31 sayım · §32 hüküm
+Kaynak audit (DEĞİŞTİRME, untracked insan dosyası):
+   docs/audits/2026-07-28-hostile-full-repository-audit.md
+
+=== DURUM: 54/54 İŞLENDİ ===
+Dal fix/hostile-audit-remediation @ **~180 commit** (bu turda 68). MERGE/PUSH EDİLMEDİ.
+**50 FIXED · 1 PARTIAL (H-06) · 3 HUMAN BLOCKED (H-04 · M-25 · L-04) · 0 NOT REPRODUCIBLE.**
+
+Bu turda kapanan (13): M-03 M-04 M-05 M-09 M-13 M-20 M-24 M-26 M-27 L-09 L-13 L-15 L-19 (+D-05, T3)
+H-06: teknik yarı FIXED **ve caller wiring yapıldı** (artık uykuda DEĞİL) — politika yarısı
+      operatör kararıyla (seçenek c) KASTEN açık.
+
+KAPILAR (seri, ağaç durgun, PIPE'SIZ): turbo --force 16/16 **0 cached** · **1513 test** ·
+verify PASS (self-test **42 vaka**) · verify-db PASS (**222 DB testi**) · goals **16/16 (0 skip)** ·
+gitleaks 587 commit temiz · docs-sync 19 · `pnpm audit --prod` **KIRMIZI 8** (`next`=0; artış
+YENİ postcss advisory'si, bu turda lockfile'a DOKUNULMADI).
+**Taze whole-branch Fable review: READY TO MERGE = YES, sıfır Critical.**
+
+=== KOD TARAFINDA ZORUNLU İŞ KALMADI. SIRADAKİ HER ŞEY İNSAN KAPISI. ===
+
+1. **⚠️ MERGE = CLOUD-APPLY İLE AYNI OPERASYON.** Merge apps/web'i otomatik deploy eder; deploy
+   edilen webhook 0018'in apply_subscription_event'ini çağırır. Cloud'da 0018 yoksa purchase
+   ETKİLENMEZ (0007 canlıda) ama her subscription.* olayı 500 döner. Paddle ~3 gün retry eder →
+   **0018-0020 o pencere içinde uygulanırsa kendiliğinden iyileşir; pencere kaçarsa OTOMATİK
+   yeniden sürücü YOKTUR** (elle runbook kurtarması).
+2. **CLOUD-APPLY: 0013→0014→0015→0016→0017→0018→0019→0020** (bu tur +3).
+   0017 ön-kontrol SQL'siz apply EDİLEMEZ · 0016 apply-SONRASI doğrulama ZORUNLU ·
+   0020, 0009'a bağımlı (idempotent olmayan DROP).
+3. **DFS_LIVE AÇILMAMALI** — H-04 rotasyonu + 0014 + 0016 bekliyor.
+4. **L-04 anayasa metni** — önerilen NEVER#5 istisnası operatöre sunuldu, İMZA BEKLİYOR.
+5. M-05 enforcement varsayılan KAPALI; açma prosedürü scripts/paddle-smoke.md.
+6. Branch protection (static-guards + licenses required'a; strict + enforce_admins) ·
+   L-18 Dockerfile smoke · M-27'nin 6 lisans istisnasının ratifikasyonu · M-25/D-04 hukuk metni.
+
+=== BU TURUN KALICI DERSLERİ (closure §29 + hakem bulguları) ===
+- **"Yeşildi" yetmez — HANGİ kapı NEYİ ölçtü.** Üç vakada yeşil ölçüm kırık iddiayı kapsamıyordu
+  (0018'de SCHEMA_VERSION bump'ı: işçi+hakem test:db koştu 84/84, assertion HIZLI paketteydi).
+  → Her migration iş emrine "SCHEMA_VERSION bump" done_when'i konur.
+- **Doğrulamayı düzeltmeden AYIR** — salt-okunur ajanlar audit'in ÜÇ iddiasını düzeltti.
+- **Düzeltmemek de ölçülür** (M-04: hakem indeksi KURUP 23505→500→ödemiş müşteri satırsız ölçtü).
+- **Süresi geçmiş imza, imzasız değildir** (M-05 yenileme yolu).
+- `pnpm --filter <pkg> build` turbo'yu ATLAR → `^build` koşmaz → temiz checkout'ta dist yok.
+```
+
 ## Oturum devir notu (HANDOFF — 2026-07-29, REMEDIATION İKİNCİ TUR)
 
 ```
