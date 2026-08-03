@@ -123,7 +123,20 @@ pnpm + Turborepo monorepo (yeni private GitHub reposu — Faz 0'da ben açarım)
 2. **Para doğruluğu:** ledger append-only; Paddle webhook imza + idempotency olmadan işlenmez.
 3. **Secrets:** env üzerinden; repo'da gitleaks nöbette (kalıcı hedef).
 4. **GSC token'ları** at-rest şifreli; kapsamı yalnız Search Console readonly.
-5. **Veri saklama:** crawl ham verisi 90 gün, rapor çıktıları hesap ömrü boyunca; silme talebi = tam purge (GDPR/KVKK).
+5. **Veri saklama — SEVKİYATTAKİ BETA POLİTİKASI (2026-07-29 düzeltmesi):** crawl ham verisi ve GSC
+   verisi **hesap aktif olduğu sürece** saklanır; rapor çıktıları hesap ömrü boyunca. Bu, kullanıcıya
+   dönük yüzeylerde yazılı olan politikadır (`apps/web/content/docs/core-concepts/data-retention.mdx`
+   ve `(marketing)/privacy` sayfası) ve koddaki davranışla birebir uyuşur — bugün hiçbir yaş-tabanlı
+   temizlik yoktur.
+   **D18'in "retention 90g" kararı beta-SONRASI taahhüt olarak ertelenmiştir** (karar kaydı §Kararlar'da
+   tarihiyle durur; burada geçmiş yeniden yazılmaz). 90 günü uygulamak, kullanıcıya verilmiş
+   "hesabınız aktifken saklanır" sözünü değiştirmeyi gerektirir → kod + kullanıcı metni BİRLİKTE,
+   insan onayıyla. Audit bulgusu M-24 bu satırın bayatlığıydı: spec 90 gün diyordu, ürün ve kullanıcı
+   sözü demiyordu.
+   *Açık operasyonel risk:* `jobs.result` sınırsız büyür — kapasite/maliyet maddesi olarak insan
+   kuyruğundadır.
+   Silme talebi = tam purge (GDPR/KVKK) — **şerh:** `credit_ledger` append-only ve `ON DELETE RESTRICT`
+   olduğu için "tam purge" ledger satırlarını kapsamaz; bu çelişki ayrı bir insan-kapılı kalem (D-04).
 6. Vitrin vaadi: **"Veriniz model eğitiminde kullanılmaz"** — zaten LLM çağırmıyoruz, bunu güven mesajına çevir.
 7. Test/CI'da paralı API'ye gerçek çağrı = 0; her dış API `packages/core`'da mock/fixture arkasında.
 
