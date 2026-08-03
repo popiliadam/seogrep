@@ -17,6 +17,9 @@ import {
   findActiveKeyByHash,
   touchLastUsed,
 } from "./db.ts";
+// Additive M-13 imports (cloud schema readiness) on their own lines, so every existing
+// import line above stays byte-identical.
+import { SCHEMA_SENTINEL_RPC, probeSchemaSentinel, type SchemaProbeResult } from "./db.ts";
 import { metrics } from "./metrics.ts";
 import { ALL_TOOLS, registerAll, type RegisteredTool } from "./tools/index.ts";
 import { registerPrompts } from "./prompts.ts";
@@ -97,6 +100,16 @@ export interface AppDeps {
    * card falls back to the compiled-in default, which is what an unset env resolves to anyway.
    */
   readonly mcpUrlTemplate?: string;
+  /**
+   * Cloud schema readiness probe for the `/status` operator signal (M-13). Optional and
+   * injected exactly like pendingJobs above — the production root wires the DB-backed
+   * probeSchemaSentinel; DB-free unit tests omit it, in which case `/status` reports
+   * `schema.status: "unknown"` and no handler touches the database. Reached only through the
+   * bounded, cancellable, long-TTL cache built in createApp, so it can never become a
+   * per-request cost (the H-05 lesson) and a failing probe degrades to `unknown` instead of
+   * lying `ready`. Purely REPORTING: nothing in this app refuses to serve on `not_ready`.
+   */
+  readonly schemaReadiness?: SchemaReadinessProbe;
 }
 
 /**
@@ -104,6 +117,25 @@ export interface AppDeps {
  * must CANCEL the read, not merely stop waiting for it (see readPendingJobsBounded).
  */
 export type PendingJobsReader = (signal: AbortSignal) => Promise<number>;
+
+/** The `/status` schema probe. Cancellable for the same reason PendingJobsReader is. */
+export type SchemaReadinessProbe = (signal: AbortSignal) => Promise<SchemaProbeResult>;
+
+/**
+ * What `/status` publishes about the cloud schema. `unknown` is a first-class answer, not an
+ * error case: the probe failed, timed out, or was never wired, and saying so is the only
+ * honest option — a gate that reports what it did not measure is worse than no gate.
+ */
+export type SchemaStatus = SchemaProbeResult | "unknown";
+
+/**
+ * The capability `/status` names as the thing it measured, so a reader never has to guess what
+ * `ready` covers (signed lesson 7). Derived from the sentinel constant rather than re-typed, so
+ * the payload cannot drift from the object actually probed. Safe to disclose on this
+ * unauthenticated route: the function is revoked from anon/authenticated in migration 0014, so
+ * knowing its name grants nothing.
+ */
+const SCHEMA_REQUIREMENT = `rpc:${SCHEMA_SENTINEL_RPC}`;
 
 /** res.locals key holding the resolved tenant context (set on the authenticated path). */
 const AUTH_CONTEXT_LOCAL = "authContext";
@@ -168,6 +200,11 @@ function buildDefaultDeps(): AppDeps {
     // short-TTL single-flight cache in front, so a flood of anonymous /status hits cannot
     // multiply into a flood of unindexed counts.
     pendingJobs: (signal) => countPendingJobs(client, signal),
+    // Cloud schema readiness for /status, over the SAME service client. Read-only and
+    // side-effect-free (see probeSchemaSentinel); the signal is threaded through so the
+    // /status deadline CANCELS it, and createApp's long-TTL cache — terminal once ready —
+    // is what keeps it off the per-request path.
+    schemaReadiness: (signal) => probeSchemaSentinel(client, signal),
     // D28: the personal MCP URL shape comes from MCP_URL_TEMPLATE. Read HERE, at the
     // composition root, alongside the other env-backed wiring — buildServerCard itself stays
     // pure and never touches the environment.
@@ -200,30 +237,72 @@ export async function readPendingJobsBounded(
   timeoutMs: number,
 ): Promise<number | null> {
   if (!read) return null;
-  // The deadline CANCELS the read; it does not merely stop waiting for it. Racing a
-  // promise only abandons the ANSWER — the query underneath keeps running, so an anonymous
-  // flood of abandoned /status calls still stacks unindexed counts onto the database the
-  // auth lookup, the queue and the ledger all share. Aborting tears the request down.
+  return runBounded<number | null>(read, timeoutMs, null, "pendingJobs read");
+}
+
+/**
+ * The one implementation of the bounded, CANCELLABLE, never-throwing read that every `/status`
+ * signal is served through. Extracted so the two readers cannot drift: a second hand-rolled
+ * copy is exactly how one of them would later lose the abort and quietly become an amplifier
+ * again. `degraded` is what a timeout or ANY failure folds to, and `label` names the signal in
+ * the abort reason and the warning.
+ *
+ * The deadline CANCELS the read; it does not merely stop waiting for it. Racing a promise only
+ * abandons the ANSWER — the query underneath keeps running, so an anonymous flood of abandoned
+ * /status calls still stacks work onto the database the auth lookup, the queue and the ledger
+ * all share. Aborting tears the request down.
+ *
+ * The reader is invoked INSIDE `.then(read)` (not called directly), so a SYNCHRONOUS throw
+ * becomes a rejection and folds exactly like an async one. Folding here (via `.catch`, not
+ * left to Promise.race) also means a rejection arriving AFTER the timeout already won is
+ * handled, never an unhandled rejection (fatal under Node's default policy).
+ */
+async function runBounded<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  degraded: T,
+  label: string,
+): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolve) => {
+  const timeout = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
-      controller.abort(new Error(`/status pendingJobs read exceeded ${timeoutMs}ms`));
-      resolve(null);
+      controller.abort(new Error(`/status ${label} exceeded ${timeoutMs}ms`));
+      resolve(degraded);
     }, timeoutMs);
   });
-  const counted = Promise.resolve()
+  const settled = Promise.resolve()
     // deferred invocation: a synchronous throw in read becomes a rejection here
     .then(() => read(controller.signal))
     .catch((error: unknown) => {
-      console.warn(`/status pendingJobs read failed: ${errorMessage(error)}`);
-      return null;
+      console.warn(`/status ${label} failed: ${errorMessage(error)}`);
+      return degraded;
     });
   try {
-    return await Promise.race([counted, timeout]);
+    return await Promise.race([settled, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * Upper bound (ms) on the `/status` schema probe. Same rationale and same value as the backlog
+ * read above: `/status` must stay fast even when the database is the unwell thing.
+ */
+const STATUS_SCHEMA_TIMEOUT_MS = 1_000;
+
+/**
+ * Read cloud schema readiness for `/status`, bounded and never-throwing, folding a timeout, a
+ * rejection, a synchronous throw and a missing probe alike to `unknown`. `unknown` — never
+ * `ready` — is the ONLY safe fold: a green field that reports what it did not measure is worse
+ * than no field at all. Exported so the honesty guarantee is unit-testable directly.
+ */
+export async function readSchemaStatusBounded(
+  read: SchemaReadinessProbe | undefined,
+  timeoutMs: number,
+): Promise<SchemaStatus> {
+  if (!read) return "unknown";
+  return runBounded<SchemaStatus>(read, timeoutMs, "unknown", "schema readiness probe");
 }
 
 /**
@@ -258,26 +337,96 @@ export function createPendingJobsCache(
   read: PendingJobsReader | undefined,
   options: PendingJobsCacheOptions = {},
 ): () => Promise<number | null> {
-  const timeoutMs = options.timeoutMs ?? STATUS_PENDING_TIMEOUT_MS;
-  const ttlMs = options.ttlMs ?? STATUS_PENDING_CACHE_TTL_MS;
-  const now = options.now ?? Date.now;
-  let cached: { readonly value: number | null; readonly atMs: number } | null = null;
-  let inFlight: Promise<number | null> | null = null;
+  return createTtlSingleFlight<number | null>(
+    (timeoutMs) => readPendingJobsBounded(read, timeoutMs),
+    null,
+    {
+      timeoutMs: options.timeoutMs ?? STATUS_PENDING_TIMEOUT_MS,
+      ttlMs: options.ttlMs ?? STATUS_PENDING_CACHE_TTL_MS,
+      now: options.now ?? Date.now,
+    },
+  );
+}
+
+/** Resolved knobs for createTtlSingleFlight (each caller supplies its own defaults). */
+interface TtlSingleFlightOptions<T> {
+  readonly timeoutMs: number;
+  readonly ttlMs: number;
+  readonly now: () => number;
+  /**
+   * Optional "this answer can never change again" test. When it holds, the value is kept
+   * FOREVER and the reader is never called again — the strongest possible form of the
+   * anti-amplification guarantee, available only where the underlying fact is monotonic.
+   */
+  readonly isTerminal?: (value: T) => boolean;
+}
+
+/**
+ * The TTL + SINGLE-FLIGHT core both `/status` caches are built from. Single-flight collapses
+ * CONCURRENT hits onto one in-flight read, the TTL collapses SEQUENTIAL ones — together they
+ * bound the endpoint's database cost at one query per TTL no matter the request rate, which is
+ * what keeps an unauthenticated route from being an amplifier. `degraded` is the value a
+ * (contractually impossible) rejection folds to.
+ */
+function createTtlSingleFlight<T>(
+  read: (timeoutMs: number) => Promise<T>,
+  degraded: T,
+  options: TtlSingleFlightOptions<T>,
+): () => Promise<T> {
+  const { timeoutMs, ttlMs, now, isTerminal } = options;
+  let cached: { readonly value: T; readonly atMs: number } | null = null;
+  let terminal = false;
+  let inFlight: Promise<T> | null = null;
   return () => {
-    if (cached !== null && now() - cached.atMs < ttlMs) return Promise.resolve(cached.value);
+    if (cached !== null && (terminal || now() - cached.atMs < ttlMs)) {
+      return Promise.resolve(cached.value);
+    }
     if (inFlight !== null) return inFlight; // a read is already out — join it, do not add one
-    const settled = readPendingJobsBounded(read, timeoutMs)
+    const settled = read(timeoutMs)
       .then((value) => {
         cached = { value, atMs: now() };
+        terminal = isTerminal?.(value) ?? false;
         return value;
       })
       // Non-rejecting by contract; this arm only stops a future change there from wedging
       // the cache with a permanently in-flight read.
-      .catch(() => null)
+      .catch(() => degraded)
       .finally(() => (inFlight = null));
     inFlight = settled;
     return settled;
   };
+}
+
+/**
+ * TTL (ms) on the `/status` schema answer. A minute, not the backlog's 5s, because the fact
+ * moves at HUMAN pace: it changes exactly once, when an operator applies migrations to the
+ * cloud project. One probe per minute per process is a rounding error next to any real load,
+ * and the endpoint still converges within a minute of the migration landing — no redeploy.
+ */
+const STATUS_SCHEMA_CACHE_TTL_MS = 60_000;
+
+/**
+ * The `/status` schema answer, bounded exactly like the backlog one and with one extra rule:
+ * `ready` is TERMINAL. Migrations are forward-only, so a schema that has once satisfied this
+ * build cannot stop satisfying it while the process lives — after the first successful probe
+ * the endpoint costs ZERO further database work for the rest of the process's lifetime.
+ * `not_ready` and `unknown` keep re-probing on the TTL, which is what lets the field converge
+ * on its own once a human applies the pending migrations.
+ */
+export function createSchemaStatusCache(
+  read: SchemaReadinessProbe | undefined,
+  options: PendingJobsCacheOptions = {},
+): () => Promise<SchemaStatus> {
+  return createTtlSingleFlight<SchemaStatus>(
+    (timeoutMs) => readSchemaStatusBounded(read, timeoutMs),
+    "unknown",
+    {
+      timeoutMs: options.timeoutMs ?? STATUS_SCHEMA_TIMEOUT_MS,
+      ttlMs: options.ttlMs ?? STATUS_SCHEMA_CACHE_TTL_MS,
+      now: options.now ?? Date.now,
+      isTerminal: (value) => value === "ready",
+    },
+  );
 }
 
 /**
@@ -572,13 +721,24 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   // most one query per TTL), and only then the bounded, CANCELLABLE read. Best-effort
   // contract unchanged: on a slow or broken DB it degrades to null and STILL answers ok.
   const readCachedPendingJobs = createPendingJobsCache(deps.pendingJobs);
+  // Cloud schema readiness (M-13), behind the SAME three gates as the backlog above. This is a
+  // REPORT, never a gate: the cloud schema is genuinely allowed to lag the shipped code, so a
+  // refuse-to-serve rule here would black out production the moment it deployed. Nothing else
+  // in this app reads the answer — it exists so an operator (and a deploy runbook) can SEE the
+  // lag instead of discovering it as a runtime error inside a paid tool call.
+  const readCachedSchemaStatus = createSchemaStatusCache(deps.schemaReadiness);
   app.get("/status", async (req, res) => {
     // Throttle FIRST: a denied /status costs one in-memory token check and nothing else.
     if (deps.statusThrottle && !deps.statusThrottle.tryConsume(clientIpOf(req))) {
       res.status(429).json({ ok: false, error: "Rate limit exceeded" });
       return;
     }
-    const pendingJobs = await readCachedPendingJobs();
+    // Both signals are already individually bounded, so reading them CONCURRENTLY keeps the
+    // endpoint's worst-case latency at one bound rather than the sum of two.
+    const [pendingJobs, schemaStatus] = await Promise.all([
+      readCachedPendingJobs(),
+      readCachedSchemaStatus(),
+    ]);
     // Fields are picked EXPLICITLY, not spread from metrics.snapshot() (L-02). The snapshot
     // also carries the reaper counters, and those are recorded in the WORKER process — which
     // runs no HTTP listener — while /status is answered by the WEB process, whose counters
@@ -587,7 +747,16 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     // counter from silently acquiring the same shape; the reaper's real heartbeat is the
     // worker's per-sweep log (scripts/monitoring.md §4).
     const { uptimeSeconds, errorsSinceBoot } = metrics.snapshot();
-    res.json({ ok: true, uptimeSeconds, errorsSinceBoot, pendingJobs });
+    // `requires` ships WITH the status for the same L-02 reason the reaper fields were removed:
+    // a bare "ready" is a claim, and a claim that does not say what it measured is the shape of
+    // a green gate that measured nothing.
+    res.json({
+      ok: true,
+      uptimeSeconds,
+      errorsSinceBoot,
+      pendingJobs,
+      schema: { status: schemaStatus, requires: SCHEMA_REQUIREMENT },
+    });
   });
 
   // The MCP POST pipeline, shared VERBATIM by both endpoints below. The ONLY
