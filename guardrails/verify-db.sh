@@ -7,6 +7,17 @@
 # Kept OUT of the fast gate (guardrails/verify.sh stays DB-less and fast). Requires
 # Docker running + the supabase CLI (the pinned repo devDependency bin — same
 # lockfile-controlled version locally and in CI; PATH is only a fallback).
+#
+# KNOWN FALSE ALARM — read this before believing a mass failure.
+# `supabase db reset` recreates the auth container, and Kong can be left pointing at the
+# OLD upstream. Every spec that provisions a user then dies with the same useless message:
+#     admin.createUser failed: {}
+# Dozens of failures, no assertion reached, nothing wrong with the schema or the code.
+# Cure: `docker restart supabase_kong_seogrep`, then re-run. Confirm with
+# `curl -s -o /dev/null -w '%{http_code}' "$SUPABASE_URL/auth/v1/health"` — 502 means Kong,
+# 200 means the failure is real.
+# Recorded because it has now cost two separate sessions an investigation each; the second
+# time it was a fresh reviewer who nearly read 88 failures as a broken migration.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

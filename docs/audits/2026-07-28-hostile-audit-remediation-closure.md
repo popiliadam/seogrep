@@ -981,7 +981,7 @@ Tur 1-2'de kapanan 37 bulgunun kanıt zincirleri §5.1, §11 ve §18'dedir; bura
 | M-17 | FIXED (tur 2) | AES-GCM'de AAD yok | A'nın token'ı B'nin satırından açılıyordu | Fable PASS | §18 | **v3 TEK YÖNLÜ**; deploy sırası mcp→web |
 | M-18 | FIXED (tur 1) | IPv6 elle denylist, sonda `return false` | 300k fuzz | Fable PASS | §5.1 | — |
 | M-19 | FIXED (tur 2) | Job ID'siz ~35 sn keşif | `expected 7 to be <= 4` | Fable PASS | §18 | — |
-| **M-20** | **FIXED** | Analiz penceresi bugünde bitiyor; finalize olmamış günler gerçek sıfır sayılıyor | Eski kodda 36 hayalet-çöküş → yeni kodda **0**; 50.820 senaryoda kalıcı kaçırma 0 | **Opus PASS** | `65bed75` `1bdb892` `c39a71d` `f314c6e` `6e6fef0` | Gerçek gecikme ≥6 güne çıkarsa hayalet geri gelir — doküman artık bunu SINIRLI ifade ediyor |
+| **M-20** | **FIXED** | Analiz penceresi bugünde bitiyor; finalize olmamış günler gerçek sıfır sayılıyor | **Commit'li artefakt:** 84-pencere + 504-senaryo sweep, sınır vakası ve türetilmiş-sınır testi (`apps/mcp`, `6e6fef0`); mutasyonla kanıtlandı — lag 3→2 ve shift'in kaldırılması ayrı ayrı kırmızı. *(Hakem transkriptindeki 36-hayalet ve 50.820-senaryo ölçümleri KOŞAN bir artefakt değildir; imzalı ders 9 gereği kanıt sütununda sayılmaz.)* | **Opus PASS** | `65bed75` `1bdb892` `c39a71d` `f314c6e` `6e6fef0` | Gerçek gecikme ≥6 güne çıkarsa hayalet geri gelir — doküman artık bunu SINIRLI ifade ediyor |
 | M-21 | FIXED (tur 1) | Trial RPC hatası hesabı kredisiz bırakıyor | `ensureTrialGranted` retry | Fable PASS | §5.1 | — |
 | M-22 | FIXED (tur 2) | Rotation cap'i atlıyor | Hakem: 5→6→7→8, tavan yok | Fable PASS | §18 | — |
 | M-23 | FIXED (tur 1) | Waitlist'te yalnız honeypot | Sınır aşımında mock delta = 0 | Fable PASS | §11 | — |
@@ -1027,7 +1027,7 @@ Tüm şeritler ve hakemler kapandıktan SONRA, başka hiçbir iş koşmazken, ş
 | `make verify` | **exit=0** | `CHECK-GUARDS-SELFTEST: PASS (42 cases, 25 weakenings caught)` · `CHECK-RLS: PASS (12 tables)` · `CHECK-APPEND-ONLY: PASS` · `CHECK-LICENSES: PASS (397 >= floor 150)` → `VERIFY: PASS` |
 | `make verify-db` | **exit=0** | 105 (packages/db) + 117 (apps/mcp) = **222 DB testi** (tur başı 195) → `VERIFY-DB: PASS` |
 | `make goals` | **16/16 PASS (0 skip)** · exit=0 | Env AÇIKÇA yüklendi ve koşudan önce doğrulandı: `MCP_SMOKE_URL=SET PROD_URL=SET SUPABASE_URL=SET` (imzalı ders 7) |
-| Full-history gitleaks | **exit=0** | `581 commits scanned` · 3,70 MB · `no leaks found` |
+| Full-history gitleaks | **exit=0** | `581 commits scanned` · 3,70 MB · `no leaks found` *(bu bölümün kendi commit'lerinden önce; whole-branch hakemi 587 commit'te yeniden koştu, yine temiz)* |
 | Generated docs sync | **exit=0** | `19 tool pages in sync, meta + nav synced` |
 | `pnpm audit --prod` | **KIRMIZI — exit=1, 8 zafiyet** | Aşağıdaki dürüstlük notu |
 
@@ -1065,6 +1065,17 @@ Bu deponun geleneği: hakemlerin bulduğu kadar şefin kendi hataları da yazıl
    - **0016 apply SONRASI doğrulama SQL'i ZORUNLU** (farklı-grantor TRUNCATE kalıntısı sessizce sağ kalır).
    - **0020, 0009'a bağımlıdır** (0009'un yarattığı `claim_trial(uuid,bigint)`'i DROP eder, idempotent değil).
    - **`DFS_LIVE` sırası:** 0014 **ve** 0016 apply → deploy → `DFS_LIVE=1`.
+   - **⚠️ MERGE SIRASI — whole-branch hakeminin bulduğu, bu raporun ATLADIĞI kalem.**
+     Merge, `apps/web`'i otomatik deploy eder ve deploy edilen webhook **0018'in
+     `apply_subscription_event` fonksiyonunu çağırır**. Cloud'da 0018 yoksa: purchase yolu
+     ETKİLENMEZ (0007 canlıda mevcut), ama her `subscription.*` olayı `PGRST202` → 500 döner.
+     Paddle ~3 gün retry ettiği ve `processed_at` NULL kaldığı için **0018 o pencere içinde
+     uygulanırsa her şey kendiliğinden iyileşir** (NULL watermark ilk tarihli olayda dolar).
+     **Pencere kaçarsa saklanmış-işlenmemiş olaylar için OTOMATİK yeniden sürücü YOKTUR** —
+     kurtarma runbook'tan elle yapılır.
+     → **0018-0020 cloud-apply'ı, web deploy'u ile AYNI operasyonun parçası sayın; Paddle'ın
+     retry penceresi içinde tamamlayın.** (0020 web açısından sırasız güvenlidir: 2-argümanlı
+     çağrı 5-argümanlı fonksiyona çözülür, hakem ölçtü. 0019 hiçbir ürün yoluna dokunmaz.)
 2. **H-04 — DataForSEO vendor parolası.** Fonlama ve `DFS_LIVE=1` öncesi rotasyon ŞART. Operatör
    bunu daha önce "dormant" gerekçesiyle reddetti; **o gerekçe fonlama anında düşer**. Değer
    istemeyen doğrulama: insan panelden değiştirir, `flyctl secrets list` çıktısındaki **digest**
