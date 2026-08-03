@@ -7,6 +7,7 @@ export * from "./waitlist/resend-store.js";
 export * from "./waitlist/posthog-analytics.js";
 
 export * from "./billing/packages.js";
+export * from "./billing/trial-identity.js";
 export * from "./billing/ledger.js";
 export * from "./billing/paddle-events.js";
 
