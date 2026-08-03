@@ -12,6 +12,7 @@ import { createServiceClient } from "@pseo/db/server";
 import { capturePurchase } from "../../../../lib/analytics";
 import {
   attributionEnforced,
+  attributionOrigin,
   attributionReferenceTime,
   decideTenant,
   readAttributionToken,
@@ -44,7 +45,8 @@ import { resolvePaddleEnvironment } from "../../../../lib/paddle-env";
  * checkout mints a signed attribution token (lib/billing/attribution) and the VERIFIED subject
  * wins here. Grace is the default: a missing or unverifiable token is still accepted and reported,
  * because customers are mid-checkout across every deploy. PADDLE_ATTRIBUTION_ENFORCE turns that
- * into a refusal — see the attribution block below.
+ * into a refusal for a FIRST-PARTY checkout only — a renewal cannot carry a fresh token, so a
+ * stale-but-signed one is graced there. Operator contract: scripts/paddle-smoke.md.
  */
 export const runtime = "nodejs";
 
@@ -89,13 +91,18 @@ function warnSubscription(
 }
 
 /**
- * The ONE shape for "this event's tenant was not proved by a token" (M-05). Same discipline: ids
- * and a reason code only — never the payload, never the token itself (a token is bearer material
- * for one checkout), never the user id. `reason` is the countable field: `absent` is the expected
- * shape of an overlay opened before the token shipped, anything else is an anomaly.
+ * The ONE shape for "something about this event's attribution is worth an operator's eye" (M-05).
+ * Same discipline: ids and a reason code only — never the payload, never the token itself (a token
+ * is bearer material for one checkout), never the user id.
+ *
+ * `reason` is the countable field and the only place the specific lives: `absent` (an overlay from
+ * before the token shipped), `expired` (a renewal, or a customer who took their time), a signature
+ * failure, or `custom_data_user_id_mismatch` — which is the case the message deliberately does not
+ * call "not verified": there the token DID verify and its subject won, and the anomaly is that the
+ * body disagreed with it.
  */
 function warnAttribution(eventId: string, eventType: string, reason: string): void {
-  console.warn("paddle webhook: attribution NOT verified", { eventId, eventType, reason });
+  console.warn("paddle webhook: attribution ANOMALY", { eventId, eventType, reason });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -165,6 +172,12 @@ export async function POST(request: Request): Promise<Response> {
         readAttributionToken(event.data, attributionReferenceTime(event.occurredAt)),
         command.userId,
         attributionEnforced(),
+        // Which side of the judgement this event is on: a renewal / plan change / cancellation
+        // carries the token minted at the ORIGINAL checkout, so under enforcement a STALE (but
+        // still correctly signed) token there is graced instead of refused. Everything unproved —
+        // absent, forged, malformed — is refused on both sides. Both inputs come from the
+        // signature-verified body, so the browser cannot pick the lenient side.
+        attributionOrigin(event.eventType, event.data),
       );
       if (decision.outcome === "refuse") {
         // Enforcement is ON and the token did not verify. Refuse WITHOUT writing state and

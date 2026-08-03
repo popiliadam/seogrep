@@ -22,6 +22,17 @@ import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
  * GRACE: a MISSING token is accepted (and logged). Customers sit mid-checkout across deploys with
  * an overlay built before this shipped; refusing them would cost paying customers their credits.
  * Enforcement is opt-in via PADDLE_ATTRIBUTION_ENFORCE and OFF unless explicitly set.
+ *
+ * WHAT THE TOKEN DOES NOT BIND (accepted residual): the payload is subject + expiry, NOT the
+ * transaction. A token stolen from a live session can therefore attribute the THIEF's own paid
+ * transaction to its subject — but only to its own subject (the subject is inside the signature),
+ * and only inside the TTL on a first-party checkout. Binding a transaction id is impossible here:
+ * the id does not exist yet when the overlay opens. The residual is bounded by session security
+ * plus ATTRIBUTION_TTL_SECONDS, and its worst outcome is credits landing on the victim's account,
+ * not leaving it. Do not "fix" it by widening the TTL — the TTL is the bound.
+ *
+ * The operator contract for PADDLE_ATTRIBUTION_ENFORCE (both states, the two preconditions, the
+ * heal path) lives in scripts/paddle-smoke.md — "Attribution enforcement". Keep them in step.
  */
 
 /** The customData key the overlay carries the token under, next to the existing user_id. */
@@ -85,7 +96,15 @@ export function mintAttributionToken(userId: string, now: Date = new Date()): st
 }
 
 export type AttributionCheck =
+  /** Signature held AND the token is still fresh: `userId` is server-attested authority. */
   | { readonly status: "verified"; readonly userId: string }
+  /**
+   * Signature held, freshness did not. The subject is STILL server-attested — the HMAC covers it —
+   * so this carries the subject where `invalid` cannot: only recency lapsed, not authenticity.
+   * Its own status because that is exactly the distinction enforcement has to be able to draw
+   * (see `decideTenant`), and a union member cannot be forgotten the way an optional field can.
+   */
+  | { readonly status: "expired"; readonly userId: string }
   | { readonly status: "absent" }
   | { readonly status: "invalid"; readonly reason: string };
 
@@ -130,11 +149,13 @@ export function readAttributionToken(eventData: unknown, at: Date): AttributionC
   if (!Number.isSafeInteger(expiresAt)) {
     return { status: "invalid", reason: "malformed_expiry" };
   }
-  if (Math.floor(at.getTime() / 1000) > expiresAt) {
-    return { status: "invalid", reason: "expired" };
-  }
+  // Subject shape BEFORE expiry: `expired` hands the subject back to the caller, so it may only be
+  // reached once the subject is a thing we would have been willing to mint for in the first place.
   if (!UUID_PATTERN.test(subject)) {
     return { status: "invalid", reason: "bad_subject" };
+  }
+  if (Math.floor(at.getTime() / 1000) > expiresAt) {
+    return { status: "expired", userId: subject };
   }
   return { status: "verified", userId: subject };
 }
@@ -158,10 +179,67 @@ export function attributionReferenceTime(occurredAt: string | null, now: Date = 
  * ENFORCEMENT FLAG. OFF unless explicitly set to "1"/"true" — unset, empty, "0", "false" and
  * anything unrecognised all mean grace. Default-off is load-bearing: an EXPIRED token from a real
  * customer who left the overlay open would otherwise cost them the credits they paid for.
+ *
+ * An unrecognised value used to be indistinguishable from an unset one at runtime: an operator who
+ * set `PADDLE_ATTRIBUTION_ENFORCE=yes` got silent grace and no way to tell. It now says so once per
+ * event it is consulted for. The value itself is NOT logged — the fix ("set it to 1, or unset it")
+ * does not depend on knowing it, and this file's standing rule is that env never reaches stdout.
  */
 export function attributionEnforced(): boolean {
   const raw = process.env.PADDLE_ATTRIBUTION_ENFORCE?.trim().toLowerCase();
-  return raw === "1" || raw === "true";
+  if (raw === "1" || raw === "true") {
+    return true;
+  }
+  if (raw !== undefined && raw !== "" && raw !== "0" && raw !== "false") {
+    console.warn(
+      "paddle attribution: PADDLE_ATTRIBUTION_ENFORCE has an unrecognised value — treating it as OFF (grace). Set it to 1 or true to enforce, or unset it.",
+    );
+  }
+  return false;
+}
+
+/**
+ * Where the event came from, for the sole purpose of judging its token. This is NOT a security
+ * boundary by itself — it decides what enforcement is ENTITLED to conclude from a stale token.
+ *
+ *  - `checkout`  — a first-party checkout completion: the overlay was open, our server action
+ *                  minted a token seconds ago, so a token that is absent, forged or stale is a
+ *                  fact about THIS event and enforcement may refuse it.
+ *  - `recurring` — Paddle raised it on its own (a renewal charge, a plan change, a cancellation).
+ *                  No overlay was open, so no fresh token can exist: whatever custom_data carries
+ *                  was written months ago at checkout time. Staleness here is a fact about the
+ *                  CALENDAR, not about the event, and refusing it would refuse every renewal.
+ *
+ * The discriminator is vendor-attested: `eventType` and the transaction's `origin` are both inside
+ * the body the webhook signature already covers, so a browser cannot dress a checkout up as a
+ * renewal. `origin` is a required field on Paddle's transaction notification; anything unreadable
+ * (or the checkout value "web") falls to `checkout`, i.e. to the strict side.
+ *
+ * `api`-origin transactions also read as `recurring`. We never create transactions through the
+ * Paddle API, and one cannot be provoked from a browser — it needs our server API key — so the
+ * only shapes that reach this branch in practice are Paddle's own subscription_* origins.
+ */
+export type AttributionOrigin = "checkout" | "recurring";
+
+/** Paddle's transaction `origin` for a transaction created by the browser checkout overlay. */
+const CHECKOUT_TRANSACTION_ORIGIN = "web";
+
+/** Subscription lifecycle events that can fire arbitrarily long after the checkout that made them. */
+const RECURRING_EVENT_TYPES = new Set(["subscription.updated", "subscription.canceled"]);
+
+export function attributionOrigin(eventType: string, eventData: unknown): AttributionOrigin {
+  if (RECURRING_EVENT_TYPES.has(eventType)) {
+    return "recurring";
+  }
+  // subscription.created is deliberately NOT here: Paddle raises it as the checkout completes, so
+  // its token is seconds old and enforcement can judge it exactly like the transaction beside it.
+  if (eventType !== "transaction.completed") {
+    return "checkout";
+  }
+  const origin = (eventData as { origin?: unknown } | null | undefined)?.origin;
+  return typeof origin === "string" && origin !== "" && origin !== CHECKOUT_TRANSACTION_ORIGIN
+    ? "recurring"
+    : "checkout";
 }
 
 export type TenantDecision =
@@ -171,22 +249,52 @@ export type TenantDecision =
 /**
  * The whole policy, pure and in one place. `signal` is a reason string the caller logs (one line,
  * one channel — the reason is what an operator counts), or null when there is nothing to say.
- *  - verified          -> accept the SIGNED subject; a body id that disagrees is discarded and
- *                         reported (custom_data was edited after checkout started).
- *  - anything else, ON -> refuse; the caller must not write state and must not close the event.
- *  - anything else, OFF-> accept the claim and report why it could not be verified. `absent` is
- *                         the expected shape of every overlay opened before this shipped.
+ *
+ *  - verified              -> accept the SIGNED subject; a body id that disagrees is discarded and
+ *                             reported (custom_data was edited after checkout started).
+ *  - expired               -> the signature held, so the subject is STILL server-attested: accept
+ *                             THAT subject, never the body claim. Refused under enforcement only
+ *                             on a `checkout` origin, where a stale token is a fact about the event.
+ *  - absent / invalid, ON  -> refuse; the caller must not write state and must not close the event.
+ *  - absent / invalid, OFF -> accept the claim and report why it could not be verified. `absent` is
+ *                             the expected shape of every overlay opened before this shipped.
+ *
+ * WHY `expired` IS NOT REFUSED ON A RECURRING EVENT. A renewal charge, a plan change and a
+ * cancellation all carry the token minted at the ORIGINAL checkout — nobody opens an overlay to be
+ * renewed, so a fresh token is not something the operator can wait for, it is something that can
+ * never exist. Refusing them made enforcement structurally unusable: left on past Paddle's ~3-day
+ * retry window it would kill renewal grants and cancellations outright. Accepting a stale-but-
+ * authentic token there costs nothing enforcement was actually buying, because the HMAC still
+ * proves who the subject is; only the replay window lapsed, and a replay window has no meaning for
+ * an event no browser initiated.
+ *
+ * WHAT ENFORCEMENT STILL REFUSES, everywhere including renewals: `absent`, `bad_signature`,
+ * `malformed`, `malformed_expiry`, `bad_subject`, `not_a_string`, `no_signing_key` — i.e. every
+ * shape in which the subject was never proved. Plus `expired` on a `checkout` origin, so the TTL
+ * keeps biting in the one place a fresh token was actually available. A forged first-party checkout
+ * is refused exactly as before.
  */
 export function decideTenant(
   check: AttributionCheck,
   claimedUserId: string,
   enforced: boolean,
+  origin: AttributionOrigin,
 ): TenantDecision {
   if (check.status === "verified") {
     return {
       outcome: "accept",
       userId: check.userId,
       signal: check.userId === claimedUserId ? null : "custom_data_user_id_mismatch",
+    };
+  }
+  if (check.status === "expired") {
+    if (enforced && origin === "checkout") {
+      return { outcome: "refuse", reason: "expired" };
+    }
+    return {
+      outcome: "accept",
+      userId: check.userId, // the SIGNED subject — stale is not the same as unproved
+      signal: check.userId === claimedUserId ? "expired" : "expired_user_id_mismatch",
     };
   }
   const reason = check.status === "absent" ? "absent" : check.reason;
