@@ -71,6 +71,18 @@ const SUBSCRIPTION_EVENT_TYPES = new Set([
   "subscription.canceled",
 ]);
 
+/**
+ * True for exactly the event types this module translates into subscription STATE.
+ *
+ * Exported because the caller has to tell a subscription `record_only` (a plan state change we
+ * declined to apply — worth an operator's attention) from an informational one (an event type we
+ * never handled at all — noise). Keeping the answer here means a fourth subscription type added
+ * to the set above cannot silently fall out of the caller's reporting.
+ */
+export function isSubscriptionEventType(eventType: string): boolean {
+  return SUBSCRIPTION_EVENT_TYPES.has(eventType);
+}
+
 const userIdSchema = z.object({ user_id: z.uuid() });
 
 const itemsSchema = z

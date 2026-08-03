@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CREDIT_PACKAGES, type PackageKey } from "./packages.js";
-import { ledgerCommandFor, type PaddleEventLike } from "./paddle-events.js";
+import {
+  isSubscriptionEventType,
+  ledgerCommandFor,
+  type PaddleEventLike,
+} from "./paddle-events.js";
 
 /**
  * Pure translation tests — no network, no SDK. The route feeds real unmarshalled Paddle
@@ -353,5 +357,24 @@ describe("ledgerCommandFor — other events", () => {
       PRICE_MAP,
     );
     expect(command).toEqual({ kind: "record_only", reason: expect.stringContaining("customer.updated") });
+  });
+});
+
+describe("isSubscriptionEventType", () => {
+  // The route needs to tell a SUBSCRIPTION record_only (a plan state change we declined to
+  // apply — operationally significant) from every other record_only (informational noise).
+  // That knowledge lives here, next to the switch that uses it, so the two cannot drift.
+  it("is true for exactly the three event types ledgerCommandFor treats as subscription state", () => {
+    expect(isSubscriptionEventType("subscription.created")).toBe(true);
+    expect(isSubscriptionEventType("subscription.updated")).toBe(true);
+    expect(isSubscriptionEventType("subscription.canceled")).toBe(true);
+  });
+
+  it("is false for event types that are NOT translated into subscription state", () => {
+    // subscription.paused is deliberately in this list: it is a real Paddle event, but
+    // ledgerCommandFor does not handle it, so it is informational — not a refused apply.
+    for (const eventType of ["transaction.completed", "customer.updated", "subscription.paused"]) {
+      expect(isSubscriptionEventType(eventType)).toBe(false);
+    }
   });
 });
