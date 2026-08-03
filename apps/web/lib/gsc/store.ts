@@ -21,14 +21,19 @@ import type { createServiceClient } from "@pseo/db/server";
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
 /**
- * Hand-written schema slice for the ONE table this module writes, INCLUDING migration
- * 0009's `gsc_property` — the committed @pseo/db generated types still omit that column
- * (apps/mcp/src/db.ts carries the same note for its slice). We cast the service client to
- * this slice for the write rather than edit the out-of-scope generated package; the shape
- * mirrors the generated types so the supabase-js generics resolve.
+ * Hand-written schema slice for the ONE table this module writes. We cast the service client to
+ * this slice for the write rather than depend on the generated package here; the shape mirrors
+ * the generated @pseo/db types (which do carry migration 0009's `gsc_property`) so the
+ * supabase-js generics resolve.
+ *
+ * PostgrestVersion is the stack's MEASURED version (T3), matching what the @pseo/db generator
+ * pins from the running PostgREST. Hand-declared here, it can drift from the generated types
+ * with nothing to catch it — and it had: it said "14.5", a version this stack has never run.
+ * Documentary only: postgrest-js gates on the MAJOR prefix (`V extends "14" + string`), so both
+ * strings unlock exactly the same client methods. Measured, not assumed — see the T3 commit.
  */
 type GscConnectionsDatabase = {
-  __InternalSupabase: { PostgrestVersion: "14.5" };
+  __InternalSupabase: { PostgrestVersion: "14.14" };
   public: {
     Tables: {
       gsc_connections: {

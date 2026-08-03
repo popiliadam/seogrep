@@ -57,15 +57,22 @@ export type JobRow = {
  * `[_ in never]: never` empties) mirrors the generated @pseo/db types so the supabase-js
  * generics resolve; the whole schema is a `type` for the same never-collapse reason as
  * JobRow above.
+ *
+ * PostgrestVersion is the stack's MEASURED version (T3), matching what the @pseo/db generator
+ * pins from the running PostgREST. This slice hand-declares it, so it can drift from the
+ * generated types in a way nothing else catches — and it had: it said "14.5", a version this
+ * stack has never run. Documentary only: postgrest-js gates on the MAJOR prefix
+ * (`V extends "14" + string`), so both strings unlock exactly the same client methods. That
+ * equivalence was measured, not assumed — see the T3 commit message for the probe.
  */
 export type Database = {
   __InternalSupabase: {
-    PostgrestVersion: "14.5";
+    PostgrestVersion: "14.14";
   };
   public: {
     Tables: {
-      // Hashed, revocable personal API keys. last_used_at (migration 0009) is modelled
-      // here; the committed @pseo/db types.ts predates that column.
+      // Hashed, revocable personal API keys, including last_used_at (migration 0009) — which
+      // the generated @pseo/db types now carry too; this slice is narrow, not ahead of them.
       api_keys: {
         Row: {
           id: string;
