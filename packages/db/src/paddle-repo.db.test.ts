@@ -459,6 +459,26 @@ describe("paddle-repo against local Supabase", () => {
  * now does; a partial unique index would instead make the webhook throw on a subscription the
  * customer genuinely paid for. See the migration note in 0018 for the ordering rules that DO
  * apply per subscription.
+ *
+ * WHY A PER-USER UNIQUE ACTIVE-SUBSCRIPTION INDEX WAS REJECTED — the reasoning, recorded here
+ * because it previously lived only in a review report and a future engineer meeting these
+ * absence tests would find no trace of it. Paddle permits several subscriptions per customer, so
+ * the second one is not a bug to be refused; it is a thing the customer bought. The webhook is
+ * the SOLE writer, and it applies events through `apply_subscription_event`, whose conflict
+ * target is `paddle_subscription_id`. `ON CONFLICT (paddle_subscription_id)` cannot arbitrate a
+ * DIFFERENT index, so a per-user unique violation would not be absorbed — it would raise 23505
+ * INSIDE the function, surface as a PostgREST 409, and become a 500 from the route. The route
+ * would then never reach `markProcessed`, so Paddle would retry the event for roughly three days
+ * and give up, leaving a customer who has been charged and has NO subscription row at all. That
+ * is strictly worse than the state the audit found: the audit's complaint is that a user may
+ * show two active subscriptions, which is merely an honest display problem in the app layer.
+ *
+ * The apply-time hazard is empirical, not theoretical: on any database that has merely RUN this
+ * suite the index cannot even be created — `could not create unique index ... Key (user_id) is
+ * duplicated` — because the two specs below deliberately leave duplicate active rows behind. A
+ * future migration that adds the index naively therefore dies at apply time, on the cloud project,
+ * mid-deploy. If the invariant is ever genuinely wanted, it has to arrive WITH an app-layer
+ * decision about which subscription wins and a data cleanup, not as a lone index.
  */
 describe("subscriptions: more than one ACTIVE row per user is legal (M-04)", () => {
   it("two distinct paddle subscriptions for the same user both persist as active", async () => {
