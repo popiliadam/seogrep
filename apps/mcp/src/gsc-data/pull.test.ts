@@ -21,7 +21,10 @@ function fakeApi(): GscApi {
   };
 }
 
-const REFERENCE = new Date("2026-07-17T00:00:00Z");
+// The pull INSTANT, which is GSC_FRESHNESS_LAG_DAYS (3) later than the last day the windows
+// analyze: computeWindows backs off Search Console's unfinalized tail (M-20). Chosen so the
+// windows still land exactly on FIXTURE_WINDOWS — every assertion below is unchanged.
+const REFERENCE = new Date("2026-07-20T00:00:00Z");
 
 describe("runPull", () => {
   it("refreshes once and queries both windows, normalizing each response into its window", async () => {
