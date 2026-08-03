@@ -49,6 +49,7 @@ import {
 import { createServiceClient } from "@pseo/db/server";
 import {
   ATTRIBUTION_CUSTOM_DATA_KEY,
+  ATTRIBUTION_TTL_SECONDS,
   mintAttributionToken,
 } from "../../../../lib/billing/attribution";
 import { POST } from "./route";
@@ -78,6 +79,8 @@ function allLoggedText(): string {
 // Fake, unmistakably-not-real secret. NEVER a real key value in a fixture.
 const SECRET = "test_secret_pdl_ntfset_deadbeef";
 const USER_ID = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
+/** A tenant the attacker does NOT control — the id a forged custom_data would point at (M-05). */
+const VICTIM_ID = "9c8b7a6d-5e4f-4a3b-9c8d-7e6f5a4b3c2d";
 /** Every fixture's occurred_at, so token expiry is pinned to fixture data and not to the clock. */
 const OCCURRED_AT = "2026-07-18T00:00:00Z";
 
@@ -524,6 +527,200 @@ describe("POST /api/paddle/webhook", () => {
       "test_apikey_not_real",
       expect.objectContaining({ environment: "sandbox" }),
     );
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // M-05: custom_data is CLIENT-settable, so custom_data.user_id is a claim, not authority.
+  // ---------------------------------------------------------------------------------------
+
+  it("M-05: the VERIFIED subject wins over a custom_data user id that disagrees", async () => {
+    // The exact attack: a real, paid, correctly-signed Paddle transaction whose custom_data was
+    // edited in the browser to name someone else. The token was minted server-side for the
+    // attacker, so the attacker is who gets credited — the victim's uuid is discarded.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID, // what the browser claims
+          attributionToken: tokenFor(USER_ID), // what the server actually signed
+          transactionId: "txn_mismatch",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_mismatch" }),
+    );
+    expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "custom_data_user_id_mismatch",
+    });
+  });
+
+  it("GRACE (flag OFF, the default): an ABSENT token is still credited, and reported", async () => {
+    // The load-bearing case. Overlays opened before this shipped send no token; refusing them
+    // would take credits from customers who paid while a deploy was rolling.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: null, transactionId: "txn_grace" })),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_grace" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "absent",
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalled(); // grace is not an incident
+  });
+
+  it("GRACE (flag OFF): an INVALID token is still credited, and reported as a security signal", async () => {
+    // A legitimate customer whose token expired in an open overlay must not lose what they paid
+    // for. The signal still fires, with the reason an operator counts.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const expired = tokenFor(USER_ID, "2026-07-17T00:00:00Z"); // TTL ended before occurred_at
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: expired, transactionId: "txn_expired" })),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_expired" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired",
+    });
+  });
+
+  it("GRACE (flag OFF): a token signed with the WRONG key is reported as bad_signature", async () => {
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    vi.stubEnv("PADDLE_WEBHOOK_SECRET", "test_secret_pdl_ntfset_00000000");
+    const foreign = tokenFor(USER_ID);
+    vi.stubEnv("PADDLE_WEBHOOK_SECRET", SECRET);
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: foreign, transactionId: "txn_wrongkey" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "bad_signature",
+    });
+  });
+
+  it("ENFORCED: a forged (unsigned) custom_data user id is REFUSED, never credited", async () => {
+    // The RED case. Today's code credits VICTIM_ID verbatim; with enforcement on nothing is
+    // written, and — critically — the paid event is NOT stamped, so it stays retryable.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID,
+          attributionToken: null,
+          transactionId: "txn_forged",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: "attribution refused" });
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
+    // B-C1 discipline: a refusal must NOT close a paid event.
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      { eventId: expect.any(String), eventType: "transaction.completed", reason: "absent" },
+    );
+  });
+
+  it("ENFORCED: a TAMPERED token (subject swapped for the victim) is refused", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const [version, , expires, signature] = tokenFor(USER_ID).split(".");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID,
+          attributionToken: `${version}.${VICTIM_ID}.${expires}.${signature}`,
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "bad_signature" }),
+    );
+  });
+
+  it("ENFORCED: a VALID token still sails through (enforcement is not a wall for real traffic)", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_ok" })));
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_ok" }),
+    );
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("ENFORCED: a SUBSCRIPTION event with no token writes no subscription state", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(signedRequest(subscriptionEvent({ attributionToken: null })));
+    expect(response.status).toBe(500);
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+  });
+
+  it("a token minted at checkout still verifies when Paddle RETRIES days later", async () => {
+    // Expiry is measured against the event's own occurred_at, not delivery time, so the ~3-day
+    // retry window cannot expire a token that was valid when the customer actually paid.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    vi.setSystemTime(new Date("2026-07-21T00:00:00Z")); // three days after occurred_at
+    try {
+      const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_retry" })));
+      expect(response.status).toBe(200);
+      expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: USER_ID }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("NO attribution log line carries the token, the payload or the tenant id", async () => {
+    const marker = "ctm_PAYLOAD_MARKER_MUST_NOT_BE_LOGGED";
+    const expired = tokenFor(USER_ID, "2026-07-17T00:00:00Z");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    await POST(signedRequest(transactionEvent({ attributionToken: expired })));
+    await POST(signedRequest(subscriptionEvent({ attributionToken: null, customerId: marker })));
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    await POST(signedRequest(transactionEvent({ attributionToken: "v1.junk.1.1" })));
+
+    const logged = allLoggedText();
+    expect(logged).toContain("attribution"); // all three spoke...
+    expect(logged).not.toContain(expired); // ...and none leaked the bearer token,
+    expect(logged).not.toContain(SECRET); // nor the secret it is derived from,
+    expect(logged).not.toContain(USER_ID); // nor the tenant,
+    expect(logged).not.toContain(marker); // nor the body.
+  });
+
+  it("the TTL is a real bound, not an unbounded token", () => {
+    expect(ATTRIBUTION_TTL_SECONDS).toBeGreaterThan(0);
+    expect(ATTRIBUTION_TTL_SECONDS).toBeLessThanOrEqual(24 * 60 * 60);
   });
 
   it("passes NO options object when NEXT_PUBLIC_PADDLE_ENV is unset (SDK default untouched)", async () => {
