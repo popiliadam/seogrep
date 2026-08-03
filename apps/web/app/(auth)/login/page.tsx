@@ -2,7 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthForm } from "../auth-form";
 
-export const metadata: Metadata = { title: "Log in" };
+/**
+ * noindex: a sign-in form is not a search result (audit L-19c) — and site-header.tsx links here
+ * from every page, so crawlers reach it constantly. `follow: true` keeps the links out of the page
+ * (signup, and the header/footer nav) flowing. Set as page metadata rather than a robots.txt
+ * Disallow on purpose: a disallowed URL is never fetched, so the crawler would never see the
+ * noindex and an already-indexed URL could linger in the index.
+ */
+export const metadata: Metadata = { title: "Log in", robots: { index: false, follow: true } };
 
 /**
  * `?error=auth` is the one fixed failure destination /auth/callback redirects to on any

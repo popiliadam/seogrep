@@ -15,7 +15,12 @@ export const metadata: Metadata = {
   openGraph: {
     siteName: SITE_NAME,
     type: "website",
-    url: SITE_URL,
+    // Per-route, for the same reason and by the same mechanism as the canonical above: a static
+    // SITE_URL here was inherited verbatim by every page, so ~40 docs pages, both blog posts and
+    // every marketing page advertised the HOMEPAGE as their og:url while their canonical was
+    // correct (audit L-19b). Shares of /pricing resolved to /. "./" is resolved against
+    // metadataBase + the current route, so each page now declares its own URL.
+    url: "./",
   },
   twitter: { card: "summary" },
 };
