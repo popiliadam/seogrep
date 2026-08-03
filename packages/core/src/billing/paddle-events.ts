@@ -29,6 +29,14 @@ export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 export interface PaddleEventLike {
   readonly eventType: string;
   readonly data: unknown;
+  /**
+   * Paddle's `occurred_at` (the SDK surfaces it as `occurredAt` on every event entity) — WHEN
+   * the event happened, as opposed to when it was delivered. Paddle guarantees delivery, not
+   * order, so this is the only thing that can tell a late-delivered OLD event from a new one.
+   * Nullable at the type level because a malformed body may not carry it; the subscription
+   * path then fails closed rather than pretending to be newest (M-03).
+   */
+  readonly occurredAt: string | null;
 }
 
 export type LedgerCommand =
@@ -48,6 +56,12 @@ export type LedgerCommand =
       readonly plan: PackageKey;
       readonly status: SubscriptionStatus;
       readonly currentPeriodEnd: string | null;
+      /**
+       * The ordering key (validated ISO-8601). Carried on the command so the DB can refuse a
+       * state change that OCCURRED before the one already stored — see migration 0018. A
+       * subscription command never exists without it: an unorderable event becomes record_only.
+       */
+      readonly occurredAt: string;
     }
   | { readonly kind: "record_only"; readonly reason: string };
 
@@ -87,6 +101,13 @@ const subscriptionSchema = z.object({
   customData: userIdSchema.nullish(),
   currentBillingPeriod: z.object({ endsAt: z.string() }).nullish(),
 });
+
+/**
+ * The event's own occurrence timestamp, validated as ISO-8601 with an offset (Paddle sends
+ * RFC 3339 UTC, e.g. 2026-07-18T10:18:47.635628Z). Strict on purpose: an unparseable value must
+ * fail into record_only, never be handed to the DB as a comparable instant.
+ */
+const occurredAtSchema = z.iso.datetime({ offset: true });
 
 function recordOnly(reason: string): LedgerCommand {
   return { kind: "record_only", reason };
@@ -162,10 +183,22 @@ function transactionCommand(
 function subscriptionCommand(
   data: unknown,
   priceMap: Record<string, PackageKey>,
+  occurredAt: string | null,
 ): LedgerCommand {
   const parsed = subscriptionSchema.safeParse(data);
   if (!parsed.success) {
     return recordOnly("subscription: unparseable data");
+  }
+  // M-03 fail-safe. Paddle guarantees delivery, not order, so subscription state is only safe
+  // to write when we can say WHEN it happened. Without a usable occurred_at the event has no
+  // claim to being the newest truth — and an event with no claim must not be allowed to act
+  // like it has one. Fail closed into record_only, exactly like an unknown status or an
+  // unmapped price: the route stores the raw event for audit and stamps it processed.
+  const occurred = occurredAtSchema.safeParse(occurredAt);
+  if (!occurred.success) {
+    return recordOnly(
+      `subscription: missing or invalid occurred_at (${JSON.stringify(occurredAt)}) — an event with no ordering key can never be proven newest`,
+    );
   }
   const userId = parsed.data.customData?.user_id;
   if (!userId) {
@@ -191,6 +224,7 @@ function subscriptionCommand(
     plan,
     status,
     currentPeriodEnd: parsed.data.currentBillingPeriod?.endsAt ?? null,
+    occurredAt: occurred.data,
   };
 }
 
@@ -211,7 +245,7 @@ export function ledgerCommandFor(
     return transactionCommand(event.data, priceMap);
   }
   if (SUBSCRIPTION_EVENT_TYPES.has(event.eventType)) {
-    return subscriptionCommand(event.data, priceMap);
+    return subscriptionCommand(event.data, priceMap, event.occurredAt);
   }
   return recordOnly(`unhandled event type: ${event.eventType}`);
 }

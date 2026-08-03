@@ -16,11 +16,18 @@ const PRICE_MAP: Record<string, PackageKey> = {
   pri_topup_10: "topup_10",
 };
 
+/** Paddle stamps every event with occurred_at; the SDK surfaces it as `occurredAt`. */
+const OCCURRED_AT = "2026-07-18T00:00:00Z";
+
 function txnCompleted(data: unknown): PaddleEventLike {
-  return { eventType: "transaction.completed", data };
+  return { eventType: "transaction.completed", data, occurredAt: OCCURRED_AT };
 }
-function subscriptionEvent(eventType: string, data: unknown): PaddleEventLike {
-  return { eventType, data };
+function subscriptionEvent(
+  eventType: string,
+  data: unknown,
+  occurredAt: string | null = OCCURRED_AT,
+): PaddleEventLike {
+  return { eventType, data, occurredAt };
 }
 
 describe("ledgerCommandFor — transaction.completed", () => {
@@ -223,6 +230,9 @@ describe("ledgerCommandFor — subscription.*", () => {
       plan: "pro",
       status: "active",
       currentPeriodEnd: "2026-08-01T00:00:00Z",
+      // M-03: the ordering key travels WITH the command. Without it the DB cannot tell a
+      // late-delivered older event from a genuinely newer one.
+      occurredAt: OCCURRED_AT,
     });
   });
 
@@ -244,6 +254,52 @@ describe("ledgerCommandFor — subscription.*", () => {
       plan: "starter",
       status: "canceled",
       currentPeriodEnd: null,
+      occurredAt: OCCURRED_AT,
+    });
+  });
+
+  it("record_only when the event carries NO occurred_at (an unorderable event is never state)", () => {
+    // M-03 fail-safe. occurred_at is the only evidence of WHEN an event happened; without it a
+    // late-delivered older event is indistinguishable from a newer one. Fail closed here — the
+    // same way an unknown status / unmapped price already does — rather than let the DB guess.
+    const command = ledgerCommandFor(
+      subscriptionEvent(
+        "subscription.updated",
+        {
+          id: "sub_1",
+          status: "active",
+          items: [{ price: { id: "pri_pro" } }],
+          customData: { user_id: USER_ID },
+          currentBillingPeriod: null,
+        },
+        null,
+      ),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("occurred_at"),
+    });
+  });
+
+  it("record_only when occurred_at is present but not a usable timestamp", () => {
+    const command = ledgerCommandFor(
+      subscriptionEvent(
+        "subscription.updated",
+        {
+          id: "sub_1",
+          status: "active",
+          items: [{ price: { id: "pri_pro" } }],
+          customData: { user_id: USER_ID },
+          currentBillingPeriod: null,
+        },
+        "not-a-timestamp",
+      ),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("occurred_at"),
     });
   });
 
