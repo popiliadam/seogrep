@@ -12,7 +12,7 @@
     "verify:db": "bash guardrails/verify-db.sh",
     "waitlist:smoke": "node scripts/waitlist-smoke.mjs",
     "email:smoke": "node scripts/email-smoke.mjs",
-    "lighthouse": "pnpm --filter @pseo/web build && lhci autorun",
+    "lighthouse": "turbo run build --filter=@pseo/web && lhci autorun",
     "db:start": "supabase start --workdir packages/db",
     "db:reset": "supabase db reset --workdir packages/db",
     "db:types": "pnpm --filter @pseo/db run db:types"
