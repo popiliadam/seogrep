@@ -118,6 +118,15 @@ function transactionEvent(overrides: {
   quantity?: number;
   /** undefined = a valid token for the named user; null = no token at all; string = verbatim. */
   attributionToken?: string | null;
+  /**
+   * Paddle's transaction `origin`, carried verbatim through unmarshal. "web" is the browser
+   * checkout (the default, and the strict side of enforcement); "subscription_recurring" is the
+   * renewal charge Paddle raises on its own, months later, with no overlay open. Real bodies
+   * always carry it — see M-05 follow-up in lib/billing/attribution.
+   */
+  origin?: string;
+  /** The event's own occurred_at: how far after the checkout Paddle raised this event. */
+  occurredAt?: string;
 }): Record<string, unknown> {
   const customData =
     overrides.userId === null
@@ -126,10 +135,11 @@ function transactionEvent(overrides: {
   return {
     event_id: overrides.eventId ?? `evt_${randomUUID()}`,
     event_type: "transaction.completed",
-    occurred_at: OCCURRED_AT,
+    occurred_at: overrides.occurredAt ?? OCCURRED_AT,
     data: {
       id: overrides.transactionId ?? "txn_123",
       status: "completed",
+      origin: overrides.origin ?? "web",
       custom_data: customData,
       items: [
         {
@@ -729,6 +739,164 @@ describe("POST /api/paddle/webhook", () => {
     expect(response.status).toBe(500);
     expect(upsertSubscriptionMock).not.toHaveBeenCalled();
     expect(markProcessedMock).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // M-05 follow-up: enforcement may only judge an event a FRESH token could have reached.
+  // A renewal, a plan change and a cancellation carry the token minted at the ORIGINAL checkout
+  // — no overlay is open, so a fresh one can never exist. These pin that enforcement is a real
+  // steady state (it does not kill recurring revenue) WITHOUT becoming a hole.
+  // -------------------------------------------------------------------------------------------
+
+  /** A month after checkout — every recurring event below is raised this long after the mint. */
+  const A_MONTH_LATER = "2026-08-17T00:00:00Z";
+
+  it("ENFORCED: a RENEWAL charge carrying the original (now stale) token is still credited", async () => {
+    // The case that made the flag unusable: Paddle raises this one on its own, a month later,
+    // with the custom_data it stored at checkout. Refusing it means the customer pays for a month
+    // of credits they never receive, and the event dies once Paddle's ~3-day window closes.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID), // minted at the ORIGINAL checkout, long expired
+          transactionId: "txn_renewal",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_renewal" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired",
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalled(); // graced, not refused
+  });
+
+  it("ENFORCED: a CANCELLATION a month later still applies (a stale token is not an unproved one)", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.canceled",
+          status: "canceled",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID),
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(upsertSubscriptionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, status: "canceled" }),
+    );
+    expect(markProcessedMock).toHaveBeenCalled();
+  });
+
+  it("ENFORCED: the stale token's SIGNED subject still wins over a disagreeing custom_data id", async () => {
+    // Grace on a recurring event must not degrade into trusting the claim: the HMAC still proves
+    // the subject. If it did, a renewal would be attributable by editing custom_data at checkout.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: tokenFor(USER_ID),
+          transactionId: "txn_renewal_mismatch",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_renewal_mismatch" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired_user_id_mismatch",
+    });
+  });
+
+  it("ENFORCED: a renewal with NO token is STILL refused — grace is only for a signed subject", async () => {
+    // The hole this fix must not open. `absent` proves nothing about who paid, whenever it
+    // arrives, so a recurring origin buys it nothing.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: null,
+          transactionId: "txn_renewal_untokenized",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "absent" }),
+    );
+  });
+
+  it("ENFORCED: a FORGED token on a renewal is refused exactly as on a checkout", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const [version, , expires, signature] = tokenFor(USER_ID).split(".");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: `${version}.${VICTIM_ID}.${expires}.${signature}`,
+          transactionId: "txn_renewal_forged",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "bad_signature" }),
+    );
+  });
+
+  it("ENFORCED: an EXPIRED token on a first-party CHECKOUT is still refused (the TTL still bites)", async () => {
+    // The lenient side is reached only by Paddle's own origin values, which live inside the
+    // signature-verified body. A browser checkout is judged on freshness exactly as before.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "web",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID),
+          transactionId: "txn_stale_checkout",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "expired" }),
+    );
   });
 
   it("a token minted at checkout still verifies when Paddle RETRIES days later", async () => {
