@@ -104,8 +104,16 @@ async function lookupBucketKey(): Promise<string> {
 /**
  * List the caller's reports, newest first. MUST be called with the caller's authenticated
  * client: RLS scopes the read to their own rows and the explicit user_id filter is defence in
- * depth. The stored 0009 columns (title) are not in the committed @pseo/db generated types, so
- * the projection is asserted here (the same runtime-column cast list_projects uses).
+ * depth.
+ *
+ * The row shape is pinned below because `client` is the BARE `SupabaseClient` — no `Database`
+ * generic — so PostgREST's response comes back as `any` and nothing would check the `.map()`.
+ * It is NOT pinned because the generated types lack these columns: `packages/db/src/types.ts`
+ * carries all four of `id`, `title`, `created_at`, `public_slug` on `reports.Row`. (That older
+ * claim was wrong, and it is the third copy of it found in this repo.) A plain annotation is
+ * used rather than an `as unknown as` double-assertion so that the day this parameter gains
+ * its `Database` generic, a projection that drifts from the table becomes a compile error
+ * instead of staying silently hidden.
  */
 export async function listReports(client: SupabaseClient, userId: string): Promise<ReportListItem[]> {
   const { data, error } = await client
@@ -117,12 +125,12 @@ export async function listReports(client: SupabaseClient, userId: string): Promi
   if (error) {
     throw new Error(`listReports failed: ${error.message}`);
   }
-  const rows = (data ?? []) as unknown as {
+  const rows: {
     id: string;
     title: string | null;
     created_at: string;
     public_slug: string | null;
-  }[];
+  }[] = data ?? [];
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
