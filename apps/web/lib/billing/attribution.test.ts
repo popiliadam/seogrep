@@ -8,6 +8,7 @@ import {
   ATTRIBUTION_CUSTOM_DATA_KEY,
   ATTRIBUTION_TTL_SECONDS,
   attributionEnforced,
+  attributionOrigin,
   attributionReferenceTime,
   decideTenant,
   mintAttributionToken,
@@ -91,13 +92,22 @@ describe("checkout attribution token (M-05)", () => {
     });
   });
 
-  it("rejects an EXPIRED token", () => {
+  it("reports an EXPIRED token as expired — never verified — but keeps the SIGNED subject", () => {
+    // The signature still held, so the subject is server-attested; only freshness lapsed. Callers
+    // need that distinction: a renewal can only ever carry a stale token (see decideTenant).
     const token = mintAttributionToken(USER_ID, MINTED_AT);
     expect(readAttributionToken(withToken(token), TOO_LATE)).toEqual({
-      status: "invalid",
-      reason: "expired",
+      status: "expired",
+      userId: USER_ID,
     });
   });
+
+  // NOT pinned here, deliberately: "a well-signed token whose subject is not a uuid reads as
+  // bad_subject, not expired". Building one needs the module's unexported HKDF salt/info copied
+  // into this file, and a copy would go stale into a FALSE red (bad_signature) the day either
+  // constant changes. The case is unreachable anyway — mintAttributionToken refuses a non-uuid
+  // subject, and nothing else can produce a signature. The ordering that guarantees it is a
+  // comment at the check itself in attribution.ts.
 
   it("rejects junk shapes without ever reading them as verified", () => {
     for (const junk of ["", "abc", "v1.a.b", "v2.a.b.c", `v1.${USER_ID}.x.y`]) {
@@ -136,8 +146,10 @@ describe("checkout attribution token (M-05)", () => {
 });
 
 describe("PADDLE_ATTRIBUTION_ENFORCE", () => {
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   afterEach(() => {
     vi.unstubAllEnvs();
+    warnSpy.mockClear();
   });
 
   it("is OFF unless explicitly set to 1/true — everything else means grace", () => {
@@ -150,13 +162,77 @@ describe("PADDLE_ATTRIBUTION_ENFORCE", () => {
       expect(attributionEnforced()).toBe(true);
     }
   });
+
+  it("SAYS SO when the value is unrecognised (a typo used to be silent grace)", () => {
+    for (const value of ["yes", "on", "enforce", "0.5"]) {
+      warnSpy.mockClear();
+      vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", value);
+      expect(attributionEnforced()).toBe(false);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0]?.[0]).toContain("PADDLE_ATTRIBUTION_ENFORCE");
+    }
+  });
+
+  it("never echoes the value itself into the log (env does not reach stdout here)", () => {
+    const marker = "ENFORCE_VALUE_MUST_NOT_BE_LOGGED";
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", marker);
+    expect(attributionEnforced()).toBe(false);
+    const logged = warnSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+    expect(logged).not.toContain(marker.toLowerCase());
+  });
+
+  it("stays QUIET for every value that is a deliberate setting (on, off or unset)", () => {
+    for (const value of [undefined, "", " ", "0", "false", "1", "true", "TRUE", " true "]) {
+      vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", value);
+      attributionEnforced();
+    }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("attributionOrigin", () => {
+  it("a browser checkout transaction is `checkout` — the strict side", () => {
+    expect(attributionOrigin("transaction.completed", { origin: "web" })).toBe("checkout");
+  });
+
+  it("every Paddle-raised transaction origin is `recurring`", () => {
+    for (const origin of [
+      "subscription_recurring",
+      "subscription_charge",
+      "subscription_update",
+      "subscription_payment_method_change",
+      "api",
+    ]) {
+      expect(attributionOrigin("transaction.completed", { origin })).toBe("recurring");
+    }
+  });
+
+  it("an unreadable or missing origin falls to `checkout`, never to grace", () => {
+    for (const data of [{}, { origin: "" }, { origin: 42 }, null, undefined]) {
+      expect(attributionOrigin("transaction.completed", data)).toBe("checkout");
+    }
+  });
+
+  it("subscription.updated / .canceled are `recurring`; .created is not", () => {
+    expect(attributionOrigin("subscription.updated", {})).toBe("recurring");
+    expect(attributionOrigin("subscription.canceled", {})).toBe("recurring");
+    // Paddle raises `created` as the checkout completes, so its token is seconds old.
+    expect(attributionOrigin("subscription.created", {})).toBe("checkout");
+  });
+
+  it("an unknown event type falls to `checkout` (fail toward the judgeable side)", () => {
+    expect(attributionOrigin("customer.updated", { origin: "subscription_recurring" })).toBe(
+      "checkout",
+    );
+  });
 });
 
 describe("decideTenant", () => {
   const verified = { status: "verified", userId: USER_ID } as const;
+  const expired = { status: "expired", userId: USER_ID } as const;
 
   it("uses the SIGNED subject, not the body claim, and reports the disagreement", () => {
-    expect(decideTenant(verified, VICTIM_ID, false)).toEqual({
+    expect(decideTenant(verified, VICTIM_ID, false, "checkout")).toEqual({
       outcome: "accept",
       userId: USER_ID,
       signal: "custom_data_user_id_mismatch",
@@ -164,7 +240,7 @@ describe("decideTenant", () => {
   });
 
   it("stays silent when the signed subject and the body agree", () => {
-    expect(decideTenant(verified, USER_ID, true)).toEqual({
+    expect(decideTenant(verified, USER_ID, true, "checkout")).toEqual({
       outcome: "accept",
       userId: USER_ID,
       signal: null,
@@ -172,12 +248,12 @@ describe("decideTenant", () => {
   });
 
   it("GRACE (default): absent and invalid are both accepted, and both reported", () => {
-    expect(decideTenant({ status: "absent" }, USER_ID, false)).toEqual({
+    expect(decideTenant({ status: "absent" }, USER_ID, false, "checkout")).toEqual({
       outcome: "accept",
       userId: USER_ID,
       signal: "absent",
     });
-    expect(decideTenant({ status: "invalid", reason: "expired" }, USER_ID, false)).toEqual({
+    expect(decideTenant(expired, USER_ID, false, "checkout")).toEqual({
       outcome: "accept",
       userId: USER_ID,
       signal: "expired",
@@ -185,13 +261,48 @@ describe("decideTenant", () => {
   });
 
   it("ENFORCED: neither absent nor invalid can name a tenant", () => {
-    expect(decideTenant({ status: "absent" }, USER_ID, true)).toEqual({
+    for (const origin of ["checkout", "recurring"] as const) {
+      expect(decideTenant({ status: "absent" }, USER_ID, true, origin)).toEqual({
+        outcome: "refuse",
+        reason: "absent",
+      });
+      expect(
+        decideTenant({ status: "invalid", reason: "bad_signature" }, VICTIM_ID, true, origin),
+      ).toEqual({ outcome: "refuse", reason: "bad_signature" });
+    }
+  });
+
+  it("ENFORCED: an expired token on a CHECKOUT is refused — the TTL still bites where it can", () => {
+    expect(decideTenant(expired, USER_ID, true, "checkout")).toEqual({
       outcome: "refuse",
-      reason: "absent",
+      reason: "expired",
     });
-    expect(decideTenant({ status: "invalid", reason: "bad_signature" }, VICTIM_ID, true)).toEqual({
-      outcome: "refuse",
-      reason: "bad_signature",
+  });
+
+  it("ENFORCED: an expired token on a RECURRING event is graced, not refused", () => {
+    // A renewal / plan change / cancellation carries the token minted at the ORIGINAL checkout.
+    // A fresh one there is not something an operator can wait for — it can never exist. Without
+    // this, enforcement kills every renewal grant and every cancellation the moment Paddle's
+    // ~3-day retry window closes, which is what made the flag unusable as a steady state.
+    expect(decideTenant(expired, USER_ID, true, "recurring")).toEqual({
+      outcome: "accept",
+      userId: USER_ID,
+      signal: "expired",
     });
+  });
+
+  it("an expired token still names the SIGNED subject, never the body claim", () => {
+    // Stale is not the same as unproved: the HMAC covered the subject, so it is still authority.
+    // If this ever returned the claim, a renewal would be attributable by editing custom_data.
+    for (const [enforced, origin] of [
+      [false, "checkout"],
+      [true, "recurring"],
+    ] as const) {
+      expect(decideTenant(expired, VICTIM_ID, enforced, origin)).toEqual({
+        outcome: "accept",
+        userId: USER_ID,
+        signal: "expired_user_id_mismatch",
+      });
+    }
   });
 });
