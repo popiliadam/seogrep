@@ -56,6 +56,29 @@ async function purchaseRows(ref: string): Promise<Array<{ delta: number; user_id
   return data ?? [];
 }
 
+/** The single subscriptions row for a paddle subscription id, read service-side (RLS bypass). */
+async function subscriptionRow(subId: string): Promise<{
+  plan: string;
+  status: string;
+  current_period_end: string | null;
+  occurred_at: string | null;
+}> {
+  const { data, error } = await service
+    .from("subscriptions")
+    .select("plan, status, current_period_end, occurred_at")
+    .eq("paddle_subscription_id", subId);
+  if (error) throw new Error(`subscriptionRow query failed: ${error.message}`);
+  if (data?.length !== 1) {
+    throw new Error(`expected exactly one subscriptions row for ${subId}, got ${data?.length ?? 0}`);
+  }
+  return data[0];
+}
+
+/** Compare a timestamptz column as an INSTANT, not as the DB's text formatting. */
+function instant(value: string | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
+}
+
 beforeAll(async () => {
   const { error } = await service.from("paddle_events").select("event_id").limit(1);
   if (error) {
@@ -194,6 +217,12 @@ describe("paddle-repo against local Supabase", () => {
     expect(await purchaseRows(ref)).toHaveLength(0);
   });
 
+  // CONTRACT REWRITTEN (audit M-03). This test previously proved the UNCONDITIONAL overwrite:
+  // it applied two undated events and asserted the second one always won. That property was the
+  // bug — with no ordering key, "second delivered" was treated as "newer". The test is kept (the
+  // no-duplicate-row guarantee it also pinned is still true and still asserted) but its ordering
+  // contract is now explicit: the second event wins BECAUSE it occurred later, not because it
+  // arrived later.
   it("upsertSubscription is idempotent on paddle_subscription_id (update in place, no duplicate)", async () => {
     const userId = await makeUserId();
     const subId = `sub_${randomUUID()}`;
@@ -203,6 +232,7 @@ describe("paddle-repo against local Supabase", () => {
       plan: "starter",
       status: "trialing",
       currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: "2026-07-01T00:00:00.000Z",
     });
     await upsertSubscription(service, {
       userId,
@@ -210,6 +240,7 @@ describe("paddle-repo against local Supabase", () => {
       plan: "starter",
       status: "active",
       currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T00:00:00.000Z",
     });
 
     const { data } = await service
@@ -222,5 +253,200 @@ describe("paddle-repo against local Supabase", () => {
     expect(new Date(data?.[0]?.current_period_end as string).toISOString()).toBe(
       "2026-09-01T00:00:00.000Z",
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // M-03: subscription event ORDERING. Paddle does not guarantee delivery order and a
+  // redelivery of an older event carries a DIFFERENT event_id, so the event_id idempotency
+  // gate above cannot stop it. Ordering is by the event's own occurred_at, decided inside
+  // one atomic INSERT ... ON CONFLICT DO UPDATE ... WHERE (migration 0018) — a read-then-write
+  // in TypeScript would lose the race it exists to prevent.
+  // -------------------------------------------------------------------------
+
+  it("a late-arriving OLDER event does NOT resurrect a canceled subscription", async () => {
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    // Newest truth: the customer cancelled at 12:00.
+    const cancel = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "pro",
+      status: "canceled",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T12:00:00.000Z",
+    });
+    // A subscription.updated that OCCURRED at 11:00 is delivered AFTER the cancel (retry,
+    // queue reorder, Paddle backlog). Its event_id is different, so idempotency lets it through.
+    const stale = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T11:00:00.000Z",
+    });
+
+    expect(cancel).toBe(true);
+    expect(stale).toBe(false); // rejected as stale, not applied
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled"); // NOT resurrected
+    expect(row.plan).toBe("pro"); // plan not rolled back
+    expect(instant(row.current_period_end)).toBe("2026-09-01T00:00:00.000Z"); // period not rolled back
+    expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z"); // watermark unmoved
+  });
+
+  it("the normal FORWARD path still applies: older active, then newer canceled -> canceled", async () => {
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    const first = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T11:00:00.000Z",
+    });
+    const second = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "canceled",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T12:00:00.000Z",
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled");
+    expect(instant(row.current_period_end)).toBe("2026-09-01T00:00:00.000Z");
+    expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z");
+  });
+
+  it("an EQUAL occurred_at is a tie and never overwrites (strictly-newer wins)", async () => {
+    // Deliberate choice: only a STRICTLY newer event may overwrite. The overwhelmingly common
+    // tie is the same event redelivered — identical occurred_at, identical content — so
+    // ignoring it is a true no-op and makes the operation idempotent. Two genuinely distinct
+    // events stamped at the same instant carry no evidence of which is newer, so we keep what
+    // is already stored rather than let arrival order decide.
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    const at = "2026-08-01T12:00:00.000Z";
+    const first = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "pro",
+      status: "canceled",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: at,
+    });
+    const tie = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: at,
+    });
+
+    expect(first).toBe(true);
+    expect(tie).toBe(false);
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled");
+    expect(row.plan).toBe("pro");
+  });
+
+  it("a MISSING occurred_at may create state but may NEVER overwrite it (fail-safe)", async () => {
+    // An event with no usable ordering key has no claim to being newest, so it must not be
+    // treated as newest. It may still INSERT — a first-ever row is better than no state, and it
+    // lands with occurred_at NULL, i.e. "unordered" — but it can never UPDATE an existing row.
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    const created = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "pro",
+      status: "canceled",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T12:00:00.000Z",
+    });
+    const undated = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: null,
+    });
+
+    expect(created).toBe(true);
+    expect(undated).toBe(false); // an undated event never wins over stored state
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled");
+    expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z");
+  });
+
+  it("an UNORDERED stored row (occurred_at NULL) is recoverable by the next dated event", async () => {
+    // The other half of the fail-safe: rows that predate this migration (backfilled NULL) and
+    // rows created by an undated event must not be frozen forever. NULL stored = "unknown",
+    // so any dated event takes over and installs the watermark.
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    const undatedInsert = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "starter",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      occurredAt: null,
+    });
+    expect(undatedInsert).toBe(true); // created the row
+    expect(await subscriptionRow(subId)).toMatchObject({ status: "active", occurred_at: null });
+
+    const dated = await upsertSubscription(service, {
+      userId,
+      paddleSubscriptionId: subId,
+      plan: "pro",
+      status: "canceled",
+      currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+      occurredAt: "2026-08-01T12:00:00.000Z",
+    });
+
+    expect(dated).toBe(true);
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled");
+    expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z");
+  });
+
+  it("two CONCURRENT out-of-order deliveries still leave the NEWER state (atomic, not read-then-write)", async () => {
+    // The reason ordering lives in SQL and not in TypeScript: a read-then-write would let both
+    // deliveries read "no row / older watermark" and both write, with the loser landing last.
+    // ON CONFLICT DO UPDATE ... WHERE resolves this inside one statement.
+    const userId = await makeUserId();
+    const subId = `sub_${randomUUID()}`;
+    const results = await Promise.all([
+      upsertSubscription(service, {
+        userId,
+        paddleSubscriptionId: subId,
+        plan: "pro",
+        status: "canceled",
+        currentPeriodEnd: "2026-09-01T00:00:00.000Z",
+        occurredAt: "2026-08-01T12:00:00.000Z",
+      }),
+      upsertSubscription(service, {
+        userId,
+        paddleSubscriptionId: subId,
+        plan: "starter",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        occurredAt: "2026-08-01T11:00:00.000Z",
+      }),
+    ]);
+
+    // Whichever order they hit the DB, the newer event's state is what survives.
+    expect(results.filter(Boolean).length).toBeGreaterThanOrEqual(1);
+    const row = await subscriptionRow(subId);
+    expect(row.status).toBe("canceled");
+    expect(instant(row.occurred_at)).toBe("2026-08-01T12:00:00.000Z");
   });
 });
