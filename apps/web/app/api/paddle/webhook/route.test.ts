@@ -157,6 +157,8 @@ function subscriptionEvent(overrides: {
   customerId?: string;
   /** undefined = a valid token for USER_ID; null = no token at all; string = verbatim. */
   attributionToken?: string | null;
+  /** What the BROWSER claims custom_data.user_id is — a claim, never authority (M-05). */
+  userId?: string;
 }): Record<string, unknown> {
   const occurredAt = overrides.occurredAt ?? OCCURRED_AT;
   return {
@@ -172,7 +174,11 @@ function subscriptionEvent(overrides: {
       collection_mode: "automatic",
       billing_cycle: { interval: "month", frequency: 1 },
       current_billing_period: { starts_at: "2026-07-01T00:00:00Z", ends_at: "2026-08-01T00:00:00Z" },
-      custom_data: customDataFor(USER_ID, overrides.attributionToken, occurredAt),
+      custom_data: customDataFor(
+        overrides.userId ?? USER_ID,
+        overrides.attributionToken,
+        occurredAt,
+      ),
       items: [{ price: { id: overrides.priceId ?? "pri_pro" } }],
     },
   };
@@ -553,12 +559,54 @@ describe("POST /api/paddle/webhook", () => {
       expect.objectContaining({ userId: USER_ID, ref: "txn_mismatch" }),
     );
     expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
-    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
       eventId: expect.any(String),
       eventType: "transaction.completed",
       reason: "custom_data_user_id_mismatch",
     });
   });
+
+  it("M-05: the VERIFIED subject wins on the SUBSCRIPTION path too, not just on purchases", async () => {
+    // The purchase path above has always been pinned by its own mismatch test; subscription state
+    // had none, so `upsertSubscription({ userId: command.userId, … })` — the body CLAIM, the exact
+    // regression M-05 exists to prevent — passed the whole route suite. Same attack, other side of
+    // the switch: a real, signed subscription event whose custom_data was edited to name someone
+    // else must write the SIGNED subject's row, never the victim's.
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.created",
+          subscriptionId: "sub_mismatch",
+          userId: VICTIM_ID, // what the browser claims
+          attributionToken: tokenFor(USER_ID), // what the server actually signed
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(upsertSubscriptionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, paddleSubscriptionId: "sub_mismatch" }),
+    );
+    // and the victim's uuid reached no writer at all.
+    expect(upsertSubscriptionMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: VICTIM_ID }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "subscription.created",
+      reason: "custom_data_user_id_mismatch",
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // LOAD-BEARING, DO NOT "CLEAN UP". The three GRACE tests below are the only route-level guard
+  // of the grace guarantee — that the default configuration can never cost a paying customer
+  // their credits. Every other fixture in this file now carries a token that verifies, so if
+  // these three go, a change that made refusal the default would ship green. They look redundant
+  // with the enforcement tests on purpose: they pin the OTHER half of the flag.
+  // -------------------------------------------------------------------------------------------
 
   it("GRACE (flag OFF, the default): an ABSENT token is still credited, and reported", async () => {
     // The load-bearing case. Overlays opened before this shipped send no token; refusing them
@@ -572,7 +620,7 @@ describe("POST /api/paddle/webhook", () => {
       expect.anything(),
       expect.objectContaining({ userId: USER_ID, ref: "txn_grace" }),
     );
-    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
       eventId: expect.any(String),
       eventType: "transaction.completed",
       reason: "absent",
@@ -593,7 +641,7 @@ describe("POST /api/paddle/webhook", () => {
       expect.anything(),
       expect.objectContaining({ userId: USER_ID, ref: "txn_expired" }),
     );
-    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
       eventId: expect.any(String),
       eventType: "transaction.completed",
       reason: "expired",
@@ -609,7 +657,7 @@ describe("POST /api/paddle/webhook", () => {
       signedRequest(transactionEvent({ attributionToken: foreign, transactionId: "txn_wrongkey" })),
     );
     expect(response.status).toBe(200);
-    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution NOT verified", {
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
       eventId: expect.any(String),
       eventType: "transaction.completed",
       reason: "bad_signature",
