@@ -1,0 +1,31 @@
+{
+  "MIT": [
+    { "name": "next", "versions": ["0.0.0"], "license": "MIT" }
+  ],
+  "LGPL-3.0-or-later": [
+    { "name": "@img/sharp-libvips-darwin-arm64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-darwin-x64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-arm", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-arm64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-ppc64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-riscv64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-s390x", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linux-x64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linuxmusl-arm64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" },
+    { "name": "@img/sharp-libvips-linuxmusl-x64", "versions": ["0.0.0"], "license": "LGPL-3.0-or-later" }
+  ],
+  "MPL-2.0": [
+    { "name": "lightningcss", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-android-arm64", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-darwin-arm64", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-darwin-x64", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-freebsd-x64", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-linux-arm-gnueabihf", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-linux-arm64-gnu", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-linux-arm64-musl", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-linux-x64-gnu", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-linux-x64-musl", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-win32-arm64-msvc", "versions": ["0.0.0"], "license": "MPL-2.0" },
+    { "name": "lightningcss-win32-x64-msvc", "versions": ["0.0.0"], "license": "MPL-2.0" }
+  ]
+}

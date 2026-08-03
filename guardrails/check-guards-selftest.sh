@@ -65,6 +65,11 @@ weakened-rls-dq-data-quote-pairs-ident
 # weakening it was pointed at. For every leak fixture the finding text is pinned here, so
 # an accidental red counts as a FAIL. Empty = colour-only assertion (the older fixtures).
 # A fixture may pin SEVERAL findings, one per line; every one of them must appear.
+#
+# GREEN cases are pinned here too, and not decoratively: "a green gate reports WHAT it
+# excepted" is check-licenses.sh's headline property and signed lesson 7, and colour-only
+# assertions could not see the exception printout being deleted — a referee mutation that
+# survived. Pinning an exception line per green licence case is what kills it.
 expected_finding() {
   case "$1" in
     weakened-append-revoke-grant-option)
@@ -100,6 +105,26 @@ expected_finding() {
                       'nested-and@3.0.0 - ((MIT OR Apache-2.0) AND GPL-3.0-only)' ;;
     licenses-exception-drift)
       printf '%s\n%s' 'argparse@2.0.1 - GPL-3.0-only' 'lightningcss-linux-x64-gnu@1.32.0 - GPL-3.0-only' ;;
+    licenses-empty|licenses-below-floor)
+      printf '%s' 'the gate measured nothing meaningful and must not report PASS' ;;
+    # Every name here is one the glob matcher accepts once its ^/$ anchors are dropped, and
+    # the first is also an UNSCOPED-prefix smuggle: lightningcss-* is a namespace anyone can
+    # publish into, so the platform token in the exception globs is what rejects it.
+    licenses-glob-smuggle)
+      printf '%s\n%s\n%s\n%s' 'lightningcss-totally-unrelated-attacker-pkg@9.9.9 - MPL-2.0' \
+                              '@evil/lightningcss-linux-x64@9.9.9 - MPL-2.0' \
+                              'evil-lightningcss-linux-x64@9.9.9 - MPL-2.0' \
+                              '@img/sharp-libvips-attacker-pkg@9.9.9 - LGPL-3.0-or-later' ;;
+    # GREEN content pins — see the note above expected_finding.
+    licenses-healthy-darwin)
+      printf '%s\n%s' 'exception tslib@2.8.1 (0BSD)' \
+                      'exception lightningcss-darwin-arm64@1.32.0 (MPL-2.0)' ;;
+    licenses-healthy-linux)
+      printf '%s\n%s' 'exception @img/sharp-libvips-linux-x64@1.2.4 (LGPL-3.0-or-later)' \
+                      'exception lightningcss-linux-x64-gnu@1.32.0 (MPL-2.0)' ;;
+    licenses-platform-variants)
+      printf '%s\n%s' 'exception @img/sharp-libvips-linuxmusl-x64@0.0.0 (LGPL-3.0-or-later)' \
+                      'exception lightningcss-win32-x64-msvc@0.0.0 (MPL-2.0)' ;;
     *) printf '' ;;
   esac
 }
@@ -180,13 +205,49 @@ assert "healthy" check-append-only.sh "$healthy_dir" green
 #     positive OR side ((MIT OR CC0-1.0)); these two are the negative space of that reader;
 #   * exception-drift - an exception is <name>+<licence>, not a blanket pass for a name: the
 #     excepted argparse/lightningcss relicensed to GPL-3.0-only must redden.
+#   * platform-variants — EVERY @img/sharp-libvips-* and lightningcss-* name in
+#     pnpm-lock.yaml, generated from it rather than hand-typed. The exception globs carry a
+#     platform token to close an unscoped-namespace hole, and this is the proof that the
+#     narrowing did not trade that hole for a red CI on some arch;
+#   * empty / below-floor — a gate that measures nothing must not report PASS (signed lesson
+#     6). `{}` trips the snapshot floor of 1; LICENSES_MIN drives the same comparison the live
+#     run makes against LIVE_MIN_PACKAGES, which no fixture can reach;
+#   * glob-smuggle — names that a matcher without ^/$ anchors would accept, plus the unscoped
+#     lightningcss-<anything> smuggle the platform token now rejects.
 LIC="$FIXTURES/licenses"
-assert "licenses-healthy-darwin"  check-licenses.sh "$LIC/healthy-darwin.json"     green
-assert "licenses-healthy-linux"   check-licenses.sh "$LIC/healthy-linux.json"      green
-assert "licenses-copyleft"        check-licenses.sh "$LIC/bad-copyleft.json"       red
-assert "licenses-or-all-denied"   check-licenses.sh "$LIC/bad-or-all-denied.json"  red
-assert "licenses-and-mixed"       check-licenses.sh "$LIC/bad-and-mixed.json"      red
-assert "licenses-exception-drift" check-licenses.sh "$LIC/bad-exception-drift.json" red
+assert "licenses-healthy-darwin"    check-licenses.sh "$LIC/healthy-darwin.json"     green
+assert "licenses-healthy-linux"     check-licenses.sh "$LIC/healthy-linux.json"      green
+assert "licenses-platform-variants" check-licenses.sh "$LIC/platform-variants.json"  green
+assert "licenses-copyleft"          check-licenses.sh "$LIC/bad-copyleft.json"       red
+assert "licenses-or-all-denied"     check-licenses.sh "$LIC/bad-or-all-denied.json"  red
+assert "licenses-and-mixed"         check-licenses.sh "$LIC/bad-and-mixed.json"      red
+assert "licenses-exception-drift"   check-licenses.sh "$LIC/bad-exception-drift.json" red
+assert "licenses-glob-smuggle"      check-licenses.sh "$LIC/bad-glob-smuggle.json"   red
+assert "licenses-empty"             check-licenses.sh "$LIC/bad-empty.json"          red
+LICENSES_MIN=100 \
+assert "licenses-below-floor"       check-licenses.sh "$LIC/healthy-darwin.json"     red
+
+# Retiring an exception by simply WIDENING the allowlist kept the self-test green while the
+# exception printout silently emptied — the policy eroding with no signal. contract.md's set is
+# therefore pinned HERE as well: the two must agree, and disagreement is a FAIL that points at
+# contract.md, which is the human's text authority, not at the gate.
+POLICY_SET="Apache-2.0 BSD-2-Clause BSD-3-Clause ISC MIT"
+gate_set="$(awk -v q="'" '
+  $0 == "ALLOWLIST=" q { f = 1; next }
+  f && $0 == q { exit }
+  f && NF { print }
+' guardrails/check-licenses.sh | sort | tr '\n' ' ')"
+gate_set="${gate_set% }"
+cases=$((cases + 1))
+if [ "$gate_set" = "$POLICY_SET" ]; then
+  printf 'selftest: ok   %-44s %-22s -> %s\n' "licenses-allowlist-pin" "check-licenses.sh" "PINNED"
+else
+  printf 'selftest: FAIL %-44s %-22s -> allowlist drifted from the contract.md policy set\n' \
+    "licenses-allowlist-pin" "check-licenses.sh"
+  printf '               | gate:        [%s]\n' "$gate_set"
+  printf '               | contract.md: [%s]\n' "$POLICY_SET"
+  bad=$((bad + 1))
+fi
 
 found=0
 for d in "$FIXTURES"/weakened-*/; do
