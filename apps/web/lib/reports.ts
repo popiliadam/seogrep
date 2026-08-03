@@ -131,6 +131,50 @@ export async function listReports(client: SupabaseClient, userId: string): Promi
   }));
 }
 
+/** The tenant coordinates of ONE report. A report is addressed by (user, report id) — never id alone. */
+export interface ReportRef {
+  readonly userId: string;
+  readonly reportId: string;
+}
+
+/**
+ * Revoke a report's public link (L-13): null its `public_slug` so /r/<slug> resolves to nothing
+ * and the page 404s. Returns whether a row was actually updated, so the caller can answer an
+ * unknown / foreign id the same opaque way it answers a missing one.
+ *
+ * REVOKE ONLY — the row, its html and its title stay. Nothing here deletes a report, and the
+ * UI must not promise that it does. Revoking twice is a no-op that still reports success: the
+ * slug is already null and the link already dead.
+ *
+ * The slug is NOT rotated, it is dropped. A future generate_report mints a fresh 8-byte slug of
+ * its own, so a revoked link is never re-issued to a later reader.
+ *
+ * Takes effect IMMEDIATELY: `fetchPublicReportBySlug` never caches a hit (see the flood-control
+ * note above), and a NULL public_slug cannot match any non-empty slug param, so the next public
+ * request misses. Only misses are cached, so at worst the dead link 404s a minute sooner.
+ *
+ * TENANT FILTER, NOT RLS. This runs the SERVICE-ROLE client, which is `rolbypassrls` — FORCE ROW
+ * LEVEL SECURITY does not constrain it either. RLS therefore cannot save a missing filter here:
+ * the `user_id` predicate riding on the UPDATE **is** the tenant guard (constitution NEVER #4),
+ * exactly as in the api-keys and gsc_connections service-role paths. Its removal is not a style
+ * regression, it is a cross-tenant write — reports.test.ts fails if it goes.
+ *
+ * UPDATE is already granted to service_role (migration 0006), so this needs no new grant and no
+ * migration.
+ */
+export async function revokeReportLink(ref: ReportRef): Promise<boolean> {
+  const { data, error } = await createServiceClient()
+    .from("reports")
+    .update({ public_slug: null })
+    .eq("user_id", ref.userId)
+    .eq("id", ref.reportId)
+    .select("id");
+  if (error) {
+    throw new Error(`revokeReportLink failed: ${error.message}`);
+  }
+  return ((data ?? []) as unknown as { id: string }[]).length > 0;
+}
+
 /**
  * Resolve one report by its public slug for the public page, or null when the slug matches
  * nothing OR the matched row has no rendered html. Uses the service-role client (deliberate,

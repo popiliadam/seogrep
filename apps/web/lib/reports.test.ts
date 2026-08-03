@@ -22,7 +22,7 @@ vi.mock("next/headers", () => ({
   },
 }));
 
-import { fetchPublicReportBySlug, listReports } from "./reports";
+import { fetchPublicReportBySlug, listReports, revokeReportLink } from "./reports";
 
 beforeEach(() => {
   clientIp = null;
@@ -74,6 +74,69 @@ function singleServiceClient(result: QueryResult): { calls: Record<string, unkno
     },
   });
   return { calls };
+}
+
+/** One row of the fake `reports` table below. */
+interface ReportRow {
+  id: string;
+  user_id: string;
+  title: string | null;
+  html: string | null;
+  public_slug: string | null;
+}
+type Filter = { column: string; value: unknown };
+
+/** Rows the fake table currently holds — inspected by the revoke specs after each statement. */
+let reportRows: ReportRow[] = [];
+
+/** A statement reaches a row only when EVERY filter it carried matches — like PostgREST. */
+function matchesRow(row: ReportRow, filters: Filter[]): boolean {
+  return filters.every((f) => (row as unknown as Record<string, unknown>)[f.column] === f.value);
+}
+
+/**
+ * A service client backed by REAL rows rather than a canned answer. lib/reports runs unmocked
+ * against it, so the tenant filter is proved on the ACTUAL statement: drop `.eq("user_id", …)`
+ * from the UPDATE and the write reaches another user's row, which the isolation specs below
+ * catch. That matters here more than anywhere — service_role is `rolbypassrls`, so RLS (even
+ * FORCE ROW LEVEL SECURITY) does not constrain this client and cannot cover a missing predicate.
+ */
+function reportsServiceClient(rows: readonly ReportRow[], error: unknown = null): void {
+  reportRows = rows.map((row) => ({ ...row }));
+  const chainOf = <T>(terminal: (filters: Filter[]) => T) => {
+    const filters: Filter[] = [];
+    const chain = {
+      eq(column: string, value: unknown) {
+        filters.push({ column, value });
+        return chain;
+      },
+      select: () => terminal(filters),
+      maybeSingle: () => terminal(filters),
+    };
+    return chain;
+  };
+  serviceClient.mockReturnValue({
+    from: (table: string) => {
+      if (table !== "reports") throw new Error(`unexpected table: ${table}`);
+      return {
+        update: (patch: Partial<ReportRow>) =>
+          chainOf(async (filters) => {
+            if (error) return { data: null, error };
+            const hit = reportRows.filter((row) => matchesRow(row, filters));
+            reportRows = reportRows.map((row) =>
+              matchesRow(row, filters) ? { ...row, ...patch } : row,
+            );
+            return { data: hit.map((row) => ({ id: row.id })), error: null };
+          }),
+        select: () =>
+          chainOf(async (filters) => {
+            if (error) return { data: null, error };
+            const row = reportRows.find((candidate) => matchesRow(candidate, filters)) ?? null;
+            return { data: row ? { title: row.title, html: row.html } : null, error: null };
+          }),
+      };
+    },
+  });
 }
 
 describe("listReports", () => {
@@ -229,5 +292,91 @@ describe("fetchPublicReportBySlug flood controls (L-14)", () => {
       html: "<main>back</main>",
     });
     expect(countDatabaseReads() - before).toBe(1);
+  });
+});
+
+/**
+ * L-13 — a public report link used to be permanent: minted on every generate_report, handed to
+ * the user, and revocable by nobody. These specs pin what revoking actually does (null the slug,
+ * kill the route) and, above all, that the UPDATE's `user_id` predicate is load-bearing.
+ */
+describe("revokeReportLink (L-13)", () => {
+  const OWNER = "user-1";
+  const OTHER = "user-2";
+  const REPORT = "11111111-1111-4111-8111-111111111111";
+  const HTML = "<main>report</main>";
+
+  function ownedRow(slug: string | null): ReportRow {
+    return { id: REPORT, user_id: OWNER, title: "Q3", html: HTML, public_slug: slug };
+  }
+
+  it("nulls the caller's own report slug and reports it revoked", async () => {
+    reportsServiceClient([ownedRow("revokeslug1")]);
+
+    await expect(revokeReportLink({ userId: OWNER, reportId: REPORT })).resolves.toBe(true);
+
+    expect(reportRows[0]?.public_slug).toBeNull();
+    // REVOKE, not delete: the row, its html and its title all survive. Nothing in this feature
+    // removes a report, and the UI may not say otherwise.
+    expect(reportRows).toHaveLength(1);
+    expect(reportRows[0]?.html).toBe(HTML);
+    expect(reportRows[0]?.title).toBe("Q3");
+  });
+
+  it("kills the public route: the revoked slug resolves to nothing, so /r/<slug> 404s", async () => {
+    reportsServiceClient([ownedRow("killslug1")]);
+    clientIp = "198.51.100.60";
+
+    // Live before — the page renders this.
+    expect(await fetchPublicReportBySlug("killslug1")).toEqual({ title: "Q3", html: HTML });
+
+    await revokeReportLink({ userId: OWNER, reportId: REPORT });
+
+    // Dead immediately after: a NULL public_slug matches no slug param, and hits are never
+    // cached, so the very next public request misses and the route calls notFound().
+    expect(await fetchPublicReportBySlug("killslug1")).toBeNull();
+  });
+
+  it("user A cannot revoke user B's report: not reported revoked, row untouched", async () => {
+    reportsServiceClient([{ ...ownedRow("foreignslug1"), user_id: OTHER }]);
+
+    await expect(revokeReportLink({ userId: OWNER, reportId: REPORT })).resolves.toBe(false);
+
+    expect(reportRows[0]?.public_slug).toBe("foreignslug1");
+  });
+
+  it("…and B's link KEEPS working afterwards — the user_id filter is the ONLY thing stopping it", async () => {
+    // The mutation this spec exists to catch: delete `.eq("user_id", ref.userId)` from
+    // revokeReportLink and A's call silently revokes B's link here. RLS cannot help — the
+    // service-role client bypasses it — so the predicate in the code IS the tenant boundary.
+    reportsServiceClient([{ ...ownedRow("survivingslug1"), user_id: OTHER }]);
+    clientIp = "198.51.100.61";
+
+    await revokeReportLink({ userId: OWNER, reportId: REPORT });
+
+    expect(await fetchPublicReportBySlug("survivingslug1")).toEqual({ title: "Q3", html: HTML });
+  });
+
+  it("is a no-op that still succeeds when the link was already revoked", async () => {
+    reportsServiceClient([ownedRow(null)]);
+
+    await expect(revokeReportLink({ userId: OWNER, reportId: REPORT })).resolves.toBe(true);
+    expect(reportRows[0]?.public_slug).toBeNull();
+  });
+
+  it("reports nothing revoked for an id that matches no row", async () => {
+    reportsServiceClient([ownedRow("otherreport1")]);
+
+    const missing = "22222222-2222-4222-8222-222222222222";
+    await expect(revokeReportLink({ userId: OWNER, reportId: missing })).resolves.toBe(false);
+    expect(reportRows[0]?.public_slug).toBe("otherreport1");
+  });
+
+  it("throws when the update errors, so the UI never claims a revoke that did not happen", async () => {
+    reportsServiceClient([ownedRow("erroringslug1")], { message: "db down" });
+
+    await expect(revokeReportLink({ userId: OWNER, reportId: REPORT })).rejects.toThrow(
+      /revokeReportLink failed: db down/,
+    );
   });
 });
