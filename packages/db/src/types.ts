@@ -366,6 +366,36 @@ export type Database = {
         }
         Relationships: []
       }
+      trial_claims: {
+        Row: {
+          collision_count: number
+          disposable_domain: boolean
+          email_domain: string | null
+          email_fingerprint: string
+          last_collision_at: string | null
+          recorded_at: string
+          user_id: string | null
+        }
+        Insert: {
+          collision_count?: number
+          disposable_domain?: boolean
+          email_domain?: string | null
+          email_fingerprint: string
+          last_collision_at?: string | null
+          recorded_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          collision_count?: number
+          disposable_domain?: boolean
+          email_domain?: string | null
+          email_fingerprint?: string
+          last_collision_at?: string | null
+          recorded_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       users_profile: {
         Row: {
           created_at: string
@@ -410,7 +440,13 @@ export type Database = {
         Returns: boolean
       }
       claim_trial: {
-        Args: { p_amount: number; p_user_id: string }
+        Args: {
+          p_amount: number
+          p_disposable_domain?: boolean
+          p_email_domain?: string
+          p_email_fingerprint?: string
+          p_user_id: string
+        }
         Returns: boolean
       }
       commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined }
