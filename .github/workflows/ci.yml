@@ -1,4 +1,8 @@
 name: CI
+# DO NOT ADD A `paths:` FILTER TO THE main PUSH BELOW. deploy-mcp.yml's require-ci job waits
+# for a successful run of THIS workflow against the pushed commit; a path-filtered push would
+# create no CI run, so require-ci would wait out its 25 minutes and redden. Fail-closed, but
+# it stops the deploy pipeline. Filter inside a job with an `if:` instead.
 on:
   push:
     branches: [main]
@@ -36,8 +40,13 @@ jobs:
   # reads the INSTALLED STORE, so it needs pnpm/action-setup + setup-node + a real install.
   # Runs on ubuntu, so it sees the LINUX optional binaries a darwin laptop never installs —
   # which is why the exceptions in check-licenses.sh are name globs, not exact names.
+  # verify.sh runs this gate too, so it executes twice per CI. Deliberate: `verify` is already
+  # a required check and carries it today, while this job can be required on its own and names
+  # the failure instead of burying it in verify's log. Both run in parallel, so the cost is
+  # wall-clock-free.
   licenses:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0

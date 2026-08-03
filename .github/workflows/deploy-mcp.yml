@@ -44,6 +44,13 @@ jobs:
   # fails this job and shows red on the commit; and because `deploy` reaches it through
   # `needs:`, a typo in the job name is an "Invalid workflow file" error rather than a
   # quietly ungated deploy.
+  #
+  # ANY successful ci.yml run for this head_sha counts, including one from a pull_request
+  # event. That is deliberate, not a hole: a PR run's head_sha is the PR's head commit, so it
+  # matches main only when main was fast-forwarded to exactly that commit — in which case CI
+  # tested this identical tree. Squash and merge-commit merges mint a new SHA and get a fresh
+  # push run. Restricting to event=push would only force a needless second CI wait.
+  # Requires ci.yml to keep running on every main push — see the note on its `on:` block.
   require-ci:
     runs-on: ubuntu-latest
     timeout-minutes: 30
