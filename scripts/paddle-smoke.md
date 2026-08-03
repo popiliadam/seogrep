@@ -89,8 +89,8 @@ a second grant, so the manual call is safe.
 `custom_data.user_id` is settable from the browser while the overlay is open, so it is a CLAIM.
 The checkout mints a short-lived signed token (`attribution_token`, HMAC-derived from
 `PADDLE_WEBHOOK_SECRET`) and the webhook prefers its **signed subject** over that claim. This flag
-decides what happens when the token cannot be verified. It is **not in `.env.example`** — see the
-follow-up note at the end of this section.
+decides what happens when the token cannot be verified. It is listed in the repo-root
+`.env.example` as a **commented** line, because unset is the correct default.
 
 ### The two states
 
@@ -155,11 +155,6 @@ logs, Paddle's destination showing repeated 500s, and `paddle_events` rows with 
 - `origin` is present on every `transaction.completed` and is `web` for a checkout-overlay
   transaction, `subscription_*` for one Paddle raised itself.
 - Paddle retries a 500 for roughly three days.
-
-### Follow-up, not done here
-
-`PADDLE_ATTRIBUTION_ENFORCE` is missing from the repo-root `.env.example` (which lists every other
-`PADDLE_*` var). It should be added there, commented, defaulting to unset.
 
 ## Evidence to capture
 - The ledger row (SQL result) + the `/app` balance screenshot.
