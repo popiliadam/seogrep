@@ -207,10 +207,20 @@ grant execute on function public.claim_trial(uuid, bigint, text, text, boolean) 
 -- (4) CLOUD APPLY: no pre-check gate needed, and here is why that is a claim and not a hope.
 --
 -- Unlike 0017, nothing here validates existing rows. `create table` cannot conflict with data
--- that does not exist yet; its primary key and the partial index are declared on that same empty
--- table; no constraint or column is added to any existing table; DROP/CREATE FUNCTION is
--- data-independent. The only way this fails on the cloud project is a NAME collision
--- (`public.trial_claims` already existing), which fails loudly and harmlessly at apply time.
+-- that does not exist yet; its primary key is declared on that same empty table; no constraint
+-- or column is added to any existing table; DROP/CREATE FUNCTION is data-independent. The only
+-- way this fails on the cloud project is a NAME collision (`public.trial_claims` already
+-- existing), which fails loudly and harmlessly at apply time.
+--
+-- (An earlier draft of this comment also cited "the partial index". There is no partial index —
+-- §1 says the table is deliberately UNINDEXED beyond its primary key, and pg_indexes shows only
+-- trial_claims_pkey. The conclusion above holds without it; the clause was simply false.)
+--
+-- ORDERING: this migration requires 0009, because it DROPs the claim_trial(uuid, bigint) that
+-- 0009 created and the DROP is not idempotent. It does NOT depend on 0013..0019 — its only
+-- constraints are trial_claims_pkey and the FK to auth.users. Apply in order anyway; the
+-- dependency is on 0009 specifically, which is a narrower and more accurate statement than
+-- "must not jump 0013..0019".
 --
 -- It must not jump the 0013..0019 queue: it drops the function 0009 created, so applying it to a
 -- database that never received 0009 would fail on the DROP.

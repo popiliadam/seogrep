@@ -23,12 +23,26 @@ import { createHash } from "node:crypto";
 export const DOT_INSENSITIVE_DOMAINS: readonly string[] = ["gmail.com", "googlemail.com"];
 
 /**
- * Domains the provider itself treats as ONE namespace. Only Google's pair qualifies:
- * `googlemail.com` and `gmail.com` are documented as the same mailbox.
+ * Domains the provider itself treats as ONE namespace. This map is DELIBERATELY MINIMAL and
+ * is NOT a complete census of provider aliasing — do not read it as one.
  *
- * hotmail.com / outlook.com / live.com are deliberately ABSENT. They are separate
- * Microsoft namespaces — `person@hotmail.com` and `person@outlook.com` can be two
- * different people — so aliasing them would merge strangers.
+ * Present: `googlemail.com` -> `gmail.com`, which Google documents as the same mailbox.
+ *
+ * Absent BECAUSE MERGING WOULD BE WRONG: hotmail.com / outlook.com / live.com are separate
+ * Microsoft namespaces — `person@hotmail.com` and `person@outlook.com` can be two different
+ * people, so aliasing them would merge strangers. That is the failure mode this whole module
+ * is built to avoid.
+ *
+ * Absent BECAUSE UNVERIFIED, which is a different reason and is recorded separately so nobody
+ * mistakes it for the one above: other providers do operate multi-domain namespaces, and a
+ * referee measured that we currently treat them as distinct — e.g. `js@proton.me` vs
+ * `js@pm.me` vs `js@protonmail.com`, and Apple's icloud.com / me.com / mac.com trio, where a
+ * single Apple ID owns all three. Apple's case is the sharpest: merging it would close farming
+ * WITHOUT the false-positive risk that correctly rules out the Microsoft set.
+ *
+ * They stay out because provider policy could not be verified from the build environment, and
+ * this repo does not write unmeasured claims into code (signed lesson 9). Adding an entry here
+ * is a deliberate act requiring a cited provider policy — not a guess.
  */
 const DOMAIN_ALIASES: Readonly<Record<string, string>> = { "googlemail.com": "gmail.com" };
 
