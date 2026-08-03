@@ -2,11 +2,19 @@ import Link from "next/link";
 import { createClient } from "../../../lib/supabase/server";
 import { listReports, type ReportListItem } from "../../../lib/reports";
 import { formatDate } from "../ui";
+import { revokeReportLinkAction } from "./actions";
+import { RevokeLinkButton } from "./revoke-link-button";
 
 /**
  * /app/reports — the caller's generated reports, newest first. Reads through the caller's
  * authenticated client so RLS (`reports_select_own`) is the real tenant scope. Each row links to
- * its public /r/<slug> page. Minimal by design (v0, YAGNI): no paging, no delete.
+ * its public /r/<slug> page.
+ *
+ * Minimal by design (v0, YAGNI): no paging. A shared link CAN be revoked (L-13) — Revoke nulls
+ * the report's public_slug, so the URL stops resolving and /r/<slug> 404s from the next request.
+ * That is the whole of it: revoking DELETES NOTHING. The report row, its title and its rendered
+ * html all stay, there is still no delete, and revoking is one-way — no UI re-issues a link, and
+ * whoever already opened the page keeps whatever their browser kept.
  */
 export default async function ReportsPage() {
   const supabase = await createClient();
@@ -30,7 +38,8 @@ export default async function ReportsPage() {
         <h1 className="text-xl font-semibold">Reports</h1>
         <p className="text-sm text-neutral-600">
           Shareable HTML reports you generated with the generate_report tool, newest first. Anyone
-          with a report&apos;s link can view it.
+          with a report&apos;s link can view it. Revoke stops a link working for good — the report
+          itself is kept, and a new link cannot be issued for it.
         </p>
       </header>
       <ReportsList reports={reports} />
@@ -72,12 +81,19 @@ function ReportsList({ reports }: { reports: readonly ReportListItem[] }) {
               </td>
               <td className="py-2 pl-4 text-right">
                 {report.publicSlug ? (
-                  <Link
-                    href={`/r/${report.publicSlug}`}
-                    className="text-neutral-700 hover:text-neutral-900"
-                  >
-                    View
-                  </Link>
+                  <span className="inline-flex items-center gap-3">
+                    <Link
+                      href={`/r/${report.publicSlug}`}
+                      className="text-neutral-700 hover:text-neutral-900"
+                    >
+                      View
+                    </Link>
+                    <RevokeLinkButton
+                      reportId={report.id}
+                      title={report.title ?? "Untitled report"}
+                      revokeReportLinkAction={revokeReportLinkAction}
+                    />
+                  </span>
                 ) : (
                   <span className="text-neutral-300">—</span>
                 )}
