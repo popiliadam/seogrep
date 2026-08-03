@@ -4,6 +4,11 @@ name: Deploy MCP
 # workspace package the image builds (@pseo/core), or this workflow. Manual dispatch stays.
 on:
   workflow_dispatch:
+    inputs:
+      skip_ci_gate:
+        description: "EMERGENCY: deploy without a green CI run for this commit"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -28,7 +33,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Deploy used to start in PARALLEL with CI on the same push: nothing tied shipping to a
+  # green build (audit M-13). This job blocks until CI has SUCCEEDED for this exact commit.
+  #
+  # Why a poll and not `workflow_run:`. workflow_run drops the paths filter, resolves to the
+  # default branch instead of the triggering commit unless head_sha is threaded by hand, and
+  # — the disqualifier — fails SILENTLY: rename CI or move it off the default branch and the
+  # trigger simply never fires, so deploys stop with no red anywhere. Every failure mode here
+  # is LOUD instead: a 404 from the API, a red CI, or the timeout all exit non-zero, which
+  # fails this job and shows red on the commit; and because `deploy` reaches it through
+  # `needs:`, a typo in the job name is an "Invalid workflow file" error rather than a
+  # quietly ungated deploy.
+  require-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require a green CI run for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          SKIP_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_ci_gate }}
+        run: |
+          set -euo pipefail
+          if [ "$SKIP_GATE" = "true" ]; then
+            echo "require-ci: EMERGENCY BYPASS — dispatched with skip_ci_gate=true, CI was not consulted."
+            exit 0
+          fi
+          deadline=$(( $(date +%s) + 25 * 60 ))
+          while :; do
+            gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=100" > runs.json
+            total=$(jq '.total_count' runs.json)
+            green=$(jq '[.workflow_runs[] | select(.conclusion == "success")] | length' runs.json)
+            open=$(jq '[.workflow_runs[] | select(.status != "completed")] | length' runs.json)
+            if [ "$green" -gt 0 ]; then
+              echo "require-ci: CI is green for $SHA ($green successful run(s)) — deploy may proceed."
+              exit 0
+            fi
+            if [ "$total" -gt 0 ] && [ "$open" -eq 0 ]; then
+              echo "require-ci: CI finished for $SHA with NO successful run — refusing to deploy."
+              jq -r '.workflow_runs[] | "  run \(.id): \(.status)/\(.conclusion) \(.html_url)"' runs.json
+              echo "require-ci: override = fix CI and re-run it, or dispatch this workflow with skip_ci_gate=true."
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "require-ci: timed out waiting for CI on $SHA (runs=$total, in-flight=$open) — refusing to deploy."
+              echo "require-ci: override = fix CI and re-run it, or dispatch this workflow with skip_ci_gate=true."
+              exit 1
+            fi
+            echo "require-ci: waiting for CI on $SHA (runs=$total, in-flight=$open)..."
+            sleep 20
+          done
+
   deploy:
+    needs: require-ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
