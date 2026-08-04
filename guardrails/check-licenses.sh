@@ -124,9 +124,19 @@ else
   # through the snapshot branch above, so nothing needs the override here.
   MIN_PACKAGES="$LIVE_MIN_PACKAGES"
 fi
-export SPDX_JSON ALLOWLIST EXCEPTIONS MIN_PACKAGES
+# SPDX_JSON goes in on STDIN, NOT in the environment. Measured the hard way: exporting it died
+# on ubuntu with
+#   guardrails/check-licenses.sh: line 129: .../node: Argument list too long   (exit 126)
+# while passing on macOS. E2BIG covers argv AND the environment together, and Linux additionally
+# caps any SINGLE argv/env string at MAX_ARG_STRLEN (128 KB); the report for ~400 packages is
+# past that. So the gate never started — it reported nothing about licences at all.
+#
+# The failure direction was at least the safe one (126, loud, CI red) rather than a silent green,
+# but a gate that cannot start is the same family as the floor-of-zero defect this script already
+# guards against: it must FAIL LOUDLY or MEASURE, never neither. stdin has no such size limit.
+export ALLOWLIST EXCEPTIONS MIN_PACKAGES
 
-node -e '
+printf '%s' "$SPDX_JSON" | node -e '
 const min = Number(process.env.MIN_PACKAGES);
 if (!Number.isInteger(min) || min < 1) {
   console.log("check-licenses: FAIL floor is not a positive integer: " + process.env.MIN_PACKAGES);
@@ -135,7 +145,7 @@ if (!Number.isInteger(min) || min < 1) {
 }
 let groups;
 try {
-  groups = JSON.parse(process.env.SPDX_JSON);
+  groups = JSON.parse(require("fs").readFileSync(0, "utf8"));
 } catch (err) {
   console.log("check-licenses: FAIL the licence report is not valid JSON - " + err.message);
   console.log("CHECK-LICENSES: FAIL (unreadable input)");
