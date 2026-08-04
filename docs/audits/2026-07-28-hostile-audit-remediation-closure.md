@@ -998,7 +998,7 @@ Tur 1-2'de kapanan 37 bulgunun kanıt zincirleri §5.1, §11 ve §18'dedir; bura
 | L-01 | FIXED (tur 1) | Reaper refund/commit ayırmıyordu | Fable PASS | §11 | — |
 | L-02 | FIXED (tur 2) | `/status` reaper sayaçları yapısal olarak 0/0/null | Fable PASS | §18 | — |
 | L-03 | FIXED (tur 1) | Internal exception metni tool çıktısında | Fable PASS | §5.1 | — |
-| **L-04** | **HUMAN BLOCKED** | DFS client'ları `packages/core` yerine `apps/mcp/src/dfs/` (NEVER#5 konum şartı) | — | — | Ölçüm: taşıma 600-900 satır ve core'a Supabase sokar. NEVER#5'in ÖZÜ zaten sağlanıyor. **Önerilen anayasa metni operatöre sunuldu, imza bekliyor** |
+| **L-04** | **FIXED (imzalı istisna)** | DFS client'ları `packages/core` yerine `apps/mcp/src/dfs/` (NEVER#5 konum şartı) | — (doküman) | İnsan imzası 2026-08-03 | `CLAUDE.md` NEVER#5 | Kod TAŞINMADI — ölçüldü: 600-900 satır, core'a Supabase sokar, blast radius'ta $3/gün bütçe kapısı. NEVER#5'in ÖZÜ (paralı çağrı 0, port+fixture, `DFS_LIVE!=1` fail-closed) bu konumda sağlanıyor ve testlerle pinli. İstisna **DFS'e özgü** yazıldı; yeni dış API varsayılan core'a. Dependency-inversion taşıması backlog'da. **Şerh: `AGENTS.md` untracked bir insan dosyasıdır ve ŞEF DOKUNMADI — aynı maddeyi elle yansıtmanız gerekir** |
 | L-05 | FIXED (tur 1) | Waitlist üyeliği sorgulanabiliyordu | Fable PASS | §11 | — |
 | L-06 | FIXED (tur 1) | Auth callback Host-origin fallback | Fable PASS | §5.1 | `WEB_BASE_URL` her ortamda ŞART |
 | L-07 | FIXED (tur 1) | Boş `NEXT_PUBLIC_SITE_URL` | Fable PASS | §5.1 | — |

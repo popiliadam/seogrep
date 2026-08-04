@@ -22,7 +22,15 @@ Global `performance.md`'nin "model omit" kuralı bu projede kullanıcı talimat�
 2. `credit_ledger` append-only: UPDATE/DELETE asla; bakiye yalnız ledger toplamından türer.
 3. Paddle webhook'u imza doğrulaması + `event_id` idempotency olmadan işlenmez.
 4. Tenant filtresiz DB sorgusu yazılmaz; RLS hiçbir tabloda kapatılmaz.
-5. Test/CI'da paralı API'ye gerçek çağrı = 0; dış API'ler `packages/core`'da mock/fixture arkasında. Dev smoke DFS bütçesi ≤$3/gün (`guardrails/dfs-budget.sh`, Faz 3).
+5. Test/CI'da paralı API'ye gerçek çağrı = 0; dış API'ler mock/fixture arkasında **port** olarak yazılır.
+   Konum kuralı `packages/core`'dur. **İmzalı istisna (insan onayı 2026-08-03 — audit L-04): DataForSEO
+   adaptörleri `apps/mcp/src/dfs/` altında kalır.** Gerekçe ölçüldü: `budget.ts` DB-destekli harcama
+   defterine (0014 RPC'leri) bağlıdır ve core'a taşımak, core'un tek runtime bağımlılığı olan `zod`'un
+   yanına Supabase'i sokar; gerçekçi taşıma 600-900 satır ve blast radius'ta $3/gün bütçe kapısı var.
+   NEVER#5'in ÖZÜ bu konumda da sağlanır ve testlerle pinlidir: enjekte edilebilir transport + 7 fixture,
+   `DFS_LIVE != 1` iken fail-closed. Dependency-inversion taşıması (saf parse/estimate → core,
+   `SpendLedger` → app) backlog'dadır. **Bu istisna DFS'e özgüdür; yeni bir dış API varsayılan olarak
+   `packages/core`'a yazılır.** Dev smoke DFS bütçesi ≤$3/gün (`guardrails/dfs-budget.sh`, Faz 3).
 6. Fiyat, kredi maliyeti, paket rakamları insan onayı olmadan değişmez (kod + docs + pricing).
 7. Vitrine uydurma metrik/müşteri yorumu/logo konmaz.
 8. Testi geçirmek için testi değiştirmek/silmek = otomatik FAIL.
