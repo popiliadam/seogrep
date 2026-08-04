@@ -77,8 +77,27 @@ function queryRows(sql: string): Record<string, unknown>[] {
         `(it starts the stack and resets it to the committed migrations). (${String(error)})`,
     );
   }
-  const parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
-  return parsed.rows ?? [];
+  // See the twin note in users-profile-privileges.db.test.ts: `?? []` turned any unexpected output
+  // shape into a silent empty result, so a broken transport read as "measured zero tables" —
+  // `expected 0 to be greater than 0` — instead of naming itself. A query that returned nothing
+  // is a BROKEN MEASUREMENT, and this enumerating spec is exactly the one that must not confuse
+  // the two: "no tables have TRUNCATE" and "I could not see any tables" look identical otherwise.
+  let parsed: { rows?: Record<string, unknown>[] };
+  try {
+    parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
+  } catch (error) {
+    throw new Error(
+      `supabase db query did not return JSON (${String(error)}). Raw stdout, first 800 chars:\n` +
+        stdout.slice(0, 800),
+    );
+  }
+  if (!Array.isArray(parsed.rows)) {
+    throw new Error(
+      "supabase db query returned JSON with no `rows` array — the measurement did not happen. " +
+        `Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
+    );
+  }
+  return parsed.rows;
 }
 
 /**

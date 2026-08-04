@@ -69,8 +69,27 @@ function queryRows(sql: string): Record<string, unknown>[] {
         `(it starts the stack and resets it to the committed migrations). (${String(error)})`,
     );
   }
-  const parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
-  return parsed.rows ?? [];
+  // `?? []` here used to turn ANY unexpected output shape into a silent empty result, so a
+  // transport failure surfaced as `expected {} to deeply equal {...}` — an assertion message that
+  // names the wrong thing entirely. A query that returned nothing is a BROKEN MEASUREMENT, not a
+  // measurement of zero, and this helper must say which. (First seen when these specs, which had
+  // only ever run locally, met CI: six failures, none of them naming the cause.)
+  let parsed: { rows?: Record<string, unknown>[] };
+  try {
+    parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
+  } catch (error) {
+    throw new Error(
+      `supabase db query did not return JSON (${String(error)}). Raw stdout, first 800 chars:\n` +
+        stdout.slice(0, 800),
+    );
+  }
+  if (!Array.isArray(parsed.rows)) {
+    throw new Error(
+      "supabase db query returned JSON with no `rows` array — the measurement did not happen. " +
+        `Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
+    );
+  }
+  return parsed.rows;
 }
 
 /** `has_table_privilege` for every role x privilege pair, keyed "role.PRIVILEGE". */
