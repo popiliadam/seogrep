@@ -17,7 +17,7 @@ const SECTIONS = [
   },
   {
     heading: "Data retention",
-    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account, and every report you generate also gets an unguessable public link so you can share it — anyone holding that link can open the report without signing in. To have your data deleted, email us at support@seogrep.com.",
+    body: "During beta, we retain your crawl data and Search Console data while your account is active. Report outputs are kept for the lifetime of your account, and every report you generate also gets an unguessable public link so you can share it — anyone holding that link can open the report without signing in. To have your data deleted, email us at support@seogrep.com — with the one exception described under Your rights below.",
   },
   {
     heading: "Processors we use",
@@ -33,7 +33,7 @@ const SECTIONS = [
   },
   {
     heading: "Your rights",
-    body: "You can request access to or deletion of your data by emailing support@seogrep.com. We honor GDPR and KVKK rights, including access and erasure. One exception is worth stating plainly: the credit ledger is append-only by design, so the entries showing what you bought and what you spent are kept as accounting records and are not erased along with the rest of your account.",
+    body: "You can request access to or deletion of your data by emailing support@seogrep.com. We honor GDPR and KVKK rights, including access and erasure. One exception is worth stating plainly: the credit ledger is append-only by design, so the entries showing what you bought and what you spent are kept as accounting records rather than erased. Those entries are tied to your account record, so that record is kept alongside them. Everything else goes: your crawl data, your Search Console data and the stored token, and your report outputs together with their share links.",
   },
   {
     heading: "Changes to this policy",
