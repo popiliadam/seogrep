@@ -986,7 +986,7 @@ Tur 1-2'de kapanan 37 bulgunun kanıt zincirleri §5.1, §11 ve §18'dedir; bura
 | M-22 | FIXED (tur 2) | Rotation cap'i atlıyor | Hakem: 5→6→7→8, tavan yok | Fable PASS | §18 | — |
 | M-23 | FIXED (tur 1) | Waitlist'te yalnız honeypot | Sınır aşımında mock delta = 0 | Fable PASS | §11 | — |
 | **M-24** | **FIXED (yön düzeltilerek)** | İÇ SPEC bayat — kod ve kullanıcıya dönük söz zaten uyuşuyordu (§25.3) | — (doküman) | — | `e1c9e14` | `jobs.result` sınırsız büyür — kapasite/maliyet insan kuyruğunda |
-| M-25 | **HUMAN BLOCKED** | Silme vaadi ile append-only ledger istisnası çelişiyor | — | — | — | KVKK/GDPR metni; operatör kapsamı "yalnız üç olgusal cümle" olarak sınırladı |
+| **M-25** | **FIXED** (insan onayı 2026-08-03) | Silme vaadi ile append-only ledger istisnası çelişiyordu — **privacy sayfası kendi kendisiyle de** çelişiyordu (audit'in görmediği ikinci yüzey) | 13 vakalık `deletion-copy.test.tsx`, iki yönde pinli; hakem üç mutasyonla sınadı | **Fable PASS** (0C) | `7776c6f` `b45eb5c` | **Yeni açığa çıkan gerçek:** `credit_ledger` FK'si RESTRICT ve her gerçek hesabın trial satırı var → **hesap KAYDI da silinmiyor**; eski metin bunu söylemiyordu, yenisi söylüyor. **⚠️ MERGE ÖNCESİ BLOKER: "Effective 28 July 2026" tarihi güncellenmedi** — sayfanın kendi "Changes to this policy" kuralı gereği yayın günü ile değişmeli; tarih testte literal pinli, sayfa+test birlikte. **Hukuki YETERLİLİK insanda** — hakemin hükmü yalnız "şemada ölçülen davranışın doğru ve tutarlı karşılığı" |
 | **M-26** | **FIXED** | Bağlayıcı pricing sayfası 13 ücretli tool'dan 3'ünü hiç göstermiyordu; kapı TUTARLILIK ölçüyor, KAPSAM ölçmüyordu | Kapsam testi kırmızıyken eski tutarlılık testleri YEŞİLDİ | **Opus + Fable PASS** | `5f4b711` `c3823e6` | Eşit-fiyatlı grup satırına eklenen yeni tool satır etiketinde adlandırılmaz (ölçüldü, Minor) |
 | **M-27** | **FIXED** | Lisans allowlist'i kapısız; 7 paket dışarıda | Kapı boş girdiye `PASS (0 packages)` diyordu → floor 150; 42 vakalık self-test | **Opus PASS** (2 tur) | `bf23410` `5d27e59` `ab36749` `074daa5` | 6 istisnanın **onayı insanda**; `licenses` job'ı ubuntu'da hiç koşmadı |
 | M-28 | FIXED (tur 1) | Next internal Server Function disclosure | `pnpm audit` `next` 0 | Fable PASS | §13 | — |
@@ -1103,9 +1103,9 @@ Bu deponun geleneği: hakemlerin bulduğu kadar şefin kendi hataları da yazıl
 | | Devralınan (`ac4565d`) | **Bu tur sonu** |
 |---|---:|---:|
 | Audit bulgusu (toplam) | 54 | 54 |
-| **FIXED** | 37 | **50** |
-| **PARTIAL** | — | **1** (H-06) |
-| **HUMAN BLOCKED** | 3 | **3** (H-04 · M-25 · L-04) |
+| **FIXED** | 37 | **52** |
+| **PARTIAL** | — | **1** (H-06 — politika yarısı, operatör seçimi c) |
+| **HUMAN BLOCKED** | 3 | **1** (H-04 — vendor parolası rotasyonu) |
 | NOT REPRODUCIBLE | 0 | **0** |
 | Test (fresh koşu) | 1308 | **1487** |
 | DB testi | 195 | **222** |
