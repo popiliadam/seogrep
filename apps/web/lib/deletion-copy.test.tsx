@@ -17,12 +17,26 @@ import PrivacyPage from "../app/(marketing)/privacy/page";
  *      "credit_ledger_user_id_fkey" on table "credit_ledger"`.
  *   2. A ledger row cannot be deleted by ANYONE, up to and including the table owner: the
  *      `credit_ledger_append_only` BEFORE UPDATE OR DELETE trigger raises regardless of role
- *      (0002_credit_ledger.sql:36-40). Probed as the postgres superuser:
- *      `ERROR: append-only table: DELETE blocked on credit_ledger`.
- *   3. EVERY completed signup has at least one such row — `claim_trial` appends the trial grant in
- *      the same transaction as the lock (0009_faz3_jobs_reports_indexes.sql:125-127), called from
- *      apps/web/app/auth/callback/route.ts:84. So (1) applies to every real account, not an edge
- *      case.
+ *      (0002_credit_ledger.sql:36-40): `ERROR: append-only table: DELETE blocked on credit_ledger`.
+ *      Probed as `supabase_admin` — locally `postgres` has `rolsuper = f`, so naming it "the
+ *      postgres superuser" would have been the weaker claim AND the wrong one.
+ *      Scope, stated honestly: this is a RETENTION guarantee, not tamper-proofness. Owner-path
+ *      TRUNCATE and DDL (dropping the trigger) remain physically available to a DBA. The published
+ *      copy claims only what this footnote claims.
+ *   3. ALMOST every completed signup has at least one such row — `claim_trial` appends the trial
+ *      grant in the same transaction as the lock (0020_trial_mailbox_dimension.sql; 0009's earlier
+ *      two-argument version was DROPped by 0020), reached from apps/web/app/auth/callback/route.ts.
+ *      So (1) applies to real accounts as a rule, not as an edge case.
+ *
+ *      NOT "every", and the exception is deliberate: since the H-06 caller wiring landed, a signup
+ *      whose normalised mailbox already claimed a trial is REFUSED, so that account has ZERO ledger
+ *      rows and deletes cleanly. Measured by a referee, not reasoned.
+ *
+ *      This does not weaken the published copy, and the direction matters: the copy is conditional
+ *      by construction ("those entries are tied to your account record"), so a zero-ledger account
+ *      simply gets MORE deletion than promised — never less. An earlier draft of this comment said
+ *      "EVERY" and cited a function 0020 had already dropped: a claim that was stale the day it was
+ *      written, about the very branch shipping it (imzalı ders 10).
  *   4. Everything else in the tenant tree is ON DELETE CASCADE from auth.users — users_profile,
  *      projects, api_keys, subscriptions, jobs, reports, gsc_connections (0001_core_tables.sql:11,
  *      29, 48, 69, 91, 112 and 0003_paddle_events.sql:26) — so "everything else is removed" is the
