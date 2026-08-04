@@ -16,11 +16,17 @@ const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
  * deliberately do NOT set `include_granted_scopes` — incremental authorization would let
  * an unrelated previously-granted scope ride along on this token, blurring the one-scope
  * discipline this consent is meant to hold.
+ *
+ * `codeChallenge` is REQUIRED, not optional (L-10): PKCE that a caller can forget is PKCE
+ * that eventually is forgotten, and the digest is safe to publish — it is the verifier behind
+ * it, held in an httpOnly cookie (lib/gsc/pkce), that must never appear in a URL. Committing
+ * to a challenge here is what lets Google refuse a code redeemed by anyone else.
  */
 export function buildConsentUrl(params: {
   clientId: string;
   redirectUri: string;
   state: string;
+  codeChallenge: string;
 }): string {
   const query = new URLSearchParams({
     client_id: params.clientId,
@@ -30,6 +36,8 @@ export function buildConsentUrl(params: {
     access_type: "offline",
     prompt: "consent",
     state: params.state,
+    code_challenge: params.codeChallenge,
+    code_challenge_method: "S256",
   });
   return `${GOOGLE_AUTH_ENDPOINT}?${query.toString()}`;
 }

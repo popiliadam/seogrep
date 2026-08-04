@@ -20,7 +20,7 @@ vi.mock("@pseo/core", async (importOriginal) => {
 vi.mock("@pseo/db/api-keys-repo", () => ({
   countActiveKeys: vi.fn(),
   createKey: vi.fn(),
-  getKeyOwner: vi.fn(),
+  listKeys: vi.fn(),
   revokeKey: vi.fn(),
 }));
 
@@ -116,7 +116,7 @@ vi.mock("../../../lib/gsc/revoke", () => ({
 
 import { revalidatePath } from "next/cache";
 import { encryptToken, generateApiKey, toByteaHex } from "@pseo/core";
-import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
+import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import {
   createKeyAction,
   disconnectGscAction,
@@ -127,7 +127,7 @@ import {
 const generateApiKeyMock = vi.mocked(generateApiKey);
 const countActiveKeysMock = vi.mocked(countActiveKeys);
 const createKeyMock = vi.mocked(createKey);
-const getKeyOwnerMock = vi.mocked(getKeyOwner);
+const listKeysMock = vi.mocked(listKeys);
 const revokeKeyMock = vi.mocked(revokeKey);
 
 const SAMPLE = { key: "sg_PLAINTEXT", prefix: "sg_PLAINTE", hash: "hash-abc" };
@@ -137,6 +137,10 @@ const NEW_ID = "22222222-2222-4222-8222-222222222222";
 function createdRow(id: string) {
   return { id, keyPrefix: SAMPLE.prefix, createdAt: "2026-07-01T00:00:00.000Z", revokedAt: null };
 }
+/** The same row after a revoke — what the owner's key list holds for a dead credential. */
+function revokedRow(id: string) {
+  return { ...createdRow(id), revokedAt: "2026-07-02T00:00:00.000Z" };
+}
 function signedIn(userId: string) {
   getUser.mockResolvedValue({ data: { user: { id: userId } } });
 }
@@ -145,6 +149,14 @@ function signedOut() {
 }
 
 describe("connection server actions", () => {
+  // Since M-22 the ownership check reads the caller's key list and requires the target to be
+  // ACTIVE, so every rotate/revoke spec has to declare one. This default (the session user owns
+  // KEY_ID and it is live) keeps the pre-M-22 expectations byte-identical; the specs that care
+  // about a missing / foreign / revoked key override it. Harness only — no assertion moved.
+  beforeEach(() => {
+    listKeysMock.mockResolvedValue([createdRow(KEY_ID)]);
+    countActiveKeysMock.mockResolvedValue(1);
+  });
   // resetAllMocks (not clearAllMocks): the compensation tests install throwing
   // implementations on revokeKeyMock, which must not leak into later tests.
   afterEach(() => vi.resetAllMocks());
@@ -203,7 +215,7 @@ describe("connection server actions", () => {
   describe("rotateKeyAction", () => {
     it("rejects when the target key belongs to another user", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("someone-else");
+      listKeysMock.mockResolvedValue([]); // the tenant-filtered list cannot contain it
       await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/not found/i);
       expect(createKeyMock).not.toHaveBeenCalled();
       expect(revokeKeyMock).not.toHaveBeenCalled();
@@ -213,16 +225,21 @@ describe("connection server actions", () => {
     it("rejects a malformed key id without querying the DB", async () => {
       signedIn("user-1");
       await expect(rotateKeyAction("not-a-uuid")).rejects.toThrow(/not found/i);
-      expect(getKeyOwnerMock).not.toHaveBeenCalled();
+      expect(listKeysMock).not.toHaveBeenCalled();
       expect(createKeyMock).not.toHaveBeenCalled();
       expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
-    it("is EXEMPT from the active-key cap: rotates even at the limit, without a count read", async () => {
+    // SPEC CHANGE (M-22), replacing "is EXEMPT from the active-key cap: rotates even at the
+    // limit, without a count read", which asserted `countActiveKeys` was NEVER called. That
+    // assertion pinned the bypass itself, so it could not survive the fix: with no count read
+    // there was no ceiling above the mint. What the old test was PROTECTING — a user at the
+    // limit can still roll their credential — is kept and still asserted here; only the claim
+    // that rotate ignores the cap is gone. Strictly stronger: same success case, plus a
+    // ceiling (the "already OVER the cap" spec below).
+    it("still rotates a user sitting exactly AT the cap (rotation is net-neutral)", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("user-1");
-      // At (indeed over) the cap — rotate must still succeed (it's net-neutral on the count).
-      countActiveKeysMock.mockResolvedValue(99);
+      countActiveKeysMock.mockResolvedValue(5); // exactly at the cap of 5
       generateApiKeyMock.mockReturnValue(SAMPLE);
       createKeyMock.mockResolvedValue(createdRow(NEW_ID));
       revokeKeyMock.mockResolvedValue(undefined);
@@ -231,14 +248,43 @@ describe("connection server actions", () => {
 
       expect(result.key).toBe("sg_PLAINTEXT");
       expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
-      // Rotate never consults the cap — the exemption is in the code path, not just the number.
-      expect(countActiveKeysMock).not.toHaveBeenCalled();
       expect(captureKeyCreated).toHaveBeenCalledWith("user-1", true);
+    });
+
+    // M-22 (a): the ownership lookup used to answer "yes, yours" for an ALREADY-REVOKED key.
+    // Rotate then minted a fresh key and "revoked" a row that was already revoked — a no-op —
+    // so each replay of a rotate on one dead key id added an active key. That is the cap bypass:
+    // net +1 per call, unbounded. A dead credential is not rotatable; it is Not found.
+    it("refuses to rotate an ALREADY-REVOKED key: no mint, no net-positive rotation", async () => {
+      signedIn("user-1");
+      listKeysMock.mockResolvedValue([revokedRow(KEY_ID)]);
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(NEW_ID));
+
+      await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/not found/i);
+
+      expect(createKeyMock).not.toHaveBeenCalled();
+      expect(revokeKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
+    });
+
+    // M-22 (b): rotate skipped the cap read entirely, so the mint had no ceiling above it. The
+    // count is now consulted BEFORE the mint — a refused rotation must never create a row first.
+    it("refuses to rotate a user already OVER the cap, and refuses BEFORE minting", async () => {
+      signedIn("user-1");
+      countActiveKeysMock.mockResolvedValue(6); // cap is 5; this user is already past it
+      generateApiKeyMock.mockReturnValue(SAMPLE);
+      createKeyMock.mockResolvedValue(createdRow(NEW_ID));
+
+      await expect(rotateKeyAction(KEY_ID)).rejects.toThrow(/maximum/i);
+
+      expect(createKeyMock).not.toHaveBeenCalled();
+      expect(revokeKeyMock).not.toHaveBeenCalled();
+      expect(captureKeyCreated).not.toHaveBeenCalled();
     });
 
     it("mints the new key BEFORE revoking the old one", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("user-1");
       generateApiKeyMock.mockReturnValue(SAMPLE);
       const order: string[] = [];
       createKeyMock.mockImplementation(async () => {
@@ -259,7 +305,6 @@ describe("connection server actions", () => {
 
     it("old-key revoke failure: back-revokes the NEW key, throws clean-failure, old key touched once", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("user-1");
       generateApiKeyMock.mockReturnValue(SAMPLE);
       createKeyMock.mockResolvedValue(createdRow(NEW_ID));
       const revoked: string[] = [];
@@ -281,7 +326,6 @@ describe("connection server actions", () => {
 
     it("old-key revoke + compensation both fail: throws a partial-failure error, nothing further", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("user-1");
       generateApiKeyMock.mockReturnValue(SAMPLE);
       createKeyMock.mockResolvedValue(createdRow(NEW_ID));
       revokeKeyMock.mockRejectedValue(new Error("db down"));
@@ -304,14 +348,23 @@ describe("connection server actions", () => {
 
     it("rejects revoking another user's key", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("someone-else");
+      listKeysMock.mockResolvedValue([]); // the tenant-filtered list cannot contain it
+      await expect(revokeKeyAction(KEY_ID)).rejects.toThrow(/not found/i);
+      expect(revokeKeyMock).not.toHaveBeenCalled();
+    });
+
+    // M-22, same lookup: an already-revoked key is Not found rather than a silent second
+    // revoke. Harmless on this path (revokeKey is idempotent), but the liveness requirement
+    // belongs to the shared check, not to whichever caller happens to need it.
+    it("rejects revoking an ALREADY-REVOKED key", async () => {
+      signedIn("user-1");
+      listKeysMock.mockResolvedValue([revokedRow(KEY_ID)]);
       await expect(revokeKeyAction(KEY_ID)).rejects.toThrow(/not found/i);
       expect(revokeKeyMock).not.toHaveBeenCalled();
     });
 
     it("revokes a key the session user owns", async () => {
       signedIn("user-1");
-      getKeyOwnerMock.mockResolvedValue("user-1");
       await revokeKeyAction(KEY_ID);
       expect(revokeKeyMock).toHaveBeenCalledWith(expect.anything(), KEY_ID);
       // Revocation is not a key-creation event — never fires mcp_key_created.
@@ -331,12 +384,15 @@ describe("disconnectGscAction", () => {
   const PROJECT = "33333333-3333-4333-8333-333333333333";
   const REFRESH_TOKEN = "1//the-refresh-token";
 
-  /** Seal a token exactly the way the OAuth callback stored it (real crypto). */
-  function sealed(token: string, keyHex = ENC_KEY): string {
-    return toByteaHex(encryptToken(token, keyHex));
+  /**
+   * Seal a token exactly the way the OAuth callback stored it (real crypto): v3 binds the
+   * blob to the row's own (user, project), so the owner is part of sealing, not a detail.
+   */
+  function sealed(token: string, ownerUserId: string, keyHex = ENC_KEY): string {
+    return toByteaHex(encryptToken(token, keyHex, { userId: ownerUserId, projectId: PROJECT }));
   }
 
-  function linkedRow(userId: string, token: string | null = sealed(REFRESH_TOKEN)): GscRow {
+  function linkedRow(userId: string, token: string | null = sealed(REFRESH_TOKEN, userId)): GscRow {
     return { id: "conn-1", user_id: userId, project_id: PROJECT, encrypted_refresh_token: token };
   }
 
@@ -348,10 +404,22 @@ describe("disconnectGscAction", () => {
     });
   });
 
+  /** Capture a server-side diagnostic instead of printing it into the test output. */
+  function captureConsole(level: "warn" | "error") {
+    return vi.spyOn(console, level).mockImplementation(() => {});
+  }
+
+  /** Every argument the diagnostic was given, flattened — what an operator would read. */
+  function logged(spy: ReturnType<typeof captureConsole>): string {
+    return spy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+  }
+
   // resetAllMocks (as in the key-action suite): the specs install their own revoke
   // implementations, which must not leak — nor may a call history — into the next test.
+  // restoreAllMocks additionally puts `console` back for the specs that spy on it.
   afterEach(() => {
     vi.resetAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     gscRows = [];
     gscTables = [];
@@ -403,8 +471,11 @@ describe("disconnectGscAction", () => {
     const row = linkedRow("user-1");
     gscRows = [row];
 
-    await disconnectGscAction(PROJECT);
+    const outcome = await disconnectGscAction(PROJECT);
 
+    // "revoked" is the ONE outcome that is a confirmed fact — Google acknowledged. It is
+    // what entitles the UI to stay silent instead of warning the user (M-15).
+    expect(outcome).toBe("revoked");
     // Google gets the opened plaintext — never the stored ciphertext.
     expect(revokeGoogleToken).toHaveBeenCalledWith(REFRESH_TOKEN);
     expect(revokeGoogleToken).not.toHaveBeenCalledWith(row.encrypted_refresh_token);
@@ -417,38 +488,59 @@ describe("disconnectGscAction", () => {
     expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
   });
 
-  it("still deletes locally when Google refuses the revoke (best-effort semantics)", async () => {
+  // M-15. The local deletion still happens — refusing to disconnect would trap the user —
+  // but the caller is told the Google-side grant is UNCONFIRMED, so the UI cannot claim
+  // "access revoked" on the strength of a call that failed.
+  it("reports `unconfirmed` when Google does not acknowledge, and still deletes locally", async () => {
     signedIn("user-1");
     gscRows = [linkedRow("user-1")];
+    const warn = captureConsole("warn");
     revokeGoogleToken.mockImplementation(async () => {
       gscOps.push("revoke");
       return false; // e.g. Google answered 400 invalid_token, or the request failed
     });
 
-    await expect(disconnectGscAction(PROJECT)).resolves.toBeUndefined();
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("unconfirmed");
 
     expect(gscOps).toEqual(["select", "revoke", "delete"]);
     expect(gscRows).toEqual([]);
+    // The operator gets the diagnosis, keyed to the row, and never the secret itself.
+    expect(logged(warn)).toMatch(/conn-1/);
+    expect(logged(warn)).toMatch(/not acknowledge/i);
+    expect(logged(warn)).not.toMatch(REFRESH_TOKEN);
   });
 
-  it("deletes without calling Google when the row holds no token", async () => {
+  it("deletes without calling Google when the row holds no token, and says so", async () => {
     signedIn("user-1");
     gscRows = [linkedRow("user-1", null)];
+    const warn = captureConsole("warn");
 
-    await disconnectGscAction(PROJECT);
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
 
     expect(revokeGoogleToken).not.toHaveBeenCalled();
     expect(gscRows).toEqual([]);
+    expect(logged(warn)).toMatch(/conn-1/);
+    expect(logged(warn)).toMatch(/skipped/i);
   });
 
-  it("an unopenable seal (rotated key) skips the revoke but still frees the user", async () => {
+  // T5, M-15's sibling: after a key retirement the seal will not open, so the revoke is
+  // never even ATTEMPTED. The row still goes (the user asked to disconnect) but the skip
+  // must be visible to an operator and must not be reported to the user as a revocation.
+  it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
     signedIn("user-1");
-    gscRows = [linkedRow("user-1", sealed(REFRESH_TOKEN, OTHER_KEY))];
+    const sealedWithRetiredKey = sealed(REFRESH_TOKEN, "user-1", OTHER_KEY);
+    gscRows = [linkedRow("user-1", sealedWithRetiredKey)];
+    const error = captureConsole("error");
 
-    await disconnectGscAction(PROJECT);
+    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
 
     expect(revokeGoogleToken).not.toHaveBeenCalled();
     expect(gscRows).toEqual([]);
+    expect(logged(error)).toMatch(/conn-1/);
+    expect(logged(error)).toMatch(/skipped/i);
+    // Neither the sealed bytes nor the key may reach the log.
+    expect(logged(error)).not.toMatch(sealedWithRetiredKey);
+    expect(logged(error)).not.toMatch(OTHER_KEY);
   });
 
   it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {

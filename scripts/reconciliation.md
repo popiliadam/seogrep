@@ -165,6 +165,24 @@ charge twice for the same intent — issue a **support credit** for the lost run
 is a support decision, never an automatic refund (the original charge is a valid settled
 commit).
 
+#### 2d-bis. The "commit landed but its reply was lost" shape
+
+`commit_reserve` can succeed **in the database** while its response is lost (a dropped socket,
+a proxy timeout). The guard's retry then meets `reserve already settled` — the *same* error a
+reserve released by someone else produces. This shape is now handled automatically: when the
+RPC will not confirm, the guard reads the ledger once and, on finding a `spend_commit`, treats
+the run as the **success it actually was**. The job ends `succeeded`, the user gets the result,
+and the charge stands — nothing lands in this section.
+
+It reaches §2d only when that classifying read **also** fails. The job is then marked failed
+with `… the reserve's final state could not be confirmed — contact support if your balance
+looks short`, and it is deliberately worded as **no promise**: a refund is not coming, because
+the reserve is committed and the ledger-keyed sweep (§2f) correctly skips settled reserves. The
+query above finds it. Handle it exactly like the rest of §2d — **re-run or support credit,
+never an automatic refund**. If you see this wording, also check the database's availability
+around `finished_at`: a failed *read* on top of a failed *write* means the stack was degraded,
+not just unlucky.
+
 ### 2e. Paid Paddle events not yet attributed (B-C1)
 
 A different money surface: the Paddle **webhook**, not the jobs/ledger. A paid
@@ -200,6 +218,78 @@ webhook runbook (`scripts/paddle-smoke.md`, "paid but no credits") to grant the 
 fabricate a grant that bypasses the `process_paddle_purchase` idempotency guard — replay through
 the real path so a later Paddle retry cannot double-grant.
 
+### 2f. Open reserves with NO jobs row behind them (H-01)
+
+Every query above starts from `jobs`. Two real shapes are therefore **invisible to all of
+them**, and both hold a user's credits indefinitely:
+
+- a **SYNC surface** tool (`generate_report`, `pull_gsc_data`, the DFS tools …) charges through
+  `withCredits` with **no jobs row at all** — its ledger reserve carries a traceability uuid in
+  `job_id` that matches nothing;
+- an **async** run whose `commit_reserve` failed: the worker marks the job **`failed`**, so a
+  `status = 'running'` scan cannot see it either.
+
+Find them by asking the ledger alone — no join, no status:
+
+```sql
+-- Open reserves (a spend_reserve with no matching spend_commit / spend_release) older than
+-- 30 minutes, regardless of whether a jobs row exists or what status it holds.
+select
+  r.reserve_id,
+  r.user_id,
+  r.tool,
+  r.job_id,                      -- may be a traceability uuid that matches no jobs row
+  r.created_at,
+  -r.delta          as held_credits,
+  j.status          as job_status  -- NULL when there is no jobs row at all
+from public.credit_ledger r
+left join public.jobs j
+  on j.id::text = r.job_id
+where r.kind = 'spend_reserve'
+  and r.created_at < now() - interval '30 minutes'
+  and not exists (
+    select 1
+    from public.credit_ledger s
+    where s.reserve_id = r.reserve_id
+      and s.kind in ('spend_commit', 'spend_release')
+  )
+order by r.created_at asc;
+```
+
+`scripts/reconcile.mjs` refunds exactly this set (the reaper's **ledger lane**) through the
+same `release_reserve` RPC, and reports it as `ledger-only open reserves found` /
+`… refunded`. It is idempotent: a second run finds nothing, because the first run's
+`spend_release` rows now satisfy the `not exists` above. The 30-minute window is deliberately
+far above the longest run of **any** tool, sync tools included, since this lane has no
+`started_at` to age.
+
+> **Money direction, decided 2026-07-28:** these reserves are **released**, not left standing.
+> `withCredits` *throws* on a settlement failure, so the caller never receives the result — the
+> user got nothing and must not stay debited. Over-refunding a genuinely committed reserve is
+> structurally impossible: `release_reserve`'s advisory-locked settled-guard rejects it.
+
+### 2g. Jobs that were never delivered to a worker (M-01)
+
+`enqueueJob` inserts the `jobs` row and **then** sends the pg-boss message. If the process dies
+between the two, the row's own catch never runs and `retryLimit` is 0, so nothing replays it:
+the user watches the job sit `queued` forever. **No money is at stake** — a reserve only opens
+after the claim — but the row is a lie until someone closes it.
+
+```sql
+-- Jobs still queued long past any healthy queue delay: no message was ever delivered.
+select id as job_id, user_id, tool, created_at
+from public.jobs
+where status = 'queued'
+  and created_at < now() - interval '30 minutes'
+order by created_at asc;
+```
+
+`scripts/reconcile.mjs` fails exactly these (the reaper's **queued lane**), with the honest
+`reconciled: the job was never delivered to a worker; no credits were charged, re-run the
+tool`, under a compare-and-set on `status = 'queued'` so a worker that claims the row in the
+same instant wins. A non-empty result **while the worker is healthy** points at the enqueue
+path, not at the queue: check for worker crashes around each `created_at`.
+
 ---
 
 ## 3. Recovery
@@ -212,9 +302,12 @@ node scripts/reconcile.mjs [--older-than-minutes=N]   # N defaults to 15
 ```
 
 > **Node floor:** `reconcile.mjs` imports the reaper's TypeScript directly, which needs
-> **Node ≥22.18 (or ≥23)** with default type-stripping. Older Node exits with
-> `ERR_UNKNOWN_FILE_EXTENSION` *before any DB call* — safe (no money moves), but confusing
-> mid-incident; upgrade Node if you hit it.
+> **Node ≥22.18.0** — the release that turned on type-stripping by default. Older Node exits
+> with `ERR_UNKNOWN_FILE_EXTENSION` *before any DB call* — safe (no money moves), but confusing
+> mid-incident; upgrade Node if you hit it. This is the repo-wide baseline: root
+> `package.json` declares the same `engines.node`, and CI and Netlify both build on the 22
+> line, whose current releases are all above it. `apps/web/lib/node-floor.test.ts` fails if
+> these three ever disagree again.
 
 What it does, per stuck job:
 
@@ -266,9 +359,13 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
   NOT "reserve released". Find these with **§2c** and handle by manual review / a support
   credit grant.
 - **The 15-minute threshold** must exceed the longest job runtime (the crawl time budget
-  is 90s) so a job that is genuinely still running is never reaped. Lower it below the max
-  runtime only if you accept the risk of refunding a live job (which would then fail when
-  its own commit hits `already settled`).
+  is 90s) so a job that is genuinely still running is never reaped. A **hard 2-minute floor**
+  now enforces that: `--older-than-minutes` below 2 is REJECTED (exit 1, before any DB
+  connection or mutation) unless you also pass `--i-accept-refunding-live-jobs`. This closes
+  the typo path — `--older-than-minutes=.15` used to be accepted as a *nine-second* window and
+  would have swept live work. With the override the CLI prints a warning and proceeds; you are
+  then accepting refunds of jobs that may still be running (each such job later fails when its
+  own commit hits `already settled`).
 
 ---
 
@@ -277,8 +374,8 @@ settled concurrently — skipped, never double-refunded), `failed`, and `orphanR
 Since Faz 4 (T-D1) the reaper also runs **automatically inside the worker process**: an
 in-worker sweep every 10 minutes (`REAPER_INTERVAL_MS`, `apps/mcp/src/queue/worker.ts`)
 calls the same `reconcileStuckJobs()`. The worker starts no HTTP listener, so its outcomes do
-**not** reach `/status` (that endpoint is served by the web process, which always reports zeros
-for the reaper counters); each completed sweep logs one line instead —
+**not** reach `/status` — which is exactly why that endpoint no longer carries reaper counters
+at all (L-02); each completed sweep logs one line instead —
 `flyctl logs --app seogrep-mcp | grep 'reaper sweep'`, expected every ~10 min — see
 `scripts/monitoring.md` §4. Errors are logged (`reaper run failed:`), never fatal; safety is
 unchanged because at-most-once release stays arbitrated by the `release_reserve` RPC, not the

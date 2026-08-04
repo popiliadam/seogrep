@@ -15,6 +15,7 @@ describe("buildConsentUrl", () => {
         clientId: "cid.apps.googleusercontent.com",
         redirectUri: "https://app.example.com/api/gsc/callback",
         state: "signed-state-token",
+        codeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       }),
     );
     expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
@@ -26,6 +27,10 @@ describe("buildConsentUrl", () => {
     expect(p.get("access_type")).toBe("offline"); // needed to receive a refresh token
     expect(p.get("prompt")).toBe("consent"); // force refresh-token issue even on re-consent
     expect(p.get("state")).toBe("signed-state-token");
+    // L-10: PKCE is committed to here. Only the digest travels; `codeChallenge` is a required
+    // parameter, so a caller cannot quietly drop the protection by forgetting a field.
+    expect(p.get("code_challenge")).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    expect(p.get("code_challenge_method")).toBe("S256");
   });
 });
 

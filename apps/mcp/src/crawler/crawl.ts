@@ -93,11 +93,31 @@ export interface ParsedHtml {
   readonly h1s: string[];
   readonly canonical: string | null;
   readonly robotsMeta: string | null;
-  /** Absolute, deduped href targets (non-http(s) schemes dropped). */
+  /** Absolute, deduped href targets (non-http(s) schemes dropped), capped per page. */
   readonly links: string[];
   readonly wordCount: number;
+  /** True when the page carried more links than MAX_LINKS_PER_PAGE (the rest were dropped). */
+  readonly linksTruncated: boolean;
   /** Schema.org @type names from JSON-LD blocks ([] when none/malformed). */
   readonly jsonLdTypes: string[];
+}
+
+/**
+ * Per-RECORD ceilings (H-02). The 2 MB body ceiling bounds what we READ; these bound what
+ * one page may become. Without them a bounded body still explodes downstream: 2 MB of
+ * "<h1></h1>" is ~200k headings, one <title> may carry the whole 2 MB, and 100 such pages
+ * are persisted verbatim into jobs.result. Every number here is far above any real page —
+ * a document with >1000 links or >100 h1s is already pathological, and 2000 characters is
+ * ~10x the longest useful title/description and above the practical URL length.
+ */
+const MAX_LINKS_PER_PAGE = 1_000;
+const MAX_H1S_PER_PAGE = 100;
+const MAX_JSONLD_TYPES = 100;
+const MAX_FIELD_CHARS = 2_000;
+
+/** Clamp a stored text field, marking the cut so a truncated value never reads as complete. */
+function clampField(value: string): string {
+  return value.length <= MAX_FIELD_CHARS ? value : `${value.slice(0, MAX_FIELD_CHARS)}…`;
 }
 
 /** Resolve `href` against `baseUrl`, keeping only http(s); null if invalid. */
@@ -115,12 +135,13 @@ function textOf(html: string): string {
   return decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
-/** First capture group of `re` in `html`, entity-decoded; null if absent or blank. */
+/** First capture group of `re` in `html`, entity-decoded and clamped; null if absent/blank. */
 function firstGroup(re: RegExp, html: string): string | null {
   const match = re.exec(html);
   const group = match?.[1];
   if (group === undefined) return null;
-  return decodeEntities(group).trim() || null;
+  const value = decodeEntities(group).trim();
+  return value ? clampField(value) : null;
 }
 
 /** Parse a tag's attribute string into a lower-cased name -> value map (first wins). */
@@ -153,8 +174,8 @@ export function parseJsonLdTypes(html: string): string[] {
   const types: string[] = [];
   const seen = new Set<string>();
   const add = (value: unknown): void => {
-    if (typeof value !== "string") return;
-    const name = value.trim();
+    if (typeof value !== "string" || types.length >= MAX_JSONLD_TYPES) return;
+    const name = clampField(value.trim());
     if (name && !seen.has(name)) {
       seen.add(name);
       types.push(name);
@@ -210,34 +231,46 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   for (const m of content.matchAll(/<meta\b([^>]*)>/gi)) {
     const a = parseAttrs(m[1] ?? "");
     const name = (a.name ?? a.property ?? "").toLowerCase();
-    if (name === "description" && metaDescription === null) metaDescription = a.content?.trim() || null;
-    if (name === "robots" && robotsMeta === null) robotsMeta = a.content?.trim() || null;
+    const value = a.content?.trim();
+    if (name === "description" && metaDescription === null) metaDescription = value ? clampField(value) : null;
+    if (name === "robots" && robotsMeta === null) robotsMeta = value ? clampField(value) : null;
   }
 
   let canonical: string | null = null;
   for (const m of content.matchAll(/<link\b([^>]*)>/gi)) {
     const a = parseAttrs(m[1] ?? "");
     if ((a.rel ?? "").toLowerCase().split(/\s+/).includes("canonical") && a.href) {
-      canonical = resolveUrl(a.href, baseUrl);
+      // An over-long URL is DROPPED, never clamped: a truncated URL is not a shorter
+      // answer, it is a wrong one.
+      const resolved = resolveUrl(a.href, baseUrl);
+      canonical = resolved !== null && resolved.length <= MAX_FIELD_CHARS ? resolved : null;
       break;
     }
   }
 
   const h1s: string[] = [];
   for (const m of content.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)) {
+    if (h1s.length >= MAX_H1S_PER_PAGE) break;
     const text = textOf(m[1] ?? "");
-    if (text) h1s.push(text);
+    if (text) h1s.push(clampField(text));
   }
 
   const links: string[] = [];
   const seen = new Set<string>();
+  let linksTruncated = false;
   for (const m of content.matchAll(/<a\b([^>]*)>/gi)) {
+    if (links.length >= MAX_LINKS_PER_PAGE) {
+      // BREAK, do not filter afterwards: matchAll is lazy, so stopping here means the rest
+      // of a link-flooded document is never scanned or turned into strings.
+      linksTruncated = true;
+      break;
+    }
     const href = parseAttrs(m[1] ?? "").href;
     const abs = href ? resolveUrl(href, baseUrl) : null;
     // Normalize link targets (drop fragment / trailing slash) so same-page anchors
     // collapse and the field matches the crawler's dedupe key.
     const norm = abs ? normalizeUrl(abs) : null;
-    if (norm && !seen.has(norm)) {
+    if (norm && norm.length <= MAX_FIELD_CHARS && !seen.has(norm)) {
       seen.add(norm);
       links.push(norm);
     }
@@ -250,7 +283,17 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   // not the script-stripped `content` above.
   const jsonLdTypes = parseJsonLdTypes(html);
 
-  return { title, metaDescription, h1s, canonical, robotsMeta, links, wordCount, jsonLdTypes };
+  return {
+    title,
+    metaDescription,
+    h1s,
+    canonical,
+    robotsMeta,
+    links,
+    wordCount,
+    linksTruncated,
+    jsonLdTypes,
+  };
 }
 
 /**
@@ -326,6 +369,90 @@ const DEFAULT_ROBOTS_RETRY_DELAY_MS = 2_000;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * Ceilings on how much DECOMPRESSED body the crawler will hold for ONE response. The URL
+ * count (100) and the wall clock (90 s) bound how MANY answers we take, not how big one may
+ * be — and Content-Length cannot supply that bound: it describes WIRE bytes (a gzip bomb is
+ * ~20 KB on the wire and 20 MB in memory) and a chunked response carries no length at all.
+ * So the crawler counts bytes off the body reader and CANCELS the transfer at the ceiling.
+ *
+ * Sizing, against the 512 MB machine in apps/mcp/fly.toml: the crawl is SEQUENTIAL, so
+ * exactly one body is in flight at a time and the live cost is that body plus the
+ * accumulated result (bounded separately). 2 MB is ~20x a large real HTML document. 8 MB
+ * lets a legitimately large sitemap through — it already carries ~150k <loc>s, far more than
+ * either the 100-URL crawl or the 5000-URL estimate can consume, so the sitemaps.org 50 MB
+ * file limit is deliberately NOT honoured on a shared 512 MB machine. robots.txt gets the
+ * RFC 9309 §2.5 parse limit (a crawler MAY cap parsing at >= 500 KiB and ignore the rest).
+ */
+const MAX_HTML_BYTES = 2_000_000;
+const MAX_SITEMAP_BYTES = 8_000_000;
+const MAX_ROBOTS_BYTES = 512 * 1024;
+
+/**
+ * Discovery ceilings (H-02). The BFS queue exists ONLY to choose the next <= maxUrls pages,
+ * so 5000 candidates is already 50x more than the 100-page contract can ever consume — past
+ * that it is ballast that grows with every link-flooded page. skipped[] needs its own bound
+ * because the queue is DRAINED into it when a limit is hit: an unbounded queue meant an
+ * unbounded skip list AND an unbounded jobs.result row. 500 entries is 5x the page cap, and
+ * whatever exceeds it is reported as one honest summary line rather than dropped in silence.
+ */
+const MAX_QUEUE_URLS = 5_000;
+const MAX_SKIPPED = 500;
+/**
+ * Room RESERVED inside MAX_SKIPPED for the ceiling notes the crawl appends at the end (skip
+ * overflow, link flood, queue full). Reserving it here is what keeps those notes from being
+ * the entries a later bound trims away — the whole point of them is that they survive.
+ */
+const MAX_CEILING_NOTES = 3;
+const MAX_SKIPPED_LISTED = MAX_SKIPPED - MAX_CEILING_NOTES;
+/** Hard ceiling on the pages a persisted result may carry (== the tool's own 100-URL cap). */
+const MAX_PAGES_PERSISTED = 100;
+
+/**
+ * TOTAL byte ceiling on the pages one crawl accumulates (T8) — the ONE bound here that does
+ * not multiply.
+ *
+ * Every ceiling above bounds ONE thing: one body (2 MB), one page's links (1000), one field
+ * (2000 chars), one result's page COUNT (100). Their PRODUCT is invisible to all of them: a
+ * page carrying 1000 links of 2000 characters is individually legal at ~2 MB, and 100 such
+ * pages are ~200 MB of strings that JSON.stringify then roughly doubles at the moment of
+ * persisting — on the 512 MB machine in apps/mcp/fly.toml that is the whole machine, and a
+ * jobs.result row nobody can read back.
+ *
+ * 12 MB is ~2 orders of magnitude above any real 100-page crawl (a fat real page record is a
+ * few KB) while leaving the adversarial case bounded. skipped[] is bounded separately and
+ * independently (MAX_SKIPPED x the field ceilings, ~2 MB worst case), so a whole persisted
+ * result stays under ~14 MB.
+ */
+const MAX_RESULT_BYTES = 12_000_000;
+
+/** The one spelling of the skip-list overflow line, shared by the crawl and the bound. */
+const skipOverflowReason = (dropped: number): string =>
+  `skip list truncated at ${MAX_SKIPPED} entries; ${dropped} more URL(s) were skipped but not listed`;
+
+/**
+ * The tenant-visible reason a URL was not crawled because the result hit MAX_RESULT_BYTES.
+ * Honest and actionable: it names the bound, says the page was NOT read, and says what to
+ * change. Shared by the crawl (per URL, like the other two limit paths) and the bound.
+ */
+const RESULT_BUDGET_REASON =
+  `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); this URL was not ` +
+  "included — narrow the crawl with include_paths or a lower max_urls to cover it";
+
+/** The bound's one-line summary when it had to DROP already-crawled pages to fit the budget. */
+const resultBudgetDropReason = (dropped: number): string =>
+  `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); ${dropped} crawled ` +
+  "page(s) were dropped from the stored result — narrow the crawl with include_paths " +
+  "or a lower max_urls to cover them";
+
+/**
+ * UTF-8 byte size of a value's JSON encoding — the exact unit the persisted jobs.result row
+ * is measured in, so the budget bounds the real thing rather than a proxy for it.
+ */
+function jsonByteSize(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function sameOrigin(a: URL, b: URL): boolean {
@@ -348,12 +475,51 @@ type FetchOutcome =
   | FetchOk
   | { readonly kind: "timeout" }
   | { readonly kind: "error"; readonly message: string }
+  | { readonly kind: "too-large"; readonly limitBytes: number }
   | { readonly kind: "too-many-redirects" }
   | { readonly kind: "off-origin-redirect"; readonly target: string };
 
 /** Release the per-hop pinned dispatchers a chain opened (bodies are consumed by now). */
 async function destroyAll(dispatchers: readonly Dispatcher[]): Promise<void> {
   await Promise.allSettled(dispatchers.map((d) => d.destroy()));
+}
+
+/** A body read that either completed or stopped at its ceiling. */
+interface CappedBody {
+  readonly text: string;
+  /** True when `maxBytes` would have been exceeded and the rest was CANCELLED. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Read a response body as text, counting DECOMPRESSED bytes and cancelling the transfer the
+ * moment `maxBytes` would be exceeded. undici inflates Content-Encoding before this stream,
+ * so what is counted here is exactly what would land in memory. Cancelling (rather than
+ * abandoning) releases the socket instead of letting a hostile server keep pushing.
+ *
+ * Chunks are collected and joined ONCE — never `text += chunk` — so a body that runs to the
+ * ceiling costs O(maxBytes), not O(maxBytes^2). A read that rejects (abort, socket reset)
+ * propagates to the caller's existing failure path unchanged.
+ */
+async function readCappedText(res: Response, maxBytes: number): Promise<CappedBody> {
+  if (!res.body) return { text: "", truncated: false };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done || value === undefined) break;
+    if (total + value.byteLength > maxBytes) {
+      // The overflowing chunk is dropped whole rather than sliced: a partial chunk buys
+      // nothing here and could end in a half-decoded multi-byte sequence.
+      await reader.cancel().catch(() => undefined);
+      return { text: chunks.join(""), truncated: true };
+    }
+    total += value.byteLength;
+    chunks.push(decoder.decode(value, { stream: true }));
+  }
+  return { text: chunks.join("") + decoder.decode(), truncated: false };
 }
 
 /**
@@ -413,7 +579,12 @@ async function fetchPage(
         await res.body?.cancel();
         return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
       }
-      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: await res.text() };
+      // A page over the ceiling is REFUSED, not truncated: half a document parses into
+      // misleading signals (a "missing title" that is only missing because we stopped
+      // reading). The caller records it as skipped with an honest reason instead.
+      const capped = await readCappedText(res, MAX_HTML_BYTES);
+      if (capped.truncated) return { kind: "too-large", limitBytes: MAX_HTML_BYTES };
+      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: capped.text };
     }
     return { kind: "too-many-redirects" };
   } catch (error) {
@@ -472,11 +643,17 @@ async function validateRedirectTarget(target: URL, lookup: LookupFn): Promise<bo
  * CALLER CONTRACT: the INITIAL url's host is the caller's responsibility to validate —
  * crawlSite vets the crawl origin before any fetchText. fetchText validates cross-origin
  * REDIRECT hops only.
+ *
+ * `maxBytes` bounds the DECOMPRESSED body (see the ceilings above). Unlike a page, a text
+ * resource over its ceiling is TRUNCATED rather than refused, because the prefix is still
+ * the useful answer: RFC 9309 §2.5 prescribes exactly this for robots.txt, and a sitemap
+ * prefix at 8 MB already carries far more <loc>s than any crawl or estimate can consume.
  */
 async function fetchText(
   url: string,
   timeoutMs: number,
   lookup: LookupFn,
+  maxBytes: number,
 ): Promise<{ status: number; body: string } | null> {
   let requestedOrigin: URL;
   try {
@@ -517,7 +694,7 @@ async function fetchText(
         current = next.toString();
         continue;
       }
-      return { status: res.status, body: await res.text() };
+      return { status: res.status, body: (await readCappedText(res, maxBytes)).text };
     }
     return null; // exceeded MAX_REDIRECTS -> unreachable
   } catch {
@@ -567,7 +744,12 @@ const ROBOTS_UNREACHABLE_REASON: Record<RobotsUnreachableCause, string> = {
  * blocked pin) is `network`.
  */
 async function loadRobots(origin: URL, timeoutMs: number, lookup: LookupFn): Promise<RobotsLoad> {
-  const res = await fetchText(new URL("/robots.txt", origin).toString(), timeoutMs, lookup);
+  const res = await fetchText(
+    new URL("/robots.txt", origin).toString(),
+    timeoutMs,
+    lookup,
+    MAX_ROBOTS_BYTES,
+  );
   if (res === null) return { kind: "unreachable", cause: "network" };
   if (res.status >= 500) return { kind: "unreachable", cause: "server_error" };
   return { kind: "ok", rules: parseRobots(res.status === 200 ? res.body : "") };
@@ -597,11 +779,41 @@ async function loadRobotsWithRetry(
 }
 
 /**
+ * A TOTAL wall-clock budget shared by a SEQUENCE of fetches (M-19). Per-fetch timeouts bound
+ * one hop; over a hop sequence they multiply, and the product is what a caller waits on. A
+ * deadline is checked BEFORE each hop and clamps that hop's own timeout to what is left, so
+ * the sequence can neither overrun the budget nor leave orphaned requests running past it
+ * (which is exactly what a Promise.race around the whole thing would do).
+ *
+ * `null` means NO deadline — the crawl path, which already has its own whole-crawl
+ * timeBudgetMs, passes null and is therefore byte-identical to before.
+ */
+type Deadline = { readonly remainingMs: () => number } | null;
+
+/** Open a deadline `budgetMs` from now. */
+function deadlineIn(budgetMs: number): Deadline {
+  const endsAt = Date.now() + budgetMs;
+  return { remainingMs: () => endsAt - Date.now() };
+}
+
+/**
+ * The timeout ONE hop may spend: its own timeout, clamped to whatever the deadline leaves.
+ * A return value <= 0 means the budget is spent and the hop must NOT be emitted.
+ */
+function hopTimeout(deadline: Deadline, timeoutMs: number): number {
+  return deadline === null ? timeoutMs : Math.min(timeoutMs, deadline.remainingMs());
+}
+
+/**
  * Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. When
  * `prefixes` is non-empty, only same-origin locs whose pathname is in scope are kept — an
  * empty `prefixes` (the default) filters nothing, so the crawl's existing behavior is
  * byte-identical. The guarded fetchText path (incl. its cross-origin redirect checks) is
  * unchanged; scoping is a pure post-fetch filter.
+ *
+ * `deadline` (default null = none) bounds the WHOLE root+children sequence rather than each
+ * hop: an exhausted budget returns the seeds found so far, which is a FLOOR — honest for
+ * every consumer here, since both callers already treat the count as approximate.
  */
 async function loadSitemapSeeds(
   origin: URL,
@@ -609,10 +821,14 @@ async function loadSitemapSeeds(
   limit: number,
   lookup: LookupFn,
   prefixes: readonly string[] = [],
+  deadline: Deadline = null,
 ): Promise<string[]> {
   const seeds: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string): void => {
+    // Stop ACCUMULATING at the limit, rather than collecting everything and slicing at the
+    // end: the slice bounded the answer, not the memory it took to produce it.
+    if (seeds.length >= limit) return;
     let u: URL;
     try {
       u = new URL(raw);
@@ -628,12 +844,23 @@ async function loadSitemapSeeds(
     }
   };
 
-  const root = await fetchText(new URL("/sitemap.xml", origin).toString(), timeoutMs, lookup);
+  const rootTimeout = hopTimeout(deadline, timeoutMs);
+  if (rootTimeout <= 0) return seeds;
+  const root = await fetchText(
+    new URL("/sitemap.xml", origin).toString(),
+    rootTimeout,
+    lookup,
+    MAX_SITEMAP_BYTES,
+  );
   if (!root || root.status !== 200) return seeds;
   const parsed = parseSitemap(root.body);
   parsed.urls.forEach(add);
   for (const child of parsed.sitemaps.slice(0, 5)) {
     if (seeds.length >= limit) break;
+    // Budget check BEFORE the hop: an exhausted deadline stops expansion here, so the
+    // remaining children are never requested at all.
+    const childTimeout = hopTimeout(deadline, timeoutMs);
+    if (childTimeout <= 0) break;
     // SSRF guard: child-sitemap locs are tenant-controlled input on a hosted
     // service — never let them point our fetcher off the crawl origin (e.g. at
     // cloud metadata endpoints). Off-origin or unparsable children are skipped.
@@ -644,7 +871,7 @@ async function loadSitemapSeeds(
       continue;
     }
     if (!sameOrigin(childUrl, origin)) continue;
-    const res = await fetchText(child, timeoutMs, lookup);
+    const res = await fetchText(child, childTimeout, lookup, MAX_SITEMAP_BYTES);
     if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
   }
   return seeds.slice(0, limit);
@@ -755,8 +982,30 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   const pages: PageRecord[] = [];
   const skipped: SkippedUrl[] = [];
   let fetches = 0;
+  // H-02 counters: what the ceilings dropped, reported ONCE at the end instead of one
+  // entry per casualty (which is how skipped[] became the memory problem in the first place).
+  let skippedDropped = 0;
+  let linkFloodedPages = 0;
+  let queueFull = false;
+  // T8: what the accumulated pages have cost so far, in the unit they will be PERSISTED in.
+  let resultBytes = 0;
+
+  /** Record a skip, bounded: past the listing ceiling only the DROP COUNT is kept. */
+  const addSkip = (url: string, reason: string): void => {
+    if (skipped.length >= MAX_SKIPPED_LISTED) {
+      skippedDropped++;
+      return;
+    }
+    skipped.push({ url, reason });
+  };
 
   const enqueue = (link: string): void => {
+    // The queue only exists to choose the next <= maxUrls pages; beyond MAX_QUEUE_URLS
+    // candidates it is pure ballast that can never be fetched.
+    if (queue.length >= MAX_QUEUE_URLS) {
+      queueFull = true;
+      return;
+    }
     let u: URL;
     try {
       u = new URL(link);
@@ -775,11 +1024,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
   while (queue.length > 0) {
     if (pages.length >= maxUrls) {
-      for (const url of queue.splice(0)) skipped.push({ url, reason: "max URL limit reached" });
+      for (const url of queue.splice(0)) addSkip(url, "max URL limit reached");
       break;
     }
     if (Date.now() - started >= timeBudgetMs) {
-      for (const url of queue.splice(0)) skipped.push({ url, reason: "time budget exhausted" });
+      for (const url of queue.splice(0)) addSkip(url, "time budget exhausted");
       break;
     }
 
@@ -789,7 +1038,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
     const target = new URL(url);
     if (!robots.isAllowed(target.pathname + target.search)) {
-      skipped.push({ url, reason: "blocked by robots.txt" });
+      addSkip(url, "blocked by robots.txt");
       continue;
     }
 
@@ -798,19 +1047,25 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
     const outcome = await fetchPage(url, originUrl, pageTimeoutMs, lookup);
     if (outcome.kind === "timeout") {
-      skipped.push({ url, reason: "timeout" });
+      addSkip(url, "timeout");
       continue;
     }
     if (outcome.kind === "too-many-redirects") {
-      skipped.push({ url, reason: "too many redirects" });
+      addSkip(url, "too many redirects");
       continue;
     }
     if (outcome.kind === "off-origin-redirect") {
-      skipped.push({ url, reason: `off-origin redirect to ${outcome.target}` });
+      addSkip(url, `off-origin redirect to ${outcome.target}`);
+      continue;
+    }
+    if (outcome.kind === "too-large") {
+      // Honest, actionable, and never silent: the tenant is told the page was too big and
+      // by which bound, rather than seeing it vanish or come back half-parsed.
+      addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
       continue;
     }
     if (outcome.kind === "error") {
-      skipped.push({ url, reason: `fetch failed: ${outcome.message}` });
+      addSkip(url, `fetch failed: ${outcome.message}`);
       continue;
     }
 
@@ -822,18 +1077,18 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
         // without it, a sitemap URL that redirects to a crawled page reads as a coverage
         // gap. Benign — the reason string marks it as a redirect, not a failure.
-        skipped.push({ url, reason: "redirects to already-crawled URL" });
+        addSkip(url, "redirects to already-crawled URL");
         continue;
       }
       visited.add(finalUrl);
       const finalTarget = new URL(finalUrl);
       if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
-        skipped.push({ url: finalUrl, reason: "blocked by robots.txt" });
+        addSkip(finalUrl, "blocked by robots.txt");
         continue;
       }
     }
     if (!isHtml(outcome.contentType)) {
-      skipped.push({ url: finalUrl, reason: `non-HTML (${outcome.contentType || "unknown"})` });
+      addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
       continue;
     }
 
@@ -844,13 +1099,10 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     try {
       parsed = parseHtml(outcome.body, finalUrl);
     } catch (error) {
-      skipped.push({
-        url: finalUrl,
-        reason: `parse failed: ${error instanceof Error ? error.message : String(error)}`,
-      });
+      addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
-    pages.push({
+    const record: PageRecord = {
       url: finalUrl,
       status: outcome.status,
       title: parsed.title,
@@ -862,11 +1114,82 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       wordCount: parsed.wordCount,
       jsonLdTypes: parsed.jsonLdTypes,
       issues: computeIssues(parsed),
-    });
+    };
+    // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
+    // point is never to hold the 200 MB in the first place. The page that does not fit is
+    // recorded as skipped (never silently dropped) and the crawl stops here, draining the
+    // queue exactly as the maxUrls and time-budget limits do.
+    const recordBytes = jsonByteSize(record);
+    if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
+      addSkip(finalUrl, RESULT_BUDGET_REASON);
+      for (const url of queue.splice(0)) addSkip(url, RESULT_BUDGET_REASON);
+      break;
+    }
+    resultBytes += recordBytes;
+    pages.push(record);
+    if (parsed.linksTruncated) linkFloodedPages++;
     parsed.links.forEach(enqueue);
   }
 
-  return { pages, skipped, fetchedAt };
+  // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
+  // they can never be the entries that get dropped. Nothing is trimmed silently.
+  const notes: SkippedUrl[] = [];
+  if (skippedDropped > 0) notes.push({ url: rootSeed, reason: skipOverflowReason(skippedDropped) });
+  if (linkFloodedPages > 0) {
+    notes.push({
+      url: rootSeed,
+      reason:
+        `${linkFloodedPages} page(s) carried more than ${MAX_LINKS_PER_PAGE} links; ` +
+        `only the first ${MAX_LINKS_PER_PAGE} of each were recorded and queued`,
+    });
+  }
+  if (queueFull) {
+    notes.push({
+      url: rootSeed,
+      reason:
+        `link queue limit reached (${MAX_QUEUE_URLS} URLs); further discovered links were ` +
+        "not queued — narrow the crawl with include_paths to cover them",
+    });
+  }
+  return { pages, skipped: [...skipped, ...notes], fetchedAt };
+}
+
+/**
+ * Bound a CrawlResult to what may be PERSISTED into jobs.result (H-02). crawlSite already
+ * holds itself to these ceilings, so on the real crawler this is the identity — it exists
+ * because the queue handler must not have to TRUST its (injectable) crawl function with the
+ * size of a DB row. Pure: returns a new result, mutates nothing.
+ */
+export function boundCrawlResult(result: CrawlResult): CrawlResult {
+  const skipped = result.skipped
+    .slice(0, MAX_SKIPPED)
+    .map((s) => (s.reason.length <= MAX_FIELD_CHARS ? s : { ...s, reason: clampField(s.reason) }));
+  const dropped = result.skipped.length - skipped.length;
+
+  // The page COUNT cap first, then the total BYTE budget (T8) — 100 pages is a count, and a
+  // count cannot bound a size. Accumulate while under budget rather than measuring the whole
+  // array, so an oversized page stops the walk instead of being measured into it.
+  const capped = result.pages.slice(0, MAX_PAGES_PERSISTED);
+  const pages: PageRecord[] = [];
+  let bytes = 0;
+  for (const page of capped) {
+    const size = jsonByteSize(page);
+    if (bytes + size > MAX_RESULT_BYTES) break;
+    bytes += size;
+    pages.push(page);
+  }
+  // Counted against `capped`, NOT result.pages: pages lost to the 100-page COUNT cap were not
+  // lost to size, and folding them into this number would overstate what the budget did.
+  const budgetDropped = capped.length - pages.length;
+
+  const notes: SkippedUrl[] = [];
+  if (dropped > 0) notes.push({ url: skipped[0]?.url ?? "", reason: skipOverflowReason(dropped) });
+  // Only the BYTE budget is reported here: dropping past MAX_PAGES_PERSISTED is the crawler's
+  // own contract (max_urls <= 100), so a note fires only when pages were actually lost to size.
+  if (budgetDropped > 0) {
+    notes.push({ url: capped[0]?.url ?? "", reason: resultBudgetDropReason(budgetDropped) });
+  }
+  return { pages, skipped: [...skipped, ...notes], fetchedAt: result.fetchedAt };
 }
 
 // --- Free pre-discovery (site-size estimate) ------------------------------------
@@ -882,6 +1205,26 @@ export interface SiteSizeEstimate {
 const ESTIMATE_SITEMAP_LIMIT = 5_000;
 /** Default wall-clock budget for each fetch in the free pre-discovery, ms. */
 const DEFAULT_ESTIMATE_TIMEOUT_MS = 5_000;
+
+/**
+ * The TOTAL wall-clock ceiling on pre-discovery (M-19), and the one number that decides how
+ * long a crawl_site call can sit there before it hands back a job id.
+ *
+ * WHY it is needed on top of DEFAULT_ESTIMATE_TIMEOUT_MS: the per-fetch timeout bounds ONE
+ * hop, and pre-discovery is a SEQUENCE of them — the root sitemap, up to 5 children, then the
+ * homepage fallback. Seven hops x 5 s is ~35 s of a caller staring at nothing, because this
+ * runs on the REQUEST path (the tool must decide whether to enqueue at all, so it cannot be
+ * deferred to the worker without opening the worker's credit reserve for a crawl the caller
+ * may still decline).
+ *
+ * Overrun is SAFE, never a money event: pre-discovery reads no ledger, and a budget-truncated
+ * count is a FLOOR, so at worst a large site is not flagged and the caller is charged the same
+ * flat TOOL_COSTS.crawl_site they would have paid after confirming. It can never overstate.
+ *
+ * HONEST LIMIT: this bounds the FETCH sequence. DNS resolution inside the SSRF origin gate is
+ * the OS resolver's own timeout and is not covered here.
+ */
+export const PRE_DISCOVERY_BUDGET_MS = 8_000;
 
 /** Count distinct same-origin, in-scope links in `html` (a homepage-size floor). Pure. */
 function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly string[]): number {
@@ -914,14 +1257,26 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
  *    `<loc>`s -> source "sitemap";
  *  - otherwise the homepage's same-origin, in-scope links as a rough floor -> source "homepage";
  *  - `includePaths` scopes the count exactly as it scopes the crawl.
+ *
+ * It is also BOUNDED IN TOTAL by `budgetMs` (default PRE_DISCOVERY_BUDGET_MS) — see that
+ * constant for why a per-fetch timeout is not enough on the request path. An exhausted budget
+ * simply stops emitting hops, so the answer is whatever was discovered by then: a floor, never
+ * an overstatement.
  */
 export async function estimateSiteSize(
   origin: string,
-  opts: { lookup?: LookupFn; timeoutMs?: number; includePaths?: string[] } = {},
+  opts: {
+    lookup?: LookupFn;
+    timeoutMs?: number;
+    includePaths?: string[];
+    /** Total wall clock for the whole discovery sequence, ms. Test knob. */
+    budgetMs?: number;
+  } = {},
 ): Promise<SiteSizeEstimate> {
   const lookup = opts.lookup ?? defaultLookup;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ESTIMATE_TIMEOUT_MS;
   const prefixes = normalizeIncludePaths(opts.includePaths);
+  const deadline = deadlineIn(opts.budgetMs ?? PRE_DISCOVERY_BUDGET_MS);
 
   let originUrl: URL;
   try {
@@ -939,20 +1294,29 @@ export async function estimateSiteSize(
       return { pages: null, source: "unknown" };
     }
 
-    // Guarded sitemap count (reuses loadSitemapSeeds' fetchText + bounded index expansion).
+    // Guarded sitemap count (reuses loadSitemapSeeds' fetchText + bounded index expansion),
+    // sharing THIS call's deadline so root + children cannot outspend the total budget.
     const sitemapSeeds = await loadSitemapSeeds(
       originUrl,
       timeoutMs,
       ESTIMATE_SITEMAP_LIMIT,
       lookup,
       prefixes,
+      deadline,
     );
     if (sitemapSeeds.length > 0) {
       return { pages: sitemapSeeds.length, source: "sitemap" };
     }
 
     // No usable sitemap -> the homepage's in-scope same-origin links as a rough floor.
-    const home = await fetchText(rootSeedOf(originUrl), timeoutMs, lookup);
+    // The homepage is HTML, so it gets the page ceiling. A body at the ceiling yields a
+    // link count from the bounded prefix — which is exactly what this estimate claims to
+    // be (a floor), so truncation never overstates the site's size.
+    // This is the LAST hop, and it too runs only on what the budget still allows: a
+    // sitemap sequence that spent the whole budget leaves nothing to discover with.
+    const homeTimeout = hopTimeout(deadline, timeoutMs);
+    if (homeTimeout <= 0) return { pages: null, source: "unknown" };
+    const home = await fetchText(rootSeedOf(originUrl), homeTimeout, lookup, MAX_HTML_BYTES);
     if (!home || home.status !== 200 || !home.body) {
       return { pages: null, source: "unknown" };
     }

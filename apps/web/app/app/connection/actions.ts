@@ -8,8 +8,9 @@ import {
   mcpUrlFor,
   mcpUrlTemplate,
   tokenKeyBytes,
+  type TokenOwner,
 } from "@pseo/core";
-import { countActiveKeys, createKey, getKeyOwner, revokeKey } from "@pseo/db/api-keys-repo";
+import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
 import { revokeGoogleToken } from "../../../lib/gsc/revoke";
@@ -28,11 +29,16 @@ import { createClient } from "../../../lib/supabase/server";
 const CONNECTION_PATH = "/app/connection";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Cap on simultaneously-active keys per user, enforced when GENERATING a fresh key. Rotate is
-// deliberately EXEMPT: it is net-neutral on the active count (it mints one and revokes one,
-// create-first), so applying the cap there would wedge a user who is legitimately at the limit
-// and wants to roll their credential. The check is best-effort (a count read, not an atomic
-// constraint) — it bounds accidental/abusive growth, not a money or security invariant.
+// Cap on simultaneously-active keys per user, enforced on BOTH mint paths (M-22).
+//
+// Rotate used to be EXEMPT on the argument that it is net-neutral (mint one, revoke one). That
+// argument only holds while the OLD key is actually active — which the ownership check did not
+// require, so rotating an already-revoked id minted a key and revoked nothing: net +1, repeatable,
+// no ceiling. Liveness is now part of the ownership check and rotate consults the count before it
+// mints, so neither path can grow the active set past the cap.
+//
+// The check is best-effort (a count read, not an atomic constraint) — it bounds accidental/abusive
+// growth, not a money or security invariant.
 const MAX_ACTIVE_KEYS = 5;
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
@@ -57,16 +63,30 @@ async function requireUserId(): Promise<string> {
 }
 
 /**
- * Authorize a key mutation: the target must exist and belong to `userId`. Returns the
- * same opaque "Key not found" for a malformed id, a missing key, and another user's
- * key, so nothing about other users' keys leaks.
+ * Authorize a key mutation: the target must exist, belong to `userId`, and still be ACTIVE.
+ * Returns the same opaque "Key not found" for a malformed id, a missing key, another user's
+ * key, and a revoked one, so nothing about other users' keys leaks.
+ *
+ * LIVENESS is part of the authorization, not a nicety (M-22): a revoked key is not a
+ * credential anyone can still be holding, so rotating or re-revoking one is never a real
+ * request — and treating it as one is what let rotate mint without revoking anything.
+ *
+ * The lookup runs `listKeys` on the SERVICE client rather than the caller's RLS-scoped one:
+ * the explicit `user_id` filter it carries IS the tenant guard here (constitution NEVER #4),
+ * the same posture as the other service-role reads on this table (countActiveKeys). It also
+ * answers ownership and liveness in ONE round trip. The RSC render path keeps using the
+ * caller's own client, where RLS remains the scope.
  */
-async function assertOwnedBy(service: ServiceClient, keyId: string, userId: string): Promise<void> {
+async function assertActiveKeyOwnedBy(
+  service: ServiceClient,
+  keyId: string,
+  userId: string,
+): Promise<void> {
   if (!UUID_RE.test(keyId)) {
     throw new Error("Key not found");
   }
-  const owner = await getKeyOwner(service, keyId);
-  if (owner !== userId) {
+  const key = (await listKeys(service, userId)).find((candidate) => candidate.id === keyId);
+  if (!key || key.revokedAt !== null) {
     throw new Error("Key not found");
   }
 }
@@ -103,7 +123,19 @@ export async function createKeyAction(): Promise<GeneratedKeyResult> {
 export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyResult> {
   const userId = await requireUserId();
   const service = createServiceClient();
-  await assertOwnedBy(service, oldKeyId, userId);
+  await assertActiveKeyOwnedBy(service, oldKeyId, userId);
+  // Cap BEFORE the mint (M-22). The old key is required to be active above, so it is inside
+  // `activeKeys` and leaves the set when we revoke it: the post-rotation count is `activeKeys`
+  // itself. Refuse only when even that net-neutral mint would land above the cap — a user
+  // already over it — so a legitimate rotation AT the limit still goes through, and a refused
+  // one never creates a row it would then have to clean up.
+  const activeKeys = await countActiveKeys(service, userId);
+  if (activeKeys - 1 >= MAX_ACTIVE_KEYS) {
+    throw new Error(
+      `You have more than ${MAX_ACTIVE_KEYS} active API keys, the maximum. ` +
+        "Revoke one before rotating.",
+    );
+  }
   // Chef order: mint + insert the new key FIRST, then revoke the old one, so the user is
   // never left without a copyable key (a brief double-active window is acceptable).
   const issued = await issueKey(service, userId);
@@ -132,22 +164,49 @@ export async function rotateKeyAction(oldKeyId: string): Promise<GeneratedKeyRes
 export async function revokeKeyAction(keyId: string): Promise<void> {
   const userId = await requireUserId();
   const service = createServiceClient();
-  await assertOwnedBy(service, keyId, userId);
+  await assertActiveKeyOwnedBy(service, keyId, userId);
   await revokeKey(service, keyId);
   revalidatePath(CONNECTION_PATH);
 }
 
 /**
- * Open the sealed refresh token and ask Google to forget the grant.
+ * What Disconnect could establish about SeoGrep's grant at GOOGLE — the local deletion is a
+ * separate, always-performed half.
+ *
+ *   revoked       — Google acknowledged the revoke. The only CONFIRMED outcome.
+ *   unconfirmed   — we asked and Google did not acknowledge (refusal, outage, dead token).
+ *   not_attempted — we never asked: no stored token, or a seal that would not open (T5).
+ *
+ * The last two are the honest names for "we do not know", and no caller may turn either of
+ * them into a promise that access is gone (signed lesson 9 — the same disposition-follows-
+ * verified-state posture as the credit guard's commit classification).
+ */
+export type GscRevocationOutcome = "revoked" | "unconfirmed" | "not_attempted";
+
+/**
+ * Open the sealed refresh token and ask Google to forget the grant, reporting which of the
+ * three outcomes above actually happened.
  *
  * A MISSING or MALFORMED TOKEN_ENCRYPTION_KEY throws (signed lesson #5): that is a broken
  * deploy, and silently dropping the row while the Google-side grant lives on would turn a
  * config fault into a privacy fault. Everything AFTER the key is best-effort: an unopenable
  * ciphertext (rotated key, corrupt bytes) is a per-row fault, and trapping the user with an
  * undeletable connection would be worse than leaving one unusable token un-revoked — so we
- * log that we could not open it (never the ciphertext or the key) and let the deletion proceed.
+ * log that we could not open it (never the ciphertext or the key) and let the deletion
+ * proceed, with `not_attempted` telling the caller no revoke was ever tried.
+ *
+ * An already-dead token is deliberately NOT special-cased into a success. Google answers one
+ * with 400 invalid_token, which `revokeGoogleToken` collapses into the same `false` as an
+ * outage — and even a distinguishable 400 would only prove THIS token string is unusable,
+ * not that the grant is gone. Reporting `revoked` from it would be precisely the unverified
+ * promise this reports exist to prevent; a needless trip to Google's permissions page costs
+ * far less than a false all-clear.
  */
-async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
+async function revokeStoredToken(
+  encryptedTokenHex: string,
+  connectionId: string,
+  owner: TokenOwner,
+): Promise<GscRevocationOutcome> {
   const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
   if (!encryptionKey) {
     throw new Error("Search Console is not configured; disconnect is unavailable");
@@ -159,12 +218,30 @@ async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
   tokenKeyBytes(encryptionKey);
   let refreshToken: string;
   try {
-    refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey);
+    refreshToken = decryptToken(fromByteaHex(encryptedTokenHex), encryptionKey, owner);
   } catch (caught) {
-    console.error("disconnectGscAction: stored token could not be opened, skipping revoke:", caught);
-    return;
+    // T5: the revoke is SKIPPED here, and the row still goes. Name the skip and key it to
+    // the row so an operator can find the grants a key retirement left live at Google —
+    // this used to be indistinguishable from a completed disconnect. Never the ciphertext
+    // or the key: the caught error carries neither.
+    console.error(
+      `disconnectGscAction: connection ${connectionId} — stored token could not be opened, ` +
+        "Google-side revoke SKIPPED (the grant may still be live at Google):",
+      caught,
+    );
+    return "not_attempted";
   }
-  await revokeGoogleToken(refreshToken);
+  if (await revokeGoogleToken(refreshToken)) {
+    return "revoked";
+  }
+  // warn, not error: `revokeGoogleToken` is expected to answer false for grants Google
+  // already dropped, so this is a routine unknown rather than a fault — but an unknown the
+  // operator (and, in different words, the user) must be able to see.
+  console.warn(
+    `disconnectGscAction: connection ${connectionId} — Google did not acknowledge the revoke; ` +
+      "reporting the grant as unconfirmed",
+  );
+  return "unconfirmed";
 }
 
 /**
@@ -179,8 +256,14 @@ async function revokeStoredToken(encryptedTokenHex: string): Promise<void> {
  * Order: revoke first, then delete. The revoke is best-effort — `revokeGoogleToken` never
  * throws (see its unit tests), so a Google outage or an already-dead token can never leave
  * the user stuck with a connection they asked us to drop.
+ *
+ * M-15: the RETURN VALUE is the point. The local half succeeded whenever this resolves, but
+ * only `revoked` means Google confirmed anything, and the caller owes the user wording that
+ * matches. Refusing the disconnect on a failed revoke would be the worse failure — it would
+ * leave the user unable to disconnect at all — so the honest shape is "delete, then say
+ * exactly what we know".
  */
-export async function disconnectGscAction(projectId: string): Promise<void> {
+export async function disconnectGscAction(projectId: string): Promise<GscRevocationOutcome> {
   const userId = await requireUserId();
   if (!UUID_RE.test(projectId)) {
     throw new Error("Connection not found");
@@ -190,9 +273,24 @@ export async function disconnectGscAction(projectId: string): Promise<void> {
   if (!connection) {
     throw new Error("Connection not found");
   }
+  let revocation: GscRevocationOutcome = "not_attempted";
   if (connection.encryptedTokenHex) {
-    await revokeStoredToken(connection.encryptedTokenHex);
+    // The (user, project) below is the SAME pair the row was found by, so a v3 seal that
+    // truly belongs to this row opens and one planted from elsewhere does not — in which
+    // case the outcome is the existing `not_attempted`, not a crash.
+    revocation = await revokeStoredToken(connection.encryptedTokenHex, connection.id, {
+      userId,
+      projectId,
+    });
+  } else {
+    // A row without a token cannot revoke anything, and its grant at Google — if one is
+    // still live — is beyond our reach. Same honest report as an unopenable seal.
+    console.warn(
+      `disconnectGscAction: connection ${connection.id} — no stored token, ` +
+        "Google-side revoke SKIPPED",
+    );
   }
   await deleteGscConnection(service, { userId, projectId });
   revalidatePath(CONNECTION_PATH);
+  return revocation;
 }

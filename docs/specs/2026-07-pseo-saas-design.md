@@ -6,6 +6,23 @@
 
 ---
 
+> **Güncellik notu (2026-07-28):** Bu belge Faz 0'da (2026-07-10) yazılan tarihsel bir tasarım
+> dokümanıdır — TOPTAN güncellenmedi; gövde metni tarihsel sadakatle korunur, yalnız birkaç
+> satıra aşağıdaki gerçeklere işaret eden kısa şerhler eklendi. Sonraki fazlarda değişenler:
+> - **Marka:** `[MARKA]` placeholder'ı kapandı — karar **SeoGrep**, seogrep.com'da CANLI ve
+>   para alıyor (Faz 4 çıkış kriteri karşılandı).
+> - **MCP tool yüzeyi:** taslaktaki ~16 tool → bugün **19 tool** canlı (bkz.
+>   `apps/mcp/src/tools/index.ts`, `apps/web/content/docs/tools-reference/`).
+> - **Web framework/deploy:** taslaktaki Next.js 15 / Vercel → bugün **Next.js 16**; web
+>   **Netlify**'da, mcp **Fly.io (nrt)**'da (Vercel hiç kullanılmadı).
+> - **Job kuyruğu:** bazı erken satırlarda "Redis/BullMQ" geçer — gerçekleşen karar (§10 D27,
+>   07-19) **pg-boss** (Supabase Postgres içinde, SKIP LOCKED); Redis/BullMQ beta'da YOK.
+> - **Hesap silme / veri saklama:** bu belgenin §6 madde 5 taslağı ("silme talebi = tam purge")
+>   yerine geçerli olan gerçek: `credit_ledger` append-only + ilgili foreign key'ler
+>   `ON DELETE RESTRICT`; kullanıcıya dönük vaat ve ayrıntı bu belgede DEĞİL, `/privacy`'dedir.
+
+---
+
 ## 1. Vizyon
 
 **Tek cümle:** *"Claude'una (veya Cursor'una) bir URL ekle, iki dakika sonra sitenin SEO denetimi elinde — SEO uzmanı olmana gerek yok."*
@@ -26,7 +43,7 @@ Siteye gel → kartsız kayıt (200 trial kredisi)
 
 ## 2. Ürün tanımı (v1 = analiz çekirdeği)
 
-### 2.1 MCP tool yüzeyi (~16 tool)
+### 2.1 MCP tool yüzeyi (~16 tool) *(bugün 19 — üstteki güncellik notu)*
 
 | Grup | Tool'lar |
 |---|---|
@@ -79,6 +96,7 @@ Mekanizma: **1 kredi ≈ $0.01 taban maliyet karşılığı.** Tool kredi fiyat�
 ```
 pnpm + Turborepo monorepo (yeni private GitHub reposu — Faz 0'da ben açarım)
 ├── apps/web        Next.js 15 App Router — marketing + Fumadocs docs + dashboard → Vercel
+│                   (bugün: Next.js 16 · Netlify — üstteki güncellik notu)
 ├── apps/mcp        Node/TS, resmi @modelcontextprotocol/sdk, Streamable HTTP
 │                   + pg-boss worker (D27) → Fly.io Tokyo/nrt (D26; uzun yaşayan servis)
 ├── packages/core   domain mantığı + kredi defteri + dış API client'ları (mock'lu)
@@ -105,7 +123,20 @@ pnpm + Turborepo monorepo (yeni private GitHub reposu — Faz 0'da ben açarım)
 2. **Para doğruluğu:** ledger append-only; Paddle webhook imza + idempotency olmadan işlenmez.
 3. **Secrets:** env üzerinden; repo'da gitleaks nöbette (kalıcı hedef).
 4. **GSC token'ları** at-rest şifreli; kapsamı yalnız Search Console readonly.
-5. **Veri saklama:** crawl ham verisi 90 gün, rapor çıktıları hesap ömrü boyunca; silme talebi = tam purge (GDPR/KVKK).
+5. **Veri saklama — SEVKİYATTAKİ BETA POLİTİKASI (2026-07-29 düzeltmesi):** crawl ham verisi ve GSC
+   verisi **hesap aktif olduğu sürece** saklanır; rapor çıktıları hesap ömrü boyunca. Bu, kullanıcıya
+   dönük yüzeylerde yazılı olan politikadır (`apps/web/content/docs/core-concepts/data-retention.mdx`
+   ve `(marketing)/privacy` sayfası) ve koddaki davranışla birebir uyuşur — bugün hiçbir yaş-tabanlı
+   temizlik yoktur.
+   **D18'in "retention 90g" kararı beta-SONRASI taahhüt olarak ertelenmiştir** (karar kaydı §Kararlar'da
+   tarihiyle durur; burada geçmiş yeniden yazılmaz). 90 günü uygulamak, kullanıcıya verilmiş
+   "hesabınız aktifken saklanır" sözünü değiştirmeyi gerektirir → kod + kullanıcı metni BİRLİKTE,
+   insan onayıyla. Audit bulgusu M-24 bu satırın bayatlığıydı: spec 90 gün diyordu, ürün ve kullanıcı
+   sözü demiyordu.
+   *Açık operasyonel risk:* `jobs.result` sınırsız büyür — kapasite/maliyet maddesi olarak insan
+   kuyruğundadır.
+   Silme talebi = tam purge (GDPR/KVKK) — **şerh:** `credit_ledger` append-only ve `ON DELETE RESTRICT`
+   olduğu için "tam purge" ledger satırlarını kapsamaz; bu çelişki ayrı bir insan-kapılı kalem (D-04).
 6. Vitrin vaadi: **"Veriniz model eğitiminde kullanılmaz"** — zaten LLM çağırmıyoruz, bunu güven mesajına çevir.
 7. Test/CI'da paralı API'ye gerçek çağrı = 0; her dış API `packages/core`'da mock/fixture arkasında.
 
@@ -176,6 +207,7 @@ yapar; LLM maliyeti müşterinin kendi aboneliğinde. Spec: docs/specs/
 (marketing + Fumadocs docs + dashboard, Vercel); apps/mcp = Node/TS resmi MCP SDK,
 Streamable HTTP (Fly.io/Railway); packages/core = domain + kredi defteri;
 packages/db = Supabase (RLS açık); Redis/BullMQ; Paddle; PostHog; Resend.
+(bugün: Next.js 16, web Netlify'da; kuyruk pg-boss, Redis/BullMQ yok — üstteki güncellik notu)
 
 ORKESTRASYON: Şef = Fable 5 (ana oturum; tüm kurallar ve kararlar).
 İşçiler = Opus 4.8 (varsayılan, kolay olmayan her iş) ve Sonnet 5 (yalnız
@@ -313,7 +345,7 @@ insana onaya sun. Onaysız hiçbirini CLAUDE.md'ye yazma.
 - **Çıkış:** verify.sh + verify-goals.sh yeşil (çıktı kanıtlı); Faz 1'in ilk 3 işi done_when'li.
 
 ### FAZ 1 — Vitrin + docs + waitlist (1-1.5 hafta)
-- **İşler:** Landing (hero + canlı demo) · /pricing (taslak rakamlarla, "beta" rozetli) · /how-it-works · docs hub v1 (concepts + getting-started iskeleti + 3 recipe taslağı; tool referansı YOK — Faz 3'te şemadan otomatik) · waitlist (Resend + DB) · PostHog temel · Vercel deploy · Lighthouse ≥90 · legal sayfalar (terms/privacy taslak).
+- **İşler:** Landing (hero + canlı demo) · /pricing (taslak rakamlarla, "beta" rozetli) · /how-it-works · docs hub v1 (concepts + getting-started iskeleti + 3 recipe taslağı; tool referansı YOK — Faz 3'te şemadan otomatik) · waitlist (Resend + DB) · PostHog temel · Vercel deploy *(gerçekleşen: Netlify — üstteki güncellik notu)* · Lighthouse ≥90 · legal sayfalar (terms/privacy taslak).
 - **İnsan kapıları:** ilk prod deploy onayı + DNS. **Paralel insan görevi:** Paddle hesap başvurusu (canlı site ister — landing çıkar çıkmaz başvur; onay günler sürebilir).
 - **Hedefler:** `landing-live`, `lighthouse-90`.
 - **Çıkış:** site canlı, waitlist kayıt alıyor (kanıt: test kaydı id).
@@ -325,7 +357,7 @@ insana onaya sun. Onaysız hiçbirini CLAUDE.md'ye yazma.
 - **Çıkış:** sandbox'ta uçtan uca satın alma → kredi yüklenmesi ledger'da; dashboard gerçek bakiye gösteriyor.
 
 ### FAZ 3 — MCP gateway + analiz çekirdeği (2-3 hafta)
-- **İşler:** apps/mcp (initialize/tools/list, Streamable HTTP, kişisel URL auth) · BullMQ worker · fetch-tabanlı crawler (URL limitli) · DFS client (mock fixtures + `dfs-budget.sh` günlük ≤$3) · GSC OAuth akışı (link-out deseni) · 16 tool iteratif ("tool DONE" beşlisiyle) · tool referansı docs'a şemadan otomatik · kredi guard (tahmin→onay, eşik 200) · paylaşılabilir raporlar · trial onboarding e2e · **kredi maliyetlerini gerçek ölçümle kalibre et → insan onayına sun**.
+- **İşler:** apps/mcp (initialize/tools/list, Streamable HTTP, kişisel URL auth) · BullMQ worker · fetch-tabanlı crawler (URL limitli) · DFS client (mock fixtures + `dfs-budget.sh` günlük ≤$3) · GSC OAuth akışı (link-out deseni) · 16 tool iteratif ("tool DONE" beşlisiyle) *(bugün 19 — üstteki güncellik notu)* · tool referansı docs'a şemadan otomatik · kredi guard (tahmin→onay, eşik 200) · paylaşılabilir raporlar · trial onboarding e2e · **kredi maliyetlerini gerçek ölçümle kalibre et → insan onayına sun**.
 - **İnsan kapıları:** kalibre edilmiş fiyat/kredi tablosu onayı · beta davetleri (waitlist'ten).
 - **Hedefler:** `mcp-alive`, `docs-schema-sync`, `trial-flow-e2e`, `dfs-budget-guard`.
 - **Çıkış:** gerçek client'tan (Claude Code) trial akışı uçtan uca: kayıt → URL ekle → crawl → audit → rapor → kredi düşüşü doğru.
@@ -351,10 +383,10 @@ insana onaya sun. Onaysız hiçbirini CLAUDE.md'ye yazma.
 | D7 | Ödeme: Paddle (MoR); fallback Lemon Squeezy | 07-10 |
 | D8 | Proje sınırı: site + MCP backend tek monorepo, fazlı | 07-10 |
 | D9 | Marka: yeni kısa isim; shortlist+müsaitlik → **insan seçer** | 07-10 |
-| D10 | v1 ürün: analiz çekirdeği + research_keywords (~16 tool) | 07-10 |
+| D10 | v1 ürün: analiz çekirdeği + research_keywords (~16 tool) *(bugün 19)* | 07-10 |
 | D11 | Docs: tam hub; tool referansı şemalardan otomatik (Faz 3) | 07-10 |
 | D12 | Tempo: fazlı-hızlı, ~7-8 hafta esnek; sıra sabit | 07-10 |
-| D13 | Mimari: A (monorepo, iki deploy: Vercel + Fly/Railway) | 07-10 |
+| D13 | Mimari: A (monorepo, iki deploy: Vercel + Fly/Railway) *(gerçekleşen: Netlify + Fly.io)* | 07-10 |
 | D14 | Rollover: 1 ay devir, tavan 2× plan kredisi | 07-10 |
 | D15 | İlk aha anı GSC'siz (domain → crawl → audit) | 07-10 |
 | D16 | Paylaşılabilir HTML raporlar + "powered by" | 07-10 |

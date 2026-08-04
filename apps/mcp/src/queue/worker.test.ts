@@ -51,8 +51,15 @@ describe("in-worker stuck-job reaper", () => {
     scanned: released,
     released,
     alreadySettled: 0,
+    alreadyCommitted: 0,
+    alreadyReleased: 0,
     failed: released,
     orphanReserves: 0,
+    orphanScanned: 0,
+    orphanReleased: 0,
+    orphanAlreadySettled: 0,
+    queuedScanned: 0,
+    queuedFailed: 0,
   });
 
   /** The reaper heartbeat lines a console.warn spy saw, in call order (other warns ignored). */
@@ -163,8 +170,21 @@ describe("in-worker stuck-job reaper", () => {
       scanned: 3,
       released: 1,
       alreadySettled: 2,
+      // The L-01 breakdown of alreadySettled. It is deliberately NOT in the heartbeat line:
+      // the operator's liveness signal keeps its exact shape; the split is reported by
+      // scripts/reconcile.mjs, where the committed-vs-refunded distinction is acted on.
+      alreadyCommitted: 2,
+      alreadyReleased: 0,
       failed: 4,
       orphanReserves: 5,
+      // The H-01 ledger lane reports on its own `orphan reserve sweep:` line (reaper.ts), so
+      // these stay out of the heartbeat and this spec keeps asserting its exact shape.
+      orphanScanned: 0,
+      orphanReleased: 0,
+      orphanAlreadySettled: 0,
+      // Same for the M-01 queued lane: its own `stuck queued sweep:` line, no money involved.
+      queuedScanned: 0,
+      queuedFailed: 0,
     };
     startReaperTimer({ reaperIntervalMs: 1_000, reconcile: async () => sweep });
 

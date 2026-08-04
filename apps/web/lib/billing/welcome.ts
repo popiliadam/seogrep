@@ -1,9 +1,7 @@
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { sendEmail, welcomeEmail } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
-import type { Database } from "@pseo/db/types";
-import { SITE_URL } from "../site";
+import { SITE_URL, resolveBaseUrl } from "../site";
 
 /**
  * One-time first-login welcome email (Resend transactional). Runs ONLY from
@@ -21,27 +19,6 @@ import { SITE_URL } from "../site";
  * Fail-open on config gaps: if RESEND_API_KEY / RESEND_FROM_EMAIL are unset we skip
  * WITHOUT flipping the lock, so a later login (once configured) still gets the welcome.
  */
-
-// welcomed_at is not in the generated types.ts yet (that file is regenerated from the
-// cloud project in the chef flow). This overlay keeps the lock UPDATE typed until then —
-// the same fenced `as unknown as` cast pattern used by trial.ts / packages/db ledger-repo.
-type WelcomedColumn = { welcomed_at: string | null };
-type DatabaseWithWelcomed = Omit<Database, "public"> & {
-  public: Omit<Database["public"], "Tables"> & {
-    Tables: Omit<Database["public"]["Tables"], "users_profile"> & {
-      users_profile: {
-        Row: Database["public"]["Tables"]["users_profile"]["Row"] & WelcomedColumn;
-        Insert: Database["public"]["Tables"]["users_profile"]["Insert"] & Partial<WelcomedColumn>;
-        Update: Database["public"]["Tables"]["users_profile"]["Update"] & Partial<WelcomedColumn>;
-        Relationships: [];
-      };
-    };
-  };
-};
-
-function withWelcomed(client: SupabaseClient<Database>): SupabaseClient<DatabaseWithWelcomed> {
-  return client as unknown as SupabaseClient<DatabaseWithWelcomed>;
-}
 
 export async function sendWelcomeIfFirst(userId: string, email: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -64,7 +41,7 @@ export async function sendWelcomeIfFirst(userId: string, email: string): Promise
   }
 
   // Atomic one-time lock: only the first caller flips NULL -> now and gets a row back.
-  const { data, error } = await withWelcomed(service)
+  const { data, error } = await service
     .from("users_profile")
     .update({ welcomed_at: new Date().toISOString() })
     .eq("id", userId)
@@ -78,7 +55,9 @@ export async function sendWelcomeIfFirst(userId: string, email: string): Promise
   }
 
   // Lock flipped -> send exactly once. A throw here leaves welcomed_at set (no retry).
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? SITE_URL;
+  // resolveBaseUrl, not `??`: a set-but-empty / malformed NEXT_PUBLIC_SITE_URL must be treated
+  // as ABSENT, otherwise the welcome mail ships relative links that are dead in an inbox (L-07).
+  const base = resolveBaseUrl(process.env.NEXT_PUBLIC_SITE_URL) ?? SITE_URL;
   const { subject, html } = welcomeEmail({
     dashboardUrl: `${base}/app/connection`,
     docsUrl: `${base}/docs`,

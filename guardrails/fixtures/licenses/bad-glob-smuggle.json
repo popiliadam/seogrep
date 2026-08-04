@@ -1,0 +1,11 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "MPL-2.0": [
+    { "name": "lightningcss-totally-unrelated-attacker-pkg", "versions": ["9.9.9"], "license": "MPL-2.0" },
+    { "name": "@evil/lightningcss-linux-x64", "versions": ["9.9.9"], "license": "MPL-2.0" },
+    { "name": "evil-lightningcss-linux-x64", "versions": ["9.9.9"], "license": "MPL-2.0" }
+  ],
+  "LGPL-3.0-or-later": [
+    { "name": "@img/sharp-libvips-attacker-pkg", "versions": ["9.9.9"], "license": "LGPL-3.0-or-later" }
+  ]
+}

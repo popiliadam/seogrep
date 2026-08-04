@@ -215,24 +215,87 @@ describe("registerAll", () => {
     expect(result.content[0]?.text).toMatch(/unknown tool/i);
   });
 
-  it("tools/call surfaces a handler failure as an isError result", async () => {
+  /** Wire ONE tool that throws `message`, and return its tools/call entry point. */
+  function callThrowing(message: string) {
     const boom = defineTool({
       name: "whats_next",
       description: "d",
       inputSchema: z.object({}),
       handler: async () => {
-        throw new Error("handler exploded");
+        throw new Error(message);
       },
     });
     const { server, handlers } = fakeServer();
     registerAll(server, { ctx: CTX, tools: [boom] });
-    const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<{
+    return handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<{
       content: { text: string }[];
       isError?: boolean;
     }>;
-    const result = await call({ params: { name: "whats_next", arguments: {} } });
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/handler exploded/);
+  }
+
+  it("tools/call surfaces a handler failure as an isError result — WITHOUT the raw detail (L-03)", async () => {
+    // The caller learns that the tool failed and gets a reference to quote; the raw
+    // message stays server-side. Strengthened from the previous assertion, which pinned
+    // the leak itself (it required the thrown text to appear in the tool output).
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const call = callThrowing("handler exploded");
+      const result = await call({ params: { name: "whats_next", arguments: {} } });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).not.toMatch(/handler exploded/);
+      expect(result.content[0]?.text).toMatch(/whats_next/); // which tool failed is not sensitive
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("does NOT leak DB/RPC internals (relation, function, schema names) to the caller (L-03)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const call = callThrowing(
+        'jobs pending count failed: relation "public.credit_ledger" does not exist',
+      );
+      const result = await call({ params: { name: "whats_next", arguments: {} } });
+      const text = result.content[0]?.text ?? "";
+      expect(text).not.toMatch(/relation/i);
+      expect(text).not.toMatch(/credit_ledger/);
+      expect(text).not.toMatch(/public\./);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("logs the FULL detail server-side under the same reference the caller was given (L-03)", async () => {
+    // Operator diagnosis must not regress: the reference in the caller's message is the
+    // key into a server log line that still carries the verbatim error.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const call = callThrowing('relation "public.jobs" does not exist');
+      const result = await call({ params: { name: "whats_next", arguments: {} } });
+
+      const reference = /\b([0-9a-f]{8,})\b/.exec(result.content[0]?.text ?? "")?.[1];
+      expect(reference).toBeDefined();
+
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain('relation "public.jobs" does not exist');
+      expect(logged).toContain(reference!);
+      expect(logged).toContain("whats_next");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("gives each failure its OWN reference (two failures are never confused in the log)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const call = callThrowing("boom");
+      const first = await call({ params: { name: "whats_next", arguments: {} } });
+      const second = await call({ params: { name: "whats_next", arguments: {} } });
+      expect(first.content[0]?.text).not.toBe(second.content[0]?.text);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

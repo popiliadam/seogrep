@@ -8,7 +8,7 @@
         "http://localhost:4517/pricing",
         "http://localhost:4517/how-it-works"
       ],
-      "numberOfRuns": 1,
+      "numberOfRuns": 3,
       "settings": { "chromeFlags": "--headless=new" }
     },
     "assert": {

@@ -10,6 +10,7 @@ import {
   type BacklinksPort,
 } from "../dfs/backlinks.ts";
 import type { DfsTransport } from "../dfs/client.ts";
+import { createMemorySpendLedger } from "../dfs/budget.ts";
 import { makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
 import summaryFixture from "../dfs/fixtures/backlinks-summary.json";
 import referringDomainsFixture from "../dfs/fixtures/backlinks-referring-domains.json";
@@ -108,11 +109,11 @@ const failingPort: BacklinksPort = {
 };
 
 /**
- * A LIVE client (fake transport, no real HTTP, spend written to a temp-free scratch dir) whose
- * Nth request fails — the realistic partial-fan-out failure. `spendDir` points at a per-call
- * temp path so the repo's real spend tree is never touched.
+ * A LIVE client (fake transport, no real HTTP, spend booked against a throwaway in-memory budget
+ * ledger) whose Nth request fails — the realistic partial-fan-out failure. The ledger is
+ * per-call, so the shared vendor-budget counter is never touched.
  */
-function portFailingAtRequest(failFrom: 2 | 3, spendDir: string): BacklinksPort {
+function portFailingAtRequest(failFrom: 2 | 3): BacklinksPort {
   const responses: Record<string, unknown> = {
     summary: summaryFixture,
     referring_domains: referringDomainsFixture,
@@ -130,7 +131,7 @@ function portFailingAtRequest(failFrom: 2 | 3, spendDir: string): BacklinksPort 
     login: "user@x.test",
     password: "pw",
     transport,
-    spendDir,
+    ledger: createMemorySpendLedger(),
   });
 }
 
@@ -204,8 +205,7 @@ describe("analyze_backlinks credit path against the local stack", () => {
     it(`(${failFrom === 2 ? "d" : "e"}) request #${failFrom} of 3 failing still bills ZERO (no partial profile is sold)`, async () => {
       const ctx = await makeCtx();
       await seedGrant(ctx.userId, 200);
-      const spendDir = `${process.env.TMPDIR ?? "/tmp"}/dfs-backlinks-db-${randomUUID()}`;
-      const tool = makeAnalyzeBacklinksTool({ port: portFailingAtRequest(failFrom, spendDir) });
+      const tool = makeAnalyzeBacklinksTool({ port: portFailingAtRequest(failFrom) });
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {

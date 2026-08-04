@@ -1,4 +1,4 @@
-import { crawlSite, type CrawlResult } from "../../crawler/crawl.ts";
+import { boundCrawlResult, crawlSite, type CrawlResult } from "../../crawler/crawl.ts";
 import { forUser, getServiceClient, type Json, type JobRow } from "../../db.ts";
 import { getJobForUser } from "../boss.ts";
 import type { ToolHandler } from "../worker.ts";
@@ -68,8 +68,20 @@ export interface CrawlHandlerDeps {
  * tenant guard on the RLS-bypassing service client (constitution NEVER #4); a project
  * that is missing or belongs to another tenant both resolve to "not found" and abort
  * the crawl before a single request is made.
+ *
+ * DEFENCE IN DEPTH, NOT REDUNDANCY. Migration 0017 made `jobs.(user_id, project_id)` a
+ * composite FK onto `projects.(user_id, id)`, so the database now refuses a job row parented
+ * to ANOTHER tenant's project (SQLSTATE 23503) — the cross-tenant state this guard was written
+ * to catch can no longer be written. The guard stays and is still tested: the application layer
+ * must not depend on a constraint that a future migration, a restore, or a differently-migrated
+ * environment could be missing. `project_id` is also still nullable, so the no-project branch
+ * remains live (0017 nulls it via ON DELETE SET NULL when a parent project is deleted, and
+ * enqueueJob writes NULL for any tool called without a project).
+ *
+ * Exported for its DB spec: the cross-tenant branch can no longer be reached by seeding a row,
+ * so the spec drives this function with the in-memory job row that state would have produced.
  */
-async function resolveProjectOrigin(userId: string, job: JobRow): Promise<string> {
+export async function resolveProjectOrigin(userId: string, job: JobRow): Promise<string> {
   if (!job.project_id) {
     throw new Error("crawl_site: job has no project to crawl");
   }
@@ -115,15 +127,23 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
     const maxUrls = clampMaxUrls(payload.max_urls);
     const includePaths = clampIncludePaths(payload.include_paths);
 
-    const result = await crawl(origin, { maxUrls, includePaths });
+    // H-02: what reaches jobs.result is BOUNDED here rather than trusted from the crawl
+    // function (which is an injectable dep). On the real crawler this is the identity.
+    const result = boundCrawlResult(await crawl(origin, { maxUrls, includePaths }));
 
     // A crawl that fetched NOTHING (e.g. an unreachable robots.txt — RFC 9309
     // complete disallow) delivered no value. Throw so withCredits RELEASES the
     // reserve and the job settles `failed`, rather than committing a spend for an
     // empty result; the skip reasons make the failure legible in jobs.error.
     if (result.pages.length === 0) {
-      const reasons = result.skipped.map((s) => s.reason).join("; ") || "no pages reachable";
-      throw new Error(`crawl_site: no pages could be crawled for ${origin} (${reasons})`);
+      // The first few reasons only, hard-capped: jobs.error is a DB column and a message a
+      // human reads, not a dump of every skip a link-flooded crawl produced. The paths that
+      // matter here (unreachable robots, blocked origin) carry ONE actionable reason.
+      const reasons =
+        result.skipped.slice(0, 5).map((s) => s.reason).join("; ") || "no pages reachable";
+      throw new Error(
+        `crawl_site: no pages could be crawled for ${origin} (${reasons.slice(0, 1_000)})`,
+      );
     }
 
     // CrawlResult is JSON-serializable end to end (only strings / numbers / null and

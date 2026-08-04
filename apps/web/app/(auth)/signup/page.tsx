@@ -3,7 +3,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthForm } from "../auth-form";
 
-export const metadata: Metadata = { title: "Sign up" };
+/** noindex for the same reason as /login (audit L-19c); follow stays on. */
+export const metadata: Metadata = { title: "Sign up", robots: { index: false, follow: true } };
 
 export default function SignupPage() {
   return (

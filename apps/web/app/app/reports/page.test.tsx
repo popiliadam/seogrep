@@ -15,6 +15,13 @@ vi.mock("next/link", () => ({
     <a href={href}>{children}</a>
   ),
 }));
+// The revoke control is a client island with its own specs (revoke-link-button.test.tsx); here
+// only its PRESENCE matters, so the server action module is never really loaded.
+const revokeReportLinkAction = vi.fn();
+vi.mock("./actions", () => ({
+  revokeReportLinkAction: (...args: unknown[]) => revokeReportLinkAction(...args),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import ReportsPage from "./page";
 
@@ -34,6 +41,33 @@ describe("ReportsPage", () => {
     expect(link.getAttribute("href")).toBe("/r/abc123");
     // Reads through the caller's authenticated client, scoped to their id.
     expect(listReports).toHaveBeenCalledWith(expect.anything(), "user-1");
+  });
+
+  it("offers Revoke for a shared report and NOTHING for one with no link (L-13)", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    listReports.mockResolvedValue([
+      { id: "r1", title: "Shared", createdAt: "2026-07-19T00:00:00.000Z", publicSlug: "abc123" },
+      { id: "r2", title: "Private", createdAt: "2026-07-18T00:00:00.000Z", publicSlug: null },
+    ]);
+    render(await ReportsPage());
+
+    // Exactly one row is shared, so exactly one link can be revoked.
+    const revokers = screen.getAllByRole("button", { name: /revoke the public link/i });
+    expect(revokers).toHaveLength(1);
+    expect(revokers[0]?.getAttribute("aria-label")).toBe("Revoke the public link for Shared");
+    expect(screen.getAllByText("View")).toHaveLength(1);
+  });
+
+  it("does not offer, or claim, deletion — revoking is about the link only", async () => {
+    getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    listReports.mockResolvedValue([
+      { id: "r1", title: "Shared", createdAt: "2026-07-19T00:00:00.000Z", publicSlug: "abc123" },
+    ]);
+    const { container } = render(await ReportsPage());
+
+    expect(container.textContent ?? "").not.toMatch(/delete/i);
+    // …and the page says plainly what Revoke costs, so nobody reads it as reversible.
+    expect(screen.getByText(/a new link cannot be issued for it/i)).toBeTruthy();
   });
 
   it("shows an empty state when there are no reports", async () => {

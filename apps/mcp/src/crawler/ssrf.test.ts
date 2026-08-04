@@ -64,6 +64,47 @@ describe("isBlockedIp", () => {
   }
 });
 
+/**
+ * M-18 (hostile audit): the IPv6 side used to be a hand-written six-branch denylist that
+ * ENDED IN "allow" — so every address the six branches did not name was treated as public.
+ * These are the six the audit reproduced as false-negatives, plus the fail-closed property
+ * itself: an address outside global unicast (2000::/3) must be refused even when no rule
+ * names it. The classification is now an allowlist, so this table is the regression fence.
+ */
+describe("isBlockedIp — IPv6 is an allowlist (fail-closed outside global unicast)", () => {
+  const blocked = [
+    ["site-local fec0::/10 (deprecated, non-global)", "fec0::1"],
+    ["discard-only 100::/64", "100::1"],
+    ["Teredo 2001::/32", "2001::1"],
+    ["6to4 2002::/16 wrapping loopback 127.0.0.1", "2002:7f00:1::1"],
+    ["NAT64 local-use 64:ff9b:1::/48", "64:ff9b:1::7f00:1"],
+    ["IPv4-translated ::ffff:0:0:0/96 wrapping loopback", "::ffff:0:127.0.0.1"],
+    // Not in any rule at all: the fail-closed default itself.
+    ["unassigned 4000::/3", "4000::1"],
+    ["unassigned e000::/4", "e000::1"],
+    ["ORCHIDv2 2001:20::/28", "2001:20::1"],
+    ["documentation 3fff::/20 (RFC 9637)", "3fff::1"],
+  ] as const;
+  for (const [label, ip] of blocked) {
+    it(`blocks ${label} (${ip})`, () => {
+      expect(isBlockedIp(ip)).toBe(true);
+    });
+  }
+
+  // The allowlist must still let REAL global-unicast addresses through, or the crawler
+  // stops working on every IPv6-only site.
+  const allowed = [
+    ["Cloudflare DNS (full form)", "2606:4700:4700::1111"],
+    ["Google DNS 2001:4860:4860::8888", "2001:4860:4860::8888"],
+    ["a 2a00::/12 RIPE address", "2a00:1450:4001:80e::200e"],
+  ] as const;
+  for (const [label, ip] of allowed) {
+    it(`allows ${label} (${ip})`, () => {
+      expect(isBlockedIp(ip)).toBe(false);
+    });
+  }
+});
+
 describe("nonPublicHostnameReason", () => {
   const nonPublic = [
     "foo.internal",

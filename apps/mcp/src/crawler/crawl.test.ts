@@ -1,10 +1,12 @@
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  boundCrawlResult,
   computeIssues,
   crawlSite,
   estimateSiteSize,
+  PRE_DISCOVERY_BUDGET_MS,
   matchesIncludePaths,
   normalizeIncludePaths,
   normalizeUrl,
@@ -12,6 +14,7 @@ import {
   parseJsonLdTypes,
   type CrawlResult,
 } from "./crawl.ts";
+import { startHostileSite } from "./fixtures/hostile-server.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 import type { LookupFn } from "./ssrf.ts";
 
@@ -419,6 +422,252 @@ describe("crawlSite — limits and edge behavior", () => {
   });
 });
 
+// --- H-02: hostile response SIZE limits ----------------------------------------
+// The crawler bounded URL COUNT and WALL CLOCK but nothing about how big a single answer
+// may be, on a 512 MB machine (apps/mcp/fly.toml). These drive the hostile fixture over
+// loopback — ZERO external calls — and pin that every hostile shape stops at a fixed
+// ceiling instead of being drained into memory.
+
+describe("crawlSite — hostile response sizes (H-02)", () => {
+  const skipFor = (result: CrawlResult, url: string): string | undefined =>
+    result.skipped.find((s) => s.url === url)?.reason;
+
+  it("cancels a gzip bomb instead of inflating it (Content-Length is not a bound)", async () => {
+    // ~20 KB on the wire, 20 MB once undici inflates it: the Content-Length header is
+    // truthful and still useless, so the ceiling MUST count decompressed bytes.
+    const site = await startHostileSite({ bombBytes: 20_000_000 });
+    try {
+      const result = await crawlSite(site.origin + "/bomb", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(skipFor(result, normalizeUrl(site.origin + "/bomb"))).toMatch(/body exceeded/i);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("caps a body served with NO Content-Length and stops reading it early", async () => {
+    // Chunked transfer: nothing in the headers says how big this is. The crawler must
+    // count as it reads and cancel — proven by how little the server managed to push.
+    const site = await startHostileSite({ chunkedBytes: 30_000_000 });
+    try {
+      const result = await crawlSite(site.origin + "/chunked", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      expect(skipFor(result, normalizeUrl(site.origin + "/chunked"))).toMatch(/body exceeded/i);
+      // Far short of the 30 MB on offer: the body was cancelled, not drained.
+      expect(site.bytesWritten.get("/chunked") ?? 0).toBeLessThan(10_000_000);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("still crawls a normal page — the ceiling does not fire on ordinary bodies", async () => {
+    const site = await startHostileSite({ chunkedBytes: 100_000 });
+    try {
+      const result = await crawlSite(site.origin + "/chunked", { crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.title).toBe("Hostile");
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("caps an oversized sitemap body and still crawls what it seeded", async () => {
+    // ~16 MB of <loc>s. The sitemap ceiling must stop the read well before the end, and
+    // the crawl must still run on the seeds the bounded prefix yielded.
+    const site = await startHostileSite({ locCount: 400_000 });
+    try {
+      const result = await crawlSite(site.origin, { maxUrls: 2, crawlDelayCapMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(site.bytesWritten.get("/sitemap.xml") ?? 0).toBeLessThan(11_000_000);
+    } finally {
+      await site.close();
+    }
+  });
+});
+
+// --- H-02: per-record ceilings (what ONE page may contribute to the result) -------
+// A 2 MB body ceiling does not bound the ARRAYS and FIELDS a page is turned into: 2 MB of
+// "<h1></h1>" is ~200k headings, and a single <title> may carry the whole 2 MB. Persisted
+// 100 pages deep into jobs.result, that is the same OOM by another route.
+
+describe("parseHtml — per-record ceilings (H-02)", () => {
+  it("caps the links materialized from one page", () => {
+    const anchors = Array.from({ length: 20_000 }, (_, i) => `<a href="/p/${i}">l</a>`).join("");
+    const parsed = parseHtml(`<html><body>${anchors}</body></html>`, BASE);
+    expect(parsed.links).toHaveLength(1_000);
+    expect(parsed.linksTruncated).toBe(true);
+  });
+
+  it("does not flag an ordinary page as truncated", () => {
+    const parsed = parseHtml('<html><body><a href="/a">a</a></body></html>', BASE);
+    expect(parsed.links).toEqual(["https://site.test/a"]);
+    expect(parsed.linksTruncated).toBe(false);
+  });
+
+  it("caps the h1 list", () => {
+    expect(parseHtml(`<body>${"<h1>h</h1>".repeat(5_000)}</body>`, BASE).h1s).toHaveLength(100);
+  });
+
+  it("clamps a page-sized <title> / meta description instead of storing it whole", () => {
+    const big = "t".repeat(500_000);
+    const parsed = parseHtml(
+      `<html><head><title>${big}</title><meta name="description" content="${big}"></head></html>`,
+      BASE,
+    );
+    expect(parsed.title?.length).toBeLessThan(2_100);
+    expect(parsed.metaDescription?.length).toBeLessThan(2_100);
+  });
+
+  it("drops an absurdly long href rather than storing a truncated (wrong) URL", () => {
+    const href = `/${"x".repeat(5_000)}`;
+    const parsed = parseHtml(
+      `<html><body><a href="${href}">x</a><a href="/ok">y</a></body></html>`,
+      BASE,
+    );
+    expect(parsed.links).toEqual(["https://site.test/ok"]);
+  });
+
+  it("caps the JSON-LD type list", () => {
+    const nodes = Array.from({ length: 5_000 }, (_, i) => `{"@type":"T${i}"}`).join(",");
+    const html = `<script type="application/ld+json">[${nodes}]</script>`;
+    expect(parseJsonLdTypes(html)).toHaveLength(100);
+  });
+});
+
+describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", () => {
+  const page = (i: number) => ({
+    url: `https://x.test/${i}`,
+    status: 200,
+    title: "t",
+    metaDescription: "d",
+    h1s: ["h"],
+    canonical: null,
+    robotsMeta: null,
+    links: [],
+    wordCount: 1,
+    jsonLdTypes: [],
+    issues: [],
+  });
+  const AT = "2026-07-28T00:00:00.000Z";
+
+  it("caps pages and replaces the skipped tail with ONE summary line", () => {
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 250 }, (_, i) => page(i)),
+      skipped: Array.from({ length: 900 }, (_, i) => ({ url: `https://x.test/s${i}`, reason: "timeout" })),
+      fetchedAt: AT,
+    });
+    expect(bounded.pages).toHaveLength(100);
+    expect(bounded.skipped).toHaveLength(501);
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/400 more/i);
+  });
+
+  it("clamps an absurdly long skip reason", () => {
+    const bounded = boundCrawlResult({
+      pages: [],
+      skipped: [{ url: "https://x.test/a", reason: "x".repeat(50_000) }],
+      fetchedAt: AT,
+    });
+    expect(bounded.skipped[0]?.reason.length).toBeLessThan(2_100);
+  });
+
+  it("leaves an ordinary result untouched", () => {
+    const result = { pages: [page(1)], skipped: [{ url: "https://x.test/s", reason: "timeout" }], fetchedAt: AT };
+    expect(boundCrawlResult(result)).toEqual(result);
+  });
+
+  it("enforces the TOTAL byte budget the per-record ceilings cannot see (T8)", () => {
+    // 20 pages, each ~1 MB and each comfortably INSIDE every per-record ceiling — the point
+    // is that those ceilings MULTIPLY (100 x 1000 links x 2000 chars is ~200 MB) and no
+    // per-record rule can see the product. 100 pages is a page count, not a size.
+    // boundCrawlResult must not have to TRUST its (injectable) crawl fn with a DB row's size.
+    const heavy = (i: number) => ({ ...page(i), title: "t".repeat(1_000_000) });
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 20 }, (_, i) => heavy(i)),
+      skipped: [],
+      fetchedAt: AT,
+    });
+    // Under the 12 MB budget — pinned as a literal so widening it is a deliberate spec edit.
+    expect(Buffer.byteLength(JSON.stringify(bounded.pages), "utf8")).toBeLessThanOrEqual(12_000_000);
+    expect(bounded.pages.length).toBeGreaterThan(0); // bounded, not emptied
+    expect(bounded.pages.length).toBeLessThan(20);
+    // Never silent: the drop is reported once, in the skip list the user already reads.
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/byte budget/i);
+    expect(bounded.skipped.at(-1)?.reason).toMatch(/12000000/);
+    // The count is what the BUDGET dropped, not what the 100-page count cap dropped.
+    expect(bounded.skipped.at(-1)?.reason).toContain(`${20 - bounded.pages.length} crawled`);
+  });
+
+  it("attributes only the BYTE-budget drops to the byte budget, not the page-count cap", () => {
+    // 150 heavy pages: the count cap takes 50, then the budget takes most of the remaining
+    // 100. The note must count only the latter — a number that folded in the count cap's 50
+    // would tell the operator the crawl was ~50 pages bigger than it was.
+    const heavy = (i: number) => ({ ...page(i), title: "t".repeat(1_000_000) });
+    const bounded = boundCrawlResult({
+      pages: Array.from({ length: 150 }, (_, i) => heavy(i)),
+      skipped: [],
+      fetchedAt: AT,
+    });
+    expect(bounded.skipped.at(-1)?.reason).toContain(`${100 - bounded.pages.length} crawled`);
+  });
+});
+
+describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () => {
+  it("bounds skipped[] and states ONCE how many were dropped", async () => {
+    // One page, 2000 links: the queue drain would otherwise copy every one of them into
+    // skipped[]. The per-page link ceiling trims it to 1000, and skipped[] caps that.
+    const site = await startHostileSite({ linkCount: 2_000 });
+    try {
+      const result = await crawlSite(site.origin + "/links", { maxUrls: 1, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0]?.links).toHaveLength(1_000);
+      expect(result.skipped.length).toBeLessThanOrEqual(500);
+      expect(result.skipped.filter((s) => /more URL/i.test(s.reason))).toHaveLength(1);
+      // The truncated link list is reported, not swallowed.
+      expect(result.skipped.filter((s) => /more than 1000 links/i.test(s.reason))).toHaveLength(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("bounds the BFS queue and says so exactly once", async () => {
+    // Every page links to 2000 more, so BFS discovery grows by ~1000 per page. Eight pages
+    // in, an unbounded queue would be holding ~8000 URLs it can never fetch.
+    const site = await startHostileSite({ linkCount: 2_000 });
+    try {
+      const result = await crawlSite(site.origin + "/links", { maxUrls: 8, crawlDelayCapMs: 0 });
+      expect(result.pages).toHaveLength(8);
+      expect(result.skipped.filter((s) => /queue limit/i.test(s.reason))).toHaveLength(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("stops ACCUMULATING at the total result byte budget, before maxUrls (T8)", async () => {
+    // The adversarial-maximal shape: every page is individually legal (1000 links, each URL
+    // under the 2000-char field ceiling) yet is a ~1.4 MB RECORD. 30 of them would be ~40 MB
+    // held in memory and then persisted whole into jobs.result — on the 512 MB machine in
+    // apps/mcp/fly.toml, with JSON.stringify roughly doubling the peak. The budget must bite
+    // BEFORE maxUrls does, and must bite during accumulation (not by trimming 40 MB after).
+    const site = await startHostileSite({ linkCount: 1_000, heavyLinkChars: 1_400 });
+    try {
+      const result = await crawlSite(site.origin + "/heavy", { maxUrls: 30, crawlDelayCapMs: 0 });
+      expect(result.pages.length).toBeGreaterThan(0); // bounded, never emptied
+      expect(result.pages.length).toBeLessThan(30); // the budget bit first, not maxUrls
+      expect(Buffer.byteLength(JSON.stringify(result.pages), "utf8")).toBeLessThanOrEqual(
+        12_000_000,
+      );
+      // Honest, never silent: the page that did not fit and every still-queued URL are
+      // recorded, with a reason that names the bound and what to change.
+      const budgetSkips = result.skipped.filter((s) => /result byte budget/i.test(s.reason));
+      expect(budgetSkips.length).toBeGreaterThan(0);
+      expect(budgetSkips[0]?.reason).toMatch(/12000000/);
+      expect(budgetSkips[0]?.reason).toMatch(/include_paths|max_urls/);
+    } finally {
+      await site.close();
+    }
+  });
+});
+
 // --- SSRF origin gate + pre-emission redirect parity (audit §1 Important) --------
 // The injectable `lookup` fakes DNS so these make ZERO real DNS calls: the blocked-origin
 // path never fetches, and the redirect-parity path is loopback-only.
@@ -786,6 +1035,89 @@ describe("estimateSiteSize", () => {
   it("degrades to null for an invalid / non-http origin (no throw)", async () => {
     expect(await estimateSiteSize("not a url")).toEqual({ pages: null, source: "unknown" });
     expect(await estimateSiteSize("ftp://example.com")).toEqual({ pages: null, source: "unknown" });
+  });
+});
+
+// --- estimateSiteSize's TOTAL wall-clock deadline (M-19) ------------------------
+// This estimate runs on the crawl_site REQUEST path, before a job id exists, so its cost
+// is time the caller sits and waits. Per-fetch timeouts alone do not bound it: they
+// MULTIPLY over the fetch sequence (root sitemap + up to 5 children + the homepage
+// fallback = 7 x DEFAULT_ESTIMATE_TIMEOUT_MS ~= 35 s). The budget is the ONE bound that
+// does not multiply. Loopback fixture only — ZERO external calls.
+
+describe("estimateSiteSize — total discovery deadline (M-19)", () => {
+  /**
+   * A sitemap INDEX pointing at five children that NEVER answer (the socket is held open
+   * until the crawler's own timeout fires). Every other path hangs too, so the homepage
+   * fallback would pay a full timeout as well. This is the shape that made the request
+   * path pay one per-fetch timeout per hop.
+   */
+  async function startHangingSitemapIndex(): Promise<{
+    origin: string;
+    requested: string[];
+    close: () => Promise<void>;
+  }> {
+    const requested: string[] = [];
+    const sockets = new Set<Socket>();
+    let origin = "";
+    const server = createServer((req, res) => {
+      requested.push(req.url ?? "");
+      if (req.url === "/sitemap.xml") {
+        const children = Array.from(
+          { length: 5 },
+          (_, i) => `<sitemap><loc>${origin}/child-${i}.xml</loc></sitemap>`,
+        ).join("");
+        res.writeHead(200, { "content-type": "application/xml" });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex>${children}</sitemapindex>`);
+        return;
+      }
+      // Deliberately no response: the request hangs until the crawler aborts it.
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return {
+      origin,
+      requested,
+      close: async () => {
+        for (const socket of sockets) socket.destroy(); // hung sockets would block close()
+        await new Promise<void>((resolve, reject) =>
+          server.close((err) => (err ? reject(err) : resolve())),
+        );
+      },
+    };
+  }
+
+  it("stops the fetch sequence at budgetMs instead of paying one timeout per hop", async () => {
+    const site = await startHangingSitemapIndex();
+    try {
+      // Without a total budget: 5 hanging children x 500 ms + the hanging homepage = ~3 s.
+      // With one: the root sitemap answers instantly, then hops are clamped to what the
+      // 600 ms budget leaves and the rest are never emitted.
+      const started = Date.now();
+      const est = await estimateSiteSize(site.origin, { timeoutMs: 500, budgetMs: 600 });
+      const elapsed = Date.now() - started;
+
+      // Degrades honestly — nothing was discovered, so it claims nothing.
+      expect(est).toEqual({ pages: null, source: "unknown" });
+      // The hop count is the timing-independent proof: 1 (sitemap) + 7 without the budget,
+      // at most a couple of children with it. A deadline that only raced the promise would
+      // leave the remaining hops running and this count unchanged.
+      expect(site.requested.length).toBeLessThanOrEqual(4);
+      expect(elapsed).toBeLessThan(1_500);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("defaults the budget to PRE_DISCOVERY_BUDGET_MS — the bound the crawl_site tool inherits", () => {
+    // crawl_site injects estimateSiteSize with only includePaths, so the DEFAULT is what
+    // bounds the tool call. Pinned here as a literal so the request-path ceiling cannot be
+    // widened silently.
+    expect(PRE_DISCOVERY_BUDGET_MS).toBe(8_000);
   });
 });
 

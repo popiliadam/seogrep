@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ESTIMATED_RANKED_KEYWORDS_CALL_USD,
   RANKED_KEYWORDS_MAX_LIMIT,
@@ -13,7 +10,7 @@ import {
   resolveDefaultRankedKeywordsPort,
 } from "./ranked-keywords.ts";
 import type { DfsTransport } from "./client.ts";
-import { readTodaySpendUsd } from "./budget.ts";
+import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
 import fixtureResponse from "./fixtures/ranked-keywords.json";
 
 /**
@@ -23,9 +20,6 @@ import fixtureResponse from "./fixtures/ranked-keywords.json";
  * dataforseo_labs/google/ranked_keywords/live response shape.
  */
 
-const FIXED_NOW = new Date("2026-07-28T12:00:00.000Z");
-const now = (): Date => FIXED_NOW;
-
 const QUERY = {
   target: "example.com",
   limit: RANKED_KEYWORDS_MAX_LIMIT,
@@ -33,12 +27,9 @@ const QUERY = {
   location_code: 2840,
 } as const;
 
-let dir: string;
+let ledger: MemorySpendLedger;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "dfs-ranked-"));
-});
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  ledger = createMemorySpendLedger();
 });
 
 describe("parseRankedKeywordsResponse", () => {
@@ -169,7 +160,7 @@ describe("resolveDefaultRankedKeywordsPort", () => {
 });
 
 describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", () => {
-  it("posts the Labs query, parses rows, and records the response cost to the budget file", async () => {
+  it("posts the Labs query, parses rows, and settles the reservation at the response cost", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
@@ -179,8 +170,7 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
 
     const result = await client.fetchRankedKeywords({ ...QUERY, limit: 1000 });
@@ -198,8 +188,8 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
         item_types: ["organic"],
       },
     ]);
-    // The REAL cost (0.132 from the response) was recorded, not the estimate.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.132, 5);
+    // The REAL cost (0.132 from the response) settled the reservation, not the estimate.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.132, 5);
   });
 
   it("throws on a non-OK HTTP response instead of reporting empty rankings", async () => {
@@ -212,20 +202,19 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
     await expect(client.fetchRankedKeywords(QUERY)).rejects.toThrow(/HTTP 402/);
-    // A failed call records no spend.
-    expect(readTodaySpendUsd({ now, dir })).toBe(0);
+    // A failed call leaves its reservation OPEN, so today keeps paying the FULL estimate: the
+    // budget errs toward refusing the next call, never toward handing the allowance back. (The
+    // pre-fix file ledger recorded $0 here — cheaper, but it is not what the fleet may spend.)
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_RANKED_KEYWORDS_CALL_USD, 5);
+    expect(ledger.rows()[0]?.actualUsd).toBeNull();
   });
 
   it("refuses the call BEFORE any HTTP when today's budget is already at the cap", async () => {
     // Pre-seed today's spend at $2.95; the pre-call estimate would pass $3.00.
-    writeFileSync(
-      path.join(dir, "2026-07-28.jsonl"),
-      JSON.stringify({ ts: "x", cost_usd: 2.95, endpoint: "e", count: 1 }) + "\n",
-    );
+    ledger.seed(2.95);
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
@@ -236,8 +225,7 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
       login: "user@x.test",
       password: "pw",
       transport,
-      now,
-      spendDir: dir,
+      ledger,
     });
 
     try {

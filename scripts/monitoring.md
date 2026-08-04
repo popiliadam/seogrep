@@ -6,7 +6,7 @@ into 5xx errors, queue backlog, or downtime: the beta was flown blind. This runb
 that with two cheap, real signals plus a documented external-uptime setup.
 
 It is **not** an observability platform. No dashboards, no historical metrics, no paging —
-that is deliberately Faz 4 (see the scope note in §5 and audit G4).
+that is a deliberate scope cut for this beta slice (see the scope note in §5 and audit G4).
 
 ---
 
@@ -29,9 +29,11 @@ separate `/status` route, which nothing uses as a liveness gate.
 `GET /status` returns:
 
 ```json
-{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0,
-  "reaperRuns": 0, "reservesReleased": 0, "lastReaperRunAt": null }
+{ "ok": true, "uptimeSeconds": 1234, "errorsSinceBoot": 0, "pendingJobs": 0 }
 ```
+
+Those four fields are the **whole** payload — the route picks them explicitly, and the shape
+is pinned by spec (`server.test.ts`, exact key set).
 
 - **`uptimeSeconds`** — whole seconds since the web process booted.
 - **`errorsSinceBoot`** — count of internal-error (500) responses since boot, incremented at
@@ -40,19 +42,31 @@ separate `/status` route, which nothing uses as a liveness gate.
   effectively every realistic 500.
 - **`pendingJobs`** — jobs in `status in ('queued','running')` — the app's own view of queue
   backlog / stuck work. `null` when the count could not be read in time (see §4).
-- **`reaperRuns` / `reservesReleased` / `lastReaperRunAt`** — counters for the stuck-job reaper:
-  completed sweeps since boot, credit reserves refunded since boot (cumulative), and the ISO
-  timestamp of the last completed sweep. **On this endpoint they are always `0 / 0 / null`.**
-  The reaper runs inside the **worker** process, which starts no HTTP listener at all; `/status`
-  is served only by the **web** processes, whose in-memory counters never see a sweep. The
-  reaper's real heartbeat is the worker's log — see §4.
+**No reaper counters here — and that is deliberate.** `/status` used to carry `reaperRuns` /
+`reservesReleased` / `lastReaperRunAt`, and they were **structurally** `0 / 0 / null` forever:
+the reaper runs inside the **worker** process, which starts no HTTP listener at all, while
+`/status` is served only by the **web** processes, whose in-memory counters never see a sweep.
+Three fields that read as measurements and measured nothing, so they were removed rather than
+left to be misread. **The reaper's only real heartbeat is the worker's log — see §4.**
 
 **In-memory caveat (important):** `uptimeSeconds` and `errorsSinceBoot` are **in-memory and
 per-process**. They **reset to zero on every deploy/restart**, and in a multi-machine
 deployment each machine has its own counters (the request you happen to hit answers with
 that machine's numbers). They are a cheap "is it getting worse right now" signal, **not** a
-durable metric. `pendingJobs` is not in-memory — it is read live from the database on each
-call — but is still a point-in-time count, not a time series.
+durable metric. `pendingJobs` is not in-memory — it comes from the database — but it is **served
+from a short-lived cache**, so it can be a few seconds stale, and it is still a point-in-time
+count, not a time series.
+
+**Two behaviours added by the H-05 hardening — know them before you read a `/status` response:**
+
+- **`pendingJobs` is cached for a few seconds** and concurrent callers share one in-flight read.
+  This is deliberate: the count is an unindexed exact scan of `jobs`, so before the cache an
+  anonymous flood turned into one full scan per request and the load landed on auth, the queue
+  and credit settlement. Treat the number as "correct within the last few seconds", not as live.
+- **`/status` can now answer `429`.** It is per-IP throttled. A `429` means *you* are polling too
+  fast — it is **not** an outage signal and must never page anyone. If a monitor gets a `429`,
+  slow the monitor down; the liveness gate is `/healthz`, which is **not** throttled and is
+  unaffected by any of this.
 
 ---
 
@@ -100,7 +114,7 @@ There is no error dashboard yet. Today you read errors two ways:
 - A hard crash-loop shows up as `flyctl` restarts and as `/healthz` downtime.
 
 Real metrics/tracing and an alerting platform (error-rate thresholds, latency percentiles,
-paging) are **deferred to Faz 4** — see audit **G4**.
+paging) remain **out of scope for this beta slice** — see audit **G4**.
 
 ---
 
@@ -120,7 +134,9 @@ up and finished quickly by the worker.
   ~1s (DB slow or down), `/status` returns **`"pendingJobs": null`** and still answers
   `"ok": true`. `null` means "couldn't read the backlog right now," **not** "zero backlog" —
   fall back to `flyctl logs` and the reconciliation runbook. `/status` never hangs or 5xx-es
-  on a slow DB by design: it is an operator signal, not a liveness gate.
+  on a slow DB by design: it is an operator signal, not a liveness gate. Since H-05 the read is
+  also **cancelled** when it passes that deadline, instead of being abandoned to keep running
+  against the database — the old behaviour was what made an anonymous flood expensive.
 
 **Automatic reaping (Faz 4 — now live).** The worker process sweeps for stuck jobs **every 10
 minutes** on its own (`REAPER_INTERVAL_MS` in `apps/mcp/src/queue/worker.ts`, running the same
@@ -148,12 +164,15 @@ wait 10 minutes for) — see [`scripts/reconciliation.md`](./reconciliation.md).
 This slice is minimal on purpose (beta): give the operator cheap, real signals and a
 free external uptime alert, without building an observability platform.
 
-**Since shipped (Faz 4):** automatic periodic reaping of stuck jobs — the worker sweeps every 10
+**Since shipped:** automatic periodic reaping of stuck jobs — the worker sweeps every 10
 minutes and logs one `reaper sweep:` line per sweep (§4). It is no longer on the deferred list
-below. Still deferred: surfacing those counters on a *reachable* endpoint — the worker serves no
-HTTP, so cross-process metrics remain Faz-4 platform work.
+below. Still not built: surfacing those counters on a *reachable* endpoint — the worker serves no
+HTTP, so cross-process metrics stay a `flyctl logs`-only affair for now (no committed phase;
+revisit if/when a dedicated observability platform is scoped). Until then `/status` does not
+carry them **at all**: an unmeasurable field printed next to measured ones is worse than an
+absent one, because it invites the operator to trust it (§3).
 
-Explicitly **out of scope**, deferred to **Faz 4 (audit G4)**:
+Explicitly **out of scope** for this beta slice (audit **G4**):
 
 - **No dashboards** and **no historical metrics / time series** — the counters are
   in-memory, per-process, and reset on deploy (§1). No storage, no charts.
@@ -163,10 +182,12 @@ Explicitly **out of scope**, deferred to **Faz 4 (audit G4)**:
   automated alert is external uptime on `/healthz` (§2) plus Fly's health-check alerting.
 - **No request/latency counters.** `/status` deliberately omits a `requestsSinceBoot`
   denominator: an always-present request counter adds hot-path surface for marginal beta
-  value, and an error **rate** (errors ÷ requests) is exactly the kind of derived metric
-  Faz 4's platform owns. The three signals here (uptime, `errorsSinceBoot`, `pendingJobs`)
-  map directly onto the audit's three blind spots: downtime, 5xx, and queue backlog.
+  value, and an error **rate** (errors ÷ requests) is exactly the kind of derived metric a
+  dedicated metrics platform should own, not this beta slice. The three signals here (uptime,
+  `errorsSinceBoot`, `pendingJobs`) map directly onto the audit's three blind spots: downtime,
+  5xx, and queue backlog.
 - **No tracing** and **no distributed request IDs**.
 
 The guiding rule: `/healthz` must never do I/O (it is the liveness gate), and `/status`
-must never hang or 5xx (it is only a signal). Everything richer is Faz 4.
+must never hang or 5xx (it is only a signal). Everything richer is intentionally out of
+scope for this beta slice.

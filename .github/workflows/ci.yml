@@ -1,4 +1,8 @@
 name: CI
+# DO NOT ADD A `paths:` FILTER TO THE main PUSH BELOW. deploy-mcp.yml's require-ci job waits
+# for a successful run of THIS workflow against the pushed commit; a path-filtered push would
+# create no CI run, so require-ci would wait out its 25 minutes and redden. Fail-closed, but
+# it stops the deploy pipeline. Filter inside a job with an `if:` instead.
 on:
   push:
     branches: [main]
@@ -19,6 +23,40 @@ jobs:
           cache: pnpm
       - run: bash guardrails/verify.sh
 
+  # DB-less static schema gates. Deterministic (bash + awk only: no node, no secrets,
+  # no network, no Supabase stack), so they are cheap enough to be their own required
+  # job instead of hiding inside verify. check-guards-selftest.sh is what proves the
+  # other two can still go red.
+  static-guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: bash guardrails/check-rls.sh
+      - run: bash guardrails/check-append-only.sh
+      - run: bash guardrails/check-guards-selftest.sh
+
+  # Dependency-licence policy (contract.md: MIT/Apache-2/ISC/BSD + recorded exceptions).
+  # Cannot join static-guards: that job is deliberately node-free, and `pnpm licenses list`
+  # reads the INSTALLED STORE, so it needs pnpm/action-setup + setup-node + a real install.
+  # Runs on ubuntu, so it sees the LINUX optional binaries a darwin laptop never installs —
+  # which is why the exceptions in check-licenses.sh are name globs, not exact names.
+  # verify.sh runs this gate too, so it executes twice per CI. Deliberate: `verify` is already
+  # a required check and carries it today, while this job can be required on its own and names
+  # the failure instead of burying it in verify's log. Both run in parallel, so the cost is
+  # wall-clock-free.
+  licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash guardrails/check-licenses.sh
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -28,6 +66,44 @@ jobs:
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Lighthouse budget for the three marketing pages (goals/lighthouse-90.md). It was configured
+  # since Faz 1 but NO workflow ever invoked it, so the 0.9 floor was only ever enforced by hand.
+  #
+  # WHY THIS IS NOT A FLAKY GATE, measured rather than hoped:
+  #   - lhci's default aggregationMethod is `optimistic`, which for a minScore assertion returns
+  #     Math.max across runs (@lhci/utils/src/assertions.js:56-68,139). With numberOfRuns: 3 that
+  #     is best-of-3: all three runs must dip under 0.9 to fail. Raising the count is therefore
+  #     monotonically SAFER here, which is why 1 -> 3 is part of wiring this in at all.
+  #   - Measured spread over 9 local runs: performance 0.98-0.99, accessibility and SEO exactly
+  #     1.00 with zero variance, against a 0.9 floor. a11y and SEO are deterministic DOM audits
+  #     that do not move with runner CPU; performance is the only CPU-sensitive category and it
+  #     carries ~0.08 of headroom on tiny static pages served from localhost.
+  #
+  # The URL list is deliberately NOT widened beyond the three pages the goal names. The /docs/*
+  # scores have never been measured, and asserting a threshold over unmeasured pages is exactly
+  # how a new gate lands red on day one.
+  #
+  # RESIDUAL RISK, stated rather than papered over: ubuntu-latest runner behaviour could not be
+  # verified from the authoring environment (no Actions run). If performance proves noisy here,
+  # fix it by raising numberOfRuns further — do NOT lower the 0.9 threshold (goals/lighthouse-90).
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The root `lighthouse` script builds through turbo so ^build produces @pseo/core and
+      # @pseo/db `dist/` first. It used to call `pnpm --filter @pseo/web build` directly, which
+      # a stale local dist masked: on a clean checkout that step dies with module-not-found for
+      # both packages, so this job would have been red on its first run for a reason that had
+      # nothing to do with Lighthouse.
+      - run: pnpm run lighthouse
 
   verify-db:
     runs-on: ubuntu-latest

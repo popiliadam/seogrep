@@ -1,0 +1,16 @@
+-- SYNTHETIC WEAKENING - never applied. Layered on top of fixtures/healthy by
+-- check-guards-selftest.sh. NEGATIVE SPACE of the R7 quoted-identifier reader: the two
+-- double quotes on this line are DATA, not identifier delimiters. They sit inside
+-- dollar-quoted comment bodies, which the scanner deliberately does not treat as opaque.
+--
+-- The first R7 reader paired ANY two double quotes on a line and re-injected the span
+-- between them from $0, i.e. with its ORIGINAL case. Postgres down-folds unquoted upper
+-- case, so the ALTER below really executes while the lower-cased shapes in the gate never
+-- see it: a silent-green path the PRE-R7 gate did not have. The reader must therefore
+-- unquote only a plain lowercase identifier and leave data quotes alone.
+--
+-- Measured on postgres 17.6 (isolated container): the whole file applies cleanly
+-- (psql exit 0, no error) and leaves pg_class.relrowsecurity = false on
+-- public.credit_ledger - the armor is really gone.
+-- check-rls.sh MUST go RED on this.
+comment on table public.events is $q$he said " hello$q$; ALTER TABLE public.credit_ledger DISABLE ROW LEVEL SECURITY; comment on table public.events is $q$ and " bye$q$;

@@ -19,6 +19,7 @@ describe("AuthForm", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("login mode submits the credentials via signInWithPassword", async () => {
@@ -32,6 +33,44 @@ describe("AuthForm", () => {
         email: "ada@example.com",
         password: "s3cret-pass",
       }),
+    );
+  });
+
+  // L-07: a SET-but-EMPTY NEXT_PUBLIC_SITE_URL is the broken-deploy case `??` misses ("" is not
+  // nullish), which made emailRedirectTo the RELATIVE "/auth/callback" — Supabase then cannot
+  // build a working confirmation link. The empty value must be treated as absent so the
+  // window-origin fallback takes over and the link stays absolute.
+  it("signup mode falls back to the window origin when NEXT_PUBLIC_SITE_URL is set but empty", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    signUp.mockResolvedValue({ data: {}, error: null });
+    render(<AuthForm mode="signup" />);
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "grace@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+    await waitFor(() =>
+      expect(signUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          },
+        }),
+      ),
+    );
+  });
+
+  it("signup mode uses NEXT_PUBLIC_SITE_URL (trailing slash stripped) when it is a valid URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://seogrep.com/");
+    signUp.mockResolvedValue({ data: {}, error: null });
+    render(<AuthForm mode="signup" />);
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "grace@example.com" } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+    await waitFor(() =>
+      expect(signUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          options: { emailRedirectTo: "https://seogrep.com/auth/callback" },
+        }),
+      ),
     );
   });
 

@@ -57,15 +57,22 @@ export type JobRow = {
  * `[_ in never]: never` empties) mirrors the generated @pseo/db types so the supabase-js
  * generics resolve; the whole schema is a `type` for the same never-collapse reason as
  * JobRow above.
+ *
+ * PostgrestVersion is the stack's MEASURED version (T3), matching what the @pseo/db generator
+ * pins from the running PostgREST. This slice hand-declares it, so it can drift from the
+ * generated types in a way nothing else catches — and it had: it said "14.5", a version this
+ * stack has never run. Documentary only: postgrest-js gates on the MAJOR prefix
+ * (`V extends "14" + string`), so both strings unlock exactly the same client methods. That
+ * equivalence was measured, not assumed — see the T3 commit message for the probe.
  */
 export type Database = {
   __InternalSupabase: {
-    PostgrestVersion: "14.5";
+    PostgrestVersion: "14.14";
   };
   public: {
     Tables: {
-      // Hashed, revocable personal API keys. last_used_at (migration 0009) is modelled
-      // here; the committed @pseo/db types.ts predates that column.
+      // Hashed, revocable personal API keys, including last_used_at (migration 0009) — which
+      // the generated @pseo/db types now carry too; this slice is narrow, not ahead of them.
       api_keys: {
         Row: {
           id: string;
@@ -250,6 +257,16 @@ export type Database = {
       };
       commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
       release_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
+      // The migration-0014 DataForSEO vendor-budget RPCs (dfs/budget.ts). VENDOR spend, not
+      // user credits — a separate counter with its own per-day advisory lock. The dfs_spend
+      // table itself is deliberately NOT modelled above: it carries no user_id (it is operator
+      // accounting, not tenant data), and the app reaches it only through these functions.
+      reserve_dfs_spend: { Args: { p_estimated_usd: number; p_endpoint: string }; Returns: string };
+      settle_dfs_spend: {
+        Args: { p_reservation_id: string; p_actual_usd: number; p_row_count: number };
+        Returns: undefined;
+      };
+      dfs_spend_today_usd: { Args: Record<string, never>; Returns: number };
     };
     Enums: {
       [_ in never]: never;
@@ -323,16 +340,82 @@ export function getServiceClient(): ServiceClient {
  * count over the jobs table — cheap at beta volume, and the `/status` caller bounds it with
  * a short timeout + best-effort `null` fallback regardless. Throws on a query error; the
  * caller degrades to `null` rather than failing `/status`.
+ *
+ * `signal` makes the read CANCELLABLE, which is what makes the caller's timeout honest: a
+ * bound that only abandons the ANSWER leaves the request running, so a flood of abandoned
+ * `/status` calls still piles unindexed counts onto the database every other subsystem
+ * shares. Passing the signal through to PostgREST tears the HTTP request down when the
+ * caller gives up. It is optional so the reader stays usable off the `/status` path.
  */
-export async function countPendingJobs(client: ServiceClient): Promise<number> {
-  const { count, error } = await client
+export async function countPendingJobs(
+  client: ServiceClient,
+  signal?: AbortSignal,
+): Promise<number> {
+  const query = client
     .from("jobs")
     .select("id", { count: "exact", head: true })
     .in("status", ["queued", "running"]);
+  const { count, error } = await (signal ? query.abortSignal(signal) : query);
   if (error) {
     throw new Error(`jobs pending count failed: ${error.message}`);
   }
   return count ?? 0;
+}
+
+/**
+ * The DB object `/status` probes to answer the question nothing in this repo could answer
+ * before: does the CLOUD database actually carry the schema this BUILD calls? Code and
+ * migrations merge together but deploy INDEPENDENTLY, so Fly can start serving a build whose
+ * RPCs the cloud project has never seen.
+ *
+ * Why a CAPABILITY probe and not a version read: `supabase_migrations.schema_migrations` is not
+ * in the `public` schema, not in the generated types, and not reachable through this typed
+ * service client — and a version number only tells you what was RECORDED, never what is
+ * callable. Asking the database to run the thing is the honest question.
+ *
+ * Why THIS object is the sentinel:
+ *   - it is the NEWEST database capability apps/mcp actually calls (migration 0014's vendor
+ *     budget; 0015-0018 add armor — triggers, constraints, grants — which this gateway never
+ *     names), so it is precisely the object whose absence breaks this service at runtime;
+ *   - it is `language sql stable` over one UTC day of `dfs_spend`: read-only by SQL contract,
+ *     no advisory lock, no write, no side effect, and it returns a single numeric;
+ *   - `dfs/budget.ts` already depends on it, so a `not_ready` here is a REAL fault report, not
+ *     a synthetic canary that could pass while the app is broken.
+ * Rename or drop it in the migrations and apps/mcp's db.schema.test.ts pin goes red.
+ */
+export const SCHEMA_SENTINEL_RPC = "dfs_spend_today_usd";
+
+/** The two DEFINITIVE answers the probe can get from the database. Everything else throws. */
+export type SchemaProbeResult = "ready" | "not_ready";
+
+/**
+ * Error codes that mean the object is DEFINITIVELY not there: PostgREST's own
+ * "function not found in the schema cache", and Postgres SQLSTATE 42883 (undefined_function)
+ * when the engine is the one to answer. Any OTHER failure is ambiguous by construction.
+ */
+const MISSING_OBJECT_CODES: readonly string[] = ["PGRST202", "42883"];
+
+/**
+ * Probe whether the connected database carries the sentinel capability (see above). Returns a
+ * DEFINITIVE answer or THROWS — it never guesses. That split is the whole point: a probe that
+ * folded a timeout or a permission error into `ready` would report a measurement it never took
+ * (signed lesson 7), and folding it into `not_ready` would cry wolf about a healthy schema.
+ * The caller (`/status`) owns the degradation policy and reports `unknown` for a throw.
+ *
+ * `signal` makes the probe CANCELLABLE for the same reason countPendingJobs takes one: a bound
+ * that only abandons the ANSWER leaves the query running underneath.
+ */
+export async function probeSchemaSentinel(
+  client: ServiceClient,
+  signal?: AbortSignal,
+): Promise<SchemaProbeResult> {
+  const query = client.rpc(SCHEMA_SENTINEL_RPC);
+  const { error } = await (signal ? query.abortSignal(signal) : query);
+  if (!error) return "ready";
+  if (MISSING_OBJECT_CODES.includes(error.code)) return "not_ready";
+  throw new Error(
+    `schema readiness probe (${SCHEMA_SENTINEL_RPC}) failed with ${error.code || "no code"}: ${error.message}`,
+  );
 }
 
 /**

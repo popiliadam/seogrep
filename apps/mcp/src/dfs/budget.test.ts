@@ -1,107 +1,171 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DAILY_BUDGET_USD,
-  assertWithinBudget,
-  readTodaySpendUsd,
-  recordSpend,
+  createMemorySpendLedger,
+  reserveSpend,
+  settleSpend,
+  todaySpendUsd,
+  type SpendLedger,
 } from "./budget.ts";
 
 /**
- * Unit proofs for the DataForSEO daily dev-budget guard (apps/mcp side). All three
- * functions take an injected spend directory + clock, so nothing here touches the real
- * guardrails/.dfs-spend tree. The clock is pinned to a fixed UTC instant so the
- * <YYYY-MM-DD>.jsonl file name is deterministic and matches the guard script's `date -u`.
+ * Unit proofs for the DataForSEO daily vendor-budget guard (apps/mcp side). The counter itself
+ * is a port, so nothing here needs a database or a network; the migration-0014 RPCs behind the
+ * production implementation are proven separately in budget.db.test.ts.
+ *
+ * The four properties the hostile audit (H-03) found missing are what these specs pin:
+ * ATOMIC (a reservation is visible to the next caller before the vendor request runs), GLOBAL
+ * and DURABLE (one shared counter — proven end-to-end against Postgres in the DB lane) and
+ * FAIL-CLOSED (an uncountable day refuses the call instead of assuming $0.00).
  */
 
-// 2026-07-19T12:00:00Z -> spend file "2026-07-19.jsonl".
-const FIXED_NOW = new Date("2026-07-19T12:00:00.000Z");
-const now = (): Date => FIXED_NOW;
-const DAY_FILE = "2026-07-19.jsonl";
-
-let dir: string;
-
-beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "dfs-spend-"));
-});
-
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
-/** Write raw JSONL lines into today's spend file (test seam for pre-existing spend). */
-function seedSpendFile(lines: object[]): void {
-  const body = lines.map((line) => JSON.stringify(line)).join("\n") + "\n";
-  writeFileSync(path.join(dir, DAY_FILE), body);
+/** Silence + capture the WAKE-THE-HUMAN lines a refusal prints. */
+function captureWakeLines(): { lines: () => string; restore: () => void } {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  return {
+    lines: () => spy.mock.calls.map((call) => call.map(String).join(" ")).join("\n"),
+    restore: () => spy.mockRestore(),
+  };
 }
 
-describe("readTodaySpendUsd", () => {
-  it("returns 0 when today's spend file does not exist", () => {
-    expect(readTodaySpendUsd({ now, dir })).toBe(0);
+describe("reserveSpend", () => {
+  it("books the estimate and returns a reservation naming its endpoint", async () => {
+    const ledger = createMemorySpendLedger();
+    const reservation = await reserveSpend(0.1, "search_volume", ledger);
+
+    expect(reservation.estimatedUsd).toBe(0.1);
+    expect(reservation.endpoint).toBe("search_volume");
+    expect(reservation.id).not.toBe("");
+    // ATOMIC: the booking is on the counter BEFORE the vendor request goes out, so the next
+    // caller is measured against it rather than against a stale total.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.1, 5);
   });
 
-  it("sums the cost_usd field across today's jsonl lines (ignoring blank/malformed)", () => {
-    seedSpendFile([
-      { ts: "2026-07-19T01:00:00.000Z", cost_usd: 0.5, endpoint: "e", count: 3 },
-      { ts: "2026-07-19T02:00:00.000Z", cost_usd: 1.25, endpoint: "e", count: 3 },
-    ]);
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(1.75, 5);
-  });
-});
-
-describe("assertWithinBudget", () => {
-  it("passes when today's spend plus the estimate stays under the cap", () => {
-    seedSpendFile([{ ts: "x", cost_usd: 1.0, endpoint: "e", count: 1 }]);
-    expect(() => assertWithinBudget(0.1, { now, dir })).not.toThrow();
-  });
-
-  it("RED path: rejects (and wakes the human) when the estimate would pass the cap", () => {
-    // Fake jsonl already at $2.95 today; a $0.10 estimate would push past $3.00.
-    seedSpendFile([{ ts: "x", cost_usd: 2.95, endpoint: "e", count: 1 }]);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("refuses (and wakes the human) when the estimate would pass the cap", async () => {
+    const ledger = createMemorySpendLedger();
+    ledger.seed(2.95);
+    const wake = captureWakeLines();
     try {
-      expect(() => assertWithinBudget(0.1, { now, dir })).toThrow(/budget exceeded/i);
-      const logged = errorSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
-      expect(logged).toMatch(/WAKE THE HUMAN/);
+      await expect(reserveSpend(0.1, "search_volume", ledger)).rejects.toThrow(/budget exceeded/i);
+      expect(wake.lines()).toMatch(/WAKE THE HUMAN/);
     } finally {
-      errorSpy.mockRestore();
+      wake.restore();
+    }
+    // A refused call books nothing.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(2.95, 5);
+  });
+
+  it("admits a call that lands EXACTLY on the cap and refuses the next cent", async () => {
+    const ledger = createMemorySpendLedger();
+    ledger.seed(2.9);
+    await expect(reserveSpend(0.1, "search_volume", ledger)).resolves.toBeTruthy();
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(DAILY_BUDGET_USD, 5);
+
+    const wake = captureWakeLines();
+    try {
+      await expect(reserveSpend(0.01, "search_volume", ledger)).rejects.toThrow(/budget exceeded/i);
+    } finally {
+      wake.restore();
     }
   });
 
-  it("uses the $3.00 sanctioned daily cap", () => {
+  it("FAIL-CLOSED: an unreadable counter refuses the call instead of assuming $0.00", async () => {
+    const ledger = createMemorySpendLedger();
+    ledger.breakWith(new Error("connection reset by peer"));
+    const wake = captureWakeLines();
+    try {
+      await expect(reserveSpend(0.1, "search_volume", ledger)).rejects.toThrow(
+        /budget ledger unavailable/i,
+      );
+      expect(wake.lines()).toMatch(/WAKE THE HUMAN/);
+      expect(wake.lines()).toMatch(/cannot be counted/i);
+    } finally {
+      wake.restore();
+    }
+  });
+
+  it("ATOMIC: barrier-released callers cannot together outspend the cap", async () => {
+    // The exact shape the audit walked past: ten callers enter the gate at the same instant and
+    // each one then holds a vendor request open. With the booking written INSIDE the gate, only
+    // the ones that fit are admitted; the rest are refused before any request is sent.
+    const ledger = createMemorySpendLedger();
+    const released = new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const wake = captureWakeLines();
+    let admitted = 0;
+    try {
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: 10 }, async () => {
+          await released; // barrier: all ten reach the gate together
+          const reservation = await reserveSpend(0.5, "search_volume", ledger);
+          admitted += 1;
+          await new Promise((resolve) => setTimeout(resolve, 5)); // the vendor request window
+          await settleSpend(reservation, 0.5, 1, ledger);
+        }),
+      );
+      expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(6);
+      expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(4);
+    } finally {
+      wake.restore();
+    }
+
+    expect(admitted).toBe(6); // 6 x $0.50 = $3.00 — the cap, not a cent over
+    expect(await todaySpendUsd(ledger)).toBeLessThanOrEqual(DAILY_BUDGET_USD);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(3.0, 5);
+  });
+});
+
+describe("settleSpend", () => {
+  it("replaces the estimate with the REAL cost, so the day's total is what was billed", async () => {
+    const ledger = createMemorySpendLedger();
+    const reservation = await reserveSpend(0.1, "search_volume", ledger);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.1, 5);
+
+    await settleSpend(reservation, 0.075, 3, ledger);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.075, 5);
+    expect(ledger.rows()).toEqual([
+      { id: reservation.id, endpoint: "search_volume", estimatedUsd: 0.1, actualUsd: 0.075, rowCount: 3 },
+    ]);
+  });
+
+  it("an UNSETTLED reservation keeps costing its estimate (a failed run never gets it back)", async () => {
+    const ledger = createMemorySpendLedger();
+    await reserveSpend(0.3, "backlinks_summary", ledger); // the vendor request then threw
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.3, 5);
+  });
+
+  it("does NOT throw when the counter rejects: the paid data is already in hand", async () => {
+    // Failing here would discard a call the business has been billed for without making the
+    // budget any safer — the reservation stays open at its estimate either way. It must still be
+    // LOUD, because a real cost above that estimate is under-counted until the day rolls over.
+    const ledger = createMemorySpendLedger();
+    const reservation = await reserveSpend(0.1, "search_volume", ledger);
+    ledger.breakWith(new Error("socket hang up"));
+
+    const wake = captureWakeLines();
+    try {
+      await expect(settleSpend(reservation, 0.42, 1, ledger)).resolves.toBeUndefined();
+      expect(wake.lines()).toMatch(/WAKE THE HUMAN/);
+      expect(wake.lines()).toMatch(/stays OPEN/);
+      expect(wake.lines()).toMatch(/UNDER-COUNTED/);
+    } finally {
+      wake.restore();
+    }
+  });
+});
+
+describe("the cap itself", () => {
+  it("is the $3.00 sanctioned daily figure", () => {
     expect(DAILY_BUDGET_USD).toBe(3.0);
   });
 });
 
-describe("recordSpend", () => {
-  it("appends a spend line that readTodaySpendUsd then sums back", () => {
-    recordSpend({ cost_usd: 0.075, endpoint: "search_volume", count: 5 }, { now, dir });
-    recordSpend({ cost_usd: 0.05, endpoint: "search_volume", count: 2 }, { now, dir });
-
-    const raw = readFileSync(path.join(dir, DAY_FILE), "utf8").trim().split("\n");
-    expect(raw).toHaveLength(2);
-    const first = JSON.parse(raw[0] ?? "{}") as Record<string, unknown>;
-    expect(first).toMatchObject({ cost_usd: 0.075, endpoint: "search_volume", count: 5 });
-    expect(first.ts).toBe(FIXED_NOW.toISOString());
-
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.125, 5);
-  });
-});
-
-describe("DFS_BUDGET_DIR env override (real prod name — container-writable dir)", () => {
-  it("recordSpend and readTodaySpendUsd use DFS_BUDGET_DIR when no ctx.dir is injected", () => {
-    const envDir = mkdtempSync(path.join(tmpdir(), "dfs-envdir-"));
-    vi.stubEnv("DFS_BUDGET_DIR", envDir);
-    try {
-      recordSpend({ cost_usd: 0.05, endpoint: "search_volume", count: 3 }, { now });
-      const raw = readFileSync(path.join(envDir, DAY_FILE), "utf8");
-      expect(raw).toContain('"cost_usd":0.05');
-      expect(readTodaySpendUsd({ now })).toBe(0.05);
-    } finally {
-      vi.unstubAllEnvs();
-      rmSync(envDir, { recursive: true, force: true });
-    }
+describe("createMemorySpendLedger (the spec seam)", () => {
+  it("satisfies the SpendLedger port", async () => {
+    const ledger: SpendLedger = createMemorySpendLedger();
+    const id = await ledger.reserve(0.2, "ranked_keywords");
+    await ledger.settle(id, 0.13, 42);
+    expect(await ledger.todayUsd()).toBeCloseTo(0.13, 5);
+    await expect(ledger.settle(id, 0.13, 42)).rejects.toThrow(/already settled/i);
+    await expect(ledger.settle("nope", 0.1, 1)).rejects.toThrow(/unknown reservation/i);
   });
 });

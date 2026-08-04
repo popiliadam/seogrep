@@ -5,6 +5,19 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🛡️ 2026-07-28 gece — DÜŞMANCA AUDIT REMEDIATION (dal `fix/hostile-audit-remediation`, 71 commit)
+- Kaynak: `docs/audits/2026-07-28-hostile-full-repository-audit.md` (Codex, 54 bulgu, **NO-GO**).
+- **53/53 bulgu HEAD'e karşı yeniden doğrulandı → 0 NOT REPRODUCIBLE.** Audit teknik olarak sağlam çıktı.
+- **29 bulgu FIXED** (done_when + taze hakem PASS + deterministik kapı). **Beş High'ın BEŞİ de teknik
+  olarak kapandı** (H-01 H-02 H-03 H-05 H-07); kalan iki High **kod değil karar** (H-04 rotasyon ·
+  H-06 politikası).
+- Kapılar: fresh `turbo --force` 16/16 **0 cached** · **1252 test** (+171) · `verify-db` **177 DB testi** ·
+  `goals` **16/16 (0 skip)** · gitleaks temiz · `pnpm audit` **16→7**, `next` advisory **0**.
+- Yeni migration'lar **0013** (para mandalları) + **0014** (DFS bütçe sayacı) — **CLOUD-APPLY İNSAN KUYRUĞUNDA**.
+- Kapanış: `docs/audits/2026-07-28-hostile-audit-remediation-closure.md` (17 bölüm) ·
+  ledger: `.superpowers/sdd/hostile-audit-remediation-ledger.md`.
+- **AÇIK: 25 bulgu + 3 drift + 9 hakem-takip işi.** Dilimler ve insan kuyruğu aşağıdaki HANDOFF bloğunda.
+
 ### 🎉 2026-07-28 — Paddle LIVE ve ilk gerçek satış
 - **Paddle hesap doğrulaması aynı gün onaylandı** (beklenen en uzun kuyruk kapandı). Sole Trader/TR; payout Halkbank ticari hesap, **wire** (Payoneer değil — muhasebe izi Paddle→banka doğrudan kalsın diye). Vergi/fatura tarafı mali müşavire bırakıldı (şef tavsiye vermedi, sorulacak 6 maddeyi listeledi).
 - **Katalog + checkout + webhook** canlıda; 10 Netlify env sandbox→live güncellendi.
@@ -186,7 +199,284 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — 2026-07-28, ÜRÜN CANLI PARA ALIYOR)
+## Oturum devir notu (HANDOFF — 2026-08-03, REMEDIATION ÜÇÜNCÜ TUR — **KOD TARAFI BİTTİ**)
+
+```
+Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
+→ docs/audits/2026-07-28-hostile-audit-remediation-closure.md ← ESAS BELGE, artık **32 bölüm**
+   §27 = 54 ID'lik ANA TABLO · §30 insan kuyruğu · §31 sayım · §32 hüküm
+Kaynak audit (DEĞİŞTİRME, untracked insan dosyası):
+   docs/audits/2026-07-28-hostile-full-repository-audit.md
+
+=== DURUM: 54/54 İŞLENDİ ===
+Dal fix/hostile-audit-remediation @ **~180 commit** (bu turda 68). MERGE/PUSH EDİLMEDİ.
+**50 FIXED · 1 PARTIAL (H-06) · 3 HUMAN BLOCKED (H-04 · M-25 · L-04) · 0 NOT REPRODUCIBLE.**
+
+Bu turda kapanan (13): M-03 M-04 M-05 M-09 M-13 M-20 M-24 M-26 M-27 L-09 L-13 L-15 L-19 (+D-05, T3)
+H-06: teknik yarı FIXED **ve caller wiring yapıldı** (artık uykuda DEĞİL) — politika yarısı
+      operatör kararıyla (seçenek c) KASTEN açık.
+
+KAPILAR (seri, ağaç durgun, PIPE'SIZ): turbo --force 16/16 **0 cached** · **1513 test** ·
+verify PASS (self-test **42 vaka**) · verify-db PASS (**222 DB testi**) · goals **16/16 (0 skip)** ·
+gitleaks 587 commit temiz · docs-sync 19 · `pnpm audit --prod` **KIRMIZI 8** (`next`=0; artış
+YENİ postcss advisory'si, bu turda lockfile'a DOKUNULMADI).
+**Taze whole-branch Fable review: READY TO MERGE = YES, sıfır Critical.**
+
+=== KOD TARAFINDA ZORUNLU İŞ KALMADI. SIRADAKİ HER ŞEY İNSAN KAPISI. ===
+
+1. **⚠️ MERGE = CLOUD-APPLY İLE AYNI OPERASYON.** Merge apps/web'i otomatik deploy eder; deploy
+   edilen webhook 0018'in apply_subscription_event'ini çağırır. Cloud'da 0018 yoksa purchase
+   ETKİLENMEZ (0007 canlıda) ama her subscription.* olayı 500 döner. Paddle ~3 gün retry eder →
+   **0018-0020 o pencere içinde uygulanırsa kendiliğinden iyileşir; pencere kaçarsa OTOMATİK
+   yeniden sürücü YOKTUR** (elle runbook kurtarması).
+2. **CLOUD-APPLY: 0013→0014→0015→0016→0017→0018→0019→0020** (bu tur +3).
+   0017 ön-kontrol SQL'siz apply EDİLEMEZ · 0016 apply-SONRASI doğrulama ZORUNLU ·
+   0020, 0009'a bağımlı (idempotent olmayan DROP).
+3. **DFS_LIVE AÇILMAMALI** — H-04 rotasyonu + 0014 + 0016 bekliyor.
+4. **L-04 anayasa metni** — önerilen NEVER#5 istisnası operatöre sunuldu, İMZA BEKLİYOR.
+5. M-05 enforcement varsayılan KAPALI; açma prosedürü scripts/paddle-smoke.md.
+6. Branch protection (static-guards + licenses required'a; strict + enforce_admins) ·
+   L-18 Dockerfile smoke · M-27'nin 6 lisans istisnasının ratifikasyonu · M-25/D-04 hukuk metni.
+
+=== BU TURUN KALICI DERSLERİ (closure §29 + hakem bulguları) ===
+- **"Yeşildi" yetmez — HANGİ kapı NEYİ ölçtü.** Üç vakada yeşil ölçüm kırık iddiayı kapsamıyordu
+  (0018'de SCHEMA_VERSION bump'ı: işçi+hakem test:db koştu 84/84, assertion HIZLI paketteydi).
+  → Her migration iş emrine "SCHEMA_VERSION bump" done_when'i konur.
+- **Doğrulamayı düzeltmeden AYIR** — salt-okunur ajanlar audit'in ÜÇ iddiasını düzeltti.
+- **Düzeltmemek de ölçülür** (M-04: hakem indeksi KURUP 23505→500→ödemiş müşteri satırsız ölçtü).
+- **Süresi geçmiş imza, imzasız değildir** (M-05 yenileme yolu).
+- `pnpm --filter <pkg> build` turbo'yu ATLAR → `^build` koşmaz → temiz checkout'ta dist yok.
+```
+
+## Oturum devir notu (HANDOFF — 2026-07-29, REMEDIATION İKİNCİ TUR)
+
+```
+Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
+→ docs/audits/2026-07-28-hostile-audit-remediation-closure.md  ← ESAS BELGE, artık 23 bölüm
+   (§18-23 = İKİNCİ TUR; §22 nihai sayım; §21 insan kuyruğu eklemeleri; §19 yöntem dersleri)
+→ ledger .superpowers/sdd/hostile-audit-remediation-ledger.md ("İKİNCİ TUR" başlığından itibaren)
+Kaynak audit (DEĞİŞTİRME): docs/audits/2026-07-28-hostile-full-repository-audit.md (untracked, insan dosyası)
+
+=== DURUM ===
+Dal: fix/hostile-audit-remediation @ **110 commit** (bu turda +38), taban 55fea36.
+main'e MERGE EDİLMEDİ, PUSH EDİLMEDİ. Çalışma ağacı TEMİZ (yalnız insanın untracked dosyaları).
+
+**37/54 audit bulgusu FIXED** (tur başı 29). **17 teknik açık.**
+Hakem-takip işlerinin **8/9'u kapandı** (yalnız T3 açık; T2 zaten kapalıymış, kayıt düzeltildi).
+**Audit'te OLMAYAN 5 bulgu daha bulunup kapatıldı** — en ağırı: `dfs_spend` üzerinden
+**H-03'ün DFS bütçe SAYACI TRUNCATE ile sıfırlanabiliyordu.**
+
+KAPILAR (hepsi SERİ, ağaç durgunken, PIPE'SIZ ölçüldü — closure §23):
+  fresh `turbo --force` 16/16 **0 cached** · **1308 test** (tur başı 1252, +56)
+  `make verify` exit=0 (selftest **27 vaka / 25 zayıflatma**, tur başı 13/11)
+  `make verify-db` exit=0 — 78 + 117 = **195 DB testi** (tur başı 177)
+  `make goals` **16/16 PASS (0 skip)** · gitleaks 525 commit temiz · docs-sync 19 tool
+  `pnpm audit --prod` **7 zafiyet, `next` advisory 0** (önceki turla AYNI, dokunulmadı)
+
+BU TURDA KAPANAN AUDIT BULGULARI (8): M-10 · M-15 · M-17 · M-19 · M-22 · L-02 · L-10 · L-18
+KAPANAN TAKİP İŞLERİ (7): T1 · T4 · T5 · T6 · T7 · T8 · T9
+YENİ BULUNUP KAPATILAN (5): T10 (sistemik TRUNCATE, 0016) · R7 ailesi (guardrail parser) ·
+  PKCE dikişi (core'a codeVerifier) · AAD harf-durumu · deploy-sırası dokümantasyonu
+
+=== SIRADAKİ OTURUMUN BİRİNCİ İŞİ: DİLİM A — PADDLE HATTI ===
+Kalan en büyük teknik blok ve CANLI PARA YOLU. **SERİ, bu sırayla:**
+  M-03 event sıralaması (occurredAt sakla+karşılaştır; SDK'da alan MEVCUT) → migration **0018**
+  M-04 çoklu aktif subscription (portal `.limit(1)` kaldır; partial unique index İNSAN KAPISI)
+  M-05 customData otoritesi (HMAC'li kısa-ömürlü token; deploy grace period ister) — EN SON
+Bu üçü `packages/core` + `apps/web` + `packages/db` gerektiriyor → üç lane de aynı anda boş olmalı.
+**Migration numarası: 0017 KULLANILDI (M-10). Sıradaki serbest numara 0018.**
+
+DİĞER AÇIK TEKNİK BULGULAR (13):
+  H-06(c) signup abuse sertleştirme (politika kısmı İNSAN) · M-13 cloud şema hazırlığı bağı ·
+  M-20 GSC freshness (etki alanı DAR: yalnız days∈[7,10] VE lag=3) · M-24 retention ·
+  M-27 lisans kapısı (7 paket, hepsi transitive) · L-04 DFS client'ları core'a taşıma ·
+  L-13 rapor revoke/delete (DB'de `reports` üzerinde DELETE grant'i YOK — önce o) ·
+  L-15 API key URL'de (bilinçli ürün kararı D28) · L-19 web SEO/perf (og:url, noindex, Lighthouse) ·
+  T3 PostgrestVersion 14.5→12 düştü · artı insan-kapılı: H-04 · M-09 · M-25/M-26/D-04/D-05/D-08
+
+=== İNSAN KUYRUĞU (öncelik sırasıyla — closure §21 detaylı) ===
+1. **CLOUD-APPLY: 0013 → 0014 → 0015 → 0016 → 0017.** (Kuyruk bu turda ÜÇ migration büyüdü.)
+   · **0017 KOŞULSUZ DEĞİL:** canlıda çapraz-kiracı satır varsa üç `ADD CONSTRAINT` **23503 ile FAIL
+     eder ve migration ROLLBACK olur.** Apply'dan ÖNCE ön-kontrol SQL'i koşulmalı (migration §3'e gömülü;
+     beklenen üç satır, hepsi 0). Hakem sentetik ihlalle sınadı: yetim + çapraz-kiracı iki şekli de yakalıyor.
+   · **0016 apply SONRASI doğrulama SQL'i ZORUNLU** (closure §21'de üç sorgu). Sebep hakem tarafından
+     DENEYLE kanıtlandı: **başka bir grantor'un verdiği TRUNCATE, revoke'tan SESSİZCE sağ çıkıyor.**
+   · **`DFS_LIVE` sırası GÜNCELLENDİ: 0014 **ve 0016** apply → deploy → DFS_LIVE=1.**
+     (0016 olmadan bütçe sayacı TRUNCATE'le sıfırlanabilir kalır.)
+2. **DEPLOY SIRASI — v3 mühür (M-17): `apps/mcp` ÖNCE, `apps/web` SONRA.** Ters sırada skew
+   penceresindeki her yeni bağlantı `pull_gsc_data`'da hata verir (kredi yanmaz, kendiliğinden iyileşir).
+   **v3 TEK YÖNLÜ KAPI:** v3 satırlar oluştuktan sonra `packages/core` rollback'i onları KALICI
+   okunamaz yapar → reconnect. Detay: `docs/runbooks/secret-rotation.md` (e).
+3. **L-18 Dockerfile SMOKE'U MERGE ÖNCESİ ŞART** — bu makinede kanıtlanamadı (hem işçi hem hakem
+   denedi; build base-image registry metadata'sında asıldı, değişen satıra ULAŞMADAN iptal;
+   ağın suçsuz olduğu ölçüldü). pnpm tarafı statik TAM doğrulandı, **build grafiği doğrulanmadı.**
+4. `WEB_BASE_URL` HER ortamda tanımlı olmalı (L-06 fail-closed) — deploy checklist'ine.
+5. `static-guards` CI job'ını branch-protection required-check listesine ekle.
+6. M-09 para politikası kararı (şef önerisi B) · M-26 fiyat yayını · M-25/D-04/D-08 legal ·
+   D-05 kendi kendini yalanlayan fiyat belgesi · H-06 beta politikası.
+7. **Park edilen commit-boyutu ihlalleri** (bu turda +6: cc1ced7 270 · de95cd3 301 · 5e99171 204 ·
+   30ea609 300 · ebf260b 283 · 041abd8 390). Hepsi hakem incelemesinden geçti; **üçünün
+   bölünemezliği hakemce ÖLÇÜLEREK doğrulandı** (041abd8: `owner` zorunlu parametre → ayrı inerse
+   repo DERLENMİYOR, hakem TS2554 ile kanıtladı). Düzeltmesi `git rebase -i` = insan onayı.
+8. `0054e05`'in commit MESAJI ters yazılmış (hakem ölçtü: bayat önek sayımı popülasyonu gizlemez,
+   FAZLA raporlar). Doküman düzeltmesinin kendisi DOĞRU. Mesaj düzeltmesi rebase = insan.
+9. İmza bekleyen dersler (closure §19 + önceki §7.4) — CLAUDE.md'ye OTONOM YAZILMADI.
+10. Dal push + PR + merge (şef yapamaz).
+
+=== BU TURUN YÖNTEM DERSLERİ (closure §19 — imza adayı) ===
+1. **Ölçmeden koruma eklemek de bir hata sınıfıdır.** M-10'da işçi, audit'in istediği `with check`
+   policy'lerini üç bağımsız ölçümle **TİYATRO ilan edip YAPMADI**: `authenticated` 11 tablonun
+   hiçbirinde yazamıyor (GRANT katmanı RLS'e danışmadan reddediyor) ve tek yazıcı `service_role`
+   **`rolbypassrls=TRUE`** — deny-all RESTRICTIVE policy yürürlükteyken INSERT'ü yine de indi.
+   **`FORCE ROW LEVEL SECURITY` bu bypass'a karşı savunma DEĞİL** (sahip muafiyetini kaldırır,
+   BYPASSRLS'i değil). → Bu şemada **referential integrity, service_role'ü bağlayan TEK katman.**
+2. **"Koşulmamış test hakkında akıl yürütme" ölçüm yerine geçmez.** İşçi `test:db`'yi koşamayıp riski
+   statik argümanla sınırladı ve dürüstçe işaretledi; hakem koştu ve **argüman iki yönden yanlış çıktı.**
+   H-03 dersinin kardeşi: orada "yeşil geçen test ölçmüyordu", burada "koşulmamış test hakkında akıl".
+3. **Mutlak doğruluk kontrolü > göreli matris.** Eski-vs-yeni matrisi ikisi de aynı şeyi kaçırıyorsa
+   SESSİZ kalır. R7'de 32 sentetik **postgres ground truth'una** karşı koşuldu (64 verdict, 0 uyuşmazlık)
+   ve sevkiyattaki parser'ın kaybının 3 değil **10-13** olduğu ancak böyle görüldü.
+4. **Düzeltmenin kendisi yeni bir kör nokta açabilir** — ve kapının self-test'inin de kör noktası olur.
+   R7'nin ilk hâli veri-tırnakları arasındaki BÜYÜK harfli zayıflatmayı görünmez yaptı
+   (`GRANT UPDATE ON credit_ledger TO authenticated` = **NEVER#2 sessizce yeşil**), ve eklenen
+   fixture'ların hiçbiri o **negatif uzayı** kapsamıyordu.
+5. **Aynı locale tuzağına iki kez düşülmedi:** M-17'de `toLocaleLowerCase` bilinçli reddedildi
+   (Türkçe noktasız-i) — 0014'ün `DateStyle` hatasıyla aynı sınıf.
+
+=== ORTAM (değişmedi + bu turun eklemeleri) ===
+git push + gh pr merge = İNSAN. gh pr create · gh api · flyctl secrets · curl-GET ·
+Supabase MCP execute_sql(READ) ŞEFE AÇIK. apply_migration classifier-gated.
+Prod: main canlı · Netlify (web) · Fly seogrep-mcp nrt · Supabase dvtqlxwnhdzveytqgksd.
+UI copy İngilizce (ders 4).
+**KAPI KOŞMA (bu turda öğrenilen kesin reçete):**
+  `make goals` 0-skip için: `eval "$(grep -E '^export (MCP_SMOKE_URL|PROD_URL)=' ~/.zshrc)"`
+  **VE** Supabase env: `eval "$(./node_modules/.bin/supabase status --workdir packages/db -o env \
+    --override-name api.url=SUPABASE_URL --override-name auth.anon_key=SUPABASE_ANON_KEY \
+    --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY --override-name db.url=SUPABASE_DB_URL)"`
+  sonra `export` et. **`test:db` bu env OLMADAN 10-20 dosya çökertir** (kapı kusuru değil, env eksiği).
+**PARALEL ŞERİT:** bu turda 4 lane aynı anda koştu (packages/db · packages/core · apps/web · apps/mcp ·
+guardrails). Kural: her lane TEK paket ailesi · `build` yalnız o lane tek başınayken · `test:db`
+YALNIZ tek DB lane'inde · `git commit --only` · `git reset` ASLA. Ders 8 bu turda **üç kez daha**
+fiilen tekrarladı (hayalet FAIL'ler, kanıt çürümesi, dist yarışı) — hepsi kaydedildi.
+```
+
+## Önceki devir notu (2026-07-28 gece, DÜŞMANCA AUDIT REMEDIATION DALI — İLK TUR)
+
+```
+Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
+→ docs/audits/2026-07-28-hostile-audit-remediation-closure.md  ← ESAS BELGE, 17 bölüm
+→ ledger .superpowers/sdd/hostile-audit-remediation-ledger.md (şerit şerit kanıt zinciri)
+Kaynak audit (DEĞİŞTİRME): docs/audits/2026-07-28-hostile-full-repository-audit.md (untracked, insan dosyası)
+
+=== DURUM ===
+Dal: fix/hostile-audit-remediation @ 71 commit, taban 55fea36. main'e MERGE EDİLMEDİ, PUSH EDİLMEDİ.
+Çalışma ağacı TEMİZ (yalnız insanın untracked dosyaları: .agents/ .codex/ AGENTS.md + 3 audit md).
+
+54 audit bulgusunun 53'ü HEAD'e karşı YENİDEN DOĞRULANDI (H-04 salt-kayıt) → **0 NOT REPRODUCIBLE**.
+**29 bulgu FIXED** (done_when + taze hakem PASS + deterministik kapı). **25 bulgu AÇIK.**
+**Audit'in BEŞ High'ının BEŞİ de teknik olarak kapandı**: H-01 H-02 H-03 H-05 H-07.
+Kalan iki High KOD DEĞİL KARAR: H-04 (rotasyon, operatör) · H-06 politikası (ürün).
+
+KAPILAR (hepsi bu dalda, düzeltme turlarından SONRA koşuldu):
+  fresh `turbo --force` 16/16 **0 cached** · **1252 test** (taban 1081, +171)
+  `make verify` PASS (guardrail self-test 13/13) · `make verify-db` PASS (**177 DB testi**)
+  `make goals` **16/16 PASS (0 skip)** (tam env) · gitleaks temiz · docs-sync PASS (19 tool)
+  `pnpm audit --prod` **16 → 7**; **`next` advisory sayısı 0**
+
+FIXED (29): H-01 H-02 H-03 H-05 H-07 · M-01 M-02 M-06 M-07 M-08 M-11 M-12 M-14 M-16 M-18 M-21
+M-23 M-28 · L-01 L-03 L-05 L-06 L-07 L-08 L-11 L-12 L-14 L-16 L-17 · artı D-01 D-02 D-03 D-06 D-07
+
+>>> AÇIK 25 BULGU + 3 drift + 9 takip işi: closure §5.2 (insan kapılı) · §5.3 (OPEN tablosu) · §10 (T1-T9)
+
+=== SIRADAKİ OTURUM: HAZIR DİLİMLER (bağımlılığa göre) ===
+Her dilim ayrı paket ailesinde → paralel koşabilir. DB-integration şeritleri SERİ (aşağıya bak).
+
+DİLİM A — Paddle hattı (packages/core + apps/web + migration). SERİ, bu sırayla:
+  M-03 event sıralaması (occurredAt sakla+karşılaştır; SDK'da alan MEVCUT) → 0015 kolonu
+  M-04 çoklu aktif subscription (portal .limit(1) kaldır; partial unique index İNSAN KAPISI)
+  M-05 customData otoritesi (HMAC'li kısa-ömürlü token; deploy grace period ister) — EN SON, en geniş etki
+DİLİM B — Tenant/GSC (migration + apps/web + apps/mcp)
+  M-10 composite FK — DİKKAT: `projects`/`jobs` üzerinde `unique (user_id, id)` YOK, önce O gerekiyor;
+       dokuz RLS policy'sinin hepsi SELECT-only, tek `with check` yok → yazma yolunda RLS SUSUYOR
+  M-15 disconnect dürüstlüğü + T5 (emeklilik sonrası key-id-1 satırında revoke ATLANIYOR — kardeş bulgu)
+  M-17 AES-GCM AAD (v2 formatı bunu MÜMKÜN KILACAK şekilde tasarlandı; version baytı hazır)
+  M-20 GSC freshness (etki alanı DAR: yalnız days∈[7,10] VE lag=3; varsayılan days=90 güvenli)
+DİLİM C — apps/mcp kalanlar
+  M-19 crawl_site enqueue öncesi 25-30 sn keşif · L-02 /status reaper sayaçları yanıltıcı sıfır
+  L-18 Dockerfile `pnpm dlx turbo@X` lockfile'a bağlı değil · T8 crawler tavanlarının TOPLAM bütçesi yok
+DİLİM D — apps/web kalanlar
+  M-22 API-key rotation beş-key cap'ini atlıyor · L-10 GSC OAuth PKCE + tek-kullanımlık state
+  L-13 rapor revoke/delete (DB'de `reports` üzerinde DELETE grant'i HİÇ YOK — önce o)
+  T4 GSC route'larında Host-fallback kalıntısı (L-06 kalıbı taşınacak) · T6 waitlist ölü `alreadyExisted` dalı
+DİLİM E — CI/şema/ops
+  T1 **0015**: `REVOKE DELETE, TRUNCATE ON public.users_profile` (M-07 mandalının cloud yan kapısı)
+  M-13 cloud şema hazırlığı bağı (branch protection zaten var; `enforce_admins=false` insan ayarı)
+  M-27 lisans kapısı (7 paket allowlist dışı, HEPSİ transitive) · T3 PostgrestVersion 14.5→12 düştü
+  T7 guardrail parser kalıntı kaçakları R1-R6 · T9 apps/web'de olgusal yanlış iki yorum
+DİLİM F — ürün/doküman (ÇOĞU İNSAN KAPILI — closure §5.2)
+  M-24 retention · M-25/M-26/D-04/D-05/D-08 · L-09 (ikinci kopya troubleshooting.mdx:49-50) · L-15 · L-19
+DİLİM G — H-06 teknik kısım (c): signup abuse sertleştirme. (a)/(b) politika = İNSAN.
+
+=== İNSAN KUYRUĞU (öncelik sırasıyla) ===
+1. **CLOUD-APPLY: 0012 → 0013 → 0014.** Uygulanmadan bu turun DB kazanımları CANLIDA YOK.
+   **`DFS_LIVE` için SIRA KESİN: 0014 apply → deploy → DFS_LIVE=1.** Ters sırada dört DFS tool'u
+   fail-closed reddeder (para harcamaz, hizmet vermez, wake basar).
+2. **DFS fonlama ön koşulu:** (a) vendor parolası rotasyonu [operatör kararı, ŞEF YENİDEN AÇMADI]
+   + (b) çalışan bütçe kapısı [KOD TARAFI BİTTİ — ama cloud-apply'a kadar canlıda yok].
+3. **`WEB_BASE_URL` HER ortamda tanımlı olmalı** — L-06 fail-closed oldu; env'siz ortamda (deploy
+   preview, lokal dev) auth callback artık **500** döner. Deploy checklist'ine gir.
+4. `static-guards` CI job'ını branch-protection required-check listesine ekle (job hazır, koşuyor).
+5. M-09 para politikası kararı (closure §5.2, iki seçenek, ŞEF ÖNERİSİ **B**).
+6. M-26 fiyat yayını · M-25/D-04/D-08 legal metin · D-05'in kendi kendini yalanlayan fiyat belgesi
+   · H-06 beta politikası.
+7. Park edilen commit-boyutu ihlalleri (3aa4aa4/6aac65b/b7ca6f2/32ac564/c98ff85/c8b307a) —
+   düzeltmesi `git rebase -i` = insan onayı; kod içeriği bit-aynı, hepsi hakem-onaylı.
+8. **İmza bekleyen 4 ders** (closure §7.4) — CLAUDE.md'ye OTONOM YAZILMADI.
+9. Dal push + PR + merge (şef yapamaz: plugin outward-gate + harness classifier).
+
+=== BU OTURUMDA ÖĞRENİLEN ORTAM GERÇEKLERİ (sıradaki oturum ZAMAN KAZANIR) ===
+PARALEL ŞERİT MEKANİĞİ — imzalı ders 8'e ÜÇ yeni mekanizma eklendi:
+  (a) **Paylaşılan lokal Supabase**: packages/db ve apps/mcp DB testleri AYNI veritabanına vurur →
+      DB-integration şeritleri paket-scoped kapıyla bile paralelleşemez, SERİLEŞTİR.
+  (b) **dist/ bağımlılığı**: apps/web testleri @pseo/core'u dist/ten çözer → bir şeridin `build`'i
+      diğerinin testini bozar. Paralel şeritlerde `build` YASAKLA, dist'i bilinçli bayat tut.
+  (c) **Paylaşılan git index**: bir ajanın `git add`'i diğerinin commit'ine sızar → `git commit --only`.
+      **VE: paylaşılan dalda `git reset` ASLA** — bu oturumda bir ajan `reset --soft HEAD~1` ile
+      başka şeridin commit'ini düşürdü (kurtarıldı, kayıp yok, reflog HEAD@{7}).
+ŞEFİN KENDİ HATALARI (tekrarlama):
+  · Review paketini DOSYA YOLUNDAN üretme → İKİ kez yanlış çıktı (bir kez kapsam-içi dosyayı ATLADI:
+    `guardrails/verify-db.sh` bir done_when'in TEK kanıtıydı; bir kez BAŞKA şeridin commit'ini KATTI).
+    **Doğrusu: şeridin KENDİ commit sha'larından üret** (`for s in "${SHAS[@]}"; do git show -U10 $s; done`).
+  · `cmd | tail` sonrası `$?` **tail'in** kodudur → kapı "FAIL yazıp exit 0 dönüyor" sanılabilir.
+KAPI KOŞMA:
+  · `make goals` **0 skip** için: `eval "$(grep -E '^export (MCP_SMOKE_URL|PROD_URL)=' ~/.zshrc)"`
+    **VE** Supabase env (`supabase status -o env` ile) — H-03'ten sonra dfs-budget-guard da env ister.
+  · docs sync script'i `apps/web/scripts/gen-tool-docs.mjs` (kökte `scripts/` DEĞİL).
+  · `make verify-db` ARTIK VAR (bu oturumda eklendi).
+DISPATCH: işçi Opus 4.8 · mekanik iş Sonnet 5 · hakem taze Opus; **ledger/webhook/auth/RLS/migration
+diff'inde VEYA toplam >400 satırda taze FABLE** (kural 10). Hakem YALNIZ iş emri + diff görür.
+
+=== BU TURUN ASIL BULGUSU (sıradaki oturum bunu bilsin) ===
+Audit'in altında yatan soru "kod hatalı mı" değil **"kapılar bir şey ölçüyor mu"**ydu — ve aynı hata
+sınıfı BAĞIMSIZ ÜÇ YERDE çıktı, üçü de kapandı:
+  · check-rls/check-append-only geçmişe bakıyordu → **8/8 sentetik zayıflatma YEŞİL geçiyordu**
+  · dfs-budget.sh repo-göreli dizini okuyordu, prod /tmp'ye yazıyordu → **daima "OK"**
+  · goals/dfs-budget-guard ölçemediği hedefi **tam-ölçüm PASS** sayıyordu
+Üçü de artık kendi kendini sınıyor (self-test / SKIP-97 / açık skip sayımı).
+Kanıt standardı: hakemler işçi beyanına GÜVENMEDİ — 300k adres SSRF fuzz'ı, 26 vakalık eski-vs-yeni
+matris, 4 awk implementasyonu, ve H-03'te **MUTASYON TESTİ** (düzeltme-öncesi gövdeyi geri koyup
+20/20 deterministik kırmızı). "Yeşil geçiyor" tek başına testin bir şey ölçtüğünü KANITLAMAZ.
+
+ORTAM: git push + gh pr merge = İNSAN (plugin outward-gate + harness classifier).
+gh pr create · gh api · flyctl secrets · curl-GET · Supabase MCP execute_sql(READ) ŞEFE AÇIK.
+apply_migration classifier-gated (insan onaylı). Prod: main canlı · Netlify (web) ·
+Fly seogrep-mcp nrt (web+worker) · Supabase dvtqlxwnhdzveytqgksd. UI copy İngilizce (ders 4).
+```
+
+## Önceki devir notu (2026-07-28, ÜRÜN CANLI PARA ALIYOR)
 
 ```
 Proje: SeoGrep — hosted SEO MCP SaaS (seogrep.com). Dizin: "/Users/apple/dev/pseo web saas"

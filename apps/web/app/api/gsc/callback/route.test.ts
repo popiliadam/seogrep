@@ -46,12 +46,14 @@ vi.mock("../../../../lib/gsc/store", () => ({
 }));
 
 import { GET } from "./route";
+import { PKCE_COOKIE, serializePkceCookie } from "../../../../lib/gsc/pkce";
 
 const BASE = "http://localhost:3457/api/gsc/callback";
 const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 const SECRET = "gsc_client_secret_do_not_leak_1234";
 const USER = "user-1";
 const PROJECT = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
+const VERIFIER = "the-code-verifier-kept-only-in-the-cookie";
 
 function stubEnv() {
   vi.stubEnv("GOOGLE_CLIENT_ID", "cid.apps.googleusercontent.com");
@@ -60,15 +62,24 @@ function stubEnv() {
   vi.stubEnv("WEB_BASE_URL", "https://app.example.com");
 }
 
-/** A validly-signed state for USER + PROJECT (real signing — the route verifies it for real). */
+/**
+ * A validly-signed state for USER + PROJECT (real signing — the route verifies it for real),
+ * which since L-10 also records the one-time `gsc_oauth` cookie the connect step set beside
+ * it. `callbackUrl` then attaches that cookie the way a browser would, so an unqualified spec
+ * models a NORMAL return from Google. A spec that wants a REPLAY (or a foreign flow) passes
+ * its own cookie header explicitly — that is the whole difference between the two.
+ */
+let issuedCookie = "";
 function validState(): string {
-  return signState(freshStatePayload(USER, PROJECT), ENC_KEY);
+  const payload = freshStatePayload(USER, PROJECT);
+  issuedCookie = `${PKCE_COOKIE}=${serializePkceCookie(payload.nonce, VERIFIER)}`;
+  return signState(payload, ENC_KEY);
 }
 
-function callbackUrl(params: Record<string, string>): Request {
+function callbackUrl(params: Record<string, string>, cookie: string = issuedCookie): Request {
   const url = new URL(BASE);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  return new Request(url);
+  return new Request(url, cookie ? { headers: { cookie } } : undefined);
 }
 
 describe("GET /api/gsc/callback", () => {
@@ -98,10 +109,12 @@ describe("GET /api/gsc/callback", () => {
       "https://app.example.com/app?gsc=connected&property=matched",
     );
 
-    // Code exchanged with the redirect_uri that matches the one used at connect time.
+    // Code exchanged with the redirect_uri that matches the one used at connect time, and the
+    // PKCE verifier from the cookie (that it reaches the wire is asserted in the spec below).
     expect(exchangeCodeForTokens).toHaveBeenCalledWith({
       code: "auth-code",
       redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
     });
 
     // The store received the SEALED token (never the plaintext), and it decrypts back.
@@ -115,7 +128,85 @@ describe("GET /api/gsc/callback", () => {
     expect(write.projectId).toBe(PROJECT);
     expect(write.gscProperty).toBe("sc-domain:example.com");
     expect(write.encryptedTokenHex).not.toContain("1//the-refresh-token");
-    expect(decryptToken(fromByteaHex(write.encryptedTokenHex), ENC_KEY)).toBe("1//the-refresh-token");
+    expect(decryptToken(fromByteaHex(write.encryptedTokenHex), ENC_KEY, {
+      userId: USER,
+      projectId: PROJECT,
+    })).toBe("1//the-refresh-token");
+  });
+
+  /**
+   * L-10. The state is a stateless MAC — it can prove WHO asked but never that this is the
+   * FIRST time it has been presented, and its own docstring says nothing rejects a replay. The
+   * one-time cookie issued beside it is what closes that: it is destroyed on use, so a state
+   * captured from a Referer, a log, or a shared screen arrives the second time with nothing to
+   * check it against. The PKCE verifier rides in the same cookie, binding the code at Google.
+   */
+  it("sends the PKCE code_verifier from the cookie to the token endpoint", async () => {
+    await GET(callbackUrl({ code: "auth-code", state: validState() }));
+
+    const [params] = exchangeCodeForTokens.mock.calls[0] as unknown as [unknown];
+    expect(params).toEqual({
+      code: "auth-code",
+      redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
+    });
+
+    // ...and those params really do put the verifier on the wire, not merely in scope: the
+    // REAL @pseo/core client (the mock above only stands in for the route's call) is driven
+    // with exactly what the route passed, over an injected fetch — zero network, NEVER #5.
+    // This is the spec that fails if the client's request body ever stops carrying the
+    // parameter, which is the regression the deleted `fetchWithCodeVerifier` wrapper could
+    // only have suffered silently in production.
+    const core = await vi.importActual<typeof import("@pseo/core")>("@pseo/core");
+    const captured: RequestInit[] = [];
+    await core.exchangeCodeForTokens(params as Parameters<typeof core.exchangeCodeForTokens>[0], {
+      credentials: { clientId: "cid.apps.googleusercontent.com", clientSecret: SECRET },
+      fetch: async (_url: string, init?: RequestInit) => {
+        captured.push(init!);
+        return new Response("{}");
+      },
+    });
+    const sent = new URLSearchParams(String(captured[0]!.body));
+    expect(sent.get("code_verifier")).toBe(VERIFIER);
+    expect(sent.get("code")).toBe("auth-code");
+    expect(sent.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
+  });
+
+  it("REFUSES a state presented a second time (no one-time cookie left), code not exchanged", async () => {
+    const state = validState();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // The browser dropped the cookie when the first callback consumed it; the replayed URL is
+    // byte-identical and the state is still inside its TTL.
+    const response = await GET(callbackUrl({ code: "auth-code", state }, ""));
+
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+    expect(upsertGscConnection).not.toHaveBeenCalled();
+    // The log names the flow, never the state or the verifier.
+    for (const call of errorSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(state);
+      expect(JSON.stringify(call)).not.toContain(VERIFIER);
+    }
+  });
+
+  it("REFUSES a cookie belonging to a different flow (nonce mismatch), code not exchanged", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const foreign = `${PKCE_COOKIE}=${serializePkceCookie("11111111-1111-4111-8111-111111111111", VERIFIER)}`;
+    const response = await GET(callbackUrl({ code: "auth-code", state: validState() }, foreign));
+    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+  });
+
+  it("clears the one-time cookie on the way out — on success AND on rejection", async () => {
+    const success = await GET(callbackUrl({ code: "auth-code", state: validState() }));
+    expect(success.headers.get("set-cookie")).toMatch(new RegExp(`${PKCE_COOKIE}=;`));
+    expect(success.headers.get("set-cookie")).toMatch(/Max-Age=0/i);
+    expect(success.headers.get("set-cookie")).toMatch(/Path=\/api\/gsc/i);
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const rejected = await GET(callbackUrl({ code: "auth-code", state: "forged.state" }));
+    expect(rejected.headers.get("set-cookie")).toMatch(/Max-Age=0/i);
   });
 
   it("connects with property=none when the account has no matching property", async () => {
@@ -215,13 +306,6 @@ describe("GET /api/gsc/callback", () => {
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
-  it("fails closed when WEB_BASE_URL is unset (falls back to request origin — no canonical base)", async () => {
-    vi.stubEnv("WEB_BASE_URL", "");
-    const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("http://localhost:3457/app?gsc=error");
-    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
-  });
-
   it("still connects when sites.list fails (property stays null, token still sealed)", async () => {
     listSites.mockRejectedValue(new Error("403"));
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
@@ -238,7 +322,7 @@ describe("GET /api/gsc/callback", () => {
     url.searchParams.set("code", "auth-code");
     url.searchParams.set("state", validState());
     const spoofed = new Request(url, {
-      headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
+      headers: { host: "attacker.example", "x-forwarded-host": "attacker.example", cookie: issuedCookie },
     });
     const location = new URL((await GET(spoofed)).headers.get("location")!);
     expect(location.origin).toBe("https://app.example.com");
@@ -246,6 +330,68 @@ describe("GET /api/gsc/callback", () => {
     expect(exchangeCodeForTokens).toHaveBeenCalledWith({
       code: "auth-code",
       redirectUri: "https://app.example.com/api/gsc/callback",
+      codeVerifier: VERIFIER,
     });
+  });
+});
+
+/**
+ * SPEC CHANGE (T4), replacing "fails closed when WEB_BASE_URL is unset (falls back to request
+ * origin — no canonical base)", which asserted a 307 to `http://localhost:3457/app?gsc=error`.
+ * "Fails closed" was the label; the behaviour was a redirect built from the REQUEST HOST, the
+ * last Host-derived target left in this route. Behind a Host-forwarding proxy a broken deploy
+ * therefore 302'd the returning user to the attacker's origin. Now the L-06 shape: 500, no
+ * Location, no code exchanged, diagnostics in the log only.
+ */
+describe("GET /api/gsc/callback — unusable WEB_BASE_URL fails CLOSED (T4)", () => {
+  beforeEach(() => {
+    stubEnv();
+    getUser.mockResolvedValue({ data: { user: { id: USER } } });
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  async function expectConfigFailure(response: Response): Promise<void> {
+    expect(response.status).toBe(500);
+    expect(response.headers.get("location")).toBeNull();
+    expect(exchangeCodeForTokens).not.toHaveBeenCalled(); // one-time code NOT burned
+    expect(upsertGscConnection).not.toHaveBeenCalled();
+  }
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("returns a 500 config error (no redirect) when WEB_BASE_URL is unset", async () => {
+    vi.stubEnv("WEB_BASE_URL", undefined);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("returns a 500 config error when WEB_BASE_URL is not an absolute URL", async () => {
+    vi.stubEnv("WEB_BASE_URL", "seogrep.com");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expectConfigFailure(await GET(callbackUrl({ code: "auth-code", state: validState() })));
+  });
+
+  it("never puts the request Host (or the env name) in the user-facing body", async () => {
+    vi.stubEnv("WEB_BASE_URL", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const url = new URL("https://attacker.example/api/gsc/callback");
+    url.searchParams.set("code", "auth-code");
+    url.searchParams.set("state", validState());
+    const response = await GET(
+      new Request(url, { headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" } }),
+    );
+    const body = await response.text();
+    expect(response.headers.get("location")).toBeNull();
+    expect(body).not.toContain("attacker.example");
+    expect(body).not.toContain("WEB_BASE_URL");
+    expect(body).toMatch(/search console/i);
   });
 });

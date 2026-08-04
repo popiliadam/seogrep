@@ -24,9 +24,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const HEADER_ENDPOINT = "https://mcp.seogrep.com/mcp";
+
 function props(overrides: Partial<Parameters<typeof KeyPanel>[0]> = {}) {
   return {
     activeKeyId: null,
+    headerEndpoint: HEADER_ENDPOINT,
     createKeyAction: vi.fn().mockResolvedValue(REVEAL),
     rotateKeyAction: vi.fn().mockResolvedValue(REVEAL),
     revokeKeyAction: vi.fn().mockResolvedValue(undefined),
@@ -78,5 +81,40 @@ describe("KeyPanel", () => {
     render(<KeyPanel {...p} />);
     fireEvent.click(screen.getByRole("button", { name: /generate key/i }));
     expect(await screen.findByRole("alert")).toBeTruthy();
+  });
+});
+
+/**
+ * L-15. Both auth forms are supported by the server and both are documented, but the dashboard
+ * offered only the URL-with-key form at the ONE moment the plaintext key is on screen — so a user
+ * whose client sends headers had to leave and read the docs to learn the alternative existed.
+ * This is strictly ADDITIVE: the URL form stays, and stays first.
+ */
+describe("KeyPanel — header auth alternative", () => {
+  async function reveal(overrides: Partial<Parameters<typeof KeyPanel>[0]> = {}) {
+    const p = props(overrides);
+    render(<KeyPanel {...p} />);
+    fireEvent.click(screen.getByRole("button", { name: /generate key/i }));
+    await screen.findByText(REVEAL.key);
+  }
+
+  it("offers the fixed endpoint and an x-api-key snippet alongside the personal URL", async () => {
+    await reveal();
+    expect(screen.getByText(HEADER_ENDPOINT)).toBeTruthy();
+    expect(screen.getByText(`x-api-key: ${REVEAL.key}`)).toBeTruthy();
+  });
+
+  it("does not replace or demote the URL form — both are offered, URL first", async () => {
+    await reveal();
+    const url = screen.getByText(REVEAL.mcpUrl);
+    const header = screen.getByText(HEADER_ENDPOINT);
+    expect(screen.getByRole("button", { name: /copy mcp url/i })).toBeTruthy();
+    expect(url.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows nothing at all rather than an invented endpoint when none could be derived", async () => {
+    await reveal({ headerEndpoint: null });
+    expect(screen.getByText(REVEAL.mcpUrl)).toBeTruthy(); // the URL form is unaffected
+    expect(screen.queryByText(/x-api-key/i)).toBeNull();
   });
 });

@@ -107,7 +107,9 @@ describe("ledger-repo against local Supabase", () => {
     const user = await makeUser();
     await grantCredits(service, { userId: user.id, kind: "grant", amount: 10 });
     await expect(
-      reserveCredits(service, { userId: user.id, amount: 40, tool: "audit", jobId: "j1" }),
+      // Unique per run for the same reason as (e) below, even though this reserve is
+      // expected to fail on the balance and so never lands a row.
+      reserveCredits(service, { userId: user.id, amount: 40, tool: "audit", jobId: randomUUID() }),
     ).rejects.toThrow(/insufficient balance/);
     // The failed reserve left no row: balance is untouched.
     expect(await getBalance(service, user.id)).toBe(10);
@@ -169,9 +171,22 @@ describe("ledger-repo against local Supabase", () => {
 
     // Five parallel reserves of 30 demand 150 against a balance of 100. The per-user
     // advisory lock serializes them, so at most floor(100/30)=3 can succeed.
+    //
+    // The job ids must be unique PER RUN, not merely within this spec: 0011's
+    // `credit_ledger_one_reserve_per_job` is a GLOBAL partial unique index on (job_id) —
+    // it is not scoped by user_id. Literal ids therefore collide with the rows a previous
+    // run of this same spec left behind, and every reserve is rejected on the index rather
+    // than on the balance, which reads as a product failure. The gate always resets first,
+    // so this only ever bit re-runs against a warm database.
+    const run = randomUUID();
     const settled = await Promise.allSettled(
       Array.from({ length: 5 }, (_, i) =>
-        reserveCredits(service, { userId: user.id, amount: 30, tool: "audit", jobId: `c${i}` }),
+        reserveCredits(service, {
+          userId: user.id,
+          amount: 30,
+          tool: "audit",
+          jobId: `${run}-c${i}`,
+        }),
       ),
     );
     const succeeded = settled.filter((r) => r.status === "fulfilled");

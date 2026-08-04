@@ -1,0 +1,5 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "GPL-3.0-only": [{ "name": "evil-copyleft", "versions": ["1.0.0"], "license": "GPL-3.0-only" }],
+  "Unknown": [{ "name": "mystery-pkg", "versions": ["0.1.0"], "license": "Unknown" }]
+}

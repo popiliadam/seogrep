@@ -1,0 +1,16 @@
+-- SYNTHETIC WEAKENING - never applied. Layered on top of fixtures/healthy by
+-- check-guards-selftest.sh. NEGATIVE SPACE of the R7 reader, second topology: here the
+-- line carries an ODD number of double quotes - one DATA quote inside a dollar-quoted
+-- comment body, then the two delimiters of a genuine quoted identifier ("reader").
+--
+-- A reader that pairs quotes positionally marries the DATA quote to the OPENING delimiter
+-- of that real identifier, so the span it swallows is the weakening in between. The two
+-- fixtures differ on purpose: the sibling needs a matched pair of data quotes, this one
+-- needs only ONE data quote plus any well-formed quoted identifier later on the line -
+-- which is the far likelier accident in a hand-written migration.
+--
+-- Measured on postgres 17.6 (isolated container): the whole file applies cleanly
+-- (psql exit 0, no error) and leaves pg_class.relrowsecurity = false on
+-- public.credit_ledger.
+-- check-rls.sh MUST go RED on this.
+comment on table public.events is $q$he said " hello$q$; ALTER TABLE public.credit_ledger DISABLE ROW LEVEL SECURITY; create policy "reader" on public.events for select using (true);

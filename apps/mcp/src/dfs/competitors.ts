@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { assertWithinBudget, recordSpend } from "./budget.ts";
-import type { DfsTransport } from "./client.ts";
+import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
  * DataForSEO Labs **competitor comparison** adapter (mock-first) — the FOURTH paid-API port,
@@ -46,8 +46,8 @@ export const COMPETITORS_DISCOVERY_MAX_LIMIT = 1000;
  * Conservative cost estimates (USD) used ONLY by the pre-call budget gate. Deliberate
  * over-estimates (DataForSEO Labs standard pricing puts a full 1000-row discovery near $0.132 and
  * a rank-overview request near $0.013) so the gate errs toward blocking. They are NOT price
- * claims: the REAL per-request costs are read from each response's `cost` field and recorded after
- * that request (budget.ts recordSpend).
+ * claims: the REAL per-request costs are read from each response's `cost` field and settled
+ * against the operation's reservation once the fan-out ends (budget.ts settleSpend).
  */
 export const ESTIMATED_COMPETITORS_DISCOVERY_USD = 0.2;
 export const ESTIMATED_RANK_OVERVIEW_REQUEST_USD = 0.0375;
@@ -407,31 +407,31 @@ export interface LiveCompetitorsOptions {
   readonly password: string;
   /** Injectable transport (default wraps global fetch) — tests pass a fake so no real HTTP runs. */
   readonly transport?: DfsTransport;
-  /** Clock (defaults to Date) for the budget day + recorded ts. */
-  readonly now?: () => Date;
-  /** Spend directory override (tests point it at a temp dir). */
-  readonly spendDir?: string;
+  /** Injectable spend counter (defaults to the DB-backed one) — specs pass a fake. */
+  readonly ledger?: SpendLedger;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
-  return { ok: res.ok, status: res.status, json: () => res.json() };
-};
-
 /**
- * The real (paid) comparison client. Per lookup: (1) ONE budget gate BEFORE any HTTP, sized to the
+ * The real (paid) comparison client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to the
  * flow that is about to run; (2) the discovery request, ONLY when the caller named no rivals;
- * (3) one rank-overview request per compared domain, sequentially. Each request's real cost is
- * booked right after it returns, so a mid-fan-out failure leaves exactly the true spend on record.
+ * (3) one rank-overview request per compared domain, sequentially; (4) ONE settlement with the
+ * fan-out's real total. A mid-fan-out failure leaves the reservation open at its full estimate,
+ * which is never less than the spend that really happened.
  */
 export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): CompetitorsPort {
-  const transport = opts.transport ?? defaultTransport;
-  const now = opts.now ?? ((): Date => new Date());
+  const transport = opts.transport ?? defaultDfsTransport;
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
-  const budgetCtx = { now, dir: opts.spendDir };
+  const ledger = opts.ledger ?? createDbSpendLedger();
 
-  /** POST one endpoint, parse it, and book its actual cost against today's budget. */
+  /** One fan-out's running real cost + row count, settled against the reservation at the end. */
+  interface Tally {
+    costUsd: number;
+    rows: number;
+  }
+
+  /** POST one endpoint, parse it, and add its actual cost to the operation's running tally. */
   async function runRequest<T>(
+    tally: Tally,
     endpoint: string,
     body: Record<string, unknown>,
     parse: (raw: unknown) => T,
@@ -448,14 +448,8 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
     }
     const raw: unknown = await response.json();
     const parsed = parse(raw);
-    recordSpend(
-      {
-        cost_usd: extractCompetitorsCostUsd(raw) ?? fallbackCostUsd,
-        endpoint,
-        count: rowCount(parsed),
-      },
-      budgetCtx,
-    );
+    tally.costUsd += extractCompetitorsCostUsd(raw) ?? fallbackCostUsd;
+    tally.rows += rowCount(parsed);
     return parsed;
   }
 
@@ -465,13 +459,19 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
       const supplied = query.competitors.slice(0, MAX_COMPETITORS);
       const discovering = supplied.length === 0;
 
-      // (1) Pre-call gate for the WHOLE operation — throws (and wakes the human) if it would pass
-      // the cap, before a single request is sent.
-      assertWithinBudget(estimateComparisonUsd(supplied), budgetCtx);
+      // (1) ONE reservation for the WHOLE operation — throws (and wakes the human) at the cap or
+      // when the counter is unreadable, before a single request is sent.
+      const reservation = await reserveSpend(
+        estimateComparisonUsd(supplied),
+        DFS_DOMAIN_RANK_OVERVIEW_ENDPOINT,
+        ledger,
+      );
+      const tally: Tally = { costUsd: 0, rows: 0 };
 
       // (2) Discovery — skipped outright when the caller named the rivals (the cheaper flow).
       const discovery = discovering
         ? await runRequest(
+            tally,
             DFS_COMPETITORS_DOMAIN_ENDPOINT,
             {
               target: query.target,
@@ -505,6 +505,7 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
       let rows: readonly ComparisonRow[] = [];
       for (const entry of plan) {
         const metrics = await runRequest(
+          tally,
           DFS_DOMAIN_RANK_OVERVIEW_ENDPOINT,
           {
             target: entry.domain,
@@ -517,6 +518,10 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
         );
         rows = [...rows, { ...entry, metrics }];
       }
+
+      // (4) Settle once with the fan-out's real total; a throw above leaves the reservation open
+      // at its full estimate, which is never less than the partial spend that happened.
+      await settleSpend(reservation, tally.costUsd, tally.rows, ledger);
 
       return {
         target: query.target,

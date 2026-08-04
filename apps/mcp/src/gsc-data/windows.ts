@@ -4,12 +4,23 @@
  * (previous). All arithmetic is in UTC over YYYY-MM-DD strings, and the reference instant
  * is injected, so the windows are fully deterministic in tests (no wall clock).
  *
- * v0 limitation (documented, not a bug): the current window ends at the reference date
- * with NO freshness-lag offset. Search Console finalizes data with a ~2–3 day delay, so
- * the most recent day or two of the current window can be partial. This is acceptable for
- * the trend/decay comparisons here and is noted in the tool docs; a lag offset can land
- * later without changing this contract.
+ * The current window ends GSC_FRESHNESS_LAG_DAYS days BEFORE the reference, never at the
+ * reference itself. Search Console finalizes a day with a ~2–3 day delay and reports an
+ * unfinalized day as ZERO, not as "not in yet" — so a window running up to today books a
+ * page's real traffic as real zeros and analyze_content_decay reports a perfectly stable
+ * page as decaying (M-20). Both windows shift back by the same offset, so they stay equal
+ * length and adjacent and every downstream comparison is unaffected. The cost is stated
+ * plainly in the tool docs: the newest few days are not analyzed, so a genuine drop
+ * surfaces up to GSC_FRESHNESS_LAG_DAYS days later than it happened.
  */
+
+/**
+ * How many days back from "now" the analysis window ends. Search Console finalizes a day's
+ * performance data with a ~2–3 day delay and reports an unfinalized day as ZERO rather than
+ * as "not in yet", so a window that runs up to today books real traffic as real zeros. This
+ * is the ONE source of truth for that offset — every window is built from it.
+ */
+export const GSC_FRESHNESS_LAG_DAYS = 3;
 
 export interface DateRange {
   readonly start_date: string;
@@ -34,15 +45,22 @@ function addUtcDays(date: Date, delta: number): Date {
 }
 
 /**
- * Build the current + previous windows for a `days`-day pull ending at `reference`.
+ * Build the current + previous windows for a `days`-day pull taken at `reference`.
  *
- *   current  = [reference - (days-1) .. reference]        (days days, inclusive)
- *   previous = [current.start - days .. current.start - 1] (the days days just before)
+ *   current  = [end - (days-1) .. end]  where end = reference - lagDays  (days days, inclusive)
+ *   previous = [current.start - days .. current.start - 1]               (the days days before)
  *
- * `reference` is normalized to its UTC calendar day, so only the date matters.
+ * `reference` is normalized to its UTC calendar day, so only the date matters. `lagDays` backs
+ * the whole pair off the unfinalized tail of Search Console's data (see the file header); it is
+ * a parameter only so tests can pin the un-lagged math, and defaults to the real offset.
  */
-export function computeWindows(reference: Date, days: number): PullWindows {
-  const currentEnd = new Date(`${toIsoDate(reference)}T00:00:00.000Z`);
+export function computeWindows(
+  reference: Date,
+  days: number,
+  lagDays: number = GSC_FRESHNESS_LAG_DAYS,
+): PullWindows {
+  const referenceDay = new Date(`${toIsoDate(reference)}T00:00:00.000Z`);
+  const currentEnd = addUtcDays(referenceDay, -lagDays);
   const currentStart = addUtcDays(currentEnd, -(days - 1));
   const previousEnd = addUtcDays(currentStart, -1);
   const previousStart = addUtcDays(previousEnd, -(days - 1));

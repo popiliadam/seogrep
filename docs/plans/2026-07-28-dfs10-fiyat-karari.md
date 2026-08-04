@@ -70,4 +70,6 @@ Mevcut en pahalı araç: `audit_onpage` 30 kredi.
 - Her biri "tool DONE 5/5": zod şema + handler + test (mock/fixture — NEVER#5, gerçek DFS çağrısı 0)
   + kredi maliyet satırı + docs sayfası (gen-tool-docs). D17: >200-kredi onay eşiği etkilenmez.
 - Canlı smoke: DFS_LIVE açıldıktan sonra şef tek koşu ≤$0.10 (dfs-budget kapısı altında).
-- Confirm alanı yok (üçü de tek-atım, ≤60 kredi); bakiye yetersizse mevcut withCredits reddi geçerli.
+- Confirm alanı yok: üçü de tek-atım ve en pahalısı 90 kredi, D17 eşiğinin (`CONFIRMATION_THRESHOLD_CREDITS
+  = 200`, `apps/mcp/src/tools/registry.ts:132`; kural STRICT `>`) altında kalıyor. Bakiye yetersizse
+  mevcut withCredits reddi geçerli.

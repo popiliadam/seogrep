@@ -1,6 +1,7 @@
 import { mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import { listKeys } from "@pseo/db/api-keys-repo";
 import { formatDate } from "../../../lib/format";
+import { mcpHeaderEndpoint } from "../../../lib/mcp-endpoint";
 import { createClient } from "../../../lib/supabase/server";
 import {
   createKeyAction,
@@ -73,9 +74,11 @@ export default async function ConnectionPage() {
   const keys = user ? await listKeys(supabase, user.id) : [];
   const projects = user ? await listProjectConnections(supabase, user.id) : [];
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
-  const maskedMcpUrl = activeKey
-    ? mcpUrlFor(`${activeKey.keyPrefix}…`, mcpUrlTemplate())
-    : null;
+  // ONE read of the template feeds both forms the server accepts, so they can never point at
+  // different hosts: the personal URL below, and the key-free endpoint header auth uses (L-15).
+  const urlTemplate = mcpUrlTemplate();
+  const maskedMcpUrl = activeKey ? mcpUrlFor(`${activeKey.keyPrefix}…`, urlTemplate) : null;
+  const headerEndpoint = mcpHeaderEndpoint(urlTemplate);
 
   return (
     <section className="flex flex-col gap-6">
@@ -100,6 +103,7 @@ export default async function ConnectionPage() {
 
       <KeyPanel
         activeKeyId={activeKey?.id ?? null}
+        headerEndpoint={headerEndpoint}
         createKeyAction={createKeyAction}
         rotateKeyAction={rotateKeyAction}
         revokeKeyAction={revokeKeyAction}
@@ -109,8 +113,9 @@ export default async function ConnectionPage() {
         <h2 className="text-sm font-medium">Google Search Console</h2>
         <p className="text-sm text-neutral-600">
           Link a project to Search Console so its tools can read your real query and click
-          data. Connecting sends you to Google and back. Disconnecting revokes SeoGrep&apos;s
-          access at Google and deletes the stored token.
+          data. Connecting sends you to Google and back. Disconnecting deletes the stored
+          token and asks Google to revoke SeoGrep&apos;s access; if Google does not confirm
+          the revocation, you will be told how to remove it yourself.
         </p>
         {projects.length === 0 ? (
           <p className="text-sm text-neutral-600">
@@ -142,16 +147,15 @@ export default async function ConnectionPage() {
                   >
                     {project.connected ? "Reconnect" : "Connect"}
                   </a>
-                  {/* Only a linked project can be unlinked. Disconnect revokes the grant at
-                      Google and deletes the stored token, so this row re-renders as
-                      "Not connected" + Connect. */}
-                  {project.connected ? (
-                    <DisconnectButton
-                      projectId={project.id}
-                      domain={project.domain}
-                      disconnectGscAction={disconnectGscAction}
-                    />
-                  ) : null}
+                  {/* The island renders the Disconnect button only for a linked project, but
+                      is mounted either way: it must survive the refresh that unlinks the row
+                      to keep showing a revoke Google never confirmed (M-15). */}
+                  <DisconnectButton
+                    projectId={project.id}
+                    domain={project.domain}
+                    connected={project.connected}
+                    disconnectGscAction={disconnectGscAction}
+                  />
                 </span>
               </li>
             ))}

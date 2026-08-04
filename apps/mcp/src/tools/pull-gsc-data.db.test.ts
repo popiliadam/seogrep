@@ -22,7 +22,10 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
 const KEY = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
 // Fixed reference so the pull windows equal FIXTURE_WINDOWS and the fake can key off them.
-const REFERENCE = new Date("2026-07-17T00:00:00Z");
+// It is GSC_FRESHNESS_LAG_DAYS (3) later than the window's last day: computeWindows backs the
+// windows off Search Console's unfinalized tail (M-20), so the pull INSTANT sits 3 days ahead
+// of the newest day analyzed. Every assertion below is unchanged.
+const REFERENCE = new Date("2026-07-20T00:00:00Z");
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -88,7 +91,7 @@ async function seedConnection(
   const { error } = await service.from("gsc_connections").insert({
     user_id: userId,
     project_id: projectId,
-    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY)),
+    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, projectId })),
     gsc_property: property,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);

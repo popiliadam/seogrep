@@ -11,6 +11,7 @@ import { CREDIT_PACKAGES } from "@pseo/core";
  * idempotency -> command -> repo end to end, with only the persistence stubbed.
  */
 
+vi.mock("server-only", () => ({}));
 vi.mock("@pseo/db/server", () => ({ createServiceClient: vi.fn(() => ({})) }));
 vi.mock("@pseo/db/paddle-repo", () => ({
   insertEvent: vi.fn(),
@@ -46,6 +47,11 @@ import {
   upsertSubscription,
 } from "@pseo/db/paddle-repo";
 import { createServiceClient } from "@pseo/db/server";
+import {
+  ATTRIBUTION_CUSTOM_DATA_KEY,
+  ATTRIBUTION_TTL_SECONDS,
+  mintAttributionToken,
+} from "../../../../lib/billing/attribution";
 import { POST } from "./route";
 
 const insertEventMock = vi.mocked(insertEvent);
@@ -55,28 +61,85 @@ const processPaddlePurchaseMock = vi.mocked(processPaddlePurchase);
 const upsertSubscriptionMock = vi.mocked(upsertSubscription);
 const createServiceClientMock = vi.mocked(createServiceClient);
 
-// Route console.error output is silenced + captured for the whole file; calls are cleared per
-// test (clearAllMocks in afterEach), so "was / was not logged" assertions stay isolated.
+// Route console output is silenced + captured for the whole file; calls are cleared per test
+// (clearAllMocks in afterEach), so "was / was not logged" assertions stay isolated.
+// error = the money-loss trace (B-C1) and unexpected failures. warn = a HANDLED outcome the
+// operator still has to be able to see (M-03 follow-up). The channels are deliberately separate
+// so "leaves no money-loss trace" keeps meaning exactly what it meant before.
 const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+/** Every argument of every console.warn/console.error call, flattened to one searchable string. */
+function allLoggedText(): string {
+  return [...consoleWarnSpy.mock.calls, ...consoleErrorSpy.mock.calls]
+    .map((call) => call.map((arg) => JSON.stringify(arg)).join(" "))
+    .join("\n");
+}
 
 // Fake, unmistakably-not-real secret. NEVER a real key value in a fixture.
 const SECRET = "test_secret_pdl_ntfset_deadbeef";
 const USER_ID = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
+/** A tenant the attacker does NOT control — the id a forged custom_data would point at (M-05). */
+const VICTIM_ID = "9c8b7a6d-5e4f-4a3b-9c8d-7e6f5a4b3c2d";
+/** Every fixture's occurred_at, so token expiry is pinned to fixture data and not to the clock. */
+const OCCURRED_AT = "2026-07-18T00:00:00Z";
+
+/**
+ * M-05. Post-deploy, EVERY overlay carries a signed attribution token, so a token-bearing event is
+ * the representative fixture and each attribution edge (no token, forged token, expired token,
+ * mismatched id) gets its own named test below rather than riding along invisibly on all of them.
+ * `attributionToken: null` reproduces the pre-deploy overlay exactly.
+ */
+function tokenFor(userId: string, mintedAt: string = OCCURRED_AT): string {
+  const token = mintAttributionToken(userId, new Date(mintedAt));
+  if (!token) {
+    throw new Error("fixture could not mint an attribution token");
+  }
+  return token;
+}
+
+function customDataFor(
+  userId: string,
+  token: string | null | undefined,
+  mintedAt: string = OCCURRED_AT,
+): Record<string, unknown> {
+  if (token === null) {
+    return { user_id: userId }; // the pre-deploy overlay: user_id only
+  }
+  return { user_id: userId, [ATTRIBUTION_CUSTOM_DATA_KEY]: token ?? tokenFor(userId, mintedAt) };
+}
 
 function transactionEvent(overrides: {
   eventId?: string;
   priceId?: string;
   userId?: string | null;
   transactionId?: string;
+  /** Item-level quantity — the real Paddle field, preserved verbatim through unmarshal. */
+  quantity?: number;
+  /** undefined = a valid token for the named user; null = no token at all; string = verbatim. */
+  attributionToken?: string | null;
+  /**
+   * Paddle's transaction `origin`, carried verbatim through unmarshal. "web" is the browser
+   * checkout (the default, and the strict side of enforcement); "subscription_recurring" is the
+   * renewal charge Paddle raises on its own, months later, with no overlay open. Real bodies
+   * always carry it — see M-05 follow-up in lib/billing/attribution.
+   */
+  origin?: string;
+  /** The event's own occurred_at: how far after the checkout Paddle raised this event. */
+  occurredAt?: string;
 }): Record<string, unknown> {
-  const customData = overrides.userId === null ? null : { user_id: overrides.userId ?? USER_ID };
+  const customData =
+    overrides.userId === null
+      ? null
+      : customDataFor(overrides.userId ?? USER_ID, overrides.attributionToken);
   return {
     event_id: overrides.eventId ?? `evt_${randomUUID()}`,
     event_type: "transaction.completed",
-    occurred_at: "2026-07-18T00:00:00Z",
+    occurred_at: overrides.occurredAt ?? OCCURRED_AT,
     data: {
       id: overrides.transactionId ?? "txn_123",
       status: "completed",
+      origin: overrides.origin ?? "web",
       custom_data: customData,
       items: [
         {
@@ -85,7 +148,7 @@ function transactionEvent(overrides: {
             unit_price: { amount: "1900", currency_code: "USD" },
             quantity: { minimum: 1, maximum: 1 },
           },
-          quantity: 1,
+          quantity: overrides.quantity ?? 1,
         },
       ],
       payments: [],
@@ -98,21 +161,34 @@ function subscriptionEvent(overrides: {
   priceId?: string;
   subscriptionId?: string;
   status?: string;
+  /** Paddle's event-level occurred_at — the M-03 ordering key. */
+  occurredAt?: string;
+  /** Payload-body field used as a "did the log leak the body?" marker. */
+  customerId?: string;
+  /** undefined = a valid token for USER_ID; null = no token at all; string = verbatim. */
+  attributionToken?: string | null;
+  /** What the BROWSER claims custom_data.user_id is — a claim, never authority (M-05). */
+  userId?: string;
 }): Record<string, unknown> {
+  const occurredAt = overrides.occurredAt ?? OCCURRED_AT;
   return {
     event_id: `evt_${randomUUID()}`,
     event_type: overrides.eventType ?? "subscription.created",
-    occurred_at: "2026-07-18T00:00:00Z",
+    occurred_at: occurredAt,
     data: {
       id: overrides.subscriptionId ?? "sub_1",
       status: overrides.status ?? "active",
-      customer_id: "ctm_1",
+      customer_id: overrides.customerId ?? "ctm_1",
       address_id: "add_1",
       currency_code: "USD",
       collection_mode: "automatic",
       billing_cycle: { interval: "month", frequency: 1 },
       current_billing_period: { starts_at: "2026-07-01T00:00:00Z", ends_at: "2026-08-01T00:00:00Z" },
-      custom_data: { user_id: USER_ID },
+      custom_data: customDataFor(
+        overrides.userId ?? USER_ID,
+        overrides.attributionToken,
+        occurredAt,
+      ),
       items: [{ price: { id: overrides.priceId ?? "pri_pro" } }],
     },
   };
@@ -195,8 +271,11 @@ describe("POST /api/paddle/webhook", () => {
   });
 
   it("missing PADDLE_WEBHOOK_SECRET is a fail-closed 500 with no side effects", async () => {
+    // Fixture takes no token: with the secret gone there is nothing to mint one with, which is
+    // the same reason the route refuses to process at all — it fail-closes before any of this.
+    const event = transactionEvent({ attributionToken: null });
     vi.stubEnv("PADDLE_WEBHOOK_SECRET", "");
-    const response = await POST(signedRequest(transactionEvent({})));
+    const response = await POST(signedRequest(event));
     expect(response.status).toBe(500);
     expectNoRepoWrites();
   });
@@ -250,6 +329,30 @@ describe("POST /api/paddle/webhook", () => {
     expect(capturePurchase).not.toHaveBeenCalled();
   });
 
+  it("a quantity>1 transaction is the SAME 500 + un-stamped path (never a short one-package grant)", async () => {
+    // M-02: the customer bought TWO of a package. Credit amounts are pinned per package and are
+    // never multiplied here (NEVER #6), so this cannot be granted — and it must not be closed
+    // either: it takes the B-C1 route (500, processed_at left NULL, loud trace) so Paddle keeps
+    // retrying and an operator can settle it, rather than the customer silently paying 2x for 1x.
+    const response = await POST(
+      signedRequest(transactionEvent({ transactionId: "txn_qty2", quantity: 2 })),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "paid transaction pending attribution",
+    });
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: PAID transaction recorded without credit",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        reason: expect.stringContaining("unsupported_quantity"),
+      }),
+    );
+    expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
   it("a non-transaction record_only (informational event) still returns 200 + marks processed", async () => {
     // The other half of the B-C1 split: a record_only that is NOT a paid transaction.completed
     // (here a subscription.updated whose price is unmapped) is genuinely informational — retrying
@@ -267,7 +370,13 @@ describe("POST /api/paddle/webhook", () => {
 
   it("subscription.created upserts subscription state and marks the event processed", async () => {
     const response = await POST(
-      signedRequest(subscriptionEvent({ eventType: "subscription.created", subscriptionId: "sub_9" })),
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.created",
+          subscriptionId: "sub_9",
+          occurredAt: "2026-07-18T09:30:00Z",
+        }),
+      ),
     );
     expect(response.status).toBe(200);
     expect(upsertSubscriptionMock).toHaveBeenCalledWith(expect.anything(), {
@@ -276,10 +385,131 @@ describe("POST /api/paddle/webhook", () => {
       plan: "pro",
       status: "active",
       currentPeriodEnd: "2026-08-01T00:00:00Z",
+      // M-03: the event's OWN occurred_at is threaded all the way to the repo, so the DB can
+      // refuse a subscription event that happened before the state already stored.
+      occurredAt: "2026-07-18T09:30:00Z",
     });
     expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
     expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
     expect(capturePurchase).not.toHaveBeenCalled();
+  });
+
+  it("a subscription event the DB refuses as STALE is still a 200 and still stamped processed", async () => {
+    // apply_subscription_event returns false when the event occurred before what is stored.
+    // That is a handled outcome, not a failure: retrying would only be refused again, so the
+    // event must be closed rather than left open for Paddle's ~3-day retry window.
+    upsertSubscriptionMock.mockResolvedValue(false);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(markProcessedMock).toHaveBeenCalledWith(expect.anything(), expect.any(String));
+    // Handled, so NOT a money-loss trace — the error channel stays clean, as before.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("the refused subscription apply emits ONE structured warn line (eventId + reason)", async () => {
+    // M-03 follow-up. The refusal was operationally INVISIBLE: the boolean was discarded, the
+    // event was stamped, 200 was answered and nothing was logged — so a subscription frozen by a
+    // bad watermark (e.g. an occurred_at far in the future) emitted zero signal until a customer
+    // complained. Recovery is easy once you know: the event id joins straight to the stored
+    // paddle_events row, whose payload has everything else.
+    upsertSubscriptionMock.mockResolvedValue(false);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event NOT applied (refused as not-newest)",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        eventType: "subscription.updated",
+        reason: expect.stringContaining("stale"),
+      }),
+    );
+  });
+
+  it("an APPLIED subscription event stays silent (the warn is a signal, not a heartbeat)", async () => {
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("a subscription record_only logs its reason (a plan event that never applies is not silent)", async () => {
+    // The `record_only` half of the same blind spot: a subscription event the pure translation
+    // could not turn into a command — an unmapped price, a missing occurred_at, an unknown status
+    // — was recorded, stamped and answered 200 with no trace at all.
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({ eventType: "subscription.updated", priceId: "pri_unmapped" }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event recorded WITHOUT applying",
+      expect.objectContaining({
+        eventId: expect.any(String),
+        eventType: "subscription.updated",
+        reason: expect.stringContaining("no item price matched"),
+      }),
+    );
+  });
+
+  it("a missing occurred_at (record_only) names that reason in the log", async () => {
+    const event = subscriptionEvent({ eventType: "subscription.updated" });
+    delete (event as { occurred_at?: unknown }).occurred_at;
+    const response = await POST(signedRequest(event));
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "paddle webhook: subscription event recorded WITHOUT applying",
+      expect.objectContaining({ reason: expect.stringContaining("occurred_at") }),
+    );
+  });
+
+  it("an UNHANDLED non-subscription event type stays silent (no log noise for informational events)", async () => {
+    const response = await POST(
+      signedRequest({
+        event_id: `evt_${randomUUID()}`,
+        event_type: "customer.updated",
+        occurred_at: "2026-07-18T00:00:00Z",
+        data: { id: "ctm_1", email: "someone@example.test" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("NEITHER subscription log line carries the payload or the webhook secret", async () => {
+    // The file's standing discipline (route header): only the event id + a message ever reach a
+    // log. The id is the join key into paddle_events, which already holds the body — so the body
+    // never needs to be duplicated into stdout, where it would outlive the DB's access controls.
+    const marker = "ctm_PAYLOAD_MARKER_MUST_NOT_BE_LOGGED";
+
+    upsertSubscriptionMock.mockResolvedValue(false);
+    await POST(
+      signedRequest(subscriptionEvent({ eventType: "subscription.updated", customerId: marker })),
+    );
+    await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.updated",
+          priceId: "pri_unmapped",
+          customerId: marker,
+        }),
+      ),
+    );
+
+    expect(consoleWarnSpy).toHaveBeenCalledTimes(2); // both paths spoke...
+    const logged = allLoggedText();
+    expect(logged).not.toContain(marker); // ...and neither leaked the body,
+    expect(logged).not.toContain(SECRET); // nor the signing secret,
+    expect(logged).not.toContain(USER_ID); // nor the customer's identity.
   });
 
   it("an unexpected processing error is a 500 (leaves the event un-stamped for Paddle retry)", async () => {
@@ -313,6 +543,400 @@ describe("POST /api/paddle/webhook", () => {
       "test_apikey_not_real",
       expect.objectContaining({ environment: "sandbox" }),
     );
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // M-05: custom_data is CLIENT-settable, so custom_data.user_id is a claim, not authority.
+  // ---------------------------------------------------------------------------------------
+
+  it("M-05: the VERIFIED subject wins over a custom_data user id that disagrees", async () => {
+    // The exact attack: a real, paid, correctly-signed Paddle transaction whose custom_data was
+    // edited in the browser to name someone else. The token was minted server-side for the
+    // attacker, so the attacker is who gets credited — the victim's uuid is discarded.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID, // what the browser claims
+          attributionToken: tokenFor(USER_ID), // what the server actually signed
+          transactionId: "txn_mismatch",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_mismatch" }),
+    );
+    expect(capturePurchase).toHaveBeenCalledWith(USER_ID, "starter");
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "custom_data_user_id_mismatch",
+    });
+  });
+
+  it("M-05: the VERIFIED subject wins on the SUBSCRIPTION path too, not just on purchases", async () => {
+    // The purchase path above has always been pinned by its own mismatch test; subscription state
+    // had none, so `upsertSubscription({ userId: command.userId, … })` — the body CLAIM, the exact
+    // regression M-05 exists to prevent — passed the whole route suite. Same attack, other side of
+    // the switch: a real, signed subscription event whose custom_data was edited to name someone
+    // else must write the SIGNED subject's row, never the victim's.
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.created",
+          subscriptionId: "sub_mismatch",
+          userId: VICTIM_ID, // what the browser claims
+          attributionToken: tokenFor(USER_ID), // what the server actually signed
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(upsertSubscriptionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, paddleSubscriptionId: "sub_mismatch" }),
+    );
+    // and the victim's uuid reached no writer at all.
+    expect(upsertSubscriptionMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: VICTIM_ID }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "subscription.created",
+      reason: "custom_data_user_id_mismatch",
+    });
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // LOAD-BEARING, DO NOT "CLEAN UP". The three GRACE tests below are the only route-level guard
+  // of the grace guarantee — that the default configuration can never cost a paying customer
+  // their credits. Every other fixture in this file now carries a token that verifies, so if
+  // these three go, a change that made refusal the default would ship green. They look redundant
+  // with the enforcement tests on purpose: they pin the OTHER half of the flag.
+  // -------------------------------------------------------------------------------------------
+
+  it("GRACE (flag OFF, the default): an ABSENT token is still credited, and reported", async () => {
+    // The load-bearing case. Overlays opened before this shipped send no token; refusing them
+    // would take credits from customers who paid while a deploy was rolling.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: null, transactionId: "txn_grace" })),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_grace" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "absent",
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalled(); // grace is not an incident
+  });
+
+  it("GRACE (flag OFF): an INVALID token is still credited, and reported as a security signal", async () => {
+    // A legitimate customer whose token expired in an open overlay must not lose what they paid
+    // for. The signal still fires, with the reason an operator counts.
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const expired = tokenFor(USER_ID, "2026-07-17T00:00:00Z"); // TTL ended before occurred_at
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: expired, transactionId: "txn_expired" })),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_expired" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired",
+    });
+  });
+
+  it("GRACE (flag OFF): a token signed with the WRONG key is reported as bad_signature", async () => {
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    vi.stubEnv("PADDLE_WEBHOOK_SECRET", "test_secret_pdl_ntfset_00000000");
+    const foreign = tokenFor(USER_ID);
+    vi.stubEnv("PADDLE_WEBHOOK_SECRET", SECRET);
+    const response = await POST(
+      signedRequest(transactionEvent({ attributionToken: foreign, transactionId: "txn_wrongkey" })),
+    );
+    expect(response.status).toBe(200);
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "bad_signature",
+    });
+  });
+
+  it("ENFORCED: a forged (unsigned) custom_data user id is REFUSED, never credited", async () => {
+    // The RED case. Today's code credits VICTIM_ID verbatim; with enforcement on nothing is
+    // written, and — critically — the paid event is NOT stamped, so it stays retryable.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID,
+          attributionToken: null,
+          transactionId: "txn_forged",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ error: "attribution refused" });
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(capturePurchase).not.toHaveBeenCalled();
+    // B-C1 discipline: a refusal must NOT close a paid event.
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      { eventId: expect.any(String), eventType: "transaction.completed", reason: "absent" },
+    );
+  });
+
+  it("ENFORCED: a TAMPERED token (subject swapped for the victim) is refused", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const [version, , expires, signature] = tokenFor(USER_ID).split(".");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          userId: VICTIM_ID,
+          attributionToken: `${version}.${VICTIM_ID}.${expires}.${signature}`,
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "bad_signature" }),
+    );
+  });
+
+  it("ENFORCED: a VALID token still sails through (enforcement is not a wall for real traffic)", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_ok" })));
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_ok" }),
+    );
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("ENFORCED: a SUBSCRIPTION event with no token writes no subscription state", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(signedRequest(subscriptionEvent({ attributionToken: null })));
+    expect(response.status).toBe(500);
+    expect(upsertSubscriptionMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // M-05 follow-up: enforcement may only judge an event a FRESH token could have reached.
+  // A renewal, a plan change and a cancellation carry the token minted at the ORIGINAL checkout
+  // — no overlay is open, so a fresh one can never exist. These pin that enforcement is a real
+  // steady state (it does not kill recurring revenue) WITHOUT becoming a hole.
+  // -------------------------------------------------------------------------------------------
+
+  /** A month after checkout — every recurring event below is raised this long after the mint. */
+  const A_MONTH_LATER = "2026-08-17T00:00:00Z";
+
+  it("ENFORCED: a RENEWAL charge carrying the original (now stale) token is still credited", async () => {
+    // The case that made the flag unusable: Paddle raises this one on its own, a month later,
+    // with the custom_data it stored at checkout. Refusing it means the customer pays for a month
+    // of credits they never receive, and the event dies once Paddle's ~3-day window closes.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID), // minted at the ORIGINAL checkout, long expired
+          transactionId: "txn_renewal",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_renewal" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired",
+    });
+    expect(consoleErrorSpy).not.toHaveBeenCalled(); // graced, not refused
+  });
+
+  it("ENFORCED: a CANCELLATION a month later still applies (a stale token is not an unproved one)", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    upsertSubscriptionMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        subscriptionEvent({
+          eventType: "subscription.canceled",
+          status: "canceled",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID),
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(upsertSubscriptionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, status: "canceled" }),
+    );
+    expect(markProcessedMock).toHaveBeenCalled();
+  });
+
+  it("ENFORCED: the stale token's SIGNED subject still wins over a disagreeing custom_data id", async () => {
+    // Grace on a recurring event must not degrade into trusting the claim: the HMAC still proves
+    // the subject. If it did, a renewal would be attributable by editing custom_data at checkout.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: tokenFor(USER_ID),
+          transactionId: "txn_renewal_mismatch",
+        }),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, ref: "txn_renewal_mismatch" }),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith("paddle webhook: attribution ANOMALY", {
+      eventId: expect.any(String),
+      eventType: "transaction.completed",
+      reason: "expired_user_id_mismatch",
+    });
+  });
+
+  it("ENFORCED: a renewal with NO token is STILL refused — grace is only for a signed subject", async () => {
+    // The hole this fix must not open. `absent` proves nothing about who paid, whenever it
+    // arrives, so a recurring origin buys it nothing.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: null,
+          transactionId: "txn_renewal_untokenized",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "absent" }),
+    );
+  });
+
+  it("ENFORCED: a FORGED token on a renewal is refused exactly as on a checkout", async () => {
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const [version, , expires, signature] = tokenFor(USER_ID).split(".");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "subscription_recurring",
+          occurredAt: A_MONTH_LATER,
+          userId: VICTIM_ID,
+          attributionToken: `${version}.${VICTIM_ID}.${expires}.${signature}`,
+          transactionId: "txn_renewal_forged",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "bad_signature" }),
+    );
+  });
+
+  it("ENFORCED: an EXPIRED token on a first-party CHECKOUT is still refused (the TTL still bites)", async () => {
+    // The lenient side is reached only by Paddle's own origin values, which live inside the
+    // signature-verified body. A browser checkout is judged on freshness exactly as before.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    const response = await POST(
+      signedRequest(
+        transactionEvent({
+          origin: "web",
+          occurredAt: A_MONTH_LATER,
+          attributionToken: tokenFor(USER_ID),
+          transactionId: "txn_stale_checkout",
+        }),
+      ),
+    );
+    expect(response.status).toBe(500);
+    expect(processPaddlePurchaseMock).not.toHaveBeenCalled();
+    expect(markProcessedMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "paddle webhook: attribution REFUSED (enforcement on)",
+      expect.objectContaining({ reason: "expired" }),
+    );
+  });
+
+  it("a token minted at checkout still verifies when Paddle RETRIES days later", async () => {
+    // Expiry is measured against the event's own occurred_at, not delivery time, so the ~3-day
+    // retry window cannot expire a token that was valid when the customer actually paid.
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    vi.setSystemTime(new Date("2026-07-21T00:00:00Z")); // three days after occurred_at
+    try {
+      const response = await POST(signedRequest(transactionEvent({ transactionId: "txn_retry" })));
+      expect(response.status).toBe(200);
+      expect(processPaddlePurchaseMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: USER_ID }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("NO attribution log line carries the token, the payload or the tenant id", async () => {
+    const marker = "ctm_PAYLOAD_MARKER_MUST_NOT_BE_LOGGED";
+    const expired = tokenFor(USER_ID, "2026-07-17T00:00:00Z");
+    processPaddlePurchaseMock.mockResolvedValue(true);
+    await POST(signedRequest(transactionEvent({ attributionToken: expired })));
+    await POST(signedRequest(subscriptionEvent({ attributionToken: null, customerId: marker })));
+    vi.stubEnv("PADDLE_ATTRIBUTION_ENFORCE", "1");
+    await POST(signedRequest(transactionEvent({ attributionToken: "v1.junk.1.1" })));
+
+    const logged = allLoggedText();
+    expect(logged).toContain("attribution"); // all three spoke...
+    expect(logged).not.toContain(expired); // ...and none leaked the bearer token,
+    expect(logged).not.toContain(SECRET); // nor the secret it is derived from,
+    expect(logged).not.toContain(USER_ID); // nor the tenant,
+    expect(logged).not.toContain(marker); // nor the body.
+  });
+
+  it("the TTL is a real bound, not an unbounded token", () => {
+    expect(ATTRIBUTION_TTL_SECONDS).toBeGreaterThan(0);
+    expect(ATTRIBUTION_TTL_SECONDS).toBeLessThanOrEqual(24 * 60 * 60);
   });
 
   it("passes NO options object when NEXT_PUBLIC_PADDLE_ENV is unset (SDK default untouched)", async () => {

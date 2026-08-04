@@ -10,6 +10,7 @@ import {
   type CompetitorsPort,
 } from "../dfs/competitors.ts";
 import type { DfsTransport } from "../dfs/client.ts";
+import { createMemorySpendLedger } from "../dfs/budget.ts";
 import { makeCompareCompetitorsTool } from "./compare-competitors.ts";
 import competitorsFixture from "../dfs/fixtures/competitors-domain.json";
 import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
@@ -109,12 +110,12 @@ const failingPort: CompetitorsPort = {
 };
 
 /**
- * A LIVE client (fake transport, no real HTTP, spend written to a scratch dir) whose Nth request
- * fails — the realistic partial-fan-out failure. Request 1 is discovery; requests 2..5 are the
- * rank overviews for the target and its three discovered rivals. `spendDir` points at a per-call
- * temp path so the repo's real spend tree is never touched.
+ * A LIVE client (fake transport, no real HTTP, spend booked against a throwaway in-memory
+ * budget ledger) whose Nth request fails — the realistic partial-fan-out failure. Request 1 is
+ * discovery; requests 2..5 are the rank overviews for the target and its three discovered
+ * rivals. The ledger is per-call, so the shared vendor-budget counter is never touched.
  */
-function portFailingAtRequest(failFrom: 1 | 2 | 5, spendDir: string): CompetitorsPort {
+function portFailingAtRequest(failFrom: 1 | 2 | 5): CompetitorsPort {
   let sent = 0;
   const transport: DfsTransport = async (url) => {
     sent += 1;
@@ -124,7 +125,12 @@ function portFailingAtRequest(failFrom: 1 | 2 | 5, spendDir: string): Competitor
     const body = url.includes("/competitors_domain/live") ? competitorsFixture : rankOverviewFixture;
     return { ok: true, status: 200, json: async () => body };
   };
-  return createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, spendDir });
+  return createLiveCompetitorsClient({
+    login: "user@x.test",
+    password: "pw",
+    transport,
+    ledger: createMemorySpendLedger(),
+  });
 }
 
 /**
@@ -133,7 +139,7 @@ function portFailingAtRequest(failFrom: 1 | 2 | 5, spendDir: string): Competitor
  * saw are recorded so the spec can prove the discovery request really never happened, rather than
  * assuming it from the request count.
  */
-function suppliedFlowPortFailingAtSecond(spendDir: string): {
+function suppliedFlowPortFailingAtSecond(): {
   readonly port: CompetitorsPort;
   readonly seen: readonly string[];
 } {
@@ -146,12 +152,15 @@ function suppliedFlowPortFailingAtSecond(spendDir: string): {
     return { ok: true, status: 200, json: async () => rankOverviewFixture };
   };
   return {
-    port: createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, spendDir }),
+    port: createLiveCompetitorsClient({
+      login: "user@x.test",
+      password: "pw",
+      transport,
+      ledger: createMemorySpendLedger(),
+    }),
     seen,
   };
 }
-
-const scratchDir = (): string => `${process.env.TMPDIR ?? "/tmp"}/dfs-competitors-db-${randomUUID()}`;
 
 beforeAll(async () => {
   const { error } = await service.from("jobs").select("id").limit(1);
@@ -248,7 +257,7 @@ describe("compare_competitors credit path against the local stack", () => {
     it(`(${label}) ${what} failing still bills ZERO (no partial comparison is sold)`, async () => {
       const ctx = await makeCtx();
       await seedGrant(ctx.userId, 300);
-      const tool = makeCompareCompetitorsTool({ port: portFailingAtRequest(failFrom, scratchDir()) });
+      const tool = makeCompareCompetitorsTool({ port: portFailingAtRequest(failFrom) });
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
@@ -270,7 +279,7 @@ describe("compare_competitors credit path against the local stack", () => {
     // on a fan-out that never had a discovery request to fail at.
     const ctx = await makeCtx();
     await seedGrant(ctx.userId, 300);
-    const { port, seen } = suppliedFlowPortFailingAtSecond(scratchDir());
+    const { port, seen } = suppliedFlowPortFailingAtSecond();
     const tool = makeCompareCompetitorsTool({ port });
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

@@ -62,22 +62,30 @@ vi.mock("./key-panel", () => ({
   ),
 }));
 // Same treatment for the per-row island: the stub surfaces WHICH project the page bound it
-// to and whether it was handed a real server action.
+// to and whether it was handed a real server action. It mirrors the real component's own
+// split — the island is mounted for every project so its unconfirmed-revoke warning outlives
+// the refresh, while the BUTTON exists only for a connected one — so the specs below still
+// pin exactly where a Disconnect affordance may appear.
 vi.mock("./disconnect-button", () => ({
   DisconnectButton: (p: {
     projectId: string;
     domain: string;
-    disconnectGscAction: (projectId: string) => Promise<void>;
+    connected: boolean;
+    disconnectGscAction: (projectId: string) => Promise<string>;
   }) => (
-    <button
-      type="button"
-      data-testid="disconnect"
-      data-project-id={p.projectId}
-      data-domain={p.domain}
-      data-has-action={typeof p.disconnectGscAction === "function"}
-    >
-      Disconnect
-    </button>
+    <span data-testid="disconnect-island">
+      {p.connected ? (
+        <button
+          type="button"
+          data-testid="disconnect"
+          data-project-id={p.projectId}
+          data-domain={p.domain}
+          data-has-action={typeof p.disconnectGscAction === "function"}
+        >
+          Disconnect
+        </button>
+      ) : null}
+    </span>
   ),
 }));
 
@@ -179,6 +187,10 @@ describe("ConnectionPage — Google Search Console", () => {
 
     // Nothing to unlink on a project that was never linked.
     expect(within(rowOf(PROJECT_A.domain)).queryByTestId("disconnect")).toBeNull();
+    // The island itself rides on BOTH rows: an unconfirmed revoke has to keep warning the
+    // user through the very refresh that flips their row to "Not connected" (M-15).
+    expect(within(rowOf(PROJECT_A.domain)).getByTestId("disconnect-island")).toBeTruthy();
+    expect(within(rowOf(PROJECT_B.domain)).getByTestId("disconnect-island")).toBeTruthy();
 
     const disconnect = within(rowOf(PROJECT_B.domain)).getByTestId("disconnect");
     expect(disconnect.getAttribute("data-project-id")).toBe(PROJECT_B.id);

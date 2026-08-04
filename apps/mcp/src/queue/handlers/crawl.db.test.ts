@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient, type JobRow } from "../../db.ts";
 import { clearToolHandlers, executeJob, registerToolHandler } from "../worker.ts";
-import { createCrawlHandler } from "./crawl.ts";
+import { createCrawlHandler, resolveProjectOrigin } from "./crawl.ts";
 import { startFixtureSite } from "../../crawler/fixtures/site-server.ts";
 
 /**
@@ -57,7 +57,7 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
-async function makeQueuedCrawlJob(userId: string, projectId: string): Promise<string> {
+async function makeQueuedCrawlJob(userId: string, projectId: string | null): Promise<string> {
   const { data, error } = await service
     .from("jobs")
     .insert({ user_id: userId, project_id: projectId, tool: "crawl_site", status: "queued" })
@@ -220,18 +220,64 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     expect((await getJobRow(jobId)).status).toBe("succeeded");
   });
 
+  /**
+   * THE CROSS-TENANT ORIGIN GUARD, AFTER MIGRATION 0017.
+   *
+   * This spec used to seed the inconsistent state directly: a `jobs` row owned by `owner` but
+   * carrying `other`'s project_id. 0017 converted jobs.project_id into the composite FK
+   * `(user_id, project_id) -> projects (user_id, id)`, so that INSERT is now refused by the
+   * database (SQLSTATE 23503, `jobs_user_id_project_id_fkey`) and the old setup cannot run at
+   * all. The guarantee moved one layer DOWN, so the coverage follows it down and widens:
+   *
+   *   1. the DB refusal is asserted here, in place of the seed it replaced (the full 0017 matrix
+   *      — all three edges, UPDATE, re-parenting, cascades — lives in @pseo/db's
+   *      cross-tenant-fk.db.test.ts; this is the local anchor that explains the missing seed);
+   *   2. the APPLICATION guard is still exercised against the real database, because the app
+   *      layer must not trust the constraint (see resolveProjectOrigin's doc comment). The row
+   *      cannot be seeded, so the real resolver is driven with the in-memory job row that state
+   *      would have produced — every original assertion below is unchanged;
+   *   3. the no-project branch, which 0017 made the reachable one, is pinned too.
+   */
+  it("the database refuses the cross-tenant job row this spec used to seed (0017, 23503)", async () => {
+    const owner = await makeUser();
+    const other = await makeUser();
+    const otherProject = await makeProject(other, "not-yours-db.example.com");
+
+    const forged = await service
+      .from("jobs")
+      .insert({ user_id: owner, project_id: otherProject, tool: "crawl_site", status: "queued" })
+      .select("id");
+
+    expect(forged.error?.code).toBe("23503"); // foreign_key_violation
+    expect(forged.error?.message ?? "").toContain("jobs_user_id_project_id_fkey");
+    expect(forged.data).toBeNull();
+
+    // Refused outright — the FK does not silently null the parent pointer and let the row land.
+    const leaked = await service.from("jobs").select("id").eq("project_id", otherProject);
+    expect(leaked.error).toBeNull();
+    expect(leaked.data ?? []).toEqual([]);
+  });
+
   it("default resolver refuses a project that is not the job owner's (tenant-scoped origin)", async () => {
     const owner = await makeUser();
     const other = await makeUser();
     await seedGrant(owner, 100);
     const otherProject = await makeProject(other, "not-yours.example.com");
-    // A job owned by `owner` but pointing at `other`'s project (inconsistent state).
-    const jobId = await makeQueuedCrawlJob(owner, otherProject);
+    // The job row is legal (no project); the cross-tenant pointer is injected in memory below,
+    // because 0017 makes writing it impossible (asserted in the spec above).
+    const jobId = await makeQueuedCrawlJob(owner, null);
 
     let crawlRan = false;
+    let guardSawJob = false;
     registerToolHandler(
       "crawl_site",
       createCrawlHandler({
+        // The REAL production resolver, handed the inconsistent job row 0017 now forbids. The
+        // tenant-scoped `projects` read it performs is a real query against the real database.
+        resolveOrigin: async (userId, job) => {
+          guardSawJob = true;
+          return resolveProjectOrigin(userId, { ...job, project_id: otherProject });
+        },
         crawl: async () => {
           crawlRan = true;
           return { pages: [], skipped: [], fetchedAt: new Date().toISOString() };
@@ -240,11 +286,47 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     );
     await executeJob({ jobId, userId: owner, tool: "crawl_site", payload: {} });
 
+    expect(guardSawJob).toBe(true); // the guard really ran (not skipped by an earlier throw)
     expect(crawlRan).toBe(false); // origin never resolved -> crawl never ran
     const job = await getJobRow(jobId);
     expect(job.status).toBe("failed");
     expect(job.error).toMatch(/project not found/i);
     // reserve opened then released (resolveOrigin threw inside withCredits)
+    expect((await ledger(owner)).map((r) => r.kind)).toEqual([
+      "grant",
+      "spend_reserve",
+      "spend_release",
+    ]);
+    // The other tenant's project is untouched and still theirs — the refusal is a read that
+    // returned nothing, not a write.
+    const parent = await service.from("projects").select("user_id").eq("id", otherProject).single();
+    expect(parent.data?.user_id).toBe(other);
+  });
+
+  it("default resolver aborts a job with no project before any crawl (0017 SET NULL path)", async () => {
+    const owner = await makeUser();
+    await seedGrant(owner, 100);
+    // The state 0017 leaves behind when a parent project is deleted (ON DELETE SET NULL
+    // (project_id)), and the state enqueueJob writes for any tool called without a project.
+    const jobId = await makeQueuedCrawlJob(owner, null);
+
+    let crawlRan = false;
+    registerToolHandler(
+      "crawl_site",
+      createCrawlHandler({
+        // Default resolver on purpose: this is the branch it takes for a project-less job.
+        crawl: async () => {
+          crawlRan = true;
+          return { pages: [], skipped: [], fetchedAt: new Date().toISOString() };
+        },
+      }),
+    );
+    await executeJob({ jobId, userId: owner, tool: "crawl_site", payload: {} });
+
+    expect(crawlRan).toBe(false);
+    const job = await getJobRow(jobId);
+    expect(job.status).toBe("failed");
+    expect(job.error).toMatch(/no project to crawl/i);
     expect((await ledger(owner)).map((r) => r.kind)).toEqual([
       "grant",
       "spend_reserve",

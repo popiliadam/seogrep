@@ -71,7 +71,7 @@ export default function Page() {
             <div className="w-full pt-2">
               <WaitlistForm source="hero" />
             </div>
-            <p className="text-sm text-ink/70">Free trial at launch: 200 credits, no card required.</p>
+            <p className="text-sm text-ink/70">Free trial: 200 credits, no card required.</p>
           </div>
           <div className="flex justify-center lg:justify-end">
             <ChatDemo />

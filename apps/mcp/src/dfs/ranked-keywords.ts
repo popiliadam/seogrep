@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { assertWithinBudget, recordSpend } from "./budget.ts";
-import type { DfsTransport } from "./client.ts";
+import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
  * DataForSEO Labs "Google Ranked Keywords" adapter (mock-first) — the SECOND paid-API port,
@@ -10,8 +10,9 @@ import type { DfsTransport } from "./client.ts";
  * with the same three concrete shapes:
  *
  *   - createLiveRankedKeywordsClient — the real HTTP path (POST .../ranked_keywords/live,
- *     Basic auth), `enabled`, wrapped by the daily budget guard (budget.ts): a pre-call gate
- *     refuses to spend past the $3/day cap, and the REAL per-call cost is recorded afterwards.
+ *     Basic auth), `enabled`, wrapped by the daily budget guard (budget.ts): the estimated cost
+ *     is RESERVED against the fleet-global counter before the request and settled with the REAL
+ *     cost afterwards, so the $3/day cap holds across machines and restarts.
  *     The transport is injectable, so the live path is exercised WITHOUT a real network.
  *   - disabledRankedKeywordsPort — `enabled: false`. resolveDefaultRankedKeywordsPort returns
  *     it whenever live is off (DFS_LIVE !== "1"); the tool checks `enabled` and refuses rather
@@ -33,7 +34,7 @@ export const DFS_RANKED_KEYWORDS_ENDPOINT =
  * Conservative per-call cost estimate (USD) used ONLY by the pre-call budget gate — a
  * deliberate over-estimate (DFS Labs standard pricing puts a full 1000-row request near
  * $0.132) so the gate errs toward blocking. It is NOT a price claim: the REAL cost is read
- * from the response `cost` field and recorded after the call (budget.ts recordSpend).
+ * from the response `cost` field and settled after the call (budget.ts settleSpend).
  */
 export const ESTIMATED_RANKED_KEYWORDS_CALL_USD = 0.2;
 
@@ -205,35 +206,33 @@ export interface LiveRankedKeywordsOptions {
   readonly password: string;
   /** Injectable transport (default wraps global fetch) — tests pass a fake so no real HTTP runs. */
   readonly transport?: DfsTransport;
-  /** Clock (defaults to Date) for the budget day + recorded ts. */
-  readonly now?: () => Date;
-  /** Spend directory override (tests point it at a temp dir). */
-  readonly spendDir?: string;
+  /** Injectable spend counter (defaults to the DB-backed one) — specs pass a fake. */
+  readonly ledger?: SpendLedger;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
-  return { ok: res.ok, status: res.status, json: () => res.json() };
-};
-
 /**
- * The real (paid) ranked-keywords client. Each call: (1) budget gate BEFORE spending — refuse if
- * the estimate would pass the daily cap; (2) POST the query with Basic auth, restricted to
- * ORGANIC items (item_types) so the credits buy the organic ranking picture the tool advertises;
- * (3) parse; (4) record the REAL cost (response `cost`, else the estimate) to today's spend file.
+ * The real (paid) ranked-keywords client. Each call: (1) RESERVE the estimate against the
+ * fleet-global counter BEFORE spending — it refuses at the cap and closes the check-then-spend
+ * window; (2) POST the query with Basic auth, restricted to ORGANIC items (item_types) so the
+ * credits buy the organic ranking picture the tool advertises; (3) parse; (4) settle the
+ * reservation with the REAL cost (response `cost`, else the estimate).
  */
 export function createLiveRankedKeywordsClient(
   opts: LiveRankedKeywordsOptions,
 ): RankedKeywordsPort {
-  const transport = opts.transport ?? defaultTransport;
-  const now = opts.now ?? ((): Date => new Date());
+  const transport = opts.transport ?? defaultDfsTransport;
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
-  const budgetCtx = { now, dir: opts.spendDir };
+  const ledger = opts.ledger ?? createDbSpendLedger();
   return {
     enabled: true,
     async fetchRankedKeywords(query) {
-      // (1) Pre-call gate — throws (and wakes the human) if this would pass the cap.
-      assertWithinBudget(ESTIMATED_RANKED_KEYWORDS_CALL_USD, budgetCtx);
+      // (1) Pre-call reservation — throws (and wakes the human) at the cap, and also when the
+      // counter cannot be read at all (fail-closed).
+      const reservation = await reserveSpend(
+        ESTIMATED_RANKED_KEYWORDS_CALL_USD,
+        DFS_RANKED_KEYWORDS_ENDPOINT,
+        ledger,
+      );
 
       // (2) POST the query.
       const response = await transport(DFS_RANKED_KEYWORDS_ENDPOINT, {
@@ -257,12 +256,10 @@ export function createLiveRankedKeywordsClient(
       const raw: unknown = await response.json();
       const result = parseRankedKeywordsResponse(raw, query.target);
 
-      // (4) Record the real cost (falls back to the estimate when the response omits it).
+      // (4) Settle the reservation at the real cost (falls back to the estimate when the
+      // response omits it), so the day's total reflects what was actually billed.
       const actualCost = extractRankedKeywordsCostUsd(raw) ?? ESTIMATED_RANKED_KEYWORDS_CALL_USD;
-      recordSpend(
-        { cost_usd: actualCost, endpoint: DFS_RANKED_KEYWORDS_ENDPOINT, count: result.rows.length },
-        budgetCtx,
-      );
+      await settleSpend(reservation, actualCost, result.rows.length, ledger);
       return result;
     },
   };

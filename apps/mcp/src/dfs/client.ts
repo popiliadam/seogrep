@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { assertWithinBudget, recordSpend } from "./budget.ts";
+import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
 
 /**
  * DataForSEO keyword-research client (mock-first).
@@ -10,10 +10,11 @@ import { assertWithinBudget, recordSpend } from "./budget.ts";
  * is a small PORT — `KeywordResearchPort` — with three concrete shapes:
  *
  *   - createLiveClient — the real HTTP path (POST .../search_volume/live, Basic auth). It
- *     is `enabled`, and every call is wrapped by the daily budget guard (budget.ts): a
- *     pre-call gate refuses to spend past the $3/day cap, and the real per-call cost is
- *     recorded afterwards. The transport is injectable so it can be exercised WITHOUT a
- *     real network (tests pass a fake); the default wraps global fetch.
+ *     is `enabled`, and every call is wrapped by the daily budget guard (budget.ts): the
+ *     estimated cost is RESERVED against the fleet-global counter before the request, and
+ *     the reservation is settled with the real cost afterwards. The transport is injectable
+ *     so it can be exercised WITHOUT a real network (tests pass a fake); the default wraps
+ *     global fetch.
  *   - disabledPort    — `enabled: false`. resolveDefaultPort returns this whenever live is
  *     off (DFS_LIVE !== "1"). The tool checks `enabled` and returns a clear error rather
  *     than serve anything, so sample data is NEVER presented as real (NEVER #7).
@@ -31,8 +32,8 @@ export const DFS_SEARCH_VOLUME_ENDPOINT =
 /**
  * Conservative per-call cost estimate (USD) used ONLY by the pre-call budget gate — a
  * deliberate over-estimate so the gate errs toward blocking. It is NOT a claim about
- * DataForSEO's price: the REAL cost is read from the response `cost` field and recorded
- * after the call (budget.ts recordSpend).
+ * DataForSEO's price: the REAL cost is read from the response `cost` field and settled
+ * after the call (budget.ts settleSpend).
  */
 export const ESTIMATED_SEARCH_VOLUME_CALL_USD = 0.1;
 
@@ -171,32 +172,61 @@ export interface LiveClientOptions {
   readonly password: string;
   /** Injectable transport (default wraps global fetch) — tests pass a fake so no real HTTP runs. */
   readonly transport?: DfsTransport;
-  /** Clock (defaults to Date) for the budget day + recorded ts. */
-  readonly now?: () => Date;
-  /** Spend directory override (tests point it at a temp dir). */
-  readonly spendDir?: string;
+  /** Injectable spend counter (defaults to the DB-backed one) — specs pass a fake. */
+  readonly ledger?: SpendLedger;
 }
 
-const defaultTransport: DfsTransport = async (url, init) => {
-  const res = await fetch(url, init);
+/**
+ * Application deadline (ms) on every live DataForSEO request. Bare `fetch` has NO default
+ * timeout, so without this a provider holding the socket open keeps a credit-RESERVED tool
+ * call waiting indefinitely: the reserve stays open, the request slot stays held, and the
+ * caller only finds out when the platform kills the whole request.
+ *
+ * 30s, not the 3s used by the interactive adapters (email/send.ts, the PostHog capture):
+ * this is a PAID data endpoint whose live calls legitimately run for seconds, so a tight
+ * deadline would abort healthy work and spend budget for nothing. It is still a bound —
+ * chosen to sit inside the platform request timeout so WE give up first and release the
+ * slot, rather than being cut off from outside.
+ */
+export const DFS_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The ONE default transport for every DataForSEO port (search volume here, plus ranked
+ * keywords, backlinks and competitors, which import it). Shared deliberately: four
+ * byte-identical copies meant a deadline — or any future transport concern — had to be
+ * remembered in four places. Injected fake transports bypass it entirely, so tests stay
+ * offline (constitution NEVER #5).
+ */
+export const defaultDfsTransport = async (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: string },
+  timeoutMs: number = DFS_REQUEST_TIMEOUT_MS,
+): Promise<DfsHttpResponse> => {
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   return { ok: res.ok, status: res.status, json: () => res.json() };
 };
 
 /**
- * The real (paid) DataForSEO client. Each call: (1) budget gate BEFORE spending — refuse
- * if the estimate would pass the daily cap; (2) POST the batch with Basic auth; (3) parse;
- * (4) record the REAL cost (response `cost`, else the estimate) to today's spend file.
+ * The real (paid) DataForSEO client. Each call: (1) RESERVE the estimate against the
+ * fleet-global counter BEFORE spending — the reservation both refuses at the cap and closes
+ * the check-then-spend window; (2) POST the batch with Basic auth; (3) parse; (4) settle the
+ * reservation with the REAL cost (response `cost`, else the estimate). A request that throws
+ * leaves the reservation OPEN at its estimate — the conservative direction.
  */
 export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
-  const transport = opts.transport ?? defaultTransport;
-  const now = opts.now ?? ((): Date => new Date());
+  const transport = opts.transport ?? defaultDfsTransport;
   const authHeader = `Basic ${Buffer.from(`${opts.login}:${opts.password}`).toString("base64")}`;
-  const budgetCtx = { now, dir: opts.spendDir };
+  const ledger = opts.ledger ?? createDbSpendLedger();
   return {
     enabled: true,
     async fetchSearchVolume(query) {
-      // (1) Pre-call gate — throws (and wakes the human) if this would pass the cap.
-      assertWithinBudget(ESTIMATED_SEARCH_VOLUME_CALL_USD, budgetCtx);
+      // (1) Pre-call reservation — throws (and wakes the human) at the cap, and also when the
+      // counter cannot be read at all (fail-closed).
+      const reservation = await reserveSpend(
+        ESTIMATED_SEARCH_VOLUME_CALL_USD,
+        DFS_SEARCH_VOLUME_ENDPOINT,
+        ledger,
+      );
 
       // (2) POST the batch.
       const response = await transport(DFS_SEARCH_VOLUME_ENDPOINT, {
@@ -218,12 +248,10 @@ export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
       const raw: unknown = await response.json();
       const rows = parseSearchVolumeResponse(raw);
 
-      // (4) Record the real cost (falls back to the estimate when the response omits it).
+      // (4) Settle the reservation at the real cost (falls back to the estimate when the
+      // response omits it), so the day's total reflects what was actually billed.
       const actualCost = extractResponseCostUsd(raw) ?? ESTIMATED_SEARCH_VOLUME_CALL_USD;
-      recordSpend(
-        { cost_usd: actualCost, endpoint: DFS_SEARCH_VOLUME_ENDPOINT, count: query.keywords.length },
-        budgetCtx,
-      );
+      await settleSpend(reservation, actualCost, query.keywords.length, ledger);
       return rows;
     },
   };

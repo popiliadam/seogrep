@@ -13,17 +13,30 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 
 # 1. Prune the monorepo down to @pseo/mcp and its workspace deps (@pseo/core).
-# turbo is pinned to this exact version in the root package.json devDependencies (pnpm-lock.yaml),
-# so local/CI and this image share ONE turbo version — no drift. The prune runs BEFORE any install
-# (its whole purpose is to shrink the workspace first) and .dockerignore strips node_modules from
-# the context, so there is no installed turbo binary to `pnpm exec` here; dlx pins the same exact
-# version. RESIDUAL (D-I3): sourcing the prune tool from the lockfile itself would require an
-# install-before-prune (`pnpm install --frozen-lockfile --ignore-scripts` then `pnpm exec turbo
-# prune`), a build-graph change to smoke via `docker build -f apps/mcp/Dockerfile .` before merge.
+# turbo comes from the LOCKFILE, not from a floating registry fetch (D-I3 residual / L-18).
+# `pnpm dlx turbo@2.10.4` re-resolved the version at build time with NO integrity check against
+# pnpm-lock.yaml: the version string matched the root devDependency, but nothing tied the bytes
+# to the ones the lockfile records, so a re-published or tampered 2.10.4 would have entered the
+# build silently — in the stage that decides which source files reach the image.
+#
+# `--filter pseo-saas` installs ONLY the workspace ROOT project (named for its package.json
+# `name`, so a rename breaks the build loudly instead of quietly installing the whole monorepo),
+# whose devDependencies carry turbo. That keeps the prune's whole purpose intact: the workspace
+# packages are still installed AFTER the prune, from the pruned manifest set (stage 2), never
+# from the full monorepo. `--frozen-lockfile` makes a lockfile that disagrees with package.json a
+# BUILD FAILURE rather than a silent re-resolution, and `--ignore-scripts` keeps install-time
+# lifecycle scripts out of the build. The pruner's node_modules never leaves this stage — later
+# stages copy only /app/out.
+#
+# `pnpm exec turbo --version` is kept as a one-line build-log assertion: `exec` runs the LOCAL
+# node_modules binary (never a registry fetch), so a build log that prints the pinned version is
+# itself the evidence the prune tool came from the lockfile.
 FROM base AS pruner
 WORKDIR /app
 COPY . .
-RUN pnpm dlx turbo@2.10.4 prune @pseo/mcp --docker
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter pseo-saas \
+ && pnpm exec turbo --version \
+ && pnpm exec turbo prune @pseo/mcp --docker
 
 # 2. Install dependencies and compile TypeScript to dist/.
 FROM base AS builder

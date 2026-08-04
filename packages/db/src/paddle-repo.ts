@@ -20,6 +20,20 @@ type PaddleFunctions = {
     Args: { p_event_id: string; p_user_id: string; p_amount: number; p_ref: string };
     Returns: boolean;
   };
+  // Migration 0018. Overlaid rather than taken from the generated types because the Supabase
+  // generator emits every function argument as non-nullable, and BOTH p_current_period_end and
+  // p_occurred_at are legitimately null (no billing period; an event with no ordering key).
+  apply_subscription_event: {
+    Args: {
+      p_user_id: string;
+      p_paddle_subscription_id: string;
+      p_plan: string;
+      p_status: string;
+      p_current_period_end: string | null;
+      p_occurred_at: string | null;
+    };
+    Returns: boolean;
+  };
 };
 
 type PaddleDatabase = Omit<Database, "public"> & {
@@ -55,6 +69,12 @@ export interface UpsertSubscriptionInput {
   readonly plan: string;
   readonly status: SubscriptionStatus;
   readonly currentPeriodEnd: string | null;
+  /**
+   * The originating event's Paddle `occurred_at` — the ordering key. null means the event
+   * carried no usable timestamp, which the DB treats as "may create state, may never overwrite
+   * it" (migration 0018). It is NOT interpreted as "oldest possible".
+   */
+  readonly occurredAt: string | null;
 }
 
 /**
@@ -140,25 +160,36 @@ export async function processPaddlePurchase(
 }
 
 /**
- * Upsert the user's subscription state, idempotent on paddle_subscription_id: a repeated
- * subscription.* event updates plan / status / current_period_end in place rather than
- * inserting a duplicate row.
+ * Upsert the user's subscription state, idempotent on paddle_subscription_id AND ordered by the
+ * originating event's occurred_at (migration 0018). Returns true when this event was applied,
+ * false when the DB refused it as stale / tied / unorderable.
+ *
+ * A false is a NORMAL outcome, not an error: Paddle guarantees delivery but not order, so an
+ * older subscription.updated can legitimately arrive after a newer subscription.canceled — with
+ * its own event_id, so event-id idempotency does not stop it. Declining to regress the row IS
+ * handling it correctly, and the caller should still mark the event processed.
+ *
+ * The comparison lives in SQL, not here, on purpose: a read-then-write in TypeScript is two
+ * statements with a gap, and two concurrent deliveries would both read the old watermark and
+ * both write. `.upsert()` cannot express a conditional ON CONFLICT, hence the RPC.
  */
 export async function upsertSubscription(
   client: PaddleClient,
   input: UpsertSubscriptionInput,
-): Promise<void> {
-  const { error } = await client.from("subscriptions").upsert(
-    {
-      user_id: input.userId,
-      paddle_subscription_id: input.paddleSubscriptionId,
-      plan: input.plan,
-      status: input.status,
-      current_period_end: input.currentPeriodEnd,
-    },
-    { onConflict: "paddle_subscription_id" },
-  );
+): Promise<boolean> {
+  const { data, error } = await fns(client).rpc("apply_subscription_event", {
+    p_user_id: input.userId,
+    p_paddle_subscription_id: input.paddleSubscriptionId,
+    p_plan: input.plan,
+    p_status: input.status,
+    p_current_period_end: input.currentPeriodEnd,
+    p_occurred_at: input.occurredAt,
+  });
   if (error) {
     throw new Error(`upsertSubscription failed: ${error.message}`);
   }
+  if (typeof data !== "boolean") {
+    throw new Error("upsertSubscription: apply_subscription_event() did not return a boolean");
+  }
+  return data;
 }

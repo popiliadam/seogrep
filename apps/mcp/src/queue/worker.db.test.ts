@@ -186,6 +186,84 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
   });
 
+  it("executeJob commit failure (H-01): honest fail-mark, reserve left OPEN for reconciliation", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    registerToolHandler("audit_tech", async () => ({ audited: true }));
+
+    // The handler SUCCEEDS but commit_reserve cannot settle. Before H-01 the worker pasted the
+    // raw PostgREST string into jobs.error, so the user read a connection message for a run
+    // whose credits were silently still held.
+    const client = getServiceClient();
+    const realRpc = client.rpc.bind(client) as unknown as (
+      name: string,
+      args: unknown,
+    ) => Promise<unknown>;
+    const spy = vi.spyOn(client, "rpc").mockImplementation(((name: string, args: unknown) =>
+      name === "commit_reserve"
+        ? Promise.resolve({
+            data: null,
+            error: { message: "connection reset by peer", details: "", hint: "", code: "XX000" },
+          })
+        : realRpc(name, args)) as unknown as typeof client.rpc);
+    try {
+      await executeJob({ jobId, userId, tool: "audit_tech", payload: {} });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    // Honest: the charge did NOT settle, and the reserve really IS open, so promising an
+    // automatic refund here is a promise the ledger-keyed sweep will keep.
+    expect(job?.error).toContain("credit charge could not be settled");
+    expect(job?.error).toContain("the reserve is still open and reconciliation refunds it");
+    expect(job?.error).toContain("connection reset by peer"); // cause kept for forensics
+    // The open-reserve shape: a debit with no settling row on either side.
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve"]);
+  });
+
+  it("executeJob lost-response commit: the job SUCCEEDS — no failed job, no false refund promise", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    registerToolHandler("audit_tech", async () => ({ audited: true }));
+
+    // The commit LANDS in the database and only its reply is lost. Read as a plain failure,
+    // this marked the job failed and told the user reconciliation would refund them — while
+    // the ledger held a spend_commit, so the sweep skipped it and no refund ever came. The
+    // user-visible outcome must be the truth: the work is done and they were charged once.
+    const client = getServiceClient();
+    const realRpc = client.rpc.bind(client) as unknown as (
+      name: string,
+      args: unknown,
+    ) => Promise<unknown>;
+    let lost = false;
+    const spy = vi.spyOn(client, "rpc").mockImplementation((async (name: string, args: unknown) => {
+      if (name === "commit_reserve" && !lost) {
+        lost = true;
+        await realRpc(name, args);
+        return {
+          data: null,
+          error: { message: "socket hang up", details: "", hint: "", code: "XX000" },
+        };
+      }
+      return realRpc(name, args);
+    }) as unknown as typeof client.rpc);
+    try {
+      await executeJob({ jobId, userId, tool: "audit_tech", payload: {} });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("succeeded");
+    expect(job?.result).toEqual({ audited: true }); // the result reaches the user
+    expect(job?.error).toBeNull(); // and no refund is promised, because none is coming
+    expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+  });
+
   it("executeJob insufficient balance: failed with the DB error, only the grant in the ledger", async () => {
     const userId = await makeUserId();
     await seedGrant(userId, TOOL_COSTS.audit_onpage - 1);
@@ -246,6 +324,35 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(job?.status).toBe("succeeded");
     // EXACTLY one reserve + commit: the concurrent double-delivery did not double-reserve.
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+  });
+
+  it("executeJob claim-path failure (M-01): recorded on the job, never an unhandled throw", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 30);
+    const jobId = await makeQueuedJob(userId, "audit_tech");
+    let ran = false;
+    registerToolHandler("audit_tech", async () => {
+      ran = true;
+      return null;
+    });
+
+    // getJob and markJobRunning used to sit OUTSIDE executeJob's try, so a blip there escaped
+    // as a rejected promise: the jobs row stayed `queued` forever and the queue message was
+    // consumed. The row must carry the outcome instead — that is executeJob's whole contract.
+    const spy = vi.spyOn(boss, "getJob").mockRejectedValueOnce(new Error("jobs read timed out"));
+    try {
+      await expect(
+        executeJob({ jobId, userId, tool: "audit_tech", payload: {} }),
+      ).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(ran).toBe(false);
+    const job = await getJob(jobId);
+    expect(job?.status).toBe("failed");
+    expect(job?.error).toContain("jobs read timed out");
+    expect(await ledgerKinds(userId)).toEqual(["grant"]); // failed before any reserve
   });
 
   it("executeJob with no registered handler marks the job failed", async () => {

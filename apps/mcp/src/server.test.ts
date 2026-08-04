@@ -15,6 +15,13 @@ import { ALL_TOOLS } from "./tools/index.ts";
 // Additive import for the JSON-only Accept specs, on its own line so every existing
 // line above stays byte-identical.
 import { negotiatedAccept } from "./server.ts";
+// Additive H-05 imports, each on its own line for the same reason: the /status backlog
+// cache, and the DB-side reader whose cancellation wiring it depends on.
+import { createPendingJobsCache } from "./server.ts";
+import { countPendingJobs } from "./db.ts";
+// Additive M-13 imports (cloud schema readiness), each on its own line for the same reason:
+// the bounded reader and the cache that keeps the probe off the per-request path.
+import { createSchemaStatusCache, readSchemaStatusBounded } from "./server.ts";
 
 // server.test.ts evolves the T1 format-gate suite into the real auth contract: the
 // app is exercised through an INJECTED authenticate (no DB) that yields typed
@@ -399,18 +406,30 @@ describe("mcp gateway /status endpoint", () => {
     }
   });
 
-  it("GET /status exposes the in-worker reaper counters", async () => {
-    // The reaper runs in the WORKER process; the web process only reports its own (zero)
-    // counters. They reach /status purely through the metrics.snapshot() spread — the route
-    // itself knows nothing about them.
+  it("GET /status carries ONLY fields this process can actually measure (L-02)", async () => {
+    // The reaper runs in the WORKER process, which starts no HTTP listener; /status is
+    // answered by the WEB process, whose metrics singleton NEVER sees a sweep. So
+    // reaperRuns/reservesReleased/lastReaperRunAt were structurally 0/0/null here — three
+    // fields that looked like measurements and were not. They are gone from the response;
+    // the reaper's real heartbeat is the worker's per-sweep log (scripts/monitoring.md §4).
+    //
+    // Pinned as an EXACT key set rather than per-field type checks: that is the only shape
+    // assertion a future `...metrics.snapshot()` spread cannot silently slip a new
+    // unmeasurable field past.
     const app = await listen(appWith({ pendingJobs: () => Promise.resolve(0) }));
     try {
       const res = await fetch(`${app.baseUrl}/status`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(typeof body.reaperRuns).toBe("number");
-      expect(typeof body.reservesReleased).toBe("number");
-      expect(body.lastReaperRunAt).toBeNull(); // never swept in a web process
+      expect(Object.keys(body).sort()).toEqual([
+        "errorsSinceBoot",
+        "ok",
+        "pendingJobs",
+        "schema",
+        "uptimeSeconds",
+      ]);
+      expect(typeof body.uptimeSeconds).toBe("number");
+      expect(typeof body.errorsSinceBoot).toBe("number");
     } finally {
       await app.close();
     }
@@ -1136,5 +1155,564 @@ describe("mcp gateway public server card does not spend the per-IP throttle", ()
     } finally {
       await app.close();
     }
+  });
+});
+
+describe("mcp gateway security response headers (L-12)", () => {
+  // The gateway is a PUBLIC, unauthenticated-by-default HTTP surface, so every answer it
+  // emits — MCP dispatch, the 401/405 rejections, the operator signal and the capability
+  // card alike — carries the same baseline hardening: no framework advertisement
+  // (x-powered-by), no MIME sniffing, no referrer leakage of a path-form key, and no
+  // framing. Asserted on the REAL routes rather than on a header constant, so a route that
+  // bypasses the middleware would fail here.
+
+  it("never advertises the Express stack on an MCP response", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(res.headers.get("x-powered-by")).toBeNull();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("sets nosniff, referrer-policy and anti-framing headers on an MCP response", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("hardens the unauthenticated 401 rejection too (a bad key still gets the headers)", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await postRpc(app.baseUrl, "not-a-key", TOOLS_LIST);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-powered-by")).toBeNull();
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("hardens the public /status and capability-card surfaces", async () => {
+    const app = await listen(appWith({ tools: ALL_TOOLS }));
+    try {
+      const status = await fetch(`${app.baseUrl}/status`);
+      expect(status.headers.get("x-powered-by")).toBeNull();
+      expect(status.headers.get("x-content-type-options")).toBe("nosniff");
+
+      const card = await fetchCard(app.baseUrl);
+      expect(card.headers.get("x-powered-by")).toBeNull();
+      expect(card.headers.get("x-content-type-options")).toBe("nosniff");
+      // Hardening is additive: the card keeps the cache + CORS headers it exists to serve.
+      expect(card.headers.get("access-control-allow-origin")).toBe("*");
+      expect(card.headers.get("cache-control")).toBe("public, max-age=300");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves /healthz's status code and body byte-identical (the uptime monitor's contract)", async () => {
+    // Hardening adds RESPONSE HEADERS only. /healthz is the live uptime probe, so its
+    // status and payload must be exactly what they were before this slice.
+    const app = await listen(appWith());
+    try {
+      const res = await fetch(`${app.baseUrl}/healthz`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(JSON.stringify({ ok: true }));
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-05 — the anonymous /status amplification. /status is unauthenticated and, before
+// this slice, ungated: every hit ran countPendingJobs, an EXACT count over `jobs` with
+// no index on `status`. The 1s bound capped only the ANSWER — the query underneath kept
+// running — so N concurrent anonymous requests became N concurrent full scans, and that
+// load landed on the same database the auth lookup, the queue and the credit ledger use.
+//
+// Three properties close it, and each is pinned below:
+//   1. CANCELLATION — when the deadline wins, the underlying read is aborted, not orphaned.
+//   2. CACHE        — N concurrent requests cost at most ONE query (proven with a counter).
+//   3. THROTTLE     — a per-IP gate, on its own budget, that answers before any read.
+// /healthz is deliberately excluded from all three (it is the live uptime probe).
+// ---------------------------------------------------------------------------
+
+describe("readPendingJobsBounded cancellation (H-05)", () => {
+  it("ABORTS the underlying read when the deadline wins (the query is not orphaned)", async () => {
+    let aborted = false;
+    const hangUntilAborted = (signal: AbortSignal) =>
+      new Promise<number>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        });
+      });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await readPendingJobsBounded(hangUntilAborted, 20)).toBeNull();
+      expect(aborted).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("hands the reader a signal that is NOT aborted while it is still within the deadline", async () => {
+    let seen: AbortSignal | undefined;
+    const read = (signal: AbortSignal) => {
+      seen = signal;
+      return Promise.resolve(5);
+    };
+    expect(await readPendingJobsBounded(read, 1_000)).toBe(5);
+    expect(seen).toBeInstanceOf(AbortSignal);
+    expect(seen?.aborted).toBe(false);
+  });
+});
+
+describe("createPendingJobsCache (H-05 — one query, not N)", () => {
+  let ms = 0;
+  const now = () => ms;
+
+  it("collapses CONCURRENT reads into a single query (single-flight)", async () => {
+    let queries = 0;
+    const read = () => {
+      queries += 1;
+      return new Promise<number>((resolve) => setTimeout(() => resolve(9), 20));
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000 });
+    const results = await Promise.all(Array.from({ length: 20 }, () => cache()));
+    expect(results).toEqual(Array.from({ length: 20 }, () => 9));
+    expect(queries).toBe(1);
+  });
+
+  it("serves a SEQUENTIAL read from cache while the entry is fresh", async () => {
+    let queries = 0;
+    ms = 0;
+    const read = () => {
+      queries += 1;
+      return Promise.resolve(4);
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000, now });
+    expect(await cache()).toBe(4);
+    ms += 4_999;
+    expect(await cache()).toBe(4);
+    expect(queries).toBe(1);
+  });
+
+  it("re-reads once the TTL has expired (the signal stays live, it is not frozen)", async () => {
+    let queries = 0;
+    ms = 0;
+    const read = () => {
+      queries += 1;
+      return Promise.resolve(queries);
+    };
+    const cache = createPendingJobsCache(read, { timeoutMs: 1_000, ttlMs: 5_000, now });
+    expect(await cache()).toBe(1);
+    ms += 5_001;
+    expect(await cache()).toBe(2);
+    expect(queries).toBe(2);
+  });
+
+  it("caches the DEGRADED null too, so a slow DB is not re-queried on every hit", async () => {
+    // Worst exactly when the DB is unwell: an uncached null is re-queried by every hit.
+    let queries = 0;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const read = (signal: AbortSignal) => {
+        queries += 1;
+        return new Promise<number>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      };
+      const cache = createPendingJobsCache(read, { timeoutMs: 10, ttlMs: 5_000 });
+      expect(await cache()).toBeNull();
+      expect(await cache()).toBeNull();
+      expect(await cache()).toBeNull();
+      expect(queries).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("never queries at all when no reader is wired", async () => {
+    const cache = createPendingJobsCache(undefined, { timeoutMs: 1_000, ttlMs: 5_000 });
+    expect(await cache()).toBeNull();
+  });
+});
+
+describe("mcp gateway /status flood resistance (H-05)", () => {
+  const FLOOD_IP = { "fly-client-ip": "203.0.113.9" };
+
+  it("N concurrent anonymous /status requests cost at most ONE backlog query", async () => {
+    let queries = 0; // the finding, measured end to end: uncached, this counter reads 25
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          queries += 1;
+          return new Promise<number>((resolve) => setTimeout(() => resolve(2), 20));
+        },
+      }),
+    );
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 25 }, () => fetch(`${app.baseUrl}/status`)),
+      );
+      expect(responses.every((res) => res.status === 200)).toBe(true);
+      const bodies = await Promise.all(responses.map((res) => res.json()));
+      expect(bodies.every((body) => body.pendingJobs === 2)).toBe(true);
+      expect(queries).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("throttles a per-IP /status flood with 429 and reads NOTHING once throttled", async () => {
+    let queries = 0;
+    const app = await listen(
+      appWith({
+        pendingJobs: () => {
+          queries += 1;
+          return Promise.resolve(0);
+        },
+        statusThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }),
+      }),
+    );
+    try {
+      const first = await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP });
+      expect(first.status).toBe(200);
+
+      const second = await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP });
+      expect(second.status).toBe(429);
+      expect((await second.json()).ok).toBe(false);
+
+      expect(queries).toBe(1); // the 429 never reached the backlog reader
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does NOT spend the MCP flood budget (a /status poll cannot lock out the real endpoint)", async () => {
+    // Same discipline as the capability card: the two gates keep SEPARATE accounting, so a
+    // scanner hammering /status can never exhaust the budget protecting /mcp.
+    const authenticate = vi.fn(() => Promise.resolve(UNAUTHORIZED));
+    const app = await listen(
+      appWith({
+        authenticate,
+        ipThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }),
+        statusThrottle: createRateLimiter({ capacity: 50, refillPerSecond: 0 }),
+      }),
+    );
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        expect((await fetch(`${app.baseUrl}/status`, { headers: FLOOD_IP })).status).toBe(200);
+      }
+      const mcp = await postRpcWith(app.baseUrl, "sg_statuskey001", FLOOD_IP, TOOLS_LIST);
+      expect(mcp.status).toBe(401); // reached the lookup — the MCP token was never spent
+      expect(authenticate).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("leaves /healthz un-throttled and un-cached (the uptime probe must never 429)", async () => {
+    const app = await listen(
+      appWith({ statusThrottle: createRateLimiter({ capacity: 1, refillPerSecond: 0 }) }),
+    );
+    try {
+      for (let i = 0; i < 5; i += 1) {
+        const res = await fetch(`${app.baseUrl}/healthz`, { headers: FLOOD_IP });
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe(JSON.stringify({ ok: true }));
+      }
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("countPendingJobs cancellation wiring (H-05)", () => {
+  // The /status backlog reader is the one query the finding is about. Driven here against a
+  // hand-rolled fake builder — no database, no network — purely to prove the caller's signal
+  // reaches PostgREST, so an abandoned /status answer abandons its HTTP request too.
+
+  function fakeClient(signalSink: { signal?: AbortSignal }) {
+    const builder = {
+      select: () => builder,
+      in: () => builder,
+      abortSignal: (signal: AbortSignal) => {
+        signalSink.signal = signal;
+        return builder;
+      },
+      then: (resolve: (value: { count: number; error: null }) => unknown) =>
+        Promise.resolve({ count: 7, error: null }).then(resolve),
+    };
+    return { from: () => builder } as unknown as Parameters<typeof countPendingJobs>[0];
+  }
+
+  it("passes the caller's AbortSignal down to the query", async () => {
+    const sink: { signal?: AbortSignal } = {};
+    const controller = new AbortController();
+    expect(await countPendingJobs(fakeClient(sink), controller.signal)).toBe(7);
+    expect(sink.signal).toBe(controller.signal);
+  });
+
+  it("still works with no signal (the reader stays usable outside /status)", async () => {
+    const sink: { signal?: AbortSignal } = {};
+    expect(await countPendingJobs(fakeClient(sink))).toBe(7);
+    expect(sink.signal).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M-13 (part 2) — CLOUD SCHEMA READINESS. Nothing tied a deploy to whether the cloud database
+// had the migrations the shipped code calls: code and migrations merge together, so Fly can
+// start serving a build that calls an RPC the cloud project does not have yet (today, live,
+// the cloud schema sits behind the committed migrations).
+//
+// This is deliberately OBSERVABILITY, not enforcement: a refuse-to-serve gate would take
+// production down the moment it deployed. /status gains a schema field and NOTHING else
+// changes — the server boots, serves and dispatches tools exactly as before while the field
+// reads not_ready. Four properties are pinned below:
+//   1. REPORTED   — /status carries the readiness answer and names what it measured.
+//   2. HONEST     — a missing object reads not_ready; a FAILED probe reads unknown, never ready.
+//   3. BOUNDED    — N anonymous requests cost at most ONE probe (the H-05 lesson, not repeated).
+//   4. NON-FATAL  — not_ready never stops the server from serving.
+// ---------------------------------------------------------------------------
+
+/** The requirement string /status advertises — pinned literally so the payload cannot drift. */
+const SCHEMA_REQUIRES = "rpc:dfs_spend_today_usd";
+
+describe("mcp gateway /status schema readiness (M-13)", () => {
+  it("reports ready and NAMES the capability it probed", async () => {
+    const app = await listen(appWith({ schemaReadiness: () => Promise.resolve("ready") }));
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.schema).toEqual({ status: "ready", requires: SCHEMA_REQUIRES });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reports not_ready (never ready) when the probe finds the newest object MISSING", async () => {
+    const app = await listen(appWith({ schemaReadiness: () => Promise.resolve("not_ready") }));
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true); // still an answer — this endpoint reports, it does not gate
+      expect(body.schema.status).toBe("not_ready");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reports unknown (never ready) when the probe REJECTS", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({ schemaReadiness: () => Promise.reject(new Error("db unreachable")) }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.schema.status).toBe("unknown");
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
+  it("reports unknown (never ready) when the probe THROWS SYNCHRONOUSLY", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const app = await listen(
+      appWith({
+        schemaReadiness: () => {
+          throw new Error("sync boom");
+        },
+      }),
+    );
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.schema.status).toBe("unknown");
+    } finally {
+      warnSpy.mockRestore();
+      await app.close();
+    }
+  });
+
+  it("reports unknown when no probe is wired (an unmeasured schema is never 'ready')", async () => {
+    const app = await listen(appWith());
+    try {
+      const res = await fetch(`${app.baseUrl}/status`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.schema).toEqual({ status: "unknown", requires: SCHEMA_REQUIRES });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("N concurrent anonymous /status requests cost at most ONE schema probe (H-05)", async () => {
+    let probes = 0; // uncached this reads 25 — the exact amplifier H-05 was about
+    const app = await listen(
+      appWith({
+        schemaReadiness: () => {
+          probes += 1;
+          return new Promise<"ready">((resolve) => setTimeout(() => resolve("ready"), 20));
+        },
+      }),
+    );
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 25 }, () => fetch(`${app.baseUrl}/status`)),
+      );
+      expect(responses.every((res) => res.status === 200)).toBe(true);
+      const bodies = await Promise.all(responses.map((res) => res.json()));
+      expect(bodies.every((body) => body.schema.status === "ready")).toBe(true);
+      expect(probes).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps SERVING while the schema reads not_ready (observability, never enforcement)", async () => {
+    // The whole point of shipping this as a report: the cloud schema is genuinely behind right
+    // now, so a gate that failed closed would black out production on deploy. Boot, health,
+    // and a real authenticated tools/list dispatch must all be untouched by not_ready.
+    const app = await listen(
+      appWith({ schemaReadiness: () => Promise.resolve("not_ready"), tools: ALL_TOOLS }),
+    );
+    try {
+      expect((await fetch(`${app.baseUrl}/healthz`)).status).toBe(200);
+      const res = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.result.tools.length).toBe(ALL_TOOLS.length);
+      expect((await (await fetch(`${app.baseUrl}/status`)).json()).schema.status).toBe("not_ready");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("readSchemaStatusBounded (bounded best-effort readiness probe)", () => {
+  it("passes a definitive answer straight through", async () => {
+    expect(await readSchemaStatusBounded(() => Promise.resolve("ready"), 1_000)).toBe("ready");
+    expect(await readSchemaStatusBounded(() => Promise.resolve("not_ready"), 1_000)).toBe("not_ready");
+  });
+
+  it("resolves unknown (never hangs, never 'ready') when the probe exceeds the timeout", async () => {
+    const hang = () => new Promise<"ready">(() => undefined); // never settles
+    const start = Date.now();
+    expect(await readSchemaStatusBounded(hang, 20)).toBe("unknown");
+    expect(Date.now() - start).toBeLessThan(1_000);
+  });
+
+  it("ABORTS the underlying probe when the deadline wins (the query is not orphaned)", async () => {
+    let aborted = false;
+    const hangUntilAborted = (signal: AbortSignal) =>
+      new Promise<"ready">((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        });
+      });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await readSchemaStatusBounded(hangUntilAborted, 20)).toBe("unknown");
+      expect(aborted).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("resolves unknown when no probe is wired", async () => {
+    expect(await readSchemaStatusBounded(undefined, 1_000)).toBe("unknown");
+  });
+});
+
+describe("createSchemaStatusCache (one probe, not N)", () => {
+  let ms = 0;
+  const now = () => ms;
+
+  it("collapses CONCURRENT probes into a single query (single-flight)", async () => {
+    let probes = 0;
+    const read = () => {
+      probes += 1;
+      return new Promise<"ready">((resolve) => setTimeout(() => resolve("ready"), 20));
+    };
+    const cache = createSchemaStatusCache(read, { timeoutMs: 1_000, ttlMs: 60_000 });
+    const results = await Promise.all(Array.from({ length: 20 }, () => cache()));
+    expect(results).toEqual(Array.from({ length: 20 }, () => "ready"));
+    expect(probes).toBe(1);
+  });
+
+  it("NEVER probes again once the schema has read ready (migrations are forward-only)", async () => {
+    ms = 0;
+    let probes = 0;
+    const read = () => {
+      probes += 1;
+      return Promise.resolve("ready" as const);
+    };
+    const cache = createSchemaStatusCache(read, { timeoutMs: 1_000, ttlMs: 60_000, now });
+    expect(await cache()).toBe("ready");
+    ms += 10 * 60_000; // ten TTLs later
+    expect(await cache()).toBe("ready");
+    expect(probes).toBe(1);
+  });
+
+  it("re-probes a not_ready answer once the TTL expires, so it CONVERGES after a human migrates", async () => {
+    ms = 0;
+    let probes = 0;
+    const read = () => {
+      probes += 1;
+      return Promise.resolve(probes === 1 ? ("not_ready" as const) : ("ready" as const));
+    };
+    const cache = createSchemaStatusCache(read, { timeoutMs: 1_000, ttlMs: 60_000, now });
+    expect(await cache()).toBe("not_ready");
+    ms += 59_999;
+    expect(await cache()).toBe("not_ready"); // still fresh — no second probe
+    expect(probes).toBe(1);
+    ms += 2;
+    expect(await cache()).toBe("ready");
+    expect(probes).toBe(2);
+  });
+
+  it("caches the DEGRADED unknown too, so a sick DB is not re-probed on every hit", async () => {
+    let probes = 0;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const read = (signal: AbortSignal) => {
+        probes += 1;
+        return new Promise<"ready">((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      };
+      const cache = createSchemaStatusCache(read, { timeoutMs: 10, ttlMs: 60_000 });
+      expect(await cache()).toBe("unknown");
+      expect(await cache()).toBe("unknown");
+      expect(await cache()).toBe("unknown");
+      expect(probes).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("never probes at all when no reader is wired", async () => {
+    const cache = createSchemaStatusCache(undefined, { timeoutMs: 1_000, ttlMs: 60_000 });
+    expect(await cache()).toBe("unknown");
   });
 });

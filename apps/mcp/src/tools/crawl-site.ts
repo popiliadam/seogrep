@@ -246,9 +246,12 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
         Array.isArray(include_paths) && include_paths.length > 0 ? include_paths : undefined;
 
       // `confirm` is a reserved raw-input param. Read it BEFORE pre-discovery so a confirmed call
-      // SKIPS the (up to ~30s) free size check entirely — the caller has already seen the
-      // projection and opted in; re-sizing the site would only add latency. include_paths still
-      // flows to the enqueue below (it is independent of the estimate).
+      // SKIPS the free size check entirely — the caller has already seen the projection and opted
+      // in; re-sizing the site would only add latency. include_paths still flows to the enqueue
+      // below (it is independent of the estimate).
+      // An UNCONFIRMED call still pays for pre-discovery on this request path, so that cost is
+      // bounded IN TOTAL by crawler PRE_DISCOVERY_BUDGET_MS (M-19) — not merely per fetch, which
+      // multiplied over the hop sequence into ~35 s of a caller waiting without a job id.
       const confirmed = readConfirmFlag(rawInput);
 
       // FREE pre-discovery (worker-mode handler runs directly — no reserve, no ledger touch).

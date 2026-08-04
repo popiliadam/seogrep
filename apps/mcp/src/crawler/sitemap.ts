@@ -51,10 +51,24 @@ export interface SitemapParse {
   readonly sitemaps: string[];
 }
 
-/** Extract `<loc>` values, routed to `sitemaps` for an index or `urls` otherwise. */
-export function parseSitemap(xml: string): SitemapParse {
+/**
+ * Ceiling on how many `<loc>` values one document may contribute. This is the sitemaps.org
+ * per-file limit, so no legitimate sitemap loses a URL — but it bounds what a hostile one
+ * can cost: without it, a few megabytes of `<loc></loc>` become MILLIONS of strings on a
+ * 512 MB machine (apps/mcp/fly.toml). The crawler consumes at most 100 of these and the
+ * size estimator at most 5000, so the ceiling is pure headroom for both.
+ */
+export const MAX_SITEMAP_LOCS = 50_000;
+
+/**
+ * Extract `<loc>` values, routed to `sitemaps` for an index or `urls` otherwise, stopping
+ * at `maxLocs`. The loop BREAKS rather than filtering afterwards: `matchAll` returns a lazy
+ * iterator, so breaking means the rest of the document is never scanned OR materialized.
+ */
+export function parseSitemap(xml: string, maxLocs: number = MAX_SITEMAP_LOCS): SitemapParse {
   const locs: string[] = [];
   for (const match of xml.matchAll(/<loc>([\s\S]*?)<\/loc>/gi)) {
+    if (locs.length >= maxLocs) break;
     const value = decodeEntities((match[1] ?? "").trim());
     if (value) locs.push(value);
   }

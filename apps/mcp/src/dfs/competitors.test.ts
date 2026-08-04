@@ -1,7 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   COMPETITORS_DISCOVERY_MAX_LIMIT,
   ESTIMATED_COMPETITORS_DISCOVERY_USD,
@@ -20,7 +17,7 @@ import {
   selectDiscoveredCompetitors,
 } from "./competitors.ts";
 import type { DfsTransport } from "./client.ts";
-import { readTodaySpendUsd } from "./budget.ts";
+import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
 import competitorsFixture from "./fixtures/competitors-domain.json";
 import rankOverviewFixture from "./fixtures/domain-rank-overview.json";
 
@@ -30,9 +27,6 @@ import rankOverviewFixture from "./fixtures/domain-rank-overview.json";
  * env-resolution path only with pinned env sources. The two fixtures mirror the documented
  * /v3/dataforseo_labs/google/{competitors_domain,domain_rank_overview}/live response shapes.
  */
-
-const FIXED_NOW = new Date("2026-07-28T12:00:00.000Z");
-const now = (): Date => FIXED_NOW;
 
 const QUERY = {
   target: "example.com",
@@ -60,15 +54,15 @@ function fixtureTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   });
 }
 
-const liveClient = (transport: DfsTransport, dir: string): ReturnType<typeof createLiveCompetitorsClient> =>
-  createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, now, spendDir: dir });
+const liveClient = (
+  transport: DfsTransport,
+  spendLedger: MemorySpendLedger,
+): ReturnType<typeof createLiveCompetitorsClient> =>
+  createLiveCompetitorsClient({ login: "user@x.test", password: "pw", transport, ledger: spendLedger });
 
-let dir: string;
+let ledger: MemorySpendLedger;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "dfs-competitors-"));
-});
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  ledger = createMemorySpendLedger();
 });
 
 describe("parseCompetitorsDomainResponse", () => {
@@ -297,7 +291,7 @@ describe("resolveDefaultCompetitorsPort", () => {
 describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () => {
   it("posts discovery + one rank overview per compared domain, with the documented bodies", async () => {
     const transport = fixtureTransport();
-    const comparison = await liveClient(transport, dir).fetchCompetitorComparison(QUERY);
+    const comparison = await liveClient(transport, ledger).fetchCompetitorComparison(QUERY);
 
     // 1 discovery + 4 rank overviews (target + 3 rivals).
     expect(transport).toHaveBeenCalledTimes(1 + MAX_COMPARED_DOMAINS);
@@ -335,7 +329,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
 
   it("SKIPS the discovery request entirely when competitors are supplied", async () => {
     const transport = fixtureTransport();
-    const comparison = await liveClient(transport, dir).fetchCompetitorComparison({
+    const comparison = await liveClient(transport, ledger).fetchCompetitorComparison({
       ...QUERY,
       competitors: ["chosen.example", "other.example"],
     });
@@ -351,26 +345,27 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     expect(comparison.discovered).toBe(false);
     expect(comparison.discovered_total_count).toBeNull();
     // Only the three rank-overview costs are on the books — no discovery spend.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(3 * 0.0101, 5);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(3 * 0.0101, 5);
   });
 
-  it("records the REAL cost of every request it made (not the estimate)", async () => {
-    await liveClient(fixtureTransport(), dir).fetchCompetitorComparison(QUERY);
+  it("settles the reservation with the REAL cost of every request it made (not the estimate)", async () => {
+    await liveClient(fixtureTransport(), ledger).fetchCompetitorComparison(QUERY);
     // 0.132 discovery + 4 × 0.0101 rank overviews.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.132 + 4 * 0.0101, 5);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.132 + 4 * 0.0101, 5);
   });
 
   it("throws on a non-OK HTTP response instead of reporting an empty comparison", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 402, json: async () => ({}) }));
-    await expect(liveClient(transport, dir).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 402/);
-    expect(readTodaySpendUsd({ now, dir })).toBe(0);
+    await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 402/);
+    // The reservation stays OPEN, so today keeps paying the full flow estimate — the safe side.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_COMPETITOR_COMPARISON_CALL_USD, 5);
   });
 
   it("stops at a DEAD DISCOVERY — no rank overview is ever paid for", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 500, json: async () => ({}) }));
-    await expect(liveClient(transport, dir).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 500/);
+    await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(1);
-    expect(readTodaySpendUsd({ now, dir })).toBe(0);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_COMPETITOR_COMPARISON_CALL_USD, 5);
   });
 
   it("propagates a MID-FAN-OUT failure, keeping only the already-spent requests on the books", async () => {
@@ -382,9 +377,14 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
       }
       return { ok: false, status: 500, json: async () => ({}) };
     });
-    await expect(liveClient(transport, dir).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 500/);
+    await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // discovery + the one that died
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(0.132, 5);
+    // DFS charged $0.132 for the discovery. The reservation is never settled, so the day is
+    // charged the full flow estimate instead: MORE than the true partial spend, which is the
+    // safe direction. (The pre-fix file ledger booked exactly $0.132 and handed the rest back.)
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_COMPETITOR_COMPARISON_CALL_USD, 5);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0.132);
+    expect(ledger.rows()[0]?.actualUsd).toBeNull(); // still open
   });
 
   it("falls back to the per-request estimate when a response omits its cost", async () => {
@@ -393,9 +393,9 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
       tasks: [{ status_code: 20000, result: [{ total_count: 0, items: [] }] }],
     };
     const transport = vi.fn<DfsTransport>(async () => ({ ok: true, status: 200, json: async () => costless }));
-    await liveClient(transport, dir).fetchCompetitorComparison(QUERY);
+    await liveClient(transport, ledger).fetchCompetitorComparison(QUERY);
     // Discovery found no rivals, so only the target's rank overview follows it.
-    expect(readTodaySpendUsd({ now, dir })).toBeCloseTo(
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(
       ESTIMATED_COMPETITORS_DISCOVERY_USD + ESTIMATED_RANK_OVERVIEW_REQUEST_USD,
       5,
     );
@@ -403,14 +403,11 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
 
   it("refuses the WHOLE lookup BEFORE any HTTP when today's budget is already at the cap", async () => {
     // Pre-seed today's spend at $2.95; the pre-call whole-operation estimate would pass $3.00.
-    writeFileSync(
-      path.join(dir, "2026-07-28.jsonl"),
-      JSON.stringify({ ts: "x", cost_usd: 2.95, endpoint: "e", count: 1 }) + "\n",
-    );
+    ledger.seed(2.95);
     const transport = fixtureTransport();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      await expect(liveClient(transport, dir).fetchCompetitorComparison(QUERY)).rejects.toThrow(
+      await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(
         /budget exceeded/i,
       );
       // The gate is PRE-call: not one request may have been sent.
@@ -422,18 +419,15 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
 
   it("sizes the gate to the SHORT flow, so a supplied-competitor call is not blocked by a discovery it skips", async () => {
     // $2.80 spent: the full-flow estimate ($0.35) would trip the $3.00 cap, the short flow does not.
-    writeFileSync(
-      path.join(dir, "2026-07-28.jsonl"),
-      JSON.stringify({ ts: "x", cost_usd: 2.8, endpoint: "e", count: 1 }) + "\n",
-    );
+    ledger.seed(2.8);
     const transport = fixtureTransport();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      await expect(liveClient(transport, dir).fetchCompetitorComparison(QUERY)).rejects.toThrow(
+      await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(
         /budget exceeded/i,
       );
       await expect(
-        liveClient(fixtureTransport(), dir).fetchCompetitorComparison({
+        liveClient(fixtureTransport(), ledger).fetchCompetitorComparison({
           ...QUERY,
           competitors: ["chosen.example"],
         }),

@@ -6,6 +6,11 @@ import type { GeneratedKeyResult } from "./actions";
 
 interface KeyPanelProps {
   readonly activeKeyId: string | null;
+  /**
+   * The fixed, key-free MCP endpoint for header auth, derived server-side from the same template
+   * as the personal URL. `null` when it could not be derived — render nothing rather than guess.
+   */
+  readonly headerEndpoint: string | null;
   readonly createKeyAction: () => Promise<GeneratedKeyResult>;
   readonly rotateKeyAction: (oldKeyId: string) => Promise<GeneratedKeyResult>;
   readonly revokeKeyAction: (keyId: string) => Promise<void>;
@@ -19,6 +24,7 @@ interface KeyPanelProps {
  */
 export function KeyPanel({
   activeKeyId,
+  headerEndpoint,
   createKeyAction,
   rotateKeyAction,
   revokeKeyAction,
@@ -117,6 +123,25 @@ export function KeyPanel({
               {revealed.mcpUrl}
             </code>
           </div>
+          {/* Additive alternative (L-15): the server accepts BOTH the URL-with-key form above and
+              header auth, but this — the one moment the plaintext key is on screen — only ever
+              showed the URL, so a user whose client sends headers had to go read the docs to find
+              out the option existed. The URL form stays first and stays the default. */}
+          {headerEndpoint ? (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-neutral-600">Or use header auth</span>
+              <p className="text-xs text-neutral-600">
+                If your client can send custom headers, point it at this fixed URL and pass the key
+                in an <code>x-api-key</code> header instead — then no secret sits in the URL.
+              </p>
+              <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+                {headerEndpoint}
+              </code>
+              <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+                {`x-api-key: ${revealed.key}`}
+              </code>
+            </div>
+          ) : null}
           <div className="flex items-center gap-3">
             <button
               type="button"

@@ -23,6 +23,14 @@ describe("landing page", () => {
     expect(screen.getByText(/200 credits, no card required/i)).toBeDefined();
   });
 
+  // L-09: this line read "Free trial AT LAUNCH", which checkout going live made false — the trial
+  // is grantable today. The waitlist/private-beta posture around it is a separate, deliberate
+  // product decision and is NOT what this pins.
+  it("does not defer the trial to a future launch", () => {
+    render(<Page />);
+    expect(screen.getByText(/200 credits, no card required/i).textContent).not.toMatch(/at launch/i);
+  });
+
   it("emits valid SoftwareApplication JSON-LD (audit G2: was 0/42 pages)", () => {
     const { container } = render(<Page />);
     const scripts = Array.from(container.querySelectorAll('script[type="application/ld+json"]'));

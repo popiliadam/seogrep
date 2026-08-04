@@ -22,6 +22,28 @@ const WEBMASTERS_BASE = "https://www.googleapis.com/webmasters/v3";
 /** Read-only Search Console scope — we never request write access to a user's property. */
 export const GSC_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
+/**
+ * Application deadlines. Bare `fetch` has NO default timeout, so without these a Google
+ * socket held open blocks the awaiting caller until the PLATFORM kills the request — an
+ * OAuth callback or a credit-reserved MCP tool holding its slot the whole time. The
+ * deadline is always armed (never opt-in); `timeoutMs` only retunes it.
+ *
+ * The values differ because the CALL CLASSES differ:
+ *
+ *   TOKEN — a small form POST on the interactive OAuth redirect, with a human waiting.
+ *     Google answers it in well under a second, so 5s is already far past normal and a
+ *     longer wait would only make a stuck redirect feel broken.
+ *   SITES — the `sites.list` read, also on the interactive callback, but a listing rather
+ *     than a fixed-size exchange; 10s leaves room for a large account.
+ *   QUERY — `searchAnalytics.query` is a genuine bulk data pull (date range × dimensions ×
+ *     row limit) that legitimately runs for seconds. It gets the widest budget — but a
+ *     BOUNDED one, chosen to sit comfortably inside the platform request timeout so we
+ *     give up first and release the slot ourselves.
+ */
+export const GSC_TOKEN_TIMEOUT_MS = 5_000;
+export const GSC_SITES_TIMEOUT_MS = 10_000;
+export const GSC_QUERY_TIMEOUT_MS = 30_000;
+
 /** The `fetch` shape this module needs. Global `fetch` is assignable to it. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -36,11 +58,15 @@ export interface TokenDeps {
   readonly fetch?: FetchLike;
   readonly credentials?: GoogleCredentials;
   readonly env?: NodeJS.ProcessEnv;
+  /** Override the deadline (ms). The deadline itself is always on — this only retunes it. */
+  readonly timeoutMs?: number;
 }
 
 /** Bearer-authenticated request dependencies (injectable fetch). */
 export interface RequestDeps {
   readonly fetch?: FetchLike;
+  /** Override the deadline (ms). The deadline itself is always on — this only retunes it. */
+  readonly timeoutMs?: number;
 }
 
 /** A normalized (camelCase) Google token response. `refreshToken` is null when absent. */
@@ -121,6 +147,7 @@ async function postToken(
   const body = new URLSearchParams({ ...params, client_id: clientId, client_secret: clientSecret });
   const response = await doFetch(TOKEN_ENDPOINT, {
     method: "POST",
+    signal: AbortSignal.timeout(deps.timeoutMs ?? GSC_TOKEN_TIMEOUT_MS),
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
@@ -135,13 +162,30 @@ async function postToken(
  * Exchange a one-time authorization code for a token set (the OAuth callback's first
  * step). `redirectUri` must match the value used to obtain the code. Returns the access
  * token plus — on first consent — the long-lived refresh token to seal at rest.
+ *
+ * `codeVerifier` is the PKCE (RFC 7636) secret whose S256 digest was sent as the
+ * `code_challenge` at authorize time. Pass it whenever a challenge was issued: Google then
+ * redeems the code ONLY against that verifier, which is what stops an attacker's own code
+ * being injected into a victim's callback. It is a first-class parameter rather than
+ * something a caller splices into the body through the `deps.fetch` seam — that seam made
+ * the body's wire format an implicit contract between packages, so a harmless refactor in
+ * here (a `URLSearchParams` object instead of a string, say) would have broken the live
+ * link and shown up only in production as `invalid_grant`.
+ *
+ * OMITTING it is fully supported and leaves the request BYTE-IDENTICAL to the pre-PKCE
+ * one — pinned by an exact-string spec — so a non-PKCE caller is unaffected.
  */
 export function exchangeCodeForTokens(
-  params: { code: string; redirectUri: string },
+  params: { code: string; redirectUri: string; codeVerifier?: string },
   deps: TokenDeps = {},
 ): Promise<GoogleTokenSet> {
+  const grant = {
+    grant_type: "authorization_code",
+    code: params.code,
+    redirect_uri: params.redirectUri,
+  };
   return postToken(
-    { grant_type: "authorization_code", code: params.code, redirect_uri: params.redirectUri },
+    params.codeVerifier ? { ...grant, code_verifier: params.codeVerifier } : grant,
     deps,
   );
 }
@@ -177,7 +221,10 @@ function apiError(surface: string, status: number, payload: Record<string, unkno
  */
 export async function listSites(accessToken: string, deps: RequestDeps = {}): Promise<GscSite[]> {
   const doFetch = deps.fetch ?? fetch;
-  const response = await doFetch(`${WEBMASTERS_BASE}/sites`, { headers: bearer(accessToken) });
+  const response = await doFetch(`${WEBMASTERS_BASE}/sites`, {
+    signal: AbortSignal.timeout(deps.timeoutMs ?? GSC_SITES_TIMEOUT_MS),
+    headers: bearer(accessToken),
+  });
   const payload = await readJson(response);
   if (!response.ok) {
     throw apiError("sites.list", response.status, payload);
@@ -208,6 +255,7 @@ export async function searchAnalyticsQuery(
   const url = `${WEBMASTERS_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
   const response = await doFetch(url, {
     method: "POST",
+    signal: AbortSignal.timeout(deps.timeoutMs ?? GSC_QUERY_TIMEOUT_MS),
     headers: { ...bearer(accessToken), "content-type": "application/json" },
     body: JSON.stringify(body),
   });

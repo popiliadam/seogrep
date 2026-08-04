@@ -30,14 +30,17 @@ describe("privacy page", () => {
   it("calls itself effective, not a draft — a live policy cannot describe itself as unfinished", () => {
     const text = renderedText();
     expect(text).not.toMatch(/\bdrafts?\b/i);
-    expect(text).toContain("Effective 28 July 2026");
+    // Moved 28 July -> 4 August 2026 with the M-25 rewrite of "Your rights" and "Data retention".
+    // The page's own "Changes to this policy" section promises this date moves when the policy is
+    // updated, so leaving it would have made the policy breach its own rule on the way out.
+    expect(text).toContain("Effective 4 August 2026");
   });
 
   it("freezes the effective date — a computed date would silently move with the clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2027-03-09T12:00:00Z"));
     render(<Page />);
-    expect(screen.getByText(/Effective 28 July 2026/)).toBeDefined();
+    expect(screen.getByText(/Effective 4 August 2026/)).toBeDefined();
   });
 
   it("does not promise erasure of the append-only credit ledger", () => {

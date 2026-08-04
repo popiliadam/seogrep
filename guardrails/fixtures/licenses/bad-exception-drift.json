@@ -1,0 +1,7 @@
+{
+  "MIT": [{ "name": "next", "versions": ["16.2.12"], "license": "MIT" }],
+  "GPL-3.0-only": [
+    { "name": "argparse", "versions": ["2.0.1"], "license": "GPL-3.0-only" },
+    { "name": "lightningcss-linux-x64-gnu", "versions": ["1.32.0"], "license": "GPL-3.0-only" }
+  ]
+}

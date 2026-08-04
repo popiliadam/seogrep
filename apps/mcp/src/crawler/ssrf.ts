@@ -11,8 +11,11 @@
  * the decisive check is on the RESOLVED IP, not on the name.
  *
  * Exports:
- *  - isBlockedIp(ip): pure range-membership test over the internal ranges, IPv4 and IPv6
- *    (incl. IPv4-mapped and NAT64 embeddings), fail-closed on unparseable input;
+ *  - isBlockedIp(ip): pure admissibility test, fail-closed on unparseable input. IPv4 is a
+ *    DENYLIST of the internal CIDRs (the space is small enough to enumerate); IPv6 is an
+ *    ALLOWLIST — only global unicast 2000::/3 minus its special-purpose carve-outs passes,
+ *    with the IPv4-carrying transition forms (mapped / translated / compatible / 6to4)
+ *    decided by the IPv4 rules on the address they carry;
  *  - nonPublicHostnameReason(hostname): cheap string gate for single-label and
  *    reserved/internal TLDs (skips pointless DNS and closes names that never resolve);
  *  - checkPublicHost(hostname, lookup): resolves the name and fails if ANY resolved
@@ -146,15 +149,63 @@ function ipv6ToBytes(input: string): Uint8Array | null {
   return bytes;
 }
 
+/**
+ * Special-purpose prefixes carved out of global unicast (2000::/3) — the IPv6 twin of
+ * BLOCKED_V4, kept as human-readable CIDRs and precomputed once at load. ONLY the in-band
+ * exceptions belong here: everything OUTSIDE 2000::/3 (ULA incl. Fly 6PN fdaa::/16,
+ * link-local fe80::/10, site-local fec0::/10, multicast ff00::/8, discard-only 100::/64,
+ * NAT64 64:ff9b::/32, the whole unassigned majority of the address space) is refused by the
+ * allowlist default in isBlockedIpv6 and must NOT be restated here.
+ */
+const BLOCKED_V6: ReadonlyArray<{ base: Uint8Array; prefix: number }> = (
+  [
+    ["2001::", 23], // IETF protocol assignments: Teredo, ORCHIDv2, benchmarking, AMT, …
+    ["2001:db8::", 32], // documentation
+    ["3fff::", 20], // documentation (RFC 9637)
+    ["5f00::", 16], // SRv6 SIDs (RFC 9602)
+    ["2620:4f:8000::", 48], // direct delegation AS112 service (RFC 7534)
+  ] as ReadonlyArray<readonly [string, number]>
+).map(([cidr, prefix]) => ({ base: ipv6ToBytes(cidr) ?? new Uint8Array(16), prefix }));
+
+/** True when the 16-byte `addr` falls inside the (base, prefix) IPv6 CIDR. */
+function inV6Cidr(addr: Uint8Array, base: Uint8Array, prefix: number): boolean {
+  const wholeBytes = prefix >> 3;
+  for (let i = 0; i < wholeBytes; i++) if (addr[i] !== base[i]) return false;
+  const bits = prefix & 7;
+  if (bits === 0) return true;
+  const mask = (0xff << (8 - bits)) & 0xff;
+  return ((addr[wholeBytes] ?? 0) & mask) === ((base[wholeBytes] ?? 0) & mask);
+}
+
+/**
+ * IPv6 admissibility as an ALLOWLIST (M-18). The previous shape was a short denylist that
+ * ended in "allow", so every range nobody had thought of — site-local fec0::/10, Teredo,
+ * 6to4, IPv4-translated, NAT64 local-use, the entire unassigned space — was fetched as if it
+ * were public. IPv4 can be enumerated; IPv6 cannot, so the default must be REFUSE:
+ *
+ *   1. transition forms that CARRY an IPv4 address are decided by the IPv4 rules on the
+ *      address they carry (an internal IPv4 can never be laundered through an IPv6 shape);
+ *   2. anything outside global unicast 2000::/3 is refused, named or not;
+ *   3. inside 2000::/3, the special-purpose prefixes above are refused;
+ *   4. only what survives all three is fetched.
+ */
 function isBlockedIpv6(bytes: Uint8Array): boolean {
   const b = (i: number): number => bytes[i] ?? 0;
   const allZero = (start: number, end: number): boolean => {
     for (let i = start; i < end; i++) if (b(i) !== 0) return false;
     return true;
   };
+  /** The dotted-quad embedded at `start`, for the IPv4-carrying transition forms. */
+  const embeddedV4 = (start: number): string =>
+    `${b(start)}.${b(start + 1)}.${b(start + 2)}.${b(start + 3)}`;
+
   // ::ffff:0:0/96 — IPv4-mapped: apply the IPv4 rules to the embedded address.
-  if (allZero(0, 10) && b(10) === 0xff && b(11) === 0xff) {
-    return isBlockedIpv4(`${b(12)}.${b(13)}.${b(14)}.${b(15)}`);
+  if (allZero(0, 10) && b(10) === 0xff && b(11) === 0xff) return isBlockedIpv4(embeddedV4(12));
+  // ::ffff:0:0:0/96 — IPv4-TRANSLATED (RFC 2765): ffff sits in bytes 8-9, not 10-11, so it
+  // misses the mapped branch above by two bytes — which is exactly how ::ffff:0:127.0.0.1
+  // used to read as public. Same rule, same embedded address.
+  if (allZero(0, 8) && b(8) === 0xff && b(9) === 0xff && allZero(10, 12)) {
+    return isBlockedIpv4(embeddedV4(12));
   }
   // :: (unspecified) and ::1 (loopback).
   if (allZero(0, 15) && (b(15) === 0 || b(15) === 1)) return true;
@@ -162,20 +213,20 @@ function isBlockedIpv6(bytes: Uint8Array): boolean {
   // bytes 12-15. Mirror the IPv4-mapped branch and apply the IPv4 rules so an embedded
   // loopback/private address (e.g. ::127.0.0.1) can't slip through. :: and ::1 are already
   // returned above, so this only fires for a non-trivial embedded IPv4.
-  if (allZero(0, 12)) {
-    return isBlockedIpv4(`${b(12)}.${b(13)}.${b(14)}.${b(15)}`);
-  }
-  // 64:ff9b::/96 — NAT64 well-known prefix (block outright).
-  if (b(0) === 0x00 && b(1) === 0x64 && b(2) === 0xff && b(3) === 0x9b && allZero(4, 12)) return true;
-  // fc00::/7 — ULA (this is what covers Fly 6PN fdaa::/16).
-  if ((b(0) & 0xfe) === 0xfc) return true;
-  // fe80::/10 — link-local.
-  if (b(0) === 0xfe && (b(1) & 0xc0) === 0x80) return true;
-  // ff00::/8 — multicast.
-  if (b(0) === 0xff) return true;
-  // 2001:db8::/32 — documentation.
-  if (b(0) === 0x20 && b(1) === 0x01 && b(2) === 0x0d && b(3) === 0xb8) return true;
-  return false;
+  if (allZero(0, 12)) return isBlockedIpv4(embeddedV4(12));
+  // 64:ff9b::/32 — NAT64, both the well-known /96 and the local-use 64:ff9b:1::/48. Blocked
+  // OUTRIGHT rather than by its embedded IPv4: the packet lands on a translator we do not
+  // control, so what the embedded address looks like says nothing about where it ends up.
+  // (Also outside 2000::/3, so the default would refuse it anyway — stated for intent.)
+  if (b(0) === 0x00 && b(1) === 0x64 && b(2) === 0xff && b(3) === 0x9b) return true;
+  // 2002::/16 — 6to4: bytes 2-5 are the IPv4 endpoint the tunnel actually reaches, so
+  // 2002:7f00:1:: is loopback wearing an IPv6 hat. Decide it by that address.
+  if (b(0) === 0x20 && b(1) === 0x02) return isBlockedIpv4(embeddedV4(2));
+
+  // Fail CLOSED: global unicast 2000::/3 is the only space the crawler may reach...
+  if ((b(0) & 0xe0) !== 0x20) return true;
+  // ...minus the special-purpose prefixes carved out of it.
+  return BLOCKED_V6.some(({ base, prefix }) => inV6Cidr(bytes, base, prefix));
 }
 
 /**

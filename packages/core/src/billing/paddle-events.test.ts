@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CREDIT_PACKAGES, type PackageKey } from "./packages.js";
-import { ledgerCommandFor, type PaddleEventLike } from "./paddle-events.js";
+import {
+  isSubscriptionEventType,
+  ledgerCommandFor,
+  type PaddleEventLike,
+} from "./paddle-events.js";
 
 /**
  * Pure translation tests — no network, no SDK. The route feeds real unmarshalled Paddle
@@ -16,11 +20,18 @@ const PRICE_MAP: Record<string, PackageKey> = {
   pri_topup_10: "topup_10",
 };
 
+/** Paddle stamps every event with occurred_at; the SDK surfaces it as `occurredAt`. */
+const OCCURRED_AT = "2026-07-18T00:00:00Z";
+
 function txnCompleted(data: unknown): PaddleEventLike {
-  return { eventType: "transaction.completed", data };
+  return { eventType: "transaction.completed", data, occurredAt: OCCURRED_AT };
 }
-function subscriptionEvent(eventType: string, data: unknown): PaddleEventLike {
-  return { eventType, data };
+function subscriptionEvent(
+  eventType: string,
+  data: unknown,
+  occurredAt: string | null = OCCURRED_AT,
+): PaddleEventLike {
+  return { eventType, data, occurredAt };
 }
 
 describe("ledgerCommandFor — transaction.completed", () => {
@@ -103,6 +114,107 @@ describe("ledgerCommandFor — transaction.completed", () => {
   });
 });
 
+describe("ledgerCommandFor — transaction.completed cardinality & quantity (M-02)", () => {
+  /**
+   * A signed transaction.completed can legitimately carry SEVERAL items and a per-item
+   * quantity > 1 (Paddle's checkout supports both). Granting one pinned package for such an
+   * event splits the money from the credits — the customer pays for N and receives 1. The
+   * credit AMOUNT is a human-signed figure (NEVER #6), so multiplying it here is not ours to
+   * decide: both shapes fail closed to record_only, which the route turns into a LOUD,
+   * retryable 500 (B-C1) instead of a silent short-grant.
+   */
+
+  it("record_only when TWO items match the price map — never grant one package for a multi-package purchase", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_multi",
+        items: [
+          { price: { id: "pri_starter" }, quantity: 1 },
+          { price: { id: "pri_topup_10" }, quantity: 1 },
+        ],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("multiple_matching_items"),
+    });
+  });
+
+  it("record_only when the matched item's quantity is 2 — credits are pinned, never multiplied", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_qty2",
+        items: [{ price: { id: "pri_topup_10" }, quantity: 2 }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("unsupported_quantity"),
+    });
+  });
+
+  it("quantity 1 is the ordinary single purchase — behaviour UNCHANGED", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_qty1",
+        items: [{ price: { id: "pri_starter" }, quantity: 1 }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.starter.credits,
+      ref: "txn_qty1",
+      packageKey: "starter",
+    });
+  });
+
+  it("an absent quantity field still purchases (defaults to one) — behaviour UNCHANGED", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_noqty",
+        items: [{ price: { id: "pri_starter" } }],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.starter.credits,
+      ref: "txn_noqty",
+      packageKey: "starter",
+    });
+  });
+
+  it("an UNMATCHED extra item does not block the single matched purchase", () => {
+    const command = ledgerCommandFor(
+      txnCompleted({
+        id: "txn_mixed",
+        items: [
+          { price: { id: "pri_unknown" }, quantity: 1 },
+          { price: { id: "pri_pro" }, quantity: 1 },
+        ],
+        customData: { user_id: USER_ID },
+      }),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "purchase",
+      userId: USER_ID,
+      amount: CREDIT_PACKAGES.pro.credits,
+      ref: "txn_mixed",
+      packageKey: "pro",
+    });
+  });
+});
+
 describe("ledgerCommandFor — subscription.*", () => {
   it("maps subscription.created to a subscription upsert command", () => {
     const command = ledgerCommandFor(
@@ -122,6 +234,9 @@ describe("ledgerCommandFor — subscription.*", () => {
       plan: "pro",
       status: "active",
       currentPeriodEnd: "2026-08-01T00:00:00Z",
+      // M-03: the ordering key travels WITH the command. Without it the DB cannot tell a
+      // late-delivered older event from a genuinely newer one.
+      occurredAt: OCCURRED_AT,
     });
   });
 
@@ -143,6 +258,52 @@ describe("ledgerCommandFor — subscription.*", () => {
       plan: "starter",
       status: "canceled",
       currentPeriodEnd: null,
+      occurredAt: OCCURRED_AT,
+    });
+  });
+
+  it("record_only when the event carries NO occurred_at (an unorderable event is never state)", () => {
+    // M-03 fail-safe. occurred_at is the only evidence of WHEN an event happened; without it a
+    // late-delivered older event is indistinguishable from a newer one. Fail closed here — the
+    // same way an unknown status / unmapped price already does — rather than let the DB guess.
+    const command = ledgerCommandFor(
+      subscriptionEvent(
+        "subscription.updated",
+        {
+          id: "sub_1",
+          status: "active",
+          items: [{ price: { id: "pri_pro" } }],
+          customData: { user_id: USER_ID },
+          currentBillingPeriod: null,
+        },
+        null,
+      ),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("occurred_at"),
+    });
+  });
+
+  it("record_only when occurred_at is present but not a usable timestamp", () => {
+    const command = ledgerCommandFor(
+      subscriptionEvent(
+        "subscription.updated",
+        {
+          id: "sub_1",
+          status: "active",
+          items: [{ price: { id: "pri_pro" } }],
+          customData: { user_id: USER_ID },
+          currentBillingPeriod: null,
+        },
+        "not-a-timestamp",
+      ),
+      PRICE_MAP,
+    );
+    expect(command).toEqual({
+      kind: "record_only",
+      reason: expect.stringContaining("occurred_at"),
     });
   });
 
@@ -196,5 +357,24 @@ describe("ledgerCommandFor — other events", () => {
       PRICE_MAP,
     );
     expect(command).toEqual({ kind: "record_only", reason: expect.stringContaining("customer.updated") });
+  });
+});
+
+describe("isSubscriptionEventType", () => {
+  // The route needs to tell a SUBSCRIPTION record_only (a plan state change we declined to
+  // apply — operationally significant) from every other record_only (informational noise).
+  // That knowledge lives here, next to the switch that uses it, so the two cannot drift.
+  it("is true for exactly the three event types ledgerCommandFor treats as subscription state", () => {
+    expect(isSubscriptionEventType("subscription.created")).toBe(true);
+    expect(isSubscriptionEventType("subscription.updated")).toBe(true);
+    expect(isSubscriptionEventType("subscription.canceled")).toBe(true);
+  });
+
+  it("is false for event types that are NOT translated into subscription state", () => {
+    // subscription.paused is deliberately in this list: it is a real Paddle event, but
+    // ledgerCommandFor does not handle it, so it is informational — not a refused apply.
+    for (const eventType of ["transaction.completed", "customer.updated", "subscription.paused"]) {
+      expect(isSubscriptionEventType(eventType)).toBe(false);
+    }
   });
 });

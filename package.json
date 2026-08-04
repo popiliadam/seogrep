@@ -2,7 +2,7 @@
   "name": "pseo-saas",
   "private": true,
   "packageManager": "pnpm@11.9.0",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.18.0" },
   "scripts": {
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
@@ -12,10 +12,10 @@
     "verify:db": "bash guardrails/verify-db.sh",
     "waitlist:smoke": "node scripts/waitlist-smoke.mjs",
     "email:smoke": "node scripts/email-smoke.mjs",
-    "lighthouse": "pnpm --filter @pseo/web build && lhci autorun",
+    "lighthouse": "turbo run build --filter=@pseo/web && lhci autorun",
     "db:start": "supabase start --workdir packages/db",
     "db:reset": "supabase db reset --workdir packages/db",
-    "db:types": "supabase gen types typescript --local --workdir packages/db > packages/db/src/types.ts"
+    "db:types": "pnpm --filter @pseo/db run db:types"
   },
   "devDependencies": {
     "@lhci/cli": "^0.15.1",
