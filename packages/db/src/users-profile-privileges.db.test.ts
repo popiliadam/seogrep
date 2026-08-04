@@ -54,6 +54,33 @@ function supabaseBin(): string {
   }
 }
 
+/**
+ * `supabase db query -o json` emits TWO different shapes depending on the environment, with the
+ * SAME pinned CLI version (2.109.1, verified on both sides):
+ *
+ *   macOS, local  ->  { "boundary": "…", "rows": [ {…} ] }
+ *   ubuntu, CI    ->  [ {…} ]                                (a bare array)
+ *
+ * Measured, not guessed: these specs had only ever run on a developer machine, and their first CI
+ * run failed on all six assertions while the query itself had actually SUCCEEDED and returned the
+ * right data — the CI log shows api_keys, credit_ledger, `granted: true`, real uuids. Only the
+ * wrapper was missing, and the reader was looking for `rows`.
+ *
+ * So the shape is NOT a stable contract and must be normalized. Anything that is neither shape
+ * throws with the raw output: an unreadable answer is a BROKEN MEASUREMENT, never an empty one.
+ */
+function normalizeRows(parsed: unknown, stdout: string): Record<string, unknown>[] {
+  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+  if (parsed && typeof parsed === "object") {
+    const rows = (parsed as { rows?: unknown }).rows;
+    if (Array.isArray(rows)) return rows as Record<string, unknown>[];
+  }
+  throw new Error(
+    "supabase db query returned neither a row array nor { rows: [...] } — the measurement did " +
+      `not happen. Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
+  );
+}
+
 /** Rows of a read-only query against the LOCAL stack (stdout is pure JSON; logs go to stderr). */
 function queryRows(sql: string): Record<string, unknown>[] {
   let stdout: string;
@@ -74,22 +101,16 @@ function queryRows(sql: string): Record<string, unknown>[] {
   // names the wrong thing entirely. A query that returned nothing is a BROKEN MEASUREMENT, not a
   // measurement of zero, and this helper must say which. (First seen when these specs, which had
   // only ever run locally, met CI: six failures, none of them naming the cause.)
-  let parsed: { rows?: Record<string, unknown>[] };
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
+    parsed = JSON.parse(stdout);
   } catch (error) {
     throw new Error(
       `supabase db query did not return JSON (${String(error)}). Raw stdout, first 800 chars:\n` +
         stdout.slice(0, 800),
     );
   }
-  if (!Array.isArray(parsed.rows)) {
-    throw new Error(
-      "supabase db query returned JSON with no `rows` array — the measurement did not happen. " +
-        `Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
-    );
-  }
-  return parsed.rows;
+  return normalizeRows(parsed, stdout);
 }
 
 /** `has_table_privilege` for every role x privilege pair, keyed "role.PRIVILEGE". */

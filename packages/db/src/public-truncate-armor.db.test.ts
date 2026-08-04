@@ -66,6 +66,27 @@ function runQuery(sql: string, json: boolean): string {
   });
 }
 
+/**
+ * `supabase db query -o json` emits TWO shapes for the SAME pinned CLI version (2.109.1):
+ * `{ boundary, rows: [...] }` on macOS locally, and a BARE ARRAY on ubuntu in CI. Measured when
+ * these specs first ran outside a developer machine — the query had succeeded and returned the
+ * right rows; only the wrapper differed, and the reader was looking for `rows`.
+ *
+ * This spec is the one that most needs the distinction: it ENUMERATES tables, so "no table has
+ * TRUNCATE" and "I could not read the answer" are the same sentence unless one of them throws.
+ */
+function normalizeRows(parsed: unknown, stdout: string): Record<string, unknown>[] {
+  if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+  if (parsed && typeof parsed === "object") {
+    const rows = (parsed as { rows?: unknown }).rows;
+    if (Array.isArray(rows)) return rows as Record<string, unknown>[];
+  }
+  throw new Error(
+    "supabase db query returned neither a row array nor { rows: [...] } — the measurement did " +
+      `not happen. Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
+  );
+}
+
 /** Rows of a read-only query against the LOCAL stack (stdout is pure JSON; logs go to stderr). */
 function queryRows(sql: string): Record<string, unknown>[] {
   let stdout: string;
@@ -82,22 +103,16 @@ function queryRows(sql: string): Record<string, unknown>[] {
   // `expected 0 to be greater than 0` — instead of naming itself. A query that returned nothing
   // is a BROKEN MEASUREMENT, and this enumerating spec is exactly the one that must not confuse
   // the two: "no tables have TRUNCATE" and "I could not see any tables" look identical otherwise.
-  let parsed: { rows?: Record<string, unknown>[] };
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(stdout) as { rows?: Record<string, unknown>[] };
+    parsed = JSON.parse(stdout);
   } catch (error) {
     throw new Error(
       `supabase db query did not return JSON (${String(error)}). Raw stdout, first 800 chars:\n` +
         stdout.slice(0, 800),
     );
   }
-  if (!Array.isArray(parsed.rows)) {
-    throw new Error(
-      "supabase db query returned JSON with no `rows` array — the measurement did not happen. " +
-        `Raw stdout, first 800 chars:\n${stdout.slice(0, 800)}`,
-    );
-  }
-  return parsed.rows;
+  return normalizeRows(parsed, stdout);
 }
 
 /**
