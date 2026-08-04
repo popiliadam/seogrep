@@ -199,7 +199,33 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## Oturum devir notu (HANDOFF — 2026-08-03, REMEDIATION ÜÇÜNCÜ TUR — **KOD TARAFI BİTTİ**)
+## 🚢 2026-08-04 — DÜŞMANCA AUDIT KAPANDI VE CANLIYA ÇIKTI
+
+**PR #34 merge edildi → `main` @ `2ca481a`. Aşağıdaki handoff bloğu "MERGE EDİLMEDİ" diyor; O ARTIK
+GEÇERSİZ — tarihsel kayıt olarak duruyor.**
+
+- **52/54 FIXED · 1 PARTIAL (H-06) · 1 HUMAN BLOCKED (H-04) · 0 NOT REPRODUCIBLE.**
+- **Cloud 0013→0020 merge'den ÖNCE uygulandı** → subscription-event penceresi hiç açılmadı.
+- **Deploy sırası kasten kuruldu:** `deploy-mcp` daldan `workflow_dispatch` ile ÖNCE, sonra merge →
+  Netlify web. Sebep: merge tek başına web'i önce çıkarırdı, çünkü bu turun eklediği `require-ci`
+  mcp'yi main CI'sini beklemeye sokuyor — v3 GSC mührünün tersi. `skip_ci_gate` KULLANILMADI;
+  **`require-ci` ilk gerçek deploy'unda geçti.**
+- Canlı: `/status` → `ok · 0 hata · schema {status:"ready", requires:"rpc:dfs_spend_today_usd"}` ·
+  web 200 · pricing'de 65/70/90 · privacy "4 August 2026" · `/login` noindex.
+- Kapanış §33 sevkiyatı ve CI'nin ilk koşusunda bulduğu iki kusuru kaydeder.
+  Cloud mekaniği: `docs/runbooks/2026-08-cloud-apply-0013-0020.md` §F.
+
+### AÇIK KALANLAR — hepsi insanda, hiçbiri kod değil
+1. **H-04 vendor parolası rotasyonu → `DFS_LIVE` KAPALI KALMALI.** 0014+0016 canlıda, üç ön
+   koşuldan ikisi tamam. "Dormant" gerekçesi hesap fonlandığı anda düşer.
+2. **H-06 politika yarısı** — CAPTCHA / `enable_signup` Supabase panosunda (operatör seçimi: c).
+3. **Branch protection** — `static-guards` + `licenses` required listede DEĞİL; `strict` ve
+   `enforce_admins` kapalı.
+4. `PADDLE_ATTRIBUTION_ENFORCE` **set edilmedi** — doğru varsayılan. Açma: `scripts/paddle-smoke.md`.
+
+---
+
+## Oturum devir notu (HANDOFF — 2026-08-03, REMEDIATION ÜÇÜNCÜ TUR — *merge ÖNCESİ, tarihsel*)
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
