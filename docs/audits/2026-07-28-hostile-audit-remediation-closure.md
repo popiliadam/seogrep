@@ -1133,3 +1133,82 @@ Buna karşılık **kaynak audit'in NO-GO hükmü kısmen ayaktadır**, ve bunu y
 - **`DFS_LIVE` açılmamalıdır** — H-04 rotasyonu yapılmadı ve 0014+0016 uygulanmadı.
 
 Bu dal `main`'e **merge EDİLMEDİ ve PUSH EDİLMEDİ**; ikisi de insan kapısıdır.
+
+---
+
+## 33. SEVKİYAT (2026-08-04) — CANLIDA
+
+Dal `main`'e merge edildi (`2ca481a`, PR #34) ve **canlıya çıktı**. Bu bölüm ne olduğunu ve
+sevkiyatın kendisinin ne bulduğunu kaydeder.
+
+### Sıra — kasten bozulmadı
+
+Merge tek başına **yanlış sırayla** deploy ederdi: Netlify web'i hemen başlatır, `deploy-mcp` ise
+bu turun eklediği `require-ci` yüzünden main'in yeni CI koşusunu bekler (~4 dk). Yani web önce,
+mcp sonra çıkardı — M-17'nin v3 GSC mührünün istediğinin tersi. Kapı doğru iş yapıyor; yan etkisi
+sıralamayı bozuyordu.
+
+Operatör kararıyla `deploy-mcp` **daldan** `workflow_dispatch` ile önce tetiklendi, mcp canlıya
+çıktıktan SONRA merge edildi. `skip_ci_gate` **kullanılmadı** — kapının kendisi sınansın diye.
+**`require-ci` ilk gerçek deploy'unda geçti:** CI'yi sorguladı, o SHA için yeşil buldu, izin verdi.
+
+### Cloud şema — merge'den ÖNCE uygulandı
+
+0013→0020'nin sekizi de merge'den önce uygulandı ve doğrulandı (§F), **yani runbook'un uyardığı
+subscription-event penceresi hiç açılmadı.** Bölüşüm: şef 0013/0014/0015 ve 0018/0019'u MCP ile,
+insan 0016/0017/0020'yi SQL Editor'dan (classifier `revoke`/`drop` içerenleri bloklıyor).
+
+### Canlı doğrulama (ölçüldü, iddia değil)
+
+```
+mcp  /healthz  200 {"ok":true}
+mcp  /status   200 ok · 0 errorsSinceBoot · 0 pendingJobs
+               schema: { status: "ready", requires: "rpc:dfs_spend_today_usd" }
+web  /  /privacy  /pricing   200
+M-26 pricing'de "Ranked keywords" ve 65/70/90 görünür
+M-25 privacy: "4 August 2026" · ledger muhasebe istisnası · hesap kaydı cümlesi
+L-19 /login: <meta name="robots" content="noindex, follow">
+```
+
+**M-13'ün şema probu ilk kez üretimde ölçüm yaptı** ve `requires` alanıyla **neyi** ölçtüğünü
+söylüyor — `ready` adlandırılmış bir ölçüm, boş bir iddia değil. Tasarım şartı buydu.
+
+### CI'nin ilk koşusu iki gerçek kusur buldu — ikisi de aynı aileden
+
+Bu dal bugüne kadar hiç push edilmemişti, yani `licenses` ve iki DB spec'i **hiç CI'de koşmamıştı**.
+İlk temasta ikisi de düştü:
+
+1. **Lisans kapısı ubuntu'da hiç BAŞLAYAMIYORDU** — `Argument list too long`, exit 126. Raporu
+   node'a export edilmiş env değişkeniyle geçiriyordu; `E2BIG` argv+env toplamını sayar ve Linux
+   tek dizeyi 128 KB ile sınırlar. macOS'ta sınır yok, o yüzden her lokal koşu geçmişti.
+   Düzeltme: stdin. *Başlayamayan kapı, hiçbir şey ölçmeden PASS diyen kapıyla aynı ailedendir* —
+   bu sefer güvenli yöne düştü (gürültülü, kırmızı), ama aradaki fark bir kabuk mekaniğiydi.
+
+2. **İki DB spec'i "ölçtüm, sonuç boş" diyordu — oysa ölçüm YAPILMIŞTI.**
+   `supabase db query -o json` **aynı sabit sürümde** (2.109.1) iki şekil üretiyor:
+   macOS'ta `{ boundary, rows: [...] }`, ubuntu'da **çıplak dizi**. Sorgu çalışmış, doğru veriyi
+   döndürmüştü (CI logunda `api_keys`, `credit_ledger`, `granted: true` görünüyor); yalnız
+   sarmalayıcı farklıydı ve okuyucu `rows` arıyordu. `?? []` bunu sessizce boşa çeviriyordu, o
+   yüzden altı assertion'ın hiçbiri sebebi söylemiyordu.
+
+   **Bu, §F'deki 0016 marker hatasının tam kardeşidir.** Her ikisinde de sistem *"ölçtüm"* diyordu,
+   gerçek *"okuyamadım"*dı. Enumerate eden bir testte "hiçbir tabloda TRUNCATE yok" ile "hiçbir
+   tabloyu göremedim" aynı cümleye çıkar — ve yalnız biri iyi haberdir.
+
+   Düzeltme iki adımda yapıldı ve sırası önemliydi: **önce** hata gürültülü hale getirildi (ham
+   stdout basıldı), **sonra** kök neden okundu. Şefin ilk iki hipotezi (CLI sürüm kayması, link
+   durumu) ölçümle çürütüldü.
+
+### Sevkiyat sonrası hâlâ açık
+
+- **H-04** — DataForSEO vendor parolası rotasyonu yapılmadı. **`DFS_LIVE` KAPALI KALMALI.**
+  0014 ve 0016 artık canlıda, yani üç ön koşuldan ikisi tamam; rotasyon değil.
+- **H-06 PARTIAL** — teknik yarı canlıda ve bağlı; politika yarısı operatör seçimiyle açık, gerçek
+  kabul kapısı (CAPTCHA / `enable_signup`) Supabase panosunda.
+- **`PADDLE_ATTRIBUTION_ENFORCE` set EDİLMEDİ** — grace varsayılan, doğru olan bu. Açma prosedürü
+  `scripts/paddle-smoke.md`.
+- Branch protection: `static-guards` ve `licenses` required listede değil; `strict` ve
+  `enforce_admins` kapalı.
+- **L-18 Dockerfile build grafiği** — mcp deploy'u başarılı olduğuna göre imaj gerçekten build
+  oldu; bu, merge-öncesi şart koşulan smoke'un fiilen karşılanması sayılabilir. Yine de bu bir
+  yan-etki gözlemi, kasıtlı bir smoke değil.
