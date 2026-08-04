@@ -79,6 +79,19 @@ BSD-3-Clause
 #   * type-fest (MIT OR CC0-1.0) - needs no entry at all and has none: an SPDX OR is a CHOICE,
 #     the MIT branch already satisfies the policy, and this gate evaluates the expression
 #     instead of comparing strings. Named here so its absence is not read as an oversight.
+#
+# RATIFICATION (human, 2026-08-03 — audit M-27): the operator ratified the exception list below
+# as it stands. What was ratified is narrow and worth stating so the next reader does not widen it
+# by accident:
+#   * All six entries are TRANSITIVE. There are zero direct dependencies outside the allowlist —
+#     they arrive through next, fumadocs-*, @supabase/* and pg-boss.
+#   * Only two carry real copyleft obligations: @img/sharp-libvips-* (LGPL-3.0-or-later) and
+#     lightningcss* (MPL-2.0). Both are unmodified, dynamically-consumed prebuilt binaries.
+#   * argparse (Python-2.0) and caniuse-lite (CC-BY-4.0) are permissive in practice; caniuse-lite
+#     is browser-support DATA, not code.
+# Ratifying these entries is NOT a licence to add more. A new entry is a fresh human decision and
+# must clear both the runtime shape check and the licenses-exceptions-pin in the self-test.
+# contract.md itself was NOT reworded — promoting 0BSD into the allowlist stays open.
 EXCEPTIONS='
 @img/sharp-libvips-darwin-*|LGPL-3.0-or-later|prebuilt libvips binary, via sharp <- next image optimisation
 @img/sharp-libvips-linux-*|LGPL-3.0-or-later|prebuilt libvips binary, via sharp <- next image optimisation
