@@ -42,19 +42,34 @@ export function ForgotPasswordForm() {
         redirectTo: `${base}/auth/callback`,
         ...(captchaToken ? { captchaToken } : {}),
       });
-      // An `error` here IS account-correlated ("user not found"), so it must never change what
-      // is rendered — logged only.
-      if (error) console.error("password reset request failed:", error.message);
+      if (error) {
+        console.error("password reset request failed:", error.message);
+        // TRANSPORT failure, not an answer about this address. Measured in the installed
+        // auth-js@2.110.7 rather than assumed: a fetch rejection becomes AuthRetryableFetchError,
+        // which extends CustomAuthError, so resetPasswordForEmail's catch sees isAuthError and
+        // RESOLVES with { error } (GoTrueClient.js:3705-3710) — it does not throw. A first
+        // attempt at this check lived in the catch block below and was therefore dead code for
+        // the exact case it was written for: on flaky wifi the user still read "we've sent a
+        // link" for mail that was never requested.
+        //
+        // Enumeration-safe because this class is not account-correlated (status 0 / 5xx say
+        // nothing about whether the address exists). EVERY other error — user-not-found, rate
+        // limit, captcha — falls through to the identical "sent" text below, which is the
+        // property the two symmetry tests pin.
+        if (error.name === "AuthRetryableFetchError") {
+          setStatus("unreachable");
+          return;
+        }
+      }
     } catch (error) {
-      // A THROW is different, and conflating the two was a real defect: a network failure or a
-      // Supabase outage is not correlated with whether the address exists, so admitting it leaks
-      // nothing — while claiming "we sent a link" leaves someone waiting for mail that was never
-      // sent. Found by a referee.
+      // Retained for a genuine throw: a non-AuthError escapes the client's catch and lands here
+      // (see the `throw error` on the same lines above). Rendering the same unreachable message
+      // is right — it is still not an answer about the address.
       console.error("password reset request threw:", error);
       setStatus("unreachable");
       return;
     }
-    // Unconditional for every SERVER answer: see the enumeration note above.
+    // Unconditional for every ACCOUNT-CORRELATABLE server answer: see the enumeration note above.
     setStatus("sent");
   }
 

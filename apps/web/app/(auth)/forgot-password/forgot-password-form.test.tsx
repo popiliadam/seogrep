@@ -60,16 +60,44 @@ describe("ForgotPasswordForm", () => {
     expect(document.body.textContent).not.toMatch(/user not found/i);
   });
 
-  // A transport failure is NOT account-correlated, so saying so leaks nothing — while claiming
-  // "we sent a link" would leave the user waiting for mail that was never sent. This is the one
-  // place the form is allowed to admit failure, and it must not name the underlying error.
-  it("admits it could not reach the server, without confirming a send", async () => {
+  /**
+   * THE SHAPE THE REAL CLIENT PRODUCES. auth-js wraps a fetch rejection in
+   * AuthRetryableFetchError, which is an AuthError, so resetPasswordForEmail RESOLVES with
+   * { error } instead of throwing (GoTrueClient.js:3705-3710). An earlier version of this test
+   * used mockRejectedValue and therefore passed while the shipped form still told users on flaky
+   * wifi that a link had been sent. A referee measured the real shape; this mirrors it.
+   */
+  it("admits it could not reach the server when the client resolves a retryable fetch error", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    resetPasswordForEmail.mockResolvedValue({
+      error: { name: "AuthRetryableFetchError", message: "Failed to fetch", status: 0 },
+    });
+    await submit("someone@example.com");
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/failed to fetch/i);
+    expect(document.body.textContent).not.toMatch(/we've sent|reset link/i);
+  });
+
+  // A non-AuthError does escape the client's catch, so the throw path is still reachable.
+  it("admits it could not reach the server when the call throws outright", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     resetPasswordForEmail.mockRejectedValue(new Error("network down"));
     await submit("someone@example.com");
     expect(await screen.findByRole("alert")).toBeDefined();
-    expect(screen.queryByRole("status")).toBeNull();
     expect(document.body.textContent).not.toMatch(/network down/i);
-    expect(document.body.textContent).not.toMatch(/we've sent|reset link/i);
+  });
+
+  // The line between the two branches. A rate limit IS account-correlatable, so it must keep
+  // rendering the same confirmation as success — only the transport class may admit failure.
+  it("still confirms on an account-correlatable error, so the two stay indistinguishable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    resetPasswordForEmail.mockResolvedValue({
+      error: { name: "AuthApiError", message: "Email rate limit exceeded", status: 429 },
+    });
+    await submit("someone@example.com");
+    expect(await screen.findByRole("status")).toBeDefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/rate limit/i);
   });
 });

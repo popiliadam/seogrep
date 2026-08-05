@@ -67,16 +67,18 @@ function loadScript(): Promise<void> {
       scriptPromise = null;
       reject(new Error("Turnstile script failed to load"));
     };
-    // A tag with no memoised promise means a module re-evaluation (HMR) left it behind. Attach to
-    // it instead of appending a second copy — but only trust it once it has actually executed.
+    // A tag with no memoised promise means a module re-evaluation (HMR) left it behind.
     const existing = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
     if (existing) {
-      if (globalThis.turnstile) resolve();
-      else {
-        existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener("error", fail, { once: true });
+      if (globalThis.turnstile) {
+        resolve();
+        return;
       }
-      return;
+      // Tag present, API absent, and no way to tell whether `load` already fired — attaching a
+      // listener here can wait forever on an event that is in the past, which is the silent
+      // never-settles version of the bug this function exists to fix. Discard it and start a
+      // clean load instead; a duplicate request is cheap, a permanently disabled button is not.
+      existing.remove();
     }
     const script = document.createElement("script");
     script.id = SCRIPT_ID;
