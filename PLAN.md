@@ -233,6 +233,54 @@ Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC
   adı **SINIRSIZ**. Açma İKİ adım (env + Supabase toggle); yalnız biri sign-in'i de kırar.
   Prosedür `.env.example`'da.
 
+## 🔧 2026-08-05 — OPERATÖR KAPILARI: branch protection KAPANDI, iki kapı ÖLÇÜLDÜ
+
+Şef+operatör birlikte. **Kod değişikliği YOK**; üç doküman düzeltmesi var (closure §34).
+
+- **✅ Branch protection KAPANDI.** `gh api .../branches/main/protection` ile önce/sonra ölçüldü;
+  diff **tam olarak üç şey** değiştirdi, başka hiçbir alan bozulmadı:
+  `contexts` 3 → **5** (+`static-guards` +`licenses`) · `strict` false → **true** ·
+  `enforce_admins` false → **true**. `required_approving_review_count` **0'da BIRAKILDI** —
+  GitHub kendi PR'ını onaylatmaz; tek kişilik repoda 1 yapmak koşulsuz merge kilidi olurdu.
+  `deploy` / `require-ci` **KASTEN eklenmedi**: `deploy-mcp.yml`'in `pull_request` tetikleyicisi
+  yok, required yapılsalar her PR sonsuza dek "Expected" bekler.
+  **Yan etki, bilerek kabul edildi:** main'e doğrudan push bitti (bugüne dek `fdf41aa` ve `5ba5ce2`
+  öyle gitmişti). Artık tek satırlık docs değişikliği bile PR + yeşil kontroller ister.
+  *Ölçülen KONFİGÜRASYONDUR; fiili bloklama ilk gerçek PR'da görülecek.*
+- **`lighthouse` bilerek required YAPILMADI.** 7 koşu / 7 yeşil — ama hepsi tek günde (2026-08-04),
+  ~4 farklı commit üzerinde. CPU-duyarlı bir perf assertion'ı için ince örneklem; ~10 gerçek PR
+  koşusundan sonra tekrar bakılacak. `ci.yml:87`'deki "runner davranışı doğrulanamadı" şerhi
+  kısmen kapandı ama tamamen değil.
+- **H-06 canlı ölçüm:** `/signup` → **200, açık**; ana sayfa "Private beta" ×2 + "waitlist" ×13.
+  Ama `/signup`'a link **hiçbir pazarlama sayfasında yok** (`/`, `/pricing`, `/how-it-works`,
+  `/docs` → 0 link; tek link `/login` sayfasında). Gerçek huni `/#waitlist` → `/api/waitlist`.
+  `/signup` **reklamsız arka kapı**. → `enable_signup`'ı kapatmak ilan edilmiş duruşa uyar ve
+  **hiçbir CTA kırmaz**; bedeli, yeni müşterinin self-servis ödeyememesi (checkout `/app/billing`
+  üzerinden başlar, o da login ister).
+- **`PADDLE_ATTRIBUTION_ENFORCE` AÇILAMAZ — ölçülmüş engel var.** Tek aktif abonelik
+  `9da92d28…` (`starter`/`active`), `created_at` **2026-07-18**. Attribution token main'e
+  **2026-08-04** girdi (`2ca481a`; kod 2026-08-03). Abonelik token'dan **17 gün eski** → Paddle
+  `custom_data`'sında token YOK → `absent` → `route.ts:176` gereği **yenilemede reddedilir**
+  (muafiyet yalnız `expired` içindir, "absent forged malformed her iki tarafta da reddedilir").
+  **`current_period_end` = 2026-08-18** → bayrak açık olsaydı, ödemiş tek müşterinin yenilemesi
+  13 gün sonra 500 dönecekti. Runbook: *"sadece churn düzeltir"*.
+- **Log sayımı bu kararı zaten VEREMEZDİ.** `paddle_events` toplam **3 satır**, hepsi işlenmiş,
+  sonuncusu **2026-07-28** — token çıktığından beri **sıfır event**. Log'daki `absent=0` "temiz"
+  değil, **ölçüm yok** demek. Ders 7'nin birebir tarifi.
+- **Supabase advisors ölçüldü:** `auth_leaked_password_protection` **WARN/disabled** (Faz 3'ten
+  beri kuyrukta, 1 tık). Üç `rls_enabled_no_policy` INFO (`dfs_spend`, `paddle_events`,
+  `trial_claims`) **hata DEĞİL** — RLS açık + policy yok = yalnız service-role erişir; bu tablolar
+  için doğru duruş budur.
+
+### Bu blok sonrası AÇIK
+1. **H-04 rotasyonu** (operatör) → `DFS_LIVE` KAPALI kalır.
+2. ~~**`enable_signup` kararı**~~ **KARAR VERİLDİ: AÇIK KALIYOR** — waitlist kaldırıldı, kayıt
+   self-servis (yukarıdaki 🔓 bloğu). Sızmış-parola tıkı **YAPILAMIYOR**: organizasyon planı
+   `free`, o ayar Pro gerektiriyor (ölçüldü).
+3. **CAPTCHA bir KOD işidir, pano tıkı değil** — closure §34. Kod artık YAZILDI ve uykuda
+   (`NEXT_PUBLIC_TURNSTILE_SITE_KEY`); açmak operatörün Cloudflare + Supabase adımlarını bekliyor.
+4. **2026-08-18** — tek aboneliğin yenilemesi; bayrak KAPALIYKEN izlenecek.
+
 ## 🚢 2026-08-04 — DÜŞMANCA AUDIT KAPANDI VE CANLIYA ÇIKTI
 
 **PR #34 merge edildi → `main` @ `2ca481a`. Aşağıdaki handoff bloğu "MERGE EDİLMEDİ" diyor; O ARTIK
@@ -252,10 +300,14 @@ GEÇERSİZ — tarihsel kayıt olarak duruyor.**
 ### AÇIK KALANLAR — hepsi insanda, hiçbiri kod değil
 1. **H-04 vendor parolası rotasyonu → `DFS_LIVE` KAPALI KALMALI.** 0014+0016 canlıda, üç ön
    koşuldan ikisi tamam. "Dormant" gerekçesi hesap fonlandığı anda düşer.
-2. **H-06 politika yarısı** — CAPTCHA / `enable_signup` Supabase panosunda (operatör seçimi: c).
-3. **Branch protection** — `static-guards` + `licenses` required listede DEĞİL; `strict` ve
-   `enforce_admins` kapalı.
+2. **H-06 politika yarısı** — `enable_signup` Supabase panosunda (operatör seçimi: c).
+   ⚠️ **DÜZELTME (2026-08-05):** bu satır önce "CAPTCHA / `enable_signup` panoda" diyordu.
+   **CAPTCHA panoda AÇILMAZ** — istemci wiring'i gerektirir ve tek başına açılırsa LOGIN'i de
+   kırar. Gerekçe ve kanıt: closure §34.
+3. ~~**Branch protection**~~ → **✅ 2026-08-05'te KAPANDI**, yukarıdaki 🔧 bloğuna bak.
 4. `PADDLE_ATTRIBUTION_ENFORCE` **set edilmedi** — doğru varsayılan. Açma: `scripts/paddle-smoke.md`.
+   ⚠️ **2026-08-05 ölçümü: şu an açılamaz.** Token-öncesi tek aktif abonelik var; yenilemesi
+   `absent` okunup reddedilirdi. Detay yukarıdaki 🔧 bloğunda.
 
 ---
 
