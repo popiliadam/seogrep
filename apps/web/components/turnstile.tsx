@@ -22,8 +22,10 @@ import { useEffect, useRef, useState } from "react";
  * THE DORMANT CONTRACT. With NEXT_PUBLIC_TURNSTILE_SITE_KEY unset this renders null, loads no
  * script, and reports a null token — so the forms behave exactly as they did before it existed.
  * Turning it on is: set the env var, then enable CAPTCHA in the Supabase dashboard with the
- * matching secret. Doing only ONE of those two breaks auth, which is why both live in the
- * enable procedure in docs/runbooks, not in this file's control.
+ * matching secret. Doing only ONE of those two breaks sign-in and password reset as well as
+ * signup. The step-by-step procedure is in the repo-root `.env.example`, next to the variable
+ * itself — there is no Turnstile runbook, and an earlier version of this comment pointed at a
+ * `docs/runbooks` file that does not exist, which is the worst possible place to be wrong.
  */
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
@@ -43,18 +45,54 @@ export function turnstileEnabled(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 }
 
+/**
+ * Memoised at module scope, NOT keyed on "is the tag in the DOM".
+ *
+ * The first version resolved as soon as `getElementById(SCRIPT_ID)` returned something, which is
+ * true the instant the tag is appended and long before it has executed. A referee found what that
+ * costs: React StrictMode double-invokes effects in dev, so pass 1 appends the tag and pass 2
+ * resolves immediately, finds `globalThis.turnstile` still undefined, and bails — no widget, no
+ * error, token stuck at null, submit button disabled forever. Same shape in production on a fast
+ * navigation between /login and /signup while the script is in flight.
+ *
+ * One shared promise means every caller awaits the SAME real load event. A rejection clears it so
+ * a later mount can retry rather than inheriting a permanently poisoned promise.
+ */
+let scriptPromise: Promise<void> | null = null;
+
 function loadScript(): Promise<void> {
-  if (document.getElementById(SCRIPT_ID)) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  if (scriptPromise) return scriptPromise;
+  scriptPromise = new Promise<void>((resolve, reject) => {
+    const fail = () => {
+      scriptPromise = null;
+      reject(new Error("Turnstile script failed to load"));
+    };
+    // A tag with no memoised promise means a module re-evaluation (HMR) left it behind. Attach to
+    // it instead of appending a second copy — but only trust it once it has actually executed.
+    const existing = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    if (existing) {
+      if (globalThis.turnstile) resolve();
+      else {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", fail, { once: true });
+      }
+      return;
+    }
     const script = document.createElement("script");
     script.id = SCRIPT_ID;
     script.src = SCRIPT_SRC;
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Turnstile script failed to load"));
+    script.onerror = fail;
     document.head.appendChild(script);
   });
+  return scriptPromise;
+}
+
+/** Test seam: the memoised promise is module state and would leak between cases. */
+export function __resetTurnstileScriptForTest(): void {
+  scriptPromise = null;
 }
 
 /**
@@ -87,7 +125,15 @@ export function TurnstileWidget({
 
     loadScript()
       .then(() => {
-        if (cancelled || !globalThis.turnstile) return;
+        if (cancelled) return;
+        // The script resolved but exposed no API: a CSP block, an ad blocker, or a Cloudflare
+        // outage. Silently returning here is what left the button disabled with no explanation.
+        if (!globalThis.turnstile) {
+          console.error("turnstile: script loaded but window.turnstile is undefined");
+          setFailed(true);
+          onToken(null);
+          return;
+        }
         container.replaceChildren(); // drop any previous widget DOM before re-rendering
         widgetId = globalThis.turnstile.render(container, {
           sitekey: siteKey,
