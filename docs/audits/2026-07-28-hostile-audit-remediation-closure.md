@@ -1212,3 +1212,179 @@ Bu dal bugüne kadar hiç push edilmemişti, yani `licenses` ve iki DB spec'i **
 - **L-18 Dockerfile build grafiği** — mcp deploy'u başarılı olduğuna göre imaj gerçekten build
   oldu; bu, merge-öncesi şart koşulan smoke'un fiilen karşılanması sayılabilir. Yine de bu bir
   yan-etki gözlemi, kasıtlı bir smoke değil.
+
+---
+
+## 34. DÜZELTME VE OPERATÖR KAPILARI (2026-08-05)
+
+Bu bölüm §26/§27.1/§32/§33'teki **bir teknik iddiayı düzeltir** ve sevkiyat sonrası operatör
+kapılarından ikisinin ölçümünü kaydeder. Yukarıdaki bölümler **değiştirilmedi** — tarihsel kayıt
+olarak duruyorlar; çelişki halinde **bu bölüm geçerlidir**.
+
+### 34.1 ❌ DÜZELTME — "CAPTCHA Supabase panosunda" iddiası YANLIŞ
+
+**Nerede geçiyor:** §26 karar tablosu · §27.1 H-06 satırı · §32 ("koda kapalıdır") · §33.
+Hepsi CAPTCHA'yı `enable_signup` ile aynı kaba koyup "pano ayarı" diye sunuyor.
+
+**`enable_signup` için doğru. CAPTCHA için yanlış.**
+
+**Ölçüm:**
+
+| Kanıt | Sonuç |
+|---|---|
+| `grep -rni captcha apps/web` (node_modules/.next hariç) | **0 satır** |
+| `auth-form.tsx:33` | `signUp({ email, password, options: { emailRedirectTo } })` — `captchaToken` **yok** |
+| Supabase resmî dokümanı (`/guides/auth/auth-captcha`) | Pano toggle'ı + **frontend component** + `options: { captchaToken }` — üçü birden şart |
+| Aynı doküman | CAPTCHA "sign-in, sign-up **and password reset**" formlarını korur |
+
+**Sonuç:** CAPTCHA panodan açılırsa istemci token üretmediği için sunucu istekleri reddeder.
+Kırılan yalnız signup değil — **mevcut müşteriler de giriş yapamaz.** CAPTCHA bir operatör tıkı
+değil, bir **kod işidir** (hCaptcha/Turnstile widget + token + sitekey env'i).
+
+§32'nin *"gerçek kabul kapısı (CAPTCHA / `enable_signup`) Supabase panosundadır ve koda kapalıdır"*
+cümlesi bu yüzden yalnız `enable_signup` için okunmalıdır.
+
+**Bu, deponun 9. dersinin bir örneğidir:** sınanmamış bir iddia dört dokümana kopyalanmış.
+
+### 34.2 ✅ Branch protection kapandı — ölçülmüş önce/sonra
+
+`gh api repos/popiliadam/seogrep/branches/main/protection`, önce ve sonra, borusuz:
+
+| Alan | Önce | Sonra |
+|---|---|---|
+| `required_status_checks.contexts` | `[gitleaks, verify, verify-db]` | `[gitleaks, verify, verify-db, licenses, static-guards]` |
+| `strict` | `false` | **`true`** |
+| `enforce_admins` | `false` | **`true`** |
+| `required_approving_review_count` | `0` | `0` *(kasten değişmedi)* |
+
+Normalize edilmiş JSON diff'i **yalnız bu üç değişikliği** gösterdi; `required_pull_request_reviews`,
+`allow_force_pushes`, `allow_deletions` ve diğerleri bozulmadı.
+
+**Context adları YAML'dan değil, gerçek check-run'lardan doğrulandı** (`2ca481a` üzerinde 8 check,
+hepsi success). `ci.yml`'deki hiçbir job `name:` tanımlamıyor → context = job id.
+
+**İki bilinçli dışarıda bırakma:**
+- `deploy` ve `require-ci` — `deploy-mcp.yml`'in `pull_request` tetikleyicisi yok. Required
+  yapılsalardı her PR sonsuza dek "Expected — waiting for status" bekler, yani kalıcı merge kilidi.
+- `lighthouse` — 7/7 yeşil ama tümü tek gün / ~4 commit. CPU-duyarlı perf assertion'ı için ince
+  örneklem. ~10 gerçek PR koşusundan sonra tekrar değerlendirilecek.
+- `required_approving_review_count` **0'da bırakıldı**: GitHub PR sahibinin kendi PR'ını
+  onaylamasına izin vermez; tek kişilik repoda 1 yapmak koşulsuz merge kilidi olurdu.
+
+**Kabul edilen yan etki:** `enforce_admins` artık main'e doğrudan push'u bitiriyor. Bu turdan önce
+`fdf41aa` ve `5ba5ce2` PR'sız doğrudan push edilmişti (ölçüldü).
+
+**Kapsam şerhi:** ölçülen **konfigürasyondur**, fiili bloklama değil. Davranış kanıtı ilk gerçek
+PR'da bedavaya gelecek. Bunu "kapı çalışıyor" diye yazmıyoruz — "kapı kurulu" diye yazıyoruz.
+
+### 34.3 ⛔ `PADDLE_ATTRIBUTION_ENFORCE` açılamaz — ölçülmüş engel
+
+`scripts/paddle-smoke.md`'nin 2. ön koşulu ("token'dan eski abonelik var mı") canlı DB'de
+sorgulandı ve **boş dönmedi**:
+
+```
+9da92d28…  plan=starter  status=active
+created_at         = 2026-07-18
+current_period_end = 2026-08-18
+```
+
+Attribution token'ı getiren kod 2026-08-03'te yazıldı, `2ca481a` ile **2026-08-04**'te main'e girdi.
+Abonelik token'dan **17 gün eski** → Paddle tarafındaki `custom_data`'sında `attribution_token` yok
+→ `absent`. `route.ts:176`: *"Everything unproved — absent, forged, malformed — is refused on both
+sides."* Yenileme muafiyeti yalnız `expired` (var ama bayat) token içindir.
+
+**Somut sonuç:** bayrak açılsaydı, **2026-08-18'de** ödemiş tek müşterinin yenilemesi 500 döner ve
+kredisi yatmazdı. Runbook'un hükmü: *"waiting does not fix those, only churn does."*
+
+**Log sayımı bu kararı veremezdi — ve bu ayrıca kaydedilmelidir.** `paddle_events` toplam **3
+satır**, hepsi `processed_at` dolu, sonuncusu **2026-07-28**. Token 2026-08-04'te çıktığına göre
+**token'dan sonra hiç webhook eventi gelmemiş**. Log'da `reason:"absent"` sayısı sıfır çıkardı —
+ama bu "temiz" değil, **"ölçülecek veri yok"** demektir. Ders 7'nin (*yeşil kapı NE ölçtüğüyle
+raporlanır*) birebir tekrarı; bu kez bayrak açılmadan yakalandı.
+
+### 34.4 H-06 canlı yüzey ölçümü (politika kararı hâlâ operatörde)
+
+| Ölçüm | Sonuç |
+|---|---|
+| `curl -o /dev/null -w %{http_code} https://seogrep.com/signup` | **200** — açık |
+| Ana sayfada politika dili | "Private beta" ×2 · "waitlist" ×13 |
+| `/`, `/pricing`, `/how-it-works`, `/docs` içinde `href="/signup"` | **0, 0, 0, 0** |
+| Kaynakta `/signup` linki veren tek yer | `app/(auth)/login/page.tsx:46` |
+
+Yani `/signup` **reklamsız bir arka kapı**: huni zaten `/#waitlist` → `/api/waitlist`'e gidiyor.
+`enable_signup`'ı kapatmak ilan edilmiş private-beta duruşuna uyar ve **tanıtılmış hiçbir yolu
+kırmaz**. Bedeli açıkça yazılmalıdır: yeni müşteri **self-servis ödeyemez** (checkout
+`/app/billing` üzerinden başlar, o da login ister) — kabul akışı davete döner.
+
+### 34.5 Supabase advisors (ölçüldü)
+
+- `auth_leaked_password_protection` → **WARN, disabled.** Faz 3'ten beri insan kuyruğunda; 1 tık,
+  kod gerektirmez.
+- `rls_enabled_no_policy` ×3 (`dfs_spend`, `paddle_events`, `trial_claims`) → **INFO, ve bulgu
+  değil.** RLS açık + policy yok = anon/authenticated'a tamamen kapalı, yalnız service-role erişir.
+  Bu tablolar için hedeflenen duruş budur. Gelecekteki bir audit'in bunu "eksik policy" diye
+  yazmaması için buraya kaydedildi.
+
+### 34.6 Bu turda düzeltilen doküman kusurları
+
+| Yer | Kusur | Durum |
+|---|---|---|
+| PLAN.md AÇIK KALANLAR #2 | CAPTCHA "panoda" | Düzeltildi + §34.1'e işaret |
+| PLAN.md AÇIK KALANLAR #3 | Branch protection açık deniyor | ✅ kapandı olarak işaretlendi |
+| PLAN.md AÇIK KALANLAR #4 | Bayrak "açılabilir" izlenimi | Ölçülmüş engel eklendi |
+| `0020_trial_mailbox_dimension.sql` (c) | CAPTCHA'yı pano ayarı sayıyor | İstemci-wiring şerhi eklendi |
+| `scripts/paddle-smoke.md` | Log'un NEREDE olduğu yazmıyordu | Netlify function log'u açıkça yazıldı |
+
+**Not:** oturum devir promptunda webhook log'u "Fly'da" deniyordu. Webhook `apps/web`'dedir, yani
+**Netlify**'da koşar; `apps/mcp` (Fly) ile ilgisi yoktur. `scripts/paddle-smoke.md` bu konuda
+zaten doğruydu ("Netlify site settings"), yalnız log konumunu adlandırmıyordu.
+
+### 34.7 🔎 cloud migration ledger'ı EKSİK — şema doğru, defter değil
+
+**Önce dürüstlük payı: bunun bir kısmı biliniyordu.** Proje hafızasında `supabase db push`'un
+kullanılamaz olduğu ve `migration repair --status reverted`'in **çalıştırılmaması** gerektiği
+zaten kayıtlı. Bu bölümün YENİ olan kısmı şudur: **hangi dördünün eksik olduğu**, şemanın buna
+rağmen doğru olduğunun bağımsız kanıtı, ve aşağıdaki iki somut sonuç — özellikle bu runbook'un
+kendi §C sorgusunun yanıltıcı olması.
+
+Bu tur bir kenar etkisi olarak bulundu: 0020'ye yorum eklemenin güvenli olup olmadığı sorulunca
+`supabase_migrations.schema_migrations` okundu ve **beklenenden dört satır eksik** çıktı.
+
+**Cloud ledger'ında olanlar (16 satır):** 0001-0008 (numarasız adlarla) · 0009 · 0010 · 0011 ·
+0013 · 0014 · 0015 · 0018 · 0019.
+**Ledger'da OLMAYANLAR:** **0012 · 0016 · 0017 · 0020.**
+
+**Sebep §F'de zaten yazılı ama sonucu yazılmamış:** 0016/0017/0020'yi **insan SQL Editor'den**
+uyguladı (MCP classifier `revoke` / `drop constraint` / `alter default privileges` içerenleri
+blokladı). **SQL Editor `schema_migrations`'a satır YAZMAZ.** 0012 ise gerçekten uygulanmadı
+(GSC GRANT-paritesi, insan kuyruğunda).
+
+**Şema DOĞRU — bu tur bağımsız ölçüldü, §F'nin rakamlarına güvenilmedi:**
+
+| Migration | Bağımsız kanıt | Sonuç |
+|---|---|---|
+| 0016 | `has_table_privilege` × 3 rol × tüm public tabloları | **36 hücre, 0 açık TRUNCATE** |
+| 0017 | `pg_constraint` contype='f', conkey>1 | **3 composite FK** (`gsc_connections`, `jobs`, `reports`) |
+| 0020 | `pg_get_function_identity_arguments('claim_trial')` | **5 argüman** — `p_email_fingerprint`, `p_email_domain`, `p_disposable_domain` dahil |
+
+Yani H-06'nın teknik yarısının "canlıda ve bağlı" olduğu iddiası **doğrudur**; ledger boşluğu
+şemayı değil defteri ilgilendirir.
+
+**Ama boşluk bir TUZAK ve şimdi kayda geçiyor:**
+
+1. **Bu runbook'un kendi doğrulama sorgusu yanıltıcı.** §C'deki
+   `select max(version) from supabase_migrations.schema_migrations;` **0019'un damgasını döner** →
+   okuyan "0020 uygulanmamış" sanır. Doğru kontrol defter değil **şema nesnesidir** (yukarıdaki tablo).
+2. **`supabase db push` bu dördünü YENİDEN uygulamaya çalışır.** 0020 `create table
+   public.trial_claims` içerir → var olan tabloda patlar. 0017 `drop constraint` + yeniden ekleme
+   yapar. Yani bir sonraki push, elle onarılmadıkça **kırmızı düşer ve yarıda kalabilir.**
+3. Bu, imzalı ders 9'un bir varyantı: *"ölçtüm" dediğin şey defteri mi ölçtü, gerçeği mi?*
+   Burada defter yanlış, gerçek doğruydu — geçen sefer tersiydi.
+
+**Önerilen düzeltme (YAPILMADI, insan kapısı) — ve yön ÖNEMLİ:** hafızadaki uyarı
+`repair --status **reverted**` içindir; o, uygulanmış migration'ı geri-alınmış işaretlediği için
+tehlikelidir. Burada gereken **ters yön**dür: `supabase migration repair --status **applied**
+<version>`, yani "bu zaten uygulandı, defterine yaz". Alternatifi `schema_migrations`'a elle satır
+eklemektir. İkisi de **prod DB yazmasıdır** → bu tur yapılmadı, yalnız raporlandı. Uygulanmadan
+önce 0016/0017/0020'nin şemada var olduğu yukarıdaki tabloyla tekrar teyit edilmelidir; yanlış
+migration'ı "applied" işaretlemek onu kalıcı olarak atlatır.
