@@ -1,4 +1,21 @@
-import type { AnalyticsClient } from "./waitlist.js";
+/**
+ * PostHog capture adapter.
+ *
+ * This used to live under `src/waitlist/` because the waitlist was its first caller. It was NOT
+ * waitlist machinery: `apps/web/lib/analytics.ts` builds on it for the three product events that
+ * outlived the waitlist — signup_completed (auth callback), mcp_key_created (connection actions)
+ * and purchase_completed (Paddle webhook). Removing the waitlist moved it here rather than
+ * deleting it with the folder, which would have broken the money path's analytics.
+ */
+
+export interface AnalyticsClient {
+  capture(event: {
+    name: string;
+    distinctId: string;
+    /** String or boolean values only — callers must never put PII / raw amounts here. */
+    properties?: Record<string, string | boolean>;
+  }): Promise<void>;
+}
 
 /** Hard cap per request so a hung PostHog call can never stall a caller (mirrors email/send.ts). */
 const DEFAULT_TIMEOUT_MS = 3000;
