@@ -10,7 +10,6 @@
     "build": "turbo run build",
     "verify": "bash guardrails/verify.sh",
     "verify:db": "bash guardrails/verify-db.sh",
-    "waitlist:smoke": "node scripts/waitlist-smoke.mjs",
     "email:smoke": "node scripts/email-smoke.mjs",
     "lighthouse": "turbo run build --filter=@pseo/web && lhci autorun",
     "db:start": "supabase start --workdir packages/db",

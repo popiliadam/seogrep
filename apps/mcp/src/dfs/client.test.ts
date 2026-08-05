@@ -229,7 +229,7 @@ describe("defaultDfsTransport request deadline (M-14)", () => {
   });
 
   it("gives the paid data call a deadline well above the interactive 3s adapter default", async () => {
-    // A DataForSEO live endpoint legitimately runs for seconds; copying the 3s waitlist
+    // A DataForSEO live endpoint legitimately runs for seconds; copying the 3s analytics
     // deadline would abort healthy paid calls (and burn the budget for nothing). Pinned as
     // a bound, not an exact value, so the number can be retuned without a spec rewrite.
     expect(DFS_REQUEST_TIMEOUT_MS).toBeGreaterThan(3_000);
