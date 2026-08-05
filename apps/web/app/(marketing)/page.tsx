@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ChatDemo } from "../../components/chat-demo";
 import { SoftwareApplicationStructuredData } from "../../components/structured-data";
-import { WaitlistForm } from "../../components/waitlist-form";
 
 export const metadata: Metadata = {
   title: "SEO analysis inside your AI assistant",
@@ -61,15 +60,26 @@ export default function Page() {
           <div className="flex flex-col items-start gap-6">
             <p className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-accent-strong">
               <span aria-hidden="true" className="h-0.5 w-6 rounded-full bg-accent" />
-              Private beta — join the waitlist
+              Works with Claude, Cursor, and Windsurf
             </p>
             <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-6xl">grep your site for SEO issues.</h1>
             <p className="max-w-xl text-lg text-ink/70 sm:text-xl">
               SeoGrep turns the AI assistant you already use into an SEO analyst. Add one URL to Claude, Cursor, or
               Windsurf and run real crawls, audits, and Search Console analysis in plain language.
             </p>
-            <div className="w-full pt-2">
-              <WaitlistForm source="hero" />
+            <div className="flex flex-wrap items-center gap-4 pt-2">
+              <Link
+                href="/signup"
+                className="rounded-lg bg-ink px-5 py-2.5 text-sm font-semibold text-paper hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
+              >
+                Get started free
+              </Link>
+              <Link
+                href="/pricing"
+                className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
+              >
+                See pricing <span aria-hidden="true">→</span>
+              </Link>
             </div>
             <p className="text-sm text-ink/70">Free trial: 200 credits, no card required.</p>
           </div>
@@ -138,15 +148,20 @@ export default function Page() {
         </ol>
       </section>
 
-      <section id="waitlist" className="border-t border-ink/10 bg-white/40">
+      <section className="border-t border-ink/10 bg-white/40">
         <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center sm:py-24">
-          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Be the first match.</h2>
+          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Your first match is free.</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-ink/70">
-            We&apos;re opening SeoGrep to the waitlist in small batches. Leave your email and we&apos;ll send your
-            invite.
+            Create an account, paste your personal MCP URL into your assistant, and start analysing. 200 credits to
+            begin with, no card required.
           </p>
           <div className="mt-8 flex justify-center">
-            <WaitlistForm source="footer" />
+            <Link
+              href="/signup"
+              className="rounded-lg bg-ink px-5 py-2.5 text-sm font-semibold text-paper hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
+            >
+              Get started free
+            </Link>
           </div>
         </div>
       </section>

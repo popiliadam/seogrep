@@ -30,14 +30,14 @@ describe("terms page", () => {
   it("calls itself effective, not a draft — a service taking real money has no draft terms", () => {
     const text = renderedText();
     expect(text).not.toMatch(/\bdrafts?\b/i);
-    expect(text).toContain("Effective 28 July 2026");
+    expect(text).toContain("Effective 5 August 2026");
   });
 
   it("freezes the effective date — a computed date would silently move with the clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2027-03-09T12:00:00Z"));
     render(<Page />);
-    expect(screen.getByText(/Effective 28 July 2026/)).toBeDefined();
+    expect(screen.getByText(/Effective 5 August 2026/)).toBeDefined();
   });
 
   it("names Paddle as merchant of record, matching the refund policy", () => {

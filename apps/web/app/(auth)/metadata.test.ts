@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { metadata as forgotPassword } from "./forgot-password/page";
 import { metadata as login } from "./login/page";
+import { metadata as resetPassword } from "./reset-password/page";
 import { metadata as signup } from "./signup/page";
 
 /**
@@ -14,10 +16,12 @@ import { metadata as signup } from "./signup/page";
 const AUTH_PAGES = [
   ["/login", login],
   ["/signup", signup],
+  ["/forgot-password", forgotPassword],
+  ["/reset-password", resetPassword],
 ] as const;
 
 describe("auth page metadata", () => {
-  it("keeps both auth pages out of the index", () => {
+  it("keeps every auth page out of the index", () => {
     for (const [route, meta] of AUTH_PAGES) {
       const robots = meta.robots as { index?: boolean; follow?: boolean } | undefined;
       expect(robots, `${route} sets robots`).toBeDefined();

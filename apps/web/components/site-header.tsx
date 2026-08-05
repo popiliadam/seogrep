@@ -24,10 +24,10 @@ export function SiteHeader() {
             Sign in
           </Link>
           <Link
-            href="/#waitlist"
+            href="/signup"
             className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-paper hover:opacity-90"
           >
-            Join waitlist
+            Get started
           </Link>
         </nav>
       </div>

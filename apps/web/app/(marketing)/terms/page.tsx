@@ -19,7 +19,7 @@ const SECTIONS: readonly Section[] = [
   },
   {
     heading: "Accepting these terms",
-    body: "By joining the waitlist, creating an account, or using SeoGrep, you agree to these terms. If you do not agree, please do not use the service.",
+    body: "By creating an account or using SeoGrep, you agree to these terms. If you do not agree, please do not use the service.",
   },
   {
     heading: "Credits and payment",
@@ -53,7 +53,7 @@ export default function Page() {
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
       <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Effective 28 July 2026 — applies to every SeoGrep account.
+        Effective 5 August 2026 — applies to every SeoGrep account.
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Terms of Service</h1>
       <p className="mt-4 text-base text-ink/60">

@@ -1,8 +1,11 @@
 /**
- * Flood throttling for the PUBLIC web surface — the anonymous waitlist POST
- * (app/api/waitlist) and the anonymous public report read (lib/reports). Both spend real
- * resources per request (paid Resend/PostHog calls; a service-role Supabase read) and
- * neither sits behind auth, so each needs a cheap ceiling in front of it.
+ * Flood throttling for the PUBLIC web surface — the anonymous public report read
+ * (lib/reports). It spends real resources per request (a service-role Supabase read) and
+ * does not sit behind auth, so it needs a cheap ceiling in front of it.
+ *
+ * This used to guard the anonymous waitlist POST as well. That route is gone (self-serve
+ * signup replaced the waitlist), which is why the limiter now has a single caller — it is
+ * NOT dead code, and deleting it would leave /r/* unthrottled.
  *
  * The token bucket is the same shape the MCP gateway already runs per API key and per
  * client IP (apps/mcp/src/auth.ts). It is duplicated here rather than imported because

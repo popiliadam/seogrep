@@ -42,6 +42,11 @@ export default async function LoginPage({
       ) : null}
       <AuthForm mode="login" />
       <p className="text-sm text-neutral-600">
+        <Link href="/forgot-password" className="font-medium text-neutral-900 underline">
+          Forgot your password?
+        </Link>
+      </p>
+      <p className="text-sm text-neutral-600">
         Don&apos;t have an account?{" "}
         <Link href="/signup" className="font-medium text-neutral-900 underline">
           Sign up

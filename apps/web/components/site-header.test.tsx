@@ -9,9 +9,9 @@ describe("SiteHeader", () => {
     expect(signIn.getAttribute("href")).toBe("/login");
   });
 
-  it("keeps the Join waitlist CTA", () => {
+  it("points the primary CTA at self-serve signup", () => {
     render(<SiteHeader />);
-    expect(screen.getByRole("link", { name: /join waitlist/i }).getAttribute("href")).toBe("/#waitlist");
+    expect(screen.getByRole("link", { name: /get started/i }).getAttribute("href")).toBe("/signup");
   });
 
   it("puts Blog in the main nav", () => {
