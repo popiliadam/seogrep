@@ -183,6 +183,12 @@ grant execute on function public.claim_trial(uuid, bigint, text, text, boolean) 
 --     so the dimension is dormant until the caller-wiring slice lands.
 -- (c) Signup rate-limiting / CAPTCHA / `enable_signup` are Supabase dashboard settings and are
 --     not reachable from a migration.
+--     CORRECTION (2026-08-05): do not read that as "all three are one dashboard click".
+--     `enable_signup` is. CAPTCHA is NOT: enabling it server-side makes Supabase Auth require
+--     `options.captchaToken` on signUp, signInWithPassword AND password reset, and apps/web has
+--     zero captcha wiring (measured: 0 hits for /captcha/i under apps/web). Turning it on from
+--     the dashboard alone locks out EXISTING users, not just new ones. It is a code slice.
+--     Evidence: closure doc section 34.1.
 --
 -- Read-only DETECTION query for mailboxes that already double-claimed. It APPROXIMATES the
 -- packages/core normaliser (lowercase + plus-strip, dots folded on gmail only) — for looking,
