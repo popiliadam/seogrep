@@ -74,6 +74,46 @@ describe("AuthForm", () => {
     );
   });
 
+  // The dormant-captcha contract, stated rather than left implicit. Two tests above already
+  // compare `options` by DEEP EQUALITY, so a stray captchaToken would break them — but that is
+  // a side effect of how they were written. These name the property so a future edit that
+  // loosens those matchers cannot quietly start sending a token, or gate the button on one.
+  describe("with Turnstile unprovisioned (the shipped default)", () => {
+    it("sends no captchaToken on signup", async () => {
+      vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", "");
+      signUp.mockResolvedValue({ data: {}, error: null });
+      render(<AuthForm mode="signup" />);
+      fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "grace@example.com" } });
+      fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+      fireEvent.click(screen.getByRole("button", { name: /sign up/i }));
+      await waitFor(() => expect(signUp).toHaveBeenCalled());
+      const call = signUp.mock.calls.at(0);
+      if (!call) throw new Error("signUp was not called");
+      expect(Object.keys(call[0].options as Record<string, unknown>)).toEqual(["emailRedirectTo"]);
+    });
+
+    it("sends no options bag at all on login", async () => {
+      vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", "");
+      signInWithPassword.mockResolvedValue({ data: {}, error: null });
+      render(<AuthForm mode="login" />);
+      fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "ada@example.com" } });
+      fireEvent.change(screen.getByLabelText(/password/i), { target: { value: "s3cret-pass" } });
+      fireEvent.click(screen.getByRole("button", { name: /log in/i }));
+      await waitFor(() => expect(signInWithPassword).toHaveBeenCalled());
+      const call = signInWithPassword.mock.calls.at(0);
+      if (!call) throw new Error("signInWithPassword was not called");
+      expect(Object.keys(call[0] as Record<string, unknown>)).toEqual(["email", "password"]);
+    });
+
+    // The failure mode this guards: gating submit on a token that can never arrive would make
+    // every form permanently unsubmittable on a site with no captcha.
+    it("leaves the submit button enabled", () => {
+      vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITE_KEY", "");
+      render(<AuthForm mode="signup" />);
+      expect(screen.getByRole("button", { name: /sign up/i }).hasAttribute("disabled")).toBe(false);
+    });
+  });
+
   it("signup mode calls signUp with an emailRedirectTo pointing at /auth/callback", async () => {
     signUp.mockResolvedValue({ data: {}, error: null });
     render(<AuthForm mode="signup" />);
