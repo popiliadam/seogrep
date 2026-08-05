@@ -24,10 +24,15 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
 /**
  * Auth callback for both flows:
  *   - `?code=...`           -> exchangeCodeForSession (OAuth / PKCE, e.g. future Google).
- *   - `?token_hash=&type=`  -> verifyOtp (email signup confirmation + magic link).
+ *   - `?token_hash=&type=`  -> verifyOtp (email signup confirmation, magic link, recovery).
  * On success it establishes the session cookie, fires the one-time trial grant and the
- * one-time welcome email, then redirects to the fixed /app destination; every failure
- * goes to the fixed /login?error=auth. No redirect target is ever read from the request.
+ * one-time welcome email, then redirects; every failure goes to the fixed /login?error=auth.
+ *
+ * NO REDIRECT TARGET IS EVER READ FROM THE REQUEST (A-I4). There are exactly two destinations
+ * and both are literals in this file. Password recovery lands on /reset-password instead of
+ * /app, and that choice is driven by the OTP type that VERIFIED — a `type` that does not match
+ * the token makes verifyOtp fail, so it cannot be used to steer the redirect. It is a fixed
+ * two-entry table in code, never a URL supplied by the caller.
  */
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -58,6 +63,12 @@ export async function GET(request: Request): Promise<Response> {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
+
+  // Recovery is decided BEFORE verification and used only after it succeeds. verifyOtp rejects a
+  // token whose type does not match, so this flag cannot be flipped on a signup/magic-link token
+  // to divert someone mid-flow — the worst a wrong `type` achieves is a failed verification and
+  // the /login?error=auth path below.
+  const isRecovery = type === "recovery";
 
   const supabase = await createClient();
   let userId: string | null = null;
@@ -114,5 +125,8 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
-  return NextResponse.redirect(new URL("/app", base));
+  // A recovery link has authenticated the user, but the thing they came to do is set a password.
+  // Dropping them on /app would leave the account still using the password they could not
+  // remember, with no route to change it.
+  return NextResponse.redirect(new URL(isRecovery ? "/reset-password" : "/app", base));
 }

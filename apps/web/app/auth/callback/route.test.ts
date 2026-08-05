@@ -151,6 +151,34 @@ describe("GET /auth/callback", () => {
     expect(grantTrialCredits).toHaveBeenCalledWith("u4", "u4@example.com");
     expect(captureSignup).not.toHaveBeenCalled();
   });
+  // Password recovery: the ONE case that does not end on /app. The destination comes from the
+  // OTP type that verified, not from anything the caller supplied.
+  it("sends a verified recovery OTP to /reset-password, not /app", async () => {
+    verifyOtp.mockResolvedValue({
+      data: { user: { id: "u9", email: "u9@example.com" } },
+      error: null,
+    });
+    grantTrialCredits.mockResolvedValue(false); // existing user — trial already claimed
+    const response = await GET(new Request(`${BASE}?token_hash=rec1&type=recovery`));
+    expect(verifyOtp).toHaveBeenCalledWith({ type: "recovery", token_hash: "rec1" });
+    expect(response.headers.get("location")).toBe("http://localhost:3457/reset-password");
+  });
+
+  it("does not let ?type=recovery divert a token that fails to verify", async () => {
+    verifyOtp.mockResolvedValue({ data: { user: null }, error: { message: "invalid" } });
+    const response = await GET(new Request(`${BASE}?token_hash=signup-token&type=recovery`));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/login?error=auth");
+  });
+
+  it("still sends a verified signup OTP to /app", async () => {
+    verifyOtp.mockResolvedValue({
+      data: { user: { id: "u10", email: "u10@example.com" } },
+      error: null,
+    });
+    grantTrialCredits.mockResolvedValue(true);
+    const response = await GET(new Request(`${BASE}?token_hash=sig1&type=signup`));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+  });
 });
 
 describe("GET /auth/callback — canonical redirect base (A-I4)", () => {
