@@ -30,9 +30,9 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
  *
  * NO REDIRECT TARGET IS EVER READ FROM THE REQUEST (A-I4). There are exactly two destinations
  * and both are literals in this file. Password recovery lands on /reset-password instead of
- * /app, and that choice is driven by the OTP type that VERIFIED — a `type` that does not match
- * the token makes verifyOtp fail, so it cannot be used to steer the redirect. It is a fixed
- * two-entry table in code, never a URL supplied by the caller.
+ * /app, and each branch decides that from a signal IT verified — `redirectType` off the code
+ * verifier for PKCE, the matched OTP type for token_hash. The raw `?type=` is never sufficient
+ * on its own, so appending `&type=recovery` to someone's signup link changes nothing.
  */
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -64,27 +64,41 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
-  // Recovery is decided BEFORE verification and used only after it succeeds. verifyOtp rejects a
-  // token whose type does not match, so this flag cannot be flipped on a signup/magic-link token
-  // to divert someone mid-flow — the worst a wrong `type` achieves is a failed verification and
-  // the /login?error=auth path below.
-  const isRecovery = type === "recovery";
-
   const supabase = await createClient();
   let userId: string | null = null;
   let email: string | null = null;
+  // Set ONLY from a signal the branch below has actually verified. The query `type` is never
+  // trusted on its own — see each branch.
+  let isRecovery = false;
 
   if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       userId = data.user?.id ?? null;
       email = data.user?.email ?? null;
+      // THIS is the recovery signal for the PKCE branch, and getting it from `type` here would
+      // be both wrong and unsafe. Measured, not assumed: @supabase/ssr 0.12.3 hardcodes
+      // flowType "pkce" (createBrowserClient.js:40), so resetPasswordForEmail mints a code
+      // challenge and the stock Supabase "Reset Password" template returns the user with
+      // `?code=` and NO `type` at all. Reading `type` here would therefore (a) miss every real
+      // recovery, and (b) let anyone append `&type=recovery` to a signup link, since
+      // exchangeCodeForSession never looks at it.
+      //
+      // `redirectType` is derived server-side from the stored code verifier
+      // (GoTrueClient.js:1578,1606) — it cannot be set by the caller. It is returned at runtime
+      // but absent from the AuthTokenResponse type, hence the narrow cast.
+      const { redirectType } = data as typeof data & { redirectType?: string | null };
+      isRecovery = redirectType === "recovery";
     }
   } else if (tokenHash && isEmailOtpType(type)) {
     const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
     if (!error) {
       userId = data.user?.id ?? null;
       email = data.user?.email ?? null;
+      // Safe here, and only here: verifyOtp REJECTS a token whose type does not match, so
+      // reaching this line means the server agreed this really is a recovery token. Kept so the
+      // flow still works if an operator ever switches the template to the token_hash form.
+      isRecovery = type === "recovery";
     }
   }
 

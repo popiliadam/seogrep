@@ -151,8 +151,45 @@ describe("GET /auth/callback", () => {
     expect(grantTrialCredits).toHaveBeenCalledWith("u4", "u4@example.com");
     expect(captureSignup).not.toHaveBeenCalled();
   });
-  // Password recovery: the ONE case that does not end on /app. The destination comes from the
-  // OTP type that verified, not from anything the caller supplied.
+  // THE FLOW THE PROJECT'S OWN CONFIG ACTUALLY PRODUCES. @supabase/ssr pins flowType "pkce", so
+  // a real reset link comes back as ?code= with no ?type= at all. The first version of this
+  // routing read ?type= and therefore missed every genuine recovery — the user was silently
+  // logged in on /app with the password they could not remember.
+  it("sends a PKCE recovery (redirectType, no ?type=) to /reset-password", async () => {
+    exchangeCodeForSession.mockResolvedValue({
+      data: { user: { id: "u11", email: "u11@example.com" }, redirectType: "recovery" },
+      error: null,
+    });
+    grantTrialCredits.mockResolvedValue(false);
+    const response = await GET(new Request(`${BASE}?code=pkce-recovery`));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/reset-password");
+  });
+
+  it("sends a PKCE sign-in (redirectType absent) to /app", async () => {
+    exchangeCodeForSession.mockResolvedValue({
+      data: { user: { id: "u12", email: "u12@example.com" }, redirectType: null },
+      error: null,
+    });
+    grantTrialCredits.mockResolvedValue(true);
+    const response = await GET(new Request(`${BASE}?code=pkce-signin`));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+  });
+
+  // The unsafe shape the first version allowed: ?type= is meaningless on the code branch,
+  // because exchangeCodeForSession never looks at it.
+  it("ignores ?type=recovery appended to a code exchange", async () => {
+    exchangeCodeForSession.mockResolvedValue({
+      data: { user: { id: "u13", email: "u13@example.com" }, redirectType: null },
+      error: null,
+    });
+    grantTrialCredits.mockResolvedValue(true);
+    const response = await GET(new Request(`${BASE}?code=ordinary&type=recovery`));
+    expect(response.headers.get("location")).toBe("http://localhost:3457/app");
+  });
+
+  // Password recovery via the token_hash template, kept working in case an operator switches
+  // the email template. Here the type IS the verified signal, because verifyOtp rejects a
+  // mismatch.
   it("sends a verified recovery OTP to /reset-password, not /app", async () => {
     verifyOtp.mockResolvedValue({
       data: { user: { id: "u9", email: "u9@example.com" } },
