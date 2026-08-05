@@ -185,7 +185,8 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
    AÇIK BORÇ (insan, acele yok ama unutma): fiyat sayfası + /terms + /privacy metinlerini site canlıya çıkınca gözle oku
    ("ilk hafta insan okur" feragatinin telafisi — bunlar senin adına yayınlanıyor).
 4. ~~Resend + PostHog anahtarları~~ ✅ GİRİLDİ (2026-07-17, Netlify env; Resend yeni contacts+segments API'ye PR #8 ile taşındı, segment: SeoGrep Waitlist). Bu commit env-sonrası redeploy tetikleyicisi. ~~GÜVENLİK BORCU~~ ✅ KAPANDI (2026-07-17): anahtar rotate edildi (yeni=secret+maskeli, Netlify'da çalışır kanıtlı), eski açık anahtar Resend'den silindi (kalan: 1 seogrep + 2 Padpub).
-5. Waitlist canlıda karar bekliyor: /api/waitlist rate-limit (şu an yalnız honeypot).
+5. ~~Waitlist canlıda karar bekliyor: /api/waitlist rate-limit~~ **KONUSUZ KALDI (2026-08-05)** —
+   waitlist komple kaldırıldı, `/api/waitlist` artık 404. Aşağıdaki 🔓 bloğuna bak.
 5b. ✅ Paddle ÜYELİĞİ AÇILDI (2026-07-17). Sıradaki: hesap doğrulama/onboarding + sandbox kurulumu (API key, webhook secret, 6 price) — insan+şef birlikte, Faz 2 T7'den önce yeterli.
 6. Compost önerileri (imza bekliyor, CLAUDE.md'ye yazılmadı): (a) "Plan bağımlılık pinleri dispatch'ten önce peer-uyumluluk
    kontrolünden geçer" (Next 16 dersi); (b) "Paket, import ettiği runtime'ın tip paketini KENDİ devDependencies'ine yazar —
@@ -198,6 +199,39 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 ## Marka (KARAR — 2026-07-11, revize)
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
+
+## 🔓 2026-08-05 — ERİŞİM DURUŞU DEĞİŞTİ: waitlist KALDIRILDI, kayıt açık self-servis
+
+**Operatör kararı.** Private beta bitti; gelen kaydolur, öder, kullanır. [PR #36](https://github.com/popiliadam/seogrep/pull/36).
+
+- **Üç dilim, çünkü tek CTA değişikliği iki ölçülmüş deliği açık bırakırdı:** waitlist sökümü ·
+  **parola sıfırlama** (hiç yoktu — ölçüldü) · **Turnstile** (uykuda gönderildi).
+- **`/api/waitlist` 404.** Vitrinde "waitlist" 13→0, "private beta" 2→0. Kredi rakamları (65/70/90)
+  dokunulmadı.
+- **İKİ ANLAMDA "beta" ayrımı korundu:** erişim kapısı dili gitti; olgunluk dili KALDI —
+  Terms "as is during beta" (hukuk), "krediler beta'da expire olmaz" (**NEVER#6 fiyat sözü**),
+  MCP tool'larında "DataForSEO off during beta" (halen doğru).
+- **`goals/waitlist-works.md` EMEKLİ**, yerine `goals/self-serve-signup.md`. Silinen bir ÖZELLİĞİN
+  hedefiydi; "testi geçirmek için test silme" yasağı kapsamında değil.
+- **Hukuk sayfalarının effective tarihi 5 Ağustos 2026'ya taşındı** (sayfalar kendi kurallarında
+  söz veriyor). Başka gün merge edilirse sayfa başına 1 satır + 2 test pini.
+
+### İKİ TAZE FABLE HAKEM — İKİSİ DE **FAIL** VERDİ; bulgular düzeltildi
+Şefin ilk "%100 okey" raporu **hatalıydı**: `verify.sh` koşuldu ama **`make goals` KOŞULMADI**
+(ayrı kapı) ve o kırmızıydı. Ders 7'nin birebir tekrarı — hangi kapının NEYİ ölçtüğü söylenmedi.
+- **CRITICAL** `goals/waitlist-works.md` silinen dizine vitest koşuyordu → `make goals` 15/16 FAIL.
+- **CRITICAL** Parola sıfırlama **hiç çalışmıyordu**: `@supabase/ssr` `flowType:"pkce"` hardcode
+  eder (`createBrowserClient.js:40`), gerçek reset linki `?code=` döner ve `type` HİÇ gelmez →
+  kullanıcı parolasını değiştirmeden `/app`'e düşüyordu. Düzeltme: kod dalında
+  `data.redirectType` (verifier'dan sunucu-tarafı türetilir), token_hash dalında doğrulanmış
+  `type` — her dal KENDİ doğruladığı sinyali kullanır, `?type=` tek başına asla yeterli değil.
+- **IMPORTANT** 9 yerde "invite"/"private beta" metni yaşıyordu (how-it-works 1. adım + 5 istemci
+  rehberi + 2 docs index + troubleshooting). Şef yalnız "waitlist" aramıştı.
+- **IMPORTANT** Turnstile `loadScript` etiket varsa çözülüyordu → StrictMode 2. geçişte sessiz
+  kilitlenme (buton sonsuza dek disabled) · pricing-table CTA'sını hiçbir test pinlemiyordu.
+- **AÇIK OPERATÖR İŞİ:** Turnstile provision edilmedi → hesap başına 200 kredi × catch-all alan
+  adı **SINIRSIZ**. Açma İKİ adım (env + Supabase toggle); yalnız biri sign-in'i de kırar.
+  Prosedür `.env.example`'da.
 
 ## 🚢 2026-08-04 — DÜŞMANCA AUDIT KAPANDI VE CANLIYA ÇIKTI
 

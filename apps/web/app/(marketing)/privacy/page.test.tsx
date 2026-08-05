@@ -30,7 +30,8 @@ describe("privacy page", () => {
   it("calls itself effective, not a draft — a live policy cannot describe itself as unfinished", () => {
     const text = renderedText();
     expect(text).not.toMatch(/\bdrafts?\b/i);
-    // Moved 28 July -> 4 August 2026 with the M-25 rewrite of "Your rights" and "Data retention".
+    // 28 July -> 4 August 2026 with the M-25 rewrite of "Your rights" and "Data retention";
+    // 4 -> 5 August 2026 when the waitlist came out of "What we collect" and "How we use it".
     // The page's own "Changes to this policy" section promises this date moves when the policy is
     // updated, so leaving it would have made the policy breach its own rule on the way out.
     expect(text).toContain("Effective 5 August 2026");

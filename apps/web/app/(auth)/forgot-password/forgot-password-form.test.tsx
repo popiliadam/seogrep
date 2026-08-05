@@ -60,11 +60,16 @@ describe("ForgotPasswordForm", () => {
     expect(document.body.textContent).not.toMatch(/user not found/i);
   });
 
-  it("still confirms when the call throws outright", async () => {
+  // A transport failure is NOT account-correlated, so saying so leaks nothing — while claiming
+  // "we sent a link" would leave the user waiting for mail that was never sent. This is the one
+  // place the form is allowed to admit failure, and it must not name the underlying error.
+  it("admits it could not reach the server, without confirming a send", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     resetPasswordForEmail.mockRejectedValue(new Error("network down"));
     await submit("someone@example.com");
-    expect(await screen.findByRole("status")).toBeDefined();
+    expect(await screen.findByRole("alert")).toBeDefined();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(document.body.textContent).not.toMatch(/network down/i);
+    expect(document.body.textContent).not.toMatch(/we've sent|reset link/i);
   });
 });

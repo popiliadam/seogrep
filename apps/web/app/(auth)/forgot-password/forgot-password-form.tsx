@@ -5,7 +5,7 @@ import { TurnstileWidget, turnstileEnabled } from "../../../components/turnstile
 import { resolveBaseUrl } from "../../../lib/site";
 import { createClient } from "../../../lib/supabase/client";
 
-type Status = "idle" | "submitting" | "sent";
+type Status = "idle" | "submitting" | "sent" | "unreachable";
 
 /**
  * Step one of password recovery: ask Supabase to mail a recovery link.
@@ -42,12 +42,28 @@ export function ForgotPasswordForm() {
         redirectTo: `${base}/auth/callback`,
         ...(captchaToken ? { captchaToken } : {}),
       });
+      // An `error` here IS account-correlated ("user not found"), so it must never change what
+      // is rendered — logged only.
       if (error) console.error("password reset request failed:", error.message);
     } catch (error) {
+      // A THROW is different, and conflating the two was a real defect: a network failure or a
+      // Supabase outage is not correlated with whether the address exists, so admitting it leaks
+      // nothing — while claiming "we sent a link" leaves someone waiting for mail that was never
+      // sent. Found by a referee.
       console.error("password reset request threw:", error);
+      setStatus("unreachable");
+      return;
     }
-    // Unconditional: see the enumeration note above.
+    // Unconditional for every SERVER answer: see the enumeration note above.
     setStatus("sent");
+  }
+
+  if (status === "unreachable") {
+    return (
+      <p role="alert" className="text-sm text-red-600">
+        We couldn&apos;t reach the server. Check your connection and try again.
+      </p>
+    );
   }
 
   if (status === "sent") {

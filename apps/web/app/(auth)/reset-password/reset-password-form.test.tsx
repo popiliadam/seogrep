@@ -39,7 +39,10 @@ describe("ResetPasswordForm", () => {
     expect(screen.queryByLabelText(/current password/i)).toBeNull();
   });
 
-  it("mirrors the 8-character server minimum on the client", () => {
+  // Declares the server rule at the input. It does NOT enforce it — the form is noValidate, so
+  // the gate is Supabase's rejection, covered by the next case. Renamed after a referee pointed
+  // out the original name ("mirrors the server minimum on the client") implied enforcement.
+  it("declares the 8-character server minimum on the input", () => {
     render(<ResetPasswordForm />);
     expect(screen.getByLabelText(/new password/i).getAttribute("minLength")).toBe("8");
   });

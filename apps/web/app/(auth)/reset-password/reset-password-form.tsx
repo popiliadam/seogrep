@@ -14,9 +14,11 @@ type Status = "idle" | "submitting" | "error";
  * identity is settled and `updateUser` acts on that session's user. Asking for the old password
  * here would defeat the flow — the whole premise is that the user does not have it.
  *
- * minLength 8 mirrors the Supabase project minimum. Unlike the login form there is no
+ * minLength 8 declares the Supabase project minimum. Unlike the login form there is no
  * backwards-compatibility case to preserve: this password is being created right now, so the
- * client check and the server rule are the same rule.
+ * declared rule and the server rule are the same rule. Note the form carries `noValidate`, so
+ * the attribute documents and styles rather than enforces — Supabase's rejection is the gate,
+ * and it is surfaced verbatim below.
  */
 export function ResetPasswordForm() {
   const router = useRouter();
