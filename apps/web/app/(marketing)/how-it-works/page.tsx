@@ -16,7 +16,7 @@ type Step = {
 const STEPS: readonly Step[] = [
   {
     title: "Get your personal MCP URL",
-    body: "When your invite arrives, your dashboard gives you a personal MCP URL — one URL that carries your projects and credits.",
+    body: "Sign up and confirm your email, and your dashboard gives you a personal MCP URL — one URL that carries your projects and credits.",
   },
   {
     title: "Paste it into the client you already use",
