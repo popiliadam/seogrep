@@ -118,6 +118,15 @@ unusable as a steady state.
 1. **Watch `absent` go to zero first.** Count the warn lines: `paddle webhook: attribution ANOMALY`
    with `reason: "absent"`. `absent` means an overlay that carried no token, and under enforcement
    it becomes a refusal.
+
+   **Where those lines live:** this webhook is `apps/web/app/api/paddle/webhook/route.ts`, so it
+   runs as a **Netlify function** — Netlify site → Logs → Functions. It is NOT on Fly; Fly runs
+   `apps/mcp`, which never sees a Paddle event. (A handoff note once said "Fly logs"; it was wrong.)
+
+   **A zero you cannot use.** Before reading `absent = 0` as clean, check that the channel carried
+   any traffic at all in the window: `select count(*) from public.paddle_events where created_at >
+   '<the deploy that shipped M-05>';`. On 2026-08-05 that count was **0** — three events total, the
+   newest from 2026-07-28, all predating the token. A zero anomaly count there measures nothing.
 2. **Check for subscriptions older than the token.** Any subscription created before the token
    shipped has no `attribution_token` in its stored `custom_data`, so its renewals and its
    cancellation read as `absent` **forever** — waiting does not fix those, only churn does:
@@ -126,6 +135,13 @@ unusable as a steady state.
    where created_at < '<the deploy that shipped M-05>' and status in ('active','trialing','past_due','paused');
    ```
    A non-empty result means enforcement will refuse those customers' renewals. Do not enable.
+
+   > **MEASURED 2026-08-05 — this result is NON-EMPTY. Do not enable the flag.**
+   > One active subscription, `9da92d28…` (`starter`/`active`), `created_at` **2026-07-18**. The
+   > token shipped to main on **2026-08-04** (`2ca481a`), so this subscription is 17 days older
+   > than the token and carries none. Its renewal reads `absent`, which is refused on every path.
+   > `current_period_end` = **2026-08-18** — enforcement would 500 a paying customer's renewal on
+   > that date. Re-run this query after that renewal (under grace) before revisiting the flag.
 3. **Do not enable right after rotating `PADDLE_WEBHOOK_SECRET`.** The token key is derived from
    that secret, so a rotation invalidates every token in flight AND every token already stored on a
    live subscription — they all become `bad_signature`, which enforcement refuses on every path.
