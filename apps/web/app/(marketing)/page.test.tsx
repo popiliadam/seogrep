@@ -13,9 +13,19 @@ describe("landing page", () => {
     expect(screen.getByText(/illustrative example — sample site, sample numbers/i)).toBeDefined();
   });
 
-  it("has the waitlist section anchor", () => {
+  // Replaces "has the waitlist section anchor". The gate is gone, so what has to hold now is
+  // that the page actually offers a way IN — both CTAs land on /signup, and no dead #waitlist
+  // anchor survives to scroll a visitor to nothing.
+  it("routes both calls to action to /signup", () => {
     render(<Page />);
-    expect(document.getElementById("waitlist")).not.toBeNull();
+    const cta = screen.getAllByRole("link", { name: /get started free/i });
+    expect(cta.length).toBe(2);
+    for (const link of cta) expect(link.getAttribute("href")).toBe("/signup");
+  });
+
+  it("leaves no waitlist anchor behind", () => {
+    render(<Page />);
+    expect(document.getElementById("waitlist")).toBeNull();
   });
 
   it("mentions the real trial terms only", () => {
@@ -24,8 +34,8 @@ describe("landing page", () => {
   });
 
   // L-09: this line read "Free trial AT LAUNCH", which checkout going live made false — the trial
-  // is grantable today. The waitlist/private-beta posture around it is a separate, deliberate
-  // product decision and is NOT what this pins.
+  // is grantable today. Signup is now open self-serve, so the line is finally unqualified: there
+  // is no gate left between reading it and claiming it.
   it("does not defer the trial to a future launch", () => {
     render(<Page />);
     expect(screen.getByText(/200 credits, no card required/i).textContent).not.toMatch(/at launch/i);

@@ -18,11 +18,17 @@ export function PricingTable() {
             <p className="text-sm font-semibold text-accent-strong">{creditsLabel(plan.key)}</p>
           </div>
           <p className="flex-1 text-sm text-ink/70">{plan.blurb}</p>
+          {/*
+            Every plan routes to /signup, not to a per-plan checkout link. Checkout lives at
+            /app/billing behind auth (the Paddle overlay needs a signed-in user to attribute the
+            purchase to), so an anonymous visitor cannot buy directly from this table however the
+            button is labelled. One destination also means one place to keep correct.
+          */}
           <Link
-            href="/#waitlist"
+            href="/signup"
             className="rounded-lg bg-ink px-4 py-2 text-center text-sm font-semibold text-paper transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
           >
-            Join the waitlist
+            Get started
           </Link>
         </li>
       ))}

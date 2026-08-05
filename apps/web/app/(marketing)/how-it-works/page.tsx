@@ -109,14 +109,15 @@ export default function Page() {
         <div className="mx-auto w-full max-w-5xl px-4 py-16 text-center sm:py-20">
           <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Ready to grep your site?</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-ink/70">
-            Join the waitlist and we&apos;ll send your invite as we open SeoGrep in small batches.
+            Create an account and add your personal MCP URL to your assistant. The first 200 credits are free, no card
+            required.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
-              href="/#waitlist"
+              href="/signup"
               className="rounded-lg bg-ink px-5 py-2.5 text-sm font-semibold text-paper hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
             >
-              Join the waitlist
+              Get started free
             </Link>
             <Link
               href="/pricing"
