@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { TOOL_COSTS, type ToolName } from "./costs.ts";
+import {
+  PaidBalanceRequiredError,
+  hasPaidBalance,
+  paidBalanceRequiredMessage,
+  requiresPaidBalance,
+} from "./paid-balance.ts";
 import { getServiceClient } from "../db.ts";
+import { optionalWebBaseUrl } from "../env.ts";
 import { setJobReserve } from "../queue/boss.ts";
 
 /**
@@ -224,6 +231,20 @@ export async function withCredits<T>(
   meta: CreditMeta,
   fn: () => Promise<T>,
 ): Promise<T> {
+  // Paid-balance gate — FIRST, ahead of the cost lookup and the reserve alike. It answers a
+  // different question from price ("may this account spend real VENDOR money?"), which is why
+  // it sits above the 0-credit short-circuit rather than inside the priced branch: a gated tool
+  // must never be reachable on trial credits by being cheap. Refusing HERE is what makes the
+  // refusal free — nothing is reserved, so nothing needs refunding, and `fn` (the vendor call)
+  // never runs. It throws rather than returns because withCredits is generic in T and cannot
+  // build a ToolResult; the registry recognises the typed error and prints the sentence.
+  if (requiresPaidBalance(meta.tool) && !(await hasPaidBalance(ctx.userId))) {
+    throw new PaidBalanceRequiredError(
+      meta.tool,
+      paidBalanceRequiredMessage(meta.tool, optionalWebBaseUrl()),
+    );
+  }
+
   const cost = TOOL_COSTS[meta.tool];
   if (cost === 0) {
     return fn();

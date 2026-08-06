@@ -64,11 +64,21 @@ async function makeCtx(): Promise<AuthContext> {
   return { userId: data.user.id, keyId: `key-${randomUUID()}` };
 }
 
-async function seedGrant(userId: string, amount: number): Promise<void> {
+/**
+ * Fund the account the way a REAL caller of this tool is funded: with a purchase.
+ *
+ * It used to be a trial `grant`. The paid-balance gate (credits/paid-balance.ts, operator
+ * decision 2026-08-06) now refuses this tool on a trial account BEFORE the reserve, so a grant
+ * fixture would describe a caller who never reaches the credit path these tests are about.
+ * Every assertion below is unchanged except the kind of this one seed row; the trial-account
+ * REFUSAL is not dropped, it moved to its own file (credits/guard-paid-balance.db.test.ts),
+ * which pins it harder than these tests ever did.
+ */
+async function seedPurchase(userId: string, amount: number): Promise<void> {
   const { error } = await service
     .from("credit_ledger")
-    .insert({ user_id: userId, delta: amount, kind: "grant", reason: "test-seed" });
-  if (error) throw new Error(`seed grant failed: ${error.message}`);
+    .insert({ user_id: userId, delta: amount, kind: "purchase", reason: "test-seed" });
+  if (error) throw new Error(`seed purchase failed: ${error.message}`);
 }
 
 interface LedgerRow {
@@ -145,7 +155,7 @@ beforeAll(async () => {
 describe("analyze_backlinks credit path against the local stack", () => {
   it("(a) serving (mock) reserves+commits net -70 on the ledger, touches NO jobs row", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 200);
+    await seedPurchase(ctx.userId, 200);
     const tool = makeAnalyzeBacklinksTool({ port: createMockBacklinksPort(FIXTURES) });
 
     const result = await tool.run(ctx, { target: "example.com", limit: 2 });
@@ -155,7 +165,7 @@ describe("analyze_backlinks credit path against the local stack", () => {
 
     // ONE reserve+commit chain on the ledger, net -70.
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
     expect(rows[1]?.delta).toBe(-TOOL_COSTS.analyze_backlinks);
     expect(rows[1]?.tool).toBe("analyze_backlinks");
     expect(balanceOf(rows)).toBe(200 - TOOL_COSTS.analyze_backlinks);
@@ -167,23 +177,23 @@ describe("analyze_backlinks credit path against the local stack", () => {
 
   it("(b) live-disabled returns 'not enabled' with ZERO ledger rows and no charge", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 200);
+    await seedPurchase(ctx.userId, 200);
     const tool = makeAnalyzeBacklinksTool({ port: disabledBacklinksPort() });
 
     const result = await tool.run(ctx, { target: "example.com" });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/not yet enabled/i);
 
-    // The gate is PRE-reserve: only the seed grant exists — no spend_reserve, no release.
+    // The gate is PRE-reserve: only the seed purchase row exists — no spend_reserve, no release.
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase"]);
     expect(balanceOf(rows)).toBe(200); // untouched — the user was not charged
     expect(await jobCount(ctx.userId)).toBe(0);
   });
 
   it("(c) a DataForSEO failure releases the reserve — the balance ends unchanged", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 200);
+    await seedPurchase(ctx.userId, 200);
     const tool = makeAnalyzeBacklinksTool({ port: failingPort });
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -194,7 +204,7 @@ describe("analyze_backlinks credit path against the local stack", () => {
     }
 
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(200); // reserve refunded — a failed lookup is never billed
     expect(await jobCount(ctx.userId)).toBe(0);
   });
@@ -204,7 +214,7 @@ describe("analyze_backlinks credit path against the local stack", () => {
   for (const failFrom of [2, 3] as const) {
     it(`(${failFrom === 2 ? "d" : "e"}) request #${failFrom} of 3 failing still bills ZERO (no partial profile is sold)`, async () => {
       const ctx = await makeCtx();
-      await seedGrant(ctx.userId, 200);
+      await seedPurchase(ctx.userId, 200);
       const tool = makeAnalyzeBacklinksTool({ port: portFailingAtRequest(failFrom) });
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -215,7 +225,7 @@ describe("analyze_backlinks credit path against the local stack", () => {
       }
 
       const rows = await ledgerRows(ctx.userId);
-      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
       expect(balanceOf(rows)).toBe(200); // net zero: reserved, then fully released
       expect(await jobCount(ctx.userId)).toBe(0);
     });

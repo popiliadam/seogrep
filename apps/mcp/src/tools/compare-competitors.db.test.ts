@@ -65,11 +65,21 @@ async function makeCtx(): Promise<AuthContext> {
   return { userId: data.user.id, keyId: `key-${randomUUID()}` };
 }
 
-async function seedGrant(userId: string, amount: number): Promise<void> {
+/**
+ * Fund the account the way a REAL caller of this tool is funded: with a purchase.
+ *
+ * It used to be a trial `grant`. The paid-balance gate (credits/paid-balance.ts, operator
+ * decision 2026-08-06) now refuses this tool on a trial account BEFORE the reserve, so a grant
+ * fixture would describe a caller who never reaches the credit path these tests are about.
+ * Every assertion below is unchanged except the kind of this one seed row; the trial-account
+ * REFUSAL is not dropped, it moved to its own file (credits/guard-paid-balance.db.test.ts),
+ * which pins it harder than these tests ever did.
+ */
+async function seedPurchase(userId: string, amount: number): Promise<void> {
   const { error } = await service
     .from("credit_ledger")
-    .insert({ user_id: userId, delta: amount, kind: "grant", reason: "test-seed" });
-  if (error) throw new Error(`seed grant failed: ${error.message}`);
+    .insert({ user_id: userId, delta: amount, kind: "purchase", reason: "test-seed" });
+  if (error) throw new Error(`seed purchase failed: ${error.message}`);
 }
 
 interface LedgerRow {
@@ -172,7 +182,7 @@ beforeAll(async () => {
 describe("compare_competitors credit path against the local stack", () => {
   it("(a) serving (discovery flow) reserves+commits net -90 on the ledger, touches NO jobs row", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 300);
+    await seedPurchase(ctx.userId, 300);
     const tool = makeCompareCompetitorsTool({ port: createMockCompetitorsPort(FIXTURES) });
 
     const result = await tool.run(ctx, { target: "example.com" });
@@ -182,7 +192,7 @@ describe("compare_competitors credit path against the local stack", () => {
 
     // ONE reserve+commit chain on the ledger, net -90.
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
     expect(rows[1]?.delta).toBe(-TOOL_COSTS.compare_competitors);
     expect(rows[1]?.tool).toBe("compare_competitors");
     expect(balanceOf(rows)).toBe(300 - TOOL_COSTS.compare_competitors);
@@ -194,7 +204,7 @@ describe("compare_competitors credit path against the local stack", () => {
 
   it("(b) the SUPPLIED-competitors flow skips discovery but settles the same single -90 chain", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 300);
+    await seedPurchase(ctx.userId, 300);
     const tool = makeCompareCompetitorsTool({ port: createMockCompetitorsPort(FIXTURES) });
 
     const result = await tool.run(ctx, {
@@ -206,7 +216,7 @@ describe("compare_competitors credit path against the local stack", () => {
     expect(result.content[0]?.text).toContain("• rival.com (supplied by you)");
 
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
     expect(rows[1]?.delta).toBe(-TOOL_COSTS.compare_competitors);
     expect(balanceOf(rows)).toBe(300 - TOOL_COSTS.compare_competitors);
     expect(await jobCount(ctx.userId)).toBe(0);
@@ -214,23 +224,23 @@ describe("compare_competitors credit path against the local stack", () => {
 
   it("(c) live-disabled returns 'not enabled' with ZERO ledger rows and no charge", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 300);
+    await seedPurchase(ctx.userId, 300);
     const tool = makeCompareCompetitorsTool({ port: disabledCompetitorsPort() });
 
     const result = await tool.run(ctx, { target: "example.com" });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/not yet enabled/i);
 
-    // The gate is PRE-reserve: only the seed grant exists — no spend_reserve, no release.
+    // The gate is PRE-reserve: only the seed purchase row exists — no spend_reserve, no release.
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase"]);
     expect(balanceOf(rows)).toBe(300); // untouched — the user was not charged
     expect(await jobCount(ctx.userId)).toBe(0);
   });
 
   it("(d) a DataForSEO failure releases the reserve — the balance ends unchanged", async () => {
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 300);
+    await seedPurchase(ctx.userId, 300);
     const tool = makeCompareCompetitorsTool({ port: failingPort });
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -241,7 +251,7 @@ describe("compare_competitors credit path against the local stack", () => {
     }
 
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(300); // reserve refunded — a failed comparison is never billed
     expect(await jobCount(ctx.userId)).toBe(0);
   });
@@ -256,7 +266,7 @@ describe("compare_competitors credit path against the local stack", () => {
   for (const { label, failFrom, what } of FAN_OUT) {
     it(`(${label}) ${what} failing still bills ZERO (no partial comparison is sold)`, async () => {
       const ctx = await makeCtx();
-      await seedGrant(ctx.userId, 300);
+      await seedPurchase(ctx.userId, 300);
       const tool = makeCompareCompetitorsTool({ port: portFailingAtRequest(failFrom) });
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -267,7 +277,7 @@ describe("compare_competitors credit path against the local stack", () => {
       }
 
       const rows = await ledgerRows(ctx.userId);
-      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
       expect(balanceOf(rows)).toBe(300); // net zero: reserved, then fully released
       expect(await jobCount(ctx.userId)).toBe(0);
     });
@@ -278,7 +288,7 @@ describe("compare_competitors credit path against the local stack", () => {
     // competitors skips the discovery request entirely, so the partial-failure refund has to hold
     // on a fan-out that never had a discovery request to fail at.
     const ctx = await makeCtx();
-    await seedGrant(ctx.userId, 300);
+    await seedPurchase(ctx.userId, 300);
     const { port, seen } = suppliedFlowPortFailingAtSecond();
     const tool = makeCompareCompetitorsTool({ port });
 
@@ -298,7 +308,7 @@ describe("compare_competitors credit path against the local stack", () => {
     expect(seen.every((url) => url.includes("/domain_rank_overview/live"))).toBe(true);
 
     const rows = await ledgerRows(ctx.userId);
-    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(300); // net zero — a half-built comparison is never billed
     expect(await jobCount(ctx.userId)).toBe(0);
   });
