@@ -200,6 +200,74 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
+## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)
+
+**Operatör iş emri.** Açık self-servis kayıt + catch-all alan adına kör posta-kutusu parmak izi
+(H-06) = sınırsız trial hesap. Para kaybı $3/gün tavanıyla sınırlı; **asıl tehdit** bir farm'ın
+sabah bütçeyi tüketip O GÜN ÖDEMİŞ müşterilerin DFS çağrılarını reddettirmesi — $0 maliyetle
+hizmet kesme. Trial küçültmek çözüm değil (farm daha çok hesap açar); **riski taşıyan yüzey**
+kesildi.
+
+- **Kapı:** `apps/mcp/src/credits/paid-balance.ts` (yeni) + `withCredits`'in İLK adımı.
+  `reserve()`'den ÖNCE → reddedilen çağrı **0 kredi yakar, ledger'a hiç satır yazmaz**, `fn`
+  (vendor çağrısı) hiç koşmaz. İade mekaniği devreye girmez çünkü rezervasyon açılmaz.
+- **Tablo-anahtarlı, bayrak DEĞİL** (iş emrinin "Öneri"sinden sapma, gerekçeli): `withCredits`'e
+  ALTI yerden girilir (4 handler + registry surface + async worker); çağıran tarafın geçtiği bir
+  bayrak unutulabilir, `meta.tool` ile okunan tablo unutulamaz → **fail-closed**. Üyelik tek
+  testle pinli.
+- **"Ödemiş" testi (operatör kararı):** o kullanıcıya ait **`purchase` VEYA delta>0 `adjust`**.
+  `grant` = makine-verimi trial, kapatılan tam olarak o. `subscriptions`'tan TÜRETİLMEDİ (top-up
+  alan abonesiz müşteri de ödemiştir). `adjust` sayılır çünkü **`apps/`+`packages/` içinde
+  `adjust` yazan kod YOK** (0019 yazılı olarak söylüyor) → her biri kasıtlı insan SQL'i.
+  `delta>0` şartı canlıdaki -200'lük arşiv-testinin "ödeme" okunmasını engelliyor.
+  Sorgu `.eq("user_id", …)` ile tenant-filtreli (NEVER#4 — service-role RLS'i baypas eder).
+- **Dürüst mesaj:** typed `PaidBalanceRequiredError` → registry catch'i **birebir** basar.
+  Düzeltilmeden önce kapı "failed unexpectedly — quote reference 3f9c1a20" diyordu; yani çalışan
+  bir kural, olmayan bir bug'ın destek talebine dönüşüyordu.
+- **DOKUNULMAYAN:** crawl · audit×3 · report · GSC · quick-win'ler trial'da AYNEN çalışıyor
+  (9 tool × regresyon testi). Kredi rakamlarının hiçbiri değişmedi (NEVER#6).
+- **Tool açıklamaları düzeltildi (madde 3):** dördü de "Live DataForSEO data is off during beta"
+  diyordu — `DFS_LIVE=1` olduğu an ödeyen müşteriye YALAN olacaktı. Yeni metin **duruma değil
+  KURALA** bağlı ("erişim yoksa söyler ve ücret almaz") + paid-balance şartı. Docs registry'den
+  yeniden üretildi, `--check` yeşil. `billing-and-credits.mdx`'e "trial ne kapsar" bölümü.
+- **NEVER#8 ŞERHİ — okunmadan geçilmesin:** dört DFS tool'unun MEVCUT `*.db.test.ts` fixture'ı
+  `seedGrant` (trial hesap) idi ve kapı onları kırdı (14 FAIL). Fixture `seedPurchase`'a
+  çevrildi. Bu **testi geçirmek için test zayıflatmak DEĞİL**: (1) her davranış iddiası
+  (net delta, satır sırası, no-jobs-row, hata → release, kısmî sonuç → 0 fatura) birebir duruyor,
+  değişen tek şey tek seed satırının `kind`'ı; (2) kaybolan senaryo (trial hesap bu tool'ları
+  çağırır) silinmedi, **kendi dosyasına taşındı** ve orada daha sert pinlendi
+  (`credits/guard-paid-balance.db.test.ts`, 20 test); (3) değişimi bir kusur değil, operatör
+  onaylı ürün-kuralı değişikliği zorladı.
+- **MUTASYON TESTİ (4 tur, hepsi kırmızı döndü):** kapıyı sil → 6 FAIL · tenant filtresini sil →
+  tenant-sızıntı testi FAIL · `delta>0`'ı sil → negatif-adjust testi FAIL · `grant`'i "ödeme"
+  say → trial testi FAIL. Regresyon testleri (ödemiş hesap + gated olmayan tool'lar) her
+  mutasyonda YEŞİL kaldı — yani doğru şeyi ölçüyorlar.
+- **KAPILAR (borusuz exit kodu ölçüldü):** `verify.sh` **PASS 16/16** (mcp 761 · web 599 ·
+  core 196 · db 12) · `verify-db.sh` **PASS** (105 + **144**) · `make goals` **16/16 PASS,
+  1 SKIP** — SKIP = `dfs-budget-guard` (prod env verilmediğinde exit 97; tam ölçüm DEĞİL).
+- **TAZE FABLE HAKEM: PASS** (0 bloklayan bulgu). Beş NEVER kuralı da "held"; iki bilinçli sapma
+  da "sound/legitimate" bulundu. Hakem bağımsız doğruladı: `withCredits`'e giden **altı** çağrı
+  yolunun hepsi `meta.tool`'u tool kimliğinden türetir → tabloyu atlayan yol YOK; `dfs/`
+  modüllerini yalnız o dört tool import eder ve her vendor fetch'i `withCredits` closure'ının
+  İÇİNDE; worker yalnız `crawl_site` kaydeder. NEVER#8 için fixture diff'ini iddia iddia
+  karşılaştırdı: `delta`, `tool` kimliği, `balanceOf`, `jobCount`, zincir sırası, kısmî-hata
+  vakaları **birebir duruyor**; silinen her satır seed-helper/seed-çağrısı/kind-literali/yorum.
+- **HAKEMİN YAKALADIĞI (şefin kaçırdığı, düzeltildi):** `blog/why-mcp-not-another-dashboard.mdx:21`
+  hâlâ "Keyword-volume research is off during **the** beta" diyordu — madde 3'ün öldürdüğü
+  yalanın aynısı. Şefin taraması `during beta` arıyordu, "the" yüzünden ıskaladı. Düzeltildi.
+- **HAKEMİN AÇIK BIRAKTIĞI — OPERATÖR KARARI, şef DEĞİŞTİRMEDİ:**
+  (a) **Bugün trial kullanıcı hangi mesajı görür:** handler'lar `port.enabled`'ı `withCredits`'ten
+      ÖNCE bakar → `DFS_LIVE` kapalıyken trial hesap "not yet enabled" görür, paid-balance
+      cümlesini DEĞİL. İkisi de dürüst ve ücretsiz; bayrak açılınca doğru mesaj devreye girer.
+  (b) **Vitrin ima düzeyinde dokunulmadı:** landing "research keywords"ü yetenekler arasında
+      "Free trial: 200 credits"in yanında sayıyor; pricing dört tool'un kredisini paid-balance
+      notu olmadan listeliyor. Hiçbir cümle yalan değil ama trial'a tam da bunun için gelen
+      kullanıcı ilk kullanımda reddi yer. Pazarlama kararı → insan.
+  (c) **"Ödemiş" kalıcıdır:** tek bir geçmiş purchase yüzeyi SONSUZA dek açar — chargeback sonrası
+      bile (append-only ledger purchase'ı geri alamaz, negatif adjust iptal etmez). Bilinçli;
+      geri alma yeni bir mekanizma ister.
+- **DURUM: dal/PR YOK, commit YOK.** Diff ~960 satır. PR + merge insan kapısında.
+
 ## 🔓 2026-08-05 — ERİŞİM DURUŞU DEĞİŞTİ: waitlist KALDIRILDI, kayıt açık self-servis
 
 **Operatör kararı.** Private beta bitti; gelen kaydolur, öder, kullanır. [PR #36](https://github.com/popiliadam/seogrep/pull/36).
