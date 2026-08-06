@@ -113,10 +113,26 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
  * broken `undefined/...` link. Trailing slashes are trimmed so callers can append a path.
  */
 export function requireWebBaseUrl(source: NodeJS.ProcessEnv = process.env): string {
-  const raw = source.WEB_BASE_URL?.trim();
-  if (!raw) {
+  const url = optionalWebBaseUrl(source);
+  if (url === null) {
     throw new Error("WEB_BASE_URL is not configured (required to build the GSC connect link)");
   }
+  return url;
+}
+
+/**
+ * The same value, read SOFTLY: the trimmed base URL, or null when it is unset or blank.
+ *
+ * For callers that merely want to LINK somewhere. The paid-balance refusal
+ * (credits/paid-balance.ts) is the case this exists for: it must stay a readable English
+ * sentence on a deployment missing WEB_BASE_URL, because turning a correctly-working rule
+ * into a crash would be a worse failure than an unlinked sentence. Fail-closed reading
+ * (requireWebBaseUrl) remains the default for anything that would otherwise degrade
+ * SILENTLY — a missing link degrades visibly, in the prose itself.
+ */
+export function optionalWebBaseUrl(source: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = source.WEB_BASE_URL?.trim();
+  if (!raw) return null;
   return raw.replace(/\/+$/, "");
 }
 
