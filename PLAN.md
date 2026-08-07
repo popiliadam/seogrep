@@ -200,6 +200,60 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
+## 🧪 SIRADAKİ OTURUM — ÜRÜN TESTİ (fresh session, 2026-08-07 akşamı hazırlandı)
+
+```
+Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
+SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
+→ docs/testing/product-test-log.md  ← ESAS BELGE: test planı + iki taraflı bulgu defteri
+
+=== NEDEN BU OTURUM VAR ===
+Ürün canlı, para alıyor, kapılar yeşil, 1568 test geçiyor. Ama ÜCRETLİ 13 TOOL'UN 7'Sİ
+CANLIDA HİÇ GERÇEK ÇIKTI ÜRETMEDİ — aralarında en pahalı üçü de var (65/70/90 kredi).
+Ürünün SAĞLAM olduğunu biliyoruz; İYİ olup olmadığını bilmiyoruz. Bu oturum onu ölçer.
+Bu bir kod oturumu DEĞİL. Ürün kullanma oturumu. Kod yazmadan önce bulgu topla.
+
+=== KAPSAM DIŞI (yapma) ===
+· Daha fazla sertleştirme/refactor — audit kapandı, azalan getiri.
+· Launch yayınları (PH/HN/X) — taslaklar hazır ama TEST BİTMEDEN OLMAZ (contract.md insan kapısı).
+· Fiyat/kredi rakamı değişikliği — NEVER#6. Yanlış görünüyorsa BULGU yaz, dokunma.
+
+=== İŞİN BÖLÜŞÜMÜ — karıştırma, ikisi farklı şey ölçüyor ===
+ŞEF  (curl + MCP endpoint) → "doğru veri dönüyor mu": çıktı doğruluğu, defter (rezerve→commit),
+                              hata mesajı dürüstlüğü, vendor harcaması. Şef bunu tek başına koşar.
+OPERATÖR (Claude Desktop/Code, normal cümleler) → "kullanılabilir mi": LLM açıklamadan doğru
+                              tool'u seçiyor mu, çıktı sohbette işe yarıyor mu, 90 krediye değdi mi.
+                              ŞEF BUNU YAPAMAZ ve bugüne dek HİÇ YAPILMADI.
+
+=== ŞEFİN OPERATÖRDEN İSTEYECEĞİ İKİ ŞEY (oturum başında sor) ===
+1. Hangi gerçek site test edilecek? (example.com işe yaramaz — tek sayfa)
+2. GSC'de bağlı property hangisi? (Tur 2'nin 4 tool'u buna bağlı)
+   + ödeyen hesabın MCP URL'i (anahtar 2026-08-07'de rotate edildi; ~/.zshrc MCP_SMOKE_URL güncel)
+
+=== BULGU DEFTERİ — oturumun asıl çıktısı ===
+docs/testing/product-test-log.md · tablo + iki serbest-metin bölümü.
+Kaynak O=operatör, Ş=şef · Önem 🔴🟡🟢 · Durum açık/iş emri/düzeltildi/kabul.
+OPERATÖRÜN HER ÖNERİSİ LOGLANIR — yarım cümle bile. Şef kendi bulduğu hata/eksik/gelişim
+alanlarını da AYNI deftere yazar. Bulgu ≠ iş emri; triyaj test BİTTİKTEN sonra.
+
+=== MALİYET (onaylı) ===
+Tam tur ≈ 345 kredi (ödeyen hesapta 1380 var) · vendor ≈ $0.85 ($3/gün tavanının altında).
+Tur 1 temel akış 85 · Tur 2 GSC 35 · Tur 3 premium/DFS 225 · Tur 4 yardımcılar 0.
+
+=== CANLI DURUM (2026-08-07 ölçümü) ===
+main 8b8c5c9 · açık PR yok · çalışma ağacı temiz · lokal+uzak YALNIZ main dalı
+repo PRIVATE ✅ (CI private'ta gerçek koşuyla kanıtlandı: 6 iş de success)
+DFS_LIVE AÇIK · vendor bugün $0.09/$3.00 · Turnstile CANLI (3 auth sayfasında)
+3 hesap: ödeyen 041a09b3 (1380 kr) · trial 1bfe47da (180 kr) · 6b424117 (0 kr)
+migration defteri 20/20 hizalı · RLS 12/12 · UptimeRobot healthz'i 5 dk'da bir izliyor
+make goals 16/16 (1 skip: dfs-budget-guard, prod env shell'de yokken atlar)
+
+=== AÇIK, TEST DIŞI ===
+· Supabase Pro: operatör ALMAYACAK (2026-08-07 kararı) → leaked-password koruması kapalı kalır.
+· 18 Ağustos: tek aboneliğin yenilemesi. PADDLE_ATTRIBUTION_ENFORCE KAPALI kalacak.
+· Trial hesapta test kalıntısı: example.com projesi + 1 crawl. Zararsız.
+```
+
 ## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)
 
 **Operatör iş emri.** Açık self-servis kayıt + catch-all alan adına kör posta-kutusu parmak izi

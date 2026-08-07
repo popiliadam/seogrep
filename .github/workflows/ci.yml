@@ -59,6 +59,15 @@ jobs:
 
   gitleaks:
     runs-on: ubuntu-latest
+    # The workflow-wide default is `contents: read`, which was enough while the repository was
+    # PUBLIC: gitleaks-action reads the PR's commits through the API, and on a public repo that
+    # read needs no extra scope. The repo went private on 2026-08-07 and the very next pull
+    # request died on `RequestError [HttpError]: Resource not accessible by integration` — not a
+    # leak, a token that could no longer see the pull request. Granted here rather than at the
+    # top of the file so the other five jobs keep the narrower default.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
