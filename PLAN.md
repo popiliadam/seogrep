@@ -266,7 +266,69 @@ kesildi.
   (c) **"Ödemiş" kalıcıdır:** tek bir geçmiş purchase yüzeyi SONSUZA dek açar — chargeback sonrası
       bile (append-only ledger purchase'ı geri alamaz, negatif adjust iptal etmez). Bilinçli;
       geri alma yeni bir mekanizma ister.
-- **DURUM: dal/PR YOK, commit YOK.** Diff ~960 satır. PR + merge insan kapısında.
+- **SEVK EDİLDİ:** [PR #37](https://github.com/popiliadam/seogrep/pull/37) → `main` @ `a0a1aa5` (2026-08-07 07:23Z),
+  dal silindi. CI + Deploy MCP success. **Canlı doğrulama:** `/status` uptime 93 sn (gerçekten
+  yeniden başladı) · `tools/list`'te dört açıklamada da "paid credit balance" VAR, "off during
+  beta" YOK · docs'ta "Who can run it" · pricing'de 65/70/90 · `make goals` 16/16 (1 skip) ·
+  ledger deploy öncesiyle **birebir aynı** (deploy hiçbir satır yazmadı).
+
+## 🟢 2026-08-07 — DFS_LIVE AÇILDI · TURNSTILE CANLI · Faz 4'ün son kapıları kapandı
+
+### DFS_LIVE — dört tool artık gerçek veri döndürüyor (yüzey ilk kez 19/19)
+
+- **H-04 rotasyonu YAPILMADI — operatör İKİNCİ kez reddetti, bu kez gerekçeli:** parola başka
+  entegrasyonlarda canlı, değiştirmek oraları kırar. Ölçüldü: DataForSEO hesap başına **tek** API
+  credential veriyor, alt-hesap/proje-anahtarı YOK → "SeoGrep'e ayrı credential" yolu kapalı.
+- **Kararı değiştiren tespit:** açıktaki parolanın riski `DFS_LIVE`'dan **BAĞIMSIZ**. Para hesapta,
+  parola açıkta; credential sahibi doğrudan vendor'a bağlanır ve bütçe kapısını hiç görmez. Bayrağı
+  kapalı tutmak operatörü KORUMUYORDU, yalnız ürünü kısıtlıyordu. Seçilen: **zarar tavanını sınırla**
+  — hesapta ~$50 tutulur, hep $50'lik yüklenir. Rotasyon bir daha gündeme getirilmeyecek.
+- **Günlük bütçe $3 KALDI — operatör imzaladı** (NEVER#6). Kod/DB dokunulmadı, migration gerekmedi.
+  Gerekçe: tek ödeyen müşteriyle $3 = günde 8-15 premium çağrı, bir ciddi rakip-analizi seansı ~5
+  çağrı → kimseyi reddetmez; günlük kaybı da $50 tavan kararıyla uyumlu tutar. **Müşteri sayısı
+  artınca yeniden bakılacak** — artık "dev smoke bütçesi" değil, ÜRETİM TAVANI.
+  Ölçülen marjlar **×4.4–×6.2**; üç tool banttan içeride, `ranked_keywords` **×6.2 ile bandın
+  ÜSTÜNDE**. İhlal değil — imzalanan şey fiyatların kendisi (65/70/90) ve onlar değişmedi — ama
+  "bantla uyumlu" demek yanlış olurdu.
+- **İlk gerçek çağrı uçtan uca ÖLÇÜLDÜ** ("deploy geçti" kanıt sayılmadı):
+  `research_keywords(["seo audit tool"])` → gerçek veri (volume 2 900, CPC $19.07).
+  `dfs_spend` 0→**1** satır · `dfs_spend_today_usd()` $0→**$0.09** · ledger 27→**29**
+  (`spend_reserve -25` + `spend_commit 0`) · bakiye 1405→**1380** = tam −25.
+  **İki kanıt:** tahmin $0.10 rezerve edildi ama **gerçek maliyet $0.09 olarak kapandı**
+  (`settle_dfs_spend` estimate bırakmıyor) · `dfs_spend` ile `credit_ledger` birbirine **hiç
+  dokunmadı** → NEVER#2 canlı mühür.
+
+### Turnstile — canlı, ama araya bir KESİNTİ girdi (ders var)
+
+- Kod Ağustos 2'den beri uykudaydı; operatör Cloudflare + Netlify + Supabase adımlarını yaptı.
+- **KESİNTİ:** `.env.example`'daki prosedür "önce Supabase, sonra Netlify" diyordu. O sıra siteyi
+  **Durum B**'den geçirir: Supabase token ister, sayfa henüz göndermez → giriş + kayıt + parola
+  sıfırlama hepsi 400. Doğru sıra tersi (Netlify önce → widget token üretir → sonra Supabase).
+  `.env.example` düzeltildi ve nedeni yazıldı.
+- **ŞEFİN İKİ GEÇERSİZ ÖLÇÜMÜ — kaydediliyor, ders adayı:** şef kesinti ilan ederken (1) auth
+  sayfalarının HTML'ini `curl`'ledi — widget **client-render**, sunucu HTML'inde asla görünmez;
+  (2) Supabase'e tokensiz `curl` attı ve `captcha_failed` aldı — **`curl` hiçbir zaman token
+  taşıyamaz**, o cevap koruma açıkken DOĞRU davranıştır, kırıklık kanıtı değildir. İkisi de
+  kırıklığı kanıtlayamazdı. Şef bunu kendi düzeltti, ama **koruma bir süre gereksiz yere kapalı
+  kaldı**. Doğru alet gerçek tarayıcıdır: gönder butonunun disabled→enabled geçişi token'ın
+  geldiği andır. Otomasyonlu tarayıcı da yetmez — Turnstile tam olarak onu reddetmek için var
+  (şefin tarayıcısında widget mount oldu ama token hiç gelmedi; gerçek tarayıcıda sorunsuz).
+- **Canlı durum:** operatör gerçek tarayıcıda kayıt oldu ve giriş yaptı. Hesap 2→**3**,
+  `trial_claims` 0→**1** (H-06 parmak izi ilk kez gerçek veriyle çalıştı), grant 2→**3**.
+- **privacy sayfası güncellendi:** Cloudflare processor listesine eklendi + **hangi yüzeyde**
+  çalıştığı yazıldı (yalnız üç auth sayfası); DataForSEO cümlesindeki *"when that feature is
+  switched on"* şartı kaldırıldı (artık açık); effective **7 August 2026**. Terms DEĞİŞMEDİ →
+  tarihi 5 Ağustos'ta kaldı.
+
+### Flaky `budget.db.test.ts` KAPANDI — regex gevşetilmeden
+
+Kök neden: spec, **"reddedildi mi"** (HTTP sonucu, ağa duyarlı) ile **"bütçe kapısı mı reddetti"**
+(DB kararı) sorularını tek iddiada topluyordu. 10 eşzamanlı PostgREST çağrısından biri dropped
+connection / 5xx alınca bütçe İHLAL EDİLMİYOR, yalnız o çağrı kapının kararını hiç öğrenemiyor.
+Çözüm: transport hatası **belirsiz** sayılır ve **seri olarak yeniden istenir** — gün tavanda
+olduğu için tek doğru cevap "budget exceeded"; spec yine dört gerçek bütçe reddi talep eder.
+**İki yönlü kanıt (enjekte edilmiş 502 ile):** düzeltmeli kod GEÇTİ · eski iddia aynı enjeksiyonla
+tam olarak raporlanan mesajla KIRMIZI döndü.
 
 ## 🔓 2026-08-05 — ERİŞİM DURUŞU DEĞİŞTİ: waitlist KALDIRILDI, kayıt açık self-servis
 

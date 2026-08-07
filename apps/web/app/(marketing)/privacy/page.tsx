@@ -21,7 +21,7 @@ const SECTIONS = [
   },
   {
     heading: "Processors we use",
-    body: "We use Supabase for authentication and our database, Netlify to host the website, and Fly.io to run the analysis service; the database and the analysis service both run in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision. Paddle is our merchant of record for payments and billing, Resend sends transactional email, and PostHog, hosted in the EU, receives product analytics keyed to a hashed identifier rather than your email address. When you connect Search Console we call Google's API with your read-only token, and keyword research — when that feature is switched on — sends the keywords you ask about to DataForSEO. These providers process data only to deliver those functions.",
+    body: "We use Supabase for authentication and our database, Netlify to host the website, and Fly.io to run the analysis service; the database and the analysis service both run in Japan (Tokyo), a jurisdiction covered by an EU adequacy decision. Cloudflare Turnstile runs the bot check on our sign-up, sign-in, and password-reset pages, so those three pages load a script from Cloudflare and Cloudflare sees that request. Paddle is our merchant of record for payments and billing, Resend sends transactional email, and PostHog, hosted in the EU, receives product analytics keyed to a hashed identifier rather than your email address. When you connect Search Console we call Google's API with your read-only token, and the keyword and competitor tools send the keywords and domains you ask about to DataForSEO. These providers process data only to deliver those functions.",
   },
   {
     heading: "Google user data",
@@ -49,7 +49,7 @@ export default function Page() {
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
       <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Effective 5 August 2026 — applies to everyone who uses SeoGrep.
+        Effective 7 August 2026 — applies to everyone who uses SeoGrep.
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Privacy Policy</h1>
       <p className="mt-4 text-base text-ink/60">
