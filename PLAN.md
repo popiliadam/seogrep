@@ -287,7 +287,9 @@ kesildi.
   Gerekçe: tek ödeyen müşteriyle $3 = günde 8-15 premium çağrı, bir ciddi rakip-analizi seansı ~5
   çağrı → kimseyi reddetmez; günlük kaybı da $50 tavan kararıyla uyumlu tutar. **Müşteri sayısı
   artınca yeniden bakılacak** — artık "dev smoke bütçesi" değil, ÜRETİM TAVANI.
-  Ölçülen marjlar ×4.4–×6.2 (imzalı ×3-5 bandıyla uyumlu).
+  Ölçülen marjlar **×4.4–×6.2**; üç tool banttan içeride, `ranked_keywords` **×6.2 ile bandın
+  ÜSTÜNDE**. İhlal değil — imzalanan şey fiyatların kendisi (65/70/90) ve onlar değişmedi — ama
+  "bantla uyumlu" demek yanlış olurdu.
 - **İlk gerçek çağrı uçtan uca ÖLÇÜLDÜ** ("deploy geçti" kanıt sayılmadı):
   `research_keywords(["seo audit tool"])` → gerçek veri (volume 2 900, CPC $19.07).
   `dfs_spend` 0→**1** satır · `dfs_spend_today_usd()` $0→**$0.09** · ledger 27→**29**

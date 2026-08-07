@@ -67,9 +67,12 @@ describe("privacy page", () => {
 
   it("names every third party the running system actually touches", () => {
     const text = renderedText();
-    // Cloudflare joined on 2026-08-07: NEXT_PUBLIC_TURNSTILE_SITE_KEY is provisioned, so
-    // components/turnstile.tsx loads challenges.cloudflare.com on /signup, /login and
-    // /forgot-password — measured live in the browser, not inferred from the env var.
+    // Cloudflare joined on 2026-08-07, and the claim was OBSERVED on the live site rather than
+    // reasoned from the env var (signed lesson 9). All four pages were loaded in a browser and
+    // queried for the script tag and the widget's own cf-turnstile-response input:
+    //   /signup /login /forgot-password -> script present, widget mounted
+    //   /pricing                        -> neither
+    // So the policy's "those three pages, not the whole site" is measured on both sides.
     for (const processor of [
       "Supabase",
       "Netlify",
