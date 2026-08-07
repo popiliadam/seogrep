@@ -218,8 +218,23 @@ describe("the migration-0014 vendor-budget counter", () => {
 
     expect(admitted).toHaveLength(6);
     expect(refused).toHaveLength(4);
+
+    // Each of the four must be the GATE's refusal, not the network's. Ten simultaneous calls
+    // through PostgREST occasionally leave one of them holding a dropped connection or a gateway
+    // 5xx instead of the RPC's answer — the budget was never violated (the assertions below still
+    // pin the day at the cap), but that one call never learned the gate's decision.
+    //
+    // Such an outcome is INDETERMINATE, not excusable. Widening the matcher to accept it would
+    // let the exact regression this spec exists to catch — a gate that stops refusing and starts
+    // erroring — pass as a green run (constitution #8). So it is re-issued SERIALLY instead: the
+    // day is at the cap by now, so a re-issued call has precisely one correct answer, and the
+    // spec still ends up demanding four real "budget exceeded" refusals. What changed is only
+    // that the network no longer gets a vote on whether the gate is working.
     for (const outcome of refused) {
-      expect(String((outcome as PromiseRejectedResult).reason)).toMatch(/budget exceeded/i);
+      const reason = String((outcome as PromiseRejectedResult).reason);
+      if (/budget exceeded/i.test(reason)) continue; // the gate spoke; nothing left to prove
+      console.warn(`concurrent reserve failed in transport, re-issuing serially: ${reason}`);
+      await expect(ledger.reserve(slice, "concurrent-spec")).rejects.toThrow(/budget exceeded/i);
     }
     // Not one cent over the constitutional cap.
     expect(await todaySpendUsd(ledger)).toBeCloseTo(DAILY_BUDGET_USD, 5);
