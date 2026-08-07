@@ -320,6 +320,22 @@ kesildi.
   switched on"* şartı kaldırıldı (artık açık); effective **7 August 2026**. Terms DEĞİŞMEDİ →
   tarihi 5 Ağustos'ta kaldı.
 
+### Cloud migration defteri HİZALANDI — ve teşhis yanlış çıktı
+
+Açık borç *"0012/0016/0017/0020 `schema_migrations`'ta yok"* diye kayıtlıydı. **Ölçüm bunu
+çürüttü:** `supabase migration list` lokal `0001…0020`'nin **hiçbirini** uygulanmış saymıyordu
+(20'sinde de `remote: ""`), çünkü MCP `apply_migration` `version`'ı **zaman damgası** yazıyor
+(`20260804080245`), repo ise dosya sırası (`0013`). Eksik olan 4 satır değil, **yirmisi birden**
+eşleşmiyordu → `db push` dördünü değil yirmisini denerdi ve `0001`'de patlardı; önerilen 4 satırlık
+repair hiçbir şeyi çözmezdi.
+
+**Yapıldı:** yirmisinin etkisi önce nesne nesne ölçüldü (dördü bugün: `gsc_connections` DELETE
+grant **true** · taban tablolarda açık TRUNCATE **0** · composite FK **3** · `claim_trial`
+**5 argüman**), sonra `migration repair --status applied 0001…0020`. **`migration list` → 20/20
+eşleşti, yalnız-lokal 0.** Şema/para dokunulmadı (12/12 RLS · kredi toplamı ve `dfs_spend` aynı).
+Runbook'un yanlış teşhisi düzeltildi + **0016 ölçüm tuzağı** kaydedildi (filtresiz TRUNCATE sorgusu
+16 döndürür; 13'ü tablo sahibinin örtük yetkisi, 3'ü bir **VIEW** üzerinde — doğru sayı 0).
+
 ### Flaky `budget.db.test.ts` KAPANDI — regex gevşetilmeden
 
 Kök neden: spec, **"reddedildi mi"** (HTTP sonucu, ağa duyarlı) ile **"bütçe kapısı mı reddetti"**
