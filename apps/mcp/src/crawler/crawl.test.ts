@@ -472,13 +472,27 @@ describe("crawlSite — hostile response sizes (H-02)", () => {
   });
 
   it("caps an oversized sitemap body and still crawls what it seeded", async () => {
-    // ~16 MB of <loc>s. The sitemap ceiling must stop the read well before the end, and
-    // the crawl must still run on the seeds the bounded prefix yielded.
+    // 400k <loc>s — a 21.5 MB body (measured; the comment here used to say ~16 MB). The sitemap
+    // ceiling must stop the read well before the end, and the crawl must still run on the seeds
+    // the bounded prefix yielded.
     const site = await startHostileSite({ locCount: 400_000 });
     try {
       const result = await crawlSite(site.origin, { maxUrls: 2, crawlDelayCapMs: 0 });
       expect(result.pages.length).toBeGreaterThan(0);
-      expect(site.bytesWritten.get("/sitemap.xml") ?? 0).toBeLessThan(11_000_000);
+
+      // `bytesWritten` is what the SERVER pushed, which is the client's ceiling PLUS however far
+      // the socket buffers let the writer run ahead after we hung up. That overshoot belongs to
+      // the kernel and the runner, not to us: the old single bound of 11 MB was calibrated to one
+      // machine's buffering and failed on CI at 11.08 MB — 0.7% over — while the ceiling itself
+      // was working perfectly. Bounded on BOTH sides against the two numbers that are really ours:
+      const written = site.bytesWritten.get("/sitemap.xml") ?? 0;
+      // Lower: the read genuinely reached the 8 MB ceiling. The old spec had no lower bound at
+      // all, so a regression that killed the fetch outright (0 bytes) would have passed it.
+      expect(written).toBeGreaterThanOrEqual(8_000_000); // crawl.ts MAX_SITEMAP_BYTES
+      // Upper: and stopped far short of the 21.5 MB end. Drop the ceiling and the server drains
+      // the whole body, which misses this by 5.5 MB — the overshoot would have to more than
+      // double before the two bounds could be confused.
+      expect(written).toBeLessThan(16_000_000);
     } finally {
       await site.close();
     }
