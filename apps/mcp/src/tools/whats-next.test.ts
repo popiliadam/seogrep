@@ -75,6 +75,36 @@ describe("decideProjectNextStep — the state ladder", () => {
     expect(step.allSet).toBe(true);
     expect(step.upcoming).toContain("monthly-routine (prompt)");
   });
+
+  /**
+   * Live product test, 2026-08-07. A/B on two real projects with the SAME crawl state and only
+   * the Search Console link differing: the un-connected one was told to run the audits, the
+   * connected one was never told about them at all. Connecting GSC must not HIDE the analysis
+   * of a crawl the user has already paid 20 credits for — the ladder picks ONE primary step,
+   * but the audits stay visible on every rung where a crawl exists.
+   */
+  it("keeps the audit trio visible on every rung where a crawl exists", () => {
+    const rungs: ReadonlyArray<readonly [string, ProjectSignals]> = [
+      ["GSC connected, nothing pulled", signals({ hasPull: false, pullFresh: false })],
+      ["stale pull", signals({ pullFresh: false })],
+      ["all set", signals()],
+    ];
+    for (const [label, s] of rungs) {
+      const step = decideProjectNextStep(s);
+      expect(step.upcoming, `${label}: audit_onpage missing`).toContain("audit_onpage");
+      expect(step.upcoming, `${label}: audit_tech missing`).toContain("audit_tech");
+      expect(step.upcoming, `${label}: audit_schema missing`).toContain("audit_schema");
+    }
+  });
+
+  it("does not offer the audits when there is no crawl to audit", () => {
+    const step = decideProjectNextStep(
+      signals({ hasCrawl: false, crawlFresh: false, hasPull: false, pullFresh: false }),
+    );
+    // Rung 1 lists them as what comes AFTER the crawl, which is correct — but the primary
+    // step must still be the crawl itself, never an audit with nothing to analyze.
+    expect(step.primary).toBe("crawl_site");
+  });
 });
 
 describe("renderWhatsNext — every top-level state", () => {
