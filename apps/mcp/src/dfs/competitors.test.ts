@@ -79,6 +79,28 @@ describe("parseCompetitorsDomainResponse", () => {
     ]);
   });
 
+  // Same class as the live analyze_backlinks crash (2026-08-07, ref 5ded2b4e).
+  it("drops a null-domain row instead of failing the whole parse", () => {
+    const list = parseCompetitorsDomainResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              total_count: 2,
+              items: [
+                { domain: "rival-one.example", intersections: 9, avg_position: 4.5 },
+                { domain: null, intersections: 3, avg_position: 8.1 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(list.rows).toEqual([{ domain: "rival-one.example", intersections: 9, avg_position: 4.5 }]);
+  });
+
   it("treats an empty successful result as zero rows (a domain with no known rivals)", () => {
     expect(
       parseCompetitorsDomainResponse({

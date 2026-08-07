@@ -123,6 +123,31 @@ describe("parseReferringDomainsResponse", () => {
       }),
     ).toEqual({ total_count: 0, rows: [] });
   });
+
+  // Live regression (2026-08-07 product test): DFS sends `null` for text fields the fixtures
+  // only ever showed as strings. A null DOMAIN carries no usable information, so the row is
+  // dropped — but it must never take the whole report down with it.
+  it("drops a null-domain row instead of failing the whole parse", () => {
+    expect(
+      parseReferringDomainsResponse({
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                total_count: 2,
+                items: [
+                  { domain: "news.example", backlinks: 5, rank: 10 },
+                  { domain: null, backlinks: 3, rank: 4 },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({ total_count: 2, rows: [{ domain: "news.example", backlinks: 5, rank: 10 }] });
+  });
 });
 
 describe("parseAnchorsResponse", () => {
@@ -145,6 +170,38 @@ describe("parseAnchorsResponse", () => {
         tasks: [{ status_code: 20000, result: [{ total_count: 0, items_count: 0, items: [] }] }],
       }),
     ).toEqual({ total_count: 0, rows: [] });
+  });
+
+  // THE live crash (2026-08-07 product test, ref 5ded2b4e): analyze_backlinks died on
+  // `expected string, received null → at items[1].anchor`. An anchorless link is exactly what
+  // this file's own comment predicted ("image links carry no anchor text") — DFS just encodes
+  // it as null, not "". Null and "" must therefore mean the SAME thing, and neither may throw.
+  it("reads a null anchor as an empty anchor instead of failing the whole parse", () => {
+    expect(
+      parseAnchorsResponse({
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                total_count: 2,
+                items: [
+                  { anchor: "example", backlinks: 7 },
+                  { anchor: null, backlinks: 2 },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({
+      total_count: 2,
+      rows: [
+        { anchor: "example", backlinks: 7 },
+        { anchor: "", backlinks: 2 },
+      ],
+    });
   });
 });
 

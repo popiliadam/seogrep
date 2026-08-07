@@ -80,7 +80,9 @@ export type DfsTransport = (
 // --- Response parsing (validated with zod; the fixture is the real response shape) ------
 
 const dfsResultRowSchema = z.object({
-  keyword: z.string(),
+  // Nullish because DFS sends null where the fixtures only ever showed strings; a row with no
+  // keyword identifies nothing, so the projection drops it rather than failing the whole lookup.
+  keyword: z.string().nullish(),
   search_volume: z.number().nullish(),
   cpc: z.number().nullish(),
   competition: z.string().nullish(),
@@ -125,12 +127,14 @@ export function parseSearchVolumeResponse(raw: unknown): KeywordVolumeRow[] {
       `DataForSEO task failed (status ${task.status_code}): ${task.status_message ?? "unknown"}`,
     );
   }
-  return (task.result ?? []).map((row) => ({
-    keyword: row.keyword,
-    search_volume: row.search_volume ?? null,
-    cpc: row.cpc ?? null,
-    competition: row.competition ?? null,
-  }));
+  return (task.result ?? [])
+    .filter((row) => row.keyword != null)
+    .map((row) => ({
+      keyword: row.keyword as string,
+      search_volume: row.search_volume ?? null,
+      cpc: row.cpc ?? null,
+      competition: row.competition ?? null,
+    }));
 }
 
 /** The USD cost of a DFS response: top-level `cost`, else the first task's `cost`, else null. */

@@ -247,7 +247,8 @@ const competitorsResultSchema = z.object({
   items: z
     .array(
       z.object({
-        domain: z.string(),
+        // Nullish for the same reason as the other DFS text fields; a domain-less row is dropped.
+        domain: z.string().nullish(),
         avg_position: z.number().nullish(),
         intersections: z.number().nullish(),
       }),
@@ -288,11 +289,13 @@ export function parseCompetitorsDomainResponse(raw: unknown): DiscoveredCompetit
   if (result === null) return { total_count: null, rows: [] };
   return {
     total_count: result.total_count ?? null,
-    rows: (result.items ?? []).map((item) => ({
-      domain: item.domain,
-      intersections: item.intersections ?? null,
-      avg_position: item.avg_position ?? null,
-    })),
+    rows: (result.items ?? [])
+      .filter((item) => item.domain != null)
+      .map((item) => ({
+        domain: item.domain as string,
+        intersections: item.intersections ?? null,
+        avg_position: item.avg_position ?? null,
+      })),
   };
 }
 

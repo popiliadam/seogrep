@@ -55,6 +55,34 @@ describe("parseRankedKeywordsResponse", () => {
     ]);
   });
 
+  // Same class as the live analyze_backlinks crash (2026-08-07, ref 5ded2b4e).
+  it("drops a null-keyword row instead of failing the whole parse", () => {
+    const result = parseRankedKeywordsResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              target: "example.com",
+              total_count: 2,
+              items: [
+                {
+                  keyword_data: { keyword: "seo software", keyword_info: { search_volume: 10 } },
+                  ranked_serp_element: { serp_item: { rank_group: 3, url: "https://example.com/a" } },
+                },
+                { keyword_data: { keyword: null, keyword_info: null }, ranked_serp_element: null },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.rows).toEqual([
+      { keyword: "seo software", position: 3, search_volume: 10, url: "https://example.com/a" },
+    ]);
+  });
+
   it("treats an empty successful result as zero rows (a domain with no rankings)", () => {
     const result = parseRankedKeywordsResponse(
       {
