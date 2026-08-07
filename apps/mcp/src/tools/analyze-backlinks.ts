@@ -69,8 +69,9 @@ const DESCRIPTION =
   "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow-only " +
   "share, spam score, plus the top referring domains and anchor texts. Works on any public " +
   `domain, including a competitor's. Synchronous — returns a report immediately. Costs ` +
-  `${TOOL_COSTS.analyze_backlinks} credits. Live DataForSEO data is off during beta; while it ` +
-  "is off this tool returns a clear 'not yet enabled' error and charges nothing.";
+  `${TOOL_COSTS.analyze_backlinks} credits. Needs a paid credit balance: it is not available on ` +
+  "trial credits. If live DataForSEO access is unavailable on this deployment, the tool says " +
+  "so and charges nothing.";
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local on

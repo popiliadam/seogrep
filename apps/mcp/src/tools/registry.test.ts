@@ -12,6 +12,7 @@ import {
   textResult,
   type RegisteredTool,
 } from "./registry.ts";
+import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -247,6 +248,35 @@ describe("registerAll", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("renders a paid-balance refusal VERBATIM, not as an unexpected failure", async () => {
+    // The guard can only signal this refusal by throwing (withCredits is generic in T), so it
+    // lands in the same catch as a crash. It is not a crash: it is a rule working. Printing
+    // "failed unexpectedly — quote reference 3f9c1a20" would send a user who simply needs to
+    // buy credits into a support thread about a bug that does not exist.
+    const refused = defineTool({
+      name: "ranked_keywords",
+      description: "d",
+      inputSchema: z.object({}),
+      charge: "handler",
+      handler: async () => {
+        throw new PaidBalanceRequiredError("ranked_keywords", "needs a paid credit balance …");
+      },
+    });
+    const { server, handlers } = fakeServer();
+    registerAll(server, { ctx: CTX, tools: [refused] });
+    const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<{
+      content: { text: string }[];
+      isError?: boolean;
+    }>;
+
+    const result = await call({ params: { name: "ranked_keywords", arguments: {} } });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe("needs a paid credit balance …");
+    expect(result.content[0]?.text).not.toMatch(/unexpectedly/i);
+    expect(result.content[0]?.text).not.toMatch(/reference/i);
   });
 
   it("does NOT leak DB/RPC internals (relation, function, schema names) to the caller (L-03)", async () => {

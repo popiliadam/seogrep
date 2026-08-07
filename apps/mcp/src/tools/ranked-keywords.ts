@@ -66,9 +66,9 @@ type RankedKeywordsInput = z.infer<typeof inputSchema>;
 const DESCRIPTION =
   "List the Google organic keywords a domain already ranks for — keyword, position, monthly " +
   "search volume, and the ranking URL. Works on any public domain, including a competitor's. " +
-  `Synchronous — returns a table immediately. Costs ${TOOL_COSTS.ranked_keywords} credits. Live ` +
-  "DataForSEO data is off during beta; while it is off this tool returns a clear 'not yet " +
-  "enabled' error and charges nothing.";
+  `Synchronous — returns a table immediately. Costs ${TOOL_COSTS.ranked_keywords} credits. Needs ` +
+  "a paid credit balance: it is not available on trial credits. If live DataForSEO access is " +
+  "unavailable on this deployment, the tool says so and charges nothing.";
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local

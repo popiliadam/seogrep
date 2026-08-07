@@ -58,9 +58,9 @@ type ResearchKeywordsInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
   "Look up Google search volume, CPC, and competition for up to 100 keywords. Synchronous " +
-  `— returns a table immediately. Costs ${TOOL_COSTS.research_keywords} credits. Live keyword ` +
-  "data is off during beta; while it is off this tool returns a clear 'not yet enabled' " +
-  "error and charges nothing.";
+  `— returns a table immediately. Costs ${TOOL_COSTS.research_keywords} credits. Needs a paid ` +
+  "credit balance: it is not available on trial credits. If live keyword data is unavailable " +
+  "on this deployment, the tool says so and charges nothing.";
 
 /** Group digits with commas without depending on ICU/locale data (deterministic). */
 function thousands(value: number): string {

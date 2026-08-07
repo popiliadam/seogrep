@@ -501,13 +501,16 @@ export const DOC_PROSE = {
       "It also prints a one-line summary with the total monthly search volume across the batch.",
     preExampleSections: [
       {
-        heading: "Availability during beta",
+        heading: "Who can run it",
         body:
-          "Live keyword data is **off during the beta**. While it is off, `research_keywords` returns a " +
-          "clear _\"keyword research is not yet enabled on this deployment\"_ message and **charges you " +
-          "nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder " +
-          "figures dressed up as real data. Once live keyword research is switched on, the same call " +
-          "starts returning real numbers.",
+          "`research_keywords` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
+          "audits, reports and Search Console tools.\n\n" +
+          "If live keyword data is unavailable on this deployment, the tool returns a clear " +
+          "_\"keyword research is not yet enabled on this deployment\"_ message and **charges you " +
+          "nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
+          "placeholder figures dressed up as real data.",
       },
     ],
     example:
@@ -538,13 +541,16 @@ export const DOC_PROSE = {
       "how many it ranks for in total, so a truncated list never reads like the whole picture.",
     preExampleSections: [
       {
-        heading: "Availability during beta",
+        heading: "Who can run it",
         body:
-          "Live DataForSEO data is **off during the beta**. While it is off, `ranked_keywords` " +
-          "returns a clear _\"ranked-keyword lookups are not yet enabled on this deployment\"_ " +
-          "message and **charges you nothing** — no credits are reserved or spent. SeoGrep never " +
-          "returns sample or placeholder figures dressed up as real data. Once live DataForSEO " +
-          "access is switched on, the same call starts returning real numbers.",
+          "`ranked_keywords` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
+          "audits, reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"ranked-keyword lookups are not yet enabled on this deployment\"_ message and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as real data.",
       },
     ],
     example:
@@ -580,13 +586,16 @@ export const DOC_PROSE = {
       "for, how many exist in total, so a truncated list never reads like the whole picture.",
     preExampleSections: [
       {
-        heading: "Availability during beta",
+        heading: "Who can run it",
         body:
-          "Live DataForSEO data is **off during the beta**. While it is off, `analyze_backlinks` " +
-          "returns a clear _\"backlink lookups are not yet enabled on this deployment\"_ message " +
-          "and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
-          "sample or placeholder figures dressed up as real data. Once live DataForSEO access is " +
-          "switched on, the same call starts returning real numbers.",
+          "`analyze_backlinks` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
+          "audits, reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"backlink lookups are not yet enabled on this deployment\"_ message and **charges " +
+          "you nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
+          "placeholder figures dressed up as real data.",
       },
     ],
     example:
@@ -644,13 +653,16 @@ export const DOC_PROSE = {
       "for says so plainly.",
     preExampleSections: [
       {
-        heading: "Availability during beta",
+        heading: "Who can run it",
         body:
-          "Live DataForSEO data is **off during the beta**. While it is off, `compare_competitors` " +
-          "returns a clear _\"competitor comparisons are not yet enabled on this deployment\"_ " +
-          "message and **charges you nothing** — no credits are reserved or spent. SeoGrep never " +
-          "returns sample or placeholder figures dressed up as real data. Once live DataForSEO " +
-          "access is switched on, the same call starts returning real numbers.",
+          "`compare_competitors` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
+          "audits, reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"competitor comparisons are not yet enabled on this deployment\"_ message and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as real data.",
       },
     ],
     example:

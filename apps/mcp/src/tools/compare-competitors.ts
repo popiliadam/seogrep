@@ -88,8 +88,9 @@ const DESCRIPTION =
   "position bands, estimated monthly organic traffic, and the paid-equivalent traffic cost, side " +
   `by side. Name up to ${MAX_COMPETITORS} competitors or let DataForSEO pick them. Works on any ` +
   "public domain. Synchronous — returns a table immediately. Costs " +
-  `${TOOL_COSTS.compare_competitors} credits. Live DataForSEO data is off during beta; while it ` +
-  "is off this tool returns a clear 'not yet enabled' error and charges nothing.";
+  `${TOOL_COSTS.compare_competitors} credits. Needs a paid credit balance: it is not available ` +
+  "on trial credits. If live DataForSEO access is unavailable on this deployment, the tool says " +
+  "so and charges nothing.";
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local on

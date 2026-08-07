@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEnv, requireTokenEncryptionKey, requireWebBaseUrl } from "./env.ts";
+import { loadEnv, optionalWebBaseUrl, requireTokenEncryptionKey, requireWebBaseUrl } from "./env.ts";
 
 /**
  * A complete environment using the REAL production variable names. The
@@ -124,6 +124,27 @@ describe("requireWebBaseUrl", () => {
 describe("requireTokenEncryptionKey", () => {
   it("throws an error naming TOKEN_ENCRYPTION_KEY when it is missing", () => {
     expect(() => requireTokenEncryptionKey({})).toThrowError(/TOKEN_ENCRYPTION_KEY/);
+  });
+});
+
+/**
+ * The SOFT reader, and the one place it is right to be soft: a refusal message that wants to
+ * link the billing page must not become a crash when WEB_BASE_URL is unset. Fail-closed is for
+ * things that would otherwise degrade SILENTLY; a missing link degrades visibly, in prose.
+ */
+describe("optionalWebBaseUrl", () => {
+  it("returns null instead of throwing when WEB_BASE_URL is missing", () => {
+    expect(optionalWebBaseUrl({})).toBeNull();
+  });
+
+  it("returns null for a blank or whitespace-only value", () => {
+    expect(optionalWebBaseUrl({ WEB_BASE_URL: "   " })).toBeNull();
+  });
+
+  it("trims a trailing slash exactly as requireWebBaseUrl does", () => {
+    expect(optionalWebBaseUrl({ WEB_BASE_URL: "https://seogrep.com/" })).toBe(
+      "https://seogrep.com",
+    );
   });
 });
 

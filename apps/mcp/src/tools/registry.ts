@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
+import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 
 /**
@@ -288,6 +289,17 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
     try {
       return await tool.run(deps.ctx, request.params.arguments);
     } catch (error) {
+      // A DELIBERATE refusal that had no choice but to throw. The paid-balance gate lives inside
+      // withCredits, which is generic in T and so cannot return a ToolResult — its only exit is
+      // an exception, and it lands in this catch beside the genuine crashes. It is not one: the
+      // rule worked. Its sentence is written to be read by the user (what happened, why, how to
+      // clear it, that nothing was charged), so it is passed through verbatim. Falling through
+      // to the generic branch would answer "buy credits" with "failed unexpectedly, quote
+      // reference 3f9c1a20" and turn a working gate into a support ticket. No log line either:
+      // an operator has nothing to diagnose here.
+      if (isPaidBalanceRequired(error)) {
+        return errorResult(error.message);
+      }
       // The guard has already released any reserve it opened before rethrowing.
       //
       // The raw message is NOT echoed to the caller. Anything that escapes a handler is an

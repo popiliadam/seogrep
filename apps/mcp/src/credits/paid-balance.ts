@@ -1,0 +1,128 @@
+import type { ToolName } from "./costs.ts";
+import { getServiceClient } from "../db.ts";
+
+/**
+ * The paid-balance gate: which tools may spend REAL VENDOR MONEY, and who is allowed to.
+ *
+ * WHY THIS EXISTS (operator decision 2026-08-06). Signup is open self-serve and every verified
+ * account is granted trial credits. The mailbox fingerprint behind that grant is blind to a
+ * catch-all domain, so someone with their own domain can mint accounts without limit. The money
+ * loss is capped by the daily DataForSEO budget — that is NOT the threat. The threat is that a
+ * farm burning the day's vendor budget by morning makes the DataForSEO tools REFUSE for the
+ * customers who paid for them that day: a denial of service against paying users at zero cost to
+ * the attacker. Rather than shrink the trial (a farm answers by minting more accounts; only the
+ * honest user is punished), the surface that CARRIES the risk is cut off from trial credits.
+ *
+ * The gate is deliberately narrow. Only the four DataForSEO tools are listed; crawl, audit,
+ * report and Search Console tools are untouched, because their marginal cost is our own CPU.
+ *
+ * WHERE IT RUNS: credits/guard.ts, BEFORE the reserve. A refused call therefore burns zero
+ * credits and writes no ledger row at all — refusing after a reserve would need a refund path,
+ * and the cheapest refund is the one that never has to happen.
+ */
+
+/**
+ * Tools that require a paid balance — the vendor-cost surface, keyed by TOOL NAME.
+ *
+ * Keyed by name, NOT by a flag the caller passes: withCredits is reached from six places (the
+ * four handlers below, the registry's "surface" path, and the async worker), and a flag is a
+ * thing a future tool can forget to set. A name in this table is consulted no matter which path
+ * the call arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership.
+ */
+export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
+  "research_keywords",
+  "ranked_keywords",
+  "analyze_backlinks",
+  "compare_competitors",
+]);
+
+/** Whether `tool` may only run on an account that has paid. */
+export function requiresPaidBalance(tool: ToolName): boolean {
+  return PAID_BALANCE_TOOLS.has(tool);
+}
+
+/**
+ * A gated tool was called by an account that has never paid. A TYPED error rather than a raw
+ * throw so the registry can tell this DELIBERATE refusal apart from a crash and render the
+ * sentence below verbatim — the generic "failed unexpectedly, quote reference X" would be a
+ * lie about a rule working exactly as designed. Mirrors ReserveCommitFailedError's shape.
+ */
+export class PaidBalanceRequiredError extends Error {
+  readonly tool: ToolName;
+
+  constructor(tool: ToolName, message: string) {
+    super(message);
+    this.name = "PaidBalanceRequiredError";
+    this.tool = tool;
+  }
+}
+
+/**
+ * Narrow an unknown error to the paid-balance refusal. The `name` fallback keeps this true
+ * across a duplicated module instance (test isolation, bundling), where `instanceof` alone
+ * silently answers false — the same hazard isReserveCommitFailed guards against.
+ */
+export function isPaidBalanceRequired(error: unknown): error is PaidBalanceRequiredError {
+  return (
+    error instanceof PaidBalanceRequiredError ||
+    (error instanceof Error && error.name === "PaidBalanceRequiredError")
+  );
+}
+
+/**
+ * The refusal the user reads. English (UI-copy language for this product), and honest on all
+ * four counts a refusal has to be: WHAT happened, WHY, HOW to clear it, and that nothing was
+ * charged. It also says the existing credits still work, because the plain reading of a bare
+ * refusal is "my credits are worthless" — they are not; they run every other tool.
+ *
+ * `billingUrl` is the web base URL or null. Null must not degrade the sentence: WEB_BASE_URL is
+ * only ever unset by misconfiguration, and a refusal that renders "undefined/app/billing" would
+ * turn a working rule into a support ticket.
+ */
+export function paidBalanceRequiredMessage(tool: ToolName, billingUrl: string | null): string {
+  const where = billingUrl
+    ? `at ${billingUrl}/app/billing`
+    : "from the Billing page in your SeoGrep dashboard";
+  return (
+    `"${tool}" needs a paid credit balance. It reads live data from a paid third-party SEO ` +
+    `provider, so it is not available on trial credits. Buy any credit pack ${where} and this ` +
+    `tool unlocks straight away. Your existing credits are untouched and keep working for ` +
+    `crawls, audits, reports and Search Console tools. You were not charged.`
+  );
+}
+
+/**
+ * Has this account ever had value put into it by a human or by Paddle?
+ *
+ * TRUE for a positive `purchase` (money arrived through Paddle) or a positive `adjust` (the
+ * operator deliberately credited the account — a support gesture or a make-good). FALSE for a
+ * `grant`, which is the machine-issued trial: gating that is the entire point.
+ *
+ * Operator decision 2026-08-06, and the reason `adjust` counts: nothing in apps/ or packages/
+ * writes an `adjust` row (migration 0019 says so in writing), so every one of them is a
+ * deliberate human SQL statement. `delta > 0` is what keeps a CORRECTIVE adjust — the archive
+ * test in production is a -200 — from reading as a payment.
+ *
+ * Derived from the LEDGER, never from `subscriptions`: a customer who bought a top-up and holds
+ * no subscription has still paid, and reading the subscription table would lock them out.
+ *
+ * The `.eq("user_id", …)` filter is load-bearing. This client is service-role and bypasses RLS,
+ * so the filter is the ONLY thing making the read tenant-safe (constitution NEVER #4).
+ *
+ * Throws when the read fails. Fail CLOSED and fail LOUD: a gate that answered "true" on a
+ * database blip would be a gate in name only, and one that answered "false" would refuse a
+ * paying customer while claiming a rule that did not actually apply.
+ */
+export async function hasPaidBalance(userId: string): Promise<boolean> {
+  const { data, error } = await getServiceClient()
+    .from("credit_ledger")
+    .select("id")
+    .eq("user_id", userId)
+    .in("kind", ["purchase", "adjust"])
+    .gt("delta", 0)
+    .limit(1);
+  if (error) {
+    throw new Error(`paid-balance check failed: ${error.message}`);
+  }
+  return (data ?? []).length > 0;
+}
