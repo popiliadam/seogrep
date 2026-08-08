@@ -131,6 +131,17 @@ Bakılacak: `whats_next` bağlama göre değişiyor mu, yoksa hep aynı şeyi mi
 | 11 | Ş | `audit_schema` | **Dürüst ama sığ.** Çıktı yalnız `@type` histogramı (BlogPosting 24, Organization 24…) ve açıkça "only @type names are analyzed, never the JSON-LD body" diyor — bu dürüstlük **iyi**. Ama Rich Results'ın umursadığı zorunlu alan doğrulaması (headline, datePublished, author) yok; "yapısal verim geçerli mi?" sorusuna cevap vermiyor. 5 kredi olduğu için fiyat/değer dengesi kabul edilebilir; beklenti yönetimi açıklamada zaten yapılmış. | 🟢 | açık |
 | 4 | Ş | `crawl_site` | **"0 issue(s) found" yanıltıcı.** 43 sayfası düşmüş bir taramanın sonunda "0 sorun" cümlesi "siten temiz" diye okunuyor; aslında "getirebildiğimiz 24 sayfada fetch hatası yok" demek. T6'da kapatılan "No basic issues" yanılgısının crawl özetindeki eşdeğeri. | 🟡 | **PR #44 (kısmen)** |
 | 5 | Ş | `crawl_site` | **`max_urls` reklamı tutmuyor — bağlayıcı sınır zaman, URL değil.** Şema "Maximum pages to crawl (1–100, default 100)"; satın alma öncesi mesaj "~34 pages discovered; this crawl covers up to 100 of them (20 credits)". Gerçekte ~3.7 sn/sayfa süren normal bir WordPress sitesinde tavan **24**. Kullanıcı 34'ün tamamını bekleyip 24 alıyor. Zaman bütçesi hiçbir yerde (şema, açıklama, docs) geçmiyor. | 🟡 | açık |
+| 24 | Ş | bağlanma / teşhis | **Yanlış anahtarda hata mesajı okunamaz hâle geliyor.** Ölçüm: `POST /mcp/<ölü-anahtar>` ve `POST /mcp` + `x-api-key` → ikisi de `HTTP 401 {"code":-32001,"message":"Invalid API key"}`. **Sunucu doğru davranıyor** — temiz JSON-RPC hatası, `WWW-Authenticate` başlığı yok, üç OAuth keşif ucu da 404 (ölçtüm: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/register`). Garipleşen taraf istemci: 401'i "OAuth iste" sinyali sayıp DCR'a giriyor, `/register`'a POST atıyor, Express'in HTML 404'ünü JSON sanıyor ve kullanıcıya **`Failed to connect — HTTP 404 … Cannot POST /register`** gösteriyor. Geçerli anahtarı olan müşteri bunu hiç görmez; yalnız anahtar yanlış/eski/rotasyona uğramışsa çıkar — yani tam da "neden bağlanamıyorum" anındaki teşhis çöp oluyor. Olası hafifletme (karar değil, seçenek): JSON-RPC hatasını HTTP 200 ile döndürmek istemciyi OAuth merdivenine sokmaz. | 🟡 | açık |
+| 25 | O | tool seçimi / konumlandırma | **Rakip MCP'ler yüklüyken SeoGrep altı senaryonun ALTISINDA da seçilmedi.** Operatör turu Claude Desktop'ta koşuldu; ortamda `dataforseo`, `gsc`, `google-ads-mcp`, `ScraplingServer` bağlıydı ve web araması + kod çalıştırma açıktı. Seçilenler: S1 `gsc` · S2 `gsc` · S3 **web araması** · S4 `dataforseo` · S5 `dataforseo` · S6 **skill + headless Chromium**. Kanıt tek satır: **bakiye tur öncesi 740, tur sonrası 740** — hiçbir paralı tool koşmadı (ücretsiz tool'lar bakiyeye yazmadığı için "hiç çağrılmadı" DEĞİL, "hiç paralı çağrılmadı" denebilir; çıktıların hiçbirinde SeoGrep verisi yok). **Kapsam dürüstlüğü:** operatör atipik — hedef müşterinin DataForSEO hesabı olmaz, ürünün değer önerisi zaten budur. Ama dört rakipten üçü (`gsc`, web araması, kod çalıştırma) **her kullanıcıda var**. Bu bulgunun şiddeti bir triyaj değil **strateji** sorusudur: hangi segmentte yarıştığımıza karar verilmeden 🔴/🟡 atanamaz. | 🟡 | **insan kararı bekliyor** |
+| 26 | O | `compare_competitors` | **#17'nin kök sebebi DÜZELTİLİYOR: bozukluk bizim algoritmamızda değil, VENDOR'da.** DFS'in kendi MCP'si, aynı domainde (`adstark.com.tr`), otomatik rakip seçiminde **Ekşi Sözlük · Wix · QuestionPro** çıkardı — bizim youtube/wikipedia/linkedin'imizle birebir aynı hastalık, aynı sebep (4 kesişen kelimede dev siteler kazanır). Yani #17'yi "seçim ölçütümüz bozuk" diye yazmak yanlıştı; `competitors_domain` bu domain sınıfında zaten çöp veriyor. **Asıl ders davranışta:** asistan çöpü fark etti, kullanıcıya AÇIKÇA söyledi ("rakip analizi aracı bile düzgün rakip bulamadı, örtüşecek kelime yok") ve gerçek rakipleri SERP'ten kendi türetti. PR #43'te biz "kullanıcı rakipleri söylesin" dedik — daha zayıf cevap; kullanıcı zaten rakiplerini bilse tool'a ihtiyacı olmazdı. Tool-analizi önerisi (4) **"anlamlı rakip yoksa dürüstçe söyle"** doğruymuş, öneri (6) "açık modu öne çıkar" yetersizmiş. | 🟡 | açık (PR #43 kısmen) |
+| 27 | O | `audit_onpage` | **30 kredilik denetim, sitenin en değerli on-page kusurunu göremiyor.** `adstark.com.tr`'de ana sayfa hariç ~58 sayfanın title'ı **yanlış marka adıyla** bitiyor: "Sosyal Medya Reklam Yönetimi - **Artistics**", "SEO Uzmanı Nedir … - **Artistics**". WordPress Ayarlar→Genel'de tema kurulumundan kalma demo site başlığı; düzeltmesi tek alan, ~30 saniye; etkisi marka aramalarının tamamı. Bizim `audit_onpage`'imiz aynı siteye ne dedi: **"title too long ×3."** Veri elimizdeydi — `PageRecord.title` 24 sayfanın hepsinde vardı. **DÜZELTME (2026-08-08, kodu okuduktan sonra): ilk yazdığım "duplikasyon kontrolümüz yok" cümlesi YANLIŞTI.** `onpage.ts:59,82,89,109-110` site geneli `duplicate_title` **ve** `duplicate_meta` kuralları içeriyor; tool'un 5 değil **13 kural tipi** var (`missing/too_long/too_short/duplicate` × title+meta, `missing/multiple_h1`, `missing/elsewhere canonical`, `thin_content`). Tool-analizi #8'deki "5 kontrol" ifadesi kategori sayımıydı, kural sayımı değil — ben onu kural yokluğu sanıp ikincil belgeden iddia türettim. **Gerçek boşluk daha dar ve başka şekilde:** `duplicateValues` yalnız **tam eşitlik** karşılaştırıyor. "Sosyal Medya Reklam Yönetimi - Artistics" ile "SEO - Artistics" farklı string'ler, dolayısıyla duplike sayılmıyor — **ortak sonek/token deseni** diye bir kural yok. Düzeltmesi de buna göre değişir: yeni bir "duplikasyon" kuralı değil, mevcut çapraz-sayfa kuralına *paylaşılan sonek* boyutu eklemek. *(Not: "Artistics" #22'nin sinyal tablosunda "sitenin KENDİ başlık şablonu" diye ÇÜRÜTÜLMÜŞTÜ — o çürütme hack sinyali olarak doğruydu; buradaki bulgu farklı bir eksen: şablonun kendisi hatalı.)* | 🔴 | açık |
+| 28 | O | `generate_report` | **15 kredilik rapor, istemcinin BEDAVA ürettiği PDF'e yeniliyor.** "Şu raporu müşterime göndereceğim" cümlesinde `generate_report` hiç çağrılmadı; asistan bir skill çalıştırdı, HTML yazdı, headless Chromium ile **7 sayfalık PDF** render etti, sayfa görsellerinden Türkçe glif kontrolü yaptı, müşteriye dönük dili yumuşattı ve **neyi çıkardığını neden çıkardığını kullanıcıya tek tek raporladı**. Bizim raporumuzun defterdeki dört kusuru — #9 yanlış kitle · #10 çıplak "43 sayfa atlandı" · beyaz etiket yok · PDF yok — burada dördü birden, sıfır krediye çözülmüş. Bu rekabet DFS'e bağlı DEĞİL: kod çalıştırabilen her istemci bunu yapabilir ve yetenek yayılıyor. **Ek risk:** üretilen PDF "teknik durum: iyi" diyor — site #23'e göre ele geçirilmişken. | 🔴 | **insan kararı bekliyor** |
+| 29 | O | `analyze_backlinks` | **Sayıyoruz, yorumlamıyoruz.** Aynı domainde bizim tool'umuz (70 kredi) 49.855 ham backlink dökerken, DFS'in kendi MCP'si aynı veriden dört grup çıkardı (müşteri sitewide %99,6 / basın bülteni ağı ~35 domain / blogspot ağı 9 domain spam 25 / çöp 11 domain spam 50-55), sitewide'ın "domain başına tek oy"a indirgendiğini açıkladı ve asıl teşhisi koydu: **51 domain birebir aynı ticari anchor'la link veriyor = referring domain'lerin %74'ü = link şeması deseni.** Bizim çıktımızda bu analiz katmanı yok. Aradaki fark 70 kredi ile 0 kredi arasındaki fark değil. | 🟡 | açık |
+| 30 | O | kredi şeffaflığı | **145 kredi harcandı, hiçbiri önceden bildirilmedi.** 2. koşu (rakipler kapalı) ölçümü: bakiye **740 → 595**. Senaryo 1'de asistan yalnız "Bu haftalık plan neye dayansın? → *Canlı SeoGrep verisi (Önerilen)*" diye sordu — **rakam yok, onay yok**; arkasında ~75 kredilik bir tool zinciri koştu (GSC + on-page + quick-wins + kanibalizasyon + decay). Senaryo 5'te `analyze_backlinks` doğrudan koştu, **70 kredi** öncesinde söylenmedi. Açıklamalarda "Costs 70 credits" yazılı olması yetmiyor: model bu satırı kullanıcıya taşımıyor. Bu, brifingteki "hiç ölçülmemiş üç şey"in birincisiydi — **artık ölçüldü ve cevap: hayır.** *(Kayıt sınırı: operatör ham sohbeti yapıştırdı; arayüzde görünmeyen bir onay adımı olsaydı transkriptte görünürdü, ama operatör teyidi alınmadı.)* **Yan ölçüm:** arayüzde "Analyze backlinks" rozeti iki kez göründü; 145 toplamı tek çağrıyla tutarlı, yani **iki rozet iki ücretlendirme değil**. | 🟡 | açık |
+| 31 | O | denetim ailesi / [G] | **#22'nin cevabı geldi ve OLUMLU: ham URL listesi modele ulaşınca hacklenmiş sayfaları model KENDİ buldu.** 2. koşuda, rakip MCP yokken, senaryo 1'de asistan altı enjekte sayfayı raporun **1. maddesi ve tek KRİTİK'i** yaptı: URL'leri tipleriyle listeledi (bahis/kumar/yetişkin, HR/ES/FR), birini canlı doğruladı (200, gerçek içerik, dışarı spam link), Google'ın "Hacked: content injection" manuel aksiyon kategorisine bağladı, **410 vs 301** ayrımını yaptı ve kök-neden temizliği (WP/tema/eklenti + şifreler + `wp-content/uploads` PHP taraması) listeledi. Ürünün kendisi hâlâ yalnız "multiple h1" diyor — **değişen şey teslim edilen deneyim.** Bu, tema [G]'nin en güçlü kanıtı ve stratejik yönü ters çeviriyor: eksik olan yorum katmanı **bizde olmak zorunda değil**, ham envanteri modele düzgün vermek yetebilir. **Sınır: n=1.** Bu URL'ler bariz; daha sinsi bir enjeksiyonda model fark etmeyebilir. Ders 13 gereği kural üretilmedi. | 🟢 | açık |
+| 32 | O | `compare_competitors` | **PR #43 İŞE YARADI — açıklama değişikliği modelin davranışını GERÇEKTEN değiştirdi.** Turun en kritik ve en uzun süre ölçülemeyen sorusu buydu. 2. koşu senaryo 4'te asistan önce `ranked_keywords` koştu, adstark'ın TR'de yalnız **4 keyword** (en iyisi #36) ile sıralandığını gördü ve **otomatik moda GİTMEDİ**; bunun yerine kullanıcıya döndü: *"Bu kadar küçük bir ayak iziyle otomatik rakip bulma işe yaramaz — kiminle karşılaştırmamı istersin?"* ve en fazla 3 domain girme seçeneği sundu. Operatör domain vermeyip "benzer ölçekte butik ajanslar" deyince asistan gerçek TR ajanslarını web'den bulup (`dijitalpi.com`, `zeymedya.com`, `51.com.tr`) **açık modda** koştu. Sonuç: youtube/wikipedia YOK, gerçek akran karşılaştırması var; üstelik "rakipler de zayıf, bu niş boş" ve "51.com.tr'nin 1.077 trafiği bilgi amaçlı, alıcı trafiği değil" gibi doğru nitel okumalar çıktı. **#17'nin açıklama-tarafı çözümü canlıda doğrulandı.** Kalan kısım (otomatik modun kendisi hâlâ çöp verir — bkz. #26, kök vendor'da) açık. | 🟢 | **DOĞRULANDI 2026-08-08** |
+| 33 | O | kredi şeffaflığı | **Senaryo 4'ün gerçek maliyeti 220 kredi — brifing tahmini 90'dı.** Zincir: `ranked_keywords` ×2 (65+65, biri hedef biri akran seti için) + `compare_competitors` (90). Bakiye ölçümü doğruluyor: **595 → 375**. Yani tek bir kullanıcı cümlesi, tahminin **2,4 katı** harcadı ve öncesinde hiçbir rakam söylenmedi. **#30'a nüans:** asistan maliyeti **sonradan** doğru raporladı ("Kredi: 220 harcandı, 375 kaldı") ve rakam ölçümle birebir tuttu — yani muhasebe doğru, **eksik olan ön-bildirim.** Mevcut onay eşiği (D17, >200 kredi) tek çağrı bazında bakıyor; bu zincirin hiçbir tek adımı 200'ü aşmadığı için onay tetiklenmedi. Eşiği çağrı başına değil **kullanıcı-turu başına** kümülatif hesaplamak bir seçenek — ama fiyat/UX politikası olduğu için NEVER#6 komşusu, insan kararı. | 🟡 | **insan kararı bekliyor** |
+| 34 | O·Ş | premium üçlü / tema [B] | **Model "Search Console bağlanmalı" dedi — GSC ZATEN bağlı; ama bu sefer suç tool'da DEĞİL.** Senaryo 4 çıktısı "Gerçek durum için Search Console bağlanmalı (`connect_gsc`)" diye bitti. Şef canlıda ölçtü: `connect_gsc(e2785bf7-…)` → *"Google Search Console is already connected for adstark.com.tr — property https://adstark.com.tr/"* → **PR #42 canlıda doğru çalışıyor, #20 gerçekten kapalı.** Yani yanlış tavsiye modelin kendi çıkarımı. Sebebi yapısal ve tema **[B]**'nin doğrudan sonucu: `ranked_keywords` ve `compare_competitors` `project_id` DEĞİL çıplak `target` alıyor → o sohbet dalında modelin elinde proje bağlamı hiç yok, GSC'nin bağlı olduğunu bilmesinin bir yolu yok. **Bu, "premium tool'lar `project_id` kabul etsin" önerisinin ölçülmüş ikinci gerekçesi** (birincisi #18 ülke/dil): bağlam eksikliği yalnız yanlış varsayılan üretmiyor, modele yanlış tavsiye de yazdırıyor. | 🟡 | açık |
 | 1 | Ş | `whats_next` | **GSC dalı denetim dalını yutuyor.** Aynı crawl durumunda tek fark GSC bağlantısı: seogrep.com (crawl ✅, GSC ❌) → `audit_onpage` + üç denetim tool'u listeleniyor; adstark.com.tr (crawl ✅, GSC ✅) → `pull_gsc_data` ve **`audit_onpage`/`audit_tech`/`audit_schema` hiç anılmıyor** — bu projede üçü de hiç koşmamış olmasına rağmen. GSC'yi erken bağlayan kullanıcı, 20 kredi ödediği crawl'ı analiz etmesi gerektiğini hiç öğrenmiyor. | 🟡 | **PR #42** |
 
 ---
@@ -140,11 +151,151 @@ Bakılacak: `whats_next` bağlama göre değişiyor mu, yoksa hep aynı şeyi mi
 > Tablo formatına sığmayan her şey buraya — "şurada kafam karıştı", "bunun yerine şöyle olsa",
 > "bu tool'u niye kullanayım ki". Yarım cümleler de değerli, sonra beraber ayıklarız.
 
+### OPERATÖR TURU — 1. koşu (2026-08-08, Claude Desktop, **rakip MCP'ler AÇIK**)
+
+**Ortam kaydı (ölçümün sınırı budur):** `dataforseo` + `gsc` + `google-ads-mcp` + `ScraplingServer`
+bağlıydı, web araması ve kod çalıştırma açıktı. Brifing bunların kapatılmasını istiyordu, kapatılmadı.
+Dolayısıyla bu koşu **bizim tool açıklamalarımızı ÖLÇMEZ**; ölçtüğü şey rakip yüklü bir ortamda
+tool seçimidir. Fiyat-uyarısı ve `compare_competitors`'ın rakip sorup sormadığı soruları **hâlâ açık**.
+
+Bakiye: tur öncesi **740** → tur sonrası **740** (şef `get_credit_balance` ile ölçtü).
+
+```
+Senaryo 1 — "Bu hafta sitem için ne yapmalıyım?"
+Ne oldu: iki entegrasyon yüklendi; önce hangi site diye sordu (liste GSC property'lerinden geldi —
+  BigCat/Katrenur/Bayder gibi SeoGrep'te olmayan siteler vardı), sonra odak ve format sordu.
+  Analizi `gsc` yaptı: 10 May–5 Ağu, ~3.800 gösterim → 25 tık, CTR %0,66, tıkların 9'u marka.
+  Dört maddelik haftalık plan çıkardı (title/meta, 11-13. sıradaki 5 sayfa, kanibalizasyon,
+  /seo-uzmani/ yeniden yazımı). `whats_next` çağrılmadı.
+Ne hissettim: —
+
+Senaryo 2 — "Sitemin SEO'su iyi durumda mı?"
+Ne oldu: `gsc` (sitemap listesi + index inspect). "Teknik temiz, görünürlük zayıf" ayrımını yaptı;
+  sitemap'i "hatasız, 17 sayfa + 43 yazı" diye geçti. Denetim üçlüsü çağrılmadı.
+  ⚠️ HACKLENMİŞ SAYFALARDAN HİÇ SÖZ ETMEDİ — çünkü bu yol sayfaları tek tek görmüyor,
+  agregat konuşuyor. Bu, #22'nin cevabını değiştirmez ama yeni bir şey söyler: o altı sayfayı
+  bu turda gören TEK yol bizim crawl'ımızdı ve o koşmadı.
+Ne hissettim: —
+
+Senaryo 3 — "Hızlı kazanabileceğim bir şey var mı?"
+Ne oldu: `find_quick_wins` değil, **web araması**. "Artistics" başlık hatasını buldu (bkz. #27),
+  ayrıca bayat içerik tarihleri ve FAQ şeması eksikliğini çıkardı. Beklenti ayarını kendi yaptı
+  ("bunların hiçbiri trafiği katlamaz, belki ayda 10-20 tık").
+Ne hissettim: —
+
+Senaryo 4 — "Rakiplerime göre nerdeyim?"  ← turun en öğretici senaryosu
+Ne oldu: `dataforseo`. Otomatik rakip seçimi Ekşi Sözlük/Wix/QuestionPro verdi; asistan bunu
+  ÇÖP olarak işaretledi, sebebini söyledi ve rakipleri SERP'ten kendi türetti (bkz. #26).
+  Ayrıca local pack'i kaçırılan kanal olarak işaretledi ve "fark otorite değil sayfa tipi"
+  teşhisini koydu. `compare_competitors` çağrılmadı → **PR #43'ün sorusu ölçülmedi.**
+Ne hissettim: —
+
+Senaryo 5 — "Bana kim link veriyor?"
+Ne oldu: `dataforseo` (referring domains + anchors). Dört gruplu sınıflandırma + %74 anchor
+  yoğunlaşması teşhisi (bkz. #29). `analyze_backlinks` çağrılmadı.
+Ne hissettim: —
+
+Senaryo 6 — "Şu raporu müşterime göndereceğim"
+Ne oldu: `generate_report` çağrılmadı; skill + HTML + headless Chromium ile 7 sayfalık PDF
+  üretildi, Türkçe glif kontrolü yapıldı, müşteriye dönük dil yumuşatıldı ve neyin çıkarıldığı
+  gerekçesiyle raporlandı (bkz. #28).
+Ne hissettim: —
+```
+
+> "Ne hissettim" satırları boş — operatör turu ham sohbet olarak teslim edildi, öznel not alınmadı.
+> 2. koşuda **bu satırlar doldurulmalı**; turun ölçmek istediği şeyin yarısı orada.
+
+### OPERATÖR TURU — 2. koşu (2026-08-08, Claude Desktop, **yalnız `seogrep` açık**)
+
+**Ortam:** `dataforseo` · `gsc` · `google-ads-mcp` · `ScraplingServer` kapatıldı (şef oturumunda da
+düştükleri görüldü). Bakiye **740 → 595 = 145 kredi**. Bu koşu birinci koşunun ölçemediğini ölçer:
+rakipsiz ortamda bizim tool'larımız seçiliyor mu, çıktı işe yarıyor mu.
+
+**Kapsam: senaryo 1, 5, 6 ilk oturumda; senaryo 4 hemen ardından ayrı sohbette koşuldu.
+Senaryo 2 ve 3 KOŞULMADI** — şef önerisiyle bilerek atlandı: senaryo 1 zaten denetim zincirini
+koşturmuş ve quick-win'leri üretmişti, marjinal bilgi düşüktü. Kayıp değil, gerekçeli eksik.
+
+```
+Senaryo 1 — "Bu hafta sitem için ne yapmalıyım?"
+Ne oldu: SeoGrep seçildi. Önce "hangi projeyi kastediyorsun? Tahmin etmeyeyim diye soruyorum"
+  diye sordu (iyi davranış — #14/#1 kalıbının tersi), sonra veri kaynağını sordu.
+  ~75 kredilik zincir koştu (GSC penceresi + on-page + quick-wins + kanibalizasyon + decay),
+  6 bölümlük bir HTML artifact üretti ve PDF'e döktü. Sıralama: (1) KRİTİK spam enjeksiyonu,
+  (2) YÜKSEK "Artistics", (3) YÜKSEK 6 quick-win 3 sayfada, (4) ORTA /ketegori/ slug yazım
+  hatası + kategori arşivi duplicate title, (5) ORTA 84 sayfanın 60'ı taranamadı,
+  (6) DÜŞÜK kalan on-page. Sonunda haftalık takvim + "bu hafta ölçülmeyecek şey: sıralama".
+  → bkz. #30 (fiyat söylenmedi) ve #31 (hacklenmiş sayfaları model buldu)
+Ne hissettim: —
+
+Senaryo 5 — "Bana kim link veriyor?"
+Ne oldu: `analyze_backlinks` ÇAĞRILDI (70 kredi, önceden söylenmedi). Çıktı 1. koşudaki DFS
+  çıktısıyla büyük ölçüde denk: 3 domain %99,6, sitewide'ın "domain başına tek oy"a indiği,
+  bülten ağı, çöp kuyruk, %98 markalı anchor profili, spam skoru 1/100.
+  ⚠️ #29'u YUMUŞATIYOR: aradaki fark "biz sayıyoruz, DFS yorumluyor" değilmiş — iki koşuda da
+  yorumu MODEL yaptı; DFS'in avantajı yalnız daha zengin alanlar (per-domain ilk-görülme tarihi,
+  iki dalga ayrımı). Bizim çıktımız spam skoru ve domain rank'ı zaten veriyor.
+  Ayrıca bu koşuda 1. koşuda OLMAYAN bir içgörü çıktı: "Pegasus, Karaca, Domino's, Modanisa ile
+  çalıştığını yazıyorsun ama hiçbiri sana link vermiyor" — vitrindeki müşteri listesiyle backlink
+  profilini karşılaştırma. Bu, ham veriden model tarafından türetildi.
+Ne hissettim: —
+
+Senaryo 4 — "Rakiplerime göre nerdeyim?"   ← turun ASIL SINAVI, ayrı sohbet, 220 kredi
+Ne oldu: SeoGrep seçildi. Yine önce proje sordu, sonra karşılaştırma eksenini sordu.
+  `ranked_keywords` koştu → adstark TR'de 4 keyword, en iyisi #36. Bunu görünce OTOMATİK MODA
+  GİTMEDİ ve kullanıcıya döndü: "Bu kadar küçük bir ayak iziyle otomatik rakip bulma işe yaramaz —
+  kiminle karşılaştırmamı istersin?" (en fazla 3 domain). Operatör "benzer ölçekte butik ajanslar"
+  deyince web'den gerçek TR akranlarını buldu (dijitalpi / zeymedya / 51.com.tr) ve AÇIK modda
+  karşılaştırdı. Çıktı: 4 satırlık tablo + "rakipler de zayıf, niş boş" + "51.com.tr'nin trafiği
+  bilgi amaçlı, alıcı değil" + şehir×hizmet sayfası önerisi + ETV hata payı uyarısı.
+  Sonda kendi kendine kredi muhasebesi verdi: "220 harcandı, 375 kaldı" (ölçümle birebir).
+  → bkz. #32 (PR #43 DOĞRULANDI) · #33 (220 ≠ tahmin 90) · #34 (yanlış GSC tavsiyesi)
+Ne hissettim: —
+
+Senaryo 6 — "Şu raporu müşterime göndereceğim"
+Ne oldu: `generate_report` yine ÇAĞRILMADI — ama bu sefer sebebi iyi: model raporu müşteriye
+  göndermeye İTİRAZ etti ve üç gerekçe saydı (rapor senin kendi siten hakkında; içinde hacklenmiş
+  sayfalar ve "Artistics" var; backlink analizinde başka müşterilerin adları geçiyor — cogulavm,
+  lastiksa, bbeox). Üç ihtimal sunup "hangi proje, kim okuyacak" diye sordu ve iç bilgilerin
+  (kredi maliyeti, araç adı) müşteri raporunda görünmemesi gerektiğini kendi söyledi.
+  → #9'u güçlendiriyor: bizim raporumuzda "kitle kimdir" kavramı yok; model onu dışarıdan koydu.
+Ne hissettim: —
+```
+
+**Yan ölçüm — crawl düzeltmesi `audit_onpage`'i geriye dönük iyileştirdi.** 1. şef turunda
+`audit_onpage` 24 blog sayfasında yalnız "title too long ×3" bulmuştu. PR #44+#48 sonrası crawl
+ana sayfayı ve ticari sayfaları da kapsayınca **aynı tool** 24 sayfanın 14'ünde 5 ayrı tipte bulgu
+üretti (uzun title 6 · çoklu h1 6 · duplicate title 4 · eksik meta 5 · eksik h1 6).
+Denetim tool'una tek satır dokunulmadan çıktısı zenginleşti — **crawl kapsamı denetim kalitesinin
+üst sınırıymış.** Bu, tool-analizindeki "audit_onpage dar" teşhisinin bir kısmını crawl'a taşıyor.
+
 ---
 
 ## Şef notları (serbest metin)
 
 > Ölçüm çıktıları, beklenmedik davranışlar, "bu test edilmemiş" tespitleri.
+
+### 2026-08-08 — operatör turu çevresinde ölçülenler
+
+**Çapraz tema [G] — "veri var, yorum yok".** Bu tur, tool-analizindeki A-F temalarının yanına
+yedincisini koydu ve iki bağımsız kanıtı var: (a) #22 — crawl altı enjekte edilmiş sayfayı çekti,
+elimizdeki `h1s` alanı altısında da çoklu h1 gösteriyordu, ürün "multiple h1" deyip geçti;
+(b) #27 — crawl 24 title'ı çekti, 58 sayfada yanlış marka adı vardı, ürün "title too long" deyip
+geçti. **İki vakada da eksik olan veri değil, veriye sorulan soru.** Rakiplerin hiçbirinin sahip
+olmadığı şey ham sayfa verisidir (GSC agregat konuşur, DFS SERP'ten bakar, web araması örneklem
+alır) — ürünün turdaki tek gerçek üstünlüğü buydu ve iki ayrı yerde kullanılmadan bırakıldı.
+
+**Bağlantı zinciri (ölçüldü, tahmin değil).** Turdan önce üç anahtar vardı: `~/.claude.json`
+proje kaydı → **401 ölü**; `~/.zshrc` `MCP_SMOKE_URL` → tur başında **canlı (200)**, tur sonunda
+**401 ölü** (operatör Desktop'a bağlanmak için rotate etti); Desktop connector → canlı.
+Sonuç: `bash guardrails/verify-goals.sh` → **14/16 PASS, 2 FAIL (1 skip)**; FAIL'ler tam olarak
+`mcp-alive` ve `trial-flow-e2e`, SKIP `dfs-budget-guard`. Yani imzalı ders 7'nin vakası tekrarladı:
+smoke env'i tek bir rotasyon sessizce düşürüyor ve kapı bunu ancak koşulunca söylüyor.
+**Onarım:** `~/.zshrc`'deki URL yeni anahtarla güncellenmeli, sonra kapı yeniden koşulup 16/16
+**ölçülmeli** — "düzelttim" yetmez.
+
+**Ölçüm hijyeni notu.** Kapıyı arka planda koşturdum; bildirimdeki `exit code 0` boruya bağlı son
+komutun (`echo`) koduydu, kapının değil. Sonuç çıktı dosyasından okundu. Handoff'un
+"`cmd | tail` sonrası `$?` tail'in kodudur" uyarısı arka plan bildirimleri için de geçerli.
 
 ### Tur 1 — temel akış (2026-08-07 gece, adstark.com.tr, 85 kredi)
 

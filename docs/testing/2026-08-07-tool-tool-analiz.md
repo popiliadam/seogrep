@@ -23,6 +23,7 @@ tool başlıklarında bunlara `[A]`…`[F]` diye atıf var. Tek tek düzeltmek y
 | **D** | **Sessiz kısıtlar** | Zaman bütçesi, eşikler, kapsam sınırları kullanıcıya söylenmiyor; çıktı "sorun yok" gibi okunuyor | `crawl_site` · `audit_tech` · `audit_schema` · `analyze_content_decay` |
 | **E** | **Fixture ↔ gerçek boşluğu** | NEVER#5 fixture'ları yalnız bilinen şekilleri kodluyor; ilk canlı çağrı yeni şekille ölüyor | `analyze_backlinks` (kanıtlı) · diğer DFS tool'ları (taranmadı) |
 | **F** | **"Peki ne yapayım?" eksiği** | Tool'lar veri veriyor, eylem vermiyor; öncelik/etki tahmini/nasıl düzeltilir yok | denetim üçlüsü · GSC ailesi · premium üçlü |
+| **G** | **Veri var, yorum yok** | Ham sayfa verisi elimizde ama ona doğru soru sorulmuyor: sayfalar arası tutarlılık, ortak kusur deseni, kompozisyon analizi yok. Rakiplerin sahip olmadığı tek şey bu veri — kullanılmadan bırakılıyor | `audit_onpage` (#27) · denetim ailesi (#22) · `analyze_backlinks` (#29) |
 
 ---
 
