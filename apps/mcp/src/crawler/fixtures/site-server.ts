@@ -138,6 +138,34 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
         .map((p) => `<url><loc>${origin}${p}</loc></url>`)
         .join("");
       res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${urls}</urlset>`);
+    } else if (path === "/sitemap-mixed.xml") {
+      // Locs the scope filter REJECTS, ahead of the ones it accepts — the shape that proves a
+      // budget cap must sit behind the filters rather than in front of them.
+      const blog = Array.from({ length: 8 }, (_, i) => `<url><loc>${origin}/blog-${i}</loc></url>`);
+      const shop = Array.from({ length: 4 }, (_, i) => `<url><loc>${origin}/shop-${i}</loc></url>`);
+      res.writeHead(200, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${blog.join("")}${shop.join("")}</urlset>`);
+    } else if (path === "/sitemap-dupes.xml") {
+      // The same loc repeated, then distinct ones: dedupe must not consume budget either.
+      const dupes = Array.from({ length: 6 }, () => `<url><loc>${origin}/dupe</loc></url>`);
+      const uniq = Array.from({ length: 4 }, (_, i) => `<url><loc>${origin}/uniq-${i}</loc></url>`);
+      res.writeHead(200, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${dupes.join("")}${uniq.join("")}</urlset>`);
+    } else if (path.startsWith("/blog-") || path.startsWith("/shop-") || path.startsWith("/uniq-") || path === "/dupe") {
+      sendHtml(res, `<html><head><title>${path}</title></head><body><h1>${path}</h1>x</body></html>`);
+    } else if (path === "/sitemap-many.xml" || path === "/sitemap-few.xml") {
+      // Two children of deliberately unequal size, mirroring a Yoast index where the post
+      // sitemap dwarfs the page sitemap. Their pages are served by the generic handler below.
+      const count = path === "/sitemap-many.xml" ? 8 : 2;
+      const prefix = path === "/sitemap-many.xml" ? "many" : "few";
+      const urls = Array.from(
+        { length: count },
+        (_, i) => `<url><loc>${origin}/${prefix}-${i}</loc></url>`,
+      ).join("");
+      res.writeHead(200, { "content-type": "application/xml" });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${urls}</urlset>`);
+    } else if (path.startsWith("/many-") || path.startsWith("/few-")) {
+      sendHtml(res, `<html><head><title>${path}</title></head><body><h1>${path}</h1>page</body></html>`);
     } else if (path === "/sitemap-child.xml") {
       res.writeHead(200, { "content-type": "application/xml" });
       res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>${origin}/orphan</loc></url></urlset>`);
