@@ -38,6 +38,26 @@ describe("parseSearchVolumeResponse", () => {
     ]);
   });
 
+  // Same class as the live analyze_backlinks crash (2026-08-07, ref 5ded2b4e): DFS sends null
+  // where the fixture only ever showed a string. A keyword-less row names nothing, so it is
+  // dropped — but it must not take the surrounding lookup down with it.
+  it("drops a null-keyword row instead of failing the whole lookup", () => {
+    expect(
+      parseSearchVolumeResponse({
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              { keyword: "seo software", search_volume: 10, cpc: 1.5, competition: "LOW" },
+              { keyword: null, search_volume: 5, cpc: null, competition: null },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([{ keyword: "seo software", search_volume: 10, cpc: 1.5, competition: "LOW" }]);
+  });
+
   it("throws a clear error when the top-level DFS status is not 20000", () => {
     expect(() =>
       parseSearchVolumeResponse({ status_code: 40200, status_message: "Payment Required.", tasks: [] }),

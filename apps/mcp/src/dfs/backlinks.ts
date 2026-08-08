@@ -204,16 +204,20 @@ const summaryResultSchema = z.object({
   referring_main_domains: z.number().nullish(),
 });
 
+// DFS sends `null` for text fields the fixtures only ever showed as strings, so every text field
+// here is nullish and the PROJECTION decides what null means. Two different meanings: a null
+// ANCHOR is real data (an anchorless image link) and becomes ""; a null DOMAIN identifies nothing,
+// so that row is dropped. Neither may take the whole report down (live crash 2026-08-07, 5ded2b4e).
 const referringDomainsResultSchema = z.object({
   total_count: z.number().nullish(),
   items: z
-    .array(z.object({ domain: z.string(), rank: z.number().nullish(), backlinks: z.number().nullish() }))
+    .array(z.object({ domain: z.string().nullish(), rank: z.number().nullish(), backlinks: z.number().nullish() }))
     .nullish(),
 });
 
 const anchorsResultSchema = z.object({
   total_count: z.number().nullish(),
-  items: z.array(z.object({ anchor: z.string(), backlinks: z.number().nullish() })).nullish(),
+  items: z.array(z.object({ anchor: z.string().nullish(), backlinks: z.number().nullish() })).nullish(),
 });
 
 const EMPTY_SUMMARY: BacklinkSummary = {
@@ -253,11 +257,14 @@ export function parseReferringDomainsResponse(raw: unknown): BacklinkList<Referr
   if (result === null) return { total_count: null, rows: [] };
   return {
     total_count: result.total_count ?? null,
-    rows: (result.items ?? []).map((item) => ({
-      domain: item.domain,
-      backlinks: item.backlinks ?? null,
-      rank: item.rank ?? null,
-    })),
+    // A row with no domain names nothing and cannot be acted on — drop it, keep the report.
+    rows: (result.items ?? [])
+      .filter((item) => item.domain != null)
+      .map((item) => ({
+        domain: item.domain as string,
+        backlinks: item.backlinks ?? null,
+        rank: item.rank ?? null,
+      })),
   };
 }
 
@@ -267,8 +274,9 @@ export function parseAnchorsResponse(raw: unknown): BacklinkList<AnchorRow> {
   if (result === null) return { total_count: null, rows: [] };
   return {
     total_count: result.total_count ?? null,
+    // null and "" both mean "this link carries no anchor text" (image links) — same row, kept.
     rows: (result.items ?? []).map((item) => ({
-      anchor: item.anchor,
+      anchor: item.anchor ?? "",
       backlinks: item.backlinks ?? null,
     })),
   };

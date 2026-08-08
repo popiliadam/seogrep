@@ -91,7 +91,8 @@ const serpItemSchema = z.object({
 
 const rankedItemSchema = z.object({
   keyword_data: z.object({
-    keyword: z.string(),
+    // Nullish for the same reason as the other DFS text fields; a keyword-less row is dropped.
+    keyword: z.string().nullish(),
     keyword_info: z.object({ search_volume: z.number().nullish() }).nullish(),
   }),
   ranked_serp_element: z.object({ serp_item: serpItemSchema.nullish() }).nullish(),
@@ -154,12 +155,14 @@ export function parseRankedKeywordsResponse(
   return {
     target: result?.target ?? fallbackTarget,
     total_count: result?.total_count ?? null,
-    rows: (result?.items ?? []).map((item) => ({
-      keyword: item.keyword_data.keyword,
-      position: item.ranked_serp_element?.serp_item?.rank_group ?? null,
-      search_volume: item.keyword_data.keyword_info?.search_volume ?? null,
-      url: item.ranked_serp_element?.serp_item?.url ?? null,
-    })),
+    rows: (result?.items ?? [])
+      .filter((item) => item.keyword_data.keyword != null)
+      .map((item) => ({
+        keyword: item.keyword_data.keyword as string,
+        position: item.ranked_serp_element?.serp_item?.rank_group ?? null,
+        search_volume: item.keyword_data.keyword_info?.search_volume ?? null,
+        url: item.ranked_serp_element?.serp_item?.url ?? null,
+      })),
   };
 }
 
