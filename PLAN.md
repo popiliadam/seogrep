@@ -200,153 +200,261 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — TRİYAJ VE [B] project_id (2026-08-08 gece güncellendi)
+## 🧪 SIRADAKİ OTURUM — ÇOK-SİTE × ÇOK-SENARYO ÖLÇÜM KAMPANYASI (2026-08-08 gece)
 
 ```
-Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
+Proje: SeoGrep (hosted SEO MCP SaaS). Dizin: "/Users/apple/dev/pseo web saas"
+
 SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/product-test-log.md  ← ESAS BELGE (34 bulgu + iki operatör koşusu + triyaj)
-→ docs/testing/2026-08-07-tool-tool-analiz.md  ← 19 tool'un analizi + A-G çapraz temaları
+→ docs/testing/product-test-log.md             ← 34 bulgu + iki operatör koşusu
+→ docs/testing/2026-08-07-tool-tool-analiz.md  ← 19 tool + [A]-[G] çapraz temaları
 
-=== OPERATÖR TURU BİTTİ (2026-08-08) — iki koşu, PR #54 merged ===
-Şefin koşamadığı yarı tamamlandı. İki koşu FARKLI şey ölçtü, ikisi de kayda değer.
+=== BU OTURUM NE İÇİN VAR ===
+Defterdeki 34 bulgunun neredeyse tamamı TEK siteye (adstark.com.tr) dayanıyor.
+İmzalı ders 13: bir örnek kuralı ÇÜRÜTMEYE yeter, DOĞRULAMAYA yetmez. Bu yüzden
+#22'de hacklenmiş-sayfa kuralını yazamadık, #27'yi genelleyemedik, #12'nin
+sezgiseli dört hakem turu sürdü. Bu kampanya o kilidi açar.
 
-1. koşu — rakip MCP'ler AÇIK (dataforseo + gsc + web araması + kod çalıştırma):
-  SeoGrep altı senaryonun ALTISINDA da seçilmedi. Bakiye 740 → 740, sıfır paralı çağrı.
-  Bu koşu bizim açıklamalarımızı ÖLÇMEZ — rakip yüklü ortamda tool seçimini ölçer (bulgu #25).
-2. koşu — yalnız `seogrep` AÇIK:
-  Dört senaryonun dördünde de seçildi ve işe yarar çıktı verdi. Bakiye 740 → 375 (365 kredi).
+ÜRÜNÜ rapor değil, ÜÇ ŞEY:
+ 1. FIXTURE'lar. #15'i hatırla: 70 kredilik tool canlıda HİÇ çalışmadı çünkü yedi
+    fixture yalnız BİLİNEN vendor şekillerini kodluyordu; `null` anchor hiçbirinde
+    yoktu, testler yeşildi, ilk gerçek çağrı öldü ([E] teması). Her canlı çağrı
+    gerçekliğin bedava bir örneğidir. NEVER#5 ile ÇELİŞMEZ — CI paralı API'ye çıkmaz.
+ 2. Ön-kayıtlı hipotezlerin (H1-H9) cevapları.
+ 3. Hata / sınır / kiracı-izolasyon yollarının haritası — çoğu BEDAVA.
 
-BRİFİNGDEKİ ÜÇ ÖLÇÜLMEMİŞ SORUNUN ÜÇÜ DE CEVAPLANDI:
-· Fiyatı koşmadan ÖNCE söylüyor mu?  → HAYIR. 365 kredi habersiz harcandı. Muhasebeyi
-  SONRADAN doğru raporladı (ölçümle birebir). Eksik olan ön-bildirim. (#30 · #33)
-· Hacklenmiş sayfalardan söz ediyor mu? → EVET, raporun 1. maddesi ve tek KRİTİK'i yaptı;
-  410-vs-301 ayrımı + kök-neden temizliği dahil. Ürün hâlâ yalnız "multiple h1" diyor —
-  değişen şey teslim edilen deneyim. n=1, kural üretilmedi (ders 13). (#31)
-· compare_competitors rakip adı soruyor mu? → EVET. PR #43 İŞE YARADI, canlıda doğrulandı.
-  Otomatik moda gitmedi; önce ranked_keywords ile hedefi boyutladı (4 kw, en iyi #36),
-  sonra kullanıcıya döndü ve açık modda gerçek TR akranlarıyla karşılaştırdı. (#32)
+=== BU OTURUM NE İÇİN VAR DEĞİL ===
+OPERATÖR TURU DEĞİL. "LLM doğru tool'u seçiyor mu · çıktı sohbette işe yarıyor mu ·
+90 krediye değdi mi" yalnız insanın gerçek sohbetinde ölçülür ve 2026-08-08'de İKİ KEZ
+koşuldu (defterde "OPERATÖR TURU — 1. koşu / 2. koşu"). Tekrarlama, karıştırma.
+Şef süpürmesi "doğru veri dönüyor mu"yu ölçer; başka bir şeyi ölçtüğünü iddia etme.
 
-ŞEFİN İKİ İDDİASI ÖLÇÜMLE ÇÜRÜDÜ, İKİSİ DE DEFTERDE AÇIKÇA DÜZELTİLDİ:
-· "audit_onpage'in duplikasyon kuralı yok" → YANLIŞ. onpage.ts'te 13 kural tipi var,
-  duplicate_title + duplicate_meta dahil. Gerçek boşluk dar: çapraz-sayfa kuralları yalnız
-  TAM EŞİTLİK bakıyor, ortak sonek deseni ("… - Artistics") yakalanmıyor. (#27)
-· "biz sayıyoruz, DFS yorumluyor" → TUTMUYOR. Yorumu iki koşuda da MODEL yaptı. (#29)
-İkisinin de kökü aynı hata: ikincil belgeden iddia türetip koda bakmamak.
+=== CANLI DURUM (2026-08-08 gece — hepsi ÖLÇÜLDÜ, hiçbiri varsayım değil) ===
+main 7a1ae06 · açık PR 0 · uzak dal yalnız main · repo PRIVATE (gh api ile ölçüldü)
+Bakiye 10.375 — operatör 10.000'lik `adjust` satırı yazdı (internal test grant,
+  GELİR DEĞİL; NEVER#2 invariant'ı yazımdan sonra tuttu, 375 → 10.375 ölçüldü).
+verify: 16 görev / 0 cached / PASS (borusuz exit 0)
+goals: 16/16 PASS — ŞERH: 1 SKIP (`dfs-budget-guard`), yani tam ölçüm değil.
+MCP endpoint: ~/.zshrc içinde MCP_SMOKE_URL, ve CANLI (initialize 200 ile ölçüldü).
+  ŞEF BASH'İ ~/.zshrc'yi SOURCE ETMEZ (imzalı ders 7) → env'i her koşuda AÇIKÇA yükle:
+  `set -a && . ~/.zshrc; set +a`
+DFS günlük tavan $3 — kredi eklemek onu BÜYÜTMEZ.
 
-=== CANLI DURUM (2026-08-08 gece ölçümü) ===
-main 6851276 · açık PR 0 · uzak dal 1 (yalnız main; GitHub API'den teyit edildi)
-Bakiye 375 (ölçüldü) · verify PASS (16/16, ama CACHED = replay) · CI'da verify+verify-db yeşil
-KIRIK: `~/.zshrc` içindeki MCP_SMOKE_URL eski anahtarı tutuyor (401 ölçüldü) →
-  `make goals` 14/16, FAIL = mcp-alive + trial-flow-e2e, SKIP = dfs-budget-guard.
-  ONARIM: yeni MCP URL'i insandan al → zshrc → kapıyı tekrar koş → 16/16 ÖLÇ.
+19 TOOL VAR, 16 DEĞİL. Ortalıkta üç ayrı "16" dolaşıyor, karıştırma:
+  · bayat spec/dizin metni (2026-07-28'de eklenen ranked_keywords / analyze_backlinks /
+    compare_competitors yazılmamış) — operatörün elindeki liste de bu bayat liste
+  · turbo'nun 16 GÖREVİ (verify.sh çıktısı)
+  · goals'un 16 HEDEFİ
+Tool sayısı = tools-reference'ta 19 mdx = registry.ALL_TOOLS.length. Ölçüldü.
 
-=== BU OTURUMUN İŞİ: [B] project_id (triyaj 1. sırası) ===
-Premium tool'lar (ranked_keywords · compare_competitors · research_keywords) `project_id` DEĞİL
-çıplak `target`/`keywords` alıyor → proje bağlamı sıfır. İKİ bağımsız ölçülmüş zararı var:
-· #18 — yanlış varsayılan: aynı domain, aynı 65 kredi, en/2840 → 3 kw volume 30;
-  tr/2792 → 4 kw volume 210/480/3.600/1.600. Türk kullanıcı iki kez ödüyor.
-· #34 — YENİ ve farklı türden: bağlam yokluğu MODELE YANLIŞ CÜMLE KURDURUYOR. Senaryo 4'te
-  "Search Console bağlanmalı (connect_gsc)" dedi; oysa BAĞLI. Şef canlıda ölçtü:
-  connect_gsc → "already connected … property https://adstark.com.tr/" = PR #42 mühürlü.
-  Yani tool doğru cevap veriyor ama o soru sorulamıyor, çünkü project_id alanı yok.
-KÖK: `setup_project` projede ülke/dil alanı TUTMUYOR — tam çözüm migration ister (insan kuyruğu).
-Şef önerisi: migrationsuz ilk dilim (project_id → target türetme + boş-sonuç uyarısı), migration
-ikinci dilimde. Kapsam kararı iş emrinde yazılacak.
+DOĞRULANMAMIŞ YENİ KOD: PR #56 ([B] dilim 1) 2026-08-08'de merge oldu — ranked_keywords,
+analyze_backlinks, compare_competitors artık `project_id` YA DA `target` alıyor (tam biri;
+"ikisi birden" sessiz öncelikle çözülmez, REDDEDİLİR). Taze Fable hakem PASS verdi ama
+AÇIKÇA şerh düştü: "project_id yolu gerçek DataForSEO API'sine ya da cloud DB'ye karşı
+HİÇ koşmadı." H8 bunun ilk gerçek sınavıdır.
 
-SIRADAKİ İKİ İŞ (bu bitince):
-2. Kredi ön-bildirimi (#30 · #33) — ÖNCE İNSAN KARARI: onay eşiği (D17, >200 kredi) çağrı
-   başına mı kalsın, kullanıcı-turu başına kümülatif mi olsun? Senaryo 4 tek cümlede 220 kredi
-   harcadı ama hiçbir TEK adımı eşiği aşmadı. NEVER#6 komşusu, karar gelmeden kod yazılmaz.
-3. #27 ortak-sonek title kuralı — küçük, gerçek, ucuz.
+=== SİTELER — yedisi de ÖN-UÇUŞTAN GEÇTİ (2026-08-08, curl ile ölçüldü) ===
+Hepsi HTTP 200 · yönlendirme 0 · robots.txt 200 · robots'ta sitemap ilan edilmiş.
 
-STRATEJİ SORUSU (iş emri DEĞİL, oturum): iki koşu da aynı yeri işaret ediyor — değerin
-neredeyse tamamı HAM VERİMİZ + MODELİN YORUMU'ndan çıktı. Bizim "yorum/sunum" katmanımız
-(generate_report) iki koşuda da atlandı: birincide bedava PDF yendiği için (#28), ikincide
-modelin kendisi "bu müşteriye gitmemeli" dediği için. Veri katmanı mı satıyoruz, sunum katmanı mı?
+  adstark.com.tr        .com.tr   sitemap 1   ← KURULU, taze crawl + GSC var
+  bayder.com.tr         .com.tr   sitemap 1
+  rkturizm.com          .com      sitemap 1
+  www.bigcattr.com      .com      sitemap 2   ← markada "tr" var, TLD'de yok
+  www.noraninsaat.com   .com      sitemap 1
+  katrenur.com          .com      sitemap 1
+  dentnotion.com        .com      sitemap 5   ← en çok sitemap; muhtemelen en büyük
+  seogrep.com           .com      —           ← KURULU, 18 günlük crawl, GSC YOK: KONTROL GRUBU
 
-=== OPERATÖR TURUNDAN SONRA: TRİYAJDA KALANLAR ===
-Dilim 5-6 (yazılmadı, ertelendi — gerekçeleri defterde):
-· #6  audit_tech yönlendirme körü ("Redirects: 0" derken 24/24 URL 301). PageRecord'a
-      yönlendirme zinciri alanı ister — Faz 3'ten kalan borç (PLAN.md:91).
-· #5 #7 crawl zaman bütçesi (90 sn) + eşzamanlılık. #2 kapandı ama 57 sayfa hâlâ atlanıyor;
-      round-robin kapsamı düzeltti, DERİNLİĞİ değil. Eşzamanlılık BİLİNÇLİ ertelendi:
-      SSRF yolunu, hedef siteyi yormayı, crawl-delay uyumunu ve test determinizmini birden etkiler.
-· #8  audit_onpage 30 kredi / 5 kural — fiyat/değer dengesizliği (NEVER#6, insan kararı).
-· #9 #10 rapor: beyaz etiket, PDF, müşteriye dönük CTA — ticari kapsam, insan kararı.
-· #11 #21 kabul edildi (yapılmayacak) — ikisi de fiyatı dürüst.
-· #22 hacklenmiş sayfa tespiti — ÖLÇÜM VAR, KURAL YOK (aşağıya bak).
+GSC: operatör "hepsinin GSC'si var, istek attığında bağlarım" dedi. Yani her site için
+OAuth onayı ANLIK istenecek. connect_gsc link üretir, TIKLAYAN İNSANDIR. Katman 2'ye
+girmeden önce site site iste, toplu isteme.
 
-=== YENİ VE ÖNEMLİ: #22 / #23 ===
-Canlı tarama adstark.com.tr'de 84 URL'in 6'sını bahis/yetişkin spam'i buldu (Hırvatça,
-İspanyolca, Fransızca; biri elle doğrulandı: canlı, indekslenebilir, 543 kelime). Ürün onları
-TARADI ve yalnız "multiple h1" dedi.
-Tespit için DÖRT sinyal ölçüldü, ÜÇÜ ÇÜRÜDÜ (defterde tablo):
-  ❌ başlıkta farklı marka (meşru 13/18'de de var) · ❌ yetim sayfa (0/0) · ❌ html lang (hepsi tr)
-  ✅ çoklu h1 (spam 6/6 · meşru 0/18) — AMA n=1 site, kural olarak ÖNERİLMEDİ.
-KURAL YAZMADAN ÖNCE İKİNCİ BİR SİTEDE ÖLÇ. Bu oturumda tek örnekten genelleme üç kez geri tepti.
+DİKKAT — www AYRIMI: bigcattr ve noraninsaat `www.` ile geliyor, diğerleri değil.
+`normalizeDomain`'in www davranışı ve GSC property biçimi (`https://…/` vs `sc-domain:`)
+S6 sınır senaryosunun gerçek girdisidir. Ölç, varsayma.
 
-GÜNCELLEME (2026-08-08, operatör turu 2. koşu — bulgu #31): kural hâlâ yazılmadı AMA soru
-cevaplandı ve cevap OLUMLU. Ham URL listesi modele ulaşınca model hacklenmiş altı sayfayı
-KENDİ buldu ve raporun tek KRİTİK maddesi yaptı. Yani eksik olan yorum katmanı BİZDE olmak
-zorunda olmayabilir — ham envanteri düzgün vermek yetebilir. Sınır aynı: n=1, bu URL'ler bariz,
-daha sinsi bir enjeksiyonda model fark etmeyebilir. Kural üretmek için hâlâ ikinci site gerekir.
+=== ÜÇ BOYUTLU MATRİS ===
+Boyut 1: 8 site · Boyut 2: 19 tool · Boyut 3: 6 senaryo
 
-#23 OPERATÖRDE, ürün kusuru DEĞİL: adstark.com.tr büyük olasılıkla ELE GEÇİRİLMİŞ. Altı sayfa
-canlı ve post-sitemap'te; Google gözünde alan adını yakar. Bu senin kendi ajans siten.
+SENARYOLAR VE MALİYETLERİ. Kritik olgu (2026-08-08'de kod okunarak ölçüldü):
+reddedilen çağrılar rezervasyondan ÖNCE dönüyor — üç premium tool'da `resolveTarget`
+`withCredits`'ten önce (satır 222<237 · 196<208 · 294<315), denetim tool'larında
+"crawl yok" durumu RETURN değil THROW eder → withCredits RELEASE eder.
+Yani S2-S5'in çoğu BEDAVA. Bedava olduğu için EKSİKSİZ koşulmalı; burada cimrilik
+etmenin hiçbir gerekçesi yok.
 
-=== AÇIKLANAMAYAN / İZLENECEK ===
-· verify-db bir kez alakasız bir spec'te düştü (executeJob success), üç koşuda ve main'de
-  tekrarlamadı. AÇIKLANAMADI, "flaky" DENMEDİ. (#46 PR'ında kayıtlı.)
-· `turbo run typecheck lint test build --force` şefin makinesinde 3/3 düştü, her seferinde
-  FARKLI bir zamanlama-duyarlı gateway testi; hakemin makinesinde 5/5 yeşil; yalnız `test`
-  görevi tek başına burada da geçiyor. Makine-CPU çekişmesi gibi duruyor, KANITLANMADI.
-  → Kapı koşarken görevleri AYRI AYRI ölç (test/typecheck/lint/build), hepsi 0 cached yeşildi.
+  S1 mutlu yol          normal girdi, önkoşullar sağlanmış                ücretli
+  S2 soğuk durum        crawl yok / GSC yok / analiz koşmamış proje       ~bedava
+  S3 hatalı girdi       geçersiz domain, bozuk uuid, olmayan proje        bedava
+  S4 kiracı izolasyonu  BAŞKA kiracının project_id'si                     bedava
+  S5 tekrar/idempotans  aynı çağrı iki kez — ikincisi ne yapıyor          değişken
+  S6 sınır              limit min/max · www vs non-www · en büyük/küçük site  ücretli
 
-=== BU OTURUMUN DERSİ (imza bekliyor, CLAUDE.md'ye YAZILMADI) ===
-Ders adayı 11: "Bir dosyayı program yazarak değiştiren her adım assert'le bağlanır ve sonuç
-grep ile teyit edilir. Eşleşmeyen bir replace SESSİZDİR; sessiz bir düzeltme yapılmamış bir
-düzeltmedir — ve rapor edilirse yalan olur."
-Gerekçe: şef bir docstring düzeltmesini "yaptım" diye hakeme bildirdi, assert'siz replace sessizce
-eşleşmemişti, kod sahip olmadığı bir güvenlik özelliğini beyan eden cümleyle sevk edilecekti.
+S3 ve S4'te HER tool için iki şey ölç: (a) mesaj varlık sızıntısı yapıyor mu,
+(b) BAKİYE DEĞİŞTİ Mİ. Bakiye değiştiyse bu bir 🔴 — kullanıcı hata mesajı için ödemiş.
 
-Ders adayı 12: "Yorumdaki her iddia ölçülür. 'never', 'only', 'measured' yazan bir cümle,
-ölçümü gösterilemiyorsa yazılmaz."
-Gerekçe: bu oturumda DÖRT kez ölçülmemiş mutlak iddia yazıldı, BİRİ PROD'A ULAŞTI (reaper
-"charging today's budget" derken sorguda spend_day filtresi yoktu — PR #47).
-BEŞİNCİ VAKA (2026-08-08): şef deftere "audit_onpage'in duplikasyon kuralı yok" yazdı; kaynağı
-kodun kendisi değil, ikincil bir belgedeki "5 kontrol" ifadesiydi. Kodda 13 kural var. İddia
-PR'a girmeden önce yakalandı ve defterde açıkça düzeltildi (#27). Adayın kapsamı bir cümle
-genişliyor: **iddianın kaynağı kod ise koda bakılır; özet belge kanıt değildir.**
+=== ÖN-KAYITLI HİPOTEZLER — eşikler veriyi GÖRMEDEN sabit ===
+Veriyi gördükten sonra eşik oynatmak YASAK. Bu, "tek örnekten kural" hatasının
+panzehiri; o hata bu projede ÜÇ kez geri teptı.
 
-Ders adayı 13: "Tek canlı örnekten kural üretilmez. Bir örnek kuralı çürütmeye yeter,
-doğrulamaya yetmez."
-Gerekçe: marka-yamyamlaşma heuristiği DÖRT hakem turu sürdü; her turda 'makul görünen' kural
-gerçek dünyada ters çalıştı (ilk etiket=marka · [1.0,1.0] şekli · platformun kendi markası).
+H1 · #22 hacklenmiş-sayfa sinyali
+    Ölç: TEMİZ sitelerde meşru sayfalarda "multiple h1" oranı.
+    Karar: ≥4 sitede meşru sayfaların >%10'u çoklu h1 gösteriyorsa SİNYAL ÖLÜ →
+      #22'yi "kural yazılmayacak" diye KAPAT. <%2 ise aday kural → hakem.
+      Arada ise "yetersiz" yaz, kural YAZMA.
+    NOT: ikinci bir hacklenmiş site GEREKMİYOR. Gereken YANLIŞ-POZİTİF oranı.
 
-=== KESİN KURALLAR (değişmedi) ===
+H2 · #27 ortak-sonek yanlış marka (adstark'ta "… - Artistics")
+    Ölç: kaç sitede, sayfaların çoğunda paylaşılan ve markayla uyuşmayan title soneki var.
+    Karar: ≥2 sitede varsa kural yazmaya değer; 1'de kalırsa adstark'ın tema kazası.
+    ÖNCE KODU OKU: audit_onpage'in `duplicate_title` kuralı VAR ama yalnız TAM EŞİTLİK
+      karşılaştırıyor (onpage.ts:59,82,109) — ortak sonek yakalanmıyor. Boşluk burada.
+
+H3 · #12 / PR #45 marka-yamyamlaşma filtresi
+    Ölç: GSC bağlı her sitede detect_cannibalization çıktısı.
+    Karar: bir tane bile marka/navigasyonel yanlış-pozitif çıkarsa filtre YETERSİZ → yeni tur.
+
+H4 · #5 #7 crawl zaman bütçesi
+    Ölç: her sitede keşfedilen/taranan URL oranı + süre; site boyutuna karşı çıkar.
+    Karar: 90 sn'nin hangi sayfa sayısında bağladığını SAYIYLA yaz. Eşzamanlılık işi
+      buradan gerekçelenir ya da GEREKÇELENMEZ.
+
+H5 · #6 audit_tech yönlendirme körlüğü
+    Ölç: tool'un "Redirects surfaced" değeri VE curl ile sayılan gerçek 3xx.
+    Karar: ≥2 sitede tool 0 derken gerçek >0 ise #6'yı kapsam-sınırından BULGU'ya yükselt.
+
+H6 · [E] vendor şekil varyansı   ← EN DEĞERLİ
+    Ölç: her DFS çağrısının HAM yanıtını sakla; fixture'lardaki şekillerle diff'le —
+      hangi alan null geliyor, hangisi eksik, hangi tip değişiyor.
+    Karar: fixture'da olmayan HER varyant için fixture ekle. Bu, #15 sınıfını kapatır.
+
+H7 · [A] bağlam körlüğü
+    Ölç: farklı durumdaki 8 projede whats_next + connect_gsc + generate_report ne diyor.
+    Karar: #1'in "GSC dalı denetim dalını yutuyor" teşhisi n=8'de tutuyor mu.
+
+H8 · PR #56 canlı sınavı   ← YENİ KODUN İLK GERÇEK SINAVI
+    (a) project_id gerçekten projenin domain'ini mi kullanıyor
+    (b) target + project_id birlikte REDDEDİLİYOR ve 0 kredi mi yakıyor (bakiye önce/sonra)
+    (c) başka kiracının project_id'si sızıntısız mı
+    (d) ccTLD uyarısı .com.tr'de ÇIKIYOR, .com'da ÇIKMIYOR mu
+    Karar: (b) veya (c) tutmuyorsa DUR, insanı uyandır — para/kiracı yolu.
+
+H9 · migration 0021 (projeye ülke/dil alanı) gerçekten gerekli mi   ← YENİ
+    Gözlem (ölçüldü, henüz kanıt değil): yedi Türk işletmesinin BEŞİ `.com`.
+      Yani PR #56'nın ccTLD hafifletmesi portföyün yalnız %29'unda tetikleniyor.
+    Ölç: bir `.com` Türk sitesinde (rkturizm.com önerilir) ranked_keywords'ü İKİ kez koş —
+      varsayılan (en/2840) ve tr/2792. Sonuçları karşılaştır. 130 kredi.
+    Karar: .com sitede varsayılan anlamlı ölçüde daha kötü sonuç veriyorsa ccTLD yaklaşımı
+      YETERSİZ kanıtlanır ve 0021 zorunlu hale gelir. Aksi hâlde 0021 ertelenebilir.
+    Bu tek ölçüm, bir migration + cloud-apply kararının gerekçesidir. Ucuz ve belirleyici.
+
+=== KATMANLAR (kredi/site) ===
+K0 ÜCRETSİZ, her sitede — setup_project · list_projects · whats_next · crawl ÖN-KEŞFİ ·
+   connect_gsc · get_job_status · get_credit_balance + TÜM S3/S4 senaryoları        = 0
+   BURADAN BAŞLA. Site sınıflarını (boyut, sitemap şekli, www, ccTLD) KENDİ keşfeder.
+   H7'nin tamamını ve H8(b,c)'yi bedavaya verir.
+K1 on-page çekirdeği — crawl_site 20 + audit_onpage 30 + audit_tech 15 + audit_schema 5 = 70
+   → H1 H2 H4 H5
+K2 GSC ailesi (yalnız onay alınan sitelerde) — pull_gsc_data 5 + find_quick_wins 10 +
+   detect_cannibalization 10 + analyze_content_decay 10                             = 35  → H3
+K3 premium / vendor şekli (SEÇİLMİŞ siteler, GÜNLERE YAY) — ranked_keywords 65 +
+   analyze_backlinks 70 + compare_competitors 90 + research_keywords 25             = 250 → H6 H8 H9
+   Seçim sonuç için değil ŞEKİL için: en az bir .com ve bir .com.tr (H8d), en az bir
+   gerçek backlink profili olan (H6).
+K4 generate_report 15 — iki sitede, #8/#9/#10'un tekrar üreyip üremediğini görmek için.
+
+BÜTÇE 10.375. 8 site tam kapsama ≈ 3.300 → para artık kısıt DEĞİL.
+AMA harness'a SERT TAVAN 3.000 ver; bir döngü hatası bakiyeyi boşaltmasın.
+DFS tavanı $3/gün DURUYOR → K3'ü GÜNLERE YAY, her günün başında /status'tan harcamayı oku.
+
+=== HARNESS — sohbette elle koşma ===
+19 tool × 8 site × 6 senaryo elle koşulmaz: bağlam şişer, ölçüm kaybolur, tekrar edilemez.
+CLAUDE.md dispatch yasası: İŞÇİ (Opus) yazsın, TAZE HAKEM denetlesin, kapı son sözü söylesin.
+
+  scripts/testing/tool-sweep.mjs
+  - MCP endpoint'ini JSON-RPC ile sürer (initialize → tools/call). Şef bu deseni curl ile
+    2026-08-08'de çalıştırdı, çalışıyor.
+  - Girdi: site matrisi + katman/senaryo seçimi + kredi tavanı.
+  - ZORUNLU GÜVENLİK:
+      --dry-run     sıfır kredi; planı ve TOPLAM maliyeti basar. İLK KOŞU BUDUR, operatör onaylar.
+      --max-credits her ücretli çağrıdan ÖNCE bakiye okunur; öngörü tavanı aşarsa DURUR.
+      --resume      kaydedilmiş hücre tekrar koşulmaz; çökme ikinci kez para harcatmaz.
+      her ücretli çağrının yanında BAKİYE DELTASI kaydedilir — tahmin değil ÖLÇÜM.
+        (Operatör turunda "senaryo 4 = 90 kredi" sanılmıştı; gerçekte 220 çıktı.)
+  - Asenkron iş (crawl): get_job_status ile poll; poll sayısı ve toplam süre kaydedilir.
+  - HER çağrının HAM yanıtı saklanır. Özet DEĞİL — özet, sonradan sorulamayan soruyu öldürür.
+
+=== KAYIT MİMARİSİ — ikiye ayrı, bilerek ===
+  Ham JSONL (müşteri URL'leri, GSC sorguları) → SCRATCHPAD, repo DIŞI.
+      Repo private ama ham GSC sorgu verisi müşterinin verisidir; repoya girmez.
+  Türetilmiş sinyal tabloları → repo, docs/testing/ — H1-H9'un her biri için bir tablo.
+  TEMİZLENMİŞ fixture'lar → repo, test fixture dizini. Alan ADLARI korunur, DEĞERLER anonim.
+
+=== YÜRÜTME SIRASI ===
+ 1. Harness iş emri → işçi → hakem → kapı yeşil.
+ 2. --dry-run → planı ve maliyeti OPERATÖRE onaylat.
+ 3. K0 (bedava; 8 sitenin tamamı + tüm S3/S4) → oku → matrisi BUNA GÖRE kes.
+    K3'e hangi sitelerin gireceğine K0'ın boyut/ccTLD verisi karar verir, tahmin değil.
+ 4. K1 → H1 H2 H4 H5 tablolarını yaz → ön-kayıtlı kararları UYGULA.
+ 5. GSC: site site operatörden onay iste (o tıklar) → K2 → H3.
+ 6. K3'ü günlere yayarak koş → H6 H8 H9. Her gün DFS harcamasını oku.
+ 7. Fixture'ları PR'la. Kural önerilerini AYRI PR'la — kanıt ve kural aynı PR'da olmasın
+    ki hakem ikisini AYRI yargılayabilsin.
+
+=== KAMPANYA DIŞI, BİLEREK: SCRAPLING ===
+Repoda tek satır kod YOK (ölçüldü). Operatörün Desktop'ındaki `ScraplingServer` ayrı bir MCP.
+AMA tasarımı zaten hazır: docs/plans/2026-07-21-faz4-kickoff.md:74 — ayrı Fly app
+`seogrep-fetch` (Python+Scrapling), YALNIZ iç ağ, crawler'da takılabilir fetch katmanı,
+boş/script-only sayfada OTOMATİK render, SSRF birebir taşınır, robots duruşu değişmez,
+**SERP kazıma YOK (ToS)**, render kredi farkı İNSAN ONAYI. PLAN.md backlog #2.
+Ölçülenler: lisans **BSD-3-Clause** (CLAUDE.md lisans kapısını GEÇER) · Python 3.10+
+(mevcut imaj node:22-alpine, yani YENİ RUNTIME) · stealth/dynamic modlar Chromium ister,
+düz `Fetcher` istemez · dört mod: Fetcher / StealthyFetcher (Cloudflare bypass) /
+DynamicFetcher (tam tarayıcı) / session varyantları.
+
+KAMPANYAYA GİRMEZ, iki sebeple:
+ 1. Kampanya tam olarak "kaç sitede JS-render gerekiyordu" sorusunu ÖLÇECEK. O rakam
+    olmadan entegre etmek, ihtiyacı VARSAYMAK olur.
+ 2. Ölçülmüş bir ÖNKOŞUL var: `setup_project` alan adı SAHİPLİĞİNİ doğrulamıyor
+    (tool-analizi #1, iyileştirme 2). Bot-koruması aşan bir fetcher'ı sahiplik
+    doğrulaması olmadan göndermek, ürünü herkesin herkese karşı kullanabileceği bir
+    kazıma hizmetine çevirir. SAHİPLİK DOĞRULAMASI ÖNCE GELİR.
+AÇIK SORU (operatör cevaplamadı): Scrapling hangi problemi çözecek — (a) JS ile render
+edilen sayfalar boş dönüyor, (b) bazı müşteri siteleri crawler'ı engelliyor, (c) ikisi de?
+(b) için doğru çözüm genelde SeoGrep IP'sini müşterinin Cloudflare'inde izinli listeye
+almaktır, yeni bir runtime değil. Cevap gelmeden tasarıma başlama; superpowers
+brainstorming ile ayrı bir oturumda ele al.
+
+=== KESİN KURALLAR ===
 · İDDİA ETMEDEN ÖNCE ÖLÇ. Hangi kapıyı koştuğunu ve NEYİ ölçtüğünü söyle.
-· Yeşil kapı NE ölçtüğüyle raporlanır — CACHE SAYACIYLA (ders 7). verify.sh'in turbo adımı
-  16/16 cached verirse o bir REPLAY'dir, ölçüm değil; --force ile 0 cached teyit et.
-· `cmd | tail` sonrası $? tail'in kodudur — exit kodlarını BORUSUZ ölç.
+· Yeşil kapı CACHE SAYACIYLA raporlanır: "16 cached" bir REPLAY'dir, ölçüm değil.
+  `--force` ile `0 cached` teyit et.
+· `cmd | tail` sonrası $? tail'in kodudur. ARKA PLAN BİLDİRİMİNDEKİ "exit code 0" da
+  son komutun kodudur, kapının değil — çıktıyı DOSYADAN oku.
 · Kendi testine güvenme: geçtiğinde MUTASYON uygula; kırmızıya dönmüyorsa hiçbir şey ölçmüyor.
-  (Bu oturumda DÖRT test mutasyonda hayatta kaldı = hiçbir şey ölçmüyorlardı.)
-· NEVER#8: testi geçirmek için testi değiştirme. Metnin teste çarpıyorsa METNİ değiştir.
-· main'e doğrudan push YOK · Prod DB mutation / deploy / secret / dış servis = insana sor.
-· Merge sonrası DELETE BRANCH (imzalı ders 3).
+· Dosyayı programla değiştiren her adım ASSERT'le bağlanır, sonuç GREP'le teyit edilir
+  (ders adayı 11 — eşleşmeyen replace SESSİZDİR; sessiz düzeltme yapılmamış düzeltmedir).
+· İddianın kaynağı KOD ise KODA bak; özet belge kanıt DEĞİLDİR (ders adayı 12, beşinci vaka:
+  şef "audit_onpage'in duplikasyon kuralı yok" yazdı, kodda 13 kural varmış).
+· Tek canlı örnekten kural üretilmez (ders adayı 13). Ön-kayıtlı eşikler bunun içindir.
+· NEVER#2 ledger append-only · NEVER#4 tenant filtresiz sorgu yok (service-role RLS'i BAYPAS
+  EDER) · NEVER#5 CI'da paralı API yok · NEVER#6 fiyat insan onayı · NEVER#8 testi geçirmek
+  için testi değiştirme · NEVER#9 sabit/konvansiyon uydurma.
+· main'e doğrudan push YOK · merge sonrası DELETE BRANCH (imzalı ders 3) · merge öncesi
+  dal main'in gerisindeyse `gh pr update-branch` (branch protection bunu zorluyor).
+· Prod DB mutation / secret / dış servis = insana sor. Şefin Supabase `execute_sql`'i izin
+  katmanınca ENGELLİ ve bu DOĞRU — psql ile DOLANMA, operatöre SQL'i ver.
+· Paralel işçi AYNI ağaçta koşmaz (imzalı ders 8): worktree izolasyonu ya da seri koş.
+  Hakem mutasyon koşarken şef ağaca dokunmaz.
 
-=== ŞEFİN YETKİSİ DEĞİŞTİ (2026-08-08) ===
-Şef artık PR MERGE EDEBİLİR. `.claude/settings.local.json`'a (gitignore'da, yerel) eklendi:
-  "Bash(gh pr merge:*)"  ·  "Bash(gh run rerun:*)"
-Push + PR açma zaten şefteydi. Yani insana kalan: KARARLAR (fiyat/kapsam/go-no-go) ve
-şefin yapamadığı OPERATÖR TURU. Geri almak için o iki satırı sil.
-
-=== CI NOTU: geçici altyapı hatası görülebilir ===
-2026-08-08'de docs-only bir PR'da `verify-db` düştü. Test başarısızlığı DEĞİLDİ — hiç test
-koşmadı: `Recreating database... → Initialising schema... → error running container: exit 1`
-(Supabase yerel yığını runner'da kalkamadı). Öncesindeki 12 CI koşusunun 12'si başarılıydı;
-yeniden koşturuldu, GEÇTİ. Aynı deseni görürsen: önce LOGU OKU (test mi, konteyner mi),
-sonra geçmişi ölç, sonra `gh run rerun --failed`. Üçü olmadan "flaky" deme.
+=== BİTTİ TANIMI ===
+Kampanya, H1-H9'un HER BİRİ için deftere ya bir CEVAP ya da açık bir "ölçülemedi + neden"
+yazıldığında biter. "Çok veri topladık" bitti DEĞİLDİR. Ayrıca:
+ · 19 tool × S3 + S4 tamamlanmış ve hiçbirinde hata mesajı için ücret alınmadığı ÖLÇÜLMÜŞ,
+ · en az bir yeni fixture varyantı repoda (yoksa H6 cevapsız demektir),
+ · harcanan kredi ve DFS $ ölçümle raporlanmış (tahminle değil),
+ · ön-kayıtlı karar kurallarının hiçbiri veriyi gördükten sonra değiştirilmemiş —
+   değiştirildiyse NEDEN'i yazılmış.
 ```
 
 
