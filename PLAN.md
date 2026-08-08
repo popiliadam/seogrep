@@ -229,12 +229,10 @@ DFS bugün: kapının gördüğü $0.3850 / GERÇEK $0.0850 → $0.30 hayalet (d
 Açık dfs_spend rezervasyonu: 2 (biri 08-07 — #47 sonrası artık sayılmıyor, biri 08-08 — sayılıyor)
 healthz 200 · Deploy MCP success · reaper canlıda "stale dfs reserves" satırı basıyor
 
-TEMİZLİK BORCU: main'e merge edilmiş AMA SİLİNMEMİŞ 10 uzak dal var (imzalı ders 3 "Delete
-branch" kalın yazılmıştı, bu turda unutuldu). Silinecekler:
-docs/hacked-page-finding · docs/operator-round-brief · feat/dfs-spend-observability ·
-fix/cannibalization-brand-queries · fix/crawl-homepage-first · fix/crawl-interleave-sitemaps ·
-fix/dfs-null-text-fields · fix/premium-defaults-honesty · fix/project-context-blindness ·
-fix/stale-dfs-scope-to-today
+DALLAR TEMİZ: yerel 1 · uzak 1 (yalnız main) — ölçüldü 2026-08-08 kapanışta.
+Merge sırasında "Delete branch" unutulmuştu, 11 dal biriktiği fark edilip toplu silindi
+(`git branch -d` ile, yani merge edilmemiş tek dal olmadığı doğrulanarak). İmzalı ders 3
+bir sonraki turda da hatırlanmalı: merge ederken kutuyu işaretle, sonradan toplamaktan iyidir.
 
 === BU OTURUMUN İŞİ: OPERATÖR TURU — ŞEF BUNU KOŞAMAZ ===
 Brifing HAZIR: product-test-log.md sonundaki "OPERATÖR TURU — brifing".
