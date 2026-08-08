@@ -106,6 +106,8 @@ const RECONCILE_ERROR_NEVER_DELIVERED =
 export interface ReconcileOptions {
   /** Reap running jobs whose started_at is older than this (default 15 min). */
   olderThanMs?: number;
+  /** How old an open dfs_spend row must be to count as abandoned (default DEFAULT_STALE_DFS_MS). */
+  staleDfsMs?: number;
   /** Injectable clock — tests pin it. */
   now?: () => Date;
   /** Max jobs processed per run (default 100). */
@@ -220,6 +222,22 @@ export interface ReconcileOutcome {
   /** The QUEUED lane (M-01): never-delivered rows found, and how many this run transitioned. */
   readonly queuedScanned: number;
   readonly queuedFailed: number;
+  /**
+   * The DFS lane — OBSERVATION ONLY, no money moves here.
+   *
+   * A DataForSEO fan-out books ONE reservation before any HTTP and settles it with the real
+   * cost afterwards. A run that dies in between leaves the row open, and an open row keeps
+   * charging today's budget its full ESTIMATE until the UTC day rolls over. That is the
+   * deliberate, conservative choice (budget.ts) and it is NOT changed here.
+   *
+   * What was missing is that nobody could see it. Measured live on 2026-08-07: one crashed
+   * call held $0.30 of a $3.00 day against roughly $0.08 of real spend, and the only way to
+   * find that out was to query the table by hand. A budget that can be consumed invisibly is
+   * a budget that can deny paying customers their DFS calls with no trace of why.
+   */
+  readonly staleDfsReserves: number;
+  /** Estimated USD those stale reservations are still holding against today's cap. */
+  readonly staleDfsEstimatedUsd: number;
 }
 
 function errorDetail(error: unknown): string {
@@ -497,6 +515,10 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
   const cutoffIso = new Date(nowDate.getTime() - olderThanMs).toISOString();
 
   await warnRunningWithoutStart(client, limit);
+  const dfs = await countStaleDfsReserves(
+    client,
+    new Date(nowDate.getTime() - (opts?.staleDfsMs ?? DEFAULT_STALE_DFS_MS)).toISOString(),
+  );
 
   let candidateQuery = client
     .from("jobs")
@@ -639,5 +661,38 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
     orphanAlreadySettled: orphan.alreadySettled,
     queuedScanned: queued.scanned,
     queuedFailed: queued.failed,
+    staleDfsReserves: dfs.count,
+    staleDfsEstimatedUsd: dfs.estimatedUsd,
   };
+}
+
+/** How long an open dfs_spend row must sit before it counts as abandoned rather than in flight. */
+export const DEFAULT_STALE_DFS_MS = 5 * 60_000;
+
+/**
+ * Count today's ABANDONED DataForSEO reservations. A live fan-out settles within a couple of
+ * seconds, so anything still open minutes later is the residue of a crashed run.
+ *
+ * Read-only on purpose. Settling these at their estimate would change nothing financially, and
+ * settling them at less would reopen a decision the team already made and pinned with tests
+ * (a partial settle "under-counted a fleet that had already committed to the operation").
+ * The gap was never the policy — it was that the policy ran unobserved.
+ */
+async function countStaleDfsReserves(
+  client: ServiceClient,
+  cutoffIso: string,
+): Promise<{ count: number; estimatedUsd: number }> {
+  const { data, error } = await client
+    .from("dfs_spend")
+    .select("estimated_usd")
+    .eq("status", "open")
+    .lt("created_at", cutoffIso);
+  if (error) {
+    // Never fail a sweep over a metric: the jobs and ledger lanes are the ones that move money.
+    console.error("reaper: stale dfs_spend read failed:", error.message);
+    return { count: 0, estimatedUsd: 0 };
+  }
+  const rows = data ?? [];
+  const estimatedUsd = rows.reduce((sum, row) => sum + Number(row.estimated_usd ?? 0), 0);
+  return { count: rows.length, estimatedUsd };
 }
