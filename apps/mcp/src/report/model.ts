@@ -95,6 +95,13 @@ export interface ReportModel {
   readonly tech: TechSummary | null;
   readonly schema: SchemaSummary | null;
   readonly gsc: GscSummary | null;
+  /**
+   * Is Search Console CONNECTED for this project? Distinct from `gsc` being null, which only
+   * means no data has been pulled. Without this the absent-section told a connected user to
+   * "connect it with connect_gsc" while whats_next said it was already connected — two live
+   * tools contradicting each other about the same project (product test 2026-08-07).
+   */
+  readonly gscConnected: boolean;
 }
 
 export interface ReportInput {
@@ -105,6 +112,8 @@ export interface ReportInput {
   readonly generatedAt: string;
   readonly crawl: AuditCrawl | null;
   readonly pull: PullData | null;
+  /** Whether a gsc_connections row exists for this project (see ReportModel.gscConnected). */
+  readonly gscConnected?: boolean;
 }
 
 /** How many aggregated rows each GSC top-list shows. Bounded so a report stays readable. */
@@ -231,5 +240,7 @@ export function buildReportModel(input: ReportInput): ReportModel {
     tech: crawl ? summarizeTech(crawl) : null,
     schema: crawl ? summarizeSchema(crawl) : null,
     gsc: input.pull ? summarizeGsc(input.pull) : null,
+    // A pull implies a connection; otherwise trust the caller's read of gsc_connections.
+    gscConnected: input.gscConnected ?? input.pull !== null,
   };
 }
