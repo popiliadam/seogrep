@@ -99,8 +99,9 @@ function thousands(value: number): string {
  * mismatch than a genuinely unranked domain, so the output says so. Measured 2026-08-07:
  * adstark.com.tr returned 3 rows, all at search volume 30, on the default; the same domain at
  * tr/2792 returned rows carrying volumes up to 3,600 — the same 65 credits, twice, to discover a parameter the tool never mentioned.
- * This tool takes a bare `target` rather than a project_id, so it cannot infer the country;
- * the honest move is to name the assumption exactly when it looks wrong.
+ * Knowing the domain does NOT tell the tool which location_code to use — that mapping is not
+ * something this repo has measured (see twoLetterTld below) — so the honest move is to name the
+ * assumption, and the domain's country-code TLD, exactly when the assumption looks wrong.
  */
 const THIN_RESULT_ROWS = 5;
 
