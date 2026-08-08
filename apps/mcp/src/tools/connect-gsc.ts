@@ -41,7 +41,35 @@ export const connectGscTool = defineTool({
     }
     const { domain } = data as unknown as { domain: string };
 
+    // Is it ALREADY connected? The answer sits in gsc_connections and used to go unread, so a
+    // connected project got the same "go connect it" copy as an unconnected one (live product
+    // test 2026-08-07). Same reader shape as pull_gsc_data's loadConnection: the literal table
+    // is needed because forUser's selectOwn narrows filters to the columns common to ALL tenant
+    // tables, which excludes project_id. Tenant scope is the explicit user_id filter (NEVER #4),
+    // so another tenant's connection is indistinguishable from none.
+    const { data: existing, error: connError } = await getServiceClient()
+      .from("gsc_connections")
+      .select("gsc_property")
+      .eq("user_id", ctx.userId)
+      .eq("project_id", project_id)
+      .maybeSingle();
+    if (connError) {
+      throw new Error(`connect_gsc: connection lookup failed: ${connError.message}`);
+    }
+
     const connectUrl = `${requireWebBaseUrl()}/api/gsc/connect?project_id=${project_id}`;
+
+    if (existing) {
+      const { gsc_property: property } = existing as unknown as { gsc_property: string };
+      return textResult(
+        `Google Search Console is already connected for ${domain} — property ${property}.\n\n` +
+          "Run pull_gsc_data to fetch performance data, then find_quick_wins, " +
+          "detect_cannibalization or analyze_content_decay.\n\n" +
+          "If you need to connect a DIFFERENT property, or access was revoked on Google's side, " +
+          `re-approve here:\n${connectUrl}`,
+      );
+    }
+
     return textResult(
       `To connect Google Search Console for ${domain}, open this link and approve access:\n` +
         `${connectUrl}\n\n` +

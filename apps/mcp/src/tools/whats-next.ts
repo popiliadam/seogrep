@@ -61,6 +61,18 @@ export type WhatsNextState =
  * The pure decision ladder for a RESOLVED project (first match wins). Kept free of I/O so every
  * rung is unit-tested directly. See the module header for why the ladder keys on data milestones.
  */
+/**
+ * The three tools that analyze a crawl. They appear on EVERY rung where a crawl exists, because
+ * the ladder returns one primary step and the rest of the list is what the user can still do.
+ *
+ * Live product test 2026-08-07: two real projects with identical crawl state and only the Search
+ * Console link differing. The un-connected one was told to audit; the connected one was routed
+ * to pull_gsc_data and never heard of the audits at all — so connecting GSC silently hid the
+ * analysis of a crawl the user had already paid 20 credits for. Connecting a data source must
+ * ADD a path, never remove one.
+ */
+const AUDIT_TRIO = ["audit_onpage", "audit_tech", "audit_schema"] as const;
+
 export function decideProjectNextStep(s: ProjectSignals): NextStep {
   // Rung 1 — no crawl: the GSC-less foundation (works without Search Console).
   if (!s.hasCrawl) {
@@ -92,11 +104,12 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       primary: "pull_gsc_data",
       reason:
         "Google Search Console is connected. Pull your latest performance data to unlock quick " +
-        "wins, cannibalization, and content-decay analysis.",
+        "wins, cannibalization, and content-decay analysis. Your crawl is ready to analyze too.",
       upcoming: [
         "find_quick_wins",
         "detect_cannibalization",
         "analyze_content_decay",
+        ...AUDIT_TRIO,
         "generate_report",
       ],
       allSet: false,
@@ -114,6 +127,7 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
         "find_quick_wins",
         "detect_cannibalization",
         "analyze_content_decay",
+        ...AUDIT_TRIO,
         "generate_report",
       ],
       allSet: false,
@@ -140,6 +154,7 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       "find_quick_wins",
       "detect_cannibalization",
       "analyze_content_decay",
+      ...AUDIT_TRIO,
       "monthly-routine (prompt)",
     ],
     allSet: true,
