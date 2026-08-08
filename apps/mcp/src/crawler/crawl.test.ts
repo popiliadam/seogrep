@@ -1198,3 +1198,68 @@ describe("crawler fetches are pinned to the validated address", () => {
     }
   });
 });
+
+/**
+ * Live product test, 2026-08-07. adstark.com.tr paid 20 credits for a crawl that fetched 24
+ * blog posts and skipped 43 URLs — including "/", "/seo", "/iletisim" and every other
+ * commercial page — all as "time budget exhausted". Cause: when a sitemap exists the queue IS
+ * the sitemap, in the sitemap's own order, and the homepage is only a FALLBACK seed. Yoast
+ * lists its post sitemap first, so the blog archive consumed the whole budget before "/" came up.
+ *
+ * The homepage is the one page no crawl may miss: it is what every audit, every report and
+ * every client conversation starts from.
+ */
+describe("crawlSite — the homepage is never the page that gets dropped", () => {
+  it("crawls '/' first even when the sitemap buries it behind other URLs", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/blog", "/about", "/noindex", "/"] });
+    try {
+      // A budget that can only afford TWO pages — the shape of the live failure, where the
+      // ceiling landed long before the sitemap reached "/".
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2 });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls).toContain(normalizeUrl(site.origin + "/"));
+      expect(urls[0]).toBe(normalizeUrl(site.origin + "/"));
+      expect(result.skipped.some((s) => s.url === normalizeUrl(site.origin + "/"))).toBe(false);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does not crawl '/' twice when the sitemap also lists it", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/", "/blog"] });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const root = normalizeUrl(site.origin + "/");
+      expect(result.pages.filter((p) => p.url === root)).toHaveLength(1);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does not report the homepage as skipped when a ceiling drains the queue", async () => {
+    // Referee catch: seeding the root ahead of a sitemap that ALSO lists it left a dead second
+    // entry in the queue array. `visited` stopped the double fetch, but a ceiling draining the
+    // queue counted that entry as skipped — inflating the very number this work makes honest.
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/", "/blog"] });
+    try {
+      // maxUrls must be big enough for the sitemap seeds to REACH "/" (loadSitemapSeeds is
+      // capped by the same number), and small enough that the ceiling still drains the queue.
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2 });
+      const root = normalizeUrl(site.origin + "/");
+      expect(result.pages.map((p) => p.url)).toContain(root);
+      expect(result.skipped.map((s) => s.url)).not.toContain(root);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("still honours include_paths: an out-of-scope homepage is not force-crawled", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/blog", "/"] });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, includePaths: ["/blog"] });
+      expect(result.pages.map((p) => p.url)).not.toContain(normalizeUrl(site.origin + "/"));
+    } finally {
+      await site.close();
+    }
+  });
+});
