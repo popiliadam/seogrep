@@ -49,6 +49,80 @@ describe("formatRankedKeywords", () => {
     );
   });
 
+  /**
+   * Live product test, 2026-08-07. adstark.com.tr (a Turkish site) was looked up with the
+   * DEFAULT locale and returned 3 keywords, all at volume 30; the same domain at tr/2792
+   * returned volumes up to 3,600. The tool takes a bare `target`, not a project_id, so it
+   * cannot know the site's country — but a thin result under the US default is exactly when
+   * it should say so, instead of letting the user pay 65 credits twice to find out.
+   */
+  it("hints at the locale when the US default returns a thin result", () => {
+    const text = formatRankedKeywords(
+      {
+        target: "adstark.com.tr",
+        total_count: 3,
+        rows: [{ keyword: "seo uzmani", position: 23, search_volume: 30, url: null }],
+      },
+      RENDER_INPUT,
+    );
+    expect(text).toMatch(/location_code/);
+    expect(text).toMatch(/language_code/);
+    // The table above does not characterise the count, so this branch DOES lead with it.
+    expect(text).toMatch(/Few results\. This looked up the United States in English/);
+  });
+
+  /**
+   * Referee catch on this slice: zero rows is the THINNEST possible result — squarely inside the
+   * code's own THIN_RESULT_ROWS definition — and it was the one path that skipped the hint, via
+   * an early return. It is also the exact case the slice exists for: a Turkish site that ranks
+   * for nothing in the US pays 65 credits, is told it "has no rankings on record", and never
+   * learns the lookup was pointed at the wrong country.
+   */
+  it("hints at the locale when the default locale found NOTHING at all", () => {
+    const text = formatRankedKeywords(
+      { target: "adstark.com.tr", total_count: 0, rows: [] },
+      RENDER_INPUT,
+    );
+    expect(text).toMatch(/no google organic rankings on record/i);
+    expect(text).toMatch(/location_code/);
+    // The line above already says there are none: "Few results." would contradict it and
+    // "No results." would merely repeat it. Assert the SENTENCE, not just that a hint exists —
+    // an existence-only assertion stays green while the copy says something wrong (lesson 9).
+    expect(text).not.toMatch(/few results/i);
+    expect(text).toMatch(/This looked up the United States in English/);
+  });
+
+  it("does NOT hint on an empty result when the locale was set explicitly", () => {
+    const text = formatRankedKeywords(
+      { target: "adstark.com.tr", total_count: 0, rows: [] },
+      { language_code: "tr", location_code: 2792 },
+    );
+    expect(text).not.toMatch(/location_code/);
+  });
+
+  it("does NOT add the locale hint when the locale was set explicitly", () => {
+    const text = formatRankedKeywords(
+      {
+        target: "adstark.com.tr",
+        total_count: 3,
+        rows: [{ keyword: "seo uzmani", position: 23, search_volume: 30, url: null }],
+      },
+      { language_code: "tr", location_code: 2792 },
+    );
+    expect(text).not.toMatch(/location_code/);
+  });
+
+  it("does NOT add the locale hint when the default locale returned plenty", () => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      keyword: `kw-${i}`,
+      position: i + 1,
+      search_volume: 100,
+      url: null,
+    }));
+    const text = formatRankedKeywords({ target: "example.com", total_count: 12, rows }, RENDER_INPUT);
+    expect(text).not.toMatch(/location_code/);
+  });
+
   it("renders n/a for a missing position, volume, or URL", () => {
     const text = formatRankedKeywords(
       {

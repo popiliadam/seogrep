@@ -48,6 +48,23 @@ describe("DataForSEO tool descriptions", () => {
     expect(descriptionOf(name)).toMatch(/charges nothing|not charged|no credits/i);
   });
 
+  /**
+   * Live product test, 2026-08-07: run with the schema's suggested default (omit `competitors`
+   * and let DataForSEO pick), the 90-credit comparison offered youtube.com, wikipedia.org and
+   * linkedin.com as rivals for a small agency. Naming one real rival produced an excellent
+   * comparison. So the copy must steer at the mode that works.
+   *
+   * This pin exists because the referee proved the copy was otherwise unprotected: reverting the
+   * description to its old wording broke NOTHING — 136/136 tests green, docs:tools:check clean,
+   * because the generated .mdx frontmatter truncates at 155 chars and the changed text sits past
+   * the cut. Without this line the next copy edit could silently restore the misleading default.
+   */
+  it("steers compare_competitors at naming competitors, not at the auto-discovery default", () => {
+    const description = descriptionOf("compare_competitors");
+    expect(description).toMatch(/name the competitors/i);
+    expect(description).not.toMatch(/or let DataForSEO pick them/i);
+  });
+
   it("leaves the ungated tools saying nothing about a paid balance", () => {
     // A copy fix that leaked onto crawl/audit/report would misdescribe the trial.
     const ungated = ALL_TOOLS.filter((tool) => !PAID_BALANCE_TOOLS.has(tool.name));
