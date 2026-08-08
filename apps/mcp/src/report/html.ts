@@ -202,11 +202,20 @@ function gscSection(gsc: GscSummary): string {
   </section>`;
 }
 
-function gscAbsentSection(): string {
+/**
+ * The "no search data" section. It must distinguish NOT CONNECTED from CONNECTED-BUT-NOT-PULLED:
+ * telling a connected user to connect is a factual error, and it contradicted whats_next on the
+ * same project in the live product test (2026-08-07).
+ */
+function gscAbsentSection(connected: boolean): string {
+  const body = connected
+    ? `Search Console is connected, but no performance data has been pulled yet. Run
+    <code>pull_gsc_data</code> to include search performance here.`
+    : `No Search Console data yet. Connect it with <code>connect_gsc</code>, then run
+    <code>pull_gsc_data</code> to include search performance here.`;
   return `<section class="rpt">
     <h2>Search performance</h2>
-    <p class="muted">No Search Console data yet. Connect it with <code>connect_gsc</code>, then run
-    <code>pull_gsc_data</code> to include search performance here.</p>
+    <p class="muted">${body}</p>
   </section>`;
 }
 
@@ -228,7 +237,7 @@ export function renderReportHtml(model: ReportModel): string {
     ${model.onpage ? onpageSection(model.onpage) : ""}
     ${model.tech ? techSection(model.tech) : ""}
     ${model.schema ? schemaSection(model.schema) : ""}
-    ${model.gsc ? gscSection(model.gsc) : gscAbsentSection()}
+    ${model.gsc ? gscSection(model.gsc) : gscAbsentSection(model.gscConnected)}
     <footer class="rpt">powered by <a href="${MARKETING_URL}" rel="noopener">SeoGrep</a></footer>
   </div>`;
 

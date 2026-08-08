@@ -10,6 +10,7 @@ import { auditHint, escapeHtml, renderReportHtml } from "./html.ts";
 
 const FULL_MODEL: ReportModel = {
   domain: "example.com",
+  gscConnected: true,
   title: "Q3 SEO Report",
   generatedAt: "2026-07-19T00:00:00.000Z",
   crawl: {
@@ -180,5 +181,26 @@ describe("renderReportHtml", () => {
       schema: null,
     });
     expect(gscOnly).toMatch(/crawl_site/);
+  });
+});
+
+/**
+ * Live product test, 2026-08-07: on a project whose Search Console had been connected since
+ * 2026-07-28, the report still printed "Connect it with connect_gsc" while whats_next said it
+ * WAS connected. Two live tools contradicting each other about the same project. The section
+ * must distinguish not-connected from connected-but-not-pulled.
+ */
+describe("Search performance section when there is no pull", () => {
+  it("tells an UNCONNECTED project to connect", () => {
+    const html = renderReportHtml({ ...FULL_MODEL, gsc: null, gscConnected: false });
+    expect(html).toContain("connect_gsc");
+    expect(html).toMatch(/No Search Console data yet/);
+  });
+
+  it("does NOT tell a CONNECTED project to connect — it asks for a pull", () => {
+    const html = renderReportHtml({ ...FULL_MODEL, gsc: null, gscConnected: true });
+    expect(html).toMatch(/Search Console is connected/);
+    expect(html).toContain("pull_gsc_data");
+    expect(html).not.toContain("connect_gsc");
   });
 });

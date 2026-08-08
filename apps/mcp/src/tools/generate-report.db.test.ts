@@ -245,6 +245,51 @@ describe("generate_report sync charge against the local stack", () => {
     expect(await jobCount(user.userId)).toBe(2);
   });
 
+  /**
+   * Referee follow-up on the context-blindness slice: the RENDERER was pinned (html.test.ts) but
+   * the WIRING was not — hardcoding `gscConnected: false` in this tool would have turned no test
+   * red, because ReportInput.gscConnected is optional and tsc cannot catch it. This drives the
+   * whole tool against the real stack so the connection read is pinned end to end.
+   *
+   * The live defect (product test 2026-08-07): a project connected since 2026-07-28 got a report
+   * saying "Connect it with connect_gsc" while whats_next said it WAS connected.
+   */
+  it("(a3) crawl but no pull, GSC CONNECTED -> the report asks for a pull, never for a connect", async () => {
+    const user = await makeUser();
+    await seedGrant(user.userId, 100);
+    const projectId = await makeProject(user.userId, "connected-no-pull.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    const { error: connErr } = await service.from("gsc_connections").insert({
+      user_id: user.userId,
+      project_id: projectId,
+      gsc_property: "https://connected-no-pull.example.com/",
+      encrypted_refresh_token: Buffer.from("not-a-real-token"),
+    });
+    if (connErr) throw new Error(`could not seed gsc_connections: ${connErr.message}`);
+
+    const result = await reportTool.run(ctxOf(user), { project_id: projectId });
+    expect(result.isError).toBeUndefined();
+
+    const html = (await reportRows(user.userId))[0]?.html ?? "";
+    expect(html).toMatch(/Search Console is connected/);
+    expect(html).toContain("pull_gsc_data");
+    expect(html).not.toContain("connect_gsc");
+  });
+
+  it("(a4) crawl but no pull and NOT connected -> the report still tells the user to connect", async () => {
+    const user = await makeUser();
+    await seedGrant(user.userId, 100);
+    const projectId = await makeProject(user.userId, "unconnected.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+
+    const result = await reportTool.run(ctxOf(user), { project_id: projectId });
+    expect(result.isError).toBeUndefined();
+
+    const html = (await reportRows(user.userId))[0]?.html ?? "";
+    expect(html).toContain("connect_gsc");
+    expect(html).toMatch(/No Search Console data yet/);
+  });
+
   it("(a2) works from a pull alone (no crawl) and still commits net -15", async () => {
     const user = await makeUser();
     await seedGrant(user.userId, 100);

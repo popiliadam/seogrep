@@ -77,6 +77,35 @@ describe("connect_gsc against the local stack", () => {
     expect(text).toMatch(/read-only/i);
   });
 
+  /**
+   * Live product test, 2026-08-07: adstark.com.tr had been connected since 2026-07-28 and
+   * connect_gsc still answered with the byte-identical "open this link and approve access".
+   * The state sits in gsc_connections and the tool simply never read it. Same blindness as
+   * whats_next's swallowed audit branch and generate_report's "connect it" line.
+   */
+  it("says the project is ALREADY connected, and names the property, instead of re-offering the link", async () => {
+    const ctx = await makeCtx();
+    const projectId = await makeProject(ctx.userId, "already-connected.example.com");
+    const { error } = await service.from("gsc_connections").insert({
+      user_id: ctx.userId,
+      project_id: projectId,
+      gsc_property: "https://already-connected.example.com/",
+      encrypted_refresh_token: Buffer.from("not-a-real-token"),
+    });
+    if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
+
+    const result = await connectGscTool.run(ctx, { project_id: projectId });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/already connected/i);
+    expect(text).toContain("https://already-connected.example.com/");
+    // It must still offer a way to re-connect (property changed, token revoked) — but the
+    // headline may not be the plain "go connect it" of an unconnected project.
+    expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+    expect(text).toMatch(/pull_gsc_data/);
+  });
+
   it("treats another tenant's project id as not found (no link issued)", async () => {
     const a = await makeCtx();
     const b = await makeCtx();
