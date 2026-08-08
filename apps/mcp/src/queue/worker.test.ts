@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  formatStaleDfsWarning,
   clearToolHandlers,
   getToolHandler,
   registerToolHandler,
@@ -234,5 +235,27 @@ describe("in-worker stuck-job reaper", () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(reconcile).toHaveBeenCalledTimes(1); // one sweep per interval, not two
+  });
+});
+
+/**
+ * The stale-DFS warning. Referee catch: inlined in the reaper tick, a mutation that inverted its
+ * condition — so the line never printed — passed 761 unit and 148 DB tests. The whole point of
+ * that lane is being able to see abandoned reservations, so its output channel gets a gate.
+ */
+describe("formatStaleDfsWarning", () => {
+  it("says nothing when nothing is stale", () => {
+    expect(formatStaleDfsWarning({ staleDfsReserves: 0, staleDfsEstimatedUsd: 0 })).toBeNull();
+  });
+
+  it("names the count and the USD being held", () => {
+    const line = formatStaleDfsWarning({ staleDfsReserves: 3, staleDfsEstimatedUsd: 0.9 });
+    expect(line).toContain("count=3");
+    expect(line).toContain("holdingUsd=0.9000");
+    expect(line).toMatch(/abandoned DataForSEO reservations/);
+  });
+
+  it("warns on a single stale reservation, not just a pile of them", () => {
+    expect(formatStaleDfsWarning({ staleDfsReserves: 1, staleDfsEstimatedUsd: 0.3 })).not.toBeNull();
   });
 });

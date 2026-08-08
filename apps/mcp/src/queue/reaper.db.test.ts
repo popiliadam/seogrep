@@ -426,3 +426,89 @@ describe("stuck queued job sweep (M-01)", () => {
     expect((await getJob(jobId))?.status).toBe("queued");
   });
 });
+
+/**
+ * The DFS lane — observation only. A DataForSEO fan-out books ONE reservation before any HTTP
+ * and settles it with the real cost afterwards; a run that dies in between leaves the row open,
+ * and an open row charges today's budget its full ESTIMATE until the UTC day rolls over.
+ *
+ * That conservatism is deliberate and is NOT changed here. What was missing is visibility.
+ * Measured live 2026-08-07: one crashed analyze_backlinks call held $0.30 of a $3.00 day against
+ * roughly $0.08 of genuine spend, and the only way to discover it was to query the table by
+ * hand. A budget that can be consumed invisibly can deny paying customers their DFS calls with
+ * no trace of why.
+ */
+describe("reaper — stale DataForSEO reservations", () => {
+  const insertDfsRow = async (
+    endpoint: string,
+    status: "open" | "settled",
+    estimatedUsd: number,
+    createdAt: Date,
+  ): Promise<void> => {
+    const { error } = await service.from("dfs_spend").insert({
+      spend_day: createdAt.toISOString().slice(0, 10),
+      endpoint,
+      estimated_usd: estimatedUsd,
+      status,
+      created_at: createdAt.toISOString(),
+      ...(status === "settled" ? { actual_usd: 0.01, settled_at: createdAt.toISOString() } : {}),
+    });
+    if (error) throw new Error(`dfs_spend insert failed: ${error.message}`);
+  };
+
+  it("counts an abandoned reservation and the USD it is still holding", async () => {
+    // Measured as a DELTA and cleaned up afterwards. An absolute >= assertion on this shared
+    // table passed under two referee mutations purely on leftover rows from other specs — it
+    // was reporting the table's history, not this reservation.
+    const stamp = `stale-${randomUUID()}`;
+    const now = new Date();
+    const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+    await insertDfsRow(stamp, "open", 0.3, new Date(now.getTime() - 30 * 60_000));
+    try {
+      const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+      expect(after.staleDfsReserves).toBe(before.staleDfsReserves + 1);
+      expect(after.staleDfsEstimatedUsd - before.staleDfsEstimatedUsd).toBeCloseTo(0.3, 5);
+    } finally {
+      await service.from("dfs_spend").delete().eq("endpoint", stamp);
+    }
+  });
+
+  it("ignores a reservation that is still in flight", async () => {
+    const now = new Date();
+    const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+    await insertDfsRow(`inflight-${randomUUID()}`, "open", 0.3, new Date(now.getTime() - 2_000));
+    const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+
+    // A live fan-out settles in seconds; two seconds old is working, not abandoned.
+    expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+  });
+
+  it("ignores a settled reservation however old it is", async () => {
+    const now = new Date();
+    const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+    await insertDfsRow(`settled-${randomUUID()}`, "settled", 0.3, new Date(now.getTime() - 86_400_000));
+    const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+
+    expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+  });
+
+  it("moves NO money: the lane is a read, and dfs_spend is left exactly as it was", async () => {
+    const stamp = `readonly-${randomUUID()}`;
+    const now = new Date();
+    await insertDfsRow(stamp, "open", 0.3, new Date(now.getTime() - 30 * 60_000));
+    try {
+      await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+
+      const { data } = await service
+        .from("dfs_spend")
+        .select("status, actual_usd, settled_at")
+        .eq("endpoint", stamp)
+        .single();
+      expect(data?.status).toBe("open");
+      expect(data?.actual_usd).toBeNull();
+      expect(data?.settled_at).toBeNull();
+    } finally {
+      await service.from("dfs_spend").delete().eq("endpoint", stamp);
+    }
+  });
+});

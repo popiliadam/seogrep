@@ -260,9 +260,34 @@ async function runReaperTick(reconcile: () => Promise<ReconcileOutcome>): Promis
         ` alreadySettled=${outcome.alreadySettled} failed=${outcome.failed}` +
         ` orphanReserves=${outcome.orphanReserves}`,
     );
+    const staleDfs = formatStaleDfsWarning(outcome);
+    if (staleDfs !== null) console.warn(staleDfs);
   } catch (error) {
     console.error("reaper run failed:", error);
   }
+}
+
+/**
+ * The stale-DFS warning line, or null when there is nothing to warn about.
+ *
+ * Extracted so the emission itself is testable. Inlined in the tick it was NOT: a mutation
+ * inverting its condition — so the warning never printed at all — passed 761 unit and 148 DB
+ * tests. A slice whose entire purpose is observability cannot leave its own output channel
+ * unguarded (signed lesson 9).
+ *
+ * The cap is deliberately not quoted here; it lives in dfs_daily_budget_usd() and a number
+ * copied into a log line goes stale the day it changes.
+ */
+export function formatStaleDfsWarning(outcome: {
+  staleDfsReserves: number;
+  staleDfsEstimatedUsd: number;
+}): string | null {
+  if (outcome.staleDfsReserves <= 0) return null;
+  return (
+    `stale dfs reserves: count=${outcome.staleDfsReserves}` +
+    ` holdingUsd=${outcome.staleDfsEstimatedUsd.toFixed(4)}` +
+    " — abandoned DataForSEO reservations are charging today's budget their estimate"
+  );
 }
 
 /**

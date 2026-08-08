@@ -126,6 +126,26 @@ export type Database = {
         };
         Relationships: [];
       };
+      // The DataForSEO daily-budget ledger (migration 0014). Writes go exclusively through the
+      // reserve_dfs_spend / settle_dfs_spend RPCs — this Row exists only so the reaper can READ
+      // abandoned reservations for its heartbeat. Insert/Update are deliberately absent from the
+      // app's usage: nothing here may write the money ledger directly.
+      dfs_spend: {
+        Row: {
+          id: string;
+          spend_day: string;
+          endpoint: string;
+          estimated_usd: number;
+          actual_usd: number | null;
+          row_count: number | null;
+          status: string;
+          created_at: string;
+          settled_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       jobs: {
         Row: JobRow;
         Insert: {
@@ -283,7 +303,40 @@ export type ServiceClient = SupabaseClient<Database>;
 export type JobUpdate = Database["public"]["Tables"]["jobs"]["Update"];
 
 /** Table names that carry a tenant `user_id` column (scopable by forUser). */
-export type TenantTable = keyof Database["public"]["Tables"];
+/**
+ * The tables `forUser` may scope, DERIVED from which of them actually carry a user_id rather
+ * than assumed to be all of them.
+ *
+ * `keyof Tables` was the old definition, and it quietly depended on every table in the slice
+ * being tenant-owned. The moment a table without a user_id was added (dfs_spend — a
+ * fleet-global money ledger, not a tenant one), `selectOwn`'s filter type collapsed to the
+ * columns common to ALL tables and `.eq("user_id", …)` stopped type-checking across the app.
+ * That failure was loud, but the quiet direction is the dangerous one: this type is what
+ * makes a cross-tenant read a compile error (constitution NEVER #4), and it should say what
+ * it means instead of relying on a coincidence about the slice's contents.
+ *
+ * Purely a narrowing: every table that WAS scopable still is, so no existing call changes.
+ */
+export type TenantTable = {
+  [K in keyof Database["public"]["Tables"]]: Database["public"]["Tables"][K]["Row"] extends {
+    user_id: string;
+  }
+    ? K
+    : never;
+}[keyof Database["public"]["Tables"]];
+
+/**
+ * Compile-time proof of the line above, kept in a file the typecheck gate actually reads.
+ *
+ * The obvious home for this is a spec, but `tsconfig.json` excludes `src/**` + `*.test.ts`, so a
+ * `@ts-expect-error` there is decorative — verified by mutation: deleting the directive changed
+ * nothing. Here, breaking the invariant fails `pnpm typecheck`, which is a real gate.
+ *
+ * If a future table without a user_id becomes scopable by forUser, this stops compiling.
+ */
+type AssertNotTenantScopable<T extends string> = T extends TenantTable ? never : true;
+const _dfsSpendIsNotTenantScopable: AssertNotTenantScopable<"dfs_spend"> = true;
+void _dfsSpendIsNotTenantScopable;
 
 /**
  * Service-role Supabase client factory (RLS bypass), for SERVER-SIDE use only.
