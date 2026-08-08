@@ -200,59 +200,121 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — ÜRÜN TESTİ (fresh session, 2026-08-07 akşamı hazırlandı)
+## 🧪 SIRADAKİ OTURUM — OPERATÖR TURU (fresh session, 2026-08-08 hazırlandı)
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/product-test-log.md  ← ESAS BELGE: test planı + iki taraflı bulgu defteri
+→ docs/testing/product-test-log.md  ← ESAS BELGE (23 bulgu + triyaj + operatör brifingi)
+→ docs/testing/2026-08-07-tool-tool-analiz.md  ← 19 tool'un tek tek analizi
 
-=== NEDEN BU OTURUM VAR ===
-Ürün canlı, para alıyor, kapılar yeşil, 1568 test geçiyor. Ama ÜCRETLİ 13 TOOL'UN 7'Sİ
-CANLIDA HİÇ GERÇEK ÇIKTI ÜRETMEDİ — aralarında en pahalı üçü de var (65/70/90 kredi).
-Ürünün SAĞLAM olduğunu biliyoruz; İYİ olup olmadığını bilmiyoruz. Bu oturum onu ölçer.
-Bu bir kod oturumu DEĞİL. Ürün kullanma oturumu. Kod yazmadan önce bulgu topla.
+=== ÖNCEKİ OTURUM NE YAPTI (2026-08-07/08, iki gün) ===
+ÜRÜN TESTİ + DÜZELTME MARATONU. 19 tool'un 19'u canlıda koşturuldu; 23 bulgu yazıldı;
+triyaj yapıldı; 10 PR merge edildi; hepsi CANLIDA doğrulandı.
 
-=== KAPSAM DIŞI (yapma) ===
-· Daha fazla sertleştirme/refactor — audit kapandı, azalan getiri.
-· Launch yayınları (PH/HN/X) — taslaklar hazır ama TEST BİTMEDEN OLMAZ (contract.md insan kapısı).
-· Fiyat/kredi rakamı değişikliği — NEVER#6. Yanlış görünüyorsa BULGU yaz, dokunma.
+Kapanan 🔴 (5/5) — hepsi merge + deploy + canlı ölçümle mühürlü:
+· #15 analyze_backlinks CANLIDA HİÇ ÇALIŞMAMIŞTI (null anchor, z.string()). PR #41.
+  KANIT: 49.855 backlink döndü; "(no anchor text) — 452 backlinks" = tool'u öldüren satırlar.
+· #2  crawl ANA SAYFAYI taramıyordu. PR #44 (ana sayfa ilk) + PR #48 (sitemap round-robin).
+  KANIT: first_crawled=/ · ticari sayfa 0→10 · atlanan ticari 8→4.
+· #12 detect_cannibalization marka sorgusunu yamyamlaşma sanıyordu. PR #45 (4 hakem turu).
+· #17 compare_competitors varsayılan modda youtube/wikipedia öneriyordu. PR #43.
+· #18 ranked_keywords ABD varsayılanında sessizce boş dönüyordu. PR #43.
+Ayrıca 🟡: #1 #3 #4 #8 #16 #20 kapandı. #22 #23 YENİ (aşağıda).
 
-=== İŞİN BÖLÜŞÜMÜ — karıştırma, ikisi farklı şey ölçüyor ===
-ŞEF  (curl + MCP endpoint) → "doğru veri dönüyor mu": çıktı doğruluğu, defter (rezerve→commit),
-                              hata mesajı dürüstlüğü, vendor harcaması. Şef bunu tek başına koşar.
-OPERATÖR (Claude Desktop/Code, normal cümleler) → "kullanılabilir mi": LLM açıklamadan doğru
-                              tool'u seçiyor mu, çıktı sohbette işe yarıyor mu, 90 krediye değdi mi.
-                              ŞEF BUNU YAPAMAZ ve bugüne dek HİÇ YAPILMADI.
+=== CANLI DURUM (2026-08-08 ölçümü, hepsi bu oturumda ölçüldü) ===
+main e5753f1 · açık PR YOK · çalışma ağacı temiz
+Bakiye 740 · SUM(credit_ledger)=740 (NEVER#2 mühürlü, oturum boyunca her adımda tuttu)
+DFS bugün: kapının gördüğü $0.3850 / GERÇEK $0.0850 → $0.30 hayalet (deploy öncesi çökmeden)
+Açık dfs_spend rezervasyonu: 2 (biri 08-07 — #47 sonrası artık sayılmıyor, biri 08-08 — sayılıyor)
+healthz 200 · Deploy MCP success · reaper canlıda "stale dfs reserves" satırı basıyor
 
-=== ŞEFİN OPERATÖRDEN İSTEYECEĞİ İKİ ŞEY (oturum başında sor) ===
-1. Hangi gerçek site test edilecek? (example.com işe yaramaz — tek sayfa)
-2. GSC'de bağlı property hangisi? (Tur 2'nin 4 tool'u buna bağlı)
-   + ödeyen hesabın MCP URL'i (anahtar 2026-08-07'de rotate edildi; ~/.zshrc MCP_SMOKE_URL güncel)
+TEMİZLİK BORCU: main'e merge edilmiş AMA SİLİNMEMİŞ 10 uzak dal var (imzalı ders 3 "Delete
+branch" kalın yazılmıştı, bu turda unutuldu). Silinecekler:
+docs/hacked-page-finding · docs/operator-round-brief · feat/dfs-spend-observability ·
+fix/cannibalization-brand-queries · fix/crawl-homepage-first · fix/crawl-interleave-sitemaps ·
+fix/dfs-null-text-fields · fix/premium-defaults-honesty · fix/project-context-blindness ·
+fix/stale-dfs-scope-to-today
 
-=== BULGU DEFTERİ — oturumun asıl çıktısı ===
-docs/testing/product-test-log.md · tablo + iki serbest-metin bölümü.
-Kaynak O=operatör, Ş=şef · Önem 🔴🟡🟢 · Durum açık/iş emri/düzeltildi/kabul.
-OPERATÖRÜN HER ÖNERİSİ LOGLANIR — yarım cümle bile. Şef kendi bulduğu hata/eksik/gelişim
-alanlarını da AYNI deftere yazar. Bulgu ≠ iş emri; triyaj test BİTTİKTEN sonra.
+=== BU OTURUMUN İŞİ: OPERATÖR TURU — ŞEF BUNU KOŞAMAZ ===
+Brifing HAZIR: product-test-log.md sonundaki "OPERATÖR TURU — brifing".
+Şef 19 tool'u curl ile ölçtü = "doğru veri dönüyor mu". Bu tur "KULLANILABİLİR Mİ"yi ölçer ve
+yalnız Claude Desktop'ta gerçek cümlelerle ölçülebilir. İNSAN yapar, şef NOT ALIR.
 
-=== MALİYET (onaylı) ===
-Tam tur ≈ 345 kredi (ödeyen hesapta 1380 var) · vendor ≈ $0.85 ($3/gün tavanının altında).
-Tur 1 temel akış 85 · Tur 2 GSC 35 · Tur 3 premium/DFS 225 · Tur 4 yardımcılar 0.
+Şefin bu turdaki rolü:
+1. İnsan hazır değilse brifingi hatırlat, senaryoları ver, ama YERİNE KOŞMA.
+2. İnsan sonuçları getirince deftere Kaynak=O ile işle (yarım cümle bile).
+3. Triyajı BERABER yap. Bulgu ≠ iş emri.
+4. İnsan isterse curl tarafıyla çapraz-doğrula (örn. LLM'in seçtiği tool defterde ne yazdı).
 
-=== CANLI DURUM (2026-08-07 ölçümü) ===
-main 8b8c5c9 · açık PR yok · çalışma ağacı temiz · lokal+uzak YALNIZ main dalı
-repo PRIVATE ✅ (CI private'ta gerçek koşuyla kanıtlandı: 6 iş de success)
-DFS_LIVE AÇIK · vendor bugün $0.09/$3.00 · Turnstile CANLI (3 auth sayfasında)
-3 hesap: ödeyen 041a09b3 (1380 kr) · trial 1bfe47da (180 kr) · 6b424117 (0 kr)
-migration defteri 20/20 hizalı · RLS 12/12 · UptimeRobot healthz'i 5 dk'da bir izliyor
-make goals 16/16 (1 skip: dfs-budget-guard, prod env shell'de yokken atlar)
+HİÇ ÖLÇÜLMEMİŞ İKİ ŞEY (brifingde de var, en değerlileri):
+· Asistan 90 kredilik bir tool'u KOŞMADAN ÖNCE fiyatı söylüyor mu?
+· Hacklenmiş sayfalardan (#22) sohbette söz ediyor mu, yoksa "multiple h1"de mi kalıyor?
+· Senaryo 4 KRİTİK: compare_competitors açıklamasını "rakipleri sen adlandır" diye değiştirdik
+  ama LLM'in o metni okuyup davranışını değiştirdiğini HİÇ ÖLÇMEDİK. Açıklama düzeltmesi ancak
+  modeli yönlendiriyorsa işe yarar.
 
-=== AÇIK, TEST DIŞI ===
-· Supabase Pro: operatör ALMAYACAK (2026-08-07 kararı) → leaked-password koruması kapalı kalır.
-· 18 Ağustos: tek aboneliğin yenilemesi. PADDLE_ATTRIBUTION_ENFORCE KAPALI kalacak.
-· Trial hesapta test kalıntısı: example.com projesi + 1 crawl. Zararsız.
+=== OPERATÖR TURUNDAN SONRA: TRİYAJDA KALANLAR ===
+Dilim 5-6 (yazılmadı, ertelendi — gerekçeleri defterde):
+· #6  audit_tech yönlendirme körü ("Redirects: 0" derken 24/24 URL 301). PageRecord'a
+      yönlendirme zinciri alanı ister — Faz 3'ten kalan borç (PLAN.md:91).
+· #5 #7 crawl zaman bütçesi (90 sn) + eşzamanlılık. #2 kapandı ama 57 sayfa hâlâ atlanıyor;
+      round-robin kapsamı düzeltti, DERİNLİĞİ değil. Eşzamanlılık BİLİNÇLİ ertelendi:
+      SSRF yolunu, hedef siteyi yormayı, crawl-delay uyumunu ve test determinizmini birden etkiler.
+· #8  audit_onpage 30 kredi / 5 kural — fiyat/değer dengesizliği (NEVER#6, insan kararı).
+· #9 #10 rapor: beyaz etiket, PDF, müşteriye dönük CTA — ticari kapsam, insan kararı.
+· #11 #21 kabul edildi (yapılmayacak) — ikisi de fiyatı dürüst.
+· #22 hacklenmiş sayfa tespiti — ÖLÇÜM VAR, KURAL YOK (aşağıya bak).
+
+=== YENİ VE ÖNEMLİ: #22 / #23 ===
+Canlı tarama adstark.com.tr'de 84 URL'in 6'sını bahis/yetişkin spam'i buldu (Hırvatça,
+İspanyolca, Fransızca; biri elle doğrulandı: canlı, indekslenebilir, 543 kelime). Ürün onları
+TARADI ve yalnız "multiple h1" dedi.
+Tespit için DÖRT sinyal ölçüldü, ÜÇÜ ÇÜRÜDÜ (defterde tablo):
+  ❌ başlıkta farklı marka (meşru 13/18'de de var) · ❌ yetim sayfa (0/0) · ❌ html lang (hepsi tr)
+  ✅ çoklu h1 (spam 6/6 · meşru 0/18) — AMA n=1 site, kural olarak ÖNERİLMEDİ.
+KURAL YAZMADAN ÖNCE İKİNCİ BİR SİTEDE ÖLÇ. Bu oturumda tek örnekten genelleme üç kez geri tepti.
+
+#23 OPERATÖRDE, ürün kusuru DEĞİL: adstark.com.tr büyük olasılıkla ELE GEÇİRİLMİŞ. Altı sayfa
+canlı ve post-sitemap'te; Google gözünde alan adını yakar. Bu senin kendi ajans siten.
+
+=== AÇIKLANAMAYAN / İZLENECEK ===
+· verify-db bir kez alakasız bir spec'te düştü (executeJob success), üç koşuda ve main'de
+  tekrarlamadı. AÇIKLANAMADI, "flaky" DENMEDİ. (#46 PR'ında kayıtlı.)
+· `turbo run typecheck lint test build --force` şefin makinesinde 3/3 düştü, her seferinde
+  FARKLI bir zamanlama-duyarlı gateway testi; hakemin makinesinde 5/5 yeşil; yalnız `test`
+  görevi tek başına burada da geçiyor. Makine-CPU çekişmesi gibi duruyor, KANITLANMADI.
+  → Kapı koşarken görevleri AYRI AYRI ölç (test/typecheck/lint/build), hepsi 0 cached yeşildi.
+
+=== BU OTURUMUN DERSİ (imza bekliyor, CLAUDE.md'ye YAZILMADI) ===
+Ders adayı 11: "Bir dosyayı program yazarak değiştiren her adım assert'le bağlanır ve sonuç
+grep ile teyit edilir. Eşleşmeyen bir replace SESSİZDİR; sessiz bir düzeltme yapılmamış bir
+düzeltmedir — ve rapor edilirse yalan olur."
+Gerekçe: şef bir docstring düzeltmesini "yaptım" diye hakeme bildirdi, assert'siz replace sessizce
+eşleşmemişti, kod sahip olmadığı bir güvenlik özelliğini beyan eden cümleyle sevk edilecekti.
+
+Ders adayı 12: "Yorumdaki her iddia ölçülür. 'never', 'only', 'measured' yazan bir cümle,
+ölçümü gösterilemiyorsa yazılmaz."
+Gerekçe: bu oturumda DÖRT kez ölçülmemiş mutlak iddia yazıldı, BİRİ PROD'A ULAŞTI (reaper
+"charging today's budget" derken sorguda spend_day filtresi yoktu — PR #47).
+
+Ders adayı 13: "Tek canlı örnekten kural üretilmez. Bir örnek kuralı çürütmeye yeter,
+doğrulamaya yetmez."
+Gerekçe: marka-yamyamlaşma heuristiği DÖRT hakem turu sürdü; her turda 'makul görünen' kural
+gerçek dünyada ters çalıştı (ilk etiket=marka · [1.0,1.0] şekli · platformun kendi markası).
+
+=== KESİN KURALLAR (değişmedi) ===
+· İDDİA ETMEDEN ÖNCE ÖLÇ. Hangi kapıyı koştuğunu ve NEYİ ölçtüğünü söyle.
+· Yeşil kapı NE ölçtüğüyle raporlanır — CACHE SAYACIYLA (ders 7). verify.sh'in turbo adımı
+  16/16 cached verirse o bir REPLAY'dir, ölçüm değil; --force ile 0 cached teyit et.
+· `cmd | tail` sonrası $? tail'in kodudur — exit kodlarını BORUSUZ ölç.
+· Kendi testine güvenme: geçtiğinde MUTASYON uygula; kırmızıya dönmüyorsa hiçbir şey ölçmüyor.
+  (Bu oturumda DÖRT test mutasyonda hayatta kaldı = hiçbir şey ölçmüyorlardı.)
+· NEVER#8: testi geçirmek için testi değiştirme. Metnin teste çarpıyorsa METNİ değiştir.
+· main'e doğrudan push YOK · Prod DB mutation / deploy / secret / dış servis = insana sor.
+· Merge sonrası DELETE BRANCH (imzalı ders 3 — bu turda 10 dal unutuldu).
 ```
+
 
 ## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)
 
