@@ -527,11 +527,15 @@ export const DOC_PROSE = {
       "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +
       "with its position, monthly search volume, and the exact URL that ranks — powered by " +
       "DataForSEO Labs. It works on **any public domain**, so it reads your own site or a " +
-      "competitor's the same way, and it needs no project setup. It is **synchronous**: the table " +
-      "comes back immediately, with no background job to poll.",
+      "competitor's the same way. It is **synchronous**: the table comes back immediately, with " +
+      "no background job to poll.",
     whatItDoes:
-      "Given a domain (a bare host or a full URL — it is canonicalized for you), it returns one row " +
-      "per ranked keyword:\n\n" +
+      "Name the site in **one of two ways** — pass a `target` domain (a bare host or a full URL — " +
+      "it is canonicalized for you), or pass the `project_id` of one of your own projects and the " +
+      "domain is taken from it. Exactly one of the two: passing both is rejected rather than " +
+      "resolved by precedence, because the two can name different sites and guessing would bill " +
+      "you for a lookup of the one you did not mean. Either way you get one row per ranked " +
+      "keyword:\n\n" +
       "- **Keyword** — the query the domain ranks for.\n" +
       "- **Position** — where it ranks in the organic results.\n" +
       "- **Search volume** — average monthly Google searches for that keyword.\n" +
@@ -558,10 +562,16 @@ export const DOC_PROSE = {
       "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.",
     returns:
       "A table with one row per ranked keyword — keyword, position, search volume, and the ranking " +
-      "URL — under a header saying how many of the domain's ranked keywords are shown. A domain " +
-      "with no organic rankings on record is reported as such. An input that is not a public " +
-      "domain is rejected before anything is charged, and while live data is off you get the " +
-      "\"not yet enabled\" message instead — also free.",
+      "URL — under a header saying how many of the domain's ranked keywords are shown; when you " +
+      "looked the site up by `project_id`, the header names that project. A domain with no " +
+      "organic rankings on record is reported as such.\n\nRankings are read for the United States " +
+      "in English unless you pass `location_code` and `language_code`. When a lookup left on that " +
+      "default comes back thin AND the domain carries a country-code TLD, the reply says so and " +
+      "names the TLD — it does **not** guess the matching location code, because a wrong code " +
+      "returns another country's rankings that look perfectly ordinary.\n\nAn input that is not a " +
+      "public domain, a call naming neither `target` nor `project_id` (or both), and a " +
+      "`project_id` that is not yours are all rejected before anything is charged; while live " +
+      "data is off you get the \"not yet enabled\" message instead — also free.",
   },
 
   analyze_backlinks: {
@@ -569,11 +579,14 @@ export const DOC_PROSE = {
       "`analyze_backlinks` reports a domain's **backlink profile** — how many links point at it, " +
       "which domains send them, and what anchor text those links use — powered by the DataForSEO " +
       "Backlinks database. It works on **any public domain**, so it reads your own site or a " +
-      "competitor's the same way, and it needs no project setup. It is **synchronous**: the report " +
-      "comes back immediately, with no background job to poll.",
+      "competitor's the same way. It is **synchronous**: the report comes back immediately, with " +
+      "no background job to poll.",
     whatItDoes:
-      "Given a domain (a bare host or a full URL — it is canonicalized for you), it returns three " +
-      "sections:\n\n" +
+      "Name the site in **one of two ways** — pass a `target` domain (a bare host or a full URL — " +
+      "it is canonicalized for you), or pass the `project_id` of one of your own projects and the " +
+      "domain is taken from it. Exactly one of the two: passing both is rejected rather than " +
+      "resolved by precedence, because the two can name different sites and guessing would bill " +
+      "you for a lookup of the one you did not mean. Either way you get three sections:\n\n" +
       "- **Profile summary** — total backlinks, referring domains (with the share that link " +
       "**exclusively with dofollow** links), referring main domains, broken backlinks, the " +
       "aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
@@ -605,7 +618,9 @@ export const DOC_PROSE = {
       "The profile summary, then the top referring domains (domain, backlink count, rank), then " +
       "the top anchors (anchor text, backlink count) — each list headed by how many of the total " +
       "are shown. A metric DataForSEO has no value for is shown as `n/a` rather than as a zero. " +
-      "An input that is not a public domain is rejected before anything is charged, and while " +
+      "When you looked the site up by `project_id`, the heading names that project.\n\nAn input " +
+      "that is not a public domain, a call naming neither `target` nor `project_id` (or both), " +
+      "and a `project_id` that is not yours are all rejected before anything is charged; while " +
       "live data is off you get the \"not yet enabled\" message instead — also free.",
     postReturnsSections: [
       {
@@ -623,9 +638,14 @@ export const DOC_PROSE = {
       "`compare_competitors` puts a domain side by side with its rivals on Google organic search — " +
       "how many organic result pages each one appears in, where those appearances sit, and what " +
       "that traffic is worth — powered by DataForSEO Labs. It works on **any public domain**, so it " +
-      "reads your own site or a competitor's the same way, and it needs no project setup. It is " +
-      "**synchronous**: the table comes back immediately, with no background job to poll.",
+      "reads your own site or a competitor's the same way. It is **synchronous**: the table comes " +
+      "back immediately, with no background job to poll.",
     whatItDoes:
+      "Name the site being compared in **one of two ways** — pass a `target` domain, or pass the " +
+      "`project_id` of one of your own projects and the domain is taken from it. Exactly one of " +
+      "the two: passing both is rejected rather than resolved by precedence, because the two can " +
+      "name different sites and guessing would bill you for a comparison of the one you did not " +
+      "mean. The competitors are always plain domains — a rival is not one of your projects.\n\n" +
       "**Name up to three competitors yourself** — that is the mode that gives a useful " +
       "comparison. You can instead omit them and let DataForSEO pick the rivals it sees sharing " +
       "the most organic result pages with your target, which works well for a domain with a broad " +
@@ -673,11 +693,13 @@ export const DOC_PROSE = {
       "competitors?\n\nOr name the rivals yourself:\n\n> Compare example.com against " +
       "first-rival.com and second-rival.com.",
     returns:
-      "A heading naming the target, the language and location the figures were read for, and where " +
-      "the compared rivals came from — then one block per domain with its metric lines, the target " +
-      "first. An input that is not a public domain — the target, or any competitor you named — is " +
-      "rejected before anything is charged, and while live data is off you get the \"not yet " +
-      "enabled\" message instead — also free.",
+      "A heading naming the target — or, when you passed a `project_id`, the project it came from " +
+      "— the language and location the figures were read for, and where the compared rivals came " +
+      "from; then one block per domain with its metric lines, the target first.\n\nAn input that " +
+      "is not a public domain (the target, or any competitor you named), a call naming neither " +
+      "`target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected " +
+      "before anything is charged; while live data is off you get the \"not yet enabled\" message " +
+      "instead — also free.",
     postReturnsSections: [
       {
         heading: "Billing",

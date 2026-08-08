@@ -13,14 +13,23 @@ import {
   type BacklinksPort,
   type ReferringDomainRow,
 } from "../dfs/backlinks.ts";
-import { normalizeDomain } from "./setup-project.ts";
+import {
+  loadOwnProject,
+  projectIdField,
+  resolveTarget,
+  subjectLabel,
+  targetField,
+  type LoadProjectFn,
+  type ProjectRef,
+} from "./project-target.ts";
 import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResult } from "./registry.ts";
 
 /**
  * analyze_backlinks — a domain's backlink profile from the DataForSEO Backlinks API: the
  * profile-level summary, the top referring domains, and the top anchor texts. Synchronous: it
- * returns the report immediately (no background job). It needs no project: any public domain
- * (yours or a competitor's) can be looked up directly.
+ * returns the report immediately (no background job). It takes EITHER a bare `target` (any
+ * public domain, yours or a competitor's) OR a `project_id`, whose stored domain becomes the
+ * target.
  *
  * It is built to the ranked_keywords pattern, and the same two hard product rules shape its
  * credit path:
@@ -47,10 +56,8 @@ const NOT_ENABLED_MESSAGE =
   "charged.";
 
 const inputSchema = z.object({
-  target: z
-    .string()
-    .min(1)
-    .describe("The domain to look up, e.g. \"example.com\" or \"https://example.com\"."),
+  target: targetField("look up"),
+  project_id: projectIdField,
   limit: z
     .number()
     .int()
@@ -67,8 +74,9 @@ type AnalyzeBacklinksInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
   "Analyze a domain's backlink profile — total backlinks, referring domains, dofollow-only " +
-  "share, spam score, plus the top referring domains and anchor texts. Works on any public " +
-  `domain, including a competitor's. Synchronous — returns a report immediately. Costs ` +
+  "share, spam score, plus the top referring domains and anchor texts. Pass a target domain " +
+  "(any public domain, including a competitor's) or a project_id to look up one of your own " +
+  `sites. Synchronous — returns a report immediately. Costs ` +
   `${TOOL_COSTS.analyze_backlinks} credits. Needs a paid credit balance: it is not available on ` +
   "trial credits. If live DataForSEO access is unavailable on this deployment, the tool says " +
   "so and charges nothing.";
@@ -115,10 +123,10 @@ function listHeader(label: string, list: BacklinkList<unknown>): string {
   return truncated ? `${label} (${shown} of ${thousands(list.total_count ?? 0)}):` : `${label} (${shown}):`;
 }
 
-function renderSummary(profile: BacklinkProfile): string {
+function renderSummary(profile: BacklinkProfile, project: ProjectRef | null | undefined): string {
   const { summary } = profile;
   return [
-    `Backlink profile for "${profile.target}":`,
+    `Backlink profile for ${subjectLabel(profile.target, project)}:`,
     `• Backlinks: ${metric(summary.backlinks)}`,
     `• Referring domains: ${renderReferringDomainsMetric(summary)}`,
     `• Referring main domains: ${metric(summary.referring_main_domains)}`,
@@ -146,10 +154,17 @@ function renderAnchors(list: BacklinkList<AnchorRow>): string {
   return `${listHeader("Top anchors", list)}\n${lines.join("\n")}`;
 }
 
-/** Render the backlink profile as the plain-text tool output (pure — unit-tested directly). */
-export function formatBacklinkProfile(profile: BacklinkProfile): string {
+/**
+ * Render the backlink profile as the plain-text tool output (pure — unit-tested directly).
+ * `project` is passed only when the caller resolved the target from a project_id; a bare-target
+ * call renders exactly as it always did.
+ */
+export function formatBacklinkProfile(
+  profile: BacklinkProfile,
+  project?: ProjectRef | null,
+): string {
   return [
-    renderSummary(profile),
+    renderSummary(profile, project),
     renderReferringDomains(profile.top_referring_domains),
     renderAnchors(profile.top_anchors),
   ].join("\n\n");
@@ -163,6 +178,8 @@ export interface AnalyzeBacklinksDeps {
    * exercise the priced path) or a disabled port (to prove the honesty gate).
    */
   readonly port?: BacklinksPort;
+  /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
+  readonly loadProject?: LoadProjectFn;
 }
 
 export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): RegisteredTool {
@@ -173,11 +190,12 @@ export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): Regis
     // See the module header: a self-settled SYNCHRONOUS surface charge, not an async job.
     charge: "handler",
     handler: async (ctx: AuthContext, input): Promise<ToolResult> => {
-      // Free pre-reserve gate 1 — a domain we could never look up is rejected outright, using
-      // the same canonicalization every other domain-taking tool uses.
-      const normalized = normalizeDomain(input.target);
-      if (!normalized.ok) {
-        return errorResult(normalized.error);
+      // Free pre-reserve gate 1 — resolve WHAT to look up: exactly one of project_id / target,
+      // the project read tenant-scoped, the domain canonicalized by the shared normalizer. Every
+      // rejection it returns costs nothing (see project-target.ts).
+      const subject = await resolveTarget(ctx.userId, input, deps.loadProject ?? loadOwnProject);
+      if (!subject.ok) {
+        return errorResult(subject.error);
       }
       const port = deps.port ?? resolveDefaultBacklinksPort();
       // Free pre-reserve gate 2 — refuse rather than reserve credits or serve mock data.
@@ -189,10 +207,10 @@ export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): Regis
       // releases and a partial profile is never billed.
       return withCredits({ userId: ctx.userId }, { tool: "analyze_backlinks" }, async () => {
         const profile = await port.fetchBacklinkProfile({
-          target: normalized.domain,
+          target: subject.domain,
           limit: input.limit,
         });
-        return textResult(formatBacklinkProfile(profile));
+        return textResult(formatBacklinkProfile(profile, subject.project));
       });
     },
   });

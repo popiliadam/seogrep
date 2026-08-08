@@ -11,6 +11,7 @@ import {
   makeCompareCompetitorsTool,
   normalizeCompetitors,
 } from "./compare-competitors.ts";
+import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import competitorsFixture from "../dfs/fixtures/competitors-domain.json";
 import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
 
@@ -24,6 +25,14 @@ import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
  */
 
 const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
+
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "example.com" };
+
+/** Models the real loader: rows are keyed by (userId, projectId), so nobody sees another tenant's. */
+const loadProject: LoadProjectFn = async (userId, projectId) =>
+  userId === CTX.userId && projectId === PROJECT_ID ? PROJECT : null;
 
 const FIXTURES = {
   competitorsDomain: competitorsFixture,
@@ -184,6 +193,19 @@ describe("formatCompetitorComparison", () => {
     );
   });
 
+  it("names the resolved PROJECT in the heading when the target came from one", () => {
+    const text = formatCompetitorComparison(DISCOVERED, { ...WHERE, project: PROJECT });
+    expect(text.startsWith('Competitor comparison for your project "example.com" (language en')).toBe(
+      true,
+    );
+    // The rest of the heading — where the rivals came from — is untouched by the project.
+    expect(text).toContain("the top 1 of 47 competitors DataForSEO found");
+  });
+
+  it("does NOT invent a project for a bare-target comparison", () => {
+    expect(formatCompetitorComparison(DISCOVERED, WHERE)).not.toContain("your project");
+  });
+
   it("echoes the language and location the numbers were read for", () => {
     const text = formatCompetitorComparison(DISCOVERED, { language_code: "de", location_code: 2276 });
     expect(text).toContain("(language de, location 2276)");
@@ -231,17 +253,25 @@ describe("compare_competitors metadata", () => {
     expect(tool.description).toContain("Costs 90 credits.");
     const schema = tool.inputJsonSchema as {
       required?: string[];
-      properties: Record<string, { maximum?: number; minimum?: number; maxItems?: number; minItems?: number }>;
+      properties: Record<
+        string,
+        { maximum?: number; minimum?: number; maxItems?: number; minItems?: number; format?: string }
+      >;
     };
-    // target is required; every defaulted / optional field is advertised OPTIONAL (io:"input").
-    expect(schema.required).toEqual(["target"]);
+    // NOTHING is required at the JSON-Schema level: the real rule is "exactly one of
+    // project_id / target", which JSON Schema's `required` cannot express, so it is enforced
+    // at runtime instead (see the free pre-reserve gates below, which pin BOTH directions).
+    // Marking `target` required again would reject every project_id-only call in tools/list.
+    expect(schema.required).toBeUndefined();
     expect(Object.keys(schema.properties).sort()).toEqual([
       "competitors",
       "language_code",
       "limit",
       "location_code",
+      "project_id",
       "target",
     ]);
+    expect(schema.properties.project_id?.format).toBe("uuid");
     // The competitor list is capped at the number the priced flow actually compares.
     expect(schema.properties.competitors?.minItems).toBe(1);
     expect(schema.properties.competitors?.maxItems).toBe(3);
@@ -315,6 +345,51 @@ describe("compare_competitors free pre-reserve gates (no credit machinery)", () 
     expect(result.content[0]?.text).toMatch(/no domain to compare against/i);
   });
 
+  /** The same serving port, plus the injected tenant-scoped project loader. */
+  const withProjects = (): ReturnType<typeof makeCompareCompetitorsTool> =>
+    makeCompareCompetitorsTool({ port: createMockCompetitorsPort(FIXTURES), loadProject });
+
+  it("rejects a call naming NEITHER project_id nor target, without reaching the ledger", async () => {
+    const result = await withProjects().run(CTX, { competitors: ["rival.com"] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/nothing to look up/i);
+    expect(result.content[0]?.text).toMatch(/not charged/i);
+  });
+
+  it("rejects a call naming BOTH, without reaching the ledger", async () => {
+    const result = await withProjects().run(CTX, {
+      project_id: PROJECT_ID,
+      target: "competitor.example",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/not both/i);
+  });
+
+  it("answers another tenant's project id exactly as it answers an unknown uuid — free", async () => {
+    const unknownId = "99999999-9999-4999-8999-999999999999";
+    const theirs = await withProjects().run(CTX, { project_id: OTHER_PROJECT_ID });
+    const unknown = await withProjects().run(CTX, { project_id: unknownId });
+    expect(theirs.isError).toBe(true);
+    expect(unknown.isError).toBe(true);
+    expect(theirs.content[0]?.text).toBe(projectNotFoundMessage(OTHER_PROJECT_ID));
+    // Same sentence up to the id the caller themselves supplied — no existence leak. Both came
+    // back with SUPABASE_* stripped, which is the proof that neither reserved a credit.
+    expect(theirs.content[0]?.text?.replace(OTHER_PROJECT_ID, "<id>")).toBe(
+      unknown.content[0]?.text?.replace(unknownId, "<id>"),
+    );
+  });
+
+  it("drops the project's OWN domain from a competitor list, free and pre-reserve", async () => {
+    // The competitor normalizer runs against the RESOLVED target, so "compare my project with
+    // itself" is still the empty-list rejection rather than a one-row table someone paid for.
+    const result = await withProjects().run(CTX, {
+      project_id: PROJECT_ID,
+      competitors: ["https://example.com/pricing"],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/no domain to compare against/i);
+  });
+
   it("returns a clear English 'not enabled' error and never reaches the ledger", async () => {
     const tool = makeCompareCompetitorsTool({ port: disabledCompetitorsPort() });
     const result = await tool.run(CTX, { target: "example.com" });
@@ -329,6 +404,15 @@ describe("compare_competitors free pre-reserve gates (no credit machinery)", () 
     // withCredits -> reserve -> getServiceClient -> loadEnv, which throws because SUPABASE_*
     // are stripped. That is the seam where the 90 credits are settled.
     await expect(serving().run(CTX, { target: "https://example.com/pricing" })).rejects.toThrow(
+      /environment configuration/i,
+    );
+  });
+
+  it("a RESOLVED project_id also reaches the credit guard — the gates are not a dead end", async () => {
+    // The complement of the rejections above: a project the caller owns passes every gate and
+    // lands on the same priced path a bare target does. The ledger shape of that path is proven
+    // against the real stack in compare-competitors.db.test.ts.
+    await expect(withProjects().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(
       /environment configuration/i,
     );
   });
