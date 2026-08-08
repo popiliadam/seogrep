@@ -438,6 +438,12 @@ describe("stuck queued job sweep (M-01)", () => {
  * hand. A budget that can be consumed invisibly can deny paying customers their DFS calls with
  * no trace of why.
  */
+/**
+ * EVERY insert here is cleaned up. dfs_spend is shared and day-scoped, and budget.db.test.ts
+ * asserts the day's TOTAL against the $3 cap — a leaked 0.30 row makes that spec fail from a
+ * different file, which is exactly how this was found: verify-db went red on
+ * "a FRESH process sees the day's total" with a difference of precisely 0.30.
+ */
 describe("reaper — stale DataForSEO reservations", () => {
   const insertDfsRow = async (
     endpoint: string,
@@ -474,13 +480,17 @@ describe("reaper — stale DataForSEO reservations", () => {
   });
 
   it("ignores a reservation that is still in flight", async () => {
+    const stamp = `inflight-${randomUUID()}`;
     const now = new Date();
     const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
-    await insertDfsRow(`inflight-${randomUUID()}`, "open", 0.3, new Date(now.getTime() - 2_000));
-    const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
-
-    // A live fan-out settles in seconds; two seconds old is working, not abandoned.
-    expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+    await insertDfsRow(stamp, "open", 0.3, new Date(now.getTime() - 2_000));
+    try {
+      const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+      // A live fan-out settles in seconds; two seconds old is working, not abandoned.
+      expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+    } finally {
+      await service.from("dfs_spend").delete().eq("endpoint", stamp);
+    }
   });
 
   /**
@@ -506,12 +516,16 @@ describe("reaper — stale DataForSEO reservations", () => {
   });
 
   it("ignores a settled reservation however old it is", async () => {
+    const stamp = `settled-${randomUUID()}`;
     const now = new Date();
     const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
-    await insertDfsRow(`settled-${randomUUID()}`, "settled", 0.3, new Date(now.getTime() - 86_400_000));
-    const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
-
-    expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+    await insertDfsRow(stamp, "settled", 0.3, new Date(now.getTime() - 86_400_000));
+    try {
+      const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+      expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+    } finally {
+      await service.from("dfs_spend").delete().eq("endpoint", stamp);
+    }
   });
 
   it("moves NO money: the lane is a read, and dfs_spend is left exactly as it was", async () => {
