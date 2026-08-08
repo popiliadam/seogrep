@@ -47,6 +47,13 @@ export interface PullData {
   readonly days: number;
   readonly current: GscWindow;
   readonly previous: GscWindow;
+  /**
+   * The verified Search Console property this pull came from (`sc-domain:example.com` or a
+   * URL-prefix like `https://example.com/`). It is the ONLY authoritative statement of which
+   * site the rows describe — page hosts are not, because one property routinely serves several
+   * hosts. Optional: pulls stored before this field existed parse back without it.
+   */
+  readonly property?: string;
 }
 
 function asObject(value: Json | undefined): Record<string, Json | undefined> | null {
@@ -105,10 +112,12 @@ export function parsePullResult(result: Json | null): PullData | null {
   const current = parseWindow(obj.current);
   const previous = parseWindow(obj.previous);
   if (!current || !previous) return null;
+  const property = asString(obj.property);
   return {
     days: asFiniteNumber(obj.days),
     current,
     previous,
+    ...(property === null ? {} : { property }),
   };
 }
 
@@ -129,5 +138,10 @@ export function pullResultToJson(pull: PullData): Json {
     // un-capped window keeps its existing shape (no noisy capped:false is emitted).
     ...(w.capped ? { capped: true } : {}),
   });
-  return { days: pull.days, current: windowJson(pull.current), previous: windowJson(pull.previous) };
+  return {
+    days: pull.days,
+    current: windowJson(pull.current),
+    previous: windowJson(pull.previous),
+    ...(pull.property === undefined ? {} : { property: pull.property }),
+  };
 }
