@@ -200,57 +200,70 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — OPERATÖR TURU (fresh session, 2026-08-08 kapanışta güncellendi)
+## 🧪 SIRADAKİ OTURUM — TRİYAJ VE [B] project_id (2026-08-08 gece güncellendi)
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/product-test-log.md  ← ESAS BELGE (23 bulgu + triyaj + operatör brifingi)
-→ docs/testing/2026-08-07-tool-tool-analiz.md  ← 19 tool'un tek tek analizi
+→ docs/testing/product-test-log.md  ← ESAS BELGE (34 bulgu + iki operatör koşusu + triyaj)
+→ docs/testing/2026-08-07-tool-tool-analiz.md  ← 19 tool'un analizi + A-G çapraz temaları
 
-=== ÖNCEKİ OTURUM NE YAPTI (2026-08-07/08, iki gün) ===
-ÜRÜN TESTİ + DÜZELTME MARATONU. 19 tool'un 19'u canlıda koşturuldu; 23 bulgu yazıldı;
-triyaj yapıldı; 10 PR merge edildi; hepsi CANLIDA doğrulandı.
+=== OPERATÖR TURU BİTTİ (2026-08-08) — iki koşu, PR #54 merged ===
+Şefin koşamadığı yarı tamamlandı. İki koşu FARKLI şey ölçtü, ikisi de kayda değer.
 
-Kapanan 🔴 (5/5) — hepsi merge + deploy + canlı ölçümle mühürlü:
-· #15 analyze_backlinks CANLIDA HİÇ ÇALIŞMAMIŞTI (null anchor, z.string()). PR #41.
-  KANIT: 49.855 backlink döndü; "(no anchor text) — 452 backlinks" = tool'u öldüren satırlar.
-· #2  crawl ANA SAYFAYI taramıyordu. PR #44 (ana sayfa ilk) + PR #48 (sitemap round-robin).
-  KANIT: first_crawled=/ · ticari sayfa 0→10 · atlanan ticari 8→4.
-· #12 detect_cannibalization marka sorgusunu yamyamlaşma sanıyordu. PR #45 (4 hakem turu).
-· #17 compare_competitors varsayılan modda youtube/wikipedia öneriyordu. PR #43.
-· #18 ranked_keywords ABD varsayılanında sessizce boş dönüyordu. PR #43.
-Ayrıca 🟡: #1 #3 #4 #8 #16 #20 kapandı. #22 #23 YENİ (aşağıda).
+1. koşu — rakip MCP'ler AÇIK (dataforseo + gsc + web araması + kod çalıştırma):
+  SeoGrep altı senaryonun ALTISINDA da seçilmedi. Bakiye 740 → 740, sıfır paralı çağrı.
+  Bu koşu bizim açıklamalarımızı ÖLÇMEZ — rakip yüklü ortamda tool seçimini ölçer (bulgu #25).
+2. koşu — yalnız `seogrep` AÇIK:
+  Dört senaryonun dördünde de seçildi ve işe yarar çıktı verdi. Bakiye 740 → 375 (365 kredi).
 
-=== CANLI DURUM (2026-08-08 kapanış ölçümü) ===
-main 6570056 · açık PR 0 · uzak dal 1 (yalnız main) · çalışma ağacı temiz
-Bakiye 740 · SUM(credit_ledger)=740 (NEVER#2 mühürlü, oturum boyunca her adımda tuttu)
-DFS bugün: kapının gördüğü $0.3850 / GERÇEK $0.0850 → $0.30 hayalet (deploy öncesi çökmeden)
-Açık dfs_spend rezervasyonu: 2 (biri 08-07 — #47 sonrası artık sayılmıyor, biri 08-08 — sayılıyor)
-healthz 200 · Deploy MCP success · reaper canlıda "stale dfs reserves" satırı basıyor
+BRİFİNGDEKİ ÜÇ ÖLÇÜLMEMİŞ SORUNUN ÜÇÜ DE CEVAPLANDI:
+· Fiyatı koşmadan ÖNCE söylüyor mu?  → HAYIR. 365 kredi habersiz harcandı. Muhasebeyi
+  SONRADAN doğru raporladı (ölçümle birebir). Eksik olan ön-bildirim. (#30 · #33)
+· Hacklenmiş sayfalardan söz ediyor mu? → EVET, raporun 1. maddesi ve tek KRİTİK'i yaptı;
+  410-vs-301 ayrımı + kök-neden temizliği dahil. Ürün hâlâ yalnız "multiple h1" diyor —
+  değişen şey teslim edilen deneyim. n=1, kural üretilmedi (ders 13). (#31)
+· compare_competitors rakip adı soruyor mu? → EVET. PR #43 İŞE YARADI, canlıda doğrulandı.
+  Otomatik moda gitmedi; önce ranked_keywords ile hedefi boyutladı (4 kw, en iyi #36),
+  sonra kullanıcıya döndü ve açık modda gerçek TR akranlarıyla karşılaştırdı. (#32)
 
-DALLAR TEMİZ: yerel 1 · uzak 1 (yalnız main) — ölçüldü 2026-08-08 kapanışta.
-Merge sırasında "Delete branch" unutulmuştu, 11 dal biriktiği fark edilip toplu silindi
-(`git branch -d` ile, yani merge edilmemiş tek dal olmadığı doğrulanarak). İmzalı ders 3
-bir sonraki turda da hatırlanmalı: merge ederken kutuyu işaretle, sonradan toplamaktan iyidir.
+ŞEFİN İKİ İDDİASI ÖLÇÜMLE ÇÜRÜDÜ, İKİSİ DE DEFTERDE AÇIKÇA DÜZELTİLDİ:
+· "audit_onpage'in duplikasyon kuralı yok" → YANLIŞ. onpage.ts'te 13 kural tipi var,
+  duplicate_title + duplicate_meta dahil. Gerçek boşluk dar: çapraz-sayfa kuralları yalnız
+  TAM EŞİTLİK bakıyor, ortak sonek deseni ("… - Artistics") yakalanmıyor. (#27)
+· "biz sayıyoruz, DFS yorumluyor" → TUTMUYOR. Yorumu iki koşuda da MODEL yaptı. (#29)
+İkisinin de kökü aynı hata: ikincil belgeden iddia türetip koda bakmamak.
 
-=== BU OTURUMUN İŞİ: OPERATÖR TURU — ŞEF BUNU KOŞAMAZ ===
-Brifing HAZIR: product-test-log.md sonundaki "OPERATÖR TURU — brifing".
-Şef 19 tool'u curl ile ölçtü = "doğru veri dönüyor mu". Bu tur "KULLANILABİLİR Mİ"yi ölçer ve
-yalnız Claude Desktop'ta gerçek cümlelerle ölçülebilir. İNSAN yapar, şef NOT ALIR.
+=== CANLI DURUM (2026-08-08 gece ölçümü) ===
+main 6851276 · açık PR 0 · uzak dal 1 (yalnız main; GitHub API'den teyit edildi)
+Bakiye 375 (ölçüldü) · verify PASS (16/16, ama CACHED = replay) · CI'da verify+verify-db yeşil
+KIRIK: `~/.zshrc` içindeki MCP_SMOKE_URL eski anahtarı tutuyor (401 ölçüldü) →
+  `make goals` 14/16, FAIL = mcp-alive + trial-flow-e2e, SKIP = dfs-budget-guard.
+  ONARIM: yeni MCP URL'i insandan al → zshrc → kapıyı tekrar koş → 16/16 ÖLÇ.
 
-Şefin bu turdaki rolü:
-1. İnsan hazır değilse brifingi hatırlat, senaryoları ver, ama YERİNE KOŞMA.
-2. İnsan sonuçları getirince deftere Kaynak=O ile işle (yarım cümle bile).
-3. Triyajı BERABER yap. Bulgu ≠ iş emri.
-4. İnsan isterse curl tarafıyla çapraz-doğrula (örn. LLM'in seçtiği tool defterde ne yazdı).
+=== BU OTURUMUN İŞİ: [B] project_id (triyaj 1. sırası) ===
+Premium tool'lar (ranked_keywords · compare_competitors · research_keywords) `project_id` DEĞİL
+çıplak `target`/`keywords` alıyor → proje bağlamı sıfır. İKİ bağımsız ölçülmüş zararı var:
+· #18 — yanlış varsayılan: aynı domain, aynı 65 kredi, en/2840 → 3 kw volume 30;
+  tr/2792 → 4 kw volume 210/480/3.600/1.600. Türk kullanıcı iki kez ödüyor.
+· #34 — YENİ ve farklı türden: bağlam yokluğu MODELE YANLIŞ CÜMLE KURDURUYOR. Senaryo 4'te
+  "Search Console bağlanmalı (connect_gsc)" dedi; oysa BAĞLI. Şef canlıda ölçtü:
+  connect_gsc → "already connected … property https://adstark.com.tr/" = PR #42 mühürlü.
+  Yani tool doğru cevap veriyor ama o soru sorulamıyor, çünkü project_id alanı yok.
+KÖK: `setup_project` projede ülke/dil alanı TUTMUYOR — tam çözüm migration ister (insan kuyruğu).
+Şef önerisi: migrationsuz ilk dilim (project_id → target türetme + boş-sonuç uyarısı), migration
+ikinci dilimde. Kapsam kararı iş emrinde yazılacak.
 
-HİÇ ÖLÇÜLMEMİŞ İKİ ŞEY (brifingde de var, en değerlileri):
-· Asistan 90 kredilik bir tool'u KOŞMADAN ÖNCE fiyatı söylüyor mu?
-· Hacklenmiş sayfalardan (#22) sohbette söz ediyor mu, yoksa "multiple h1"de mi kalıyor?
-· Senaryo 4 KRİTİK: compare_competitors açıklamasını "rakipleri sen adlandır" diye değiştirdik
-  ama LLM'in o metni okuyup davranışını değiştirdiğini HİÇ ÖLÇMEDİK. Açıklama düzeltmesi ancak
-  modeli yönlendiriyorsa işe yarar.
+SIRADAKİ İKİ İŞ (bu bitince):
+2. Kredi ön-bildirimi (#30 · #33) — ÖNCE İNSAN KARARI: onay eşiği (D17, >200 kredi) çağrı
+   başına mı kalsın, kullanıcı-turu başına kümülatif mi olsun? Senaryo 4 tek cümlede 220 kredi
+   harcadı ama hiçbir TEK adımı eşiği aşmadı. NEVER#6 komşusu, karar gelmeden kod yazılmaz.
+3. #27 ortak-sonek title kuralı — küçük, gerçek, ucuz.
+
+STRATEJİ SORUSU (iş emri DEĞİL, oturum): iki koşu da aynı yeri işaret ediyor — değerin
+neredeyse tamamı HAM VERİMİZ + MODELİN YORUMU'ndan çıktı. Bizim "yorum/sunum" katmanımız
+(generate_report) iki koşuda da atlandı: birincide bedava PDF yendiği için (#28), ikincide
+modelin kendisi "bu müşteriye gitmemeli" dediği için. Veri katmanı mı satıyoruz, sunum katmanı mı?
 
 === OPERATÖR TURUNDAN SONRA: TRİYAJDA KALANLAR ===
 Dilim 5-6 (yazılmadı, ertelendi — gerekçeleri defterde):
@@ -272,6 +285,12 @@ Tespit için DÖRT sinyal ölçüldü, ÜÇÜ ÇÜRÜDÜ (defterde tablo):
   ❌ başlıkta farklı marka (meşru 13/18'de de var) · ❌ yetim sayfa (0/0) · ❌ html lang (hepsi tr)
   ✅ çoklu h1 (spam 6/6 · meşru 0/18) — AMA n=1 site, kural olarak ÖNERİLMEDİ.
 KURAL YAZMADAN ÖNCE İKİNCİ BİR SİTEDE ÖLÇ. Bu oturumda tek örnekten genelleme üç kez geri tepti.
+
+GÜNCELLEME (2026-08-08, operatör turu 2. koşu — bulgu #31): kural hâlâ yazılmadı AMA soru
+cevaplandı ve cevap OLUMLU. Ham URL listesi modele ulaşınca model hacklenmiş altı sayfayı
+KENDİ buldu ve raporun tek KRİTİK maddesi yaptı. Yani eksik olan yorum katmanı BİZDE olmak
+zorunda olmayabilir — ham envanteri düzgün vermek yetebilir. Sınır aynı: n=1, bu URL'ler bariz,
+daha sinsi bir enjeksiyonda model fark etmeyebilir. Kural üretmek için hâlâ ikinci site gerekir.
 
 #23 OPERATÖRDE, ürün kusuru DEĞİL: adstark.com.tr büyük olasılıkla ELE GEÇİRİLMİŞ. Altı sayfa
 canlı ve post-sitemap'te; Google gözünde alan adını yakar. Bu senin kendi ajans siten.
@@ -295,6 +314,10 @@ Ders adayı 12: "Yorumdaki her iddia ölçülür. 'never', 'only', 'measured' ya
 ölçümü gösterilemiyorsa yazılmaz."
 Gerekçe: bu oturumda DÖRT kez ölçülmemiş mutlak iddia yazıldı, BİRİ PROD'A ULAŞTI (reaper
 "charging today's budget" derken sorguda spend_day filtresi yoktu — PR #47).
+BEŞİNCİ VAKA (2026-08-08): şef deftere "audit_onpage'in duplikasyon kuralı yok" yazdı; kaynağı
+kodun kendisi değil, ikincil bir belgedeki "5 kontrol" ifadesiydi. Kodda 13 kural var. İddia
+PR'a girmeden önce yakalandı ve defterde açıkça düzeltildi (#27). Adayın kapsamı bir cümle
+genişliyor: **iddianın kaynağı kod ise koda bakılır; özet belge kanıt değildir.**
 
 Ders adayı 13: "Tek canlı örnekten kural üretilmez. Bir örnek kuralı çürütmeye yeter,
 doğrulamaya yetmez."
