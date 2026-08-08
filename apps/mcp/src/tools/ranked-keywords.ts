@@ -34,6 +34,9 @@ import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResu
 /** United States — the DataForSEO default location_code (same default as research_keywords). */
 const DEFAULT_LOCATION_CODE = 2840;
 
+/** English — the default language_code. Paired with the location above by localeHint. */
+const DEFAULT_LANGUAGE_CODE = "en";
+
 const NOT_ENABLED_MESSAGE =
   "Ranked-keyword lookups are not yet enabled on this deployment. Live DataForSEO data is " +
   "turned off, and SeoGrep never returns sample or placeholder figures as if they were real. " +
@@ -52,7 +55,11 @@ const inputSchema = z.object({
     .max(RANKED_KEYWORDS_MAX_LIMIT)
     .default(RANKED_KEYWORDS_MAX_LIMIT)
     .describe(`How many ranked keywords to return (1–${RANKED_KEYWORDS_MAX_LIMIT}, default ${RANKED_KEYWORDS_MAX_LIMIT}).`),
-  language_code: z.string().min(2).default("en").describe("Language code (default 'en')."),
+  language_code: z
+    .string()
+    .min(2)
+    .default(DEFAULT_LANGUAGE_CODE)
+    .describe("Language code (default 'en')."),
   location_code: z
     .number()
     .int()
@@ -80,6 +87,16 @@ function thousands(value: number): string {
     .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/**
+ * Below this many rows, a lookup left on the US/English DEFAULT is more likely to be a locale
+ * mismatch than a genuinely unranked domain, so the output says so. Measured 2026-08-07:
+ * adstark.com.tr returned 3 rows, all at search volume 30, on the default; the same domain at
+ * tr/2792 returned rows carrying volumes up to 3,600 — the same 65 credits, twice, to discover a parameter the tool never mentioned.
+ * This tool takes a bare `target` rather than a project_id, so it cannot infer the country;
+ * the honest move is to name the assumption exactly when it looks wrong.
+ */
+const THIN_RESULT_ROWS = 5;
+
 /** Render the ranked keywords as the plain-text tool output (pure — unit-tested directly). */
 export function formatRankedKeywords(
   result: RankedKeywordsResult,
@@ -87,7 +104,11 @@ export function formatRankedKeywords(
 ): string {
   const where = `(language ${input.language_code}, location ${input.location_code})`;
   if (result.rows.length === 0) {
-    return `"${result.target}" has no Google organic rankings on record ${where}.`;
+    // Zero is the thinnest result there is, so it gets the caveat too — it used to be the ONE
+    // path that skipped it, and it is precisely the case this hint exists for.
+    return (
+      `"${result.target}" has no Google organic rankings on record ${where}.` + localeHint(0, input)
+    );
   }
   const lines = result.rows.map((row) => {
     const position = row.position === null ? "n/a" : `#${row.position}`;
@@ -102,7 +123,32 @@ export function formatRankedKeywords(
     result.total_count === null || result.total_count <= result.rows.length
       ? shown
       : `${shown} of ${thousands(result.total_count)}`;
-  return `Ranked keywords for "${result.target}" ${where} — ${scope}:\n${lines.join("\n")}`;
+  const table = `Ranked keywords for "${result.target}" ${where} — ${scope}:\n${lines.join("\n")}`;
+  // total_count, NOT rows.length: a 2-row page of a 5,312-keyword domain is TRUNCATED, not thin,
+  // and its locale is obviously fine. Only the domain's real ranking count can say otherwise.
+  return table + localeHint(result.total_count ?? result.rows.length, input);
+}
+
+/**
+ * The locale caveat, appended ONLY when the result is thin AND the caller never chose a locale.
+ * An explicit locale means the user already decided; repeating the hint there would be noise.
+ */
+function localeHint(
+  rankedCount: number,
+  input: { language_code: string; location_code: number },
+): string {
+  const onDefaults =
+    input.location_code === DEFAULT_LOCATION_CODE && input.language_code === DEFAULT_LANGUAGE_CODE;
+  if (!onDefaults || rankedCount >= THIN_RESULT_ROWS) return "";
+  // The zero-row line right above already says there are none, so repeating it here would be
+  // both redundant and — with the original "Few results." — a contradiction. Only the populated
+  // table needs the count called out, because the table itself does not characterise it.
+  const opener = rankedCount === 0 ? "" : "Few results. ";
+  return (
+    `\n\n${opener}This looked up the United States in English (the default). If the site ` +
+    "targets another country, pass location_code and language_code for it — rankings measured " +
+    "under the wrong locale can badly misrepresent how the site really performs in search."
+  );
 }
 
 /** Dependencies — the ranked-keywords port is injectable so tests run offline (mock/disabled). */

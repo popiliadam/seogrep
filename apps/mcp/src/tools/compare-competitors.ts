@@ -58,8 +58,11 @@ const inputSchema = z.object({
     .max(MAX_COMPETITORS)
     .optional()
     .describe(
-      `Up to ${MAX_COMPETITORS} competitor domains to compare the target against. Omit this to ` +
-        "let DataForSEO pick the competitors for you.",
+      `Up to ${MAX_COMPETITORS} competitor domains to compare the target against — naming them ` +
+        "gives the most useful comparison. Omit this to let DataForSEO pick, which works well " +
+        "for domains with a broad keyword footprint but on a small or niche site can return " +
+        "general-purpose giants (youtube.com, wikipedia.org) that share a SERP without being " +
+        "real rivals.",
     ),
   limit: z
     .number()
@@ -86,8 +89,9 @@ type CompareCompetitorsInput = z.infer<typeof inputSchema>;
 const DESCRIPTION =
   "Compare a domain with its competitors on Google organic search — organic SERP counts, " +
   "position bands, estimated monthly organic traffic, and the paid-equivalent traffic cost, side " +
-  `by side. Name up to ${MAX_COMPETITORS} competitors or let DataForSEO pick them. Works on any ` +
-  "public domain. Synchronous — returns a table immediately. Costs " +
+  `by side. NAME the competitors you care about (up to ${MAX_COMPETITORS}) for a useful ` +
+  "comparison; automatic discovery only works well for domains with a broad keyword footprint. " +
+  "Works on any public domain. Synchronous — returns a table immediately. Costs " +
   `${TOOL_COSTS.compare_competitors} credits. Needs a paid credit balance: it is not available ` +
   "on trial credits. If live DataForSEO access is unavailable on this deployment, the tool says " +
   "so and charges nothing.";
