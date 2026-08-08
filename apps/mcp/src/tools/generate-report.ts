@@ -44,6 +44,29 @@ export interface GenerateReportDeps {
   readonly now?: () => Date;
   /** Web base URL resolver (default: requireWebBaseUrl over the real WEB_BASE_URL env). */
   readonly resolveWebBaseUrl?: () => string;
+  /** gsc_connections reader (default: the real tenant-scoped read). Injected in tests. */
+  readonly isGscConnected?: (userId: string, projectId: string) => Promise<boolean>;
+}
+
+/**
+ * Does a gsc_connections row exist for (user, project)? Only used to word the report's
+ * "no search data" section: connected-but-not-pulled must not be told to connect (the report
+ * contradicted whats_next on a live project, product test 2026-08-07). Same reader shape as
+ * pull_gsc_data's loadConnection — the literal table is required because forUser's selectOwn
+ * narrows filters to columns common to ALL tenant tables, which excludes project_id. Tenant
+ * scope is the explicit user_id filter (constitution NEVER #4).
+ */
+async function defaultIsGscConnected(userId: string, projectId: string): Promise<boolean> {
+  const { data, error } = await getServiceClient()
+    .from("gsc_connections")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`generate_report: connection lookup failed: ${error.message}`);
+  }
+  return data !== null;
 }
 
 const inputSchema = z.object({
@@ -92,6 +115,7 @@ async function insertReport(
 export function makeGenerateReportTool(deps: GenerateReportDeps = {}): RegisteredTool {
   const loadCrawl = deps.loadCrawl ?? loadLatestCrawl;
   const loadPull = deps.loadPull ?? loadLatestPull;
+  const isGscConnected = deps.isGscConnected ?? defaultIsGscConnected;
   const randomBytes = deps.randomBytes ?? ((size: number) => cryptoRandomBytes(size));
   const now = deps.now ?? (() => new Date());
   const resolveWebBaseUrl = deps.resolveWebBaseUrl ?? requireWebBaseUrl;
@@ -123,9 +147,10 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
 
       // Read the latest crawl AND pull through the shared ports. Both may be absent; a not-ok
       // load is simply "no data of that kind", not a hard error.
-      const [crawlLoad, pullLoad] = await Promise.all([
+      const [crawlLoad, pullLoad, gscConnected] = await Promise.all([
         loadCrawl(ctx.userId, project_id),
         loadPull(ctx.userId, project_id),
+        isGscConnected(ctx.userId, project_id),
       ]);
       const crawl = crawlLoad.ok ? crawlLoad.crawl : null;
       const pull = pullLoad.ok ? pullLoad.pull : null;
@@ -141,7 +166,14 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
       const generatedAt = now().toISOString();
       const reportTitle = resolveReportTitle(title, project.domain, generatedAt);
       const html = renderReportHtml(
-        buildReportModel({ domain: project.domain, title: reportTitle, generatedAt, crawl, pull }),
+        buildReportModel({
+          domain: project.domain,
+          title: reportTitle,
+          generatedAt,
+          crawl,
+          pull,
+          gscConnected,
+        }),
       );
 
       // LAST step before the return: on success withCredits commits the 15-credit spend; any
