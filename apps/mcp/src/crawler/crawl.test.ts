@@ -1263,3 +1263,90 @@ describe("crawlSite — the homepage is never the page that gets dropped", () =>
     }
   });
 });
+
+/**
+ * Measured on adstark.com.tr, 2026-08-08, after the homepage-first fix shipped. Its Yoast
+ * <sitemapindex> lists four children:
+ *
+ *   post-sitemap      47 URLs   <- first
+ *   page-sitemap      17 URLs   <- every commercial page lives here
+ *   category-sitemap   5 URLs
+ *   llms-sitemap       1 URL
+ *
+ * Children were CONCATENATED in index order, so a crawl that reached 25 pages spent all 25 on
+ * the post sitemap and never opened the page sitemap at all: 0 of 8 commercial pages crawled,
+ * 8 of 8 skipped. The homepage was saved by the earlier fix; /seo, /iletisim, /hakkimizda and
+ * the rest still lost to the blog archive.
+ *
+ * Interleaving is semantic-free — no guessing which child is "important" — and under any budget
+ * every child gets proportional representation.
+ */
+describe("crawlSite — a budget is shared across sitemaps, not spent on the first", () => {
+  it("interleaves child sitemaps instead of draining them in order", async () => {
+    const site = await startFixtureSite({
+      sitemapIndex: ["/sitemap-many.xml", "/sitemap-few.xml"],
+    });
+    try {
+      // Room for far fewer pages than the first child alone offers.
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 6 });
+      const urls = result.pages.map((p) => p.url);
+      // The point: the SECOND child is represented at all.
+      expect(urls.some((u) => u.includes("/few-"))).toBe(true);
+      expect(urls.some((u) => u.includes("/many-"))).toBe(true);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("still takes everything when the budget is large enough for all children", async () => {
+    const site = await startFixtureSite({
+      sitemapIndex: ["/sitemap-many.xml", "/sitemap-few.xml"],
+    });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls.filter((u) => u.includes("/few-"))).toHaveLength(2);
+      expect(urls.filter((u) => u.includes("/many-"))).toHaveLength(8);
+    } finally {
+      await site.close();
+    }
+  });
+});
+
+/**
+ * Referee catch on the interleaving work, and the sharper half of it. Interleaving needs each
+ * child's list capped, and the first draft capped the RAW locs — before same-origin, scope and
+ * dedupe had a say. Every loc those filters would reject then cost a budget slot silently.
+ *
+ * Measured, with a budget that was never the constraint: a child holding 8 out-of-scope locs
+ * ahead of 4 in-scope ones returned ZERO in-scope pages, where the pre-interleave code returned
+ * all four. That is the same "the pages you sell from never get crawled" failure this work came
+ * to cure, reintroduced by its own fix.
+ */
+describe("crawlSite — the budget is spent on usable URLs, not on rejected ones", () => {
+  it("does not let out-of-scope locs consume the budget ahead of in-scope ones", async () => {
+    const site = await startFixtureSite({ sitemapIndex: ["/sitemap-mixed.xml"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 8,
+        includePaths: ["/shop"],
+      });
+      const shop = result.pages.map((p) => p.url).filter((u) => u.includes("/shop-"));
+      expect(shop).toHaveLength(4);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does not let duplicate locs consume the budget ahead of distinct ones", async () => {
+    const site = await startFixtureSite({ sitemapIndex: ["/sitemap-dupes.xml"] });
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 6 });
+      const uniq = result.pages.map((p) => p.url).filter((u) => u.includes("/uniq-"));
+      expect(uniq).toHaveLength(4);
+    } finally {
+      await site.close();
+    }
+  });
+});

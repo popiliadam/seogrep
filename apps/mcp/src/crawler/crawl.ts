@@ -385,6 +385,9 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
  * RFC 9309 §2.5 parse limit (a crawler MAY cap parsing at >= 500 KiB and ignore the rest).
  */
 const MAX_HTML_BYTES = 2_000_000;
+/** How many children of a <sitemapindex> are expanded. Unchanged value, named for the loop. */
+const MAX_CHILD_SITEMAPS = 5;
+
 const MAX_SITEMAP_BYTES = 8_000_000;
 const MAX_ROBOTS_BYTES = 512 * 1024;
 
@@ -825,23 +828,37 @@ async function loadSitemapSeeds(
 ): Promise<string[]> {
   const seeds: string[] = [];
   const seen = new Set<string>();
-  const add = (raw: string): void => {
-    // Stop ACCUMULATING at the limit, rather than collecting everything and slicing at the
-    // end: the slice bounded the answer, not the memory it took to produce it.
-    if (seeds.length >= limit) return;
+  /**
+   * Normalize ONE loc, or null when it is unusable: unparseable, off-origin, out of scope, or
+   * already claimed. Claiming happens here, so a loc can only ever be counted once.
+   *
+   * Split out of `add` because a child sitemap's list has to be filtered BEFORE it is capped.
+   * Capping the RAW list instead — which an earlier draft did — silently spends a budget slot on
+   * every loc the filters would have rejected: measured, a child holding 8 blog locs ahead of 4
+   * shop locs under include_paths:["/shop"] yielded ZERO shop pages with a budget of 8, where
+   * the pre-interleave code yielded all four. That is the same disease this work came to cure.
+   */
+  const claim = (raw: string): string | null => {
     let u: URL;
     try {
       u = new URL(raw);
     } catch {
-      return;
+      return null;
     }
-    if (!sameOrigin(u, origin)) return;
-    if (!matchesIncludePaths(u.pathname, prefixes)) return;
+    if (!sameOrigin(u, origin)) return null;
+    if (!matchesIncludePaths(u.pathname, prefixes)) return null;
     const norm = normalizeUrl(u.toString());
-    if (!seen.has(norm)) {
-      seen.add(norm);
-      seeds.push(norm);
-    }
+    if (seen.has(norm)) return null;
+    seen.add(norm);
+    return norm;
+  };
+
+  const add = (raw: string): void => {
+    // Stop ACCUMULATING at the limit, rather than collecting everything and slicing at the
+    // end: the slice bounded the answer, not the memory it took to produce it.
+    if (seeds.length >= limit) return;
+    const norm = claim(raw);
+    if (norm !== null) seeds.push(norm);
   };
 
   const rootTimeout = hopTimeout(deadline, timeoutMs);
@@ -855,8 +872,20 @@ async function loadSitemapSeeds(
   if (!root || root.status !== 200) return seeds;
   const parsed = parseSitemap(root.body);
   parsed.urls.forEach(add);
-  for (const child of parsed.sitemaps.slice(0, 5)) {
-    if (seeds.length >= limit) break;
+  // Each child's URLs are kept SEPARATE so they can be interleaved below. Concatenating them —
+  // which is what this did — spends the whole budget on whichever child the index happens to
+  // list first. Measured on adstark.com.tr: a Yoast index whose post sitemap (47 URLs) precedes
+  // its page sitemap (17), so a 25-page crawl took 25 posts and not one commercial page.
+  // Each list is capped at `limit` USABLE urls — see `claim` for why the cap cannot sit on the
+  // raw locs.
+  const childLists: string[][] = [];
+  // No early exit across children, and none is possible: interleaving has to SEE every child
+  // before it can take one URL from each. The old loop broke out once `seeds` hit the limit,
+  // which did save fetches — that saving is genuinely gone, and it is the price of the fix.
+  // A `seeds.length < limit` guard here would be dead code rather than a partial recovery:
+  // parseSitemap returns either urls or sitemaps and never both, so whenever there ARE children
+  // the root urlset is empty and seeds is still 0.
+  for (const child of parsed.sitemaps.slice(0, MAX_CHILD_SITEMAPS)) {
     // Budget check BEFORE the hop: an exhausted deadline stops expansion here, so the
     // remaining children are never requested at all.
     const childTimeout = hopTimeout(deadline, timeoutMs);
@@ -872,7 +901,30 @@ async function loadSitemapSeeds(
     }
     if (!sameOrigin(childUrl, origin)) continue;
     const res = await fetchText(child, childTimeout, lookup, MAX_SITEMAP_BYTES);
-    if (res && res.status === 200) parseSitemap(res.body).urls.forEach(add);
+    if (!res || res.status !== 200) continue;
+    // FILTER first, then cap: the cap must bound usable URLs, not raw locs (see `claim`).
+    const usable: string[] = [];
+    for (const loc of parseSitemap(res.body).urls) {
+      if (usable.length >= limit) break;
+      const norm = claim(loc);
+      if (norm !== null) usable.push(norm);
+    }
+    childLists.push(usable);
+  }
+
+  // Round-robin: one URL from each child in turn. Semantic-free — nothing here guesses which
+  // child matters — but under any budget every child is represented in proportion, so the
+  // pages a site sells from cannot be starved by the size of its blog archive. Every URL here
+  // has already passed the same-origin, scope and dedupe filters, so which URLs are ELIGIBLE is
+  // unchanged from before — what changes is which of them a short budget spends itself on.
+  const longest = childLists.reduce((max, list) => Math.max(max, list.length), 0);
+  for (let index = 0; index < longest && seeds.length < limit; index++) {
+    for (const list of childLists) {
+      if (seeds.length >= limit) break;
+      const url = list[index];
+      // Already claimed and normalized by `claim`, so it goes straight in.
+      if (url !== undefined) seeds.push(url);
+    }
   }
   return seeds.slice(0, limit);
 }
