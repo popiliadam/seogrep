@@ -483,6 +483,28 @@ describe("reaper — stale DataForSEO reservations", () => {
     expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
   });
 
+  /**
+   * Found in PRODUCTION, not by the gates: after deploying this lane, the reaper announced
+   * "count=1 holdingUsd=0.3000 — charging today's budget" for a row left by the PREVIOUS day's
+   * crash. It charges nothing today; migration 0014 sums `where spend_day = today`. The query
+   * had no day filter while its own comment and the warning text both claimed it did — a false
+   * alarm in the one feature whose entire job is to be trusted.
+   */
+  it("ignores an abandoned reservation left over from a previous day", async () => {
+    const stamp = `yesterday-${randomUUID()}`;
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 26 * 60 * 60_000);
+    const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+    await insertDfsRow(stamp, "open", 0.3, yesterday);
+    try {
+      const after = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });
+      expect(after.staleDfsReserves).toBe(before.staleDfsReserves);
+      expect(after.staleDfsEstimatedUsd).toBeCloseTo(before.staleDfsEstimatedUsd, 5);
+    } finally {
+      await service.from("dfs_spend").delete().eq("endpoint", stamp);
+    }
+  });
+
   it("ignores a settled reservation however old it is", async () => {
     const now = new Date();
     const before = await reconcileStuckJobs({ now: () => now, olderThanMs: ONE_DAY });

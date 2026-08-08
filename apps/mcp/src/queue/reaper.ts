@@ -518,6 +518,11 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
   const dfs = await countStaleDfsReserves(
     client,
     new Date(nowDate.getTime() - (opts?.staleDfsMs ?? DEFAULT_STALE_DFS_MS)).toISOString(),
+    // Scoped to the UTC day the CAP is scoped to (migration 0014 sums `where spend_day = today`).
+    // Without this the count reports abandoned rows from previous days, which hold nothing
+    // against today's budget — found in production, where a row left by yesterday's crash was
+    // still being announced as "charging today's budget".
+    nowDate.toISOString().slice(0, 10),
   );
 
   let candidateQuery = client
@@ -670,8 +675,10 @@ export async function reconcileStuckJobs(opts?: ReconcileOptions): Promise<Recon
 export const DEFAULT_STALE_DFS_MS = 5 * 60_000;
 
 /**
- * Count today's ABANDONED DataForSEO reservations. A live fan-out settles within a couple of
- * seconds, so anything still open minutes later is the residue of a crashed run.
+ * Count today's ABANDONED DataForSEO reservations — today's, because that is the window the cap
+ * itself uses. A live fan-out settles within a couple of seconds, so anything still open minutes
+ * later is the residue of a crashed run; anything left from an EARLIER day is history that no
+ * longer charges anything, and announcing it every ten minutes forever is a false alarm.
  *
  * Read-only on purpose. Settling these at their estimate would change nothing financially, and
  * settling them at less would reopen a decision the team already made and pinned with tests
@@ -681,11 +688,13 @@ export const DEFAULT_STALE_DFS_MS = 5 * 60_000;
 async function countStaleDfsReserves(
   client: ServiceClient,
   cutoffIso: string,
+  spendDay: string,
 ): Promise<{ count: number; estimatedUsd: number }> {
   const { data, error } = await client
     .from("dfs_spend")
     .select("estimated_usd")
     .eq("status", "open")
+    .eq("spend_day", spendDay)
     .lt("created_at", cutoffIso);
   if (error) {
     // Never fail a sweep over a metric: the jobs and ledger lanes are the ones that move money.
