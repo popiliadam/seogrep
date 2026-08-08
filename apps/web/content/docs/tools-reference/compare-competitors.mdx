@@ -9,7 +9,7 @@ description: "Compare a domain with its competitors on Google organic search —
 
 ## What it does
 
-Name up to **three competitors** yourself, or omit them and let DataForSEO pick the rivals it sees sharing the most organic result pages with your target. The reply says which of the two happened, and every row is labelled with where it came from — `target`, `found by DataForSEO`, or `supplied by you` — so a discovered rival is never mistaken for one you chose.
+**Name up to three competitors yourself** — that is the mode that gives a useful comparison. You can instead omit them and let DataForSEO pick the rivals it sees sharing the most organic result pages with your target, which works well for a domain with a broad keyword footprint. On a small or niche site it can pick general-purpose giants such as `youtube.com` or `wikipedia.org`: they genuinely share those result pages, but they are not competitors in any sense you can act on. The reply says which of the two happened, and every row is labelled with where it came from — `target`, `found by DataForSEO`, or `supplied by you` — so a discovered rival is never mistaken for one you chose.
 
 Every domain in the table gets the same four lines, all read from DataForSEO's domain rank overview:
 
@@ -43,7 +43,7 @@ Or name the rivals yourself:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `target` | string | Yes | The domain to compare, e.g. "example.com" or "https://example.com". |
-| `competitors` | string[] | No | Up to 3 competitor domains to compare the target against. Omit this to let DataForSEO pick the competitors for you. |
+| `competitors` | string[] | No | Up to 3 competitor domains to compare the target against — naming them gives the most useful comparison. Omit this to let DataForSEO pick, which works well for domains with a broad keyword footprint but on a small or niche site can return general-purpose giants (youtube.com, wikipedia.org) that share a SERP without being real rivals. |
 | `limit` | integer | No | How many rows the competitor-discovery request may return (1–1000, default 1000). Unused when you pass "competitors": that skips the discovery request entirely. |
 | `language_code` | string | No | Language code (default 'en'). |
 | `location_code` | integer | No | DataForSEO location code (default 2840 = United States). |
