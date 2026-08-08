@@ -65,6 +65,49 @@ describe("formatJobStatus", () => {
     expect(line).toContain("finished 2026-07-19T00:02:00.000Z");
   });
 
+  /**
+   * Live product test, 2026-08-07: the summary read "Crawled 24 page(s), skipped 43, 0 issue(s)
+   * found". Two problems in one line. It never said WHY 43 pages were dropped — the reason was
+   * recorded but only surfaced by audit_tech, a separate 15-credit tool. And "0 issue(s) found"
+   * reads as "your site is clean" when it actually means "no fetch errors among the 24 we
+   * managed to reach". Worst of all, the homepage was among the 43 and nothing said so.
+   */
+  it("names the dominant skip reason instead of just counting skips", () => {
+    const result = {
+      pages: [{ issues: [] }],
+      skipped: [
+        { url: "https://x.example/a", reason: "time budget exhausted" },
+        { url: "https://x.example/b", reason: "time budget exhausted" },
+        { url: "https://x.example/c", reason: "blocked by robots.txt" },
+      ],
+      fetchedAt: "2026-07-19T00:00:00.000Z",
+    };
+    const line = formatJobStatus(job({ status: "succeeded", result }));
+    expect(line).toContain("time budget exhausted");
+    // The counted line keeps its existing shape; the reason is ADDED, not swapped in.
+    expect(line).toContain("skipped 3");
+  });
+
+  it("says plainly when the HOMEPAGE was one of the skipped pages", () => {
+    const result = {
+      pages: [{ url: "https://x.example/blog/a", issues: [] }],
+      skipped: [{ url: "https://x.example", reason: "time budget exhausted" }],
+      fetchedAt: "2026-07-19T00:00:00.000Z",
+    };
+    const line = formatJobStatus(job({ status: "succeeded", result }));
+    expect(line).toMatch(/homepage/i);
+  });
+
+  it("stays quiet about the homepage when it WAS crawled", () => {
+    const result = {
+      pages: [{ url: "https://x.example", issues: [] }],
+      skipped: [{ url: "https://x.example/deep", reason: "max URL limit reached" }],
+      fetchedAt: "2026-07-19T00:00:00.000Z",
+    };
+    const line = formatJobStatus(job({ status: "succeeded", result }));
+    expect(line).not.toMatch(/homepage/i);
+  });
+
   it("renders a succeeded job with no crawl-shaped result and no summary line", () => {
     const line = formatJobStatus(job({ status: "succeeded", result: { ok: true } }));
     expect(line).toMatch(/succeeded/);
