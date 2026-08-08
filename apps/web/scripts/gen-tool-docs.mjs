@@ -626,11 +626,14 @@ export const DOC_PROSE = {
       "reads your own site or a competitor's the same way, and it needs no project setup. It is " +
       "**synchronous**: the table comes back immediately, with no background job to poll.",
     whatItDoes:
-      "Name up to **three competitors** yourself, or omit them and let DataForSEO pick the rivals it " +
-      "sees sharing the most organic result pages with your target. The reply says which of the two " +
-      "happened, and every row is labelled with where it came from — `target`, `found by " +
-      "DataForSEO`, or `supplied by you` — so a discovered rival is never mistaken for one you " +
-      "chose.\n\n" +
+      "**Name up to three competitors yourself** — that is the mode that gives a useful " +
+      "comparison. You can instead omit them and let DataForSEO pick the rivals it sees sharing " +
+      "the most organic result pages with your target, which works well for a domain with a broad " +
+      "keyword footprint. On a small or niche site it can pick general-purpose giants such as " +
+      "`youtube.com` or `wikipedia.org`: they genuinely share those result pages, but they are " +
+      "not competitors in any sense you can act on. The reply says which of the two happened, and " +
+      "every row is labelled with where it came from — `target`, `found by DataForSEO`, or " +
+      "`supplied by you` — so a discovered rival is never mistaken for one you chose.\n\n" +
       "Every domain in the table gets the same four lines, all read from DataForSEO's domain rank " +
       "overview:\n\n" +
       "- **Organic SERPs containing the domain** — how many organic result pages the domain appears " +
