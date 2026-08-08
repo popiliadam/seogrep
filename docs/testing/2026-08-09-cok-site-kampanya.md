@@ -216,6 +216,16 @@ Sekiz site sitemap ağacından boyutlandırıldı: **22–178 sayfa**.
    istemciden ayırt edilemiyor.
 5. **#37'nin tam HTTP kodu** — audit yalnız "4xx" kovasını yazıyor.
 
+### #44 — kapı yük altında tekrarlanabilir değil
+
+| # | Kaynak | Alan | Bulgu | Önem | Durum |
+|---|---|---|---|---|---|
+| 44 | Ş | `guardrails/verify.sh` / `crawl.test.ts` | **Cache'siz kapı, makine yüküne göre kırmızı/yeşil değişiyor.** `crawlSite — discovery ceilings … stops ACCUMULATING at the total result byte budget (T8)` testi vitest'in 5000 ms varsayılan sınırına takılıyor. Ölçüm: **izole koşuda 344 ms ve 353 ms** (14 kat marj), tam paralel kapıda **5359 ms → FAIL**. Dört cache'siz koşu: dal FAIL · dal FAIL · **main PASS** · dal PASS. Diff `scripts/` + `docs/` — ikisi de pnpm workspace'lerinin (`apps/*`, `packages/*`) dışında, `apps/mcp` testine dokunamaz; yani **dal nedenli değil, yük nedenli**. Muhtemel mekanizma: aynı anda koşan `@pseo/web:build` (Next.js, CPU-yoğun) ile çakışma. Sonuç iki yönlü ciddi: (a) CI rastgele kırmızı verebilir, (b) **cache'li koşu bunu tamamen gizliyor** — bu oturumda kapı `FULL TURBO` ile "PASS" dedi, `--force` ile aynı ağaçta kırmızı verdi. **"Flaky" DENMEDİ** (bu refleks #46'da bilinçle reddedilmişti); ölçümüyle kaydedildi. | 🟡 | açık |
+
+**Bu bulgu kampanyanın kendi kuralını kanıtladı:** *"Yeşil kapı CACHE SAYACIYLA raporlanır;
+'16 cached' bir REPLAY'dir, ölçüm değil."* Bu oturumda ilk iki commit cache'li bir "VERIFY: PASS"
+üzerine atıldı; `--force` koşulduğunda aynı ağaç kırmızıydı.
+
 ## Kapının ölçmediği (imzalı ders 7)
 
 `guardrails/verify.sh` `scripts/` dizinini **hiç görmüyor** (pnpm workspace'leri `apps/*` +
