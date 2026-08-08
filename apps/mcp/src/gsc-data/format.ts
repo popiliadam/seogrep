@@ -49,16 +49,35 @@ export function formatQuickWins(wins: readonly QuickWin[]): string {
 
 /** Render the cannibalization groups (or a friendly empty message). */
 export function formatCannibalization(groups: readonly CannibalGroup[]): string {
-  if (groups.length === 0) {
-    return "No cannibalization found: no query has two or more of your pages meaningfully competing for it.";
+  // Branded queries leave the LIST but not the answer. Several pages ranking for your own brand
+  // is sitelink behaviour, not cannibalization, and consolidating them would be self-harm — but
+  // silently dropping them would leave the user wondering where their biggest query went.
+  const branded = groups.filter((g) => g.branded);
+  const real = groups.filter((g) => !g.branded);
+  const brandNote =
+    branded.length === 0
+      ? ""
+      : `\n\nExcluded ${branded.length} branded quer${branded.length === 1 ? "y" : "ies"} ` +
+        `(${branded.map((g) => `"${g.query}"`).join(", ")}): several of your pages ranking for ` +
+        "your own brand is normal — Google shows sitelinks — and is not cannibalization.";
+
+  if (real.length === 0) {
+    return (
+      "No cannibalization found: no query has two or more of your pages meaningfully competing for it." +
+      brandNote
+    );
   }
-  const blocks = groups.map((g) => {
+  const blocks = real.map((g) => {
     const pageLines = g.pages.map(
       (p) => `    - ${p.page} — position ${pos(p.position)}, ${p.impressions} impressions, ${p.clicks} clicks`,
     );
     return `• "${g.query}" — ${g.pages.length} competing pages, ${g.total_impressions} impressions total:\n${pageLines.join("\n")}`;
   });
-  return `${groups.length} cannibalized quer${groups.length === 1 ? "y" : "ies"} (most impressions first):\n${blocks.join("\n")}`;
+  return (
+    `${real.length} cannibalized quer${real.length === 1 ? "y" : "ies"} (most impressions first):\n` +
+    blocks.join("\n") +
+    brandNote
+  );
 }
 
 /** Render the decaying pages (or a friendly empty message). */
