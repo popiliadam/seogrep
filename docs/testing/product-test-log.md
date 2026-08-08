@@ -419,3 +419,58 @@ demek.
    yönlendirme zinciri #6) yazılmadı — ertelendi, kaybolmadı.
 5. #46'da bir `verify-db` koşusu alakasız bir spec'te düştü, üç koşuda ve main'de tekrarlamadı.
    Açıklanamadı; "flaky" DENMEDİ, kayda geçirildi.
+
+---
+
+# OPERATÖR TURU — brifing (2026-08-08)
+
+> **Bu turu şef koşamaz.** Şef `curl` ile "doğru veri dönüyor mu"yu ölçtü; bu tur
+> "kullanılabilir mi"yi ölçer ve yalnız gerçek bir sohbette ölçülebilir.
+
+## Tek kural: yardım etme
+
+- **Tool adı SÖYLEME.** "crawl_site çalıştır" deme; "siteme bir bak" de. Ölçtüğümüz şey tam olarak
+  LLM'in *açıklamadan* doğru tool'u seçip seçmediği.
+- **Mekanizmayı ima etme.** "sitemap'e bakar mısın" değil, "sayfalarım Google'da çıkmıyor" de.
+- **Takılırsan düzeltme, NOT AL.** Kafan karıştığı an bulgudur; kurtarmaya çalışırsan ölçüm kaybolur.
+- **Önce bu defteri okuma.** Bulguları bilirsen sorulara yönlendirirsin. Bu brifing yeterli.
+
+## Ortam
+
+Claude Desktop (ya da Claude Code) + ödeyen hesabın MCP bağlantısı. Bakiye **740 kredi**.
+Hazır veri: `adstark.com.tr` taze crawl (bugün) + GSC verisi (dün) · `seogrep.com` 18 günlük
+crawl, GSC yok.
+
+## Senaryolar — ucuzdan pahalıya
+
+Her birinde **cümleyi olduğu gibi** kullan. Sağdaki sütun "doğru cevap" değil, *dikkat edilecek şey*.
+
+| # | Söyleyeceğin cümle | Bakılacak | ~Kredi |
+|---|---|---|---|
+| 1 | "Bu hafta sitem için ne yapmalıyım?" | Proje sorar mı, tahmin mi eder? Öneri somut mu? | 0 |
+| 2 | "Sitemin SEO'su iyi durumda mı?" | Hangi tool'u seçiyor? Denetim üçlüsünü buluyor mu? | 30-50 |
+| 3 | "Hızlı kazanabileceğim bir şey var mı?" | `find_quick_wins`'i seçiyor mu? Çıktı eyleme dönüşüyor mu? | 10 |
+| 4 | "Rakiplerime göre nerdeyim?" | **Rakip adı soruyor mu, yoksa otomatik moda mı gidiyor?** (yeni düzelttiğimiz yer) | 90 |
+| 5 | "Bana kim link veriyor?" | 70 krediyi **önceden** söylüyor mu? | 70 |
+| 6 | "Şu raporu müşterime göndereceğim" | Rapor linki paylaşılabilir mi hissettiriyor mu? | 15 |
+
+**En kritik iki gözlem — bunları özellikle not al:**
+
+1. **Kredi uyarısı.** Açıklamalarda "Costs 90 credits" yazıyor. Asistan bunu koşmadan ÖNCE sana
+   söylüyor mu, yoksa 90 kredi harcayıp sonra mı? Bu hiç ölçülmedi.
+2. **Hacklenmiş sayfalar.** Senaryo 2'de asistan `/1xbet-…`, `/…casino…`, `/…onlyfans…`
+   sayfalarından **söz ediyor mu**? Bulgu #22 diyor ki ürün onları görüyor ama "multiple h1"
+   demekle yetiniyor. Sohbette de öyle mi kalıyor, yoksa LLM fark edip söylüyor mu?
+
+## Ne yazacaksın
+
+Her senaryo için üç satır yeter:
+
+```
+Senaryo N — söylediğim cümle
+Ne oldu: (hangi tool'u seçti, ne döndü)
+Ne hissettim: (anladım mı / kafam karıştı mı / değdi mi)
+```
+
+"Yarım cümle bile değerli" kuralı geçerli — "burada durakladım" bile bir bulgudur.
+Sonuçları şefe getir, deftere **O** kaynağıyla işlenecek ve triyaj beraber yapılacak.
