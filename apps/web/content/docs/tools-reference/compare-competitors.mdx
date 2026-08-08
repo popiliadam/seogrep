@@ -5,9 +5,11 @@ description: "Compare a domain with its competitors on Google organic search —
 
 **Cost:** 90 credits.
 
-`compare_competitors` puts a domain side by side with its rivals on Google organic search — how many organic result pages each one appears in, where those appearances sit, and what that traffic is worth — powered by DataForSEO Labs. It works on **any public domain**, so it reads your own site or a competitor's the same way, and it needs no project setup. It is **synchronous**: the table comes back immediately, with no background job to poll.
+`compare_competitors` puts a domain side by side with its rivals on Google organic search — how many organic result pages each one appears in, where those appearances sit, and what that traffic is worth — powered by DataForSEO Labs. It works on **any public domain**, so it reads your own site or a competitor's the same way. It is **synchronous**: the table comes back immediately, with no background job to poll.
 
 ## What it does
+
+Name the site being compared in **one of two ways** — pass a `target` domain, or pass the `project_id` of one of your own projects and the domain is taken from it. Exactly one of the two: passing both is rejected rather than resolved by precedence, because the two can name different sites and guessing would bill you for a comparison of the one you did not mean. The competitors are always plain domains — a rival is not one of your projects.
 
 **Name up to three competitors yourself** — that is the mode that gives a useful comparison. You can instead omit them and let DataForSEO pick the rivals it sees sharing the most organic result pages with your target, which works well for a domain with a broad keyword footprint. On a small or niche site it can pick general-purpose giants such as `youtube.com` or `wikipedia.org`: they genuinely share those result pages, but they are not competitors in any sense you can act on. The reply says which of the two happened, and every row is labelled with where it came from — `target`, `found by DataForSEO`, or `supplied by you` — so a discovered rival is never mistaken for one you chose.
 
@@ -42,7 +44,8 @@ Or name the rivals yourself:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `target` | string | Yes | The domain to compare, e.g. "example.com" or "https://example.com". |
+| `target` | string | No | The domain to compare, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
+| `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
 | `competitors` | string[] | No | Up to 3 competitor domains to compare the target against — naming them gives the most useful comparison. Omit this to let DataForSEO pick, which works well for domains with a broad keyword footprint but on a small or niche site can return general-purpose giants (youtube.com, wikipedia.org) that share a SERP without being real rivals. |
 | `limit` | integer | No | How many rows the competitor-discovery request may return (1–1000, default 1000). Unused when you pass "competitors": that skips the discovery request entirely. |
 | `language_code` | string | No | Language code (default 'en'). |
@@ -50,7 +53,9 @@ Or name the rivals yourself:
 
 ### Returns
 
-A heading naming the target, the language and location the figures were read for, and where the compared rivals came from — then one block per domain with its metric lines, the target first. An input that is not a public domain — the target, or any competitor you named — is rejected before anything is charged, and while live data is off you get the "not yet enabled" message instead — also free.
+A heading naming the target — or, when you passed a `project_id`, the project it came from — the language and location the figures were read for, and where the compared rivals came from; then one block per domain with its metric lines, the target first.
+
+An input that is not a public domain (the target, or any competitor you named), a call naming neither `target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected before anything is charged; while live data is off you get the "not yet enabled" message instead — also free.
 
 ### Billing
 

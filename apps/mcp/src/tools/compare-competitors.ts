@@ -13,12 +13,23 @@ import {
   type DomainOrganicMetrics,
 } from "../dfs/competitors.ts";
 import { normalizeDomain } from "./setup-project.ts";
+import {
+  loadOwnProject,
+  projectIdField,
+  resolveTarget,
+  subjectLabel,
+  targetField,
+  type LoadProjectFn,
+  type ProjectRef,
+} from "./project-target.ts";
 import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResult } from "./registry.ts";
 
 /**
  * compare_competitors — a domain side by side with its rivals on Google organic search, from the
  * DataForSEO Labs competitors_domain + domain_rank_overview endpoints. Synchronous: it returns the
- * table immediately (no background job). It needs no project: any public domain can be compared.
+ * table immediately (no background job). It takes EITHER a bare `target` (any public domain) OR a
+ * `project_id`, whose stored domain becomes the target. The competitors are always bare domains —
+ * a rival is by definition not one of your projects.
  *
  * It is built to the analyze_backlinks pattern, and the same two hard product rules shape its
  * credit path:
@@ -48,10 +59,8 @@ const NOT_ENABLED_MESSAGE =
   "will start returning data once live DataForSEO access is switched on — you were not charged.";
 
 const inputSchema = z.object({
-  target: z
-    .string()
-    .min(1)
-    .describe("The domain to compare, e.g. \"example.com\" or \"https://example.com\"."),
+  target: targetField("compare"),
+  project_id: projectIdField,
   competitors: z
     .array(z.string().min(1))
     .min(1)
@@ -91,7 +100,8 @@ const DESCRIPTION =
   "position bands, estimated monthly organic traffic, and the paid-equivalent traffic cost, side " +
   `by side. NAME the competitors you care about (up to ${MAX_COMPETITORS}) for a useful ` +
   "comparison; automatic discovery only works well for domains with a broad keyword footprint. " +
-  "Works on any public domain. Synchronous — returns a table immediately. Costs " +
+  "Pass a target domain (any public domain) or a project_id to compare one of your own sites. " +
+  "Synchronous — returns a table immediately. Costs " +
   `${TOOL_COSTS.compare_competitors} credits. Needs a paid credit balance: it is not available ` +
   "on trial credits. If live DataForSEO access is unavailable on this deployment, the tool says " +
   "so and charges nothing.";
@@ -182,10 +192,10 @@ function renderMetrics(metrics: DomainOrganicMetrics): string {
  */
 function renderHeading(
   comparison: CompetitorComparison,
-  input: { language_code: string; location_code: number },
+  input: CompetitorComparisonRenderInput,
 ): string {
   const where = `(language ${input.language_code}, location ${input.location_code})`;
-  const lead = `Competitor comparison for "${comparison.target}" ${where} — `;
+  const lead = `Competitor comparison for ${subjectLabel(comparison.target, input.project)} ${where} — `;
   const rivals = comparison.rows.length - 1;
   const plural = rivals === 1 ? "" : "s";
   if (!comparison.discovered) {
@@ -202,10 +212,20 @@ function renderHeading(
   return `${lead}the target against the ${rivals} competitor${plural} DataForSEO found${ranking}`;
 }
 
+/**
+ * How the output names what was compared. `project` is present only when the caller passed a
+ * project_id, so a bare-target call renders exactly as it always did.
+ */
+export interface CompetitorComparisonRenderInput {
+  readonly language_code: string;
+  readonly location_code: number;
+  readonly project?: ProjectRef | null;
+}
+
 /** Render the comparison as the plain-text tool output (pure — unit-tested directly). */
 export function formatCompetitorComparison(
   comparison: CompetitorComparison,
-  input: { language_code: string; location_code: number },
+  input: CompetitorComparisonRenderInput,
 ): string {
   const blocks = comparison.rows.map(
     (row) =>
@@ -256,6 +276,8 @@ export interface CompareCompetitorsDeps {
    * exercise the priced path) or a disabled port (to prove the honesty gate).
    */
   readonly port?: CompetitorsPort;
+  /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
+  readonly loadProject?: LoadProjectFn;
 }
 
 export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): RegisteredTool {
@@ -266,14 +288,18 @@ export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): R
     // See the module header: a self-settled SYNCHRONOUS surface charge, not an async job.
     charge: "handler",
     handler: async (ctx: AuthContext, input): Promise<ToolResult> => {
-      // Free pre-reserve gate 1 — a domain we could never look up is rejected outright.
-      const normalized = normalizeDomain(input.target);
-      if (!normalized.ok) {
-        return errorResult(normalized.error);
+      // Free pre-reserve gate 1 — resolve WHAT to compare: exactly one of project_id / target,
+      // the project read tenant-scoped, the domain canonicalized by the shared normalizer. Every
+      // rejection it returns costs nothing (see project-target.ts).
+      const subject = await resolveTarget(ctx.userId, input, deps.loadProject ?? loadOwnProject);
+      if (!subject.ok) {
+        return errorResult(subject.error);
       }
-      // Free pre-reserve gate 2 — same treatment for every competitor the caller named.
+      // Free pre-reserve gate 2 — same treatment for every competitor the caller named. They are
+      // matched against the RESOLVED target, so naming your own project's domain as its own rival
+      // is dropped exactly as it is on the bare-target path.
       const rivals = input.competitors
-        ? normalizeCompetitors(normalized.domain, input.competitors)
+        ? normalizeCompetitors(subject.domain, input.competitors)
         : ({ ok: true, competitors: [] } as const);
       if (!rivals.ok) {
         return errorResult(rivals.error);
@@ -288,13 +314,19 @@ export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): R
       // a partial comparison is never billed.
       return withCredits({ userId: ctx.userId }, { tool: "compare_competitors" }, async () => {
         const comparison = await port.fetchCompetitorComparison({
-          target: normalized.domain,
+          target: subject.domain,
           competitors: rivals.competitors,
           limit: input.limit,
           language_code: input.language_code,
           location_code: input.location_code,
         });
-        return textResult(formatCompetitorComparison(comparison, input));
+        return textResult(
+          formatCompetitorComparison(comparison, {
+            language_code: input.language_code,
+            location_code: input.location_code,
+            project: subject.project,
+          }),
+        );
       });
     },
   });
