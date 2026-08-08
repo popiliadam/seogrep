@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatCannibalization, formatContentDecay, formatPullSummary, formatQuickWins } from "./format.ts";
 import { detectCannibalization } from "./cannibalization.ts";
+import type { CannibalGroup } from "./cannibalization.ts";
 import { analyzeContentDecay } from "./content-decay.ts";
 import { findQuickWins } from "./quick-wins.ts";
 import { SAMPLE_PULL } from "./fixtures.ts";
@@ -74,5 +75,57 @@ describe("non-empty results carry the key facts", () => {
     const text = formatContentDecay(analyzeContentDecay(SAMPLE_PULL));
     expect(text).toContain("https://shop.test/trail");
     expect(text).toContain("60 → 30");
+  });
+});
+
+/**
+ * The brand note. Suppressing a branded query is right; suppressing it SILENTLY is not — the
+ * user would watch their biggest query disappear with no explanation. Measured live on
+ * 2026-08-07, the branded query was the ONLY result the tool produced, so with no note the
+ * answer would have been a bare "No cannibalization found" and nothing else.
+ *
+ * These exist because a referee mutation that deleted the note entirely left the whole suite
+ * green: the behaviour the work order explicitly forbade was reachable without a single test
+ * turning red.
+ */
+describe("formatCannibalization — branded queries are excluded, never hidden", () => {
+  const group = (query: string, branded: boolean): CannibalGroup => ({
+    query,
+    total_impressions: 100,
+    total_clicks: 5,
+    branded,
+    pages: [
+      { query, page: "https://x.test/a", clicks: 3, impressions: 60, ctr: 0.05, position: 2 },
+      { query, page: "https://x.test/b", clicks: 2, impressions: 40, ctr: 0.05, position: 5 },
+    ],
+  });
+
+  it("says why, and names the query, when the ONLY finding was branded", () => {
+    const text = formatCannibalization([group("adstark", true)]);
+    expect(text).toMatch(/no cannibalization found/i);
+    expect(text).toMatch(/excluded 1 branded query/i);
+    expect(text).toContain('"adstark"');
+    expect(text).toMatch(/sitelinks/i);
+  });
+
+  it("lists the real findings and still reports the excluded branded one", () => {
+    const text = formatCannibalization([group("seo hizmeti", false), group("adstark", true)]);
+    expect(text).toMatch(/1 cannibalized query/);
+    expect(text).toContain('"seo hizmeti"');
+    expect(text).toMatch(/excluded 1 branded query/i);
+    expect(text).toContain('"adstark"');
+  });
+
+  it("pluralises and names every excluded query", () => {
+    const text = formatCannibalization([group("adstark", true), group("adstark ajans", true)]);
+    expect(text).toMatch(/excluded 2 branded queries/i);
+    expect(text).toContain('"adstark"');
+    expect(text).toContain('"adstark ajans"');
+  });
+
+  it("adds no note at all when nothing was branded", () => {
+    const text = formatCannibalization([group("seo hizmeti", false)]);
+    expect(text).not.toMatch(/excluded/i);
+    expect(text).not.toMatch(/branded/i);
   });
 });

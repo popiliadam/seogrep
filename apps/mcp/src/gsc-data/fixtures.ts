@@ -20,11 +20,17 @@ export const FIXTURE_WINDOWS = {
 } as const;
 
 /** Assemble a PullData over the fixed windows from normalized current/previous rows. */
-export function pullData(currentRows: GscRow[], previousRows: GscRow[], days = 90): PullData {
+export function pullData(
+  currentRows: GscRow[],
+  previousRows: GscRow[],
+  days = 90,
+  property?: string,
+): PullData {
   return {
     days,
     current: { ...FIXTURE_WINDOWS.current, rows: currentRows },
     previous: { ...FIXTURE_WINDOWS.previous, rows: previousRows },
+    ...(property === undefined ? {} : { property }),
   };
 }
 

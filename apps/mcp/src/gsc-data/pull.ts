@@ -97,6 +97,7 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
 
   return {
     days: input.days,
+    property: input.property,
     // capped: the window's row count filled the single-page cap, so Google may hold more
     // (query, page) rows than were fetched — see the file header and formatPullSummary.
     current: { ...windows.current, rows: currentRows, capped: currentRows.length === rowLimit },
