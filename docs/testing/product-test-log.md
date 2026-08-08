@@ -125,6 +125,8 @@ Bakılacak: `whats_next` bağlama göre değişiyor mu, yoksa hep aynı şeyi mi
 | 18 | Ş | `ranked_keywords` · `compare_competitors` | **Varsayılan ülke/dil ABD-İngilizce; tool projenin ülkesini BİLMİYOR.** Üç premium tool `project_id` DEĞİL çıplak `target` alıyor → proje bağlamı sıfır. Varsayılanlar `language_code:"en"`, `location_code:2840` (ABD). `.com.tr` alan adı ülkeyi apaçık söylüyor ama hiçbir uyarı/öneri yok. Ölçtüm, aynı domain aynı 65 kredi: **varsayılan (en/2840)** → 3 kelime, hepsi volume 30, tek sayfa. **doğru (tr/2792)** → 4 kelime, volume 210/480/**3.600**/1.600, dört ayrı sayfa. Yani Türk kullanıcı 65 kredi ödeyip neredeyse boş sonuç alıyor, sonra doğrusunu bulmak için 65 kredi daha ödüyor. Başlıkta "(language en, location 2840)" yazması dürüst ama **`2840` ham vendor kodu** — kullanıcıya "United States" demiyor. | 🔴 | **PR #43** |
 | 19 | Ş | DFS maliyet tahmini | **`estimated_usd` gerçeğin ~16 katı.** Ölçüm: `ranked_keywords` tahmin $0.20 → gerçek **$0.0124**; `domain_rank_overview` $0.35 → **$0.0665**. Kapı settle'dan sonra gerçek maliyetle sayıyor (`budget.ts:207`), settle ~1.5 sn sonra geldiği için **sıralı çağrılarda sorun yok** — hipotezimi kontrol ettim, "kapı 16x muhafazakâr" iddiası YANLIŞ. Kalan gerçek etki iki tane: (a) eşzamanlı uçuştaki çağrılar aşırı sayılır, (b) #16'daki hayalet rezervasyonlar 16x şişik değerle takılı kalır. Ayrıca operatör için bilgi: $3/gün tavanı gerçekte ~240 `ranked_keywords` çağrısına denk, 15'e değil. | 🟢 | açık |
 | 20 | Ş | `connect_gsc` | **Bağlı projeye de "bağlan" linki veriyor.** adstark.com.tr 2026-07-28'den beri bağlı; `connect_gsc` yine kelimesi kelimesine aynı "open this link and approve access" metnini döndürdü — "zaten bağlısın, property `https://adstark.com.tr/`" demedi. #1 (`whats_next`) ve #8 (`generate_report`) ile **aynı kalıp**: bağlantı durumu `gsc_connections`'ta duruyor, üç ayrı tool ona bakmıyor. Ayrıca MCP yüzeyinde **koparma yolu yok** (web'de var). | 🟡 | **PR #42** |
+| 22 | Ş | denetim ailesi (`audit_onpage` · `audit_tech` · `crawl_site`) | **Ürün ENJEKTE EDİLMİŞ sayfaları buldu ve kullanıcıya hiçbir şey söylemedi.** 2026-08-08 canlı taramasında (round-robin düzeltmesi sonrası) `adstark.com.tr`'de 84 keşfedilen URL'in **6'sı** bahis/yetişkin spam'i çıktı: `/1xbet-app-download-for-apple…`, `/grand-casino-admiral-zagreb…` (Hırvatça), `/juegos-de-casino-en-colombia…` (İspanyolca), `/installer-1xbet-pour-android…` (Fransızca), iki `onlyfans` sayfası. Birini elle doğruladım: **canlı, indekslenebilir, 543 kelime, kendine canonical**. Hacklenmiş WordPress klasiği ve ajans müşterilerinin en sık başına gelen şeylerden biri. Ürün bu sayfaları TARADI, `audit_onpage` onlara "multiple h1" dedi ve **hepsi bu**. Kullanıcı altı sayfada h1 uyarısı görüp h1'leri düzeltmeye çalışır; sitesinin ele geçirildiğini asla öğrenmez. | 🟡 | açık |
+| 23 | Ş | **TEST SİTESİ — ürün bulgusu DEĞİL** | **`adstark.com.tr` büyük olasılıkla ele geçirilmiş.** #22'deki altı sayfa canlı ve `post-sitemap.xml`'de duruyor. Bu bir SeoGrep kusuru değil, operatörün kendi mülkü hakkında acil bir tespit: bu tür enjeksiyon Google gözünde alan adını yakar. Operatöre bildirildi. | 🔴 | **operatörde** |
 | 21 | Ş | `research_keywords` | **Çalışıyor, doğru veri.** 4 kelime, gerçek hacim/CPC/rekabet; `n/a` dönen kelimeyi toplamdan doğru şekilde çıkarıyor (90+210+1900 = 2.200 ✓). İki gelişim alanı: (a) #18'in aynısı — ABD/İngilizce varsayılanı, proje bağlamı yok; (b) yalnız **verilen** listeyi ölçüyor, kelime **önerisi** üretmiyor — "araştırma" adını taşıyan tool'da ilgili-kelime keşfi yok, kullanıcı ne soracağını zaten bilmek zorunda. | 🟢 | açık |
 | 11 | Ş | `audit_schema` | **Dürüst ama sığ.** Çıktı yalnız `@type` histogramı (BlogPosting 24, Organization 24…) ve açıkça "only @type names are analyzed, never the JSON-LD body" diyor — bu dürüstlük **iyi**. Ama Rich Results'ın umursadığı zorunlu alan doğrulaması (headline, datePublished, author) yok; "yapısal verim geçerli mi?" sorusuna cevap vermiyor. 5 kredi olduğu için fiyat/değer dengesi kabul edilebilir; beklenti yönetimi açıklamada zaten yapılmış. | 🟢 | açık |
 | 4 | Ş | `crawl_site` | **"0 issue(s) found" yanıltıcı.** 43 sayfası düşmüş bir taramanın sonunda "0 sorun" cümlesi "siten temiz" diye okunuyor; aslında "getirebildiğimiz 24 sayfada fetch hatası yok" demek. T6'da kapatılan "No basic issues" yanılgısının crawl özetindeki eşdeğeri. | 🟡 | **PR #44 (kısmen)** |
@@ -375,6 +377,32 @@ yakalayamazdı, çünkü hiçbiri kodun kendi ölçütlerine göre bozuk değild
 **Ders adayı (insan imzası bekler):** *Bir dosyayı program yazarak değiştiren her adım
 `assert`'le bağlanır ve sonuç `grep` ile teyit edilir. Eşleşmeyen bir `replace` sessizdir;
 sessiz bir düzeltme, yapılmamış bir düzeltmedir — ve rapor edilirse yalan olur.*
+
+## Hacklenmiş-sayfa tespiti — ÖLÇÜLEN ve ÇÜRÜTÜLEN sinyaller (bulgu #22 eki)
+
+Bir tespit kuralı önermeden önce dört sinyali gerçek veriye karşı ölçtüm (n=24 taranan sayfa,
+6 spam / 18 meşru, **tek site**). Üçü çürüdü:
+
+| sinyal | ölçüm | sonuç |
+|---|---|---|
+| Başlıkta farklı marka adı ("- Artistics") | spam 6/6 · **meşru 13/18** | ❌ sitenin KENDİ başlık şablonu |
+| Yetim sayfa (iç link almıyor) | spam 0 yetim · meşru 0 yetim | ❌ spam sayfalar siteden link ALIYOR |
+| `<html lang>` farkı | **hepsi `lang="tr"`** — Hırvatça/İngilizce spam dahil | ❌ WordPress site geneli ayarlıyor |
+| **Çoklu h1** | **spam 6/6 · meşru 0/18** | ✅ tek temiz ayraç |
+
+**En önemli sonuç:** çoklu h1 sinyali ürünün elinde ZATEN var (`PageRecord.h1s`) ve `audit_onpage`
+onu ZATEN raporluyor (`onpage.ts:93` → `multiple_h1`). Yani eksik olan veri değil, **yorum**:
+altı sayfanın aynı kusuru paylaşması "h1'lerini düzelt" değil "bu sayfalar siteye ait olmayabilir"
+demek.
+
+**Bu bulgunun sınırları — abartmamak için açıkça yazıyorum:**
+- **n = 1 site, 24 sayfa.** Çoklu h1'in genel bir hack göstergesi olduğu KANITLANMADI; bu örnekte
+  mükemmel ayrıştırdı, o kadar. Bu oturumda "tek örnekten kural üretmek" üç kez geri teptiği için
+  bunu kural olarak önermiyorum.
+- Çoklu h1 zaten sıradan bir on-page kusuru; tek başına ele geçirilme kanıtı DEĞİL.
+- Gerçek bir tespit için ölçülmemiş fikirler (hiçbiri denenmedi, hepsi yeni veri ister):
+  içerik dilinin sayfa-bazlı tespiti (site diliyle çelişen sayfa), önceki tarama ile karşılaştırıp
+  sitemap'in ani büyümesi, konu-aykırılığı. **Bunları öneri olarak yazıyorum, ölçüm olarak değil.**
 
 ## AÇIK KALANLAR
 
