@@ -200,7 +200,7 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; GEÇİCİ PUBLIC). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — OPERATÖR TURU (fresh session, 2026-08-08 hazırlandı)
+## 🧪 SIRADAKİ OTURUM — OPERATÖR TURU (fresh session, 2026-08-08 kapanışta güncellendi)
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
@@ -222,8 +222,8 @@ Kapanan 🔴 (5/5) — hepsi merge + deploy + canlı ölçümle mühürlü:
 · #18 ranked_keywords ABD varsayılanında sessizce boş dönüyordu. PR #43.
 Ayrıca 🟡: #1 #3 #4 #8 #16 #20 kapandı. #22 #23 YENİ (aşağıda).
 
-=== CANLI DURUM (2026-08-08 ölçümü, hepsi bu oturumda ölçüldü) ===
-main e5753f1 · açık PR YOK · çalışma ağacı temiz
+=== CANLI DURUM (2026-08-08 kapanış ölçümü) ===
+main 6570056 · açık PR 0 · uzak dal 1 (yalnız main) · çalışma ağacı temiz
 Bakiye 740 · SUM(credit_ledger)=740 (NEVER#2 mühürlü, oturum boyunca her adımda tuttu)
 DFS bugün: kapının gördüğü $0.3850 / GERÇEK $0.0850 → $0.30 hayalet (deploy öncesi çökmeden)
 Açık dfs_spend rezervasyonu: 2 (biri 08-07 — #47 sonrası artık sayılmıyor, biri 08-08 — sayılıyor)
@@ -310,7 +310,20 @@ gerçek dünyada ters çalıştı (ilk etiket=marka · [1.0,1.0] şekli · platf
   (Bu oturumda DÖRT test mutasyonda hayatta kaldı = hiçbir şey ölçmüyorlardı.)
 · NEVER#8: testi geçirmek için testi değiştirme. Metnin teste çarpıyorsa METNİ değiştir.
 · main'e doğrudan push YOK · Prod DB mutation / deploy / secret / dış servis = insana sor.
-· Merge sonrası DELETE BRANCH (imzalı ders 3 — bu turda 10 dal unutuldu).
+· Merge sonrası DELETE BRANCH (imzalı ders 3).
+
+=== ŞEFİN YETKİSİ DEĞİŞTİ (2026-08-08) ===
+Şef artık PR MERGE EDEBİLİR. `.claude/settings.local.json`'a (gitignore'da, yerel) eklendi:
+  "Bash(gh pr merge:*)"  ·  "Bash(gh run rerun:*)"
+Push + PR açma zaten şefteydi. Yani insana kalan: KARARLAR (fiyat/kapsam/go-no-go) ve
+şefin yapamadığı OPERATÖR TURU. Geri almak için o iki satırı sil.
+
+=== CI NOTU: geçici altyapı hatası görülebilir ===
+2026-08-08'de docs-only bir PR'da `verify-db` düştü. Test başarısızlığı DEĞİLDİ — hiç test
+koşmadı: `Recreating database... → Initialising schema... → error running container: exit 1`
+(Supabase yerel yığını runner'da kalkamadı). Öncesindeki 12 CI koşusunun 12'si başarılıydı;
+yeniden koşturuldu, GEÇTİ. Aynı deseni görürsen: önce LOGU OKU (test mi, konteyner mi),
+sonra geçmişi ölç, sonra `gh run rerun --failed`. Üçü olmadan "flaky" deme.
 ```
 
 
