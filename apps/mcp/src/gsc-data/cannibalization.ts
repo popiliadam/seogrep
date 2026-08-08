@@ -127,9 +127,11 @@ function fold(value: string): string {
  *
  * The property (`sc-domain:adstark.com.tr`, `https://adstark.com.tr/`) is the authoritative
  * source and is preferred. Page hosts are the fallback for pulls stored before the property was
- * carried, and they are only safe when read across the WHOLE window: deriving per query group
- * made the answer depend on which row Google happened to return first, so the same data could
- * call a query branded or not depending on row order.
+ * carried; they are read from the window as a whole rather than per query group, which is what
+ * made the answer depend on which row Google happened to return first. It stops at the first
+ * usable host, so a legacy pull whose hosts spanned two different registrable domains would
+ * still be order-dependent — every host of one property normally folds to the same token, so
+ * this is a residual limit rather than an observed problem.
  *
  * Tokens under 3 characters are ignored — too short to match a query word without catching half
  * the language.
@@ -207,8 +209,10 @@ export const SITELINK_PINNED_MAX_POSITION = 1.5;
  *
  * This is required IN ADDITION to the brand-name match, never instead of it, and that direction
  * matters: as a conjunction it can only ever narrow what gets suppressed, so it cannot introduce
- * a false positive of its own. "apple pie recipe" on apple.com keeps its place in the list
- * because its pages are not pinned at 1.
+ * a false positive of its own. "apple pie recipe" on apple.com keeps its place in the list as
+ * long as its pages are NOT pinned at 1 — measured: at [1.0, 1.2] it is suppressed, because the
+ * two signals cannot tell it apart from a navigational query. See KNOWN LIMITS on
+ * isBrandedQuery; this narrows generic-word over-suppression, it does not remove it.
  *
  * Two pinned pages is the WHOLE test. An earlier version also demanded that some page NOT be
  * pinned, generalising from the one live example where the homepage happened to sit at 3.9 —
