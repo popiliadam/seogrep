@@ -33,6 +33,12 @@ export interface FixtureOptions {
    */
   sitemapIndex?: string[];
   /**
+   * Override the paths (and, crucially, the ORDER) advertised in /sitemap.xml. Real sitemaps
+   * are not homepage-first: a Yoast <sitemapindex> lists the post sitemap before the page one,
+   * so "/" can sit hundreds of entries deep. Specs use this to reproduce that shape.
+   */
+  sitemapPaths?: readonly string[];
+  /**
    * /robots.txt behavior (default "ok"): "server-error" answers 500;
    * "hang" delays the response by slowMs (lets specs force a robots timeout).
    */
@@ -128,7 +134,9 @@ export function startFixtureSite(options: FixtureOptions = {}): Promise<FixtureS
         res.end(`<?xml version="1.0" encoding="UTF-8"?><sitemapindex>${locs}</sitemapindex>`);
         return;
       }
-      const urls = SITEMAP_PATHS.map((p) => `<url><loc>${origin}${p}</loc></url>`).join("");
+      const urls = (options.sitemapPaths ?? SITEMAP_PATHS)
+        .map((p) => `<url><loc>${origin}${p}</loc></url>`)
+        .join("");
       res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset>${urls}</urlset>`);
     } else if (path === "/sitemap-child.xml") {
       res.writeHead(200, { "content-type": "application/xml" });

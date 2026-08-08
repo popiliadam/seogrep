@@ -971,12 +971,20 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   // pages). With no prefixes, matchesIncludePaths is always true, so this is byte-identical
   // to the previous `[root]` fallback.
   const rootSeed = normalizeUrl(originUrl.toString());
-  const queue: string[] =
-    seeds.length > 0
-      ? [...seeds]
-      : matchesIncludePaths(new URL(rootSeed).pathname, prefixes)
-        ? [rootSeed]
-        : [];
+  // The homepage goes FIRST, ahead of the sitemap, not merely as the fallback when there is no
+  // sitemap. A sitemap is not ordered by importance: a Yoast <sitemapindex> lists the post
+  // sitemap before the page one, so "/" can sit hundreds of entries deep and never survive the
+  // ceilings. Measured live 2026-08-07 — a 20-credit crawl returned 24 blog posts and dropped
+  // the homepage plus every commercial page as "time budget exhausted". Whatever the budget
+  // buys, it buys the homepage first. Scope still wins: an out-of-scope root is not forced in
+  // (with no prefixes matchesIncludePaths is always true, so the common case is unchanged), and
+  // the Set below keeps a sitemap that ALSO lists "/" from queueing it twice.
+  const rootInScope = matchesIncludePaths(new URL(rootSeed).pathname, prefixes);
+  // Deduped at construction: a sitemap that ALSO lists "/" would otherwise leave a second root
+  // entry in the array (the Set below only dedupes the SET, not the array). `visited` already
+  // stops it being fetched twice — measured — but a ceiling that drains the queue would count
+  // that dead entry as "skipped", inflating the very number this slice is making honest.
+  const queue: string[] = [...new Set(rootInScope ? [rootSeed, ...seeds] : seeds)];
   const enqueued = new Set<string>(queue);
   const visited = new Set<string>();
   const pages: PageRecord[] = [];
