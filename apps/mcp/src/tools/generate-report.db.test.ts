@@ -1,10 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { base58Encode } from "@pseo/core";
 import { getServiceClient, type Database, type Json } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
+import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makeGenerateReportTool } from "./generate-report.ts";
 
 /**
@@ -379,5 +382,147 @@ describe("generate_report sync charge against the local stack", () => {
     const asA = await clientForUser(userA);
     const { data: aList } = await asA.from("reports").select("id");
     expect((aList ?? []).some((row) => row.id === reportA!.id)).toBe(true);
+  });
+});
+
+/**
+ * The refusals AS THE CLIENT RECEIVES THEM — through registerAll's catch, not through tool.run.
+ * The block above proves the throw and the release; it cannot see what the user reads, and what
+ * the user read until now was "generate_report failed unexpectedly … quote reference X" for a
+ * project that simply had no data yet, or no project at all.
+ *
+ * The last test in this block is the counterweight: a REAL internal failure in this same tool must
+ * still get the generic sentence, a reference and a log line. Without it, the branch is free to
+ * creep wider and the crashes go back to hiding inside reassuring prose.
+ */
+
+/** A minimal fake MCP Server that records the handlers registerAll installs. */
+function fakeServer() {
+  const handlers = new Map<unknown, (request: unknown) => unknown>();
+  const server = {
+    setRequestHandler: (schema: unknown, handler: (request: unknown) => unknown) => {
+      handlers.set(schema, handler);
+    },
+  } as unknown as Server;
+  return { server, handlers };
+}
+
+type CallResult = { content: { text: string }[]; isError?: boolean };
+
+/** Call `tool` the way the gateway does: through registerAll, so the catch runs. */
+async function callThroughRegistry(
+  ctx: AuthContext,
+  tool: RegisteredTool,
+  projectId: string,
+): Promise<CallResult> {
+  const { server, handlers } = fakeServer();
+  registerAll(server, { ctx, tools: [tool] });
+  const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<CallResult>;
+  return call({ params: { name: tool.name, arguments: { project_id: projectId } } });
+}
+
+describe("generate_report refusals — what the CLIENT receives", () => {
+  it("no such project: the setup_project sentence verbatim, no crash sentence, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const user = await makeUser();
+      await seedGrant(user.userId, 100);
+      // A syntactically valid uuid that owns nothing — the same state another tenant's project
+      // id would produce, since the lookup is filtered to ctx.userId.
+      const unknownProjectId = randomUUID();
+
+      const result = await callThroughRegistry(ctxOf(user), reportTool, unknownProjectId);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toBe(
+        `No project found with id ${unknownProjectId}. Create one with setup_project first.`,
+      );
+      expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+      expect(result.content[0]?.text).not.toMatch(/reference/i);
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      const rows = await ledgerRows(user.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows[1]?.delta).toBe(-TOOL_COSTS.generate_report);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await reportRows(user.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("no crawl and no pull: the crawl_site/pull_gsc_data sentence verbatim, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const user = await makeUser();
+      await seedGrant(user.userId, 100);
+      const projectId = await makeProject(user.userId, `nodata-${randomUUID()}.example.com`);
+
+      const result = await callThroughRegistry(ctxOf(user), reportTool, projectId);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toBe(
+        "No crawl or Search Console data found for this project. " +
+          "Run crawl_site or pull_gsc_data first.",
+      );
+      expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+      expect(result.content[0]?.text).not.toMatch(/reference/i);
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      const rows = await ledgerRows(user.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await reportRows(user.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE COUNTERWEIGHT. gsc_connections is read on the way to a report; when that read FAILS there
+   * is a real fault with a Postgres message behind it, and the operator needs the log line. This
+   * must keep the generic sentence — and must NOT leak the raw detail (L-03), which is the other
+   * property the generic branch carries.
+   */
+  it("a genuine connection-lookup failure still gets the generic sentence, a reference and a log line", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const user = await makeUser();
+      await seedGrant(user.userId, 100);
+      const projectId = await makeProject(user.userId, `crash-${randomUUID()}.example.com`);
+      // Seed a crawl so the run is unambiguously PAST both refusals when the read blows up.
+      await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+
+      const crashingTool = makeGenerateReportTool({
+        resolveWebBaseUrl: () => WEB_BASE,
+        isGscConnected: async () => {
+          throw new Error(
+            'generate_report: connection lookup failed: relation "public.gsc_connections" does not exist',
+          );
+        },
+      });
+      const result = await callThroughRegistry(ctxOf(user), crashingTool, projectId);
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      const reference = /reference ([0-9a-f]{8})\b/.exec(text)?.[1];
+      expect(reference).toBeDefined();
+      // The raw detail stays server-side (L-03), keyed by the same reference.
+      expect(text).not.toMatch(/relation/);
+      expect(text).not.toMatch(/gsc_connections/);
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain(reference!);
+      expect(logged).toContain("connection lookup failed");
+
+      // The money path is unchanged on a crash too: reserved, released, no report persisted.
+      const rows = await ledgerRows(user.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await reportRows(user.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

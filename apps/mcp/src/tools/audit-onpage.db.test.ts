@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { getServiceClient, type Json } from "../db.ts";
 import { getJob } from "../queue/boss.ts";
-import { TOOL_COSTS } from "../credits/costs.ts";
+import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
+import { NO_CRAWL_MESSAGE } from "../audit/load.ts";
+import { registerAll, type RegisteredTool } from "./registry.ts";
 import { auditOnpageTool } from "./audit-onpage.ts";
+import { auditTechTool } from "./audit-tech.ts";
+import { auditSchemaTool } from "./audit-schema.ts";
 
 /**
  * DB-integration proof for a SYNC PRICED tool (audit_onpage, 30) against a LOCAL Supabase
@@ -177,5 +183,113 @@ describe("audit_onpage sync charge against the local stack", () => {
     expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(100); // reserved then released — never charged
     expect(await jobCount(ctx.userId)).toBe(0); // no jobs row created
+  });
+});
+
+/**
+ * The refusal AS THE CLIENT RECEIVES IT — through registerAll's catch, not through tool.run.
+ * The block above proves the throw and the release; it cannot see what the user reads, and for
+ * 18 live calls on 2026-08-09 what the user read was "audit_onpage failed unexpectedly … quote
+ * reference 0edff0bd" for a project that had simply never been crawled.
+ *
+ * The three audits are named individually because each is a separate registered tool at a
+ * separate price (30 / 15 / 5) and a regression could hit one and not the others.
+ */
+
+/** A minimal fake MCP Server that records the handlers registerAll installs. */
+function fakeServer() {
+  const handlers = new Map<unknown, (request: unknown) => unknown>();
+  const server = {
+    setRequestHandler: (schema: unknown, handler: (request: unknown) => unknown) => {
+      handlers.set(schema, handler);
+    },
+  } as unknown as Server;
+  return { server, handlers };
+}
+
+type CallResult = { content: { text: string }[]; isError?: boolean };
+
+/** Call `tool` the way the gateway does: through registerAll, so the catch runs. */
+async function callThroughRegistry(
+  ctx: AuthContext,
+  tool: RegisteredTool,
+  projectId: string,
+): Promise<CallResult> {
+  const { server, handlers } = fakeServer();
+  registerAll(server, { ctx, tools: [tool] });
+  const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<CallResult>;
+  return call({ params: { name: tool.name, arguments: { project_id: projectId } } });
+}
+
+const AUDIT_TOOLS: { name: ToolName; tool: RegisteredTool }[] = [
+  { name: "audit_onpage", tool: auditOnpageTool },
+  { name: "audit_tech", tool: auditTechTool },
+  { name: "audit_schema", tool: auditSchemaTool },
+];
+
+describe("audit tools with no crawl — what the CLIENT receives", () => {
+  it.each(AUDIT_TOOLS)(
+    "$name returns NO_CRAWL_MESSAGE verbatim, no crash sentence, and nets to zero",
+    async ({ name, tool }) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const ctx = await makeCtx();
+        await seedGrant(ctx.userId, 100);
+        const projectId = await makeProject(ctx.userId, `nocrawl-${randomUUID()}.example.com`);
+
+        const result = await callThroughRegistry(ctx, tool, projectId);
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text).toBe(NO_CRAWL_MESSAGE);
+        expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+        expect(result.content[0]?.text).not.toMatch(/reference/i);
+        // No operator log line for a designed refusal.
+        expect(errorSpy).not.toHaveBeenCalled();
+
+        // The money path is untouched by the rendering change: reserve -> release, net 0.
+        const rows = await ledgerRows(ctx.userId);
+        expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+        expect(rows[1]?.delta).toBe(-TOOL_COSTS[name]);
+        expect(balanceOf(rows)).toBe(100);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+
+  /**
+   * THE ISOLATION PIN. audit/load.ts resolves a missing project, another tenant's project and a
+   * project never crawled to the SAME sentence so that project existence is unobservable across
+   * tenants (constitution NEVER #4). The generic crash sentence used to hide that uniformity by
+   * accident; now the message is user-visible, so it is the only thing holding the property up.
+   * Byte-identical is the assertion — not "similar", not "both mention crawl_site".
+   */
+  it("cannot distinguish a nonexistent project from another tenant's from an uncrawled one", async () => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 300);
+
+    // (1) a project id that exists nowhere.
+    const nonexistent = randomUUID();
+    // (2) a REAL project belonging to a DIFFERENT tenant, with a real succeeded crawl on it —
+    //     so the only reason it is unreadable is the tenant filter, not the absence of data.
+    const other = await makeCtx();
+    await seedGrant(other.userId, 100);
+    const otherProjectId = await makeProject(other.userId, `other-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(other.userId, otherProjectId, CRAWL_RESULT);
+    // (3) our own project, never crawled.
+    const ownProjectId = await makeProject(ctx.userId, `own-${randomUUID()}.example.com`);
+
+    const texts: string[] = [];
+    for (const projectId of [nonexistent, otherProjectId, ownProjectId]) {
+      const result = await callThroughRegistry(ctx, auditOnpageTool, projectId);
+      expect(result.isError).toBe(true);
+      texts.push(result.content[0]?.text ?? "");
+    }
+
+    expect(texts[0]).toBe(NO_CRAWL_MESSAGE);
+    expect(texts[1]).toBe(texts[0]);
+    expect(texts[2]).toBe(texts[0]);
+    // …and the other tenant's crawl was genuinely there to be leaked.
+    expect((await auditOnpageTool.run(other, { project_id: otherProjectId })).isError).toBeUndefined();
   });
 });

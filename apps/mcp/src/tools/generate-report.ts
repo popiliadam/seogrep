@@ -7,6 +7,7 @@ import { loadLatestCrawl, type LoadCrawlFn } from "../audit/index.ts";
 import { loadLatestPull, type LoadPullFn } from "../gsc-data/index.ts";
 import { buildReportModel, renderReportHtml, resolveReportTitle } from "../report/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
  * generate_report — 15 credits, SYNC (surface charge). Turns a project's latest crawl and/or
@@ -20,6 +21,14 @@ import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
  * — a missing web base URL, an unknown project, no crawl AND no pull, or a failed insert all
  * RELEASE the reserve (net 0) and, because the DB insert is the LAST step before the return, a
  * released run never leaves a persisted report behind.
+ *
+ * Two KINDS of throw share that exit, and the registry tells them apart by TYPE. The two DESIGNED
+ * refusals below — no such project, and no data of either kind — carry PreconditionNotMetError, so
+ * their already-written sentence reaches the caller verbatim. Everything else here (an unresolvable
+ * web base URL, a connection-lookup error, a failed insert) stays a plain Error and keeps the
+ * generic "failed unexpectedly, quote reference X" plus its server log line, because each of those
+ * IS something an operator has to diagnose. Widening that line is the one way to lose the failures
+ * this distinction exists to keep visible.
  *
  * The public_slug is 8 bytes of CSPRNG entropy (~64 bits) base58-encoded (unprefixed — the
  * `/r/` lives in the route). The reports table has a UNIQUE constraint on public_slug; the
@@ -142,7 +151,13 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
         "domain",
       );
       if (!project) {
-        throw new Error(`No project found with id ${project_id}. Create one with setup_project first.`);
+        // TYPED so the registry renders this verbatim instead of the generic crash sentence.
+        // Echoing project_id back leaks nothing: it is the caller's own input, and the read
+        // above is filtered to ctx.userId, so "no such project" and "not your project" arrive
+        // here identically — the id names what was asked for, never what exists.
+        throw new PreconditionNotMetError(
+          `No project found with id ${project_id}. Create one with setup_project first.`,
+        );
       }
 
       // Read the latest crawl AND pull through the shared ports. Both may be absent; a not-ok
@@ -155,9 +170,11 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
       const crawl = crawlLoad.ok ? crawlLoad.crawl : null;
       const pull = pullLoad.ok ? pullLoad.pull : null;
       if (!crawl && !pull) {
-        // Nothing to report on -> THROW so withCredits RELEASES the reserve (no charge). The
-        // registry turns this into an actionable isError result for the client.
-        throw new Error(
+        // Nothing to report on -> THROW so withCredits RELEASES the reserve (no charge). TYPED,
+        // because the registry's catch cannot otherwise tell this designed refusal from a crash:
+        // it matches PreconditionNotMetError and returns the message verbatim, where a raw Error
+        // is swallowed by the generic "failed unexpectedly, quote reference X" branch.
+        throw new PreconditionNotMetError(
           "No crawl or Search Console data found for this project. " +
             "Run crawl_site or pull_gsc_data first.",
         );
