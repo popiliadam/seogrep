@@ -106,6 +106,48 @@ describe("connect_gsc against the local stack", () => {
     expect(text).toMatch(/pull_gsc_data/);
   });
 
+  /**
+   * The end-to-end pin for the failure this slice exists to fix. `gsc_property` is nullable
+   * and the null is REACHED in production: the web callback (step 7) keeps the connection
+   * when sites.list matches nothing, so the row exists with no property. Live 2026-08-09,
+   * www.noraninsaat.com, the handler interpolated that value straight into the sentence and
+   * the user read "property null" while every Search Console tool on the project was dead.
+   *
+   * The renderer's own spec (connect-gsc.test.ts) cannot see this: it proves the copy is
+   * right, not that the handler routes through it. A regression that re-interpolates
+   * gsc_property in the handler would leave that spec green — so the assertion has to come
+   * out of connectGscTool.run over a real row.
+   *
+   * The fixture domain deliberately contains no "null" substring, and that is asserted
+   * rather than assumed: a later rename to something like annullertravel.example.com would
+   * otherwise make the check pass for the wrong reason.
+   */
+  it("does not print the raw null when the connection has no matched property", async () => {
+    const domain = "unmatched-property.example.com";
+    expect(domain).not.toContain("null"); // keeps the substring check below honest
+    const ctx = await makeCtx();
+    const projectId = await makeProject(ctx.userId, domain);
+    const { error } = await service.from("gsc_connections").insert({
+      user_id: ctx.userId,
+      project_id: projectId,
+      gsc_property: null,
+      encrypted_refresh_token: Buffer.from("not-a-real-token"),
+    });
+    if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
+
+    const result = await connectGscTool.run(ctx, { project_id: projectId });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toContain("null");
+    expect(text).not.toContain("undefined");
+    // Honest: connection stands, nothing matched, WHICH domain, and what to do next.
+    expect(text).toContain(domain);
+    expect(text).toMatch(/matched it/i);
+    expect(text).toMatch(/verify a property/i);
+    expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+  });
+
   it("treats another tenant's project id as not found (no link issued)", async () => {
     const a = await makeCtx();
     const b = await makeCtx();
