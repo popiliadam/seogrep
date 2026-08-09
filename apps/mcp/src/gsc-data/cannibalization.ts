@@ -247,29 +247,64 @@ function tokenFromHost(host: string | null): string | null {
 }
 
 /**
- * Is `query` a branded query for `token`? Compared word by word on the FOLDED forms, so a brand
- * mentioned inside a longer query counts ("adstark dijital pazarlama") while a coincidental
- * substring inside an unrelated word does not ("shopping" is not "shop").
+ * A query's alphanumeric ATOMS, each already in fold()'s form: "adstark.com.tr" ->
+ * ["adstark", "com", "tr"], "dent notion" -> ["dent", "notion"], "ads-tark" -> ["ads", "tark"].
+ *
+ * Whitespace and punctuation are the same kind of boundary here, which is the point: the folding
+ * happens BEFORE the split, so a decomposed spelling ("c" + combining cedilla) loses its accent
+ * instead of being cut in half by it.
+ */
+function foldedAtoms(query: string): string[] {
+  return query
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .split(/[^\p{Letter}\p{Number}]+/u)
+    .filter((atom) => atom.length > 0);
+}
+
+/**
+ * Is `query` a branded query for `token`? True when some run of ADJACENT atoms joins to exactly
+ * the token. One atom is the common case ("adstark dijital pazarlama"); several cover both a
+ * separator inside the brand ("ads-tark" for ads-tark.com) and a compound brand the user typed as
+ * separate words.
+ *
+ * That last case is why the run exists. Measured 2026-08-09 on dentnotion.com: 107 "cannibalized"
+ * queries, the first of them "dent notion" — the company's own name with a space, homepage at 2.0
+ * plus five inner pages, the textbook sitelink shape this filter was written to suppress. Word-by
+ * -word matching could never see it, because neither "dent" nor "notion" is "dentnotion".
+ *
+ * Equality of the joined run, never containment, and that is the whole guard against
+ * over-correcting: folding the query and asking whether it CONTAINS the token would brand
+ * "car petrol" for carpet.com and "student dent notionally" for dentnotion.com. Adjacency is
+ * required too, so an intervening word ("dent and notion") or the reversed order ("notion dent")
+ * is not the brand. Atom equality also keeps "shopping" from being "shop".
  *
  * KNOWN LIMITS, accepted deliberately:
  *   - A brand that is an ordinary word ("monday", "apple") also suppresses that word's genuine
  *     cannibalization. Nothing in Search Console data separates the two, and of the two errors
  *     the false positive is the one that makes a user de-optimise their own pages. The sitelink
  *     conjunction below narrows this considerably but cannot remove it.
- *   - A multi-word brand is matched on its domain label only, so "acme corp" is recognised as
- *     "acmecorp" only if that is how the domain reads.
+ *   - The joined run must reproduce the domain label exactly, so a brand the domain abbreviates
+ *     ("dent notion clinic" for dentnotion.com is fine, but "dent notion" for
+ *     dentnotionclinic.com is not) goes unrecognised.
+ *   - Two ordinary short words that happen to join into the token are branded on sight; the
+ *     >= 3-character token floor is all that bounds how common that can be.
  */
 function isBrandedQuery(query: string, token: string | null): boolean {
   if (token === null) return false;
-  return query.split(/\s+/).some((word) => {
-    // Both readings of a word, because a separator can be INSIDE the brand or BETWEEN it and
-    // something else, and no single split gets both: folding the whole word catches "ads-tark"
-    // for ads-tark.com, while splitting on separators catches "adstark-ajans" and the canonical
-    // navigational query "adstark.com.tr". An earlier version did only one and merely traded
-    // one class of miss for another.
-    if (fold(word) === token) return true;
-    return word.split(/[^\p{Letter}\p{Number}]+/u).some((part) => fold(part) === token);
-  });
+  const atoms = foldedAtoms(query);
+  for (let start = 0; start < atoms.length; start += 1) {
+    let run = "";
+    for (let index = start; index < atoms.length; index += 1) {
+      run += atoms[index];
+      if (run === token) return true;
+      // A run only grows, so once it is as long as the token no extension of it can equal the
+      // token. Bounds the scan at a handful of atoms per start, whatever the query's length.
+      if (run.length >= token.length) break;
+    }
+  }
+  return false;
 }
 
 /** A sitelink sits at position 1; allow a hair of averaging noise over a 90-day window. */

@@ -351,6 +351,52 @@ describe("detectCannibalization — branded queries", () => {
     expect(brandedOf(sitelinkRows("ads-tark.com", "ads-tark"))).toBe(true);
   });
 
+  /**
+   * Live campaign, 2026-08-09. dentnotion.com produced 107 "cannibalized" queries and the FIRST
+   * was "dent notion" — the company's own name typed with a space, homepage at 2.0 plus five
+   * inner pages. Matching word by word could not see it: neither "dent" nor "notion" is
+   * "dentnotion". People type a compound brand as separate words, so adjacent words have to be
+   * allowed to join.
+   */
+  it("matches a compound brand the user typed as separate words", () => {
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion"))).toBe(true);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion dis klinigi"))).toBe(true);
+  });
+
+  /**
+   * The guard against over-correcting. Each of these would be branded by the obvious shortcut —
+   * fold the WHOLE query and ask whether it contains the token — and each is a query the tool
+   * must keep reporting. Joining runs of adjacent atoms and testing EQUALITY is what separates
+   * them: "car petrol" joins to "carpetrol", never to "carpet".
+   */
+  it("does not brand words that merely contain the token once the query is folded", () => {
+    expect(brandedOf(sitelinkRows("carpet.com", "car petrol"))).toBe(false);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "student dent notionally"))).toBe(false);
+  });
+
+  /**
+   * Adjacency and order are part of the rule, not an accident of it: a brand is the words next
+   * to each other in the domain's order. Without this, joining would creep toward "these words
+   * appear somewhere in the query", which is the containment failure one step removed.
+   */
+  it("does not brand the same words when they are separated or reversed", () => {
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent and notion"))).toBe(false);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "notion dent"))).toBe(false);
+  });
+
+  /**
+   * Accents are removed BEFORE the query is cut into words, not after. Cut first and a combining
+   * mark becomes a word boundary, so "araçkiralama" — one typed word, generic Turkish for car
+   * rental — would split into "arac" + "kiralama" and hand kiralama.com its own brand. That is
+   * the "shopping" is not "shop" failure coming back in through an accent, on the language most
+   * of this product's measured users search in.
+   */
+  it("does not let an accent inside a word turn the rest of it into the brand", () => {
+    expect(brandedOf(sitelinkRows("kiralama.com", "araçkiralama"))).toBe(false);
+    // The same two words genuinely written apart ARE the brand plus a word.
+    expect(brandedOf(sitelinkRows("kiralama.com", "araç kiralama"))).toBe(true);
+  });
+
   it("ignores a domain label too short to be a safe brand token", () => {
     // A 2-character token would match half the language; "hm" must not brand "hm nedir".
     expect(brandedOf(sitelinkRows("hm.com", "hm"))).toBe(false);
