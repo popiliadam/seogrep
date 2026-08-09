@@ -34,10 +34,15 @@ export interface CannibalGroup {
   readonly pages: GscRow[];
   /**
    * Does the query carry the site's own brand name? Several pages ranking for your brand is
-   * normal SERP behaviour (Google shows sitelinks), NOT cannibalization — and acting on it
-   * means de-optimising your own brand pages. Measured live 2026-08-07: the single result the
-   * tool produced on a real site was the query "adstark" on adstark.com.tr, with the homepage
-   * at 3.9 and four inner pages at exactly 1.0 — the textbook sitelink shape.
+   * normal SERP behaviour, NOT cannibalization — and acting on it means de-optimising your own
+   * brand pages. Measured live 2026-08-07: the single result the tool produced on a real site
+   * was the query "adstark" on adstark.com.tr, with the homepage at 3.9 and four inner pages at
+   * exactly 1.0 — the textbook sitelink shape.
+   *
+   * Sitelinks are the EVIDENCE, not the definition: measured 2026-08-09 on dentnotion.com, the
+   * same brand SERP arrived with nothing pinned at all (see isBrandOnlyQuery). So the sitelink
+   * shape is required of a query that carries words beyond the brand, and not of a query that
+   * is the brand alone.
    */
   readonly branded: boolean;
 }
@@ -200,10 +205,17 @@ function registrableLabel(host: string): string | null {
  * WHAT THIS COSTS, measured and accepted: ı → i merges Turkish minimal pairs that differ only in
  * that letter — tıp (medicine) with tip (type), kır (countryside) with kir (dirt), ılık (lukewarm)
  * with ilik (marrow). Nothing downstream can tell them apart afterwards, so a site on tip.com does
- * suppress the query "tıp". What bounds the damage is that this fold never suppresses anything by
- * itself: `branded` is isBrandedQuery AND looksLikeSitelinks, so a query whose pages are genuinely
- * competing stays in the list no matter how its letters fold. Widening the fold widens the first
- * half of a conjunction, never the answer.
+ * suppress the query "tıp".
+ *
+ * How far that reaches, restated when isBrandOnlyQuery landed and NARROWER than it used to be:
+ *   - a query carrying any word beyond the brand is still bounded by the conjunction below —
+ *     `branded` needs looksLikeSitelinks too, so "tıp tedavisi" on tip.com stays in the list
+ *     while its pages are genuinely competing. There, widening the fold widens one half of an
+ *     AND, never the answer.
+ *   - a query that folds onto the brand and is NOTHING else no longer has that bound: tip.com now
+ *     suppresses the lone query "tıp" whatever its pages do. That is the price of the brand-only
+ *     path, and it is paid only by single-brand-shaped queries — the collision has to hit the
+ *     whole query, not a word inside it.
  */
 function foldChars(value: string): string {
   return value
@@ -309,7 +321,9 @@ function foldedAtoms(query: string): string[] {
  *   - A brand that is an ordinary word ("monday", "apple") also suppresses that word's genuine
  *     cannibalization. Nothing in Search Console data separates the two, and of the two errors
  *     the false positive is the one that makes a user de-optimise their own pages. The sitelink
- *     conjunction below narrows this considerably but cannot remove it.
+ *     conjunction below narrows this to the word typed ALONE — "apple pie recipe" on apple.com
+ *     keeps its place in the list while its pages are unpinned, the bare query "apple" does not
+ *     (isBrandOnlyQuery) — and cannot remove it.
  *   - The joined run must reproduce the domain label exactly, so a brand the domain abbreviates
  *     ("dent notion clinic" for dentnotion.com is fine, but "dent notion" for
  *     dentnotionclinic.com is not) goes unrecognised.
@@ -332,6 +346,46 @@ function isBrandedQuery(query: string, token: string | null): boolean {
   return false;
 }
 
+/**
+ * Is the query the brand and NOTHING ELSE — every atom of it consumed by the brand name?
+ * "dent notion" on dentnotion.com yes; "dent notion dis klinigi" no; "apple pie recipe" no.
+ *
+ * This is the ONE case where `branded` does not also demand the sitelink shape, and it exists
+ * because the sitelink proxy was measured too narrow. 2026-08-09, dentnotion.com, after the
+ * adjacent-atom join shipped: the top group was still "dent notion" — the company's own name,
+ * 6 competing pages in a 4233-impression group, homepage at 2.0 and the other five between 2.7
+ * and 4.2, i.e. NOTHING at <= 1.5. Google was drawing no pinned sitelink block for it, so the
+ * conjunction failed and the firm's own name sat at the top of its cannibalization list. The
+ * rule the sitelink test came from (adstark: four pages at exactly 1.0) took "sitelinks are
+ * visible" as the proxy for "navigational"; dentnotion refutes the proxy, not the goal.
+ *
+ * Why the relaxation stops at "exactly the brand" rather than covering every branded query: a
+ * user who typed the company name and nothing else has nowhere else to be going, whatever
+ * furniture Google draws around the answer. Add one word and that stops holding — "apple pie
+ * recipe" carries the intent, and the brand is incidental to it — so those keep the sitelink
+ * requirement untouched. This function can therefore only ever suppress queries that ARE the
+ * brand; it cannot widen suppression for a query carrying any other word.
+ *
+ * Equality on the join of EVERY atom, which is deliberately the same joined-atom form
+ * isBrandedQuery matches runs against, and strictly stronger than it: a whole-query join that
+ * equals the token is also a run that equals it, so this can never brand something isBrandedQuery
+ * would not. "notion dent" joins to "notiondent" and is still not the brand.
+ *
+ * WHAT IT DOES NOT CATCH, in the safe direction: a navigational query typed as the domain,
+ * "adstark.com.tr", carries the atoms "com" and "tr" beyond the brand, so it still needs the
+ * sitelink shape. Relaxing that would mean deciding which atoms are furniture, which is the
+ * public-suffix problem again (see TWO_PART_SUFFIXES) with the answer hidden from the user.
+ *
+ * STILL UNMEASURED: dentnotion is n=1 for the unpinned brand SERP. One live case is enough to
+ * refute the old rule and never enough to prove a new one — what is claimed here is the
+ * mechanism (a brand-only query is navigational), not how often the shape occurs.
+ */
+function isBrandOnlyQuery(query: string, token: string | null): boolean {
+  if (token === null) return false;
+  const atoms = foldedAtoms(query);
+  return atoms.length > 0 && atoms.join("") === token;
+}
+
 /** A sitelink sits at position 1; allow a hair of averaging noise over a 90-day window. */
 export const SITELINK_PINNED_MAX_POSITION = 1.5;
 
@@ -346,6 +400,11 @@ export const SITELINK_PINNED_MAX_POSITION = 1.5;
  * long as its pages are NOT pinned at 1 — measured: at [1.0, 1.2] it is suppressed, because the
  * two signals cannot tell it apart from a navigational query. See KNOWN LIMITS on
  * isBrandedQuery; this narrows generic-word over-suppression, it does not remove it.
+ *
+ * Since isBrandOnlyQuery landed, "in addition" is exact rather than universal: this test governs
+ * every query that carries a word beyond the brand — which is where the generic-word protection
+ * has to live, because that is where a brand word can be incidental to the intent — and a query
+ * that is the brand alone is answered without it.
  *
  * Two pinned pages is the WHOLE test. An earlier version also demanded that some page NOT be
  * pinned, generalising from the one live example where the homepage happened to sit at 3.9 —
@@ -382,7 +441,14 @@ export function detectCannibalization(pull: PullData): CannibalGroup[] {
       total_impressions: totalImpressions,
       total_clicks: rows.reduce((sum, row) => sum + row.clicks, 0),
       pages: sorted,
-      branded: isBrandedQuery(query, brandToken) && looksLikeSitelinks(sorted),
+      // The brand match is required always; the sitelink shape only for a query that carries
+      // more than the brand. A query that IS the brand is navigational on its own evidence
+      // (isBrandOnlyQuery — measured: dentnotion.com had no page at <= 1.5 and was still a
+      // brand SERP), and the OR is reachable only through that stricter test, so no query
+      // carrying another word loses the sitelink requirement.
+      branded:
+        isBrandedQuery(query, brandToken) &&
+        (isBrandOnlyQuery(query, brandToken) || looksLikeSitelinks(sorted)),
     });
   }
   return groups.sort((a, b) => b.total_impressions - a.total_impressions);
