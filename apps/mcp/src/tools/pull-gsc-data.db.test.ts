@@ -20,11 +20,16 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
  *       (the sync surface never touches a jobs reserve);
  *   (b) no connection -> THROWS "connect_gsc first" and RELEASES (net 0), no jobs row;
  *   (c) a connection with no matched property -> THROWS and RELEASES (net 0), no jobs row.
- * A SECOND block below asserts the same three connection states as the CLIENT receives them —
- * through the registry's catch, which is where the sentence used to be lost. A THIRD block does
+ * A SECOND block below asserts the same two connection states as the CLIENT receives them —
+ * through the registry's catch, which is where the sentence used to be lost. (Migration 0021
+ * retired a third state that lived here, "connection exists but has no stored token yet":
+ * gsc_connections.encrypted_refresh_token is gone and gsc_accounts.encrypted_refresh_token is
+ * NOT NULL, so account_id now names either a real token or nothing — same message as no
+ * connection. See the commit message for the full per-assertion account.) A THIRD block does
  * the same for the Google 403, the one refusal that is BOTH user-actionable and operator-worthy:
  * the client gets a permission sentence, the log keeps Google's verbatim message, and the ledger
  * still nets to zero — with a 500 and a token-endpoint 403 beside it to hold the branch narrow.
+ * A FOURTH block is the mutation-tested tenant guard on the gsc_accounts read itself (NEVER #4).
  */
 
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
@@ -90,19 +95,38 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
-/** Seed a gsc_connections row with a sealed refresh token and (optionally) a matched property. */
+/**
+ * Seed a connected project: a real gsc_accounts row carrying a sealed refresh token (migration
+ * 0021 axis — sealed to {userId, accountId}, never {userId, projectId}), linked from
+ * gsc_connections.account_id, with (optionally) a matched property. Returns the minted
+ * accountId so a caller can seed a SECOND connection pointing at the same account (the
+ * cross-tenant SECURITY spec below).
+ */
 async function seedConnection(
   userId: string,
   projectId: string,
   property: string | null,
-): Promise<void> {
+): Promise<string> {
+  const accountId = randomUUID();
+  const acctResult = await service.from("gsc_accounts").insert({
+    id: accountId,
+    user_id: userId,
+    google_account_sub: `sub-${randomUUID()}`,
+    google_account_email: `pull-account-${randomUUID()}@example.test`,
+    encrypted_refresh_token: toByteaHex(
+      encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, accountId }),
+    ),
+  });
+  if (acctResult.error) throw new Error(`gsc_accounts seed failed: ${acctResult.error.message}`);
+
   const { error } = await service.from("gsc_connections").insert({
     user_id: userId,
     project_id: projectId,
-    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, projectId })),
+    account_id: accountId,
     gsc_property: property,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
+  return accountId;
 }
 
 interface LedgerRow {
@@ -244,17 +268,6 @@ async function callThroughRegistry(
   return call({ params: { name: tool.name, arguments: { project_id: projectId, days: 90 } } });
 }
 
-/** Seed a connection row with NO refresh token — the "approved nothing yet" state. */
-async function seedConnectionWithoutToken(userId: string, projectId: string): Promise<void> {
-  const { error } = await service.from("gsc_connections").insert({
-    user_id: userId,
-    project_id: projectId,
-    encrypted_refresh_token: null,
-    gsc_property: null,
-  });
-  if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
-}
-
 /** Assert the shared shape of a designed refusal: verbatim text, no crash dressing, net 0. */
 async function expectRefusal(
   ctx: AuthContext,
@@ -296,27 +309,6 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
     }
   });
 
-  it("connection with no stored token: the re-approve sentence verbatim, nets to zero", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      const ctx = await makeCtx();
-      await seedGrant(ctx.userId, 100);
-      const projectId = await makeProject(ctx.userId, `notoken-${randomUUID()}.example.com`);
-      await seedConnectionWithoutToken(ctx.userId, projectId);
-
-      const result = await callThroughRegistry(ctx, pullTool(), projectId);
-
-      await expectRefusal(
-        ctx,
-        result,
-        "This project's Search Console connection has no stored token yet. Re-run connect_gsc and approve access.",
-        errorSpy,
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
   /** The live state of www.noraninsaat.com on 2026-08-09 (campaign finding #36) — the sentence it should have received. */
   it("connection with no matched property: the reconnect sentence verbatim, nets to zero", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -339,29 +331,33 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
     }
   });
 
-  it("the three refusals are DIFFERENT sentences — the states are not collapsed into one", async () => {
-    // The isolation pin's opposite. The audits deliberately collapse three causes into one
-    // sentence because telling them apart would leak another tenant's data; here the three
-    // states are all the caller's OWN connection, and the next action differs each time, so
-    // collapsing them would destroy exactly what makes the refusal actionable.
+  /**
+   * Migration 0021 retired the third state that used to sit here ("connection exists but has
+   * no stored token yet" — encrypted_refresh_token dropped from gsc_connections outright, and
+   * gsc_accounts.encrypted_refresh_token is NOT NULL, so an account_id either names a row with
+   * a token or is null, same as "not connected"). Two designed refusals remain, and this spec's
+   * job shrinks to the same claim over the smaller set: they must not collapse into one sentence.
+   */
+  it("the two refusals are DIFFERENT sentences — the states are not collapsed into one", async () => {
+    // The isolation pin's opposite. The audits deliberately collapse causes into one sentence
+    // because telling them apart would leak another tenant's data; here both states are the
+    // caller's OWN connection, and the next action differs each time, so collapsing them would
+    // destroy exactly what makes the refusal actionable.
     const ctx = await makeCtx();
     await seedGrant(ctx.userId, 100);
     const noConn = await makeProject(ctx.userId, `d1-${randomUUID()}.example.com`);
-    const noToken = await makeProject(ctx.userId, `d2-${randomUUID()}.example.com`);
-    await seedConnectionWithoutToken(ctx.userId, noToken);
     const noProp = await makeProject(ctx.userId, `d3-${randomUUID()}.example.com`);
     await seedConnection(ctx.userId, noProp, null);
 
     const texts: string[] = [];
-    for (const projectId of [noConn, noToken, noProp]) {
+    for (const projectId of [noConn, noProp]) {
       const result = await callThroughRegistry(ctx, pullTool(), projectId);
       expect(result.isError).toBe(true);
       texts.push(result.content[0]?.text ?? "");
     }
-    expect(new Set(texts).size).toBe(3);
+    expect(new Set(texts).size).toBe(2);
     expect(texts[0]).toContain("Run connect_gsc first");
-    expect(texts[1]).toContain("no stored token yet");
-    expect(texts[2]).toContain("no matched property yet");
+    expect(texts[1]).toContain("no matched property yet");
   });
 
   /**
@@ -567,6 +563,83 @@ describe("pull_gsc_data when Google refuses the property (403)", () => {
       expect(result.content[0]?.text ?? "").toMatch(/failed unexpectedly/);
       expect(result.content[0]?.text ?? "").not.toContain("Users and permissions");
       expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * TENANT ISOLATION on the gsc_accounts read itself (NEVER #4) — the spec the MUTATION step in
+ * this task pins. account_id on a connection is only ever minted by the web write path for its
+ * OWN caller, so this state is not reachable through the real product; it is seeded directly to
+ * prove the read stays tenant-scoped even under a data anomaly (a bug elsewhere, or a crafted
+ * row), rather than trusting that account_id always belongs to the reading user.
+ *
+ * Mutated by hand for this task: deleting the `.eq("user_id", userId)` filter from
+ * defaultLoadAccountToken (pull-gsc-data.ts) turns this red — the read then finds the
+ * intruder's foreign account_id, decryptToken's AAD mismatch throws a DIFFERENT message ("wrong
+ * key or corrupt ciphertext", not "not found"), and both assertions on `logged` fail. Restoring
+ * the filter turns it back green. See task-2b-report.md for the exact before/after command output.
+ */
+describe("pull_gsc_data — gsc_accounts read is tenant-scoped (mutation-tested)", () => {
+  it("SECURITY: a connection whose account_id belongs to another tenant is refused, not read", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const owner = await makeCtx();
+      const intruder = await makeCtx();
+      await seedGrant(intruder.userId, 100);
+
+      // owner's REAL gsc_accounts row, holding their real sealed token.
+      const accountId = randomUUID();
+      const acctResult = await service.from("gsc_accounts").insert({
+        id: accountId,
+        user_id: owner.userId,
+        google_account_sub: `sub-${randomUUID()}`,
+        google_account_email: `owner-${randomUUID()}@example.test`,
+        encrypted_refresh_token: toByteaHex(
+          encryptToken(`1//owner-secret-${randomUUID()}`, KEY, {
+            userId: owner.userId,
+            accountId,
+          }),
+        ),
+      });
+      if (acctResult.error) {
+        throw new Error(`gsc_accounts seed failed: ${acctResult.error.message}`);
+      }
+
+      // intruder's OWN project, its connection row pointed at the OWNER's account — the
+      // anomalous state this spec exists to refuse.
+      const projectId = await makeProject(intruder.userId, `intrude-${randomUUID()}.example.com`);
+      const connResult = await service.from("gsc_connections").insert({
+        user_id: intruder.userId,
+        project_id: projectId,
+        account_id: accountId,
+        gsc_property: "sc-domain:intrude.example.com",
+      });
+      if (connResult.error) {
+        throw new Error(`gsc_connections seed failed: ${connResult.error.message}`);
+      }
+
+      const result = await callThroughRegistry(intruder, pullTool(), projectId);
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      // Never the owner's plaintext, and never Google's decrypt-failure wording either — a
+      // wrong-tenant read is reported as a lookup miss, not surfaced as a crypto failure.
+      expect(text).not.toMatch(/owner-secret/);
+
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain("not found");
+      expect(logged).toContain(accountId);
+
+      // Refused before any Google call: reserved, released, no pull job, no charge.
+      const rows = await ledgerRows(intruder.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(intruder.userId)).toHaveLength(0);
     } finally {
       errorSpy.mockRestore();
     }
