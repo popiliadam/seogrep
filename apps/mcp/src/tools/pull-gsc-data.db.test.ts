@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { encryptToken, toByteaHex } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import type { GscApi } from "../gsc-data/pull.ts";
 import { CURRENT_ROWS, FIXTURE_WINDOWS, PREVIOUS_ROWS, rawGoogleResponse } from "../gsc-data/fixtures.ts";
+import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makePullGscDataTool } from "./pull-gsc-data.ts";
 
 /**
@@ -17,6 +20,8 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
  *       (the sync surface never touches a jobs reserve);
  *   (b) no connection -> THROWS "connect_gsc first" and RELEASES (net 0), no jobs row;
  *   (c) a connection with no matched property -> THROWS and RELEASES (net 0), no jobs row.
+ * A SECOND block below asserts the same three connection states as the CLIENT receives them —
+ * through the registry's catch, which is where the sentence used to be lost.
  */
 
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
@@ -197,5 +202,207 @@ describe("pull_gsc_data sync charge against the local stack", () => {
     expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(100);
     expect(await pullJobs(ctx.userId)).toHaveLength(0);
+  });
+});
+
+/**
+ * The three CONNECTION refusals AS THE CLIENT RECEIVES THEM — through registerAll's catch rather
+ * than tool.run. They are three different states with three different next actions (connect,
+ * re-approve, wait for property verification), so collapsing them into one crash sentence did not
+ * just mislead: it deleted the only information the user could act on. On 2026-08-09 the third
+ * state was live on www.noraninsaat.com (docs/testing/2026-08-09-cok-site-kampanya.md, #36).
+ *
+ * The last test is the counterweight: a REAL lookup failure in this same tool must keep the
+ * generic sentence, the reference and the log line.
+ */
+
+/** A minimal fake MCP Server that records the handlers registerAll installs. */
+function fakeServer() {
+  const handlers = new Map<unknown, (request: unknown) => unknown>();
+  const server = {
+    setRequestHandler: (schema: unknown, handler: (request: unknown) => unknown) => {
+      handlers.set(schema, handler);
+    },
+  } as unknown as Server;
+  return { server, handlers };
+}
+
+type CallResult = { content: { text: string }[]; isError?: boolean };
+
+/** Call `tool` the way the gateway does: through registerAll, so the catch runs. */
+async function callThroughRegistry(
+  ctx: AuthContext,
+  tool: RegisteredTool,
+  projectId: string,
+): Promise<CallResult> {
+  const { server, handlers } = fakeServer();
+  registerAll(server, { ctx, tools: [tool] });
+  const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<CallResult>;
+  return call({ params: { name: tool.name, arguments: { project_id: projectId, days: 90 } } });
+}
+
+/** Seed a connection row with NO refresh token — the "approved nothing yet" state. */
+async function seedConnectionWithoutToken(userId: string, projectId: string): Promise<void> {
+  const { error } = await service.from("gsc_connections").insert({
+    user_id: userId,
+    project_id: projectId,
+    encrypted_refresh_token: null,
+    gsc_property: null,
+  });
+  if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
+}
+
+/** Assert the shared shape of a designed refusal: verbatim text, no crash dressing, net 0. */
+async function expectRefusal(
+  ctx: AuthContext,
+  result: CallResult,
+  expected: string,
+  errorSpy: MockInstance,
+): Promise<void> {
+  expect(result.isError).toBe(true);
+  expect(result.content[0]?.text).toBe(expected);
+  expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+  expect(result.content[0]?.text).not.toMatch(/reference/i);
+  expect(errorSpy).not.toHaveBeenCalled();
+
+  const rows = await ledgerRows(ctx.userId);
+  expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+  expect(rows[1]?.delta).toBe(-TOOL_COSTS.pull_gsc_data);
+  expect(balanceOf(rows)).toBe(100);
+  expect(await pullJobs(ctx.userId)).toHaveLength(0);
+}
+
+describe("pull_gsc_data refusals — what the CLIENT receives", () => {
+  it("no connection: the connect_gsc sentence verbatim, no crash sentence, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `noconn-${randomUUID()}.example.com`);
+
+      const result = await callThroughRegistry(ctx, pullTool(), projectId);
+
+      await expectRefusal(
+        ctx,
+        result,
+        `No Search Console connection for project ${projectId}. Run connect_gsc first.`,
+        errorSpy,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("connection with no stored token: the re-approve sentence verbatim, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `notoken-${randomUUID()}.example.com`);
+      await seedConnectionWithoutToken(ctx.userId, projectId);
+
+      const result = await callThroughRegistry(ctx, pullTool(), projectId);
+
+      await expectRefusal(
+        ctx,
+        result,
+        "This project's Search Console connection has no stored token yet. Re-run connect_gsc and approve access.",
+        errorSpy,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /** The live state of www.noraninsaat.com on 2026-08-09 (campaign finding #36) — the sentence it should have received. */
+  it("connection with no matched property: the reconnect sentence verbatim, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `noprop-${randomUUID()}.example.com`);
+      await seedConnection(ctx.userId, projectId, null); // token stored, property unmatched
+
+      const result = await callThroughRegistry(ctx, pullTool(), projectId);
+
+      await expectRefusal(
+        ctx,
+        result,
+        "This project's Search Console connection has no matched property yet. Reconnect once the property is verified in Search Console.",
+        errorSpy,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("the three refusals are DIFFERENT sentences — the states are not collapsed into one", async () => {
+    // The isolation pin's opposite. The audits deliberately collapse three causes into one
+    // sentence because telling them apart would leak another tenant's data; here the three
+    // states are all the caller's OWN connection, and the next action differs each time, so
+    // collapsing them would destroy exactly what makes the refusal actionable.
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const noConn = await makeProject(ctx.userId, `d1-${randomUUID()}.example.com`);
+    const noToken = await makeProject(ctx.userId, `d2-${randomUUID()}.example.com`);
+    await seedConnectionWithoutToken(ctx.userId, noToken);
+    const noProp = await makeProject(ctx.userId, `d3-${randomUUID()}.example.com`);
+    await seedConnection(ctx.userId, noProp, null);
+
+    const texts: string[] = [];
+    for (const projectId of [noConn, noToken, noProp]) {
+      const result = await callThroughRegistry(ctx, pullTool(), projectId);
+      expect(result.isError).toBe(true);
+      texts.push(result.content[0]?.text ?? "");
+    }
+    expect(new Set(texts).size).toBe(3);
+    expect(texts[0]).toContain("Run connect_gsc first");
+    expect(texts[1]).toContain("no stored token yet");
+    expect(texts[2]).toContain("no matched property yet");
+  });
+
+  /**
+   * THE COUNTERWEIGHT. A failed gsc_connections read is a real fault carrying a Postgres message;
+   * the operator needs the log line and the caller must not be handed the raw detail (L-03).
+   */
+  it("a genuine connection-lookup failure still gets the generic sentence, a reference and a log line", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `crash-${randomUUID()}.example.com`);
+
+      const crashingTool = makePullGscDataTool({
+        api: fakeApi,
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+        loadConnection: async () => {
+          throw new Error(
+            'pull_gsc_data: connection lookup failed: relation "public.gsc_connections" does not exist',
+          );
+        },
+      });
+      const result = await callThroughRegistry(ctx, crashingTool, projectId);
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      const reference = /reference ([0-9a-f]{8})\b/.exec(text)?.[1];
+      expect(reference).toBeDefined();
+      expect(text).not.toMatch(/relation/);
+      expect(text).not.toMatch(/gsc_connections/);
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain(reference!);
+      expect(logged).toContain("connection lookup failed");
+
+      // Unchanged on a crash too: reserved, released, no pull job.
+      const rows = await ledgerRows(ctx.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

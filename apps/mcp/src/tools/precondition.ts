@@ -18,11 +18,20 @@
  * reserve/release mechanics are unchanged, and an Error subclass is what withCredits already
  * releases on. All this carries is "which of the two things did the catch just catch".
  *
- * WHAT MUST NOT BE ADDED TO IT. The loaders resolve a missing project, another tenant's project
- * and a project never crawled to the SAME message on purpose (audit/load.ts, gsc-data/load.ts).
- * Until now the crash sentence hid that uniformity by accident; the message is user-visible from
- * here on, so the uniformity is load-bearing tenant isolation (constitution NEVER #4). Do not
- * enrich this error with the project id, the reason, or which of the three cases it was.
+ * WHAT MUST NOT BE ADDED TO IT — and the rule is narrower than "add nothing".
+ *
+ * The invariant is: NEVER add anything the caller could not already know. Concretely, never say
+ * WHICH of the tenant cases it was. The loaders resolve a missing project, another tenant's
+ * project and a project never crawled to the SAME message on purpose (audit/load.ts,
+ * gsc-data/load.ts). Until now the crash sentence hid that uniformity by accident; the message is
+ * user-visible from here on, so the uniformity is load-bearing tenant isolation (NEVER #4).
+ *
+ * Echoing the caller's OWN project_id back is therefore fine, and two call sites do it
+ * (generate-report.ts, pull-gsc-data.ts): it is the argument they just passed in, so it discloses
+ * nothing they did not supply, and on those paths the lookup is already tenant-scoped so missing
+ * and other-tenant remain indistinguishable. Stating this explicitly because the earlier wording
+ * here read as a blanket "no project id" rule and contradicted those two call sites — an
+ * ambiguity the next implementer would have resolved in one direction or the other by guessing.
  */
 export class PreconditionNotMetError extends Error {
   constructor(message: string) {
