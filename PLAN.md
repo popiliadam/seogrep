@@ -228,31 +228,57 @@ MCP endpoint canlı · 19 tool
 ŞEF BASH'İ ~/.zshrc'yi SOURCE ETMEZ → her koşuda: `set -a && . ~/.zshrc; set +a`
 SUPABASE_URL / SERVICE_ROLE şefte YOK ve gerekmiyor — operatör SQL'i kendi koşuyor.
 
-SEKİZ PROJE — kanonik id tablosu (list_projects ile ölçüldü):
+YEDİ PROJE — kanonik id tablosu (list_projects ile ölçüldü):
+  ⚠ www.noraninsaat.com (dcad126a-…) OPERATÖR KARARIYLA TEST LİSTESİNDEN ÇIKARILDI
+    (2026-08-09). Projesi ve crawl'ı duruyor, kampanyada ÇAĞRILMAZ. Not: GSC'de
+    sc-domain:noraninsaat.com siteOwner olarak MEVCUT, yani #36 tek tıkla çalışırdı —
+    çıkarma teknik bir engelden değil, operatör tercihinden.
   adstark.com.tr       e2785bf7-9963-4b6a-a6d7-aaed7b550abe  crawl ✅ GSC ✅ https://
   seogrep.com          4e0caff0-3788-42b2-9f70-6023f6ba6894  crawl ✅ GSC ❌ ← KONTROL GRUBU
   bayder.com.tr        424cda8f-4d35-408c-b780-1178f7d3b6f7  crawl ✅ GSC ⚠ yanlış property
   rkturizm.com         3e2068e6-9bcc-4089-b166-ba270d0ffcfc  crawl ✅ GSC ⚠ yanlış property
   www.bigcattr.com     26b95c84-1099-480f-b85f-d06536c11ba1  crawl ⚠ 1 sayfa 4xx · GSC ✅
-  www.noraninsaat.com  dcad126a-9b32-48bd-a6b5-c7422c1eac26  crawl ✅ GSC ⚠ property yok
   katrenur.com         12533f04-ead8-407e-95ff-9393b8042e82  crawl ✅ GSC ✅ sc-domain
   dentnotion.com       fa9340e5-52e6-483e-b7f9-1d10121f42d4  crawl ✅ GSC ✅ https://
+
+GSC'DE OLUP KAMPANYADA OLMAYAN ALTI SİTE (list_sites ile ölçüldü, hepsi siteOwner):
+  https://ventofurniture.com/ · https://www.calitte.com/ · https://www.miningaa.com/
+  https://www.eykom.com/ · https://www.lastiksa.com/ · sc-domain:pufypancake.com
+  Kampanyanın tek gerçek sınırı ÖRNEK SAYISI: #47 (IDN marka filtresi) ölçümle
+  bulunamadı çünkü sekiz sitenin hiçbiri o şekle sahip değildi. Bu altısı yeni ŞEKİL
+  getirebilir (farklı sektör, farklı property tipi, farklı boyut). Kampanyaya katmak
+  OPERATÖR KARARI — sormadan ekleme, ama Faz B'de örnek yetersizliğine takılırsan
+  seçenek olarak hatırla.
 
 YABANCI project_id (kiracı izolasyonu, operatör verdi):
   dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a   example.com, başka kiracı
 
-=== ÖNCE İNSAN: ÜÇ TIKLAMA — Faz B'den ÖNCE ===
+=== ÖNCE İNSAN: İKİ TIKLAMA — Faz B'den ÖNCE ===
 GSC eşleştirmesi YALNIZ OAuth callback'inde koşar; düzeltmeler mevcut bozuk satırları
-GERİYE DÖNÜK ONARMAZ. Bu üç site aksi hâlde Faz B'de yine ölçülemez.
+GERİYE DÖNÜK ONARMAZ. Bu iki site aksi hâlde Faz B'de yine ölçülemez.
 
-  bayder.com.tr       https://seogrep.com/api/gsc/connect?project_id=424cda8f-4d35-408c-b780-1178f7d3b6f7
-  rkturizm.com        https://seogrep.com/api/gsc/connect?project_id=3e2068e6-9bcc-4089-b166-ba270d0ffcfc
-  www.noraninsaat.com https://seogrep.com/api/gsc/connect?project_id=dcad126a-9b32-48bd-a6b5-c7422c1eac26
+  bayder.com.tr   https://seogrep.com/api/gsc/connect?project_id=424cda8f-4d35-408c-b780-1178f7d3b6f7
+  rkturizm.com    https://seogrep.com/api/gsc/connect?project_id=3e2068e6-9bcc-4089-b166-ba270d0ffcfc
+
+Link bir property'ye İŞARET ETMEZ — yalnız OAuth akışını başlatır; property'yi sonradan
+BİZİM kodumuz seçer. Eski kalıntıya gitmesinin sebebi linkte değil, matchGscProperty'nin
+domain property'yi tercih edip KULLANILABİLİRLİĞİNE bakmamasıydı. #50 bunu kapattı.
+
+GSC MCP ile ÖLÇÜLDÜ (2026-08-09, list_sites) — #50 sonrası beklenen düşüş:
+  rkturizm.com     https://rkturizm.com/       siteOwner            ← buraya düşmeli
+                   sc-domain:rkturizm.com      siteUnverifiedUser   ← 403'ün sebebi, elenir
+  bayder.com.tr    https://bayder.com.tr/      siteOwner            ← buraya düşmeli
+                   sc-domain:bayder.com.tr     LİSTEDE YOK
+
+siteUnverifiedUser ÖLÇÜLDÜ: işçi ve hakem bunu 403'e uyan tek belgelenmiş seviye diye
+ÇIKARIM yoluyla söylemiş ve "canlı sites.list okunmadı" şerhi düşmüştü. Şerh artık kalktı.
 
 TIKLANDIKTAN SONRA ÖLÇ, VARSAYMA: `connect_gsc` ile hangi property'ye bağlandığını oku.
-bayder/rkturizm için beklenen `https://…/` (sc-domain DEĞİL — operatör o iki sc-domain
-property'sinin "kullanım dışı" olduğunu söyledi ve Google onları 403'lüyor).
-Beklenen çıkmazsa DUR ve raporla: #50 tam bu düşüşü sağlamak için yazıldı.
+Beklenen `https://…/`. Çıkmazsa DUR ve raporla — #50 tam bu düşüşü sağlamak için yazıldı.
+
+GSC MCP (mcp__gsc__list_sites) ARTIK AKTİF: property listesini ve seviyelerini doğrudan
+okuyabilirsin. SeoGrep'in kendi OAuth'u AYRI bir yetkilendirmedir; ikisi aynı Google
+hesabı ise liste birebir örtüşür, değilse örtüşmez — iddia etmeden önce karşılaştır.
 
 === FAZ A — NE DÜZELTİLDİ ===
 
