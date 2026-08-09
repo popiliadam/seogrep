@@ -124,17 +124,27 @@ export async function upsertGscAccount(
  * failed with Google's `invalid_grant` (see {@link accessTokenFor}); ANY other refresh
  * failure (5xx, network, timeout) must never call this with `"invalid"` — a transient
  * outage is not a dead credential (migration 0021's own comment on the column).
+ *
+ * Takes `userId` and filters on it (NEVER #4) — widened from the brief's literal
+ * `(client, accountId, status)` signature in fix round 1. This function is exported and
+ * writes the table holding every Google credential in the product; without the filter, a
+ * caller passing an unvalidated `accountId` could flip a FOREIGN tenant's `token_status`,
+ * silently prompting another user to re-authorize or masking their dead credential. It
+ * cannot leak ciphertext (this is a status-only write), but "the caller will be careful"
+ * is not a guard on the one table this module exists to protect.
  */
 export async function markAccountTokenStatus(
   client: ServiceClient,
   accountId: string,
+  userId: string,
   status: "active" | "invalid",
 ): Promise<void> {
   const table = client as unknown as SupabaseClient<GscAccountsDatabase>;
   const { error } = await table
     .from("gsc_accounts")
     .update({ token_status: status, token_checked_at: new Date().toISOString() })
-    .eq("id", accountId);
+    .eq("id", accountId)
+    .eq("user_id", userId);
   if (error) {
     throw new Error(`gsc_accounts status write failed: ${error.message}`);
   }
@@ -164,6 +174,13 @@ function isInvalidGrant(error: unknown): boolean {
  * builds the typed reauth error around that written state; this function only guarantees
  * the write happens first). Any other failure (5xx, network, timeout) writes nothing and
  * rethrows as-is — see {@link isInvalidGrant}.
+ *
+ * The `invalid_grant` status write is wrapped in its OWN try/catch (fix round 1): if that
+ * write itself throws (a transient DB blip), the write's error is logged and swallowed —
+ * the ORIGINAL `invalid_grant` error always propagates unchanged. Task 8 detects a dead
+ * credential by inspecting exactly that error; letting a DB hiccup replace it would
+ * misclassify a dead credential as a transient failure, and the user would see "try again"
+ * forever instead of "reconnect".
  */
 export async function accessTokenFor(
   client: ServiceClient,
@@ -196,11 +213,20 @@ export async function accessTokenFor(
     tokens = await refreshAccessToken(refreshToken, deps);
   } catch (error) {
     if (isInvalidGrant(error)) {
-      await markAccountTokenStatus(client, accountId, "invalid");
+      try {
+        await markAccountTokenStatus(client, accountId, userId, "invalid");
+      } catch (statusError) {
+        // Never let a failed status write replace the invalid_grant error Task 8 depends
+        // on — log-and-swallow so the ORIGINAL error is always what the caller sees.
+        console.error(
+          `gsc_accounts: failed to mark account ${accountId} invalid after invalid_grant`,
+          statusError,
+        );
+      }
     }
     throw error;
   }
 
-  await markAccountTokenStatus(client, accountId, "active");
+  await markAccountTokenStatus(client, accountId, userId, "active");
   return tokens.accessToken;
 }

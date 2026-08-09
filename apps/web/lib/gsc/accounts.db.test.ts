@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@pseo/db/server";
 import type { TokenDeps } from "@pseo/core";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { accessTokenFor, markAccountTokenStatus, upsertGscAccount } from "./accounts.js";
 
 /**
@@ -131,7 +131,7 @@ describe("upsertGscAccount", () => {
       refreshToken: "t1",
       keyHex: KEY,
     });
-    await markAccountTokenStatus(client, accountId, "invalid");
+    await markAccountTokenStatus(client, accountId, user.id, "invalid");
     await upsertGscAccount(client, {
       userId: user.id,
       sub,
@@ -168,6 +168,28 @@ describe("upsertGscAccount", () => {
   });
 });
 
+describe("markAccountTokenStatus", () => {
+  it("a mismatched (accountId, userId) pair does NOT change the row — foreign tenant guard (MUTATION TARGET, fix round 1)", async () => {
+    // Fix round 1: this function is exported and writes the table holding every Google
+    // credential in the product. Without its own `.eq("user_id", …)`, a caller passing an
+    // unvalidated accountId could flip a FOREIGN tenant's token_status. Here the write
+    // targets the OWNER's real account but claims to be a DIFFERENT user — it must affect
+    // zero rows (Supabase update-with-no-match is not an error, just no-op), leaving the
+    // owner's row exactly as upsertGscAccount left it.
+    const owner = await makeUser();
+    const attacker = await makeUser();
+    const { accountId } = await upsertGscAccount(client, {
+      userId: owner.id,
+      sub: `sub-${randomUUID()}`,
+      email: "victim@x.com",
+      refreshToken: "victim-refresh",
+      keyHex: KEY,
+    });
+    await markAccountTokenStatus(client, accountId, attacker.id, "invalid");
+    expect(await readTokenStatus(accountId)).toBe("active"); // unchanged
+  });
+});
+
 describe("accessTokenFor", () => {
   it("refuses to serve an access token for an account owned by a DIFFERENT user (MUTATION TARGET)", async () => {
     const owner = await makeUser();
@@ -193,7 +215,7 @@ describe("accessTokenFor", () => {
       refreshToken: "seed-refresh",
       keyHex: KEY,
     });
-    await markAccountTokenStatus(client, accountId, "invalid"); // start from a non-trivial state
+    await markAccountTokenStatus(client, accountId, user.id, "invalid"); // start from a non-trivial state
 
     const deps = fakeGoogleDeps(200, {
       access_token: "AT-123",
@@ -244,5 +266,42 @@ describe("accessTokenFor", () => {
     const deps = fakeGoogleDeps(500, { error: "server_error" });
     await expect(accessTokenFor(client, accountId, user.id, KEY, deps)).rejects.toThrow();
     expect(await readTokenStatus(accountId)).toBe("active"); // unchanged from upsert's initial write
+  });
+
+  it("a status-write failure inside the invalid_grant handler does NOT swallow the original invalid_grant error (MUTATION TARGET, fix round 1)", async () => {
+    // Fix round 1: Task 8 detects a dead credential by inspecting the invalid_grant error
+    // itself. If markAccountTokenStatus's write throws (a transient DB blip), that error
+    // must NOT replace it — a dead credential misclassified as "transient" would tell the
+    // user to retry forever instead of reconnect. We force the SECOND from("gsc_accounts")
+    // call (the status write inside accessTokenFor's catch) to throw, while letting the
+    // FIRST (the tenant-filtered token read) run for real — a real DB, a synthetic write
+    // failure, exactly the failure mode under test rather than a full client mock.
+    const user = await makeUser();
+    const { accountId } = await upsertGscAccount(client, {
+      userId: user.id,
+      sub: `sub-${randomUUID()}`,
+      email: "a@x.com",
+      refreshToken: "seed-refresh",
+      keyHex: KEY,
+    });
+
+    const realFrom = client.from.bind(client);
+    let fromCalls = 0;
+    const spy = vi.spyOn(client, "from").mockImplementation((table: string) => {
+      fromCalls += 1;
+      if (table === "gsc_accounts" && fromCalls > 1) {
+        throw new Error("simulated transient DB failure writing token_status");
+      }
+      return realFrom(table as never);
+    });
+
+    try {
+      const deps = fakeGoogleDeps(400, { error: "invalid_grant" });
+      await expect(accessTokenFor(client, accountId, user.id, KEY, deps)).rejects.toThrow(
+        /invalid_grant/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
