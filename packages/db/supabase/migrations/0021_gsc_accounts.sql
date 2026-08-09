@@ -39,15 +39,24 @@ create policy "gsc_accounts_select_own"
 -- TRIGGER / MAINTAIN) — never DML (measured here: without these two GRANTs, a service_role
 -- select/insert/delete against a freshly-created gsc_accounts fails `permission denied for table
 -- gsc_accounts` even though service_role bypasses RLS; RLS is a second gate, not a substitute for
--- the first). Same split 0006 used for gsc_connections: authenticated gets SELECT only (its
--- policy above is the actual restriction), service_role gets the full DML surface Task 4's write
--- layer and this migration's own mutation test both require — including DELETE, because
--- `disconnectAccount` (Task 7) removes a gsc_accounts row outright and this file's own db-test
--- deletes one to prove `on delete set null` holds.
-grant select on public.gsc_accounts to authenticated;
+-- the first). service_role gets the full table-level DML surface Task 4's write layer and this
+-- migration's own mutation test both require — including DELETE, because `disconnectAccount`
+-- (Task 7) removes a gsc_accounts row outright and this file's own db-test deletes one to prove
+-- `on delete set null` holds.
+--
+-- authenticated does NOT get a table-level grant (unlike 0006's gsc_connections). gsc_connections
+-- held one project's token per row; gsc_accounts concentrates EVERY Google credential a user has
+-- into one table, so `grant select on public.gsc_accounts to authenticated` would hand an owner
+-- read access to their own `encrypted_refresh_token` ciphertext over the Data API — the RLS policy
+-- above restricts to the OWN row, not to which columns of it. A column-level grant is the fix:
+-- every column except the ciphertext. No UI ever needs the ciphertext client-side; only
+-- service_role decrypts (Task 4's accessTokenFor).
+grant select (id, user_id, google_account_sub, google_account_email, token_status, token_checked_at, created_at)
+  on public.gsc_accounts to authenticated;
 grant select, insert, update, delete on public.gsc_accounts to service_role;
 -- Reverse: revoke select, insert, update, delete on public.gsc_accounts from service_role;
---          revoke select on public.gsc_accounts from authenticated;
+--          revoke select (id, user_id, google_account_sub, google_account_email, token_status, token_checked_at, created_at)
+--            on public.gsc_accounts from authenticated;
 
 -- `on delete set null`, CASCADE DEĞİL: bir hesabı koparmak eşlemeleri SİLMEMELİ. Cascade
 -- olsaydı disconnect, bu migration'ın özenle koruduğu şeyi yok ederdi. set null ile hesabı

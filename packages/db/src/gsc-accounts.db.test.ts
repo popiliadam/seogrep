@@ -129,6 +129,34 @@ describe("gsc_accounts: owner-only, RLS enable+force (migration 0021)", () => {
     expect(bRead.error).toBeNull();
     expect(bRead.data ?? []).toEqual([]);
   });
+
+  it("an owner cannot select encrypted_refresh_token from their own row, but CAN select the non-secret columns", async () => {
+    const userA = await makeUser();
+    const accountOfA = await makeGscAccount(userA.id, { email: "owner-column-grant@example.test" });
+    const asA = await clientForUser(userA);
+
+    // The half that would still pass if the fix accidentally revoked everything: the owner's
+    // OWN row, non-secret columns, must still be readable. A column-level grant that is too
+    // narrow would fail this half silently (empty error, but also no data) alongside the denial.
+    const allowed = await asA
+      .from("gsc_accounts")
+      .select("id, google_account_email, token_status")
+      .eq("id", accountOfA);
+    expect(allowed.error).toBeNull();
+    expect(allowed.data ?? []).toHaveLength(1);
+    expect(allowed.data?.[0]?.google_account_email).toBe("owner-column-grant@example.test");
+    expect(allowed.data?.[0]?.token_status).toBe("active");
+
+    // The half under test: the ciphertext column is NOT in the authenticated grant, so
+    // referencing it must be refused at the column-privilege layer — even for the caller's own
+    // row, where the RLS policy itself would otherwise allow the row through.
+    const denied = await asA
+      .from("gsc_accounts")
+      .select("id, encrypted_refresh_token")
+      .eq("id", accountOfA);
+    expect(denied.error).not.toBeNull();
+    expect(denied.data).toBeNull();
+  });
 });
 
 describe("gsc_connections.account_id: on delete set null (migration 0021)", () => {
