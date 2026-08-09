@@ -10,7 +10,7 @@ import { parsePullResult, type PullData } from "./types.ts";
  */
 
 export type PullLoad =
-  | { readonly ok: true; readonly pull: PullData }
+  | { readonly ok: true; readonly pull: PullData; readonly pulledAt: string }
   | { readonly ok: false; readonly error: string };
 
 /** The action-suggesting message a discovery tool gives when there is no pull to analyze. */
@@ -32,5 +32,19 @@ export async function loadLatestPull(userId: string, projectId: string): Promise
   if (!latest) return { ok: false, error: NO_PULL_MESSAGE };
   const pull = parsePullResult(latest.result);
   if (!pull) return { ok: false, error: NO_PULL_MESSAGE };
-  return { ok: true, pull };
+  // The timestamp was already fetched (getLatestSucceededResult selects created_at) and then
+  // dropped here. The three discovery tools sell an ANALYSIS of this pull; an undated analysis
+  // cannot be told from a fresh one.
+  return { ok: true, pull, pulledAt: latest.createdAt };
+}
+
+/**
+ * The provenance line every discovery tool appends. ONE renderer, because three tools
+ * printing the same fact three ways is how they drift apart.
+ */
+export function renderPullProvenance(pulledAt: string, now: Date = new Date()): string {
+  const days = Math.floor((now.getTime() - Date.parse(pulledAt)) / 86_400_000);
+  const day = pulledAt.slice(0, 10);
+  const age = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  return `Search Console data pulled ${day} (${age}).`;
 }

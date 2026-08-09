@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
-import { loadLatestPull, type LoadPullFn, type PullData } from "../gsc-data/index.ts";
+import { loadLatestPull, renderPullProvenance, type LoadPullFn, type PullData } from "../gsc-data/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
@@ -56,7 +56,9 @@ export function makeDiscoveryTool(
         // reaches the user, that uniformity is what keeps project existence unobservable.
         throw new PreconditionNotMetError(load.error);
       }
-      return textResult(render(load.pull));
+      // ONE call site for all three tools, so the provenance line can't drift into three
+      // slightly different sentences (gsc-data/load.ts renderPullProvenance).
+      return textResult(`${render(load.pull)}\n\n${renderPullProvenance(load.pulledAt)}`);
     },
   });
 }
