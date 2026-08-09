@@ -162,32 +162,72 @@ export type Database = {
         }
         Relationships: []
       }
-      gsc_connections: {
+      gsc_accounts: {
         Row: {
           created_at: string
-          encrypted_refresh_token: string | null
+          encrypted_refresh_token: string
+          google_account_email: string
+          google_account_sub: string
+          id: string
+          token_checked_at: string | null
+          token_status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_refresh_token: string
+          google_account_email: string
+          google_account_sub: string
+          id?: string
+          token_checked_at?: string | null
+          token_status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_refresh_token?: string
+          google_account_email?: string
+          google_account_sub?: string
+          id?: string
+          token_checked_at?: string | null
+          token_status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      gsc_connections: {
+        Row: {
+          account_id: string | null
+          created_at: string
           gsc_property: string | null
           id: string
           project_id: string
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           created_at?: string
-          encrypted_refresh_token?: string | null
           gsc_property?: string | null
           id?: string
           project_id: string
           user_id: string
         }
         Update: {
+          account_id?: string | null
           created_at?: string
-          encrypted_refresh_token?: string | null
           gsc_property?: string | null
           id?: string
           project_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "gsc_connections_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "gsc_accounts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "gsc_connections_user_id_project_id_fkey"
             columns: ["user_id", "project_id"]
