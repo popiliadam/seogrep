@@ -198,17 +198,22 @@ export type Database = {
         };
         Relationships: [];
       };
-      // Per-project Google Search Console link (migrations 0003 + 0009). Stores the
-      // AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex string) and the
-      // resolved property. The web OAuth callback writes it; pull_gsc_data reads it back
-      // (tenant-scoped by user_id — constitution NEVER #4). gsc_property is migration 0009,
+      // Per-project Google Search Console link (migrations 0003 + 0009 + 0021). Stores the
+      // resolved property and, since 0021, an `account_id` pointing at the `gsc_accounts` row
+      // that actually holds the sealed refresh token — 0021 DROPPED
+      // `gsc_connections.encrypted_refresh_token` outright (the credential moved off the
+      // per-project axis onto the per-account one; see the gsc_accounts table below). The web
+      // OAuth callback writes account_id; pull_gsc_data reads it back tenant-scoped by user_id
+      // (constitution NEVER #4), then resolves the token through gsc_accounts. A null account_id
+      // means "not connected" — same as no row at all — because `on delete set null` (0021) is
+      // how detaching an account normalizes back to that state. gsc_property is migration 0009,
       // which the committed @pseo/db generated types still omit, so it is modeled here.
       gsc_connections: {
         Row: {
           id: string;
           user_id: string;
           project_id: string;
-          encrypted_refresh_token: string | null;
+          account_id: string | null;
           gsc_property: string | null;
           created_at: string;
         };
@@ -216,13 +221,52 @@ export type Database = {
           id?: string;
           user_id: string;
           project_id: string;
-          encrypted_refresh_token?: string | null;
+          account_id?: string | null;
           gsc_property?: string | null;
           created_at?: string;
         };
         Update: {
-          encrypted_refresh_token?: string | null;
+          account_id?: string | null;
           gsc_property?: string | null;
+        };
+        Relationships: [];
+      };
+      // One row per Google account a user has connected (migration 0021), keyed on
+      // (user_id, google_account_sub) — the SUB, never the email, because email can change and
+      // sub cannot. Holds the AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex
+      // string), bound to THIS row's (user_id, id) via the crypto v4 AAD (@pseo/core's
+      // TokenOwner) — a blob moved to another row fails to authenticate there. `authenticated`
+      // has only a column-level grant that EXCLUDES encrypted_refresh_token (migration 0021);
+      // only service_role — this client — can ever reach the ciphertext, so the explicit
+      // `.eq("user_id", …)` on every read is the ONLY tenant guard (constitution NEVER #4), not
+      // a redundant belt-and-suspenders check on top of RLS. This app only ever READS this
+      // table: the write path (upsertGscAccount / accessTokenFor) lives in
+      // apps/web/lib/gsc/accounts.ts (Task 4) — hand-declared here in the same style rather than
+      // imported, matching every other table in this slice.
+      gsc_accounts: {
+        Row: {
+          id: string;
+          user_id: string;
+          google_account_sub: string;
+          google_account_email: string;
+          encrypted_refresh_token: string;
+          token_status: "active" | "invalid";
+          token_checked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          google_account_sub: string;
+          google_account_email: string;
+          encrypted_refresh_token: string;
+          token_status?: "active" | "invalid";
+          token_checked_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          token_status?: "active" | "invalid";
+          token_checked_at?: string | null;
         };
         Relationships: [];
       };
