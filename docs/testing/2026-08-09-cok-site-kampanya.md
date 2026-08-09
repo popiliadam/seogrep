@@ -228,6 +228,19 @@ Sekiz site sitemap ağacından boyutlandırıldı: **22–178 sayfa**.
 |---|---|---|---|---|---|
 | 45 | Ş | `apps/mcp/src/queue/reaper.db.test.ts:465` | **CI'da gece yarısı penceresi — ürün kodu değil, TEST hatalı.** Test `insertDfsRow(..., new Date(now.getTime() - 30*60_000))` yazıyor; `insertDfsRow` `spend_day`'i **`now − 30 dk`**'nın UTC tarihinden türetiyor. Reaper ise `reaper.ts:697` `.eq("spend_day", spendDay)` ile **tek bir UTC gününe** kapsamlı sorguyor (satır 521: *"Scoped to the UTC day the CAP is scoped to (migration 0014)"*). **00:00–00:30 UTC arasında `now − 30 dk` ÖNCEKİ gündür** → satır "bugün"de görünmez → `staleDfsReserves` artmaz → `expected 1, received 0`. Ölçüm: PR #59 CI koşusu **`2026-08-09T00:03:14Z`** FAIL · aynı commit yeniden koşuldu (hâlâ pencere içinde) FAIL · `main`'in son koşusu **`2026-08-08T20:58Z`** PASS. Yani **dal-korelasyonlu değil, saat-korelasyonlu**; günde 30 dakikalık bir pencerede her PR kırmızı verir. **Bu, defterdeki "#46'da açıklanamayan verify-db düşüşü" vakasını da açıklıyor** — o üç yeniden koşu ve main penceresinin dışındaydı, o yüzden tekrarlamadı. Düzeltme yönü (bu PR'da YOK): testin eklediği satırın `spend_day`'i, reaper'ın sorgulayacağı günle aynı olmalı. | 🟡 | açık |
 
+**Hipotez ÖN-KAYITLI olarak sınandı ve tuttu.** Teşhis yazıldıktan sonra, kod değiştirilmeden şu
+tahmin kaydedildi: *"00:30 UTC'den sonra aynı commit yeniden koşulduğunda yeşile dönecek."*
+
+| koşu | UTC | pencere | sonuç |
+|---|---|---|---|
+| PR #59 ilk koşu | 00:03 | içi | **FAIL** |
+| aynı commit, yeniden koşu | ~00:12 | içi | **FAIL** |
+| yeni commit | 00:15 | içi | **FAIL** |
+| **aynı commit, yeniden koşu** | **00:34** | **dışı** | ✅ **PASS** |
+| `main` | 20:58 | dışı | ✅ PASS |
+
+Beş veri noktası, tek satır kod değişmeden. Teşhis kanıtlandı.
+
 **Bu bulgu kampanyanın kendi kuralını kanıtladı:** *"Yeşil kapı CACHE SAYACIYLA raporlanır;
 '16 cached' bir REPLAY'dir, ölçüm değil."* Bu oturumda ilk iki commit cache'li bir "VERIFY: PASS"
 üzerine atıldı; `--force` koşulduğunda aynı ağaç kırmızıydı.
