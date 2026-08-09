@@ -285,10 +285,18 @@ describe("detectCannibalization — branded queries", () => {
     expect(brandedOf(competitiveRows("adstark.com.tr", "adstark ajans"))).toBe(false);
   });
 
+  /**
+   * The query here USED to be the bare "adstark". It had to move to a brand-plus-word query when
+   * the brand-only path landed (see "excludes a brand-only query whose brand SERP has NO pinned
+   * sitelinks"): a query that IS the brand no longer consults the sitelink count at all, so the
+   * old fixture would have measured nothing whatever number this rule required. The claim is
+   * unchanged and still mutation-detected — it is now asserted over the queries the rule still
+   * governs, which is every query carrying a word beyond the brand.
+   */
   it("needs TWO pinned pages, not one", () => {
     const rows = [
-      gscRow({ query: "adstark", page: "https://adstark.com.tr/", impressions: 27, clicks: 9, position: 1 }),
-      gscRow({ query: "adstark", page: "https://adstark.com.tr/x", impressions: 17, clicks: 0, position: 4 }),
+      gscRow({ query: "adstark ajans", page: "https://adstark.com.tr/", impressions: 27, clicks: 9, position: 1 }),
+      gscRow({ query: "adstark ajans", page: "https://adstark.com.tr/x", impressions: 17, clicks: 0, position: 4 }),
     ];
     expect(brandedOf(rows)).toBe(false);
   });
@@ -361,6 +369,80 @@ describe("detectCannibalization — branded queries", () => {
   it("matches a compound brand the user typed as separate words", () => {
     expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion"))).toBe(true);
     expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion dis klinigi"))).toBe(true);
+  });
+
+  /**
+   * Live campaign, 2026-08-09, dentnotion.com again — the half of that case the compound-brand
+   * join could not reach. "dent notion" matched the brand and was STILL the site's number-one
+   * "cannibalized" query, because the other half of the conjunction wanted sitelinks and Google
+   * was drawing none: the homepage at 2.0 and five corporate pages between 2.7 and 4.2, nothing
+   * at <= 1.5. The measured positions are used verbatim so the pin carries the real case. (The
+   * live group printed 4233 impressions; the six pages here are the ones that cleared both
+   * floors, summing to 3614 — the rest were tail pages below the 10% share.)
+   */
+  it("excludes a brand-only query whose brand SERP has NO pinned sitelinks", () => {
+    const host = "dentnotion.com";
+    const rows = [
+      gscRow({ query: "dent notion", page: `https://${host}/`, impressions: 719, clicks: 88, position: 2.0 }),
+      gscRow({ query: "dent notion", page: `https://${host}/our-doctors/`, impressions: 713, clicks: 3, position: 3.1 }),
+      gscRow({ query: "dent notion", page: `https://${host}/iletisim/`, impressions: 704, clicks: 5, position: 4.1 }),
+      gscRow({ query: "dent notion", page: `https://${host}/cocuk-dis-hekimligi/`, impressions: 525, clicks: 2, position: 4.2 }),
+      gscRow({ query: "dent notion", page: `https://${host}/doctor/dt-gurkan-zeybek-3/`, impressions: 503, clicks: 3, position: 3.3 }),
+      gscRow({ query: "dent notion", page: `https://${host}/doktorlarimiz/`, impressions: 450, clicks: 15, position: 2.7 }),
+    ];
+    // No page is anywhere near the pinned band — that is the whole point of the fixture.
+    expect(rows.filter((r) => r.position <= 1.5)).toHaveLength(0);
+    expect(brandedOf(rows)).toBe(true);
+  });
+
+  /**
+   * The pin that stops the relaxation becoming a general loosening, and the reason it is scoped to
+   * "exactly the brand": one word beyond the brand and the brand can be incidental to the intent —
+   * "apple pie recipe" is a recipe query that happens to start with a company name — so unpinned
+   * pages stay a reportable finding exactly as before.
+   */
+  it("KEEPS a brand-PLUS-words query whose pages are NOT pinned", () => {
+    const rows = [
+      gscRow({ query: "apple pie recipe", page: "https://apple.com/a", impressions: 300, clicks: 10, position: 3 }),
+      gscRow({ query: "apple pie recipe", page: "https://apple.com/b", impressions: 200, clicks: 4, position: 4 }),
+    ];
+    expect(brandedOf(rows)).toBe(false);
+  });
+
+  /** The same query pinned at 1 is suppressed, as it already was. Behaviour must not have moved. */
+  it("still excludes a brand-PLUS-words query whose pages ARE pinned", () => {
+    const rows = [
+      gscRow({ query: "apple pie recipe", page: "https://apple.com/a", impressions: 300, clicks: 10, position: 1 }),
+      gscRow({ query: "apple pie recipe", page: "https://apple.com/b", impressions: 200, clicks: 4, position: 1.2 }),
+    ];
+    expect(brandedOf(rows)).toBe(true);
+  });
+
+  /**
+   * What the brand-only path COSTS, pinned rather than left as prose: on apple.com the bare query
+   * "apple" is now suppressed whatever its pages do. That is the generic-word limit on
+   * isBrandedQuery paid in full for one query shape, and it is the deliberate trade — of the two
+   * errors, telling a user to de-optimise the pages ranking for their own name is the one that
+   * loses their trust. If this ever needs revisiting, revisit it here.
+   */
+  it("suppresses the bare brand word even on generically-named sites, pages unpinned", () => {
+    const rows = [
+      gscRow({ query: "apple", page: "https://apple.com/a", impressions: 300, clicks: 10, position: 3 }),
+      gscRow({ query: "apple", page: "https://apple.com/b", impressions: 200, clicks: 4, position: 4 }),
+    ];
+    expect(brandedOf(rows)).toBe(true);
+  });
+
+  /**
+   * The change must not leak outside the brand path: a genuine conflict on a non-brand query, on
+   * the very site whose brand query is now suppressed, is still reported in full.
+   */
+  it("still reports a real conflict on a non-brand query on the same branded site", () => {
+    const rows = competitiveRows("dentnotion.com", "dis beyazlatma fiyatlari");
+    const groups = detectCannibalization(pullData(rows, [], 90));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.branded).toBe(false);
+    expect(groups[0]!.pages).toHaveLength(2);
   });
 
   /**
@@ -445,13 +527,18 @@ describe("detectCannibalization — branded queries", () => {
   });
 
   /**
-   * What actually bounds the widened fold: `branded` is isBrandedQuery AND looksLikeSitelinks, so
-   * even the exact brand word stays in the list when its pages are genuinely competing. The fold
-   * widens one half of a conjunction, never the answer — a reader tempted to worry about the
-   * ı → i collisions (tıp/tip, kır/kir) should read this test first.
+   * What bounds the widened fold, and it is a SMALLER bound than it was. This test asserted the
+   * bare "yıldız" until the brand-only path landed; a query that folds onto the brand and is
+   * nothing else is now suppressed on its own, so the honest statement of the bound is that it
+   * covers every query carrying a word beyond the brand. There `branded` still needs
+   * looksLikeSitelinks, so an ı-folded brand word on genuinely competing pages stays in the list
+   * — the fold widens one half of a conjunction, never the answer. A reader worried about the
+   * ı → i collisions (tıp/tip, kır/kir) should read this test AND the note on foldChars, which
+   * names what the brand-only path costs: the lone query "tıp" on tip.com is suppressed whatever
+   * its pages do.
    */
-  it("KEEPS the Turkish brand word when the pages are competing rather than pinned", () => {
-    expect(brandedOf(competitiveRows("yildiz.com", "yıldız"))).toBe(false);
+  it("KEEPS a Turkish ı-folded brand word plus a word when the pages are competing", () => {
+    expect(brandedOf(competitiveRows("yildiz.com", "yıldız markası"))).toBe(false);
   });
 
   it("ignores a domain label too short to be a safe brand token", () => {
