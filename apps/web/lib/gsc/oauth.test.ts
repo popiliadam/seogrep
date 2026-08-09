@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { buildConsentUrl, gscPropertyCandidates, matchGscProperty } from "./oauth";
+import {
+  buildConsentUrl,
+  canQuerySearchAnalytics,
+  gscPropertyCandidates,
+  matchGscProperty,
+  resolveGscProperty,
+} from "./oauth";
 
 /**
  * Pure OAuth-URL construction and the domain -> Search Console property matcher. No
@@ -198,4 +204,169 @@ describe("gscPropertyCandidates", () => {
       matchGscProperty("www.", [{ siteUrl: "sc-domain:example.com", permissionLevel: "siteOwner" }]),
     ).toBeNull();
   });
+});
+
+/**
+ * PERMISSION FILTERING. `sites.list` returns properties the account merely HOLDS — including
+ * ones it never verified — so a host match alone never proved the connection would work. Two
+ * live projects proved it did not: bayder.com.tr and rkturizm.com were bound to their
+ * `sc-domain:` property and 403'd on every later call ("User does not have sufficient
+ * permission for site"), while the operator's actually-owned URL-prefix property for the SAME
+ * host sat one candidate further down the list, never reached.
+ *
+ * The usable set is Google's, not ours (see the allowlist comment in oauth.ts): Owner, Full
+ * user and Restricted user all carry the `Performance` tick in the permission table the 403
+ * itself links to, and `searchAnalytics.query` needs read permission per the API prerequisites.
+ * `siteUnverifiedUser` — a holder who never verified — is the documented level that does not.
+ */
+const UNUSABLE = "siteUnverifiedUser";
+
+describe("canQuerySearchAnalytics", () => {
+  it.each(["siteOwner", "siteFullUser", "siteRestrictedUser"])(
+    "accepts %s — documented to have read access to the Performance report",
+    (level) => {
+      expect(canQuerySearchAnalytics(level)).toBe(true);
+    },
+  );
+
+  /**
+   * Fail closed on everything else. The first is Google's fourth documented value; the rest
+   * stand for a value Google adds later, a malformed entry, and a casing the enum does not
+   * use — none of which we have verified, and an unverified level is treated as unusable
+   * because a refusal costs a re-approve while a wrong bind costs every later call.
+   */
+  it.each([UNUSABLE, "siteSomethingNew", "", "SITEOWNER", "siteowner", "owner"])(
+    "refuses %s — undocumented or documented-without-read is unusable",
+    (level) => {
+      expect(canQuerySearchAnalytics(level)).toBe(false);
+    },
+  );
+});
+
+describe("matchGscProperty permission filtering", () => {
+  it("does not bind a host-matching property the account cannot query", () => {
+    expect(
+      matchGscProperty("example.com", [{ siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE }]),
+    ).toBeNull();
+  });
+
+  it.each(["siteOwner", "siteFullUser", "siteRestrictedUser"])(
+    "still binds the same host when the level is %s",
+    (permissionLevel) => {
+      expect(matchGscProperty("example.com", [{ siteUrl: "sc-domain:example.com", permissionLevel }])).toBe(
+        "sc-domain:example.com",
+      );
+    },
+  );
+
+  /**
+   * THE LIVE SHAPE of the two failing customer projects, confirmed by the operator on
+   * 2026-08-09: the account holds BOTH a domain property it cannot query and the URL-prefix
+   * property it actually owns. An unusable candidate must be SKIPPED and the walk continued —
+   * aborting at the first one would leave these projects unmatched with a working property one
+   * step away, which refuses more without fixing anything.
+   */
+  it.each(["bayder.com.tr", "rkturizm.com"])(
+    "falls through the unusable domain property to the usable url-prefix property for %s",
+    (domain) => {
+      expect(
+        matchGscProperty(domain, [
+          { siteUrl: `sc-domain:${domain}`, permissionLevel: UNUSABLE },
+          { siteUrl: `https://${domain}/`, permissionLevel: "siteOwner" },
+        ]),
+      ).toBe(`https://${domain}/`);
+    },
+  );
+
+  it("prefers the usable entry when the SAME property is listed at two levels", () => {
+    expect(
+      matchGscProperty("example.com", [
+        { siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE },
+        { siteUrl: "sc-domain:example.com", permissionLevel: "siteFullUser" },
+      ]),
+    ).toBe("sc-domain:example.com");
+  });
+
+  it("keeps the domain property first when BOTH shapes are usable — the filter narrows, never reorders", () => {
+    expect(
+      matchGscProperty("example.com", [
+        { siteUrl: "https://example.com/", permissionLevel: "siteOwner" },
+        { siteUrl: "sc-domain:example.com", permissionLevel: "siteOwner" },
+      ]),
+    ).toBe("sc-domain:example.com");
+  });
+
+  it("returns null when every host-matching property is unusable", () => {
+    expect(
+      matchGscProperty("example.com", [
+        { siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE },
+        { siteUrl: "https://example.com/", permissionLevel: UNUSABLE },
+        { siteUrl: "https://www.example.com/", permissionLevel: UNUSABLE },
+      ]),
+    ).toBeNull();
+  });
+
+  /**
+   * THE SECURITY PIN, re-run through the new path. The filter narrows the candidate SET; it
+   * must not become a second route by which a subdomain reaches its parent's property —
+   * neither when the parent is usable nor when it is not.
+   */
+  it.each(["siteOwner", UNUSABLE])(
+    "still refuses blog.example.com against the parent domain property at level %s",
+    (permissionLevel) => {
+      expect(matchGscProperty("blog.example.com", [{ siteUrl: "sc-domain:example.com", permissionLevel }])).toBeNull();
+    },
+  );
+});
+
+describe("resolveGscProperty", () => {
+  it("reports `matched` with the property GSC spelled it as", () => {
+    expect(
+      resolveGscProperty("example.com", [{ siteUrl: "sc-domain:example.com", permissionLevel: "siteOwner" }]),
+    ).toEqual({ kind: "matched", property: "sc-domain:example.com" });
+  });
+
+  /**
+   * The distinction the callback logs and "no property matched" could not express: the account
+   * HAS the property, it just cannot read it. The level rides along so an operator can name the
+   * customer's actual permission problem instead of guessing at it.
+   */
+  it("reports `unusable_permission` with the offending site when the only host match cannot be queried", () => {
+    expect(
+      resolveGscProperty("example.com", [{ siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE }]),
+    ).toEqual({ kind: "unusable_permission", site: { siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE } });
+  });
+
+  it("reports `none` when the account holds no property for the host at all", () => {
+    expect(
+      resolveGscProperty("example.com", [{ siteUrl: "sc-domain:other.com", permissionLevel: "siteOwner" }]),
+    ).toEqual({ kind: "none" });
+    expect(resolveGscProperty("example.com", [])).toEqual({ kind: "none" });
+  });
+
+  /**
+   * A remembered unusable match must never outrank a usable one found later in the walk, and
+   * `unusable_permission` must never name a host the candidate list would not have accepted —
+   * that report is the one new place a foreign siteUrl could have leaked out.
+   */
+  it("never lets a remembered unusable match beat a usable one further down the order", () => {
+    expect(
+      resolveGscProperty("example.com", [
+        { siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE },
+        { siteUrl: "http://www.example.com/", permissionLevel: "siteRestrictedUser" },
+      ]),
+    ).toEqual({ kind: "matched", property: "http://www.example.com/" });
+  });
+
+  it.each(["blog.example.com", "shop.example.com"])(
+    "reports `none`, not the parent's property, for the subdomain project %s",
+    (domain) => {
+      expect(
+        resolveGscProperty(domain, [
+          { siteUrl: "sc-domain:example.com", permissionLevel: UNUSABLE },
+          { siteUrl: "https://example.com/", permissionLevel: "siteOwner" },
+        ]),
+      ).toEqual({ kind: "none" });
+    },
+  );
 });

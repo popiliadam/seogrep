@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceClient } from "@pseo/db/server";
 import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pseo/core";
 import { createClient } from "../../../../lib/supabase/server";
-import { matchGscProperty } from "../../../../lib/gsc/oauth";
+import { resolveGscProperty } from "../../../../lib/gsc/oauth";
 import {
   matchesNonce,
   parsePkceCookie,
@@ -187,11 +187,39 @@ export async function GET(request: Request): Promise<Response> {
         )
       : null;
 
-    // (7) Match the project domain to a verified property. A listing failure is non-fatal:
-    // the connection (token) still stands; the property is simply left unmatched.
+    // (7) Match the project domain to a property this account can actually QUERY. A listing
+    // failure is non-fatal: the connection (token) still stands; the property is simply left
+    // unmatched.
+    //
+    // `sites.list` returns properties the account merely HOLDS, including ones it has never
+    // verified, so a host match alone never proved the link would work — it only proved the
+    // string existed. Two live projects sat in exactly that state on 2026-08-09 (bayder.com.tr,
+    // rkturizm.com): bound to a domain property they could not read, reported connected, and 403
+    // on every later call — while the URL-prefix property they DO own sat one candidate further
+    // down the same list, never reached. So the usual outcome here is a different, WORKING
+    // property rather than no property; only when every host match is unusable does this bind
+    // nothing, which is still the better failure, because `pull_gsc_data` has a written sentence
+    // for an unmatched property while a bound-but-dead one produced "failed unexpectedly".
+    //
+    // The two null causes are logged apart because only one of them is a customer permission
+    // problem an operator can act on. They are NOT split in the redirect: /app renders
+    // `property != "matched"` as "no verified property matches this domain yet — verify the
+    // domain in Search Console", which is the correct next action for the documented unusable
+    // level (`siteUnverifiedUser`, an unverified holder), and the banner that would carry a
+    // third message is outside this change's scope. project_id, not the siteUrl, is the
+    // correlation handle — it joins to the domain in the DB without putting it in a log.
     let gscProperty: string | null = null;
     try {
-      gscProperty = matchGscProperty(domain, await listSites(tokens.accessToken));
+      const outcome = resolveGscProperty(domain, await listSites(tokens.accessToken));
+      if (outcome.kind === "matched") {
+        gscProperty = outcome.property;
+      } else if (outcome.kind === "unusable_permission") {
+        console.warn(
+          `gsc callback: project ${state.project_id} has a host-matching Search Console property ` +
+            `whose permission level (${outcome.site.permissionLevel}) is not documented to allow ` +
+            "searchAnalytics.query — left unmatched instead of bound",
+        );
+      }
     } catch (listError) {
       console.error("gsc callback: sites.list failed (property left unmatched):", errorMessage(listError));
     }
