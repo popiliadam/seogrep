@@ -19,23 +19,29 @@ import { PreconditionNotMetError } from "./precondition.ts";
  * It is a defineTool with the DEFAULT "surface" charge: reserve -> handler -> commit / release.
  * withCredits COMMITS a handler that RETURNS and RELEASES only on a THROW, so the money rule
  * is: anything that means "no pull happened" must THROW (no charge), and a stored pull must
- * RETURN (charge 5). Concretely — a missing connection, an unstored token, an unmatched
- * property, and a failed Google call all THROW (released, never charged); only a completed,
- * stored pull commits. A pull that returns zero rows is still a delivered pull and DOES
- * commit (the account genuinely has no data — the discovery tools then report "no findings").
+ * RETURN (charge 5). Concretely — a missing connection, an unmatched property, and a failed
+ * Google call all THROW (released, never charged); only a completed, stored pull commits. A
+ * pull that returns zero rows is still a delivered pull and DOES commit (the account genuinely
+ * has no data — the discovery tools then report "no findings").
  *
- * Those throws are not all the same KIND, and the registry sorts them by TYPE. The three CONNECTION
- * states below — no connection, no stored token, no matched property — are designed refusals with a
- * sentence already written for the user, so they carry PreconditionNotMetError and reach the client
- * verbatim. The unmatched-property one is not hypothetical: on 2026-08-09 a live project
+ * Those throws are not all the same KIND, and the registry sorts them by TYPE. The two CONNECTION
+ * states below — no connection, no matched property — are designed refusals with a sentence
+ * already written for the user, so they carry PreconditionNotMetError and reach the client
+ * verbatim. (Migration 0021 retired a third state that used to sit between them, "connection
+ * exists but has no stored token yet": the credential moved to gsc_accounts, whose
+ * encrypted_refresh_token is NOT NULL, so a connection's account_id is now either unset — "not
+ * connected", same message as no row — or names an account that, by construction, has a token.
+ * See the commit message for the full per-assertion account of what moved and what dropped.)
+ * The unmatched-property one is not hypothetical: on 2026-08-09 a live project
  * (www.noraninsaat.com) sat in exactly that state and was handed "failed unexpectedly, quote
  * reference X" while its answer sat three lines away in this file (measured and recorded as
- * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A FOURTH refusal joins them at
+ * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A THIRD refusal joins them at
  * the Google call: a 403 on searchAnalytics.query, which is a permission fact about the user's
  * own property rather than a fault — it carries the same type so its sentence survives, and it
- * is the only one that logs (see the branch for why). A lookup error, a token that will not
- * decrypt, and every OTHER Google failure stay plain Errors and keep the generic sentence + the
- * server log line — each of those is a real fault with something for an operator to read.
+ * is the only one that logs (see the branch for why). A lookup error, a missing account row, a
+ * token that will not decrypt, and every OTHER Google failure stay plain Errors and keep the
+ * generic sentence + the server log line — each of those is a real fault with something for an
+ * operator to read.
  *
  * The stored jobs row is a pure DATA CARRIER: reserve_id stays null (the spend is on the
  * ledger, sync-surface style), so this never double-charges against a worker reserve.
@@ -56,9 +62,13 @@ const inputSchema = z.object({
     .describe("Window length in days per period (7–90, default 90). Compares this window with the one before it."),
 });
 
-/** The connection fields pull_gsc_data reads (tenant-scoped). */
+/**
+ * The connection fields pull_gsc_data reads (tenant-scoped). Migration 0021 moved the
+ * credential off this row onto `gsc_accounts`; `account_id` is what links the two. A null
+ * `account_id` means "not connected" — same as no row at all (see loadAccountToken below).
+ */
 export interface GscConnectionRow {
-  readonly encrypted_refresh_token: string | null;
+  readonly account_id: string | null;
   readonly gsc_property: string | null;
 }
 
@@ -67,6 +77,20 @@ export type LoadConnectionFn = (
   userId: string,
   projectId: string,
 ) => Promise<GscConnectionRow | null>;
+
+/** The one `gsc_accounts` field pull_gsc_data needs once a connection names an account. */
+export interface GscAccountTokenRow {
+  readonly encrypted_refresh_token: string;
+}
+
+/**
+ * Load one `gsc_accounts` row's sealed token, tenant-scoped by user_id (null when the id is
+ * unknown OR belongs to another tenant — the two are indistinguishable, same as loadConnection).
+ */
+export type LoadAccountTokenFn = (
+  accountId: string,
+  userId: string,
+) => Promise<GscAccountTokenRow | null>;
 
 /** The jobs writer port (default: recordSucceededPull over the service client). */
 export type RecordPullFn = (params: {
@@ -78,6 +102,8 @@ export type RecordPullFn = (params: {
 export interface PullGscDataDeps {
   /** GSC connection reader (default: tenant-scoped gsc_connections read). */
   readonly loadConnection?: LoadConnectionFn;
+  /** GSC account token reader (default: tenant-scoped gsc_accounts read). */
+  readonly loadAccountToken?: LoadAccountTokenFn;
   /** Google client port (default: the real @pseo/core client). */
   readonly api?: GscApi;
   /** Succeeded-pull recorder (default: recordSucceededPull). */
@@ -97,12 +123,32 @@ export interface PullGscDataDeps {
 const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
   const { data, error } = await getServiceClient()
     .from("gsc_connections")
-    .select("encrypted_refresh_token, gsc_property")
+    .select("account_id, gsc_property")
     .eq("user_id", userId)
     .eq("project_id", projectId)
     .maybeSingle();
   if (error) {
     throw new Error(`pull_gsc_data: connection lookup failed: ${error.message}`);
+  }
+  return data ?? null;
+};
+
+/**
+ * The default gsc_accounts reader, scoped to the tenant by an explicit user_id filter AND the
+ * account id (constitution NEVER #4 — service_role bypasses RLS, so this filter is the ONLY
+ * tenant guard on the table holding every Google credential in the product). A row that is
+ * missing or belongs to another tenant both read as null — mutation-tested: dropping the
+ * user_id filter here is what pull-gsc-data.db.test.ts's SECURITY spec catches.
+ */
+const defaultLoadAccountToken: LoadAccountTokenFn = async (accountId, userId) => {
+  const { data, error } = await getServiceClient()
+    .from("gsc_accounts")
+    .select("encrypted_refresh_token")
+    .eq("id", accountId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`pull_gsc_data: account token lookup failed: ${error.message}`);
   }
   return data ?? null;
 };
@@ -157,6 +203,7 @@ function forbiddenPropertyMessage(property: string): string {
  */
 export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool {
   const loadConnection = deps.loadConnection ?? defaultLoadConnection;
+  const loadAccountToken = deps.loadAccountToken ?? defaultLoadAccountToken;
   const api = deps.api ?? defaultGscApi;
   const recordPull = deps.recordPull ?? defaultRecordPull;
   const now = deps.now ?? ((): Date => new Date());
@@ -170,21 +217,22 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
     // charge defaults to "surface": reserve -> handler -> commit / release.
     handler: async (ctx: AuthContext, { project_id, days }) => {
       const connection = await loadConnection(ctx.userId, project_id);
-      // All three mean "nothing to pull" -> THROW so withCredits RELEASES (no charge), and TYPED
-      // so the registry renders each sentence verbatim rather than replacing it with the generic
-      // crash sentence. They are three DIFFERENT states with three different next actions, which
-      // is the whole reason the wording differs; the user can only act on the difference if it
-      // survives the catch. A missing project and another tenant's project are indistinguishable
+      // Both mean "nothing to pull" -> THROW so withCredits RELEASES (no charge), and TYPED so
+      // the registry renders each sentence verbatim rather than replacing it with the generic
+      // crash sentence. A missing project and another tenant's project are indistinguishable
       // here (the read is tenant-scoped), and echoing project_id back does not change that — it
       // is the caller's own input.
-      if (!connection) {
+      //
+      // A null account_id (migration 0021) means exactly the same thing as no row at all: the
+      // web callback only ever sets it once the OAuth round-trip stores a token, and detaching
+      // an account normalizes a connection back to this same null (`on delete set null`) — so
+      // there is deliberately no separate "connection exists but has no token yet" state any
+      // more (dropped from the v3 shape below; see the commit message for why). This still
+      // shares one message with the "no row" case, not a NEW error class — Task 8 owns the
+      // typed reauth error the account's own token_status will eventually drive.
+      if (!connection || !connection.account_id) {
         throw new PreconditionNotMetError(
           `No Search Console connection for project ${project_id}. Run connect_gsc first.`,
-        );
-      }
-      if (!connection.encrypted_refresh_token) {
-        throw new PreconditionNotMetError(
-          "This project's Search Console connection has no stored token yet. Re-run connect_gsc and approve access.",
         );
       }
       if (!connection.gsc_property) {
@@ -193,15 +241,27 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
         );
       }
 
+      // The account row is expected to exist (a non-null account_id names a real gsc_accounts
+      // row `on delete set null` would otherwise have cleared) — null here means a genuine data
+      // anomaly, so it is a plain Error (generic crash sentence + log line), never a designed
+      // refusal with a user-facing action.
+      const account = await loadAccountToken(connection.account_id, ctx.userId);
+      if (!account) {
+        throw new Error(
+          `pull_gsc_data: gsc_accounts row ${connection.account_id} not found for connected project ${project_id}`,
+        );
+      }
+
       const encryptionKey = deps.encryptionKey ?? requireTokenEncryptionKey();
-      // Open the seal against the SAME (user, project) the row was loaded by (M-17). A v3
-      // blob authenticates only under its own row's ids, so a token planted into this row
-      // from another user's connection fails here instead of driving their Google grant.
-      // The throw releases the credit reserve, exactly like the other "nothing to pull" exits.
+      // Open the seal against the SAME (user, account) the row was loaded by (M-17, rebound to
+      // the account axis by migration 0021 / @pseo/core crypto v4). A blob authenticates only
+      // under its own row's ids, so a token planted into this row from another user's account
+      // fails here instead of driving their Google grant. The throw releases the credit
+      // reserve, exactly like the other "nothing to pull" exits.
       const refreshToken = decryptToken(
-        fromByteaHex(connection.encrypted_refresh_token),
+        fromByteaHex(account.encrypted_refresh_token),
         encryptionKey,
-        { userId: ctx.userId, projectId: project_id },
+        { userId: ctx.userId, accountId: connection.account_id },
       );
 
       // A Google failure here THROWS -> released, never charged. That must stay true of the
