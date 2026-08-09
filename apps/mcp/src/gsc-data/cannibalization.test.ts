@@ -434,6 +434,29 @@ describe("detectCannibalization — branded queries", () => {
   });
 
   /**
+   * THE BRAND-ONLY PATH FOLDS. Both assertions below were green under a referee mutation that gave
+   * this path its own space-split, unfolded tokenization — the whole suite could not tell the
+   * shipped design apart from the alternative that was considered and rejected. They pin it now.
+   *
+   * First: the reason the fold is on this path at all. A Turkish brand carrying `ı` registers the
+   * ASCII domain (Yıldız -> yildiz.com) and the customer types the `ı`, so without the fold the
+   * bare brand word on an unpinned brand SERP is exactly the false positive this slice exists to
+   * remove — for the measured-majority case, not an edge one.
+   *
+   * Second: the PRICE of that, asserted rather than merely described in a comment. `ı` and `i` are
+   * different letters in Turkish, so the fold merges minimal pairs: tıp (medicine) / tip (type).
+   * A site on tip.com therefore suppresses the lone query `tıp`, whatever its pages do. That is a
+   * real cost accepted deliberately — the collision needs the site to be the ASCII twin of an
+   * unrelated word AND that word to be the entire query. Pinned so that a future design which can
+   * separate them has to change this line on purpose, in daylight, rather than drift past a green
+   * suite.
+   */
+  it("folds on the brand-only path too — and pins the minimal-pair price of doing so", () => {
+    expect(brandedOf(competitiveRows("yildiz.com", "yıldız"))).toBe(true);
+    expect(brandedOf(competitiveRows("tip.com", "tıp"))).toBe(true);
+  });
+
+  /**
    * The change must not leak outside the brand path: a genuine conflict on a non-brand query, on
    * the very site whose brand query is now suppressed, is still reported in full.
    */
