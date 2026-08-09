@@ -337,7 +337,7 @@ hesabı ise liste birebir örtüşür, değilse örtüşmez — iddia etmeden ö
     Test spend_day'i `now − 30dk`'dan türetir, reaper tek UTC gününe sorgular.
     Bu pencerede koşan CI'da dalı SUÇLAMA. Beş veri noktasıyla kanıtlandı.
 
-=== #51 · BAĞLANTI DOĞRULAMASI TEK TARAFLI — 🔴 AÇIK, Faz B'nin İLK işi ===
+=== #51 · BAĞLANTI DOĞRULAMASI TEK TARAFLI — 🟡 AÇIK (şiddeti ÖLÇÜMLE DÜŞÜRÜLDÜ) ===
 2026-08-09, canlıda ölçüldü. #50 sonrası bayder ve rkturizm doğru property'ye düştü
 (https://…, siteOwner). Ama uçtan uca test ikisini AYIRDI:
 
@@ -365,10 +365,22 @@ ama var, ve tam olarak "property doğru, token ölü" durumunu üretir. Ölçül
 bayder'ın token'ının neden geçersiz olduğu (iptal mi, yarım kalan onay mı) DIŞARIDAN
 belirlenemedi; sunucu yalnız invalid_grant görüyor.
 
-FAZ B'DE: (1) operatör bayder'a bir kez daha bağlansın, sonra pull_gsc_data ÖLÇÜLSÜN.
-Çalışırsa token geçici olarak ölmüştü; yine invalid_grant ise tekrarlanabilir bir
-ürün kusuru var ve iş emri yazılır. (2) Bağlanma anında kimlik bilgisi doğrulaması
-bir iş emri adayıdır — #50'nin yarım bıraktığı yarı budur.
+ÇÖZÜLDÜ VE ŞİDDET DÜŞTÜ (aynı gün, ölçümle). Operatör bayder'a bir kez daha
+bağlandı; SONRASINDA ÖLÇÜLDÜ: connect_gsc → https://bayder.com.tr/,
+pull_gsc_data → "Pulled 90 days of Search Console data." ✅ 5 kredi.
+
+Yani ŞEFİN İLK ÇERÇEVESİ YANLIŞTI: "yeniden bağlanma ölü token'ı iyileştiremiyor"
+diye yazmıştım; ÖLÇÜM İYİLEŞTİRDİĞİNİ gösterdi. buildConsentUrl'ün prompt=consent
+parametresi işini yapıyor ve taze token geliyor. Bulgu 🔴 değil 🟡.
+
+GERİYE KALAN, HÂLÂ GERÇEK BULGU: bağlanma anında property doğrulanıyor (#50) ama
+KİMLİK BİLGİSİ hiç denenmiyor. Bayat/ölü bir token ancak İLK ÜCRETLİ ÇAĞRIDA
+anlaşılıyor, ve o an kullanıcıya "failed unexpectedly, quote reference X" dönüyor.
+Tek ucuz bir çağrı (token yenileme ya da bir satırlık searchAnalytics) bunu bağlanma
+anında yakalar. İş emri ADAYI — #50'nin yarım bıraktığı yarı budur.
+
+FAZ B'DE: bu bir BLOKER DEĞİL, yedi sitenin GSC'si çalışıyor. Kalan iş, bağlanma
+anında kimlik doğrulaması eklemenin değip değmeyeceğine karar vermek.
 
 === FAZ B — TAM TUR (8 site × 19 tool) ===
 
