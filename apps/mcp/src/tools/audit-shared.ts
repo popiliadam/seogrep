@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
 import { loadLatestCrawl, type AuditCrawl, type LoadCrawlFn } from "../audit/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
  * Shared builder for the three sync audit tools (audit_onpage / audit_tech / audit_schema).
@@ -44,8 +45,15 @@ export function makeAuditTool(
       const load = await loadCrawl(ctx.userId, project_id);
       if (!load.ok) {
         // THROW so withCredits RELEASES the reserve — no charge when there is nothing to
-        // audit. The registry turns this into an actionable isError result for the client.
-        throw new Error(load.error);
+        // audit. TYPED, because the registry's catch cannot otherwise tell this designed
+        // refusal from a crash: it matches PreconditionNotMetError and returns load.error
+        // verbatim, where a raw Error is swallowed by the generic "failed unexpectedly,
+        // quote reference X" branch (which is what 18 live calls got on 2026-08-09).
+        //
+        // load.error is deliberately the same sentence for a missing project, another
+        // tenant's project and a project never crawled (audit/load.ts). Now that it reaches
+        // the user, that uniformity is what keeps project existence unobservable.
+        throw new PreconditionNotMetError(load.error);
       }
       return textResult(render(load.crawl));
     },

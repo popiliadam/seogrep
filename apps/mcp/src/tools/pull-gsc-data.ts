@@ -8,6 +8,7 @@ import { defaultGscApi, runPull, type GscApi } from "../gsc-data/pull.ts";
 import { pullResultToJson } from "../gsc-data/types.ts";
 import { formatPullSummary } from "../gsc-data/format.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
  * pull_gsc_data — 5 credits, SYNC. Fetches two adjacent windows of Search Console
@@ -22,6 +23,16 @@ import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
  * property, and a failed Google call all THROW (released, never charged); only a completed,
  * stored pull commits. A pull that returns zero rows is still a delivered pull and DOES
  * commit (the account genuinely has no data — the discovery tools then report "no findings").
+ *
+ * Those throws are not all the same KIND, and the registry sorts them by TYPE. The three CONNECTION
+ * states below — no connection, no stored token, no matched property — are designed refusals with a
+ * sentence already written for the user, so they carry PreconditionNotMetError and reach the client
+ * verbatim. The unmatched-property one is not hypothetical: on 2026-08-09 a live project
+ * (www.noraninsaat.com) sat in exactly that state and was handed "failed unexpectedly, quote
+ * reference X" while its answer sat three lines away in this file (measured and recorded as
+ * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A lookup error, a token that
+ * will not decrypt, and a Google failure stay plain Errors and keep the generic sentence + the
+ * server log line — each of those is a real fault with something for an operator to read.
  *
  * The stored jobs row is a pure DATA CARRIER: reserve_id stays null (the spend is on the
  * ledger, sync-surface style), so this never double-charges against a worker reserve.
@@ -114,20 +125,25 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
     // charge defaults to "surface": reserve -> handler -> commit / release.
     handler: async (ctx: AuthContext, { project_id, days }) => {
       const connection = await loadConnection(ctx.userId, project_id);
-      // All of these mean "nothing to pull" -> THROW so withCredits RELEASES (no charge).
-      // A missing project and another tenant's project are indistinguishable (tenant-scoped).
+      // All three mean "nothing to pull" -> THROW so withCredits RELEASES (no charge), and TYPED
+      // so the registry renders each sentence verbatim rather than replacing it with the generic
+      // crash sentence. They are three DIFFERENT states with three different next actions, which
+      // is the whole reason the wording differs; the user can only act on the difference if it
+      // survives the catch. A missing project and another tenant's project are indistinguishable
+      // here (the read is tenant-scoped), and echoing project_id back does not change that — it
+      // is the caller's own input.
       if (!connection) {
-        throw new Error(
+        throw new PreconditionNotMetError(
           `No Search Console connection for project ${project_id}. Run connect_gsc first.`,
         );
       }
       if (!connection.encrypted_refresh_token) {
-        throw new Error(
+        throw new PreconditionNotMetError(
           "This project's Search Console connection has no stored token yet. Re-run connect_gsc and approve access.",
         );
       }
       if (!connection.gsc_property) {
-        throw new Error(
+        throw new PreconditionNotMetError(
           "This project's Search Console connection has no matched property yet. Reconnect once the property is verified in Search Console.",
         );
       }

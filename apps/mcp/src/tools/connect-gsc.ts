@@ -4,6 +4,43 @@ import { requireWebBaseUrl } from "../env.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
+ * Copy for a project that already has a gsc_connections row. `gsc_property` is nullable and
+ * really is null in production: the OAuth round-trip can complete while sites.list matches
+ * nothing (web callback step 7 leaves the property unmatched rather than dropping the
+ * token). That branch used to interpolate the raw value, so the live answer for
+ * www.noraninsaat.com on 2026-08-09 was the sentence "property null" — the user was told
+ * everything was fine while every Search Console tool on the project was dead.
+ *
+ * Exported so the unmatched branch is pinned without a database (the fast-lane spec).
+ */
+export function renderAlreadyConnected(args: {
+  domain: string;
+  property: string | null;
+  connectUrl: string;
+}): string {
+  const { domain, property, connectUrl } = args;
+  if (property === null) {
+    return (
+      `Google Search Console is connected for ${domain}, but none of the verified properties ` +
+      "in that Google account matched it — nothing was stored, so pull_gsc_data and the tools " +
+      "that read its data cannot run yet.\n\n" +
+      `To fix it, verify a property for ${domain} in Search Console: either a URL-prefix ` +
+      `property (https://${domain}/) or a domain property for that domain. A domain property ` +
+      "named for a PARENT domain is not used — SeoGrep drops a leading www. label and no " +
+      "other subdomain label, because a subdomain can belong to someone else.\n\n" +
+      `Once the property is verified, re-approve access here:\n${connectUrl}`
+    );
+  }
+  return (
+    `Google Search Console is already connected for ${domain} — property ${property}.\n\n` +
+    "Run pull_gsc_data to fetch performance data, then find_quick_wins, " +
+    "detect_cannibalization or analyze_content_decay.\n\n" +
+    "If you need to connect a DIFFERENT property, or access was revoked on Google's side, " +
+    `re-approve here:\n${connectUrl}`
+  );
+}
+
+/**
  * connect_gsc — hand the user a Google sign-in link that connects Search Console to one
  * of their projects. 0 credits. This tool is the "link-out" surface (design D15): OAuth
  * is deliberately the SECOND step, never the first barrier — crawl + audit already work
@@ -60,14 +97,10 @@ export const connectGscTool = defineTool({
     const connectUrl = `${requireWebBaseUrl()}/api/gsc/connect?project_id=${project_id}`;
 
     if (existing) {
-      const { gsc_property: property } = existing as unknown as { gsc_property: string };
-      return textResult(
-        `Google Search Console is already connected for ${domain} — property ${property}.\n\n` +
-          "Run pull_gsc_data to fetch performance data, then find_quick_wins, " +
-          "detect_cannibalization or analyze_content_decay.\n\n" +
-          "If you need to connect a DIFFERENT property, or access was revoked on Google's side, " +
-          `re-approve here:\n${connectUrl}`,
-      );
+      // `gsc_property` is nullable in the schema (migration 0009) and the null is meaningful,
+      // not a placeholder — see renderAlreadyConnected.
+      const { gsc_property: property } = existing as unknown as { gsc_property: string | null };
+      return textResult(renderAlreadyConnected({ domain, property: property ?? null, connectUrl }));
     }
 
     return textResult(

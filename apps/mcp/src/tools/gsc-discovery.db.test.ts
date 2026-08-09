@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
 import { getServiceClient } from "../db.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
-import type { RegisteredTool } from "./registry.ts";
+import { registerAll, type RegisteredTool } from "./registry.ts";
 import { pullResultToJson } from "../gsc-data/types.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
 import { makeFindQuickWinsTool } from "./find-quick-wins.ts";
@@ -131,5 +134,100 @@ describe("discovery tools sync charge against the local stack", () => {
     const rows = await ledgerRows(ctx.userId);
     expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
     expect(balanceOf(rows)).toBe(100);
+  });
+});
+
+/**
+ * The refusal AS THE CLIENT RECEIVES IT — through registerAll's catch rather than tool.run.
+ * The block above proves the throw and the release; it cannot see what the user reads, and for
+ * 8 live calls on 2026-08-09 what the user read was the generic "failed unexpectedly … quote
+ * reference X" for a project that simply had no Search Console pull yet.
+ */
+
+/** A minimal fake MCP Server that records the handlers registerAll installs. */
+function fakeServer() {
+  const handlers = new Map<unknown, (request: unknown) => unknown>();
+  const server = {
+    setRequestHandler: (schema: unknown, handler: (request: unknown) => unknown) => {
+      handlers.set(schema, handler);
+    },
+  } as unknown as Server;
+  return { server, handlers };
+}
+
+type CallResult = { content: { text: string }[]; isError?: boolean };
+
+async function callThroughRegistry(
+  ctx: AuthContext,
+  tool: RegisteredTool,
+  projectId: string,
+): Promise<CallResult> {
+  const { server, handlers } = fakeServer();
+  registerAll(server, { ctx, tools: [tool] });
+  const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<CallResult>;
+  return call({ params: { name: tool.name, arguments: { project_id: projectId } } });
+}
+
+describe("discovery tools with no pull — what the CLIENT receives", () => {
+  it.each(CASES)(
+    "$name returns NO_PULL_MESSAGE verbatim, no crash sentence, and nets to zero",
+    async ({ name, make }) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const ctx = await makeCtx();
+        await seedGrant(ctx.userId, 100);
+        const projectId = await makeProject(ctx.userId, `nopull-${randomUUID()}.example.com`);
+
+        const result = await callThroughRegistry(ctx, make(), projectId);
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text).toBe(NO_PULL_MESSAGE);
+        expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+        expect(result.content[0]?.text).not.toMatch(/reference/i);
+        expect(errorSpy).not.toHaveBeenCalled();
+
+        const rows = await ledgerRows(ctx.userId);
+        expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+        expect(rows[1]?.delta).toBe(-TOOL_COSTS[name]);
+        expect(balanceOf(rows)).toBe(100);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+
+  /**
+   * THE ISOLATION PIN, discovery half. gsc-data/load.ts collapses "no such project", "not your
+   * project" and "never pulled" into one sentence on purpose; the message is user-visible from
+   * now on, so that collapse is the whole tenant-isolation property (constitution NEVER #4).
+   */
+  it("cannot distinguish a nonexistent project from another tenant's from an unpulled one", async () => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+
+    const nonexistent = randomUUID();
+    const other = await makeCtx();
+    await seedGrant(other.userId, 100);
+    const otherProjectId = await makeProject(other.userId, `other-${randomUUID()}.example.com`);
+    await recordSucceededPull(service, {
+      userId: other.userId,
+      projectId: otherProjectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+    const ownProjectId = await makeProject(ctx.userId, `own-${randomUUID()}.example.com`);
+
+    const texts: string[] = [];
+    for (const projectId of [nonexistent, otherProjectId, ownProjectId]) {
+      const result = await callThroughRegistry(ctx, makeFindQuickWinsTool(), projectId);
+      expect(result.isError).toBe(true);
+      texts.push(result.content[0]?.text ?? "");
+    }
+
+    expect(texts[0]).toBe(NO_PULL_MESSAGE);
+    expect(texts[1]).toBe(texts[0]);
+    expect(texts[2]).toBe(texts[0]);
+    // …and the other tenant's pull was genuinely there to be leaked.
+    const owner = await makeFindQuickWinsTool().run(other, { project_id: otherProjectId });
+    expect(owner.isError).toBeUndefined();
   });
 });

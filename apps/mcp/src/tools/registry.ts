@@ -9,6 +9,7 @@ import {
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
+import { isPreconditionNotMet } from "./precondition.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 
 /**
@@ -298,6 +299,21 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // reference 3f9c1a20" and turn a working gate into a support ticket. No log line either:
       // an operator has nothing to diagnose here.
       if (isPaidBalanceRequired(error)) {
+        return errorResult(error.message);
+      }
+      // The SECOND deliberate refusal with no exit but a throw: a pre-condition the project has
+      // not met yet — no crawl, no Search Console pull. Same mechanics as above; here the throw
+      // is what makes withCredits RELEASE, so returning an error result at the handler would
+      // charge the caller for being told which tool to run first (tools/precondition.ts). The
+      // loader already wrote the sentence the user needs, so it is passed through verbatim, and
+      // for the same reason as above there is no log line: an operator has nothing to diagnose
+      // in "this project has not been crawled yet". Measured in the 2026-08-09 campaign: 26 live
+      // calls in exactly this state were answered with the generic sentence below instead.
+      //
+      // The branch keys on the TYPE, never on the text: a plain Error carrying the same words is
+      // still an unexplained throw and still belongs in the generic branch. A wider match here
+      // would hide the 12 genuine failures that same campaign found wearing this disguise.
+      if (isPreconditionNotMet(error)) {
         return errorResult(error.message);
       }
       // The guard has already released any reserve it opened before rethrowing.
