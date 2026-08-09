@@ -337,6 +337,39 @@ hesabı ise liste birebir örtüşür, değilse örtüşmez — iddia etmeden ö
     Test spend_day'i `now − 30dk`'dan türetir, reaper tek UTC gününe sorgular.
     Bu pencerede koşan CI'da dalı SUÇLAMA. Beş veri noktasıyla kanıtlandı.
 
+=== #51 · BAĞLANTI DOĞRULAMASI TEK TARAFLI — 🔴 AÇIK, Faz B'nin İLK işi ===
+2026-08-09, canlıda ölçüldü. #50 sonrası bayder ve rkturizm doğru property'ye düştü
+(https://…, siteOwner). Ama uçtan uca test ikisini AYIRDI:
+
+  rkturizm  pull_gsc_data → "Pulled 90 days of Search Console data."  ✅ 5 kredi
+  bayder    pull_gsc_data → "failed unexpectedly, ref 0b97bae3"       ❌ 0 kredi
+            Fly log'u: Google token endpoint failed (400): invalid_grant
+
+Yani bayder "bağlandı" diyor, DOĞRU property'yi gösteriyor, ve saklı refresh token'ı ÖLÜ.
+Kullanıcının gördüğü: yeşil bağlantı + her çağrıda çökme. Bu, #50'nin sildiği
+"bağlı görünüp ölü olmak" sınıfının BAŞKA BİR BİÇİMİ — ve #50 onu kapsamıyor,
+çünkü #50 property'yi doğruluyor, KİMLİK BİLGİSİNİ doğrulamıyor.
+
+KÖK: bağlanma anında iki şey saklanıyor (property + token) ama YALNIZ BİRİ sınanıyor.
+  · property → permissionLevel'a bakılıyor (#50)
+  · refresh token → HİÇ denenmiyor
+Tek bir ucuz çağrı (örn. token yenileme ya da bir satırlık searchAnalytics) bağlanma
+anında bunu yakalar ve kullanıcı ilk ücretli çağrıda değil, o anda öğrenir.
+
+İKİNCİ, DAHA SESSİZ KUSUR — lib/gsc/store.ts:102-112:
+  const patch = { gsc_property: write.gscProperty };            // HER ZAMAN yazılır
+  if (write.encryptedTokenHex !== null) { patch.encrypted_refresh_token = ... }  // KOŞULLU
+Yani token yazılmasa bile property güncelleniyor. buildConsentUrl `prompt: "consent"`
+kullandığı için Google normalde her onayda taze token döndürür ve bu yol nadirdir —
+ama var, ve tam olarak "property doğru, token ölü" durumunu üretir. Ölçülmedi:
+bayder'ın token'ının neden geçersiz olduğu (iptal mi, yarım kalan onay mı) DIŞARIDAN
+belirlenemedi; sunucu yalnız invalid_grant görüyor.
+
+FAZ B'DE: (1) operatör bayder'a bir kez daha bağlansın, sonra pull_gsc_data ÖLÇÜLSÜN.
+Çalışırsa token geçici olarak ölmüştü; yine invalid_grant ise tekrarlanabilir bir
+ürün kusuru var ve iş emri yazılır. (2) Bağlanma anında kimlik bilgisi doğrulaması
+bir iş emri adayıdır — #50'nin yarım bıraktığı yarı budur.
+
 === FAZ B — TAM TUR (8 site × 19 tool) ===
 
 NEDEN TEKRAR: 1. oturumun matrisi tool'ları çoğunlukla MUTLU YOLDA ölçtü. #35'in sınıfını
