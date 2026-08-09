@@ -253,6 +253,265 @@ mutasyonla kırmızıya döndürülerek kabul edildi. Hakem iki sertleştirme a�
 **redaksiyonun JSONL yazım yoluna bağlanması pinlenmemiş** (bugün çalıştığı kanıtlandı) ve
 kapsama kontrolü tool-adı granülasyonunda.
 
+---
+
+# FAZ A — DÜZELTMELER VE SONRASINDA ÖLÇÜLENLER (aynı gün)
+
+# Faz A sonrası canlı ölçüm — üç yeni bulgu (2026-08-09, merge sonrası)
+
+Üç düzeltme (`#35` `#36` `#38`) canlıya çıktıktan SONRA gerçek veride ölçüldü.
+Harcanan: 20 kredi (iki `detect_cannibalization`). Retlerin hiçbiri ücret almadı (bakiye sabit).
+
+## Önce: düzeltmeler ne yaptı
+
+| ölçüm | önce | sonra |
+|---|---|---|
+| dentnotion kanibalize sorgu | **107** | **18** |
+| bigcattr kanibalize sorgu | **75** | **13** |
+| `pull_gsc_data` (GSC yok) | *"failed unexpectedly, ref X"* | *"No Search Console connection for project X. Run connect_gsc first."* |
+| `find_quick_wins` (pull yok) | *"failed unexpectedly, ref X"* | *"No Search Console data found. Run pull_gsc_data first."* |
+| `generate_report` (olmayan proje) | *"failed unexpectedly, ref X"* | *"No project found with id X. Create one with setup_project first."* |
+| `connect_gsc` (property yok) | *"… — property **null**."* | *"…connected, but none of the verified properties matched it — nothing was stored, so pull_gsc_data … cannot run yet."* |
+
+Fragment birleştirmesi **%83 ve %83** gürültü düşürdü. Bu tek başına büyük bir kalite sıçraması.
+
+**AMA `#12` pratikte KAPANMADI.** Her iki sitede de listenin 1. sırası hâlâ marka sorgusu.
+
+---
+
+## #48 — sitelink koşulu çok dar: pinlenmemiş marka SERP'i bastırılmıyor 🔴
+
+**Ölçüm.** `dentnotion` → 18 sorgunun **1.'si** hâlâ `"dent notion"`:
+
+```
+"dent notion" — 6 competing pages, 4233 impressions
+  /                          2.0   719 imp   88 tık
+  /our-doctors/              3.1   713 imp    3 tık
+  /iletisim/                 4.1   704 imp    5 tık
+  /cocuk-dis-hekimligi/      4.2   525 imp    2 tık
+  /doctor/dt-gurkan-zeybek-3/ 3.3  503 imp    3 tık
+  /doktorlarimiz/            2.7   450 imp   15 tık
+```
+
+Ana sayfa + beş kurumsal sayfa, şirketin kendi adında. Ders kitabı marka SERP'i.
+
+**Kök neden — marka eşleşmesi ÇALIŞIYOR, sitelink yarısı bloke ediyor.**
+`branded = isBrandedQuery AND looksLikeSitelinks` ve
+`looksLikeSitelinks` = **"≥2 sayfa pozisyon ≤1.5'te"** (`cannibalization.ts:336,357`).
+
+dentnotion'da hiçbir sayfa ≤1.5'te değil (en iyisi 2.0) → koşul false → bastırma yok.
+`#38` `"dent notion"`'ı marka olarak **tanıyor**; ikinci koşul onu geçirmiyor.
+
+**Neden orijinal kural bunu öngörmedi:** kural adstark'ın canlı vakasından türetilmişti — orada
+ana sayfa 3.9'da ve **dört sayfa tam 1.0'da**ydı. Google o SERP'te sitelink gösteriyordu.
+dentnotion'da göstermiyor. **Sitelink varlığı, "navigasyonel sorgu" için fazla dar bir vekil.**
+
+**Şerh — koşul KEYFİ DEĞİL, gerekçesi kodda yazılı** (`:343-348`): konjonksiyon olarak yalnız
+daraltabilir, yani kendi başına yanlış-pozitif üretemez; `apple.com`'da `"apple pie recipe"`
+sayfaları 1'e pinlenmedikçe listede kalır. Yani gevşetmenin bedeli gerçek: jenerik-kelime
+markalarda aşırı bastırma. **Bu bir tasarım kararı, hata değil — ama ölçüm şimdi maliyetini
+gösteriyor: portföyün en büyük GSC verisine sahip sitesinde 1. sıra hâlâ yanlış.**
+
+**Kural yazılmadı.** Öneri yönü (ölçülmedi): sitelink sinyalini "≥2 sayfa ≤1.5" yerine
+"sorgu marka token'ına TAM eşit VE ana sayfa ilk üçte" gibi bir navigasyonel-niyet sinyaliyle
+VEYA'lamak. Ama bu, aşırı bastırma yönüne genişletmek demek ve `#38`'in tüm yakın-ıska pinleri
+yeniden ölçülmeli.
+
+---
+
+## #49 — alan adı etiketi ≠ marka: `bigcat` ≠ `bigcattr` 🟡
+
+**Ölçüm.** `bigcattr` → 13 sorgunun **1.'si** `"bigcat"`:
+
+```
+"bigcat" — 5 competing pages, 8652 impressions
+  /                                    3.2  1217 imp  765 tık
+  /kategori/coklu-kampanyali-kumlar    1.0  1037 imp    5 tık
+  /marka/bigcat                        1.0  1015 imp    1 tık
+  /kategori/power                      1.0   964 imp    3 tık
+  /kategori/bigcat-kedi-kumlari        1.3   941 imp    3 tık
+```
+
+**Burada sitelink yarısı ÇALIŞIYOR** (dört sayfa ≤1.5) — bloke eden **marka yarısı**.
+Token alan adı etiketinden geliyor: `bigcattr`. Kullanıcı `bigcat` yazıyor. Eşitlik tutmuyor.
+
+Aynı çıktı `"bigcattr"` sorgusunu **doğru şekilde dışlıyor**:
+> *"Excluded 1 branded query ("bigcattr")…"*
+
+Yani filtre çalışıyor, ama **markanın kendisini değil alan adını tanıyor.** Alan adına ülke/ek
+takısı koyan her marka bu deliğe düşer — ve handoff bunu zaten işaret etmişti:
+*"markada 'tr' var, TLD'de yok"*.
+
+**Kural yazılmadı.** Öneri yönü (ölçülmedi): token'ın sonundaki ülke kodunu (`tr`, `uk`, `de`)
+soyup ikinci bir aday üretmek. Risk yine aşırı bastırma yönünde ve `#38`'in pin seti yeniden
+ölçülmeli — `bigcat` ile `bigcattr` arasındaki fark iki harf, ve `shop`/`shopping` dersi burada
+da geçerli.
+
+---
+
+## #50 — yetkisi olmayan property'ye bağlanıyoruz, hata anında anlaşılmıyor 🔴
+
+**Ölçüm.** `bayder` ve `rkturizm`'de `pull_gsc_data` hâlâ genel çökme cümlesi veriyor.
+`#35` sayesinde artık bunun **gerçek arıza** olduğu biliniyor (keşif tool'ları normal ret veriyor,
+yalnız `pull_gsc_data` çöküyor). Fly log'u sebebi verdi:
+
+```
+Google searchAnalytics.query failed (403): User does not have sufficient permission
+for site 'sc-domain:bayder.com.tr'
+```
+
+Aynısı `sc-domain:rkturizm.com` için.
+
+**Ne oluyor:** Google hesabı o property'leri **listeliyor** (`sites.list` döndürüyor), bu yüzden
+`matchGscProperty` eşleştiriyor ve `connect_gsc` kullanıcıya **"bağlandı"** diyor. Ama hesabın o
+property üzerindeki izin seviyesi **arama analitiği sorgulamaya yetmiyor** (muhtemelen
+"Restricted user", Owner/Full değil).
+
+**İki ayrı kusur:**
+
+1. **`matchGscProperty` `permissionLevel`'a hiç bakmıyor.** `sites.list` her property için izin
+   seviyesini döndürür. Sorgulanamayacak bir property'ye bağlanmak, kullanıcıya çalışmayacak bir
+   bağlantıyı "kuruldu" diye satmaktır. → `oauth.ts`, `#36` ile aynı fonksiyon.
+2. **403 mesajı çökme gibi gösteriliyor.** Bu, `#35`'in sınıfının bir üyesi *değil* (gerçek dış
+   hata, log'lanması doğru) — ama tamamen teşhis edilebilir ve kullanıcının çözebileceği bir
+   durum: *"bu property'de yalnız kısıtlı erişiminiz var; sahibinden tam yetki isteyin."*
+   Google'ın kendi destek linki bile hata gövdesinde geliyor.
+
+**Para tarafı doğru:** çağrı fırlattı, rezervasyon serbest bırakıldı, bakiye değişmedi (ölçüldü).
+
+**İNSAN EYLEMİ:** operatörün Search Console'da `bayder.com.tr` ve `rkturizm.com` property'lerinde
+kendi hesabına **tam yetki** vermesi gerekiyor; aksi hâlde bu iki sitenin GSC ailesi tam turda
+yine ölçülemez.
+
+---
+
+## Bu üçünün ortak dersi
+
+`#38` marka filtresini **iki delikten** düzeltti ve **iki delik daha açıkta kaldı** — biri
+konjonksiyonun diğer yarısında (`#48`), biri token'ın türetiminde (`#49`). `#36` eşleştirmeyi
+düzeltti ve **eşleştirmenin bakmadığı bir alan** (`permissionLevel`) çıktı (`#50`).
+
+Yani: **bir kuralın iki yarısı varsa, bir yarısını düzeltmek kuralı çalışır hâle getirmez.**
+Bu, oturumun dördüncü kez aynı şekli üretmesi (bkz. `#35` sekiz tool, `#36` handler, `#46`
+fragment, ve şimdi bu).
+
+
+---
+
+# BULGU #46 — URL fragment'leri yalnız kanibalizasyonda birleşiyor, diğer iki GSC tool'unda değil
+
+**Kaynak:** Ş (işçinin `#38` çalışması sırasında tespit, şef doğruladı) · **Önem:** 🟡 · **Durum:** açık
+
+## Gözlem
+
+`#38` düzeltmesi `detect_cannibalization`'da `/makale`, `/makale#bolum-a`, `/makale#bolum-b`
+satırlarını **tek belge** olarak birleştiriyor — çünkü bunlar Google'ın tek makaleye atlama-linki,
+ayrı rakip sayfa değil.
+
+**Ama aynı ham GSC satırlarını okuyan diğer iki tool bunu yapmıyor:**
+
+- `find_quick_wins` — `/makale` ve `/makale#bolum-a` hâlâ **ayrı sayfa**
+- `analyze_content_decay` — aynı
+
+Üçü de `gsc-data/load.ts` üzerinden aynı `pull` verisini okuyor.
+
+## Neden önemli — özellikle decay'de
+
+`analyze_content_decay` iki pencere arasında sayfa başına tıklama kaybını karşılaştırıyor.
+**Anchor satırları pencereler arasında gelip gidiyor** (Google onları her zaman göstermez). Yani:
+
+- 1. pencerede `/makale` 100 tık + `/makale#bolum-a` 40 tık
+- 2. pencerede yalnız `/makale` 130 tık
+
+Gerçek: sayfa **140 → 130**, yani %7 kayıp — muhtemelen gürültü.
+Tool'un göreceği: `/makale#bolum-a` **40 → 0**, yani **%100 kayıp**, ve muhtemelen listenin başında.
+
+Yani düşen bir "sayfa" raporlanacak ki **o sayfa hiç var olmadı**. Bu, `#12`'nin
+(marka yanlış-pozitifi) decay'deki eşdeğeri: kullanıcı olmayan bir sorunu kovalar.
+
+`find_quick_wins`'de etki daha hafif ama aynı yönde: aynı makalenin iki anchor satırı iki ayrı
+"hızlı kazanç" olarak listelenebilir, ve pozisyonları ayrı ayrı raporlanır.
+
+## Neden `#38`'de düzeltilmedi
+
+İş emrinin `files_in_scope`'u yalnız `cannibalization.ts` idi. İşçi kapsam dışına çıkmadı ve
+bulguyu adıyla raporladı — doğru davranış.
+
+## Bu, oturumun ÜÇÜNCÜ aynı-desen vakası
+
+| # | desen |
+|---|---|
+| `#35` | doğru mesajlar yazılıydı, **tesisat** kaybediyordu; ve sınıf iki paylaşılan builder'la sınırlı sanılmıştı, grep sekiz tool çıkardı |
+| `#36` | `renderAlreadyConnected` doğruydu, **çağıran handler** ham `null`'ı basıyordu; renderer'ın testi ürün bozukken 6/6 yeşil kalıyordu |
+| **`#46`** | fragment birleştirme bir tool'da doğru, **aynı veriyi okuyan iki tool'da yok** |
+
+Ortak ders: **bu kod tabanında bir kuralı bir yerde düzeltmek, o kuralın uygulanması gereken
+yerlerin tamamını kapatmıyor.** Her düzeltmede "bu veriyi başka kim okuyor?" sorusu sorulmalı.
+
+## Ölçülmedi
+
+- **Canlı etki ölçülmedi.** Yukarıdaki decay senaryosu mekanizmadan türetildi, gerçek veriden
+  değil. `bigcattr` ve `dentnotion`'ın pull verisinde anchor satırı olduğu biliniyor
+  (`#38`'in kanıtı oradan geldi), ama decay çıktısında kaç sahte "düşen sayfa" ürettiği
+  **sayılmadı**. Faz B'de ölçülecek: aynı pull üzerinde fragment'li satırların decay
+  sonuçlarındaki payı.
+- Kural yazılmadı, iş emri çıkarılmadı — önce ölçüm.
+
+
+---
+
+# BULGU #47 — IDN (Türkçe karakterli) alan adlarında marka filtresi HİÇ çalışmıyor
+
+**Kaynak:** Ş (işçinin `#38` üçüncü turunda tespiti) · **Önem:** 🟡 · **Durum:** açık
+**Ölçüldü:** `new URL().hostname` davranışı doğrudan çalıştırılarak
+
+## Gözlem
+
+`brandTokenOf` marka token'ını hostname'den türetiyor (`cannibalization.ts`). Hostname
+`new URL()` üzerinden okunuyor ve **`new URL()` her IDN'i punycode'a çeviriyor**:
+
+| gerçek alan adı | `new URL().hostname` | türeyen marka token'ı |
+|---|---|---|
+| `yıldız.com` | `xn--yldz-lzac.com` | **`xnyldzlzac`** |
+| `çiçeksepeti.com` | `xn--ieksepeti-p3ab.com` | **`xnieksepetip3ab`** |
+
+Kullanıcı `yıldız` yazıyor, token `xnyldzlzac`. **Hiçbir zaman eşleşmez.**
+
+## Sonuç
+
+IDN alan adına sahip bir sitede marka filtresi **tamamen ölü**. Yani #12'nin ta kendisi geri
+geliyor: marka sorgusu yamyamlaşma olarak raporlanıyor, kullanıcı kendi marka sayfalarını
+de-optimize etmeye kalkabiliyor.
+
+`#38` bunu düzeltmedi ve düzeltmemesi doğru — kapsam dışıydı. Ama tam olarak bu oturumun
+düzeltmeye çalıştığı Türk müşteri kitlesini vuruyor.
+
+## Neden bu oturumda görünmedi
+
+Portföydeki sekiz sitenin **hiçbiri IDN değil** — hepsi ASCII alan adı kullanıyor
+(`adstark.com.tr`, `bayder.com.tr`, `dentnotion.com` …). Türk işletmelerinin çoğunluğu böyle
+yapıyor. Yani ölçüm bunu göremezdi; kod okunarak bulundu.
+
+**Bu, kampanyanın kendi sınırının kanıtı:** sekiz gerçek site, sekiz gerçek şekil — ama dokuzuncu
+bir şekil (IDN) portföyde hiç yoktu ve ölçüm onu üretemezdi.
+
+## Düzeltme yönü (yazılmadı)
+
+Host'a `punycode.toUnicode` uygulamak + kendi near-miss pinleri. `#38`'in kapsamına
+sığmayacak kadar büyük, çünkü:
+- katlama kuralının IDN tarafında ne yapacağı ayrı bir karar (Türkçe `ı` → `i` orada da geçerli mi)
+- yanlış yönde genişletme riski aynı: daha çok bastırma = görünmez kayıp
+
+## Ölçülmedi
+
+- **Gerçek bir IDN sitede etkisi ölçülmedi** — portföyde yok. Mekanizmadan kesin, ama vaka sayısı
+  bilinmiyor.
+- Türkiye'de IDN alan adı kullanım oranı bilinmiyor; bu bulgunun ticari ağırlığını belirleyecek
+  rakam o ve elimizde yok.
+
+
+---
+
 ## Sırada
 
 1. **Kural PR'ı ile kanıt PR'ı AYRI** — bu belge kanıt; H1'in aday kuralı ve #35/#38'in
