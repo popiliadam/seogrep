@@ -367,6 +367,9 @@ iddiasına TAŞINDI. Formatı ortadan kaldıran şey 0021'in kolonu düşürmesi
 - Produces:
   - `upsertGscAccount(client, { userId, sub, email, refreshToken, keyHex }) -> Promise<{ accountId: string }>`
   - `markAccountTokenStatus(client, accountId, status: "active" | "invalid") -> Promise<void>`
+  - `accessTokenFor(client, accountId, userId, keyHex) -> Promise<string>` — satırı tenant-filtreli
+    okur, `decryptToken` ile açar, `refreshAccessToken` ile taze access token üretir. Task 6 ve
+    Task 8 bunu çağırır; **bu fonksiyon olmadan ikisi de yazılamaz.**
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -408,32 +411,34 @@ export async function upsertGscAccount(
   client: ServiceClient,
   args: { userId: string; sub: string; email: string; refreshToken: string; keyHex: string },
 ): Promise<{ accountId: string }> {
-  const { data, error } = await client
+  // id İSTEMCİDE üretilir. Alternatif — önce placeholder'la insert edip sonra gerçek token'la
+  // update etmek — not-null bir sır kolonuna geçici çöp yazar ve iki yazma arasında satır
+  // "token'ı var" der ama yoktur. Tek insert, tek gerçek.
+  const existing = await client
     .from("gsc_accounts")
-    .upsert(
-      {
-        user_id: args.userId,
-        google_account_sub: args.sub,
-        google_account_email: args.email,
-        // Placeholder: gerçek şifreli metin id belli olunca yazılır (aşağıda).
-        encrypted_refresh_token: PLACEHOLDER_BYTEA,
-        token_status: "active",
-        token_checked_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,google_account_sub" },
-    )
     .select("id")
-    .single();
-  if (error) throw new Error(`gsc_accounts upsert failed: ${error.message}`);
-  const accountId = data.id as string;
+    .eq("user_id", args.userId)
+    .eq("google_account_sub", args.sub)
+    .maybeSingle();
+  if (existing.error) throw new Error(`gsc_accounts lookup failed: ${existing.error.message}`);
+  const accountId = (existing.data?.id as string | undefined) ?? randomUUID();
 
-  const sealed = toByteaHex(encryptToken(args.refreshToken, args.keyHex, { userId: args.userId, accountId }));
-  const update = await client
-    .from("gsc_accounts")
-    .update({ encrypted_refresh_token: sealed })
-    .eq("id", accountId)
-    .eq("user_id", args.userId);          // NEVER#4: service-role RLS'i baypas eder
-  if (update.error) throw new Error(`gsc_accounts token write failed: ${update.error.message}`);
+  const sealed = toByteaHex(
+    encryptToken(args.refreshToken, args.keyHex, { userId: args.userId, accountId }),
+  );
+  const { error } = await client.from("gsc_accounts").upsert(
+    {
+      id: accountId,
+      user_id: args.userId,
+      google_account_sub: args.sub,
+      google_account_email: args.email,
+      encrypted_refresh_token: sealed,
+      token_status: "active",
+      token_checked_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,google_account_sub" },
+  );
+  if (error) throw new Error(`gsc_accounts upsert failed: ${error.message}`);
   return { accountId };
 }
 
