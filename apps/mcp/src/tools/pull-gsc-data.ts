@@ -30,8 +30,11 @@ import { PreconditionNotMetError } from "./precondition.ts";
  * verbatim. The unmatched-property one is not hypothetical: on 2026-08-09 a live project
  * (www.noraninsaat.com) sat in exactly that state and was handed "failed unexpectedly, quote
  * reference X" while its answer sat three lines away in this file (measured and recorded as
- * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A lookup error, a token that
- * will not decrypt, and a Google failure stay plain Errors and keep the generic sentence + the
+ * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A FOURTH refusal joins them at
+ * the Google call: a 403 on searchAnalytics.query, which is a permission fact about the user's
+ * own property rather than a fault — it carries the same type so its sentence survives, and it
+ * is the only one that logs (see the branch for why). A lookup error, a token that will not
+ * decrypt, and every OTHER Google failure stay plain Errors and keep the generic sentence + the
  * server log line — each of those is a real fault with something for an operator to read.
  *
  * The stored jobs row is a pure DATA CARRIER: reserve_id stays null (the spend is on the
@@ -107,6 +110,48 @@ const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
 const defaultRecordPull: RecordPullFn = (params) => recordSucceededPull(getServiceClient(), params);
 
 /**
+ * The prefix @pseo/core's `apiError` builds when Google REFUSES a searchAnalytics.query:
+ * `Google searchAnalytics.query failed (403): User does not have sufficient permission for
+ * site '...'`. Measured live 2026-08-09 (Fly refs f05822b1, bb08959c) on two projects bound to
+ * a property their account could list but not read.
+ *
+ * Keying on the MESSAGE is the opposite of the rule registry.ts states for OUR OWN refusals
+ * ("keys on the TYPE, never on the text"), and it is deliberate here for a different subject:
+ * this classifies a THIRD PARTY's failure, and the port that carries it (GscApi) hands us a
+ * bare Error with no status on it. The string is not Google's, though — it is built by our own
+ * client and the surface+status are literals in it, so this is a contract between two files in
+ * this repo. It is pinned end-to-end: the db spec drives the REAL @pseo/core client with a
+ * fake 403 fetch and feeds the resulting Error through this branch, so a reword in core fails
+ * the test rather than silently re-generalising this refusal.
+ *
+ * Narrow on purpose: only searchAnalytics.query, only 403. A 403 from the token endpoint is a
+ * different sentence (a revoked grant), and every other Google failure keeps the generic
+ * crash sentence + reference + log line, which is what stops this branch creeping wider.
+ */
+const SEARCH_ANALYTICS_FORBIDDEN_PREFIX = "Google searchAnalytics.query failed (403)";
+
+function isSearchAnalyticsForbidden(error: unknown): error is Error {
+  return error instanceof Error && error.message.startsWith(SEARCH_ANALYTICS_FORBIDDEN_PREFIX);
+}
+
+/**
+ * What the user is told when Google refuses the property. No enum value and no Google internals
+ * — a sentence with the two actions that actually clear it. The property string is echoed
+ * because it is THIS connection's own stored value, resolved from the caller's own Google
+ * account at connect time; naming it is what lets a user with several properties know which one
+ * to fix. "No credits were charged" is a fact of the throw below, not a courtesy.
+ */
+function forbiddenPropertyMessage(property: string): string {
+  return (
+    `Google refused Search Console data for this project's property (${property}): the connected ` +
+    "Google account does not have permission to read it. Ask an owner of that property to give " +
+    "this account access under Settings > Users and permissions in Search Console (or finish " +
+    "verifying the property, if it is listed but unverified) — or re-run connect_gsc and approve " +
+    "with an account that already has access. No credits were charged."
+  );
+}
+
+/**
  * Build the pull_gsc_data tool. All I/O is injectable so the DB-integration spec can use a
  * fake Google port (zero network) over the real DB, and unit tests can fake everything.
  */
@@ -159,13 +204,44 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
         { userId: ctx.userId, projectId: project_id },
       );
 
-      // A Google failure here THROWS -> released, never charged.
+      // A Google failure here THROWS -> released, never charged. That must stay true of the
+      // 403 branch below too: it RE-throws, so the money behaviour is untouched (measured
+      // live — the balance did not move across four of these failures).
+      //
+      // WHY THIS ONE FAILURE IS RE-DRESSED. A 403 on searchAnalytics.query is not a crash: it
+      // is Google stating a permission fact about the caller's own property, and the user has
+      // two concrete actions for it. Handed to the registry's generic branch it became "failed
+      // unexpectedly … quote reference f05822b1" — an instruction to file a bug about a
+      // correctly-working permission system, which is what two live projects received on every
+      // call for hours.
+      //
+      // It carries PreconditionNotMetError because that TYPE is what the registry reads as
+      // "designed refusal, sentence already written, render it verbatim" — and because the
+      // money rule leaves no alternative: returning an errorResult would COMMIT the 5 credits
+      // for a call that fetched nothing. It is the least comfortable of the four uses: the
+      // other three are states with nothing for an operator to read, and this one has Google's
+      // own message. So this branch — alone among them — logs that message ITSELF before
+      // throwing, because the registry's precondition path deliberately emits no log line. The
+      // operator keeps the verbatim external error; the user stops being told to report a bug.
+      // The 8-hex reference is the one thing not reproduced, and it correlates a sentence that
+      // says nothing to a log line — here the sentence names the state, and project_id is the
+      // handle. A wider branch (any 403, any Google error) would re-hide the real faults the
+      // 2026-08-09 campaign found wearing the generic sentence, so it stays this narrow.
+      const property = connection.gsc_property;
       const pull = await runPull({
         refreshToken,
-        property: connection.gsc_property,
+        property,
         days,
         reference: now(),
         api,
+      }).catch((error: unknown): never => {
+        if (!isSearchAnalyticsForbidden(error)) {
+          throw error;
+        }
+        console.error(
+          `pull_gsc_data: Google refused the property for project ${project_id}: ${error.message}`,
+        );
+        throw new PreconditionNotMetError(forbiddenPropertyMessage(property));
       });
 
       // Store the pull as a succeeded jobs row (data carrier; reserve_id stays null), then

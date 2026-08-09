@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { encryptToken, toByteaHex } from "@pseo/core";
+import { encryptToken, searchAnalyticsQuery, toByteaHex } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
@@ -21,7 +21,10 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
  *   (b) no connection -> THROWS "connect_gsc first" and RELEASES (net 0), no jobs row;
  *   (c) a connection with no matched property -> THROWS and RELEASES (net 0), no jobs row.
  * A SECOND block below asserts the same three connection states as the CLIENT receives them —
- * through the registry's catch, which is where the sentence used to be lost.
+ * through the registry's catch, which is where the sentence used to be lost. A THIRD block does
+ * the same for the Google 403, the one refusal that is BOTH user-actionable and operator-worthy:
+ * the client gets a permission sentence, the log keeps Google's verbatim message, and the ledger
+ * still nets to zero — with a 500 and a token-endpoint 403 beside it to hold the branch narrow.
  */
 
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
@@ -401,6 +404,169 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
       expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
       expect(balanceOf(rows)).toBe(100);
       expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * THE GOOGLE 403 — the failure that started this slice. Two live projects (bayder.com.tr,
+ * rkturizm.com) were bound to a property their Google account could LIST but not READ, and
+ * every call answered "failed unexpectedly … quote reference f05822b1" for a permission system
+ * that was working exactly as designed (Fly refs f05822b1, bb08959c, 2026-08-09).
+ *
+ * The 403 Error is not hand-written here: it is produced by the REAL @pseo/core client driven
+ * by a fake `fetch` (zero network, NEVER #5), so the message the tool matches on is the message
+ * core actually builds. Reword `apiError` and this spec fails instead of the branch silently
+ * falling back to the generic sentence — the exact failure mode that let a previous slice ship
+ * a correct renderer whose caller bypassed it.
+ */
+async function coreForbiddenError(property: string): Promise<Error> {
+  const forbiddenFetch = async (): Promise<Response> =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 403,
+          message: `User does not have sufficient permission for site '${property}'. See also: https://support.google.com/webmasters/answer/2451999`,
+        },
+      }),
+      { status: 403, headers: { "content-type": "application/json" } },
+    );
+  try {
+    await searchAnalyticsQuery("ya29.db-test-access", property, {}, { fetch: forbiddenFetch });
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected the core client to throw on a 403");
+}
+
+/** A Google port whose searchAnalytics.query is refused exactly the way production's was. */
+function forbiddenApi(error: Error): GscApi {
+  return {
+    refreshAccessToken: async () => ({ accessToken: "ya29.db-test-access" }),
+    searchAnalyticsQuery: async () => {
+      throw error;
+    },
+  };
+}
+
+describe("pull_gsc_data when Google refuses the property (403)", () => {
+  const PROPERTY = "sc-domain:forbidden.example.com";
+
+  it("answers with the actionable permission sentence, still logs Google's own message, and nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `forbidden-${randomUUID()}.example.com`);
+      await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: forbiddenApi(await coreForbiddenError(PROPERTY)),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      // What the USER gets: named state, named actions, no bug-report instruction.
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toContain(PROPERTY);
+      expect(text).toContain("does not have permission to read it");
+      expect(text).toContain("Users and permissions");
+      expect(text).toContain("connect_gsc");
+      expect(text).not.toMatch(/failed unexpectedly/i);
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // No Google/permission-enum internals leak into the user's sentence.
+      expect(text).not.toMatch(/searchAnalytics/);
+      expect(text).not.toMatch(/403/);
+      expect(text).not.toMatch(/siteUnverifiedUser|permissionLevel/);
+
+      // What the OPERATOR gets: the verbatim external error, correlated by project_id. The
+      // registry's precondition path logs nothing, so this line can only come from the tool.
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain(projectId);
+      expect(logged).toContain("Google searchAnalytics.query failed (403)");
+      expect(logged).toContain("does not have sufficient permission");
+
+      // THE MONEY PIN: a permission error is not a purchase. Reserve then release, net 0.
+      const rows = await ledgerRows(ctx.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows[1]?.delta).toBe(-TOOL_COSTS.pull_gsc_data);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE COUNTERWEIGHT, and the reason the branch is keyed on surface+status rather than "403"
+   * or "Google". A 500 from the same call is a genuine external fault: the user must NOT be told
+   * to go fix a permission, and the operator must keep the reference-correlated crash line.
+   */
+  it("a non-403 Google failure still gets the generic sentence, a reference and a log line", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `gsc500-${randomUUID()}.example.com`);
+      await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: forbiddenApi(new Error("Google searchAnalytics.query failed (500): Internal error")),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      const reference = /reference ([0-9a-f]{8})\b/.exec(text)?.[1];
+      expect(reference).toBeDefined();
+      expect(text).not.toContain("Users and permissions");
+      expect(text).not.toContain("Internal error");
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain(reference!);
+      expect(logged).toContain("Internal error");
+
+      const rows = await ledgerRows(ctx.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /** A 403 from the TOKEN endpoint is a different fault (a revoked grant) — not this branch. */
+  it("a 403 from the token endpoint is NOT re-dressed as a property permission problem", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `token403-${randomUUID()}.example.com`);
+      await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: {
+          refreshAccessToken: async () => {
+            throw new Error("Google token endpoint failed (403): insufficient_scope");
+          },
+          searchAnalyticsQuery: async () => ({}),
+        },
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      expect(result.content[0]?.text ?? "").toMatch(/failed unexpectedly/);
+      expect(result.content[0]?.text ?? "").not.toContain("Users and permissions");
+      expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
     } finally {
       errorSpy.mockRestore();
     }
