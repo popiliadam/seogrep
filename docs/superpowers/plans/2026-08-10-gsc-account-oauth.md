@@ -257,6 +257,60 @@ koparmak gsc_property'yi yok etmemeli."
 
 ---
 
+### Task 2b: MCP tarafındaki okuyucuları hesap eksenine taşı — PLAN AÇIĞI, sonradan eklendi
+
+**NEDEN SONRADAN EKLENDİ.** Task 2'nin işçisi keşfetti, şef grep'le doğruladı: 0021
+`gsc_connections.encrypted_refresh_token`'ı düşürüyor ama planın hiçbir task'ı o kolonu okuyan
+MCP tarafı kodu sahiplenmiyordu. `apps/mcp` lane'i 21 testte kırmızı ve **dal bu task inene kadar
+kırık kalır**. Planın kendisi, bu kod tabanının beş kez öğrettiği soruyu sormamıştı:
+**bu veriyi başka kim okuyor?** (#35 #36 #46 #48 #50 — hepsi aynı şekil.)
+
+**Files:**
+- Modify: `apps/mcp/src/db.ts`, `apps/mcp/src/tools/whats-next.ts`, `apps/mcp/src/tools/pull-gsc-data.ts`
+- Modify/relocate: `apps/mcp/src/gsc/gsc-storage.db.test.ts` (v3 proje-bağlı saklama iddiasını pinliyor)
+- Modify: `apps/mcp/src/tools/connect-gsc.db.test.ts`, `whats-next.db.test.ts`, `generate-report.db.test.ts`
+
+**Interfaces:**
+- Consumes: `gsc_accounts` (Task 2), `accessTokenFor(client, accountId, userId, keyHex)` (Task 4)
+- Produces: MCP tarafı artık token'ı `gsc_connections.account_id -> gsc_accounts` üzerinden çözer.
+
+- [ ] **Step 1: Her okuyucuyu adıyla listele**
+
+`grep -rn "encrypted_refresh_token" apps packages | grep -v node_modules | grep -v /dist/`
+Çıktıyı rapora YAPIŞTIR. Bu task'ın kapsamı o listedir; listede olmayan bir dosyaya dokunma.
+
+- [ ] **Step 2: Okuma yolunu hesap üzerinden kur**
+
+`gsc_connections`'tan `account_id` okunur, token `gsc_accounts`'tan alınır. Her sorgu
+tenant-filtreli (NEVER#4). `account_id IS NULL` ise bu "bağlı değil" demektir ve mevcut
+"connect_gsc first" mesajına düşer — **yeni bir hata sınıfı icat etme**, Task 8 onu yapacak.
+
+- [ ] **Step 3: NEVER#8 — v3 testlerini SİLME, TAŞI**
+
+`gsc-storage.db.test.ts` artık var olmayan bir sözü pinliyor. Her iddia tek tek ele alınır:
+hâlâ geçerli olan (tenant izolasyonu, şifreli saklama) hesap eksenine taşınır; yalnız
+"token projeye bağlıdır" iddiası düşer. **Commit mesajına hangi iddianın nereye gittiği
+tek tek yazılır** — hakem bunu iddia iddia karşılaştıracak.
+
+- [ ] **Step 4: Kapıyı koş**
+
+Run: `bash guardrails/verify-db.sh` (repo kökünden)
+Expected: PASS. Kırmızı kalan her test adıyla raporlanır.
+
+- [ ] **Step 5: MUTATION**
+
+`account_id` okumasından `.eq("user_id", …)` filtresini sil: tenant testi **kırmızı** olmalı. Geri al.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git commit -m "fix(mcp): okuma yolu hesap ekseninde — 0021'in düşürdüğü kolonun tüketicileri
+
+PLAN AÇIĞI: plan 'bu veriyi başka kim okuyor?' sorusunu sormamıştı."
+```
+
+---
+
 ### Task 3: Kripto v4 — token `(user_id, account_id)`'ye mühürlenir
 
 **Files:**
