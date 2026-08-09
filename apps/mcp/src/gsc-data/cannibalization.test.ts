@@ -49,6 +49,101 @@ describe("detectCannibalization", () => {
     expect(detectCannibalization(pull)).toEqual([]);
   });
 
+  /**
+   * Live campaign, 2026-08-09. www.bigcattr.com, query "british kedi cinsleri": 8 "competing
+   * pages", three of which were ONE article — the bare URL at 2.2 plus #nasil-bir-kedi and
+   * #renkler both at 9.8. Google shows jump-links into an article's sections; counting them as
+   * rivals of the article inflates the page count and invents a conflict to fix.
+   */
+  it("counts rows differing only by #fragment as ONE page, so a self-only query is no finding", () => {
+    const article = "https://www.bigcattr.com/blog/icerik/british-shorthair-kedi-cinsi";
+    const pull = pullData(
+      [
+        gscRow({ query: "british kedi cinsleri", page: article, impressions: 500, position: 2.2 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#nasil-bir-kedi`, impressions: 300, position: 9.8 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#renkler`, impressions: 200, position: 9.8 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(pull)).toEqual([]);
+  });
+
+  /**
+   * The aggregation rule, pinned as a number rather than left implicit. Impressions and clicks
+   * are summed (they count separate events, and the sum keeps the group's totals and therefore
+   * both floors exactly where they were); position is the IMPRESSION-WEIGHTED mean, which is the
+   * same kind of average Google's own position already is. The alternatives are visibly
+   * different here: best-position would say 2.0, an unweighted mean 6.0.
+   */
+  it("sums a merged page's impressions and clicks and weights its position by impressions", () => {
+    const pull = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/a", impressions: 100, clicks: 10, position: 2 }),
+        gscRow({ query: "q", page: "https://x.test/a#section", impressions: 300, clicks: 5, position: 10 }),
+        gscRow({ query: "q", page: "https://x.test/b", impressions: 200, clicks: 4, position: 7 }),
+      ],
+      [],
+    );
+    const groups = detectCannibalization(pull);
+    expect(groups).toHaveLength(1);
+    // Three rows, two documents: the merge happened before the competitor filter counted pages.
+    expect(groups[0]!.pages).toHaveLength(2);
+    // Both group totals survive the merge untouched — that is what keeps the share denominator
+    // and both floors exactly where they were.
+    expect(groups[0]!.total_impressions).toBe(600);
+    expect(groups[0]!.total_clicks).toBe(19);
+    expect(groups[0]!.pages[0]).toEqual({
+      query: "q",
+      page: "https://x.test/a", // the document, with no fragment left on it
+      impressions: 400, // 100 + 300
+      clicks: 15, // 10 + 5, not the bare row's 10
+      position: 8, // (2×100 + 10×300) / 400
+      ctr: 0.0375, // 15/400, recomputed rather than carried from a row
+    });
+  });
+
+  /**
+   * A section row can be the ONLY row Google returns for a document. It still names the article,
+   * so the page the user is told to look at must not carry a fragment it cannot act on.
+   */
+  it("strips the fragment even from a lone anchor row", () => {
+    const pull = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/a#section", impressions: 300, clicks: 5, position: 9 }),
+        gscRow({ query: "q", page: "https://x.test/b", impressions: 200, clicks: 4, position: 7 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(pull)[0]!.pages.map((p) => p.page)).toEqual([
+      "https://x.test/a",
+      "https://x.test/b",
+    ]);
+  });
+
+  /**
+   * The collapse must stop at the fragment. A trailing slash or a query string CAN address a
+   * different document, so merging on those would hide real rivals — the opposite failure.
+   */
+  it("does NOT merge pages differing by trailing slash or query string", () => {
+    const slash = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/guide", impressions: 300 }),
+        gscRow({ query: "q", page: "https://x.test/guide/", impressions: 200 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(slash)[0]!.pages).toHaveLength(2);
+
+    const queryString = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/guide", impressions: 300 }),
+        gscRow({ query: "q", page: "https://x.test/guide?page=2", impressions: 200 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(queryString)[0]!.pages).toHaveLength(2);
+  });
+
   it("orders groups by total impressions, biggest query first", () => {
     const pull = pullData(
       [
