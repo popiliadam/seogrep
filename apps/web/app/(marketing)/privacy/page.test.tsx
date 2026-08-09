@@ -36,14 +36,14 @@ describe("privacy page", () => {
     // DataForSEO stopped being conditional.
     // The page's own "Changes to this policy" section promises this date moves when the policy is
     // updated, so leaving it would have made the policy breach its own rule on the way out.
-    expect(text).toContain("Effective 7 August 2026");
+    expect(text).toContain("Effective 9 August 2026");
   });
 
   it("freezes the effective date — a computed date would silently move with the clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2027-03-09T12:00:00Z"));
     render(<Page />);
-    expect(screen.getByText(/Effective 7 August 2026/)).toBeDefined();
+    expect(screen.getByText(/Effective 9 August 2026/)).toBeDefined();
   });
 
   it("does not promise erasure of the append-only credit ledger", () => {
