@@ -240,14 +240,16 @@ YABANCI project_id: dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a
 
 === ÖNCE İNSAN — İKİ İŞ, İKİSİ DE ŞEFİN YAPAMAYACAĞI ===
 
-1. DÖRT SİTEDE GSC'Yİ YENİDEN ONAYLA (#52). Aksi hâlde Faz D'de GSC ailesi yine
-   ölçülemez ve #53'ün düzeltmesi canlı veriyle sınanamaz. invalid_grant ölçüldü;
-   yeniden onay bayder+rkturizm'de ÇALIŞTIĞI kanıtlandı.
-     adstark    https://seogrep.com/api/gsc/connect?project_id=e2785bf7-9963-4b6a-a6d7-aaed7b550abe
+1. ÜÇ SİTEDE GSC YENİDEN ONAYI HÂLÂ GEREKLİ (#52). 2026-08-10'da denendi:
+   adstark ✅ DÜZELDİ, üçü DÜZELMEDİ (hâlâ invalid_grant, Fly log'uyla ölçüldü).
      bigcattr   https://seogrep.com/api/gsc/connect?project_id=26b95c84-1099-480f-b85f-d06536c11ba1
      katrenur   https://seogrep.com/api/gsc/connect?project_id=12533f04-ead8-407e-95ff-9393b8042e82
      dentnotion https://seogrep.com/api/gsc/connect?project_id=fa9340e5-52e6-483e-b7f9-1d10121f42d4
-   TIKLADIKTAN SONRA ÖLÇ, VARSAYMA: `pull_gsc_data` gerçekten veri getiriyor mu.
+   TIKLADIKTAN SONRA ÖLÇ, VARSAYMA — ve `connect_gsc`'ye BAKMA, o ayırt edemiyor:
+   dördü de yeniden onaydan sonra "already connected" dedi, üçünün token'ı ölüyken bile.
+   Tek geçerli sınav `pull_gsc_data`'nın gerçekten satır getirmesidir (5 kredi).
+   NOT: onay akışı neden üçte tutmadı BİLİNMİYOR — tek tıklamayla mı yetinildi, yoksa
+   akışın kendisinde bir sorun mu var, ölçülmedi. Faz D dilim 1'in ilk sorusu bu olmalı.
 
 2. FAZ D'NİN NE OLACAĞINA KARAR VER — aşağıdaki triyaj önerisi imza bekliyor.
 

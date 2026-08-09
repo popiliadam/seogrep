@@ -151,6 +151,33 @@ Yani bağlantısı Ocak'ta ölen bir müşteri, yıl boyunca Ocak verisi için �
 bunu **hiçbir çıktıdan anlayamaz**. Crawl ailesi bu sorunu zaten çözmüş; aynı disiplin GSC
 ailesine uygulanmamış — *"bu veriyi başka kim okuyor?"* sorusunun beşinci vakası.
 
+#### #53 KANITLANDI — yeniden onay deneyi kendi kontrol grubunu üretti (aynı gün, +1 saat)
+
+Operatör dört siteye yeniden onay verdi. **Yalnız biri tuttu** — ve bu kaza, deneyin en
+değerli parçası oldu:
+
+| site | `pull_gsc_data` | sonra üç analiz tool'unun çıktısı |
+|---|---|---|
+| **adstark** | ✅ taze veri (234/254 satır) | `find_quick_wins` **DEĞİŞTİ** · `analyze_content_decay` **DEĞİŞTİ** · `detect_cannibalization` aynı |
+| bigcattr | ❌ `invalid_grant` | 3/3 **BİREBİR AYNI** |
+| katrenur | ❌ `invalid_grant` | 3/3 **BİREBİR AYNI** |
+| dentnotion | ❌ `invalid_grant` | 3/3 **BİREBİR AYNI** |
+
+Çıktılar sha256 ile karşılaştırıldı. **Token'ı ölü üç site, 30'ar kredi ödedi (90 kredi) ve
+bir saat önce aldığı analizin BİREBİR AYNISINI aldı** — tarihsiz, uyarısız, ve tam ücretle.
+Bağlantısı onarılan tek site ise aynı tool'lardan görünür biçimde farklı sonuç aldı.
+
+`detect_cannibalization`'ın adstark'ta değişmemesi çelişki değil: kanibalizasyon grupları
+90 günlük iki pencerenin büyük ölçüde örtüştüğü, yapısal olarak durağan çıktılardır.
+
+**Bu, #53'ü mekanizmadan türetilmiş bir iddiadan doğrudan ölçülmüş bir olguya çeviriyor** —
+ve kontrol grubunu kurmak gerekmedi, ölçümün kendisi üretti.
+
+**ÖLÇÜLEN İKİNCİ ŞEY — `connect_gsc` ayırt EDEMİYOR.** Yeniden onaydan sonra dört sitenin
+dördü de yine *"already connected — property https://…"* dedi; token'ı ölü olan üçü de dahil.
+Yani mesaj, canlı bağlantı ile ölü bağlantı arasında **hiçbir fark göstermiyor**; öğrenmenin
+tek yolu para harcamak. #52'nin özeti tam olarak budur ve burada canlı gösterildi.
+
 ### #54 🔴 — Satın alma öncesi site boyutu tahmini KIRPIK, ama tam sayıymış gibi sunuluyor
 
 `crawl_site` parayı harcatmadan önce şunu der: *"~28 pages discovered; this crawl covers up to
