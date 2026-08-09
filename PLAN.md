@@ -200,24 +200,24 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — FAZ D (düzeltme dilimi) · Faz B+C 2026-08-10'da BİTTİ
+## 🧪 SIRADAKİ OTURUM — FAZ D (düzeltme dilimi) · Faz B+C 2026-08-09'da BİTTİ
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 
 SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/2026-08-10-faz-b-tam-tur.md      ← 215 hücre, bulgu #52-#62, B1-B6 cevapları
-→ docs/testing/2026-08-10-faz-c-rakip-paritesi.md ← on kontrol × 7 site vaka tablosu
+→ docs/testing/2026-08-09-faz-b-tam-tur.md      ← 215 hücre, bulgu #52-#62, B1-B6 cevapları
+→ docs/testing/2026-08-09-faz-c-rakip-paritesi.md ← on kontrol × 7 site vaka tablosu
 → docs/testing/product-test-log.md               ← bulgu #1-#62 ve triyaj
 → docs/testing/2026-08-09-cok-site-kampanya.md   ← 1. oturum, bulgu #35-#51
 → docs/testing/2026-08-07-tool-tool-analiz.md    ← 19 tool + [A]-[G] temaları
 
-=== ÖNCEKİ OTURUM (2026-08-10) NE YAPTI ===
+=== ÖNCEKİ OTURUM (2026-08-09) NE YAPTI ===
 Faz B tam tur: 215 hücre, 2855 kredi, 0 kredi sapması, 12 delta_mismatch (hepsi
 güvenli yönde). Faz C: 261 sayfa, 0 kredi. Yeni bulgu #52-#62. KOD DEĞİŞTİRİLMEDİ —
 yalnız harness (scripts/testing/) ve belgeler. Bu bir ÖLÇÜM oturumuydu.
 
-=== CANLI DURUM — hepsi ÖLÇÜLDÜ 2026-08-10 ===
+=== CANLI DURUM — hepsi ÖLÇÜLDÜ 2026-08-09 ===
 Bakiye 5900 (8755 − 2855, canlı get_credit_balance ile birebir)
 MCP endpoint canlı · 19 tool · main CI yeşil
 DFS: 31 canlı çağrının 31'i başarılı, $3 tavanı HİÇ tetiklenmedi
@@ -240,7 +240,7 @@ YABANCI project_id: dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a
 
 === ÖNCE İNSAN — İKİ İŞ, İKİSİ DE ŞEFİN YAPAMAYACAĞI ===
 
-1. ÜÇ SİTEDE GSC YENİDEN ONAYI HÂLÂ GEREKLİ (#52). 2026-08-10'da denendi:
+1. ÜÇ SİTEDE GSC YENİDEN ONAYI HÂLÂ GEREKLİ (#52). 2026-08-09'da denendi:
    adstark ✅ DÜZELDİ, üçü DÜZELMEDİ (hâlâ invalid_grant, Fly log'uyla ölçüldü).
      bigcattr   https://seogrep.com/api/gsc/connect?project_id=26b95c84-1099-480f-b85f-d06536c11ba1
      katrenur   https://seogrep.com/api/gsc/connect?project_id=12533f04-ead8-407e-95ff-9393b8042e82

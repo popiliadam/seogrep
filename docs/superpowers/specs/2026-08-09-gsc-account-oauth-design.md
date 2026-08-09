@@ -1,6 +1,6 @@
 # GSC bağlantısı: hesap-bazlı OAuth + property picker
 
-> 2026-08-10 · Durum: **tasarım onaylandı, uygulama planı bekliyor**
+> 2026-08-09 · Durum: **tasarım onaylandı, uygulama planı bekliyor**
 > Kapsam kararları operatöre soruldu ve alındı (aşağıda kim neyi karara bağladı yazılı).
 > Fiyat/kredi rakamı DEĞİŞMEZ (NEVER#6). Bu spec hiçbir fiyat kalemine dokunmaz.
 

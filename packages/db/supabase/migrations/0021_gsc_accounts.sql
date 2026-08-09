@@ -1,6 +1,6 @@
 -- Migration 0021: kimlik bilgisini PROJE ekseninden HESAP eksenine taşı.
 --
--- ÖLÇÜLDÜ 2026-08-10, çıkarım değil: altı GSC-bağlı projenin DÖRDÜNDE refresh token ölü.
+-- ÖLÇÜLDÜ 2026-08-09, çıkarım değil: altı GSC-bağlı projenin DÖRDÜNDE refresh token ölü.
 -- Sebep sunucu log'undan okundu — 12 referansın 12'si de:
 --   Tool "pull_gsc_data" failed [ref …]: Google token endpoint failed (400): invalid_grant
 -- Çalışan iki proje, yeniden onaylanan tam olarak o ikisiydi. Yani bir Google hesabı için

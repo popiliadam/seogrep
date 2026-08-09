@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript · Next.js App Router (RSC + server actions) · Supabase (Postgres + RLS) · vitest · Node crypto (AES-256-GCM)
 
-**Spec:** `docs/superpowers/specs/2026-08-10-gsc-account-oauth-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-09-gsc-account-oauth-design.md`
 
 ## Global Constraints
 
@@ -139,7 +139,7 @@ git add apps/mcp/src/gsc-data apps/mcp/src/tools
 git commit -m "feat(gsc): date the pull the discovery tools analyse
 
 createdAt zaten çekiliyordu ve loadLatestPull onu bir satır sonra atıyordu.
-Ölçüldü (2026-08-10): crawl tabanlı tool'lar verisini 14/14 tarihliyor, GSC
+Ölçüldü (2026-08-09): crawl tabanlı tool'lar verisini 14/14 tarihliyor, GSC
 tabanlı 18/18 tarihlemiyor. Bulgu #53'ün şemadan bağımsız yarısı."
 ```
 
@@ -159,7 +159,7 @@ tabanlı 18/18 tarihlemiyor. Bulgu #53'ün şemadan bağımsız yarısı."
 ```sql
 -- Migration 0021: kimlik bilgisini PROJE ekseninden HESAP eksenine taşı.
 --
--- ÖLÇÜLDÜ 2026-08-10, çıkarım değil: altı GSC-bağlı projenin DÖRDÜNDE refresh token ölü.
+-- ÖLÇÜLDÜ 2026-08-09, çıkarım değil: altı GSC-bağlı projenin DÖRDÜNDE refresh token ölü.
 -- Sebep sunucu log'undan okundu — 12 referansın 12'si de:
 --   Tool "pull_gsc_data" failed [ref …]: Google token endpoint failed (400): invalid_grant
 -- Çalışan iki proje, yeniden onaylanan tam olarak o ikisiydi. Yani bir Google hesabı için
@@ -884,7 +884,7 @@ Registry'deki tipli dalı sil: "zero credits" testi **kırmızı** olmalı. Geri
 ```bash
 git commit -m "feat(gsc): ölü bağlantı tipli hata olur — 0 kredi, ve NE YAPILACAĞINI söyler
 
-Ölçüldü 2026-08-10: 12 hücrede 'failed unexpectedly'; sebep sunucu log'unda
+Ölçüldü 2026-08-09: 12 hücrede 'failed unexpectedly'; sebep sunucu log'unda
 invalid_grant'tı ve kullanıcı yeniden onayla düzeltebilirdi."
 ```
 

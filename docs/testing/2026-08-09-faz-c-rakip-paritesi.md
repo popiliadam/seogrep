@@ -1,6 +1,6 @@
 # Faz C — rakip paritesi: "bu kontrol OLSAYDI kaç bulgu üretirdi?"
 
-> 2026-08-10 · PLAN.md Faz C · Ölçüm ürünün tool'larıyla DEĞİL, sayfalar doğrudan çekilerek
+> 2026-08-09 · PLAN.md Faz C · Ölçüm ürünün tool'larıyla DEĞİL, sayfalar doğrudan çekilerek
 > yapıldı — **0 kredi**. Harness `scripts/testing/parity-probe.mjs` + `seo-checks.mjs`
 > (predikatlar saf, `--self-test` 18/18). Ham kayıtlar repo DIŞINDA.
 >
