@@ -75,12 +75,29 @@ async function seedSucceededJob(
   if (error) throw new Error(`job update failed: ${error.message}`);
 }
 
-/** Seed a gsc_connections row with a (non-null) sealed token — whats_next only checks presence. */
+/**
+ * Seed a gsc_connections row with a (non-null) account_id — whats_next only checks presence
+ * (migration 0021 moved the token itself onto gsc_accounts; a minimal real account row is
+ * seeded here so the foreign key is satisfied, not because whats_next reads its token).
+ */
 async function seedConnection(userId: string, projectId: string): Promise<void> {
+  const account = await service
+    .from("gsc_accounts")
+    .insert({
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `whats-next-${randomUUID()}@example.test`,
+      encrypted_refresh_token: "\\xdeadbeef",
+    })
+    .select("id")
+    .single();
+  if (account.error || !account.data) {
+    throw new Error(`gsc_accounts seed failed: ${account.error?.message ?? "no row"}`);
+  }
   const { error } = await service.from("gsc_connections").insert({
     user_id: userId,
     project_id: projectId,
-    encrypted_refresh_token: "\\xdeadbeef",
+    account_id: account.data.id,
     gsc_property: `sc-domain:${randomUUID()}.example`,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);

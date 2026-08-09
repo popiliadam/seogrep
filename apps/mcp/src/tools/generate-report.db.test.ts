@@ -262,11 +262,12 @@ describe("generate_report sync charge against the local stack", () => {
     await seedGrant(user.userId, 100);
     const projectId = await makeProject(user.userId, "connected-no-pull.example.com");
     await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    // No token here — generate_report's isGscConnected only checks row presence, and migration
+    // 0021 moved the credential off this row onto gsc_accounts entirely (NEVER#8 note, commit).
     const { error: connErr } = await service.from("gsc_connections").insert({
       user_id: user.userId,
       project_id: projectId,
       gsc_property: "https://connected-no-pull.example.com/",
-      encrypted_refresh_token: Buffer.from("not-a-real-token"),
     });
     if (connErr) throw new Error(`could not seed gsc_connections: ${connErr.message}`);
 

@@ -86,11 +86,12 @@ describe("connect_gsc against the local stack", () => {
   it("says the project is ALREADY connected, and names the property, instead of re-offering the link", async () => {
     const ctx = await makeCtx();
     const projectId = await makeProject(ctx.userId, "already-connected.example.com");
+    // No token here — connect_gsc only ever reads gsc_property, and migration 0021 moved the
+    // credential off this row onto gsc_accounts entirely (see NEVER#8 note in the commit).
     const { error } = await service.from("gsc_connections").insert({
       user_id: ctx.userId,
       project_id: projectId,
       gsc_property: "https://already-connected.example.com/",
-      encrypted_refresh_token: Buffer.from("not-a-real-token"),
     });
     if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
 
@@ -131,7 +132,6 @@ describe("connect_gsc against the local stack", () => {
       user_id: ctx.userId,
       project_id: projectId,
       gsc_property: null,
-      encrypted_refresh_token: Buffer.from("not-a-real-token"),
     });
     if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
 
