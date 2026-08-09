@@ -182,17 +182,45 @@ function registrableLabel(host: string): string | null {
 }
 
 /**
- * Fold a brand or query word to a comparable form: lowercase, accents stripped, everything that
- * is not a letter or digit removed. BOTH sides go through this, so "ads-tark.com" matches the
- * query "ads-tark", and "ciceksepeti.com" matches "çiçeksepeti" — a Turkish site whose customers
- * type the accented spelling would otherwise never be recognised.
+ * Case and letter folding, shared by BOTH sides of every brand comparison — the domain label and
+ * the query. It lives in one function precisely because the two sides have to agree: a rule
+ * applied to only one of them silently stops brands matching, which is invisible in a green test
+ * suite and shows up as an unfiltered false positive on a real site.
+ *
+ * Turkish dotless ı (U+0131) is mapped by hand because it is the one letter NFD cannot reach: it
+ * has no decomposition and is not a diacritic, so it folds to itself while its ASCII twin folds
+ * to "i". Measured 2026-08-09: "yıldız" did NOT match yildiz.com and "kıralama" did NOT match
+ * kiralama.com. That is the normal shape rather than an oddity — a Turkish brand whose name
+ * carries ı registers the ASCII domain, and its customers type the ı — so it is the compound-brand
+ * failure again, arriving through a letter instead of a space.
+ *
+ * İ (U+0130) needs no rule: toLowerCase yields "i" + combining dot above, which NFD then strips.
+ * Measured: "İstanbul" already folds to "istanbul", and ç ş ğ ü ö likewise decompose.
+ *
+ * WHAT THIS COSTS, measured and accepted: ı → i merges Turkish minimal pairs that differ only in
+ * that letter — tıp (medicine) with tip (type), kır (countryside) with kir (dirt), ılık (lukewarm)
+ * with ilik (marrow). Nothing downstream can tell them apart afterwards, so a site on tip.com does
+ * suppress the query "tıp". What bounds the damage is that this fold never suppresses anything by
+ * itself: `branded` is isBrandedQuery AND looksLikeSitelinks, so a query whose pages are genuinely
+ * competing stays in the list no matter how its letters fold. Widening the fold widens the first
+ * half of a conjunction, never the answer.
  */
-function fold(value: string): string {
+function foldChars(value: string): string {
   return value
     .toLowerCase()
+    .replace(/ı/gu, "i")
     .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^\p{Letter}\p{Number}]/gu, "");
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+/**
+ * Fold a brand or query word to a comparable form: foldChars plus the removal of everything that
+ * is not a letter or digit. BOTH sides go through this, so "ads-tark.com" matches the query
+ * "ads-tark", and "ciceksepeti.com" matches "çiçeksepeti" — a Turkish site whose customers type
+ * the accented spelling would otherwise never be recognised.
+ */
+function fold(value: string): string {
+  return foldChars(value).replace(/[^\p{Letter}\p{Number}]/gu, "");
 }
 
 /**
@@ -255,10 +283,7 @@ function tokenFromHost(host: string | null): string | null {
  * instead of being cut in half by it.
  */
 function foldedAtoms(query: string): string[] {
-  return query
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
+  return foldChars(query)
     .split(/[^\p{Letter}\p{Number}]+/u)
     .filter((atom) => atom.length > 0);
 }

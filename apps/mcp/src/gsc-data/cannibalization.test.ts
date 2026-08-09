@@ -397,6 +397,48 @@ describe("detectCannibalization — branded queries", () => {
     expect(brandedOf(sitelinkRows("kiralama.com", "araç kiralama"))).toBe(true);
   });
 
+  /**
+   * Referee catch. Turkish dotless ı (U+0131) has no decomposition and is not a diacritic, so it
+   * survived folding as itself while its ASCII twin folded to "i". Measured 2026-08-09: "yıldız"
+   * did not match yildiz.com, "kıralama" did not match kiralama.com. That is the ordinary shape,
+   * not a corner case — a Turkish brand whose name carries ı registers the ASCII domain and its
+   * customers type the ı — so it is the compound-brand failure arriving through a letter.
+   */
+  it("folds Turkish dotless ı to i so an ASCII domain matches the query as typed", () => {
+    expect(brandedOf(sitelinkRows("yildiz.com", "yıldız"))).toBe(true);
+    expect(brandedOf(sitelinkRows("kiralama.com", "kıralama"))).toBe(true);
+    // ...and it composes with the adjacent-atom join, which is how compound brands arrive.
+    expect(brandedOf(sitelinkRows("arikovani.com", "arı kovanı"))).toBe(true);
+  });
+
+  /**
+   * The near misses this fold CREATES. Widening a fold widens what can be suppressed, which is the
+   * direction that hides real cannibalization, so each of these is a query that only comes near
+   * the brand once ı folds and must still be reported:
+   *   - "kırmızı" (red) folds to "kirmizi", which now starts with kir.com's whole token. Equality
+   *     of atoms is what saves it; containment would suppress every red-related query on the site.
+   *   - "yıldızı" is "yıldız" with a possessive suffix, and Turkish agglutinates constantly, so
+   *     the inflected forms of a brand word are a large share of real queries. Treating them as
+   *     the brand would suppress far more than the brand.
+   */
+  it("does not brand a longer Turkish word that merely starts with the token once ı folds", () => {
+    expect(brandedOf(sitelinkRows("kir.com", "kırmızı"))).toBe(false);
+  });
+
+  it("does not brand an inflected form of the brand word", () => {
+    expect(brandedOf(sitelinkRows("yildiz.com", "yıldızı"))).toBe(false);
+  });
+
+  /**
+   * What actually bounds the widened fold: `branded` is isBrandedQuery AND looksLikeSitelinks, so
+   * even the exact brand word stays in the list when its pages are genuinely competing. The fold
+   * widens one half of a conjunction, never the answer — a reader tempted to worry about the
+   * ı → i collisions (tıp/tip, kır/kir) should read this test first.
+   */
+  it("KEEPS the Turkish brand word when the pages are competing rather than pinned", () => {
+    expect(brandedOf(competitiveRows("yildiz.com", "yıldız"))).toBe(false);
+  });
+
   it("ignores a domain label too short to be a safe brand token", () => {
     // A 2-character token would match half the language; "hm" must not brand "hm nedir".
     expect(brandedOf(sitelinkRows("hm.com", "hm"))).toBe(false);
