@@ -430,6 +430,21 @@ describe("detectCannibalization — branded queries", () => {
   });
 
   /**
+   * FOLD EXCLUSIVITY. The two tests above prove that `ı` folds and that near misses survive;
+   * neither proves that ONLY `ı` folds. A referee measured the gap: widening the replacement to
+   * `/[ıu]/` — folding an unrelated vowel "while in the area" — passed the entire suite green,
+   * in the more-suppression direction, which is the one the user cannot see.
+   *
+   * `bira` (beer) and `bura` (this place) are ordinary Turkish words that differ only in that
+   * vowel, so a domain label of one must never brand a query of the other. Any character added
+   * to the fold class that is not a Turkish-specific undecomposable letter fails here.
+   */
+  it("folds ONLY dotless ı — no other vowel is merged into i", () => {
+    expect(brandedOf(sitelinkRows("bura.com", "bira"))).toBe(false);
+    expect(brandedOf(sitelinkRows("bira.com", "bura"))).toBe(false);
+  });
+
+  /**
    * What actually bounds the widened fold: `branded` is isBrandedQuery AND looksLikeSitelinks, so
    * even the exact brand word stays in the list when its pages are genuinely competing. The fold
    * widens one half of a conjunction, never the answer — a reader tempted to worry about the
