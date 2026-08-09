@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
 import { loadLatestPull, type LoadPullFn, type PullData } from "../gsc-data/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
  * Shared builder for the three discovery tools (find_quick_wins / detect_cannibalization /
@@ -45,8 +46,15 @@ export function makeDiscoveryTool(
       const load = await loadPull(ctx.userId, project_id);
       if (!load.ok) {
         // THROW so withCredits RELEASES the reserve — no charge when there is nothing to
-        // analyze. The registry turns this into an actionable isError result for the client.
-        throw new Error(load.error);
+        // analyze. TYPED for the same reason as the audits: the registry's catch matches
+        // PreconditionNotMetError and returns load.error verbatim, where a raw Error is
+        // swallowed by the generic "failed unexpectedly, quote reference X" branch (what
+        // 8 live calls got on 2026-08-09).
+        //
+        // load.error is deliberately the same sentence for a missing project, another
+        // tenant's project and a project never pulled (gsc-data/load.ts). Now that it
+        // reaches the user, that uniformity is what keeps project existence unobservable.
+        throw new PreconditionNotMetError(load.error);
       }
       return textResult(render(load.pull));
     },
