@@ -12,6 +12,10 @@ import type { GscRow, PullData } from "./types.ts";
  *   - >= 10% of the query's total impressions (a meaningful share, not a rounding tail).
  * A query is a cannibalization group when >= 2 of its pages clear both.
  *
+ * "A page" means a DOCUMENT: rows that differ only by #fragment are merged before any of the
+ * above is applied, because a jump-link into a section of an article is that article showing,
+ * not a rival (see collapseFragments).
+ *
  * Groups are returned biggest-query-first (total impressions desc); pages within a group
  * are ordered by impressions desc (the main contender first).
  */
@@ -47,6 +51,75 @@ function groupByQuery(rows: readonly GscRow[]): Map<string, GscRow[]> {
     else byQuery.set(row.query, [row]);
   }
   return byQuery;
+}
+
+/**
+ * The document a page value addresses: everything before the first "#". RFC 3986 makes the rest
+ * the fragment, so this needs no URL parse and a page value that does not parse as a URL still
+ * collapses correctly. NOTHING else is normalised — a query string or a trailing slash can be a
+ * genuinely different document, and guessing there would merge real rivals into one.
+ *
+ * The crawler's normalizeUrl (crawl.ts) also clears the hash, but that is a different data path
+ * over URLs the crawler itself discovered; these two happen to agree rather than share a rule.
+ */
+function documentOf(page: string): string {
+  const hash = page.indexOf("#");
+  return hash === -1 ? page : page.slice(0, hash);
+}
+
+/**
+ * Merge a query's rows that address the SAME document but differ by #fragment.
+ *
+ * Google emits one row per SERP appearance, and it shows jump-links into the sections of a single
+ * article. Measured 2026-08-09 on www.bigcattr.com, query "british kedi cinsleri": 8 "competing
+ * pages", three of which were one article — /blog/icerik/british-shorthair-… bare at position 2.2
+ * plus #nasil-bir-kedi and #renkler both at 9.8. Uncollapsed those inflate the page count and can
+ * carry a healthy query over the ">= 2 pages" bar, i.e. tell the user to fix a conflict that does
+ * not exist.
+ *
+ * How the merged row's numbers are derived, chosen deliberately over the alternatives:
+ *   - impressions and clicks are SUMMED. They count separate events, so the sum is how often the
+ *     document was shown/clicked for this query; summing also leaves the group's totals — and
+ *     therefore every share denominator and both floors — exactly where they were.
+ *   - position is the IMPRESSION-WEIGHTED mean. Google's own position is already an
+ *     impression-weighted average over appearances, so this carries that same average one level
+ *     up instead of inventing a different kind of number. Taking the best-positioned row (the
+ *     other defensible answer) would report the bigcattr article at 2.2 when most of its
+ *     impressions were at 9.8 — flattering, and unlike every other position this tool prints.
+ *   - ctr is recomputed from the summed clicks/impressions, because carrying either row's rate
+ *     forward would contradict the two numbers printed beside it.
+ *
+ * The zero-impression fallback keeps the value finite; it is not a result anyone reads, since a
+ * document with no impressions never clears CANNIBAL_MIN_PAGE_IMPRESSIONS and so never reaches
+ * `pages`. A document with one row keeps that row untouched — merging is the only reason to
+ * rewrite numbers.
+ */
+function collapseFragments(rows: readonly GscRow[]): GscRow[] {
+  const byDocument = new Map<string, GscRow[]>();
+  for (const row of rows) {
+    const document = documentOf(row.page);
+    const existing = byDocument.get(document);
+    if (existing) existing.push(row);
+    else byDocument.set(document, [row]);
+  }
+  return [...byDocument].map(([page, group]) => {
+    const first = group[0]!;
+    if (group.length === 1) return first.page === page ? first : { ...first, page };
+    const impressions = group.reduce((sum, row) => sum + row.impressions, 0);
+    const clicks = group.reduce((sum, row) => sum + row.clicks, 0);
+    const position =
+      impressions > 0
+        ? group.reduce((sum, row) => sum + row.position * row.impressions, 0) / impressions
+        : group.reduce((sum, row) => sum + row.position, 0) / group.length;
+    return {
+      query: first.query,
+      page,
+      clicks,
+      impressions,
+      ctr: impressions > 0 ? clicks / impressions : 0,
+      position,
+    };
+  });
 }
 
 /**
@@ -109,17 +182,45 @@ function registrableLabel(host: string): string | null {
 }
 
 /**
- * Fold a brand or query word to a comparable form: lowercase, accents stripped, everything that
- * is not a letter or digit removed. BOTH sides go through this, so "ads-tark.com" matches the
- * query "ads-tark", and "ciceksepeti.com" matches "çiçeksepeti" — a Turkish site whose customers
- * type the accented spelling would otherwise never be recognised.
+ * Case and letter folding, shared by BOTH sides of every brand comparison — the domain label and
+ * the query. It lives in one function precisely because the two sides have to agree: a rule
+ * applied to only one of them silently stops brands matching, which is invisible in a green test
+ * suite and shows up as an unfiltered false positive on a real site.
+ *
+ * Turkish dotless ı (U+0131) is mapped by hand because it is the one letter NFD cannot reach: it
+ * has no decomposition and is not a diacritic, so it folds to itself while its ASCII twin folds
+ * to "i". Measured 2026-08-09: "yıldız" did NOT match yildiz.com and "kıralama" did NOT match
+ * kiralama.com. That is the normal shape rather than an oddity — a Turkish brand whose name
+ * carries ı registers the ASCII domain, and its customers type the ı — so it is the compound-brand
+ * failure again, arriving through a letter instead of a space.
+ *
+ * İ (U+0130) needs no rule: toLowerCase yields "i" + combining dot above, which NFD then strips.
+ * Measured: "İstanbul" already folds to "istanbul", and ç ş ğ ü ö likewise decompose.
+ *
+ * WHAT THIS COSTS, measured and accepted: ı → i merges Turkish minimal pairs that differ only in
+ * that letter — tıp (medicine) with tip (type), kır (countryside) with kir (dirt), ılık (lukewarm)
+ * with ilik (marrow). Nothing downstream can tell them apart afterwards, so a site on tip.com does
+ * suppress the query "tıp". What bounds the damage is that this fold never suppresses anything by
+ * itself: `branded` is isBrandedQuery AND looksLikeSitelinks, so a query whose pages are genuinely
+ * competing stays in the list no matter how its letters fold. Widening the fold widens the first
+ * half of a conjunction, never the answer.
  */
-function fold(value: string): string {
+function foldChars(value: string): string {
   return value
     .toLowerCase()
+    .replace(/ı/gu, "i")
     .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[^\p{Letter}\p{Number}]/gu, "");
+    .replace(/\p{Diacritic}/gu, "");
+}
+
+/**
+ * Fold a brand or query word to a comparable form: foldChars plus the removal of everything that
+ * is not a letter or digit. BOTH sides go through this, so "ads-tark.com" matches the query
+ * "ads-tark", and "ciceksepeti.com" matches "çiçeksepeti" — a Turkish site whose customers type
+ * the accented spelling would otherwise never be recognised.
+ */
+function fold(value: string): string {
+  return foldChars(value).replace(/[^\p{Letter}\p{Number}]/gu, "");
 }
 
 /**
@@ -174,29 +275,61 @@ function tokenFromHost(host: string | null): string | null {
 }
 
 /**
- * Is `query` a branded query for `token`? Compared word by word on the FOLDED forms, so a brand
- * mentioned inside a longer query counts ("adstark dijital pazarlama") while a coincidental
- * substring inside an unrelated word does not ("shopping" is not "shop").
+ * A query's alphanumeric ATOMS, each already in fold()'s form: "adstark.com.tr" ->
+ * ["adstark", "com", "tr"], "dent notion" -> ["dent", "notion"], "ads-tark" -> ["ads", "tark"].
+ *
+ * Whitespace and punctuation are the same kind of boundary here, which is the point: the folding
+ * happens BEFORE the split, so a decomposed spelling ("c" + combining cedilla) loses its accent
+ * instead of being cut in half by it.
+ */
+function foldedAtoms(query: string): string[] {
+  return foldChars(query)
+    .split(/[^\p{Letter}\p{Number}]+/u)
+    .filter((atom) => atom.length > 0);
+}
+
+/**
+ * Is `query` a branded query for `token`? True when some run of ADJACENT atoms joins to exactly
+ * the token. One atom is the common case ("adstark dijital pazarlama"); several cover both a
+ * separator inside the brand ("ads-tark" for ads-tark.com) and a compound brand the user typed as
+ * separate words.
+ *
+ * That last case is why the run exists. Measured 2026-08-09 on dentnotion.com: 107 "cannibalized"
+ * queries, the first of them "dent notion" — the company's own name with a space, homepage at 2.0
+ * plus five inner pages, the textbook sitelink shape this filter was written to suppress. Word-by
+ * -word matching could never see it, because neither "dent" nor "notion" is "dentnotion".
+ *
+ * Equality of the joined run, never containment, and that is the whole guard against
+ * over-correcting: folding the query and asking whether it CONTAINS the token would brand
+ * "car petrol" for carpet.com and "student dent notionally" for dentnotion.com. Adjacency is
+ * required too, so an intervening word ("dent and notion") or the reversed order ("notion dent")
+ * is not the brand. Atom equality also keeps "shopping" from being "shop".
  *
  * KNOWN LIMITS, accepted deliberately:
  *   - A brand that is an ordinary word ("monday", "apple") also suppresses that word's genuine
  *     cannibalization. Nothing in Search Console data separates the two, and of the two errors
  *     the false positive is the one that makes a user de-optimise their own pages. The sitelink
  *     conjunction below narrows this considerably but cannot remove it.
- *   - A multi-word brand is matched on its domain label only, so "acme corp" is recognised as
- *     "acmecorp" only if that is how the domain reads.
+ *   - The joined run must reproduce the domain label exactly, so a brand the domain abbreviates
+ *     ("dent notion clinic" for dentnotion.com is fine, but "dent notion" for
+ *     dentnotionclinic.com is not) goes unrecognised.
+ *   - Two ordinary short words that happen to join into the token are branded on sight; the
+ *     >= 3-character token floor is all that bounds how common that can be.
  */
 function isBrandedQuery(query: string, token: string | null): boolean {
   if (token === null) return false;
-  return query.split(/\s+/).some((word) => {
-    // Both readings of a word, because a separator can be INSIDE the brand or BETWEEN it and
-    // something else, and no single split gets both: folding the whole word catches "ads-tark"
-    // for ads-tark.com, while splitting on separators catches "adstark-ajans" and the canonical
-    // navigational query "adstark.com.tr". An earlier version did only one and merely traded
-    // one class of miss for another.
-    if (fold(word) === token) return true;
-    return word.split(/[^\p{Letter}\p{Number}]+/u).some((part) => fold(part) === token);
-  });
+  const atoms = foldedAtoms(query);
+  for (let start = 0; start < atoms.length; start += 1) {
+    let run = "";
+    for (let index = start; index < atoms.length; index += 1) {
+      run += atoms[index];
+      if (run === token) return true;
+      // A run only grows, so once it is as long as the token no extension of it can equal the
+      // token. Bounds the scan at a handful of atoms per start, whatever the query's length.
+      if (run.length >= token.length) break;
+    }
+  }
+  return false;
 }
 
 /** A sitelink sits at position 1; allow a hair of averaging noise over a 90-day window. */
@@ -230,7 +363,10 @@ export function detectCannibalization(pull: PullData): CannibalGroup[] {
   // Computed ONCE for the whole pull, not per group: per-group derivation made the brand depend
   // on which row Google returned first.
   const brandToken = brandTokenOf(pull);
-  for (const [query, rows] of groupByQuery(pull.current.rows)) {
+  for (const [query, rawRows] of groupByQuery(pull.current.rows)) {
+    // Fragments merge BEFORE the page count and both floors are read: three anchor rows of one
+    // article are one page, and a query that only "competes" with itself that way is no group.
+    const rows = collapseFragments(rawRows);
     if (rows.length < 2) continue; // a single page cannot cannibalize itself
     const totalImpressions = rows.reduce((sum, row) => sum + row.impressions, 0);
     if (totalImpressions <= 0) continue;

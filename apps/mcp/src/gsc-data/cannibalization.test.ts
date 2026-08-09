@@ -49,6 +49,101 @@ describe("detectCannibalization", () => {
     expect(detectCannibalization(pull)).toEqual([]);
   });
 
+  /**
+   * Live campaign, 2026-08-09. www.bigcattr.com, query "british kedi cinsleri": 8 "competing
+   * pages", three of which were ONE article — the bare URL at 2.2 plus #nasil-bir-kedi and
+   * #renkler both at 9.8. Google shows jump-links into an article's sections; counting them as
+   * rivals of the article inflates the page count and invents a conflict to fix.
+   */
+  it("counts rows differing only by #fragment as ONE page, so a self-only query is no finding", () => {
+    const article = "https://www.bigcattr.com/blog/icerik/british-shorthair-kedi-cinsi";
+    const pull = pullData(
+      [
+        gscRow({ query: "british kedi cinsleri", page: article, impressions: 500, position: 2.2 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#nasil-bir-kedi`, impressions: 300, position: 9.8 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#renkler`, impressions: 200, position: 9.8 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(pull)).toEqual([]);
+  });
+
+  /**
+   * The aggregation rule, pinned as a number rather than left implicit. Impressions and clicks
+   * are summed (they count separate events, and the sum keeps the group's totals and therefore
+   * both floors exactly where they were); position is the IMPRESSION-WEIGHTED mean, which is the
+   * same kind of average Google's own position already is. The alternatives are visibly
+   * different here: best-position would say 2.0, an unweighted mean 6.0.
+   */
+  it("sums a merged page's impressions and clicks and weights its position by impressions", () => {
+    const pull = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/a", impressions: 100, clicks: 10, position: 2 }),
+        gscRow({ query: "q", page: "https://x.test/a#section", impressions: 300, clicks: 5, position: 10 }),
+        gscRow({ query: "q", page: "https://x.test/b", impressions: 200, clicks: 4, position: 7 }),
+      ],
+      [],
+    );
+    const groups = detectCannibalization(pull);
+    expect(groups).toHaveLength(1);
+    // Three rows, two documents: the merge happened before the competitor filter counted pages.
+    expect(groups[0]!.pages).toHaveLength(2);
+    // Both group totals survive the merge untouched — that is what keeps the share denominator
+    // and both floors exactly where they were.
+    expect(groups[0]!.total_impressions).toBe(600);
+    expect(groups[0]!.total_clicks).toBe(19);
+    expect(groups[0]!.pages[0]).toEqual({
+      query: "q",
+      page: "https://x.test/a", // the document, with no fragment left on it
+      impressions: 400, // 100 + 300
+      clicks: 15, // 10 + 5, not the bare row's 10
+      position: 8, // (2×100 + 10×300) / 400
+      ctr: 0.0375, // 15/400, recomputed rather than carried from a row
+    });
+  });
+
+  /**
+   * A section row can be the ONLY row Google returns for a document. It still names the article,
+   * so the page the user is told to look at must not carry a fragment it cannot act on.
+   */
+  it("strips the fragment even from a lone anchor row", () => {
+    const pull = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/a#section", impressions: 300, clicks: 5, position: 9 }),
+        gscRow({ query: "q", page: "https://x.test/b", impressions: 200, clicks: 4, position: 7 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(pull)[0]!.pages.map((p) => p.page)).toEqual([
+      "https://x.test/a",
+      "https://x.test/b",
+    ]);
+  });
+
+  /**
+   * The collapse must stop at the fragment. A trailing slash or a query string CAN address a
+   * different document, so merging on those would hide real rivals — the opposite failure.
+   */
+  it("does NOT merge pages differing by trailing slash or query string", () => {
+    const slash = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/guide", impressions: 300 }),
+        gscRow({ query: "q", page: "https://x.test/guide/", impressions: 200 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(slash)[0]!.pages).toHaveLength(2);
+
+    const queryString = pullData(
+      [
+        gscRow({ query: "q", page: "https://x.test/guide", impressions: 300 }),
+        gscRow({ query: "q", page: "https://x.test/guide?page=2", impressions: 200 }),
+      ],
+      [],
+    );
+    expect(detectCannibalization(queryString)[0]!.pages).toHaveLength(2);
+  });
+
   it("orders groups by total impressions, biggest query first", () => {
     const pull = pullData(
       [
@@ -254,6 +349,109 @@ describe("detectCannibalization — branded queries", () => {
     expect(brandedOf(sitelinkRows("adstark.com.tr", "adstark.com.tr"))).toBe(true);
     expect(brandedOf(sitelinkRows("adstark.com.tr", "adstark-ajans"))).toBe(true);
     expect(brandedOf(sitelinkRows("ads-tark.com", "ads-tark"))).toBe(true);
+  });
+
+  /**
+   * Live campaign, 2026-08-09. dentnotion.com produced 107 "cannibalized" queries and the FIRST
+   * was "dent notion" — the company's own name typed with a space, homepage at 2.0 plus five
+   * inner pages. Matching word by word could not see it: neither "dent" nor "notion" is
+   * "dentnotion". People type a compound brand as separate words, so adjacent words have to be
+   * allowed to join.
+   */
+  it("matches a compound brand the user typed as separate words", () => {
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion"))).toBe(true);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent notion dis klinigi"))).toBe(true);
+  });
+
+  /**
+   * The guard against over-correcting. Each of these would be branded by the obvious shortcut —
+   * fold the WHOLE query and ask whether it contains the token — and each is a query the tool
+   * must keep reporting. Joining runs of adjacent atoms and testing EQUALITY is what separates
+   * them: "car petrol" joins to "carpetrol", never to "carpet".
+   */
+  it("does not brand words that merely contain the token once the query is folded", () => {
+    expect(brandedOf(sitelinkRows("carpet.com", "car petrol"))).toBe(false);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "student dent notionally"))).toBe(false);
+  });
+
+  /**
+   * Adjacency and order are part of the rule, not an accident of it: a brand is the words next
+   * to each other in the domain's order. Without this, joining would creep toward "these words
+   * appear somewhere in the query", which is the containment failure one step removed.
+   */
+  it("does not brand the same words when they are separated or reversed", () => {
+    expect(brandedOf(sitelinkRows("dentnotion.com", "dent and notion"))).toBe(false);
+    expect(brandedOf(sitelinkRows("dentnotion.com", "notion dent"))).toBe(false);
+  });
+
+  /**
+   * Accents are removed BEFORE the query is cut into words, not after. Cut first and a combining
+   * mark becomes a word boundary, so "araçkiralama" — one typed word, generic Turkish for car
+   * rental — would split into "arac" + "kiralama" and hand kiralama.com its own brand. That is
+   * the "shopping" is not "shop" failure coming back in through an accent, on the language most
+   * of this product's measured users search in.
+   */
+  it("does not let an accent inside a word turn the rest of it into the brand", () => {
+    expect(brandedOf(sitelinkRows("kiralama.com", "araçkiralama"))).toBe(false);
+    // The same two words genuinely written apart ARE the brand plus a word.
+    expect(brandedOf(sitelinkRows("kiralama.com", "araç kiralama"))).toBe(true);
+  });
+
+  /**
+   * Referee catch. Turkish dotless ı (U+0131) has no decomposition and is not a diacritic, so it
+   * survived folding as itself while its ASCII twin folded to "i". Measured 2026-08-09: "yıldız"
+   * did not match yildiz.com, "kıralama" did not match kiralama.com. That is the ordinary shape,
+   * not a corner case — a Turkish brand whose name carries ı registers the ASCII domain and its
+   * customers type the ı — so it is the compound-brand failure arriving through a letter.
+   */
+  it("folds Turkish dotless ı to i so an ASCII domain matches the query as typed", () => {
+    expect(brandedOf(sitelinkRows("yildiz.com", "yıldız"))).toBe(true);
+    expect(brandedOf(sitelinkRows("kiralama.com", "kıralama"))).toBe(true);
+    // ...and it composes with the adjacent-atom join, which is how compound brands arrive.
+    expect(brandedOf(sitelinkRows("arikovani.com", "arı kovanı"))).toBe(true);
+  });
+
+  /**
+   * The near misses this fold CREATES. Widening a fold widens what can be suppressed, which is the
+   * direction that hides real cannibalization, so each of these is a query that only comes near
+   * the brand once ı folds and must still be reported:
+   *   - "kırmızı" (red) folds to "kirmizi", which now starts with kir.com's whole token. Equality
+   *     of atoms is what saves it; containment would suppress every red-related query on the site.
+   *   - "yıldızı" is "yıldız" with a possessive suffix, and Turkish agglutinates constantly, so
+   *     the inflected forms of a brand word are a large share of real queries. Treating them as
+   *     the brand would suppress far more than the brand.
+   */
+  it("does not brand a longer Turkish word that merely starts with the token once ı folds", () => {
+    expect(brandedOf(sitelinkRows("kir.com", "kırmızı"))).toBe(false);
+  });
+
+  it("does not brand an inflected form of the brand word", () => {
+    expect(brandedOf(sitelinkRows("yildiz.com", "yıldızı"))).toBe(false);
+  });
+
+  /**
+   * FOLD EXCLUSIVITY. The two tests above prove that `ı` folds and that near misses survive;
+   * neither proves that ONLY `ı` folds. A referee measured the gap: widening the replacement to
+   * `/[ıu]/` — folding an unrelated vowel "while in the area" — passed the entire suite green,
+   * in the more-suppression direction, which is the one the user cannot see.
+   *
+   * `bira` (beer) and `bura` (this place) are ordinary Turkish words that differ only in that
+   * vowel, so a domain label of one must never brand a query of the other. Any character added
+   * to the fold class that is not a Turkish-specific undecomposable letter fails here.
+   */
+  it("folds ONLY dotless ı — no other vowel is merged into i", () => {
+    expect(brandedOf(sitelinkRows("bura.com", "bira"))).toBe(false);
+    expect(brandedOf(sitelinkRows("bira.com", "bura"))).toBe(false);
+  });
+
+  /**
+   * What actually bounds the widened fold: `branded` is isBrandedQuery AND looksLikeSitelinks, so
+   * even the exact brand word stays in the list when its pages are genuinely competing. The fold
+   * widens one half of a conjunction, never the answer — a reader tempted to worry about the
+   * ı → i collisions (tıp/tip, kır/kir) should read this test first.
+   */
+  it("KEEPS the Turkish brand word when the pages are competing rather than pinned", () => {
+    expect(brandedOf(competitiveRows("yildiz.com", "yıldız"))).toBe(false);
   });
 
   it("ignores a domain label too short to be a safe brand token", () => {
