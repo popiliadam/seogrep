@@ -142,6 +142,7 @@ vi.mock("./property-picker", async (importOriginal) => ({
   PropertyPicker: (p: {
     projectId: string;
     current: string;
+    retained: { property: string; choice: string | null } | null;
     suggested: string | null;
     missingProperty: string | null;
     alsoMapped: number;
@@ -152,6 +153,8 @@ vi.mock("./property-picker", async (importOriginal) => ({
       data-testid="picker"
       data-project-id={p.projectId}
       data-current={p.current}
+      data-retained={p.retained ? p.retained.property : ""}
+      data-retained-choice={p.retained?.choice ?? ""}
       data-suggested={p.suggested ?? ""}
       data-missing={p.missingProperty ?? ""}
       data-also-mapped={String(p.alsoMapped)}
@@ -605,6 +608,65 @@ describe("ConnectionPage — the property picker", () => {
     expect(pickerOf(PROJECT_A.domain).getAttribute("data-current")).toBe(
       encodeChoice(ACCOUNT_ID, "https://alpha.example/"),
     );
+  });
+
+  /**
+   * `account_id IS NULL` + `gsc_property` set is the design's own state (spec line 68): "the
+   * mapping stands, connect to activate it" — what migration 0021 leaves every migrated row in.
+   * Nothing rendered it: `current` is computed only for a mapped row, so the page showed a
+   * freshly recomputed SUGGESTION while the disconnect confirmation claimed the choice was kept.
+   * The suggestion here is a DIFFERENT property (the real `resolveGscProperty` prefers the
+   * domain one), so a fallback to it cannot pass this spec by accident.
+   */
+  it("surfaces the STORED property of an unmapped row, and pre-selects it where an account lists it", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, null, "https://alpha.example/")];
+    accountRows = [account()];
+    sitesByAccount = {
+      [ACCOUNT_ID]: [site("https://alpha.example/"), site("sc-domain:alpha.example")],
+    };
+    await renderPage();
+
+    const picker = pickerOf(PROJECT_A.domain);
+    expect(picker.getAttribute("data-retained")).toBe("https://alpha.example/");
+    expect(picker.getAttribute("data-retained-choice")).toBe(
+      encodeChoice(ACCOUNT_ID, "https://alpha.example/"),
+    );
+    // Still NOT a live mapping: the row reads Not connected until the user saves.
+    expect(picker.getAttribute("data-current")).toBe("");
+    expect(within(rowOf(PROJECT_A.domain)).getByText("Not connected")).toBeTruthy();
+  });
+
+  /**
+   * Before any account is reconnected there is nothing to pre-select — and the stored value is
+   * still what the user was told was kept, so it is named rather than dropped.
+   */
+  it("names the stored property of an unmapped row even when no account can offer it", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, null, "https://alpha.example/")];
+    accountRows = [];
+    await renderPage();
+
+    const picker = pickerOf(PROJECT_A.domain);
+    expect(picker.getAttribute("data-retained")).toBe("https://alpha.example/");
+    expect(picker.getAttribute("data-retained-choice")).toBe("");
+  });
+
+  it("claims no retained property for a MAPPED row, or for one that stored none", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [
+      mapping(PROJECT_A.id, ACCOUNT_ID, "https://alpha.example/"), // mapped -> `current` owns it
+      mapping(PROJECT_B.id, null, null), // unmapped, nothing stored -> nothing to show
+    ];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("https://alpha.example/")] };
+    await renderPage();
+
+    expect(pickerOf(PROJECT_A.domain).getAttribute("data-retained")).toBe("");
+    expect(pickerOf(PROJECT_B.domain).getAttribute("data-retained")).toBe("");
   });
 
   /**
