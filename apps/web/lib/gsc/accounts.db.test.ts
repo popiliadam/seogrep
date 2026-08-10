@@ -343,13 +343,13 @@ describe("accessTokenFor", () => {
 
     const realFrom = client.from.bind(client);
     let fromCalls = 0;
-    const spy = vi.spyOn(client, "from").mockImplementation((table: string) => {
+    const spy = vi.spyOn(client, "from").mockImplementation(((table: string) => {
       fromCalls += 1;
       if (table === "gsc_accounts" && fromCalls > 1) {
         throw new Error("simulated transient DB failure writing token_status");
       }
       return realFrom(table as never);
-    });
+    }) as unknown as typeof client.from);
 
     try {
       const deps = fakeGoogleDeps(400, { error: "invalid_grant" });

@@ -70,10 +70,11 @@ function record(table: string, op: string, filters: Filter[]): { message: string
 /** The filters carried by the one statement of this shape — fails loudly if there are several. */
 function filtersOf(table: string, op: string): Filter[] {
   const hits = statements.filter((s) => s.table === table && s.op === op);
-  if (hits.length !== 1) {
+  const [only, ...rest] = hits;
+  if (!only || rest.length > 0) {
     throw new Error(`expected exactly one ${op} on ${table}, saw ${hits.length}`);
   }
-  return hits[0].filters;
+  return only.filters;
 }
 
 /**
@@ -714,9 +715,13 @@ describe("two-level disconnect", () => {
       // Migration 0021's whole point: the credential goes, the MAPPING stays. Every row keeps
       // its gsc_property and merely loses its account_id (`on delete set null`), which is the
       // exact state the migration itself produced — one reconnect, no re-picking properties.
-      expect(dbRows.gsc_connections).toHaveLength(3);
-      expect(dbRows.gsc_connections.every((row) => row.account_id === null)).toBe(true);
-      expect(dbRows.gsc_connections.every((row) => row.gsc_property === PROPERTY)).toBe(true);
+      const connections = dbRows.gsc_connections;
+      if (!connections) {
+        throw new Error("expected dbRows.gsc_connections to be populated by the fake DB seed");
+      }
+      expect(connections).toHaveLength(3);
+      expect(connections.every((row) => row.account_id === null)).toBe(true);
+      expect(connections.every((row) => row.gsc_property === PROPERTY)).toBe(true);
     });
 
     // Moved from `disconnectGscAction`'s "revokes the DECRYPTED token … THEN deletes the row"
@@ -903,8 +908,12 @@ describe("two-level disconnect", () => {
 
       // The credential is still here — which is exactly what the throw is reporting. (The row
       // carries the fresh `token_checked_at` the successful refresh stamped on its way past.)
-      expect(dbRows.gsc_accounts).toHaveLength(1);
-      expect(dbRows.gsc_accounts[0]).toMatchObject({
+      const accounts = dbRows.gsc_accounts;
+      if (!accounts) {
+        throw new Error("expected dbRows.gsc_accounts to be populated by the fake DB seed");
+      }
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]).toMatchObject({
         id: ACCOUNT,
         user_id: "user-1",
         encrypted_refresh_token: row.encrypted_refresh_token,

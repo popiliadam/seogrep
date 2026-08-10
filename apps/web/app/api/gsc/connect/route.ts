@@ -39,6 +39,13 @@ function redirect(path: string, base: string): NextResponse {
 }
 
 export async function GET(_request: Request): Promise<Response> {
+  // Deliberately unread (see the file doc above) — the parameter still has to exist because
+  // Next.js's route dispatch always passes a Request, and route.test.ts calls GET directly
+  // with a spoofed one specifically to prove nothing is read from it. `void` marks the
+  // non-use honestly instead of hiding it from the linter; same idiom as
+  // apps/mcp/src/db.ts's `void _dfsSpendIsNotTenantScopable`.
+  void _request;
+
   // Canonical origin for every SAME-APP redirect below. The request Host, which
   // a proxy can let an attacker spoof, so internal 302 Locations must be built from the
   // canonical WEB_BASE_URL (A-I4) — the same origin the OAuth redirect_uri already uses —
