@@ -1,38 +1,42 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decryptToken, fromByteaHex } from "@pseo/core";
 import { signState, freshStatePayload } from "../../../../lib/gsc/state";
 
 /**
- * Callback tests. The Google client is mocked (zero network, NEVER #5) and the DB write is
- * mocked, but crypto + state verification are REAL — so we can prove the route (a) trusts
- * only a validly-signed state bound to the live session, and (b) seals the refresh token
- * before it reaches the store (the value handed to the store decrypts back to the token
- * and is never the plaintext). The server-side client_secret is never touched by the route
- * (the client module reads it), so it cannot leak into a redirect or log.
+ * Callback tests. The Google client is mocked (zero network, NEVER #5) and the account
+ * write is mocked, but state verification is REAL — so we can prove the route (a) trusts
+ * only a validly-signed state bound to the live session, (b) refuses to store anything it
+ * cannot attribute to a Google account or prove usable, and (c) hands the account layer
+ * the plaintext token together with the encryption key it seals with. The server-side
+ * client_secret is never touched by the route (the client module reads it), so it cannot
+ * leak into a redirect or log.
+ *
+ * SPEC MOVE (migration 0021). The seal used to happen in THIS route, so this file used to
+ * assert that the value reaching the store decrypted back to the refresh token and was
+ * never the plaintext. Sealing moved into `upsertGscAccount` (it binds the ciphertext to
+ * the row id, which only that function knows), so the ciphertext assertions moved with it
+ * to `lib/gsc/accounts.db.test.ts`. What is pinned HERE instead is the boundary this route
+ * still owns: the refresh token is handed over exactly once, together with
+ * TOKEN_ENCRYPTION_KEY, and the route performs no DB write of its own.
  */
 
 const getUser = vi.fn();
-const projectMaybeSingle = vi.fn();
+const serviceFrom = vi.fn();
 const exchangeCodeForTokens = vi.fn();
 const listSites = vi.fn();
-const upsertGscConnection = vi.fn();
+const upsertGscAccount = vi.fn();
 
 vi.mock("../../../../lib/supabase/server", () => ({
   createClient: async () => ({ auth: { getUser } }),
 }));
+// A service client whose `from` is a spy: the callback must never read or write a table
+// directly any more — the account layer is the only thing that touches the database.
 vi.mock("@pseo/db/server", () => ({
-  createServiceClient: () => ({
-    from: () => ({
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: projectMaybeSingle }) }) }),
-    }),
-  }),
+  createServiceClient: () => ({ from: serviceFrom }),
 }));
 // Fake ONLY the two Google-touching client functions (zero network, NEVER #5); the rest
 // of @pseo/core — the AES-256-GCM token crypto AND the key-format helper the state signer
-// reuses — stays REAL via importOriginal, so the seal + state verification are exercised
-// end to end. (Post-promotion the client + crypto both live in @pseo/core; before, the
-// client alone was mocked at its old @pseo/mcp deep path.)
+// reuses — stays REAL via importOriginal, so state verification is exercised end to end.
 vi.mock("@pseo/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pseo/core")>();
   return {
@@ -41,8 +45,8 @@ vi.mock("@pseo/core", async (importOriginal) => {
     listSites: (...a: unknown[]) => listSites(...a),
   };
 });
-vi.mock("../../../../lib/gsc/store", () => ({
-  upsertGscConnection: (...a: unknown[]) => upsertGscConnection(...a),
+vi.mock("../../../../lib/gsc/accounts", () => ({
+  upsertGscAccount: (...a: unknown[]) => upsertGscAccount(...a),
 }));
 
 import { GET } from "./route";
@@ -52,8 +56,17 @@ const BASE = "http://localhost:3457/api/gsc/callback";
 const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
 const SECRET = "gsc_client_secret_do_not_leak_1234";
 const USER = "user-1";
-const PROJECT = "3f1a2b4c-5d6e-4f70-8a90-1b2c3d4e5f60";
+const ACCOUNT = "9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2d";
 const VERIFIER = "the-code-verifier-kept-only-in-the-cookie";
+const REFRESH = "1//the-refresh-token";
+
+/** An unsigned JWT carrying the given claims — read as a label, never as a credential. */
+function idTokenFor(claims: Record<string, unknown>): string {
+  const segment = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${segment({ alg: "RS256" })}.${segment(claims)}.not-a-real-signature`;
+}
+
+const ID_TOKEN = idTokenFor({ sub: "google-sub-123", email: "owner@example.com" });
 
 function stubEnv() {
   vi.stubEnv("GOOGLE_CLIENT_ID", "cid.apps.googleusercontent.com");
@@ -63,15 +76,15 @@ function stubEnv() {
 }
 
 /**
- * A validly-signed state for USER + PROJECT (real signing — the route verifies it for real),
- * which since L-10 also records the one-time `gsc_oauth` cookie the connect step set beside
- * it. `callbackUrl` then attaches that cookie the way a browser would, so an unqualified spec
+ * A validly-signed state for USER (real signing — the route verifies it for real), which
+ * since L-10 also records the one-time `gsc_oauth` cookie the connect step set beside it.
+ * `callbackUrl` then attaches that cookie the way a browser would, so an unqualified spec
  * models a NORMAL return from Google. A spec that wants a REPLAY (or a foreign flow) passes
  * its own cookie header explicitly — that is the whole difference between the two.
  */
 let issuedCookie = "";
 function validState(): string {
-  const payload = freshStatePayload(USER, PROJECT);
+  const payload = freshStatePayload(USER);
   issuedCookie = `${PKCE_COOKIE}=${serializePkceCookie(payload.nonce, VERIFIER)}`;
   return signState(payload, ENC_KEY);
 }
@@ -82,20 +95,31 @@ function callbackUrl(params: Record<string, string>, cookie: string = issuedCook
   return new Request(url, cookie ? { headers: { cookie } } : undefined);
 }
 
+/** The single argument object the route handed the account layer. */
+function accountWrite(): {
+  userId: string;
+  sub: string;
+  email: string;
+  refreshToken: string;
+  keyHex: string;
+} {
+  return upsertGscAccount.mock.calls[0]![1] as ReturnType<typeof accountWrite>;
+}
+
 describe("GET /api/gsc/callback", () => {
   beforeEach(() => {
     stubEnv();
     getUser.mockResolvedValue({ data: { user: { id: USER } } });
-    projectMaybeSingle.mockResolvedValue({ data: { domain: "example.com" }, error: null });
     exchangeCodeForTokens.mockResolvedValue({
       accessToken: "ya29.access",
-      refreshToken: "1//the-refresh-token",
+      refreshToken: REFRESH,
+      idToken: ID_TOKEN,
       expiresIn: 3599,
-      scope: "https://www.googleapis.com/auth/webmasters.readonly",
+      scope: "https://www.googleapis.com/auth/webmasters.readonly openid email",
       tokenType: "Bearer",
     });
     listSites.mockResolvedValue([{ siteUrl: "sc-domain:example.com", permissionLevel: "siteOwner" }]);
-    upsertGscConnection.mockResolvedValue("inserted");
+    upsertGscAccount.mockResolvedValue({ accountId: ACCOUNT });
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -103,10 +127,10 @@ describe("GET /api/gsc/callback", () => {
     vi.restoreAllMocks();
   });
 
-  it("completes the link: exchanges the code, SEALS the token, matches the property, redirects connected", async () => {
+  it("completes the link: exchanges the code, stores the ACCOUNT, redirects with its id", async () => {
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "https://app.example.com/app?gsc=connected&property=matched",
+      `https://app.example.com/app/connection?connected=${ACCOUNT}`,
     );
 
     // Code exchanged with the redirect_uri that matches the one used at connect time, and the
@@ -117,21 +141,20 @@ describe("GET /api/gsc/callback", () => {
       codeVerifier: VERIFIER,
     });
 
-    // The store received the SEALED token (never the plaintext), and it decrypts back.
-    const write = upsertGscConnection.mock.calls[0]![1] as {
-      userId: string;
-      projectId: string;
-      encryptedTokenHex: string;
-      gscProperty: string | null;
-    };
-    expect(write.userId).toBe(USER);
-    expect(write.projectId).toBe(PROJECT);
-    expect(write.gscProperty).toBe("sc-domain:example.com");
-    expect(write.encryptedTokenHex).not.toContain("1//the-refresh-token");
-    expect(decryptToken(fromByteaHex(write.encryptedTokenHex), ENC_KEY, {
+    // The account layer receives the identity read out of the id_token, the plaintext token
+    // it is about to seal, and the key to seal it with — bound to the state's user, never a
+    // user taken from the request.
+    expect(upsertGscAccount).toHaveBeenCalledTimes(1);
+    expect(accountWrite()).toEqual({
       userId: USER,
-      projectId: PROJECT,
-    })).toBe("1//the-refresh-token");
+      sub: "google-sub-123",
+      email: "owner@example.com",
+      refreshToken: REFRESH,
+      keyHex: ENC_KEY,
+    });
+
+    // The route itself writes nothing: every table touch belongs to the account layer.
+    expect(serviceFrom).not.toHaveBeenCalled();
   });
 
   /**
@@ -182,7 +205,7 @@ describe("GET /api/gsc/callback", () => {
 
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
-    expect(upsertGscConnection).not.toHaveBeenCalled();
+    expect(upsertGscAccount).not.toHaveBeenCalled();
     // The log names the flow, never the state or the verifier.
     for (const call of errorSpy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(state);
@@ -209,34 +232,96 @@ describe("GET /api/gsc/callback", () => {
     expect(rejected.headers.get("set-cookie")).toMatch(/Max-Age=0/i);
   });
 
-  it("connects with property=none when the account has no matching property", async () => {
-    listSites.mockResolvedValue([{ siteUrl: "sc-domain:other.com", permissionLevel: "siteOwner" }]);
+  /**
+   * SPEC RE-AIM (migration 0021), replacing "connects with property=none when the account has
+   * no matching property". Property matching left this route: the callback no longer knows a
+   * project, so it cannot decide which property that project should bind to — the picker does,
+   * from the same `resolveGscProperty` this file used to reach through. What must hold now is
+   * that the CONTENT of the listing changes nothing about the connection outcome.
+   */
+  it("stores the account whatever the listing contains — property mapping is not this route's job", async () => {
+    listSites.mockResolvedValue([{ siteUrl: "sc-domain:someone-elses.com", permissionLevel: "siteOwner" }]);
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "https://app.example.com/app?gsc=connected&property=none",
+      `https://app.example.com/app/connection?connected=${ACCOUNT}`,
     );
-    expect((upsertGscConnection.mock.calls[0]![1] as { gscProperty: unknown }).gscProperty).toBeNull();
+    expect(upsertGscAccount).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the stored token when Google returns no refresh token (passes null to the store)", async () => {
+  it("does not carry the listing's properties into the account write", async () => {
+    await GET(callbackUrl({ code: "auth-code", state: validState() }));
+    expect(JSON.stringify(accountWrite())).not.toContain("sc-domain:example.com");
+  });
+
+  /**
+   * SPEC RE-AIM (migration 0021), replacing "keeps the stored token when Google returns no
+   * refresh token (passes null to the store)" and "redirects no_token when there is no refresh
+   * token and no existing connection". Both encoded the old `gsc_connections` shape, where a
+   * null token meant "keep whatever is already on the row". `gsc_accounts` has no such state:
+   * `encrypted_refresh_token` is NOT NULL, so a consent without a refresh token has nothing to
+   * write, and the only honest answer is to refuse rather than report a connection.
+   */
+  it("refuses when Google returns no refresh token — nothing stored, nothing claimed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     exchangeCodeForTokens.mockResolvedValue({
       accessToken: "ya29.access",
       refreshToken: null,
+      idToken: ID_TOKEN,
       expiresIn: 3599,
       scope: "readonly",
       tokenType: "Bearer",
     });
-    upsertGscConnection.mockResolvedValue("kept");
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect((upsertGscConnection.mock.calls[0]![1] as { encryptedTokenHex: unknown }).encryptedTokenHex).toBeNull();
-    expect(response.headers.get("location")).toContain("gsc=connected");
+    expect(response.headers.get("location")).toBe(
+      "https://app.example.com/app/connection?error=no_token",
+    );
+    expect(upsertGscAccount).not.toHaveBeenCalled();
   });
 
-  it("redirects no_token when there is no refresh token and no existing connection", async () => {
-    exchangeCodeForTokens.mockResolvedValue({ accessToken: "ya29", refreshToken: null, expiresIn: 1, scope: "", tokenType: "Bearer" });
-    upsertGscConnection.mockResolvedValue("no_token");
+  /**
+   * IDENTITY IS MANDATORY. `gsc_accounts` is keyed on the Google `sub`; a token we cannot
+   * attribute would make the next consent indistinguishable from this one, silently
+   * overwriting or duplicating an account. Absent, unparseable, and incomplete id_tokens all
+   * fail the same closed way: no write, and a redirect the connection page can explain.
+   */
+  it.each([
+    ["absent", null],
+    ["not a JWT at all", "garbage"],
+    ["missing the sub claim", idTokenFor({ email: "owner@example.com" })],
+    ["missing the email claim", idTokenFor({ sub: "google-sub-123" })],
+    ["carrying a blank sub", idTokenFor({ sub: "", email: "owner@example.com" })],
+  ])("refuses to store a token it cannot attribute (id_token %s)", async (_label, idToken) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    exchangeCodeForTokens.mockResolvedValue({
+      accessToken: "ya29.access",
+      refreshToken: REFRESH,
+      idToken,
+      expiresIn: 3599,
+      scope: "readonly",
+      tokenType: "Bearer",
+    });
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=no_token");
+    expect(response.headers.get("location")).toBe(
+      "https://app.example.com/app/connection?error=identity",
+    );
+    expect(upsertGscAccount).not.toHaveBeenCalled();
+    expect(listSites).not.toHaveBeenCalled(); // refused before the grant is even used
+  });
+
+  it("never logs the refresh token or the id_token when it refuses an unattributable grant", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    exchangeCodeForTokens.mockResolvedValue({
+      accessToken: "ya29.access",
+      refreshToken: REFRESH,
+      idToken: "garbage",
+      expiresIn: 3599,
+      scope: "readonly",
+      tokenType: "Bearer",
+    });
+    await GET(callbackUrl({ code: "auth-code", state: validState() }));
+    for (const call of errorSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(REFRESH);
+    }
   });
 
   it("sends a SIGNED-IN user with a forged/expired state back to /app (not /login), code not exchanged", async () => {
@@ -266,6 +351,7 @@ describe("GET /api/gsc/callback", () => {
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe("https://app.example.com/login?error=gsc");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
+    expect(upsertGscAccount).not.toHaveBeenCalled();
   });
 
   it("rejects when there is no live session", async () => {
@@ -281,19 +367,12 @@ describe("GET /api/gsc/callback", () => {
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
-  it("redirects unknown_project when the project no longer exists / is not owned", async () => {
-    projectMaybeSingle.mockResolvedValue({ data: null, error: null });
-    const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
-    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
-    expect(exchangeCodeForTokens).not.toHaveBeenCalled();
-  });
-
   it("fails closed (never leaking the secret) when a token exchange throws", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     exchangeCodeForTokens.mockRejectedValue(new Error("invalid_grant"));
     const response = await GET(callbackUrl({ code: "bad", state: validState() }));
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
-    expect(upsertGscConnection).not.toHaveBeenCalled();
+    expect(upsertGscAccount).not.toHaveBeenCalled();
     for (const call of errorSpy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SECRET);
     }
@@ -301,18 +380,39 @@ describe("GET /api/gsc/callback", () => {
 
   it("fails closed to an error when GOOGLE_CLIENT_SECRET is unset (negative env)", async () => {
     vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
+    vi.spyOn(console, "error").mockImplementation(() => {}); // the refusal is logged; keep the run quiet
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
     expect(exchangeCodeForTokens).not.toHaveBeenCalled();
   });
 
-  it("still connects when sites.list fails (property stays null, token still sealed)", async () => {
+  /**
+   * SPEC INVERSION (migration 0021) of "still connects when sites.list fails (property stays
+   * null, token still sealed)". The old rule treated a failed listing as cosmetic — the token
+   * was stored and the user was told "connected". That is precisely how bayder.com.tr and
+   * rkturizm.com sat reported-connected over grants that 403'd on every later call
+   * (measured live 2026-08-09). The `sites.list` call IS the verification now: if the grant
+   * cannot read it, the grant is not stored and the user is told to try again.
+   *
+   * MUTATION TARGET: delete the try/catch guarding the listing (or store before it) and this
+   * spec goes red.
+   */
+  it("does NOT store the token when sites.list fails — the listing IS the verification", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     listSites.mockRejectedValue(new Error("403"));
     const response = await GET(callbackUrl({ code: "auth-code", state: validState() }));
     expect(response.headers.get("location")).toBe(
-      "https://app.example.com/app?gsc=connected&property=none",
+      "https://app.example.com/app/connection?error=verify",
     );
-    expect(upsertGscConnection).toHaveBeenCalled();
+    expect(upsertGscAccount).not.toHaveBeenCalled();
+    for (const call of errorSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(REFRESH);
+    }
+  });
+
+  it("verifies with the access token from THIS exchange", async () => {
+    await GET(callbackUrl({ code: "auth-code", state: validState() }));
+    expect(listSites).toHaveBeenCalledWith("ya29.access");
   });
 
   it("routes the post-connect redirect through the canonical WEB_BASE_URL, not a spoofed Host", async () => {
@@ -326,7 +426,7 @@ describe("GET /api/gsc/callback", () => {
     });
     const location = new URL((await GET(spoofed)).headers.get("location")!);
     expect(location.origin).toBe("https://app.example.com");
-    expect(location.href).toBe("https://app.example.com/app?gsc=connected&property=matched");
+    expect(location.href).toBe(`https://app.example.com/app/connection?connected=${ACCOUNT}`);
     expect(exchangeCodeForTokens).toHaveBeenCalledWith({
       code: "auth-code",
       redirectUri: "https://app.example.com/api/gsc/callback",
@@ -358,7 +458,7 @@ describe("GET /api/gsc/callback — unusable WEB_BASE_URL fails CLOSED (T4)", ()
     expect(response.status).toBe(500);
     expect(response.headers.get("location")).toBeNull();
     expect(exchangeCodeForTokens).not.toHaveBeenCalled(); // one-time code NOT burned
-    expect(upsertGscConnection).not.toHaveBeenCalled();
+    expect(upsertGscAccount).not.toHaveBeenCalled();
   }
 
   it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {

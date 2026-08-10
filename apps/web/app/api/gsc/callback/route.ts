@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@pseo/db/server";
-import { encryptToken, exchangeCodeForTokens, listSites, toByteaHex } from "@pseo/core";
+import { exchangeCodeForTokens, listSites } from "@pseo/core";
 import { createClient } from "../../../../lib/supabase/server";
-import { resolveGscProperty } from "../../../../lib/gsc/oauth";
+import { upsertGscAccount } from "../../../../lib/gsc/accounts";
+import { parseIdTokenClaims } from "../../../../lib/gsc/oauth";
 import {
   matchesNonce,
   parsePkceCookie,
@@ -11,7 +12,6 @@ import {
   readCookie,
 } from "../../../../lib/gsc/pkce";
 import { resolveBaseUrl } from "../../../../lib/site";
-import { upsertGscConnection } from "../../../../lib/gsc/store";
 import { verifyState } from "../../../../lib/gsc/state";
 
 /**
@@ -22,15 +22,24 @@ import { verifyState } from "../../../../lib/gsc/state";
  *   2. resolve the live session up front, so a broken state can be routed by sign-in
  *      status (a signed-in user returns to /app; an anonymous visitor goes to /login);
  *   3. verify the state signature + expiry, then re-check the LIVE session matches its
- *      user_id (a leaked state alone cannot bind a project to another signed-in user);
+ *      user_id (a leaked state alone cannot bind an account to another signed-in user);
  *   4. require the ONE-TIME flow cookie issued beside that state, which makes a stateless
  *      state single-use and carries the PKCE verifier (a replay arrives without it);
  *   5. exchange the code for tokens, sending that verifier — the client_secret is server-side
  *      inside the client module and is NEVER logged or returned;
- *   6. SEAL the refresh token (AES-256-GCM) before it touches the DB — plaintext never
- *      reaches storage or a log;
- *   7. list the account's properties and match the project domain to one;
- *   8. upsert the connection and redirect to /app with a status.
+ *   6. read WHICH Google account consented from the response's `id_token`;
+ *   7. prove the grant actually works by calling `sites.list` with it — a token that cannot
+ *      be used is never stored;
+ *   8. upsert the `gsc_accounts` row (which seals the refresh token to that row) and send
+ *      the user to the connection page with the account id.
+ *
+ * WHAT THIS NO LONGER DOES (migration 0021). It used to look the project up, match its
+ * domain against the account's properties, and write `gsc_connections`. The credential is
+ * now per-ACCOUNT and this route knows of no project: property mapping returns as a PICKER
+ * the user drives after landing on the connection page, fed by `resolveGscProperty` — which
+ * is why that function still exists and is simply no longer called from here. Between this
+ * change and the picker, a consent creates an account row and no connection row; that gap
+ * is intended, not an omission to patch with a guess at which project was meant.
  *
  * No redirect target is ever read from the request. Node runtime: crypto + token exchange.
  */
@@ -116,7 +125,8 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   // (4) The state is valid — the live session must match its user_id (a leaked state alone
-  // cannot bind a project to another signed-in user). A missing/different session -> /login.
+  // cannot bind a Google account to another signed-in user). A missing/different session
+  // -> /login.
   if (!user || user.id !== state.user_id) {
     return redirect("/login?error=gsc", base);
   }
@@ -145,22 +155,6 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    // Re-confirm the project still exists and is owned (explicit tenant filter, NEVER #4).
-    const service = createServiceClient();
-    const { data: project, error } = await service
-      .from("projects")
-      .select("domain")
-      .eq("user_id", state.user_id)
-      .eq("id", state.project_id)
-      .maybeSingle();
-    if (error) {
-      throw new Error(`project lookup failed: ${error.message}`);
-    }
-    if (!project) {
-      return redirect("/app?gsc=unknown_project", base);
-    }
-    const domain = (project as { domain: string }).domain;
-
     // (5) Exchange the code. redirect_uri MUST match the one used at connect time, and the
     // PKCE verifier from the cookie must match the challenge sent at connect time — without it
     // Google refuses the code, which is exactly what stops an injected code being redeemed here.
@@ -174,67 +168,57 @@ export async function GET(request: Request): Promise<Response> {
       codeVerifier: pkce.verifier,
     });
 
-    // (6) Seal the refresh token at rest, BOUND to the row it is about to occupy (M-17).
-    // The signed state carries the same (user, project) the upsert below keys on, so the
-    // seal and its future reads agree by construction — and a blob copied into any other
-    // row stops opening, because the ids it was authenticated with no longer match.
-    const encryptedTokenHex = tokens.refreshToken
-      ? toByteaHex(
-          encryptToken(tokens.refreshToken, encryptionKey, {
-            userId: state.user_id,
-            projectId: state.project_id,
-          }),
-        )
-      : null;
+    // (6) WHOSE account is this? The `id_token` Google returned beside the tokens carries
+    // the `sub` that `gsc_accounts` is keyed on. Without it the credential cannot be
+    // attributed, and storing an unattributable refresh token is worse than storing none:
+    // the next consent would be indistinguishable from this one. Refuse instead.
+    const claims = tokens.idToken ? parseIdTokenClaims(tokens.idToken) : null;
+    if (!claims) {
+      console.error("gsc callback: the token response carried no usable id_token identity claims");
+      return redirect("/app/connection?error=identity", base);
+    }
 
-    // (7) Match the project domain to a property this account can actually QUERY. A listing
-    // failure is non-fatal: the connection (token) still stands; the property is simply left
-    // unmatched.
+    // Google issues a refresh token on every consent because connect asks for
+    // `access_type=offline` + `prompt=consent`. If one is absent anyway there is nothing to
+    // persist — `gsc_accounts.encrypted_refresh_token` is NOT NULL and an access token dies
+    // in an hour — so we refuse rather than write a row that would claim a connection this
+    // account cannot honour an hour from now.
+    if (!tokens.refreshToken) {
+      console.error("gsc callback: Google returned no refresh token — nothing to store");
+      return redirect("/app/connection?error=no_token", base);
+    }
+
+    // (7) THIS CALL IS THE VERIFICATION, and it runs BEFORE the write on purpose. A grant
+    // that cannot read `sites.list` is a grant nothing in the product can use, and the
+    // previous shape — store first, treat a listing failure as cosmetic — is exactly how two
+    // live projects ended up reported as connected while every later call 403'd (2026-08-09,
+    // bayder.com.tr and rkturizm.com). A user who sees "connect failed" reconnects; a user
+    // who sees "connected" over a dead grant has nothing to act on. So: no usable listing,
+    // no stored token.
     //
-    // `sites.list` returns properties the account merely HOLDS, including ones it has never
-    // verified, so a host match alone never proved the link would work — it only proved the
-    // string existed. Two live projects sat in exactly that state on 2026-08-09 (bayder.com.tr,
-    // rkturizm.com): bound to a domain property they could not read, reported connected, and 403
-    // on every later call — while the URL-prefix property they DO own sat one candidate further
-    // down the same list, never reached. So the usual outcome here is a different, WORKING
-    // property rather than no property; only when every host match is unusable does this bind
-    // nothing, which is still the better failure, because `pull_gsc_data` has a written sentence
-    // for an unmatched property while a bound-but-dead one produced "failed unexpectedly".
-    //
-    // The two null causes are logged apart because only one of them is a customer permission
-    // problem an operator can act on. They are NOT split in the redirect: /app renders
-    // `property != "matched"` as "no verified property matches this domain yet — verify the
-    // domain in Search Console", which is the correct next action for the documented unusable
-    // level (`siteUnverifiedUser`, an unverified holder), and the banner that would carry a
-    // third message is outside this change's scope. project_id, not the siteUrl, is the
-    // correlation handle — it joins to the domain in the DB without putting it in a log.
-    let gscProperty: string | null = null;
+    // The RESULT of the listing is deliberately discarded here. Mapping properties to
+    // projects is the picker's job (Task 6, fed by `resolveGscProperty`); this route only
+    // needs to know the call succeeded.
     try {
-      const outcome = resolveGscProperty(domain, await listSites(tokens.accessToken));
-      if (outcome.kind === "matched") {
-        gscProperty = outcome.property;
-      } else if (outcome.kind === "unusable_permission") {
-        console.warn(
-          `gsc callback: project ${state.project_id} has a host-matching Search Console property ` +
-            `whose permission level (${outcome.site.permissionLevel}) is not documented to allow ` +
-            "searchAnalytics.query — left unmatched instead of bound",
-        );
-      }
+      await listSites(tokens.accessToken);
     } catch (listError) {
-      console.error("gsc callback: sites.list failed (property left unmatched):", errorMessage(listError));
+      console.error("gsc callback: sites.list failed — token NOT stored:", errorMessage(listError));
+      return redirect("/app/connection?error=verify", base);
     }
 
-    // (8) Persist and route to the dashboard with a status the /app page renders.
-    const outcome = await upsertGscConnection(service, {
+    // (8) Persist. `upsertGscAccount` seals the refresh token to the row it is about to
+    // occupy (crypto v4 AAD = user_id + account_id), so the plaintext never reaches the DB
+    // and a blob lifted into another row stops opening. The service client bypasses RLS, so
+    // the `user_id` it writes/filters on — taken from the SIGNED state, re-checked against
+    // the live session above — is the tenant guard (NEVER #4).
+    const { accountId } = await upsertGscAccount(createServiceClient(), {
       userId: state.user_id,
-      projectId: state.project_id,
-      encryptedTokenHex,
-      gscProperty,
+      sub: claims.sub,
+      email: claims.email,
+      refreshToken: tokens.refreshToken,
+      keyHex: encryptionKey,
     });
-    if (outcome === "no_token") {
-      return redirect("/app?gsc=no_token", base);
-    }
-    return redirect(`/app?gsc=connected&property=${gscProperty ? "matched" : "none"}`, base);
+    return redirect(`/app/connection?connected=${accountId}`, base);
   } catch (caught) {
     // Never log the code, tokens, or secret — only a short message.
     console.error("gsc callback: connection failed:", errorMessage(caught));
