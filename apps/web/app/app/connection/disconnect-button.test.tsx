@@ -133,7 +133,25 @@ describe("AccountDisconnectPanel", () => {
 
   const clickAccountDisconnect = (email = "owner@example.com") =>
     fireEvent.click(screen.getByRole("button", { name: new RegExp(`disconnect ${email}`, "i") }));
-  const confirm = () => fireEvent.click(screen.getByRole("button", { name: /^confirm/i }));
+  /**
+   * Click Confirm once it is actually CLICKABLE, which is not the same instant it is visible.
+   *
+   * Measured: for exactly one macrotask after the confirmation renders, the button is still
+   * `disabled` — `ask()`'s `useTransition` pending flag has not cleared yet, and React commits
+   * the question and the cleared flag in two separate passes. A click landing in that window
+   * is a no-op on a disabled button, so `disconnectAccount` is never called and the assertion
+   * that waits for it times out ~1s later. `findByText` normally flushes past the window; under
+   * CPU contention its MutationObserver can fire inside it, which is the ~1-in-7 flake the
+   * coordinator hit.
+   *
+   * Waiting for the control to be interactive is what a user does, and it is deterministic
+   * either way.
+   */
+  async function confirmDisconnect() {
+    const button = (await screen.findByRole("button", { name: /^confirm/i })) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    fireEvent.click(button);
+  }
 
   it("names the blast radius BEFORE anything is disconnected", async () => {
     const p = panelProps();
@@ -173,10 +191,35 @@ describe("AccountDisconnectPanel", () => {
 
     clickAccountDisconnect("second@example.com");
     await screen.findByText(RADIUS);
-    confirm();
+    await confirmDisconnect();
 
     await waitFor(() => expect(p.disconnectAccount).toHaveBeenCalledWith(SECOND_ID));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  /**
+   * REGRESSION for the flake above, reproduced deterministically instead of by load.
+   *
+   * The suite normally reaches Confirm through `findByText`, which flushes past the one
+   * macrotask in which the button is painted but still disabled. This spec lands INSIDE that
+   * window on purpose — one `setTimeout(0)` after the click, measured as the tick where
+   * `disabled` is still true — and then confirms through the helper. It goes red against a
+   * bare `fireEvent.click`, which is the whole point: the fix is pinned, not just applied.
+   *
+   * It asserts the OUTCOME rather than the internal pending flag, so a future React that
+   * commits both passes together makes this spec redundant, never flaky.
+   */
+  it("confirms even when it is reached in the tick where Confirm is still disabled", async () => {
+    const p = panelProps();
+    render(<AccountDisconnectPanel {...p} />);
+
+    clickAccountDisconnect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText(RADIUS)).toBeTruthy();
+
+    await confirmDisconnect();
+
+    await waitFor(() => expect(p.disconnectAccount).toHaveBeenCalledWith(ACCOUNT_ID));
   });
 
   // M-15. `revoked` is the ONE outcome Google acknowledged, so it is the only one that may be
@@ -187,7 +230,7 @@ describe("AccountDisconnectPanel", () => {
 
     clickAccountDisconnect();
     await screen.findByText(RADIUS);
-    confirm();
+    await confirmDisconnect();
 
     const notice = await screen.findByRole("status");
     expect(notice.textContent).toMatch(/revoked/i);
@@ -203,7 +246,7 @@ describe("AccountDisconnectPanel", () => {
 
       clickAccountDisconnect();
       await screen.findByText(RADIUS);
-      confirm();
+      await confirmDisconnect();
 
       const alert = await screen.findByRole("alert");
       // No claim that access is gone — only that OUR copy is, which is all we know.
@@ -226,7 +269,7 @@ describe("AccountDisconnectPanel", () => {
 
     clickAccountDisconnect();
     await screen.findByText(RADIUS);
-    confirm();
+    await confirmDisconnect();
     await screen.findByRole("alert");
 
     // The server re-renders with the account gone — the island stays mounted.
@@ -243,7 +286,7 @@ describe("AccountDisconnectPanel", () => {
 
     clickAccountDisconnect();
     await screen.findByText(RADIUS);
-    confirm();
+    await confirmDisconnect();
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/could not disconnect/i);
