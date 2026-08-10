@@ -7,7 +7,9 @@ import { recordSucceededPull } from "../queue/boss.ts";
 import { defaultGscApi, runPull, type GscApi } from "../gsc-data/pull.ts";
 import { pullResultToJson } from "../gsc-data/types.ts";
 import { formatPullSummary } from "../gsc-data/format.ts";
+import { GscReauthRequiredError, isInvalidGrant } from "../gsc-data/reauth-error.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import { gscConnectUrl } from "./connect-gsc.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
@@ -38,10 +40,14 @@ import { PreconditionNotMetError } from "./precondition.ts";
  * finding #36 in docs/testing/2026-08-09-cok-site-kampanya.md). A THIRD refusal joins them at
  * the Google call: a 403 on searchAnalytics.query, which is a permission fact about the user's
  * own property rather than a fault — it carries the same type so its sentence survives, and it
- * is the only one that logs (see the branch for why). A lookup error, a missing account row, a
- * token that will not decrypt, and every OTHER Google failure stay plain Errors and keep the
- * generic sentence + the server log line — each of those is a real fault with something for an
- * operator to read.
+ * is the only one that logs (see the branch for why). A FOURTH sits one call EARLIER, at the
+ * token refresh: `invalid_grant` means the stored credential is dead and only the USER can
+ * replace it, so it carries GscReauthRequiredError — a different type, because its sentence is
+ * built from typed fields (which account, which link) rather than passed through. A lookup error,
+ * a missing account row, a token that will not decrypt, and every OTHER Google failure —
+ * including a 5xx from that same token endpoint — stay plain Errors and keep the generic sentence
+ * + the server log line: each of those is a real fault with something for an operator to read,
+ * and a transient outage is not a dead credential.
  *
  * The stored jobs row is a pure DATA CARRIER: reserve_id stays null (the spend is on the
  * ledger, sync-surface style), so this never double-charges against a worker reserve.
@@ -78,9 +84,14 @@ export type LoadConnectionFn = (
   projectId: string,
 ) => Promise<GscConnectionRow | null>;
 
-/** The one `gsc_accounts` field pull_gsc_data needs once a connection names an account. */
+/**
+ * The `gsc_accounts` fields pull_gsc_data needs once a connection names an account: the sealed
+ * credential, and the account's email — the label the reauth sentence names, because a user with
+ * several connected Google accounts otherwise cannot tell WHICH one to reconnect.
+ */
 export interface GscAccountTokenRow {
   readonly encrypted_refresh_token: string;
+  readonly google_account_email: string;
 }
 
 /**
@@ -143,7 +154,7 @@ const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
 const defaultLoadAccountToken: LoadAccountTokenFn = async (accountId, userId) => {
   const { data, error } = await getServiceClient()
     .from("gsc_accounts")
-    .select("encrypted_refresh_token")
+    .select("encrypted_refresh_token, google_account_email")
     .eq("id", accountId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -294,7 +305,18 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
         days,
         reference: now(),
         api,
-      }).catch((error: unknown): never => {
+      }).catch(async (error: unknown): Promise<never> => {
+        // THE DEAD GRANT. Derived from the failure we JUST saw, never from the token_status we
+        // read earlier: the stored column is a record of the last observation, and on the very
+        // first death there is nothing recorded yet — which is precisely the state all 12
+        // measured invalid_grant failures were in (migration 0021's header). Reading state here
+        // would leave the feature blind exactly where credentials actually die.
+        //
+        if (isInvalidGrant(error)) {
+          // THROW, so withCredits RELEASES: a revoked grant is not a purchase. The sentence the
+          // user reads is built by the registry from these two fields (gsc-data/reauth-error.ts).
+          throw new GscReauthRequiredError(account.google_account_email, gscConnectUrl(project_id));
+        }
         if (!isSearchAnalyticsForbidden(error)) {
           throw error;
         }

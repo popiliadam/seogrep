@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { encryptToken, searchAnalyticsQuery, toByteaHex } from "@pseo/core";
+import { encryptToken, refreshAccessToken, searchAnalyticsQuery, toByteaHex } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
@@ -29,7 +29,9 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
  * the same for the Google 403, the one refusal that is BOTH user-actionable and operator-worthy:
  * the client gets a permission sentence, the log keeps Google's verbatim message, and the ledger
  * still nets to zero — with a 500 and a token-endpoint 403 beside it to hold the branch narrow.
- * A FOURTH block is the mutation-tested tenant guard on the gsc_accounts read itself (NEVER #4).
+ * A FOURTH block covers the dead grant (invalid_grant): a typed, FREE refusal naming the account
+ * and the link that revives it. A FIFTH is the mutation-tested tenant guard on the gsc_accounts
+ * read itself (NEVER #4).
  */
 
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
@@ -98,21 +100,22 @@ async function makeProject(userId: string, domain: string): Promise<string> {
 /**
  * Seed a connected project: a real gsc_accounts row carrying a sealed refresh token (migration
  * 0021 axis — sealed to {userId, accountId}, never {userId, projectId}), linked from
- * gsc_connections.account_id, with (optionally) a matched property. Returns the minted
- * accountId so a caller can seed a SECOND connection pointing at the same account (the
- * cross-tenant SECURITY spec below).
+ * gsc_connections.account_id, with (optionally) a matched property. Returns the minted account's
+ * id AND email: the id so a caller can read back its token_status (the reauth specs below), the
+ * email because the reauth sentence names the account the user has to reconnect.
  */
 async function seedConnection(
   userId: string,
   projectId: string,
   property: string | null,
-): Promise<string> {
+): Promise<{ accountId: string; accountEmail: string }> {
   const accountId = randomUUID();
+  const accountEmail = `pull-account-${randomUUID()}@example.test`;
   const acctResult = await service.from("gsc_accounts").insert({
     id: accountId,
     user_id: userId,
     google_account_sub: `sub-${randomUUID()}`,
-    google_account_email: `pull-account-${randomUUID()}@example.test`,
+    google_account_email: accountEmail,
     encrypted_refresh_token: toByteaHex(
       encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, accountId }),
     ),
@@ -126,7 +129,7 @@ async function seedConnection(
     gsc_property: property,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
-  return accountId;
+  return { accountId, accountEmail };
 }
 
 interface LedgerRow {
@@ -159,11 +162,26 @@ async function pullJobs(userId: string): Promise<{ id: string; status: string; r
 
 const balanceOf = (rows: LedgerRow[]): number => rows.reduce((sum, row) => sum + row.delta, 0);
 
+/**
+ * The reauth sentence links back to the web app's connect route, so this suite needs the same
+ * WEB_BASE_URL connect_gsc reads (verify-db.sh exports only the Supabase stack). Set + restored
+ * exactly the way connect-gsc.db.test.ts does it.
+ */
+const WEB_BASE_URL = "https://app.test.seogrep.example";
+let priorWebBaseUrl: string | undefined;
+
 beforeAll(async () => {
+  priorWebBaseUrl = process.env.WEB_BASE_URL;
+  process.env.WEB_BASE_URL = WEB_BASE_URL;
   const { error } = await service.from("gsc_connections").select("id").limit(1);
   if (error) {
     throw new Error(`cannot reach local Supabase (run via the verify-db env): ${error.message}`);
   }
+});
+
+afterAll(() => {
+  if (priorWebBaseUrl === undefined) delete process.env.WEB_BASE_URL;
+  else process.env.WEB_BASE_URL = priorWebBaseUrl;
 });
 
 describe("pull_gsc_data sync charge against the local stack", () => {
@@ -563,6 +581,98 @@ describe("pull_gsc_data when Google refuses the property (403)", () => {
       expect(result.content[0]?.text ?? "").toMatch(/failed unexpectedly/);
       expect(result.content[0]?.text ?? "").not.toContain("Users and permissions");
       expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * THE DEAD GRANT — the failure this task exists for. Migration 0021's own header records that
+ * all 12 observed invalid_grant deaths were seen THROUGH pull_gsc_data, the one path that
+ * recorded nothing: the user was charged 5 credits and told to report a bug about a credential
+ * they could have replaced in a minute (2026-08-09 campaign, "failed unexpectedly — quote
+ * reference 3f9c1a20").
+ *
+ * The invalid_grant Error is NOT hand-written: it is produced by the REAL @pseo/core token
+ * client driven by a fake `fetch` (zero network, NEVER #5), so the message the classifier matches
+ * is the message core actually builds. Reword `tokenError` and these specs fail, instead of the
+ * branch silently falling back to the generic sentence.
+ */
+
+/** Build the Error core throws when Google's token endpoint refuses the refresh token. */
+async function coreTokenError(status: number, payload: Record<string, unknown>): Promise<Error> {
+  const refusingFetch = async (): Promise<Response> =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  try {
+    await refreshAccessToken("1//dead-refresh-token", {
+      fetch: refusingFetch,
+      credentials: { clientId: "test-client-id", clientSecret: "test-client-secret" },
+    });
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error(`expected the core token client to throw on ${status}`);
+}
+
+/** A Google port whose REFRESH fails; searchAnalytics.query is never reached. */
+function refreshFailingApi(error: Error): GscApi {
+  return {
+    refreshAccessToken: async () => {
+      throw error;
+    },
+    searchAnalyticsQuery: async () => {
+      throw new Error("searchAnalytics.query must not be reached when the refresh failed");
+    },
+  };
+}
+
+describe("pull_gsc_data when Google has revoked the stored grant (invalid_grant)", () => {
+  const PROPERTY = "sc-domain:dead-grant.example.com";
+
+  it("turns invalid_grant into an actionable message and burns ZERO credits", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `dead-${randomUUID()}.example.com`);
+      const { accountEmail } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(
+          await coreTokenError(400, {
+            error: "invalid_grant",
+            error_description: "Token has been expired or revoked.",
+          }),
+        ),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      // WHAT THE USER GETS: which account died, what to do, and that it was free.
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(new RegExp(`connection for ${accountEmail} expired.*reconnect`, "i"));
+      expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+      expect(text).toContain("You were not charged.");
+      expect(text).not.toContain("failed unexpectedly");
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // Google's own vocabulary stays out of the user's sentence.
+      expect(text).not.toMatch(/invalid_grant/);
+      // A designed refusal: nothing for an operator to diagnose, so no log line.
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      // THE MONEY PIN — the load-bearing assertion. Returning an error result instead of
+      // throwing would COMMIT 5 credits for a call that fetched nothing.
+      const rows = await ledgerRows(ctx.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows[1]?.delta).toBe(-TOOL_COSTS.pull_gsc_data);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
     } finally {
       errorSpy.mockRestore();
     }

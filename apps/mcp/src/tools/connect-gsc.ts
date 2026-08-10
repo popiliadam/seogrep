@@ -41,6 +41,20 @@ export function renderAlreadyConnected(args: {
 }
 
 /**
+ * The web app's OAuth entry point for one project — the ONE link that starts (or restarts) a
+ * Search Console connection. Exported because a second surface now hands it out: when Google
+ * refuses a stored refresh token, pull_gsc_data's reauth error carries this exact URL, and two
+ * copies of the route's shape would be two places to get it wrong.
+ *
+ * Fail-closed on WEB_BASE_URL, like every other consumer: a missing value is a deploy
+ * misconfiguration (the 2026-07-28 audit closure records that it must be set in every
+ * environment), and a link that reads "undefined/api/gsc/connect" is worse than a loud error.
+ */
+export function gscConnectUrl(projectId: string): string {
+  return `${requireWebBaseUrl()}/api/gsc/connect?project_id=${projectId}`;
+}
+
+/**
  * connect_gsc — hand the user a Google sign-in link that connects Search Console to one
  * of their projects. 0 credits. This tool is the "link-out" surface (design D15): OAuth
  * is deliberately the SECOND step, never the first barrier — crawl + audit already work
@@ -94,7 +108,7 @@ export const connectGscTool = defineTool({
       throw new Error(`connect_gsc: connection lookup failed: ${connError.message}`);
     }
 
-    const connectUrl = `${requireWebBaseUrl()}/api/gsc/connect?project_id=${project_id}`;
+    const connectUrl = gscConnectUrl(project_id);
 
     if (existing) {
       // `gsc_property` is nullable in the schema (migration 0009) and the null is meaningful,
