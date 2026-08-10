@@ -403,7 +403,17 @@ export async function describeDisconnect(accountId: string): Promise<string> {
 /** What the picker gets back: a success, or one sentence it may show the user verbatim. */
 export type SavePropertyResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
-/** The one outward call this action makes, injectable so tests reach zero live requests. */
+/**
+ * The one outward call this action makes, injectable so tests reach zero live requests
+ * (constitution NEVER #5).
+ *
+ * It is a parameter of an exported SERVER ACTION, so a caller can in principle supply it.
+ * That buys them nothing: a function is not serializable across the action boundary, and even
+ * a listing they somehow controlled would only let them store a property string against THEIR
+ * OWN project — the account is still opened with `accessTokenFor`'s tenant-filtered read, so
+ * every later Search Console call still runs on their own token and simply 403s. Nothing
+ * crosses a tenant, and nothing is read that they could not already read.
+ */
 export interface SavePropertyDeps {
   readonly listSites?: (accessToken: string) => Promise<GscSite[]>;
 }

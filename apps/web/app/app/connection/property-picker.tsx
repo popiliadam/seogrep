@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import type { SavePropertyResult } from "./actions";
 
 /** One selectable Search Console property, on one of the user's connected Google accounts. */
 export interface PropertyOption {
@@ -14,8 +15,6 @@ export interface PropertyOption {
   /** Whether Google will answer `searchAnalytics.query` at that permission level. */
   readonly queryable: boolean;
 }
-
-export type SaveResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 interface PropertyPickerProps {
   readonly projectId: string;
@@ -34,7 +33,7 @@ interface PropertyPickerProps {
     projectId: string,
     accountId: string,
     property: string,
-  ) => Promise<SaveResult>;
+  ) => Promise<SavePropertyResult>;
 }
 
 /**
@@ -118,7 +117,18 @@ export function PropertyPicker({
   // Until the user touches the control it FOLLOWS the server: the stored mapping if there is
   // one, otherwise the suggestion. So a refresh caused by another action on this row (a
   // Disconnect, say) is reflected here rather than leaving a stale-looking selection behind.
-  const value = chosen ?? (current || suggested || "");
+  //
+  // A choice with no matching option shows NOTHING selected. A `<select>` whose value matches
+  // no `<option>` displays the first one instead, so a project whose stored property has
+  // vanished — or whose account's listing could not be read at all — would appear to be
+  // reading some OTHER property it was never mapped to. Falling back to the placeholder is the
+  // honest state: nothing here is selected, and the notice below (or the page's account-level
+  // warning) says why.
+  const offered = new Set(
+    options.map((option) => encodeChoice(option.accountId, option.siteUrl)),
+  );
+  const preferred = chosen ?? (current || suggested || "");
+  const value = offered.has(preferred) ? preferred : "";
   const selectId = `gsc-property-${projectId}`;
 
   function submit() {

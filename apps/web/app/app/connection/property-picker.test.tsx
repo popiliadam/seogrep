@@ -106,6 +106,27 @@ describe("PropertyPicker", () => {
   });
 
   /**
+   * A `<select>` whose value matches no `<option>` DISPLAYS THE FIRST ONE. So a project whose
+   * stored property vanished from the listing — or whose account could not be read at all —
+   * would silently appear to be reading some other property it was never mapped to. The
+   * placeholder is the honest state; the notice beside it says why.
+   */
+  it("shows nothing selected when the stored choice is not among the options", () => {
+    render(
+      <PropertyPicker
+        {...props({
+          options: [option({ siteUrl: "https://someone-else.example/" })],
+          current: encodeChoice(ACCOUNT_A, URL_PROPERTY),
+          missingProperty: URL_PROPERTY,
+        })}
+      />,
+    );
+
+    expect(selectFor().value).toBe("");
+    expect((screen.getByRole("button", { name: /save/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /**
    * Finding #50 made structurally impossible at the UI: a property the account cannot QUERY
    * is visible (so the user can see it is there and why it is unusable) but not selectable,
    * and its permission level is spelled out rather than hidden behind "unavailable".
