@@ -34,7 +34,7 @@ type Filter = { column: string; value: unknown };
 /** One issued statement: which table, which verb, and every filter it carried. */
 type Statement = { table: string; op: string; filters: Filter[] };
 
-let dbRows: Record<string, Row[]> = { gsc_accounts: [], gsc_connections: [] };
+let dbRows: Record<string, Row[]> = { gsc_accounts: [], gsc_connections: [], projects: [] };
 let gscTables: string[] = [];
 let statements: Statement[] = [];
 /** Every side effect in order, including the Google revoke — the ordering proof. */
@@ -121,6 +121,36 @@ function fakeTable(table: string) {
       };
       return chain;
     },
+    /**
+     * PostgREST `upsert(row, { onConflict })`. There is no `.eq()` to inspect here, so the
+     * CONFLICT TARGET is recorded as this statement's filters — which is exactly what it is:
+     * the columns that decide WHICH row a write lands on. Dropping `user_id` from either the
+     * target or the payload therefore shows up as a missing/undefined filter (constitution
+     * NEVER #4), and the merge below lands on a different row, so both halves are observable.
+     */
+    upsert: (payload: Row, options: { onConflict?: string } = {}) => {
+      const target = (options.onConflict ?? "")
+        .split(",")
+        .map((column) => column.trim())
+        .filter((column) => column.length > 0);
+      record(
+        table,
+        "upsert",
+        target.map((column) => ({ column, value: payload[column] })),
+      );
+      const rows = rowsIn();
+      const conflicting =
+        target.length > 0
+          ? rows.find((row) => target.every((column) => row[column] === payload[column]))
+          : undefined;
+      dbRows = {
+        ...dbRows,
+        [table]: conflicting
+          ? rows.map((row) => (row === conflicting ? { ...row, ...payload } : row))
+          : [...rows, payload],
+      };
+      return Promise.resolve({ error: null });
+    },
     delete: () => {
       const filters: Filter[] = [];
       const chain = {
@@ -187,6 +217,7 @@ import {
   disconnectAccount,
   revokeKeyAction,
   rotateKeyAction,
+  saveProjectProperty,
   unmapProject,
 } from "./actions";
 
@@ -867,5 +898,130 @@ describe("two-level disconnect", () => {
       await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/not authenticated/i);
       expect(gscTables).toEqual([]);
     });
+  });
+});
+
+/**
+ * THE PICKER'S SERVER HALF (Task 6). `resolveGscProperty` stopped DECIDING which property a
+ * project reads and became a suggestion the user can override — so the decision moved to a
+ * human, and the verification had to move to the server. This action is that verification:
+ * it re-fetches `sites.list` LIVE and confirms the chosen property is both listed AND
+ * queryable before it writes. A disabled `<option>` in the picker is a courtesy; the only
+ * control is here, and these specs call the action directly (never through the UI) precisely
+ * to prove that.
+ *
+ * `lib/gsc/accounts.ts` again runs for REAL against the fake tables, so the token unseal and
+ * its tenant filter are exercised rather than stubbed; only `sites.list` is injected (deps)
+ * and only `refreshAccessToken` is mocked — constitution NEVER #5, zero live calls.
+ */
+describe("saveProjectProperty", () => {
+  const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+  const PROJECT = "33333333-3333-4333-8333-333333333333";
+  const ACCOUNT = "44444444-4444-4444-8444-444444444444";
+  const REFRESH_TOKEN = "1//the-refresh-token";
+  const ACCESS_TOKEN = "ya29.the-access-token";
+
+  function accountRow(userId: string): Row {
+    return {
+      id: ACCOUNT,
+      user_id: userId,
+      google_account_sub: "google-sub-1",
+      google_account_email: "owner@example.com",
+      encrypted_refresh_token: toByteaHex(
+        encryptToken(REFRESH_TOKEN, ENC_KEY, { userId, accountId: ACCOUNT }),
+      ),
+      token_status: "active",
+      token_checked_at: null,
+    };
+  }
+
+  function projectRow(userId: string, id: string = PROJECT): Row {
+    return { id, user_id: userId, domain: "alpha.example" };
+  }
+
+  /** `sites.list` as Google answers it, injected so no request is ever made. */
+  function listing(...sites: { siteUrl: string; permissionLevel: string }[]) {
+    return { listSites: async () => sites };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY);
+    signedIn("user-1");
+    vi.mocked(refreshAccessToken).mockResolvedValue({
+      accessToken: ACCESS_TOKEN,
+      refreshToken: null,
+      idToken: null,
+      expiresIn: 3599,
+      scope: "https://www.googleapis.com/auth/webmasters.readonly",
+      tokenType: "Bearer",
+    });
+    dbRows = {
+      projects: [projectRow("user-1")],
+      gsc_accounts: [accountRow("user-1")],
+      gsc_connections: [],
+    };
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    dbRows = { gsc_accounts: [], gsc_connections: [], projects: [] };
+    gscTables = [];
+    statements = [];
+    gscOps = [];
+  });
+
+  /** Capture a server-side diagnostic instead of printing it into the test output. */
+  function captureConsole(level: "warn" | "error") {
+    return vi.spyOn(console, level).mockImplementation(() => {});
+  }
+
+  // The three specs the brief pins, verbatim in intent: listed, queryable, written.
+  it("refuses a property the live account does not list", async () => {
+    const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://not-mine.com/", listing());
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(dbRows.gsc_connections).toEqual([]);
+  });
+
+  it("refuses a property the account cannot QUERY", async () => {
+    const sites = [{ siteUrl: "https://a.com/", permissionLevel: "siteUnverifiedUser" }];
+    const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing(...sites));
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("cannot query") });
+    expect(dbRows.gsc_connections).toEqual([]);
+  });
+
+  it("writes the mapping when the property is listed AND queryable", async () => {
+    const sites = [{ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }];
+    expect(
+      await saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing(...sites)),
+    ).toEqual({ ok: true });
+    expect(dbRows.gsc_connections).toEqual([
+      {
+        user_id: "user-1",
+        project_id: PROJECT,
+        account_id: ACCOUNT,
+        gsc_property: "https://a.com/",
+      },
+    ]);
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+  });
+
+  /**
+   * The listing is re-fetched from GOOGLE, not read back from what the page rendered. The
+   * picker's own list is minutes old at best: a property can be removed, or an account's
+   * permission downgraded, between the render and the click. Injecting a listing that
+   * DISAGREES with a plausible UI state is the only way to see which of the two the server
+   * believed.
+   */
+  it("trusts the LIVE listing, not the caller: a property removed since page load is refused", async () => {
+    const out = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "sc-domain:alpha.example",
+      listing({ siteUrl: "https://beta.example/", permissionLevel: "siteOwner" }),
+    );
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(dbRows.gsc_connections).toEqual([]);
   });
 });

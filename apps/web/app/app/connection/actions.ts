@@ -1,11 +1,19 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { generateApiKey, mcpUrlFor, mcpUrlTemplate, tokenKeyBytes } from "@pseo/core";
+import {
+  generateApiKey,
+  listSites,
+  mcpUrlFor,
+  mcpUrlTemplate,
+  tokenKeyBytes,
+  type GscSite,
+} from "@pseo/core";
 import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
 import { accessTokenFor } from "../../../lib/gsc/accounts";
+import { canQuerySearchAnalytics } from "../../../lib/gsc/oauth";
 import { revokeGoogleToken } from "../../../lib/gsc/revoke";
 import { createClient } from "../../../lib/supabase/server";
 
@@ -390,4 +398,117 @@ export async function describeDisconnect(accountId: string): Promise<string> {
     `${projects} ${noun} will stop reading Search Console data until you connect the ` +
     "account again. Their property mappings are kept, so you will not have to pick them anew."
   );
+}
+
+/** What the picker gets back: a success, or one sentence it may show the user verbatim. */
+export type SavePropertyResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
+
+/** The one outward call this action makes, injectable so tests reach zero live requests. */
+export interface SavePropertyDeps {
+  readonly listSites?: (accessToken: string) => Promise<GscSite[]>;
+}
+
+/**
+ * Map ONE project to ONE Search Console property on ONE connected Google account.
+ *
+ * THE SERVER NEVER TRUSTS THE UI. `resolveGscProperty` used to decide this mapping inside the
+ * OAuth callback; since migration 0021 it only SUGGESTS, and a human picks. That moved the
+ * decision to a client, so the verification had to move here: the listing is re-fetched from
+ * Google on every save and the chosen property must be BOTH listed on that account and at a
+ * permission level Google will answer `searchAnalytics.query` for. The picker greys out the
+ * rest, but a disabled `<option>` is a courtesy — this is the control.
+ *
+ * The listing is never cached, here or on the page. A cache would grow its own staleness
+ * problem, and a property can be removed (or an account demoted) between the render and the
+ * click; re-reading is the only way the answer describes the account as it is NOW.
+ *
+ * Refusals are RETURNED, not thrown, because every one of them is something the user can act
+ * on and the picker shows the sentence as-is. Only a missing session throws — there is no
+ * user to address. No refusal ever carries a token, a ciphertext, or Google's own error text
+ * to the browser; the diagnosis goes to the server log.
+ *
+ * Ownership, twice, because two client-supplied ids arrive: the PROJECT is re-read under the
+ * session user, and the ACCOUNT is reached only through `accessTokenFor`, whose read is
+ * filtered the same way. The write then carries the session user id both as a column and
+ * inside its conflict target, so it can only ever land on this tenant's row (NEVER #4 — the
+ * service-role client bypasses RLS, so these filters are the whole boundary).
+ */
+export async function saveProjectProperty(
+  projectId: string,
+  accountId: string,
+  property: string,
+  deps: SavePropertyDeps = {},
+): Promise<SavePropertyResult> {
+  const userId = await requireUserId();
+  if (!UUID_RE.test(projectId) || !UUID_RE.test(accountId)) {
+    return { ok: false, error: "That project or Google account was not found." };
+  }
+  // An empty choice is the picker's "nothing selected" and can never be listed — refuse it
+  // before spending a Google round trip on a foregone answer.
+  if (property.length === 0) {
+    return { ok: false, error: "That property is not listed on this Google account." };
+  }
+
+  const service = createServiceClient();
+  const owned = await service
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (owned.error) {
+    throw new Error(`projects lookup failed: ${owned.error.message}`);
+  }
+  if (!owned.data) {
+    // Same opaque wording as a malformed id: nothing distinguishes "no such project" from
+    // "not yours", so the action cannot be used to probe for other users' project ids.
+    return { ok: false, error: "That project or Google account was not found." };
+  }
+
+  const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    console.error("saveProjectProperty: TOKEN_ENCRYPTION_KEY is not configured");
+    return { ok: false, error: "Search Console is not configured. Please try again later." };
+  }
+
+  let sites: GscSite[];
+  try {
+    const accessToken = await accessTokenFor(service, accountId, userId, encryptionKey);
+    sites = await (deps.listSites ?? listSites)(accessToken);
+  } catch (caught) {
+    // A dead credential, a retired encryption key, a foreign account id and a Google outage
+    // all land here. They are not distinguished for the USER — every one of them is answered
+    // by reconnecting the account — but the log keeps the diagnosis. Nothing from `caught` is
+    // returned: its message can carry Google's own text, and this string reaches a browser.
+    console.error(
+      `saveProjectProperty: could not read sites.list for account ${accountId}:`,
+      caught,
+    );
+    return {
+      ok: false,
+      error: "Could not read this Google account's properties. Reconnect the account and try again.",
+    };
+  }
+
+  const hit = sites.find((site) => site.siteUrl === property);
+  if (!hit) {
+    return { ok: false, error: "That property is not listed on this Google account." };
+  }
+  if (!canQuerySearchAnalytics(hit.permissionLevel)) {
+    return {
+      ok: false,
+      error: `This account cannot query that property (${hit.permissionLevel}) — ask its owner for full access.`,
+    };
+  }
+
+  const { error } = await service.from("gsc_connections").upsert(
+    { user_id: userId, project_id: projectId, account_id: accountId, gsc_property: property },
+    { onConflict: "user_id,project_id" },
+  );
+  if (error) {
+    console.error("saveProjectProperty: gsc_connections upsert failed:", error.message);
+    return { ok: false, error: "Could not save that property. Please try again." };
+  }
+  revalidatePath(CONNECTION_PATH);
+  return { ok: true };
 }
