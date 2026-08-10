@@ -151,9 +151,7 @@ export function AccountDisconnectPanel({
   return (
     <div className="flex flex-col gap-2">
       {accounts.length === 0 ? (
-        <p className="text-sm text-neutral-600">
-          No Google account is connected yet. Use Connect on a project below.
-        </p>
+        <p className="text-sm text-neutral-600">No Google account is connected yet.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {accounts.map((account) => (

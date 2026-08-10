@@ -72,6 +72,17 @@ const CONNECTED_MESSAGE =
   "Google account connected. Choose the Search Console property each project should read.";
 
 /**
+ * Consent belongs to a GOOGLE ACCOUNT, not to a project, so the link carries NO `project_id`.
+ *
+ * It used to. Migration 0021 moved the credential to `gsc_accounts`, Task 5 dropped the
+ * project from the OAuth state, and the connect route now ignores the parameter outright — so
+ * the old `?project_id=<id>` promised a project-scoped consent that cannot happen, and its
+ * placement (one link per project row) offered a fresh Google round trip at exactly the moment
+ * the user needed the property picker instead.
+ */
+const GSC_CONNECT_PATH = "/api/gsc/connect";
+
+/**
  * The caller's projects and the mapping each one currently has. BOTH reads go through the
  * caller's authenticated client (RLS `*_select_own`) AND carry an explicit user_id filter as
  * defence in depth — no tenant table is ever queried unfiltered (constitution NEVER #4).
@@ -236,6 +247,26 @@ function missingPropertyFor(
 }
 
 /**
+ * Whether this project's row should offer a re-consent: it IS mapped, and the account it is
+ * mapped to could not be read. That is the only state a trip to Google actually fixes.
+ *
+ * An UNMAPPED project is deliberately excluded, and that is the point of the control moving.
+ * A user who has already connected an account and merely has not chosen a property for this
+ * project needs the picker below the row — sending them back through a Google consent round
+ * would re-grant something they already granted and still leave the property unchosen.
+ */
+function needsReconsent(
+  project: ProjectConnection,
+  accounts: readonly ConnectedAccount[],
+): boolean {
+  if (project.accountId === null) {
+    return false;
+  }
+  const account = accounts.find((candidate) => candidate.id === project.accountId);
+  return account !== undefined && account.sites === null;
+}
+
+/**
  * How many OTHER projects read the same property. Allowed on purpose — one domain property
  * can legitimately cover two projects — so this is a note the picker shows, never a block.
  * Only live mappings count: a row whose account was disconnected keeps its `gsc_property`
@@ -358,10 +389,20 @@ export default async function ConnectionPage({
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
+        {/* A plain <a>, like the old per-project link: this is the route handler that mints a
+            signed state and 302s to Google, and next/link would prefetch it and start the flow.
+            Rendered unconditionally — with no accounts it is the ONLY way to connect one, and
+            with several it is how the next one is added. */}
+        <a
+          href={GSC_CONNECT_PATH}
+          className="self-start font-medium text-neutral-700 hover:text-neutral-900"
+        >
+          Connect Google account
+        </a>
         {accounts.some((account) => account.sites === null) ? (
           <p role="alert" className="text-sm text-amber-700">
             We could not read the Search Console properties on at least one of these accounts.
-            Reconnect it below, or try again shortly.
+            Use Connect Google account to grant access again, or try again shortly.
           </p>
         ) : null}
 
@@ -388,14 +429,19 @@ export default async function ConnectionPage({
                         Not connected
                       </span>
                     )}
-                    {/* A plain <a>: this is the existing route handler that mints a signed state
-                        and 302s to Google. next/link would prefetch it and start the flow. */}
-                    <a
-                      href={`/api/gsc/connect?project_id=${project.id}`}
-                      className="font-medium text-neutral-700 hover:text-neutral-900"
-                    >
-                      {project.accountId !== null ? "Reconnect" : "Connect"}
-                    </a>
+                    {/* The ONLY per-row trip to Google, and only for the one state a trip
+                        fixes: a mapped project whose account credential no longer works. An
+                        unmapped project is served by the picker below the row, not by a fresh
+                        consent — and the consent it would start is account-wide anyway, so it
+                        carries no project_id. */}
+                    {needsReconsent(project, accounts) ? (
+                      <a
+                        href={GSC_CONNECT_PATH}
+                        className="font-medium text-neutral-700 hover:text-neutral-900"
+                      >
+                        Reconnect
+                      </a>
+                    ) : null}
                     {/* The island renders the Disconnect button only for a linked project, but
                         is mounted either way. Per-project Disconnect UNLINKS only — the shared
                         Google grant is dropped from the account level (finding #63). */}

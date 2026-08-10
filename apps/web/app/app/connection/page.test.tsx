@@ -272,25 +272,34 @@ describe("ConnectionPage", () => {
 });
 
 describe("ConnectionPage — Google Search Console", () => {
-  it("marks each project connected or not and links to the connect route with its id", async () => {
+  /**
+   * RE-AIMED. This spec used to assert a per-row `?project_id=` connect link on every project.
+   * That link is gone: consent belongs to a Google ACCOUNT (migration 0021), Task 5 dropped
+   * the project from the OAuth state, and the connect route ignores the parameter — so the
+   * link promised a project-scoped consent that cannot happen, and offered a Google round trip
+   * to a user whose actual next step was the picker. What the spec still guarantees, and all
+   * this spec ever really guaranteed, is that each row is MARKED. Where the trip to Google
+   * lives now is pinned in "the account-level connect control" below.
+   */
+  it("marks each project connected or not, with no per-project trip to Google", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_A, PROJECT_B];
     connectionRows = [mapping(PROJECT_B.id)];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("sc-domain:alpha.example")] };
     await renderPage();
 
     const notConnected = rowOf(PROJECT_A.domain);
     expect(within(notConnected).getByText("Not connected")).toBeTruthy();
-    const connectLink = within(notConnected).getByRole("link", { name: "Connect" });
-    expect(connectLink.getAttribute("href")).toBe(
-      `/api/gsc/connect?project_id=${PROJECT_A.id}`,
-    );
-
     const connected = rowOf(PROJECT_B.domain);
     expect(within(connected).getByText("Connected")).toBeTruthy();
-    const reconnectLink = within(connected).getByRole("link", { name: "Reconnect" });
-    expect(reconnectLink.getAttribute("href")).toBe(
-      `/api/gsc/connect?project_id=${PROJECT_B.id}`,
-    );
+
+    // Neither row sends the user to Google: the healthy one has nothing to re-consent, and
+    // the unmapped one needs the picker it already carries.
+    expect(within(notConnected).queryByRole("link")).toBeNull();
+    expect(within(connected).queryByRole("link")).toBeNull();
+    expect(within(notConnected).getByTestId("picker")).toBeTruthy();
+    expect(within(connected).getByTestId("picker")).toBeTruthy();
   });
 
   it("offers Disconnect on the CONNECTED row only, bound to that project", async () => {
@@ -320,7 +329,11 @@ describe("ConnectionPage — Google Search Console", () => {
 
     const row = rowOf(PROJECT_B.domain);
     expect(within(row).getByText("Not connected")).toBeTruthy();
-    expect(within(row).getByRole("link", { name: "Connect" })).toBeTruthy();
+    // RE-AIMED from `getByRole("link", { name: "Connect" })`: an unmapped project's next step
+    // is choosing a property on an account, not a fresh consent, so the row carries the picker
+    // instead of a link out.
+    expect(within(row).getByTestId("picker")).toBeTruthy();
+    expect(within(row).queryByRole("link")).toBeNull();
     expect(within(row).queryByText("Connected")).toBeNull();
     expect(within(row).queryByTestId("disconnect")).toBeNull();
   });
@@ -340,7 +353,9 @@ describe("ConnectionPage — Google Search Console", () => {
 
     const row = rowOf(PROJECT_B.domain);
     expect(within(row).getByText("Not connected")).toBeTruthy();
-    expect(within(row).getByRole("link", { name: "Connect" })).toBeTruthy();
+    // RE-AIMED exactly as the spec above, and for the same reason.
+    expect(within(row).getByTestId("picker")).toBeTruthy();
+    expect(within(row).queryByRole("link")).toBeNull();
     expect(within(row).queryByText("Connected")).toBeNull();
     expect(within(row).queryByTestId("disconnect")).toBeNull();
   });
@@ -402,7 +417,14 @@ describe("ConnectionPage — Google Search Console", () => {
     expect(
       screen.getByText("No projects yet. Create one from your MCP client with the setup_project tool."),
     ).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Connect" })).toBeNull();
+    // RE-AIMED. It used to assert there was no "Connect" link, which was true only because
+    // every connect link hung off a project row — the very defect that left a projectless user
+    // unable to connect anything. There are still no project rows, and the account-level
+    // control is present and reachable.
+    expect(screen.queryByTestId("picker")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Connect Google account" }).getAttribute("href"),
+    ).toBe("/api/gsc/connect");
   });
 
   it("does not read projects at all when there is no user", async () => {
@@ -670,6 +692,82 @@ describe("ConnectionPage — an account whose properties cannot be read", () => 
     expect(listSites).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toMatch(/could not read the search console/i);
     expect(error).toHaveBeenCalled();
+  });
+});
+
+/**
+ * WHERE THE TRIP TO GOOGLE LIVES. It used to live on every project row as
+ * `/api/gsc/connect?project_id=<id>`, which was wrong three ways once migration 0021 moved the
+ * credential to the account: a user with no projects (or no connected account) could not
+ * connect at all; a user who HAD connected an account was offered a fresh consent on an
+ * unmapped project when the action they needed was the picker; and the `project_id` was dead,
+ * ignored by a route that no longer knows about projects.
+ */
+describe("ConnectionPage — the account-level connect control", () => {
+  it("offers Connect Google account with NO project_id, whatever else is on the page", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("sc-domain:alpha.example")] };
+    await renderPage();
+
+    const link = screen.getByRole("link", { name: "Connect Google account" });
+    expect(link.getAttribute("href")).toBe("/api/gsc/connect");
+    // The dead parameter appears nowhere on the page, on any link.
+    expect(
+      screen.queryAllByRole("link").filter((a) => (a.getAttribute("href") ?? "").includes("project_id")),
+    ).toEqual([]);
+  });
+
+  it("is there for a user with no accounts and no projects at all", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [];
+    accountRows = [];
+    await renderPage();
+
+    expect(
+      screen.getByRole("link", { name: "Connect Google account" }).getAttribute("href"),
+    ).toBe("/api/gsc/connect");
+    // And the panel says plainly that there is nothing connected, without pointing at a
+    // per-project control that may not exist.
+    expect(screen.getByTestId("account-panel").getAttribute("data-accounts")).toBe("[]");
+  });
+
+  /**
+   * The one state a per-row trip to Google actually fixes: the project IS mapped, and the
+   * account behind it can no longer be read. Re-consenting that account is the repair; it
+   * upserts the same `gsc_accounts` row (keyed on the Google `sub`) and every mapping survives.
+   */
+  it("offers Reconnect only for a project whose account credential is dead", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [mapping(PROJECT_A.id, ACCOUNT_ID), mapping(PROJECT_B.id, SECOND_ACCOUNT_ID)];
+    accountRows = [account(), account(SECOND_ACCOUNT_ID, "second@example.com")];
+    sitesByAccount = {
+      [ACCOUNT_ID]: new Error("Google token endpoint failed (400): invalid_grant"),
+      [SECOND_ACCOUNT_ID]: [site("sc-domain:beta.example")],
+    };
+    await renderPage();
+
+    const broken = within(rowOf(PROJECT_A.domain)).getByRole("link", { name: "Reconnect" });
+    expect(broken.getAttribute("href")).toBe("/api/gsc/connect");
+    // The healthy project has nothing to re-consent.
+    expect(within(rowOf(PROJECT_B.domain)).queryByRole("link")).toBeNull();
+  });
+
+  // An unmapped project is NOT a broken credential, even while another account is unreadable:
+  // its next step is the picker, and offering Google would re-grant what is already granted.
+  it("never offers Reconnect for a project that simply has no mapping", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, null)];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("sc-domain:alpha.example")] };
+    await renderPage();
+
+    expect(within(rowOf(PROJECT_A.domain)).queryByRole("link")).toBeNull();
+    expect(within(rowOf(PROJECT_A.domain)).getByTestId("picker")).toBeTruthy();
   });
 });
 
