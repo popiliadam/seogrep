@@ -15,12 +15,18 @@ interface ProjectConnection {
 }
 
 /**
- * The caller's projects, each flagged with whether it already has a gsc_connections row.
+ * The caller's projects, each flagged with whether it is currently MAPPED to a Google account.
  * BOTH reads go through the caller's authenticated client (RLS `*_select_own`) AND carry an
  * explicit user_id filter as defence in depth — no tenant table is ever queried unfiltered
  * (constitution NEVER #4). Two small reads joined in memory: `gsc_connections` is unique per
- * (user, project), so the project_id set is all the state the row needs. Read failures throw
+ * (user, project), so one row per project is all the state this needs. Read failures throw
  * rather than degrade into a misleading "not connected" (the listReports precedent).
+ *
+ * "Connected" is `account_id !== null`, NOT the existence of the row. Since migration 0021 the
+ * credential lives on `gsc_accounts` and `gsc_connections` is the MAPPING: `unmapProject`
+ * clears `account_id` and keeps the row, and disconnecting an account sets the column null via
+ * `on delete set null` while every `gsc_property` survives. Reading row existence would have
+ * shown both of those states as "Connected" — a Disconnect that visibly does nothing.
  */
 async function listProjectConnections(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -32,7 +38,7 @@ async function listProjectConnections(
       .select("id, domain")
       .eq("user_id", userId)
       .order("domain", { ascending: true }),
-    supabase.from("gsc_connections").select("project_id").eq("user_id", userId),
+    supabase.from("gsc_connections").select("project_id, account_id").eq("user_id", userId),
   ]);
   if (projects.error) {
     throw new Error(`projects lookup failed: ${projects.error.message}`);
@@ -42,13 +48,15 @@ async function listProjectConnections(
   }
 
   const rows = (projects.data ?? []) as unknown as { id: string; domain: string }[];
-  const connectedIds = new Set(
-    ((connections.data ?? []) as unknown as { project_id: string }[]).map((row) => row.project_id),
+  const mappedIds = new Set(
+    ((connections.data ?? []) as unknown as { project_id: string; account_id: string | null }[])
+      .filter((row) => row.account_id !== null)
+      .map((row) => row.project_id),
   );
   return rows.map((row) => ({
     id: row.id,
     domain: row.domain,
-    connected: connectedIds.has(row.id),
+    connected: mappedIds.has(row.id),
   }));
 }
 
@@ -106,11 +114,17 @@ export default async function ConnectionPage() {
 
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-medium">Google Search Console</h2>
+        {/* This paragraph is the only place the user learns what Disconnect does, so it says
+            what the action actually does and nothing more. It used to promise a revoke at
+            Google; since the credential moved to the Google ACCOUNT (migration 0021) the
+            per-project button no longer performs one, and leaving the old wording would have
+            told the user their Search Console access was revoked while the grant was live. */}
         <p className="text-sm text-neutral-600">
           Link a project to Search Console so its tools can read your real query and click
-          data. Connecting sends you to Google and back. Disconnecting deletes the stored
-          token and asks Google to revoke SeoGrep&apos;s access; if Google does not confirm
-          the revocation, you will be told how to remove it yourself.
+          data. Connecting sends you to Google and back. Disconnecting removes the link
+          between this project and Search Console. It does not revoke SeoGrep&apos;s access to
+          your Google account, so your other projects keep working; dropping that access is a
+          separate step on the Google account itself.
         </p>
         {projects.length === 0 ? (
           <p className="text-sm text-neutral-600">

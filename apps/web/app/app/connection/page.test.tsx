@@ -8,15 +8,23 @@ const listKeys = vi.fn();
 let fromCalls: string[] = [];
 let eqCalls: { table: string; column: string; value: unknown }[] = [];
 let projectRows: { id: string; domain: string }[] = [];
-let connectionRows: { project_id: string }[] = [];
+let connectionRows: { project_id: string; account_id: string | null }[] = [];
 
 /**
  * Minimal PostgREST-ish builder: records the table + every .eq(), and resolves to that
  * table's rows whether the caller ends the chain with .order() or awaits it directly.
+ *
+ * It PROJECTS the requested columns, and that is load-bearing rather than tidiness. The link
+ * state now hangs on `account_id`; handing back a column the statement never selected would
+ * let "unmapped rows read Not connected" pass while the real query returned no such column —
+ * green for the wrong reason. Projected, a forgotten column reads `undefined` here exactly as
+ * it would from PostgREST, and the spec fails.
  */
-function queryBuilder(table: string) {
+function queryBuilder(table: string, columns: string) {
+  const wanted = columns.split(",").map((column) => column.trim());
+  const rows: Record<string, unknown>[] = table === "projects" ? projectRows : connectionRows;
   const result = {
-    data: table === "projects" ? projectRows : connectionRows,
+    data: rows.map((row) => Object.fromEntries(wanted.map((column) => [column, row[column]]))),
     error: null,
   };
   const builder = {
@@ -39,7 +47,7 @@ vi.mock("../../../lib/supabase/server", () => ({
     auth: { getUser },
     from: (table: string) => {
       fromCalls.push(table);
-      return { select: () => queryBuilder(table) };
+      return { select: (columns: string) => queryBuilder(table, columns) };
     },
   }),
 }));
@@ -63,9 +71,8 @@ vi.mock("./key-panel", () => ({
 }));
 // Same treatment for the per-row island: the stub surfaces WHICH project the page bound it
 // to and whether it was handed a real server action. It mirrors the real component's own
-// split — the island is mounted for every project so its unconfirmed-revoke warning outlives
-// the refresh, while the BUTTON exists only for a connected one — so the specs below still
-// pin exactly where a Disconnect affordance may appear.
+// split — the island is mounted for every project, the BUTTON exists only for a mapped one —
+// so the specs below still pin exactly where a Disconnect affordance may appear.
 vi.mock("./disconnect-button", () => ({
   DisconnectButton: (p: {
     projectId: string;
@@ -106,6 +113,13 @@ const REVOKED = {
 
 const PROJECT_A = { id: "11111111-1111-4111-8111-111111111111", domain: "alpha.example" };
 const PROJECT_B = { id: "22222222-2222-4222-8222-222222222222", domain: "beta.example" };
+/** The gsc_accounts row a mapped project points at — link state is this being non-null. */
+const ACCOUNT_ID = "44444444-4444-4444-8444-444444444444";
+
+/** A gsc_connections row; `accountId: null` is a row whose mapping was cleared. */
+function mapping(projectId: string, accountId: string | null = ACCOUNT_ID) {
+  return { project_id: projectId, account_id: accountId };
+}
 
 afterEach(() => {
   cleanup();
@@ -161,7 +175,7 @@ describe("ConnectionPage — Google Search Console", () => {
   it("marks each project connected or not and links to the connect route with its id", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_A, PROJECT_B];
-    connectionRows = [{ project_id: PROJECT_B.id }];
+    connectionRows = [mapping(PROJECT_B.id)];
     await renderPage();
 
     const notConnected = rowOf(PROJECT_A.domain);
@@ -182,13 +196,13 @@ describe("ConnectionPage — Google Search Console", () => {
   it("offers Disconnect on the CONNECTED row only, bound to that project", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_A, PROJECT_B];
-    connectionRows = [{ project_id: PROJECT_B.id }];
+    connectionRows = [mapping(PROJECT_B.id)];
     await renderPage();
 
     // Nothing to unlink on a project that was never linked.
     expect(within(rowOf(PROJECT_A.domain)).queryByTestId("disconnect")).toBeNull();
-    // The island itself rides on BOTH rows: an unconfirmed revoke has to keep warning the
-    // user through the very refresh that flips their row to "Not connected" (M-15).
+    // The island itself rides on BOTH rows, so an in-flight failure notice survives the very
+    // refresh that flips the row to "Not connected".
     expect(within(rowOf(PROJECT_A.domain)).getByTestId("disconnect-island")).toBeTruthy();
     expect(within(rowOf(PROJECT_B.domain)).getByTestId("disconnect-island")).toBeTruthy();
 
@@ -201,7 +215,7 @@ describe("ConnectionPage — Google Search Console", () => {
   it("after the connection is gone the row reads Not connected + Connect, with no Disconnect", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_B];
-    connectionRows = []; // the state a successful disconnect leaves behind
+    connectionRows = []; // no row at all — a project that was never linked
     await renderPage();
 
     const row = rowOf(PROJECT_B.domain);
@@ -209,6 +223,47 @@ describe("ConnectionPage — Google Search Console", () => {
     expect(within(row).getByRole("link", { name: "Connect" })).toBeTruthy();
     expect(within(row).queryByText("Connected")).toBeNull();
     expect(within(row).queryByTestId("disconnect")).toBeNull();
+  });
+
+  /**
+   * THE STATE unmapProject ACTUALLY LEAVES BEHIND, and the reason this predicate is not row
+   * existence. `unmapProject` clears `account_id` and KEEPS the row; disconnecting an account
+   * nulls the same column through migration 0021's `on delete set null` while every
+   * `gsc_property` survives. Reading mere row existence showed both as "Connected", so the
+   * Disconnect button stayed on screen and the click looked like it had done nothing.
+   */
+  it("an UNMAPPED row (account_id null) reads Not connected + Connect, with no Disconnect", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_B];
+    connectionRows = [mapping(PROJECT_B.id, null)]; // the row survives, the mapping does not
+    await renderPage();
+
+    const row = rowOf(PROJECT_B.domain);
+    expect(within(row).getByText("Not connected")).toBeTruthy();
+    expect(within(row).getByRole("link", { name: "Connect" })).toBeTruthy();
+    expect(within(row).queryByText("Connected")).toBeNull();
+    expect(within(row).queryByTestId("disconnect")).toBeNull();
+  });
+
+  /**
+   * The blurb is the only place a user learns what Disconnect does, so it may not promise
+   * something the button does not do. It used to say Disconnect "asks Google to revoke
+   * SeoGrep's access"; since the credential moved to the Google ACCOUNT (migration 0021) the
+   * per-project button revokes nothing, and that sentence would have told a user their
+   * Search Console access was gone while the grant was still live at Google.
+   */
+  it("the Search Console blurb does not promise a revoke the per-project button never performs", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_B];
+    connectionRows = [mapping(PROJECT_B.id)];
+    await renderPage();
+
+    const blurb = screen.getByText(/link a project to search console/i).textContent ?? "";
+    expect(blurb).toMatch(/does not revoke/i);
+    expect(blurb).toMatch(/other projects keep working/i);
+    // No claim that the stored credential is dropped or that Google was asked for anything.
+    expect(blurb).not.toMatch(/asks google to revoke/i);
+    expect(blurb).not.toMatch(/deletes the stored token/i);
   });
 
   it("reads BOTH tenant tables with an explicit user_id filter (constitution NEVER #4)", async () => {
