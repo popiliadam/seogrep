@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServiceClient } from "@pseo/db/server";
-import type { TokenDeps } from "@pseo/core";
+import { decryptToken, fromByteaHex, type TokenDeps } from "@pseo/core";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { accessTokenFor, markAccountTokenStatus, upsertGscAccount } from "./accounts.js";
 
@@ -82,6 +82,62 @@ beforeAll(async () => {
 });
 
 describe("upsertGscAccount", () => {
+  /**
+   * THE SEAL, pinned where the sealing now happens (Task 5 fix round 1).
+   *
+   * These two assertions used to live in `app/api/gsc/callback/route.test.ts`, on the
+   * "completes the link …" spec, back when the OAuth callback did the sealing itself and
+   * handed `upsertGscConnection` a finished ciphertext. Task 5 moved sealing INTO this
+   * function — it binds the ciphertext to the row id, which only this function knows — and
+   * `668ed30`'s commit ledger said the assertions had moved here with it. They had not:
+   * nothing in this file read the ciphertext column at all. The guarantee did survive
+   * transitively (the `accessTokenFor` specs below seed through `upsertGscAccount` and then
+   * decrypt, so a plaintext write would make them throw), but a transitive proof is not the
+   * pin, and a ledger pointing at an assertion that is not there turns a deleted check into
+   * something that merely reads like a relocated one. This spec makes the pointer true.
+   *
+   * MUTATION TARGET: write `args.refreshToken` into `encrypted_refresh_token` instead of
+   * `sealed` and this spec goes red on its first assertion.
+   */
+  it("stores the token SEALED — the column never holds the plaintext, and it opens with the row's own owner", async () => {
+    const user = await makeUser();
+    const refreshToken = `1//plaintext-${randomUUID()}`;
+    const { accountId } = await upsertGscAccount(client, {
+      userId: user.id,
+      sub: `sub-${randomUUID()}`,
+      email: "sealed@x.com",
+      refreshToken,
+      keyHex: KEY,
+    });
+
+    // Read the ciphertext back through the service client (the ONLY role with a grant on
+    // this column), tenant-filtered like every other query here — NEVER #4.
+    const row = await client
+      .from("gsc_accounts")
+      .select("encrypted_refresh_token")
+      .eq("id", accountId)
+      .eq("user_id", user.id)
+      .single();
+    if (row.error) throw new Error(`ciphertext read failed: ${row.error.message}`);
+    const stored = row.data.encrypted_refresh_token;
+
+    // (1) The plaintext never reached storage. Asserted on the DECODED BYTES, not on the
+    // column's text form: PostgREST hands a `bytea` back as `\x`-prefixed hex, so
+    // `expect(stored).not.toContain(refreshToken)` would pass even for a column holding the
+    // plaintext outright — the hex encoding hides it. (Measured: the mutation that writes
+    // `args.refreshToken` straight into the column left that text-form assertion GREEN.)
+    const sealedBytes = fromByteaHex(stored);
+    expect(sealedBytes.includes(Buffer.from(refreshToken, "utf8"))).toBe(false);
+    expect(sealedBytes.subarray(0, 4).toString("ascii")).toBe("SGSL"); // it is a v4 seal
+
+    // (2) ...and what IS there is the token, openable only under this row's own
+    // `(userId, accountId)` owner — the v4 AAD binding, exercised end to end against a real
+    // stored value rather than an in-memory buffer.
+    expect(decryptToken(fromByteaHex(stored), KEY, { userId: user.id, accountId })).toBe(
+      refreshToken,
+    );
+  });
+
   it("keys the account on sub, not email — a changed email updates the SAME row", async () => {
     const user = await makeUser();
     const sub = `sub-${randomUUID()}`;
