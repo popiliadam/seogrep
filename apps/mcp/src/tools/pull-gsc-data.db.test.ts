@@ -689,6 +689,53 @@ describe("pull_gsc_data when Google has revoked the stored grant (invalid_grant)
     }
   });
 
+  /**
+   * THE GUARANTEE UNDER A MISCONFIGURED ENVIRONMENT. With WEB_BASE_URL unset there is no honest
+   * link to print — but the refusal must NOT fall back to "failed unexpectedly", which is the
+   * exact sentence this path exists to abolish, in the exact situation it was written for. Driven
+   * end to end (registry catch + real ledger), not just at the renderer, because the fallback that
+   * matters is the one the CLIENT receives. Signed lessons 5 and 6: env-reading code is negative-
+   * tested with the real prod variable name.
+   */
+  it("with no WEB_BASE_URL the refusal survives without its link — and is still free", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const savedBaseUrl = process.env.WEB_BASE_URL;
+    delete process.env.WEB_BASE_URL;
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `nobase-${randomUUID()}.example.com`);
+      const { accountId, accountEmail } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(400, { error: "invalid_grant" })),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+      const text = result.content[0]?.text ?? "";
+
+      // THE ASSERTION THAT MATTERS: never the crash sentence, whatever the environment.
+      expect(text).not.toContain("failed unexpectedly");
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // Still actionable, and no half-built link.
+      expect(text).toContain(accountEmail);
+      expect(text).toMatch(/expired/i);
+      expect(text).toContain("Reconnect it from the Connection page");
+      expect(text).not.toContain("undefined/api/gsc/connect");
+      expect(text).toContain("You were not charged.");
+
+      // Unchanged by the missing env: still free, and the account is still marked.
+      expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+      expect(await tokenStatusOf(accountId)).toBe("invalid");
+    } finally {
+      if (savedBaseUrl === undefined) delete process.env.WEB_BASE_URL;
+      else process.env.WEB_BASE_URL = savedBaseUrl;
+      errorSpy.mockRestore();
+    }
+  });
+
   it("marks the account invalid so the picker can say so", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {

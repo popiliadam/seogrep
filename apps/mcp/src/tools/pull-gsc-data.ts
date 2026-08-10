@@ -9,7 +9,7 @@ import { pullResultToJson } from "../gsc-data/types.ts";
 import { formatPullSummary } from "../gsc-data/format.ts";
 import { GscReauthRequiredError, isInvalidGrant } from "../gsc-data/reauth-error.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
-import { gscConnectUrl } from "./connect-gsc.ts";
+import { optionalGscConnectUrl } from "./connect-gsc.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
@@ -332,7 +332,14 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
           }
           // THROW, so withCredits RELEASES: a revoked grant is not a purchase. The sentence the
           // user reads is built by the registry from these two fields (gsc-data/reauth-error.ts).
-          throw new GscReauthRequiredError(account.google_account_email, gscConnectUrl(project_id));
+          //
+          // The link is read SOFTLY: a deployment missing WEB_BASE_URL must still get the typed,
+          // free, actionable refusal — a throw here would hand this exact failure back to the
+          // generic "failed unexpectedly" branch, which is what this whole path removes.
+          throw new GscReauthRequiredError(
+            account.google_account_email,
+            optionalGscConnectUrl(project_id),
+          );
         }
         if (!isSearchAnalyticsForbidden(error)) {
           throw error;
