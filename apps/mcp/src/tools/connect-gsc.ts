@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { forUser, getServiceClient } from "../db.ts";
-import { requireWebBaseUrl } from "../env.ts";
+import { optionalWebBaseUrl, requireWebBaseUrl } from "../env.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
@@ -42,16 +42,38 @@ export function renderAlreadyConnected(args: {
 
 /**
  * The web app's OAuth entry point for one project — the ONE link that starts (or restarts) a
- * Search Console connection. Exported because a second surface now hands it out: when Google
- * refuses a stored refresh token, pull_gsc_data's reauth error carries this exact URL, and two
- * copies of the route's shape would be two places to get it wrong.
+ * Search Console connection. Three surfaces hand it out now (connect_gsc, the reauth refusal, the
+ * staleness warning), so the route's shape lives here once rather than in three string literals.
  *
- * Fail-closed on WEB_BASE_URL, like every other consumer: a missing value is a deploy
- * misconfiguration (the 2026-07-28 audit closure records that it must be set in every
- * environment), and a link that reads "undefined/api/gsc/connect" is worse than a loud error.
+ * Fail-closed on WEB_BASE_URL — for THIS reader, whose caller is connect_gsc, where the link is
+ * the entire answer: a missing value is a deploy misconfiguration (the 2026-07-28 audit closure
+ * records that it must be set in every environment) and a "undefined/api/gsc/connect" link is
+ * worse than a loud error. The other two callers take the soft reader below; see why there.
  */
 export function gscConnectUrl(projectId: string): string {
-  return `${requireWebBaseUrl()}/api/gsc/connect?project_id=${projectId}`;
+  return connectPath(requireWebBaseUrl(), projectId);
+}
+
+/**
+ * The same link, read SOFTLY: null when WEB_BASE_URL is unset instead of throwing.
+ *
+ * For the two surfaces that merely REFERENCE the link inside a larger, already-useful sentence —
+ * the typed reauth refusal and the discovery tools' staleness warning. For them, a throw is not a
+ * loud failure but a silent downgrade: it turns "your connection expired, reconnect it" back into
+ * "failed unexpectedly — quote reference …", which is the defect those sentences exist to remove.
+ * connect_gsc keeps the fail-closed reader above, because there the link IS the whole answer.
+ *
+ * Exactly the split env.ts already draws between requireWebBaseUrl and optionalWebBaseUrl, and
+ * for the reason written there: fail-closed is for what would otherwise degrade SILENTLY.
+ */
+export function optionalGscConnectUrl(projectId: string): string | null {
+  const base = optionalWebBaseUrl();
+  return base === null ? null : connectPath(base, projectId);
+}
+
+/** The route's shape, in ONE place — both readers above compose it. */
+function connectPath(baseUrl: string, projectId: string): string {
+  return `${baseUrl}/api/gsc/connect?project_id=${projectId}`;
 }
 
 /**

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { GscReauthRequiredError, isGscReauthRequired, isInvalidGrant } from "./reauth-error.ts";
+import {
+  GscReauthRequiredError,
+  isGscReauthRequired,
+  isInvalidGrant,
+  renderReconnectInstruction,
+} from "./reauth-error.ts";
 
 /**
  * The classifier is the whole safety of this feature: it decides between "reconnect your Google
@@ -30,6 +35,13 @@ describe("isInvalidGrant", () => {
 });
 
 describe("GscReauthRequiredError", () => {
+  it("accepts a null link — the instruction survives a deployment with no WEB_BASE_URL", () => {
+    const error = new GscReauthRequiredError("a@x.com", null);
+    expect(error.reconnectUrl).toBeNull();
+    // The message is the account's, not the link's: it never depended on the URL.
+    expect(error.message).toBe("Google Search Console connection for a@x.com expired");
+  });
+
   it("carries the account email and the reconnect link the registry renders", () => {
     const error = new GscReauthRequiredError("a@x.com", "https://web.test/api/gsc/connect?project_id=p1");
     expect(error.accountEmail).toBe("a@x.com");
@@ -43,5 +55,25 @@ describe("GscReauthRequiredError", () => {
     expect(
       isGscReauthRequired(new Error("Google Search Console connection for a@x.com expired")),
     ).toBe(false);
+  });
+});
+
+/**
+ * The fallback exists so a missing WEB_BASE_URL costs the user the LINK and never the
+ * INSTRUCTION. "Connection" is the real page (/app/connection — the nav label in
+ * apps/web/app/app/layout.tsx and the page's own h1), not a plausible-sounding invention.
+ */
+describe("renderReconnectInstruction", () => {
+  it("prints the link when there is one", () => {
+    expect(renderReconnectInstruction("https://web.test/api/gsc/connect?project_id=p1")).toBe(
+      "Reconnect: https://web.test/api/gsc/connect?project_id=p1",
+    );
+  });
+
+  it("names the page when there is none — and never renders a null or undefined link", () => {
+    const text = renderReconnectInstruction(null);
+    expect(text).toBe("Reconnect it from the Connection page in your SeoGrep dashboard.");
+    expect(text).not.toContain("null");
+    expect(text).not.toContain("undefined");
   });
 });

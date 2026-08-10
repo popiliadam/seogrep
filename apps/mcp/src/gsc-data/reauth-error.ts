@@ -21,11 +21,40 @@
 export class GscReauthRequiredError extends Error {
   constructor(
     readonly accountEmail: string,
-    readonly reconnectUrl: string,
+    /**
+     * The link that revives the connection, or null when there is no honest one to give — i.e.
+     * WEB_BASE_URL is unset. Nullable by controller ruling, widened from the brief's
+     * `reconnectUrl: string`: with a non-nullable field the only way to signal a missing base URL
+     * was to let the URL builder throw, which dropped this refusal back into the generic
+     * "failed unexpectedly — quote reference …" branch. That is the exact sentence this class
+     * exists to abolish, reappearing in the exact situation it was written for. A guarantee that
+     * holds only on a well-configured deployment is not a guarantee (signed lessons 5 and 6).
+     *
+     * Null means the LINK is missing, never the instruction: renderReconnectInstruction below
+     * still tells the user where to go. Fabricating an origin was considered and rejected —
+     * inventing an endpoint is NEVER #9, and a wrong link is worse than no link.
+     */
+    readonly reconnectUrl: string | null,
   ) {
     super(`Google Search Console connection for ${accountEmail} expired`);
     this.name = "GscReauthRequiredError";
   }
+}
+
+/**
+ * "Here is where you fix it" — with a link when there is one, and by NAME when there is not.
+ * "Connection" is the real page: `/app/connection`, the nav label in apps/web/app/app/layout.tsx
+ * and the `<h1>` on the page itself, so this names something the user can actually find rather
+ * than a plausible-sounding invention. Same shape as the paid-balance refusal's billing fallback,
+ * for the same reason.
+ *
+ * ONE renderer for both surfaces — the registry's typed refusal and the discovery tools' staleness
+ * warning — because two copies of a fallback are two chances for only one of them to be fixed.
+ */
+export function renderReconnectInstruction(reconnectUrl: string | null): string {
+  return reconnectUrl
+    ? `Reconnect: ${reconnectUrl}`
+    : "Reconnect it from the Connection page in your SeoGrep dashboard.";
 }
 
 /**

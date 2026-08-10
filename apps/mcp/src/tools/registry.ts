@@ -10,7 +10,7 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
-import { isGscReauthRequired } from "../gsc-data/reauth-error.ts";
+import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 
 /**
@@ -332,10 +332,16 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // the account row itself already records it (token_status='invalid', written on the
       // refresh path). Measured 2026-08-09: 12 live cells in exactly this state were answered
       // with the generic sentence below — and charged for it.
+      //
+      // The "where to fix it" clause is rendered, not interpolated: on a deployment missing
+      // WEB_BASE_URL there is no honest link, and the branch must still produce the actionable
+      // refusal rather than fall back to the generic sentence below (controller ruling —
+      // gsc-data/reauth-error.ts renderReconnectInstruction).
       if (isGscReauthRequired(error)) {
         return errorResult(
           `Your Google Search Console connection for ${error.accountEmail} expired, so this data ` +
-            `could not be refreshed. Reconnect: ${error.reconnectUrl}\nYou were not charged.`,
+            `could not be refreshed. ${renderReconnectInstruction(error.reconnectUrl)}\n` +
+            "You were not charged.",
         );
       }
       // The guard has already released any reserve it opened before rethrowing.
