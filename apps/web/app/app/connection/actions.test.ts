@@ -15,6 +15,10 @@ vi.mock("@pseo/core", async (importOriginal) => {
     generateApiKey: vi.fn(),
     mcpUrlFor: (key: string, template: string) => template.replace("{key}", key),
     mcpUrlTemplate: () => "https://mcp.seogrep.com/mcp/{key}",
+    // The ONE network call inside `accessTokenFor` (constitution NEVER #5). Everything else
+    // in lib/gsc/accounts.ts — the tenant-filtered reads, the v4 unseal, the status writes —
+    // runs for REAL against the fake tables below.
+    refreshAccessToken: vi.fn(),
   };
 });
 vi.mock("@pseo/db/api-keys-repo", () => ({
@@ -24,33 +28,58 @@ vi.mock("@pseo/db/api-keys-repo", () => ({
   revokeKey: vi.fn(),
 }));
 
-/** The fake `gsc_connections` table: rows, the filters each statement carried, and the ops. */
-interface GscRow {
-  id: string;
-  user_id: string;
-  project_id: string;
-  encrypted_refresh_token: string | null;
-}
+/** A fake row of either GSC table — column bag, so one builder serves both. */
+type Row = Record<string, unknown>;
 type Filter = { column: string; value: unknown };
-let gscRows: GscRow[] = [];
+/** One issued statement: which table, which verb, and every filter it carried. */
+type Statement = { table: string; op: string; filters: Filter[] };
+
+let dbRows: Record<string, Row[]> = { gsc_accounts: [], gsc_connections: [] };
 let gscTables: string[] = [];
-let gscSelectFilters: Filter[] = [];
-let gscDeleteFilters: Filter[] = [];
+let statements: Statement[] = [];
+/** Every side effect in order, including the Google revoke — the ordering proof. */
 let gscOps: string[] = [];
 
 /** A statement reaches a row only when EVERY filter it carried matches — like PostgREST. */
-function matches(row: GscRow, filters: Filter[]): boolean {
-  return filters.every((f) => (row as unknown as Record<string, unknown>)[f.column] === f.value);
+function matches(row: Row, filters: Filter[]): boolean {
+  return filters.every((f) => row[f.column] === f.value);
+}
+
+/** Return only the columns the statement asked for, as PostgREST does. */
+function project(row: Row, columns: string): Row {
+  const wanted = columns.split(",").map((column) => column.trim());
+  return Object.fromEntries(wanted.map((column) => [column, row[column]]));
+}
+
+function record(table: string, op: string, filters: Filter[]): void {
+  statements.push({ table, op, filters });
+  gscOps.push(`${op}:${table}`);
+}
+
+/** The filters carried by the one statement of this shape — fails loudly if there are several. */
+function filtersOf(table: string, op: string): Filter[] {
+  const hits = statements.filter((s) => s.table === table && s.op === op);
+  if (hits.length !== 1) {
+    throw new Error(`expected exactly one ${op} on ${table}, saw ${hits.length}`);
+  }
+  return hits[0].filters;
 }
 
 /**
- * A PostgREST-ish gsc_connections builder. The store module (NOT mocked here) runs for real
- * against it, so a forgotten tenant filter would be VISIBLE: an unfiltered delete would take
- * another user's row out of `gscRows` and fail the isolation spec.
+ * A PostgREST-ish builder over `dbRows`. `lib/gsc/accounts.ts` and the actions' own
+ * gsc_connections statements (NOT mocked here) run for REAL against it, so a forgotten
+ * tenant filter would be VISIBLE: an unfiltered delete would take another user's row out of
+ * `dbRows` and fail the isolation specs below.
+ *
+ * The gsc_accounts DELETE also emulates migration 0021's `on delete set null` on
+ * `gsc_connections.account_id`. That makes the "mappings survive" assertion meaningful about
+ * THIS code — it proves the action nulls no `gsc_property` and deletes no connection row —
+ * while the FK behaviour itself is pinned where it lives, in the migration's own db test.
  */
-function gscTable() {
+function fakeTable(table: string) {
+  const rowsIn = (): Row[] => dbRows[table] ?? [];
   return {
-    select: () => {
+    select: (columns: string, options: { count?: string; head?: boolean } = {}) => {
       const filters: Filter[] = [];
       const chain = {
         eq(column: string, value: unknown) {
@@ -58,13 +87,36 @@ function gscTable() {
           return chain;
         },
         maybeSingle: async () => {
-          gscSelectFilters = filters;
-          gscOps.push("select");
-          const row = gscRows.find((candidate) => matches(candidate, filters)) ?? null;
-          return {
-            data: row ? { id: row.id, encrypted_refresh_token: row.encrypted_refresh_token } : null,
+          record(table, "select", filters);
+          const row = rowsIn().find((candidate) => matches(candidate, filters)) ?? null;
+          return { data: row ? project(row, columns) : null, error: null };
+        },
+        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
+          record(table, "select", filters);
+          const found = rowsIn().filter((row) => matches(row, filters));
+          return Promise.resolve({
+            data: options.head ? null : found.map((row) => project(row, columns)),
+            count: options.count ? found.length : null,
             error: null,
+          }).then(onFulfilled, onRejected);
+        },
+      };
+      return chain;
+    },
+    update: (patch: Row) => {
+      const filters: Filter[] = [];
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters.push({ column, value });
+          return chain;
+        },
+        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
+          record(table, "update", filters);
+          dbRows = {
+            ...dbRows,
+            [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
           };
+          return Promise.resolve({ error: null }).then(onFulfilled, onRejected);
         },
       };
       return chain;
@@ -77,9 +129,21 @@ function gscTable() {
           return chain;
         },
         then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          gscDeleteFilters = filters;
-          gscOps.push("delete");
-          gscRows = gscRows.filter((row) => !matches(row, filters));
+          record(table, "delete", filters);
+          const doomed = rowsIn().filter((row) => matches(row, filters));
+          const survivors = rowsIn().filter((row) => !matches(row, filters));
+          const orphaned = new Set(doomed.map((row) => row.id));
+          const next = { ...dbRows, [table]: survivors };
+          // Migration 0021: `on delete set null`, never cascade.
+          dbRows =
+            table === "gsc_accounts"
+              ? {
+                  ...next,
+                  gsc_connections: (next.gsc_connections ?? []).map((row) =>
+                    orphaned.has(row.account_id) ? { ...row, account_id: null } : row,
+                  ),
+                }
+              : next;
           return Promise.resolve({ error: null }).then(onFulfilled, onRejected);
         },
       };
@@ -92,7 +156,7 @@ vi.mock("@pseo/db/server", () => ({
   createServiceClient: vi.fn(() => ({
     from: (table: string) => {
       gscTables.push(table);
-      return gscTable();
+      return fakeTable(table);
     },
   })),
 }));
@@ -115,13 +179,15 @@ vi.mock("../../../lib/gsc/revoke", () => ({
 }));
 
 import { revalidatePath } from "next/cache";
-import { encryptToken, generateApiKey, toByteaHex } from "@pseo/core";
+import { encryptToken, generateApiKey, refreshAccessToken, toByteaHex } from "@pseo/core";
 import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import {
   createKeyAction,
-  disconnectGscAction,
+  describeDisconnect,
+  disconnectAccount,
   revokeKeyAction,
   rotateKeyAction,
+  unmapProject,
 } from "./actions";
 
 const generateApiKeyMock = vi.mocked(generateApiKey);
@@ -373,31 +439,94 @@ describe("connection server actions", () => {
   });
 });
 
+
 /**
- * Disconnect: revoke the grant at Google, then drop the row. The store module runs for REAL
- * against the fake table above, so these specs prove the tenant filters on the actual
- * statements — not on a stub that was told what to return.
+ * TWO-LEVEL DISCONNECT (finding #63). Migration 0021 moved the Google credential from the
+ * PROJECT axis (`gsc_connections.encrypted_refresh_token`, now dropped) to the ACCOUNT axis
+ * (`gsc_accounts`), so one grant is shared by every project mapped to it. The old single
+ * `disconnectGscAction` therefore revoked a SHARED grant from a per-project button, silently
+ * killing the user's other projects. The two levels are now distinct, and the split IS the fix:
+ *
+ *   unmapProject(projectId)      — local only. Clears the project's `account_id` +
+ *                                  `gsc_property`. NEVER contacts Google.
+ *   disconnectAccount(accountId) — the credential level. Revokes at Google, then deletes the
+ *                                  `gsc_accounts` row; `on delete set null` keeps every
+ *                                  mapping (that is what migration 0021 protected).
+ *   describeDisconnect(accountId)— the confirmation text, which must NAME the blast radius.
+ *
+ * `lib/gsc/accounts.ts` runs for REAL against the fake tables above (only its ONE network
+ * call, `refreshAccessToken`, is stubbed), so these specs prove the tenant filters on the
+ * actual statements — not on a stub that was told what to return.
  */
-describe("disconnectGscAction", () => {
+describe("two-level disconnect", () => {
   const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
   const OTHER_KEY = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
   const PROJECT = "33333333-3333-4333-8333-333333333333";
+  const ACCOUNT = "44444444-4444-4444-8444-444444444444";
+  const OTHER_ACCOUNT = "55555555-5555-4555-8555-555555555555";
   const REFRESH_TOKEN = "1//the-refresh-token";
+  const ACCESS_TOKEN = "ya29.the-access-token";
+  const PROPERTY = "sc-domain:alpha.example";
 
   /**
-   * Seal a token exactly the way the OAuth callback stored it (real crypto): v3 binds the
-   * blob to the row's own (user, project), so the owner is part of sealing, not a detail.
+   * Seal a token exactly the way the OAuth callback stored it (real crypto). Crypto v4 binds
+   * the blob to its `gsc_accounts` row's own (user, ACCOUNT) — the axis migration 0021 moved
+   * the credential to — so the owner is part of sealing, not a detail. A pre-v4 (project-bound)
+   * seal is not constructible here at all, which is the point: nothing in this suite can
+   * accidentally re-create the format the migration retired.
    */
   function sealed(token: string, ownerUserId: string, keyHex = ENC_KEY): string {
-    return toByteaHex(encryptToken(token, keyHex, { userId: ownerUserId, projectId: PROJECT }));
+    return toByteaHex(encryptToken(token, keyHex, { userId: ownerUserId, accountId: ACCOUNT }));
   }
 
-  function linkedRow(userId: string, token: string | null = sealed(REFRESH_TOKEN, userId)): GscRow {
-    return { id: "conn-1", user_id: userId, project_id: PROJECT, encrypted_refresh_token: token };
+  function accountRow(
+    userId: string,
+    token: string = sealed(REFRESH_TOKEN, userId),
+    id: string = ACCOUNT,
+  ): Row {
+    return {
+      id,
+      user_id: userId,
+      google_account_sub: "google-sub-1",
+      google_account_email: "owner@example.com",
+      encrypted_refresh_token: token,
+      token_status: "active",
+      token_checked_at: null,
+    };
+  }
+
+  function connectionRow(
+    projectId: string,
+    userId: string,
+    accountId: string | null = ACCOUNT,
+    gscProperty: string | null = PROPERTY,
+  ): Row {
+    return {
+      id: `conn-${projectId}`,
+      user_id: userId,
+      project_id: projectId,
+      account_id: accountId,
+      gsc_property: gscProperty,
+    };
+  }
+
+  /** N mapped projects on one account — the blast radius `describeDisconnect` must name. */
+  function connectionsFor(userId: string, count: number, accountId = ACCOUNT): Row[] {
+    return Array.from({ length: count }, (_unused, index) =>
+      connectionRow(`project-${index}`, userId, accountId),
+    );
   }
 
   beforeEach(() => {
     vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY);
+    vi.mocked(refreshAccessToken).mockResolvedValue({
+      accessToken: ACCESS_TOKEN,
+      refreshToken: null,
+      idToken: null,
+      expiresIn: 3599,
+      scope: "https://www.googleapis.com/auth/webmasters.readonly",
+      tokenType: "Bearer",
+    });
     revokeGoogleToken.mockImplementation(async () => {
       gscOps.push("revoke");
       return true;
@@ -421,151 +550,322 @@ describe("disconnectGscAction", () => {
     vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    gscRows = [];
+    dbRows = { gsc_accounts: [], gsc_connections: [] };
     gscTables = [];
-    gscSelectFilters = [];
-    gscDeleteFilters = [];
+    statements = [];
     gscOps = [];
   });
 
-  it("rejects with no session and never touches the connection", async () => {
-    signedOut();
-    gscRows = [linkedRow("user-1")];
+  describe("unmapProject", () => {
+    // RULING 1 / finding #63. A per-project action that revokes the SHARED grant is the bug
+    // this whole task exists to fix, so "does not call Google" is not a detail of the current
+    // implementation — it is the requirement. Asserted against the module-level
+    // `revokeGoogleToken` mock, i.e. the real Google boundary: a call made from ANYWHERE in
+    // this action's transitive path lands here, which an injected dependency could not see.
+    it("unmapping a project NEVER calls Google", async () => {
+      signedIn("user-1");
+      // Held by reference: each seal uses a fresh random IV, so the row is compared as-is.
+      const account = accountRow("user-1");
+      dbRows = { gsc_accounts: [account], gsc_connections: [connectionRow(PROJECT, "user-1")] };
 
-    await expect(disconnectGscAction(PROJECT)).rejects.toThrow(/not authenticated/i);
+      await unmapProject(PROJECT);
 
-    expect(gscTables).toEqual([]);
-    expect(gscRows).toHaveLength(1);
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-  });
-
-  it("rejects a malformed project id without querying the DB", async () => {
-    signedIn("user-1");
-
-    await expect(disconnectGscAction("not-a-uuid")).rejects.toThrow(/not found/i);
-
-    expect(gscTables).toEqual([]);
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-  });
-
-  it("cannot reach ANOTHER user's connection: opaque error, nothing revoked, row survives", async () => {
-    signedIn("user-1");
-    // Held by reference: each seal uses a fresh random IV, so the row is compared as-is.
-    const otherTenantRow = linkedRow("user-2");
-    gscRows = [otherTenantRow];
-
-    await expect(disconnectGscAction(PROJECT)).rejects.toThrow(/not found/i);
-
-    // Scoped by the SESSION user (never a client-supplied id) plus the project.
-    expect(gscSelectFilters).toEqual([
-      { column: "user_id", value: "user-1" },
-      { column: "project_id", value: PROJECT },
-    ]);
-    expect(gscOps).toEqual(["select"]); // no delete statement was ever issued
-    expect(gscRows).toEqual([otherTenantRow]); // the other tenant's row is untouched
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-  });
-
-  it("revokes the DECRYPTED token at Google, THEN deletes the row (both tenant filters)", async () => {
-    signedIn("user-1");
-    const row = linkedRow("user-1");
-    gscRows = [row];
-
-    const outcome = await disconnectGscAction(PROJECT);
-
-    // "revoked" is the ONE outcome that is a confirmed fact — Google acknowledged. It is
-    // what entitles the UI to stay silent instead of warning the user (M-15).
-    expect(outcome).toBe("revoked");
-    // Google gets the opened plaintext — never the stored ciphertext.
-    expect(revokeGoogleToken).toHaveBeenCalledWith(REFRESH_TOKEN);
-    expect(revokeGoogleToken).not.toHaveBeenCalledWith(row.encrypted_refresh_token);
-    expect(gscOps).toEqual(["select", "revoke", "delete"]);
-    expect(gscDeleteFilters).toEqual([
-      { column: "user_id", value: "user-1" },
-      { column: "project_id", value: PROJECT },
-    ]);
-    expect(gscRows).toEqual([]); // the row (and with it the sealed token) is gone
-    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-  });
-
-  // M-15. The local deletion still happens — refusing to disconnect would trap the user —
-  // but the caller is told the Google-side grant is UNCONFIRMED, so the UI cannot claim
-  // "access revoked" on the strength of a call that failed.
-  it("reports `unconfirmed` when Google does not acknowledge, and still deletes locally", async () => {
-    signedIn("user-1");
-    gscRows = [linkedRow("user-1")];
-    const warn = captureConsole("warn");
-    revokeGoogleToken.mockImplementation(async () => {
-      gscOps.push("revoke");
-      return false; // e.g. Google answered 400 invalid_token, or the request failed
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+      // Nor is the credential even READ: no statement touches gsc_accounts, so the account
+      // row (and every other project hanging off it) is untouched by a per-project unmap.
+      expect(gscTables).toEqual(["gsc_connections"]);
+      expect(dbRows.gsc_accounts).toEqual([account]);
     });
 
-    await expect(disconnectGscAction(PROJECT)).resolves.toBe("unconfirmed");
+    it("clears account_id and gsc_property but KEEPS the connection row", async () => {
+      signedIn("user-1");
+      dbRows = {
+        gsc_accounts: [accountRow("user-1")],
+        gsc_connections: [connectionRow(PROJECT, "user-1")],
+      };
 
-    expect(gscOps).toEqual(["select", "revoke", "delete"]);
-    expect(gscRows).toEqual([]);
-    // The operator gets the diagnosis, keyed to the row, and never the secret itself.
-    expect(logged(warn)).toMatch(/conn-1/);
-    expect(logged(warn)).toMatch(/not acknowledge/i);
-    expect(logged(warn)).not.toMatch(REFRESH_TOKEN);
+      await unmapProject(PROJECT);
+
+      expect(gscOps).toEqual(["update:gsc_connections"]);
+      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1", null, null)]);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    // Moved from the retired `disconnectGscAction` cross-tenant spec and re-aimed at the
+    // UPDATE. There is no longer an error to make opaque — the statement simply cannot reach
+    // a foreign row — which is strictly stronger: nothing is leaked because nothing is found.
+    it("cannot reach ANOTHER user's project: both tenant filters ride on the UPDATE", async () => {
+      signedIn("user-1");
+      const otherTenantRow = connectionRow(PROJECT, "user-2");
+      dbRows = { gsc_accounts: [], gsc_connections: [otherTenantRow] };
+
+      await unmapProject(PROJECT);
+
+      expect(filtersOf("gsc_connections", "update")).toEqual([
+        { column: "user_id", value: "user-1" },
+        { column: "project_id", value: PROJECT },
+      ]);
+      expect(dbRows.gsc_connections).toEqual([otherTenantRow]);
+    });
+
+    it("rejects with no session and never touches the connection", async () => {
+      signedOut();
+      dbRows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
+
+      await expect(unmapProject(PROJECT)).rejects.toThrow(/not authenticated/i);
+
+      expect(gscTables).toEqual([]);
+      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
+    });
+
+    it("rejects a malformed project id without querying the DB", async () => {
+      signedIn("user-1");
+
+      await expect(unmapProject("not-a-uuid")).rejects.toThrow(/not found/i);
+
+      expect(gscTables).toEqual([]);
+    });
   });
 
-  it("deletes without calling Google when the row holds no token, and says so", async () => {
-    signedIn("user-1");
-    gscRows = [linkedRow("user-1", null)];
-    const warn = captureConsole("warn");
+  describe("disconnectAccount", () => {
+    it("disconnecting an account revokes at Google and keeps every gsc_property", async () => {
+      signedIn("user-1");
+      dbRows = {
+        gsc_accounts: [accountRow("user-1")],
+        gsc_connections: connectionsFor("user-1", 3),
+      };
 
-    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
+      await disconnectAccount(ACCOUNT);
 
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-    expect(gscRows).toEqual([]);
-    expect(logged(warn)).toMatch(/conn-1/);
-    expect(logged(warn)).toMatch(/skipped/i);
+      expect(revokeGoogleToken).toHaveBeenCalledOnce();
+      expect(dbRows.gsc_accounts).toEqual([]);
+      // Migration 0021's whole point: the credential goes, the MAPPING stays. Every row keeps
+      // its gsc_property and merely loses its account_id (`on delete set null`), which is the
+      // exact state the migration itself produced — one reconnect, no re-picking properties.
+      expect(dbRows.gsc_connections).toHaveLength(3);
+      expect(dbRows.gsc_connections.every((row) => row.account_id === null)).toBe(true);
+      expect(dbRows.gsc_connections.every((row) => row.gsc_property === PROPERTY)).toBe(true);
+    });
+
+    // Moved from `disconnectGscAction`'s "revokes the DECRYPTED token … THEN deletes the row"
+    // and re-aimed at the account axis: the secret now lives in gsc_accounts, and what goes to
+    // Google is the token minted from it — never the stored ciphertext. Revoking an access
+    // token revokes the whole grant, which is what Disconnect promises.
+    it("revokes the token opened from gsc_accounts, THEN deletes the account row", async () => {
+      signedIn("user-1");
+      const row = accountRow("user-1");
+      dbRows = { gsc_accounts: [row], gsc_connections: [] };
+
+      const outcome = await disconnectAccount(ACCOUNT);
+
+      // "revoked" is the ONE outcome that is a confirmed fact — Google acknowledged. It is
+      // what entitles the UI to stay silent instead of warning the user (M-15).
+      expect(outcome).toBe("revoked");
+      expect(revokeGoogleToken).toHaveBeenCalledWith(ACCESS_TOKEN);
+      expect(revokeGoogleToken).not.toHaveBeenCalledWith(row.encrypted_refresh_token);
+      // Ownership read, then the credential read + status stamp inside accessTokenFor, then
+      // the revoke, and only then the delete.
+      expect(gscOps).toEqual([
+        "select:gsc_accounts",
+        "select:gsc_accounts",
+        "update:gsc_accounts",
+        "revoke",
+        "delete:gsc_accounts",
+      ]);
+      expect(filtersOf("gsc_accounts", "delete")).toEqual([
+        { column: "id", value: ACCOUNT },
+        { column: "user_id", value: "user-1" },
+      ]);
+      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    // M-15, moved verbatim in meaning from the project-level action. The local deletion still
+    // happens — refusing to disconnect would trap the user — but the caller is told the
+    // Google-side grant is UNCONFIRMED, so no UI can claim "access revoked" on the strength
+    // of a call that failed.
+    it("reports `unconfirmed` when Google does not acknowledge, and still deletes locally", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      const warn = captureConsole("warn");
+      revokeGoogleToken.mockImplementation(async () => {
+        gscOps.push("revoke");
+        return false; // e.g. Google answered 400 invalid_token, or the request failed
+      });
+
+      await expect(disconnectAccount(ACCOUNT)).resolves.toBe("unconfirmed");
+
+      expect(gscOps.at(-1)).toBe("delete:gsc_accounts");
+      expect(dbRows.gsc_accounts).toEqual([]);
+      // The operator gets the diagnosis, keyed to the row, and never the secret itself.
+      expect(logged(warn)).toMatch(ACCOUNT);
+      expect(logged(warn)).toMatch(/not acknowledge/i);
+      expect(logged(warn)).not.toMatch(REFRESH_TOKEN);
+      expect(logged(warn)).not.toMatch(ACCESS_TOKEN);
+    });
+
+    // T5, moved and re-aimed: after a key retirement the seal will not open, so the revoke is
+    // never even ATTEMPTED. The row still goes (the user asked to disconnect) but the skip must
+    // be visible to an operator and must never be reported to the user as a revocation.
+    it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
+      signedIn("user-1");
+      const sealedWithRetiredKey = sealed(REFRESH_TOKEN, "user-1", OTHER_KEY);
+      dbRows = {
+        gsc_accounts: [accountRow("user-1", sealedWithRetiredKey)],
+        gsc_connections: [],
+      };
+      const error = captureConsole("error");
+
+      await expect(disconnectAccount(ACCOUNT)).resolves.toBe("not_attempted");
+
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(logged(error)).toMatch(ACCOUNT);
+      expect(logged(error)).toMatch(/skipped/i);
+      // Neither the sealed bytes nor the key may reach the log.
+      expect(logged(error)).not.toMatch(sealedWithRetiredKey);
+      expect(logged(error)).not.toMatch(OTHER_KEY);
+    });
+
+    // REPLACES `disconnectGscAction`'s "deletes without calling Google when the row holds no
+    // token". That case cannot exist on the new axis — `gsc_accounts.encrypted_refresh_token`
+    // is NOT NULL (migration 0021) — so the tokenless row it described is unconstructible.
+    // The real-world shape it protected (a credential we cannot use, and a user who must not
+    // be trapped) survives as this: the refresh Google refuses.
+    it("a credential Google has killed reports `not_attempted` and still deletes locally", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      const error = captureConsole("error");
+      vi.mocked(refreshAccessToken).mockRejectedValue(
+        new Error("Google token endpoint failed (400): invalid_grant"),
+      );
+
+      await expect(disconnectAccount(ACCOUNT)).resolves.toBe("not_attempted");
+
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(logged(error)).toMatch(ACCOUNT);
+      expect(logged(error)).toMatch(/skipped/i);
+      expect(logged(error)).not.toMatch(REFRESH_TOKEN);
+    });
+
+    // Moved from the project-level action, unchanged in force: a mis-provisioned key is a
+    // BROKEN DEPLOY, not a per-row fault, and silently dropping the credential while the
+    // Google-side grant lives on would turn a config fault into a privacy fault (lesson #5).
+    it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {
+      signedIn("user-1");
+      vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY.slice(0, 63)); // present but 63 hex chars
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+
+      await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/64 hex characters/i);
+
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+      expect(gscOps).toEqual(["select:gsc_accounts"]);
+      expect(dbRows.gsc_accounts).toHaveLength(1);
+    });
+
+    it("fails CLOSED when TOKEN_ENCRYPTION_KEY is missing: nothing revoked, nothing deleted", async () => {
+      signedIn("user-1");
+      vi.stubEnv("TOKEN_ENCRYPTION_KEY", "");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+
+      await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not configured/i);
+
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+      expect(gscOps).toEqual(["select:gsc_accounts"]);
+      expect(dbRows.gsc_accounts).toHaveLength(1);
+    });
+
+    // Moved from the project-level action and re-aimed at the account. Same opaque message for
+    // a missing account and another user's, so nothing about other users' accounts leaks — and
+    // the foreign credential is neither revoked nor deleted.
+    it("cannot reach ANOTHER user's account: opaque error, nothing revoked, row survives", async () => {
+      signedIn("user-1");
+      // Held by reference: each seal uses a fresh random IV, so the row is compared as-is.
+      const otherTenantRow = accountRow("user-2");
+      dbRows = { gsc_accounts: [otherTenantRow], gsc_connections: [] };
+
+      await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not found/i);
+
+      // Scoped by the SESSION user (never a client-supplied id) plus the account.
+      expect(filtersOf("gsc_accounts", "select")).toEqual([
+        { column: "id", value: ACCOUNT },
+        { column: "user_id", value: "user-1" },
+      ]);
+      expect(gscOps).toEqual(["select:gsc_accounts"]); // no delete statement was ever issued
+      expect(dbRows.gsc_accounts).toEqual([otherTenantRow]);
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+    });
+
+    it("rejects with no session and never touches the account", async () => {
+      signedOut();
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+
+      await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not authenticated/i);
+
+      expect(gscTables).toEqual([]);
+      expect(dbRows.gsc_accounts).toHaveLength(1);
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+    });
+
+    it("rejects a malformed account id without querying the DB", async () => {
+      signedIn("user-1");
+
+      await expect(disconnectAccount("not-a-uuid")).rejects.toThrow(/not found/i);
+
+      expect(gscTables).toEqual([]);
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+    });
   });
 
-  // T5, M-15's sibling: after a key retirement the seal will not open, so the revoke is
-  // never even ATTEMPTED. The row still goes (the user asked to disconnect) but the skip
-  // must be visible to an operator and must not be reported to the user as a revocation.
-  it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
-    signedIn("user-1");
-    const sealedWithRetiredKey = sealed(REFRESH_TOKEN, "user-1", OTHER_KEY);
-    gscRows = [linkedRow("user-1", sealedWithRetiredKey)];
-    const error = captureConsole("error");
+  describe("describeDisconnect", () => {
+    // Finding #63's other half: the old UI never said that disconnecting reaches beyond the
+    // project in front of you. The number is the whole point of the sentence.
+    it("the confirmation names how many projects it will affect", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
 
-    await expect(disconnectGscAction(PROJECT)).resolves.toBe("not_attempted");
+      expect(await describeDisconnect(ACCOUNT)).toContain("5 project");
+    });
 
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-    expect(gscRows).toEqual([]);
-    expect(logged(error)).toMatch(/conn-1/);
-    expect(logged(error)).toMatch(/skipped/i);
-    // Neither the sealed bytes nor the key may reach the log.
-    expect(logged(error)).not.toMatch(sealedWithRetiredKey);
-    expect(logged(error)).not.toMatch(OTHER_KEY);
-  });
+    it("counts ONLY the caller's projects on THIS account (constitution NEVER #4)", async () => {
+      signedIn("user-1");
+      dbRows = {
+        gsc_accounts: [accountRow("user-1")],
+        gsc_connections: [
+          connectionRow("mine", "user-1", ACCOUNT),
+          connectionRow("mine-other-account", "user-1", OTHER_ACCOUNT),
+          connectionRow("not-mine", "user-2", ACCOUNT),
+        ],
+      };
 
-  it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {
-    signedIn("user-1");
-    // Present but mis-provisioned (63 hex chars). This is a CONFIG fault, not the per-row
-    // "seal won't open" case below — it must not fall through to a revoke-less deletion.
-    vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY.slice(0, 63));
-    gscRows = [linkedRow("user-1")];
+      const text = await describeDisconnect(ACCOUNT);
 
-    await expect(disconnectGscAction(PROJECT)).rejects.toThrow(/64 hex characters/i);
+      expect(filtersOf("gsc_connections", "select")).toEqual([
+        { column: "user_id", value: "user-1" },
+        { column: "account_id", value: ACCOUNT },
+      ]);
+      // Singular, and the count excludes the other account's row AND the other tenant's.
+      expect(text).toContain("1 project");
+      expect(text).not.toContain("1 projects");
+      expect(text).not.toContain("3 project");
+    });
 
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-    expect(gscOps).toEqual(["select"]);
-    expect(gscRows).toHaveLength(1);
-  });
+    it("says nothing about revocation being confirmed — it has not happened yet", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 2) };
 
-  it("fails CLOSED when TOKEN_ENCRYPTION_KEY is missing: nothing revoked, nothing deleted", async () => {
-    signedIn("user-1");
-    vi.stubEnv("TOKEN_ENCRYPTION_KEY", "");
-    gscRows = [linkedRow("user-1")];
+      const text = await describeDisconnect(ACCOUNT);
 
-    await expect(disconnectGscAction(PROJECT)).rejects.toThrow(/not configured/i);
+      expect(text).toContain("2 projects");
+      expect(text).not.toMatch(/revoked/i); // future tense only: nothing is confirmed yet
+      expect(revokeGoogleToken).not.toHaveBeenCalled();
+    });
 
-    expect(revokeGoogleToken).not.toHaveBeenCalled();
-    expect(gscOps).toEqual(["select"]);
-    expect(gscRows).toHaveLength(1);
+    it("rejects with no session and never queries", async () => {
+      signedOut();
+      await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/not authenticated/i);
+      expect(gscTables).toEqual([]);
+    });
   });
 });
