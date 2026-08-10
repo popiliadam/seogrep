@@ -13,6 +13,7 @@ import {
   type RegisteredTool,
 } from "./registry.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
+import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -277,6 +278,46 @@ describe("registerAll", () => {
     expect(result.content[0]?.text).toBe("needs a paid credit balance …");
     expect(result.content[0]?.text).not.toMatch(/unexpectedly/i);
     expect(result.content[0]?.text).not.toMatch(/reference/i);
+  });
+
+  it("renders a dead Search Console grant as a reconnect instruction, not an unexpected failure", async () => {
+    // Measured 2026-08-09: 12 live cells got "failed unexpectedly — quote reference 3f9c1a20"
+    // for a refresh token Google had revoked. The cause was in the server log (invalid_grant)
+    // and the cure was in the user's own hands. This branch is what hands it to them.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const dead = defineTool({
+        name: "pull_gsc_data",
+        description: "d",
+        // "handler" charge so this unit test never reaches withCredits (no DB); the money
+        // behaviour of the THROW is proven end-to-end in pull-gsc-data.db.test.ts.
+        charge: "handler",
+        inputSchema: z.object({}),
+        handler: async () => {
+          throw new GscReauthRequiredError("a@x.com", "https://web.test/api/gsc/connect?project_id=p1");
+        },
+      });
+      const { server, handlers } = fakeServer();
+      registerAll(server, { ctx: CTX, tools: [dead] });
+      const call = handlers.get(CallToolRequestSchema) as (r: unknown) => Promise<{
+        content: { text: string }[];
+        isError?: boolean;
+      }>;
+
+      const result = await call({ params: { name: "pull_gsc_data", arguments: {} } });
+      const text = result.content[0]?.text ?? "";
+
+      expect(result.isError).toBe(true);
+      expect(text).toMatch(/connection for a@x\.com expired.*reconnect/i);
+      expect(text).toContain("https://web.test/api/gsc/connect?project_id=p1");
+      expect(text).toContain("You were not charged.");
+      expect(text).not.toContain("failed unexpectedly");
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // A designed refusal, not a fault: nothing for an operator to read, so no log line.
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("does NOT leak DB/RPC internals (relation, function, schema names) to the caller (L-03)", async () => {
