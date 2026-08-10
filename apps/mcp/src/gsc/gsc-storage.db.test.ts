@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "@pseo/core";
+import { getServiceClient, markGscAccountTokenInvalid } from "../db.ts";
 
 /**
  * DB-integration specs proving the constitution's core GSC promise against a LOCAL Supabase
@@ -23,9 +24,16 @@ import { decryptToken, encryptToken, fromByteaHex, toByteaHex } from "@pseo/core
  * `gsc_connections` — migration 0021 retired that column outright, and the credential's
  * identity axis is now (user_id, google_account_sub) on `gsc_accounts`, whose write path
  * (`upsertGscAccount`) is owned and tested by Task 4 (apps/web/lib/gsc/accounts.ts,
- * apps/web/lib/gsc/accounts.db.test.ts) — this app (apps/mcp) never writes either table, it
- * only reads, so re-proving that write path's upsert mechanics here would duplicate a test
- * another task already owns rather than pin anything this app's own code depends on.
+ * apps/web/lib/gsc/accounts.db.test.ts), so re-proving that write path's upsert mechanics here
+ * would duplicate a test another task already owns rather than pin anything this app's own code
+ * depends on.
+ *
+ * ONE exception to "this app only reads", added by Task 8 and pinned in the third block below:
+ * apps/mcp writes `token_status` — and ONLY the value `invalid`, and only when Google itself
+ * answered `invalid_grant` on the refresh. It is a status-only write that can never touch the
+ * ciphertext, and it exists because the credential deaths are OBSERVED on this app's read path
+ * (all 12 measured ones were, per migration 0021's header) while the recovery UI lives in the
+ * web app. Its tenant filter is the third block's subject.
  *
  * An UNTYPED service client is used deliberately: gsc_connections.gsc_property (migration
  * 0009) is not in the committed @pseo/db generated types (apps/mcp/src/db.ts's own local
@@ -144,6 +152,69 @@ describe("gsc_accounts encrypted-at-rest storage (migration 0021)", () => {
     // same query shape as pull_gsc_data's defaultLoadAccountToken (constitution NEVER #4).
     expect(await readStoredToken(owner, accountId)).not.toBeNull();
     expect(await readStoredToken(stranger, accountId)).toBeNull();
+  });
+});
+
+/**
+ * The one gsc_accounts WRITE apps/mcp performs (Task 8). The tenant filter is the whole of its
+ * safety: `authenticated` has no UPDATE grant on this table at all, so every write arrives on the
+ * RLS-bypassing service_role client and `.eq("user_id", …)` is the ONLY thing standing between an
+ * `accountId` from a corrupted connection row and a STRANGER's account being branded dead —
+ * which would prompt them to re-authorize a credential that never failed (constitution NEVER #4).
+ *
+ * MUTATION-TESTED: delete `.eq("user_id", userId)` from markGscAccountTokenInvalid (apps/mcp/src/db.ts)
+ * and the SECURITY spec goes red — the owner's row flips to "invalid" under the stranger's id.
+ */
+describe("markGscAccountTokenInvalid — the one gsc_accounts write apps/mcp performs", () => {
+  /** Seed one account row and return its id. */
+  async function seedAccount(userId: string): Promise<string> {
+    const accountId = randomUUID();
+    const { error } = await service.from("gsc_accounts").insert({
+      id: accountId,
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `owner-${randomUUID()}@example.test`,
+      encrypted_refresh_token: toByteaHex(
+        encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, accountId }),
+      ),
+    });
+    if (error) throw new Error(`gsc_accounts seed failed: ${error.message}`);
+    return accountId;
+  }
+
+  async function readStatus(accountId: string): Promise<{ status: string; checkedAt: string | null }> {
+    const { data, error } = await service
+      .from("gsc_accounts")
+      .select("token_status, token_checked_at")
+      .eq("id", accountId)
+      .maybeSingle();
+    if (error) throw new Error(`token_status read failed: ${error.message}`);
+    return { status: data?.token_status as string, checkedAt: (data?.token_checked_at as string | null) ?? null };
+  }
+
+  it("marks the caller's OWN account invalid and stamps when it was observed", async () => {
+    const userId = await makeUser();
+    const accountId = await seedAccount(userId);
+    expect((await readStatus(accountId)).status).toBe("active");
+
+    await markGscAccountTokenInvalid(getServiceClient(), accountId, userId);
+
+    const after = await readStatus(accountId);
+    expect(after.status).toBe("invalid");
+    // token_checked_at carries the last OBSERVED truth, not just the last attempt.
+    expect(after.checkedAt).not.toBeNull();
+  });
+
+  it("SECURITY: a stranger's user_id cannot flip another tenant's token_status", async () => {
+    const owner = await makeUser();
+    const stranger = await makeUser();
+    const accountId = await seedAccount(owner);
+
+    // No error is raised — an UPDATE matching no row is a successful no-op, which is exactly
+    // why the assertion has to read the row back rather than trust the call's return.
+    await markGscAccountTokenInvalid(getServiceClient(), accountId, stranger);
+
+    expect((await readStatus(accountId)).status).toBe("active");
   });
 });
 

@@ -239,10 +239,13 @@ export type Database = {
       // has only a column-level grant that EXCLUDES encrypted_refresh_token (migration 0021);
       // only service_role — this client — can ever reach the ciphertext, so the explicit
       // `.eq("user_id", …)` on every read is the ONLY tenant guard (constitution NEVER #4), not
-      // a redundant belt-and-suspenders check on top of RLS. This app only ever READS this
-      // table: the write path (upsertGscAccount / accessTokenFor) lives in
-      // apps/web/lib/gsc/accounts.ts (Task 4) — hand-declared here in the same style rather than
-      // imported, matching every other table in this slice.
+      // a redundant belt-and-suspenders check on top of RLS. The credential write path
+      // (upsertGscAccount / accessTokenFor) lives in apps/web/lib/gsc/accounts.ts (Task 4) —
+      // hand-declared here in the same style rather than imported, matching every other table in
+      // this slice. This app READS the row and writes exactly ONE field of it: markGscAccountTokenInvalid
+      // below stamps token_status='invalid' when Google refuses a refresh, because that death is
+      // observed HERE while the recovery UI lives in the web app. Insert is modelled for the
+      // schema's sake; nothing in apps/mcp inserts.
       gsc_accounts: {
         Row: {
           id: string;
@@ -554,6 +557,47 @@ export async function touchLastUsed(
     .eq("id", keyId);
   if (error) {
     throw new Error(`last_used_at update failed: ${error.message}`);
+  }
+}
+
+/**
+ * Record that Google refused this account's refresh token with `invalid_grant`, so the account
+ * picker and the discovery tools can say "reconnect" instead of guessing.
+ *
+ * WHY IT LIVES HERE AND NOT IN apps/web. `markAccountTokenStatus` already exists in
+ * apps/web/lib/gsc/accounts.ts, and this is deliberately NOT that function: apps/mcp depends on
+ * @pseo/core, @supabase/supabase-js, express, pg-boss, undici and zod — never on apps/web — and
+ * the write cannot move to packages/core either, whose one runtime dependency is zod. The
+ * duplication across the app boundary is the same convention as the hand-declared gsc_accounts
+ * row shape above, for the same reason.
+ *
+ * WHY "INVALID" ONLY. Migration 0021's note on the column and apps/web's twin both draw the same
+ * line: `invalid` means Google specifically said `invalid_grant`. A 5xx, a timeout or a network
+ * error must never reach this function — a transient outage is not a dead credential, and
+ * branding a live account invalid sends the user through an OAuth round for nothing. The MCP
+ * read path has no reason to write `active` back (a re-consent already does that, in the web
+ * upsert), so this helper cannot express it.
+ *
+ * The `.eq("user_id", …)` filter is the ONLY tenant guard: this client is service-role, and
+ * `authenticated` has no UPDATE grant on gsc_accounts at all, so without the filter an
+ * `accountId` from a corrupted connection row could flip a FOREIGN tenant's token_status and
+ * prompt a stranger to re-authorize (constitution NEVER #4).
+ *
+ * Throws on a query error; the caller decides whether to swallow it (pull_gsc_data does, so a
+ * DB blip can never replace the invalid_grant answer the user needs).
+ */
+export async function markGscAccountTokenInvalid(
+  client: ServiceClient,
+  accountId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("gsc_accounts")
+    .update({ token_status: "invalid", token_checked_at: new Date().toISOString() })
+    .eq("id", accountId)
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`gsc_accounts status write failed: ${error.message}`);
   }
 }
 
