@@ -954,6 +954,29 @@ describe("two-level disconnect", () => {
       expect(text).not.toContain("3 project");
     });
 
+    /**
+     * THE PROMISE NOTHING IMPLEMENTS. The sentence used to end "Their property mappings are
+     * kept, so you will not have to pick them anew" — zero clicks. The only writer of a
+     * non-null `account_id` is saveProjectProperty, the picker's Save; the OAuth callback
+     * writes no connection row at all, so reconnecting revives nothing by itself. A false
+     * statement about the consequences of a security action, read at the moment of consent.
+     *
+     * Both halves are pinned: the property IS kept (that much was true), and reconnecting does
+     * NOT switch it on. Neither may be dropped in favour of the other — the opposite
+     * overclaim, "your mappings are gone", would be just as wrong.
+     */
+    it("promises no free revival: kept, yes — but saved once per project", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 3) };
+
+      const text = await describeDisconnect(ACCOUNT);
+
+      expect(text).toMatch(/is kept/i); // the stored property really does survive
+      expect(text).toMatch(/save it once per project/i); // and it takes a click each
+      expect(text).toMatch(/does not switch it on by itself/i);
+      expect(text).not.toMatch(/not have to pick/i); // the retired zero-click promise
+    });
+
     it("says nothing about revocation being confirmed — it has not happened yet", async () => {
       signedIn("user-1");
       dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 2) };

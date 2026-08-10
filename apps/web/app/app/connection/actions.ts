@@ -374,6 +374,15 @@ export async function disconnectAccount(accountId: string): Promise<GscRevocatio
  * Google yet, and only {@link disconnectAccount}'s return value may speak to what Google
  * actually confirmed (M-15).
  *
+ * THE SAME RULE APPLIES TO THE MAPPINGS, and it did not used to. This sentence ended with
+ * "Their property mappings are kept, so you will not have to pick them anew" — a promise of
+ * zero clicks that NOTHING implements. The only code that ever writes a non-null `account_id`
+ * is {@link saveProjectProperty}, the picker's Save; the OAuth callback deliberately writes no
+ * connection row, so reconnecting revives nothing on its own. The stored property really is
+ * kept, and /app/connection now SHOWS it on an unmapped row and pre-selects it where the
+ * account still lists it — but the user saves it once per project, and a confirmation read at
+ * the moment of consent to a security action may not round that down to zero.
+ *
  * The count is a query like any other, so it carries the tenant filter (NEVER #4). A foreign
  * account id therefore counts zero rather than reporting another user's project count.
  */
@@ -395,8 +404,9 @@ export async function describeDisconnect(accountId: string): Promise<string> {
   const noun = projects === 1 ? "project" : "projects";
   return (
     `Disconnect this Google account? SeoGrep will ask Google to drop its access, and ` +
-    `${projects} ${noun} will stop reading Search Console data until you connect the ` +
-    "account again. Their property mappings are kept, so you will not have to pick them anew."
+    `${projects} ${noun} will stop reading Search Console data. The property each one is set ` +
+    "to read is kept, and it is shown again when you connect the account back — but " +
+    "reconnecting does not switch it on by itself: you save it once per project."
   );
 }
 
