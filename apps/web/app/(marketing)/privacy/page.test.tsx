@@ -107,8 +107,10 @@ describe("privacy page", () => {
   });
 
   it("describes the Search Console connection as read-only and encrypted at rest", () => {
-    // GSC_READONLY_SCOPE (packages/core/src/gsc/client.ts:23) + the sealed bytea token in
-    // apps/web/lib/gsc/store.ts — the policy must claim neither more nor less.
+    // GSC_READONLY_SCOPE (packages/core/src/gsc/client.ts:23) + the sealed bytea token that
+    // apps/web/lib/gsc/accounts.ts writes to gsc_accounts.encrypted_refresh_token (migration
+    // 0021 moved the credential there from gsc_connections, and only service_role can read
+    // the column) — the policy must claim neither more nor less.
     const text = renderedText();
     expect(text).toMatch(/refresh token encrypted at rest/i);
     expect(text).toMatch(/read-only access only/i);

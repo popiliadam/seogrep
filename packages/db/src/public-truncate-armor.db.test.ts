@@ -224,10 +224,15 @@ describe("public-schema TRUNCATE armor (migration 0016) against local Supabase",
   });
 
   it("leaves the legitimate grants alone — 0016 revokes TRUNCATE and nothing else", () => {
-    // gsc_connections DELETE is LIVE: /app/connection Disconnect calls deleteGscConnection
-    // (apps/web/lib/gsc/store.ts) with service_role, and 0012 granted it deliberately,
-    // superseding 0006's "DELETE: granted to no one". It is the one DELETE grant in the schema
-    // and the one this migration was most able to break by over-reaching.
+    // gsc_connections DELETE is the one DELETE grant in the schema, and the one this migration
+    // was most able to break by over-reaching. 0012 granted it deliberately, superseding 0006's
+    // "DELETE: granted to no one", for a /app/connection Disconnect that deleted the connection
+    // row with service_role. Since migration 0021 split the two levels, NO application code
+    // issues that statement any more: `unmapProject` CLEARS account_id + gsc_property and keeps
+    // the row, and `disconnectAccount` deletes from gsc_accounts instead (both in
+    // apps/web/app/app/connection/actions.ts). The grant is asserted here as a grant-PARITY
+    // pin — 0016 revokes TRUNCATE and nothing else — not as evidence that anything still
+    // exercises it. Withdrawing it is a migration's job, not this spec's.
     expect(hasPrivilege("service_role", "public.gsc_connections", "DELETE")).toBe(true);
 
     // dfs_spend is the other table 0016 touches. 0014's RPCs (reserve_dfs_spend /

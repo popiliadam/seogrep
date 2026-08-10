@@ -21,14 +21,29 @@ import {
  * entirely, so the `.eq("user_id", …)` on each query IS the tenant guard (constitution
  * NEVER #4) — not a redundant belt-and-suspenders check on top of RLS.
  *
- * Sibling of `apps/web/lib/gsc/store.ts` (the `gsc_connections` write layer): same shape,
- * same error-message style, same hand-declared narrow DB type slice per-function rather
- * than depending on the generated `@pseo/db` types package here.
+ * This module owns the CREDENTIAL. The per-project MAPPING it hangs off — the
+ * `gsc_connections` row carrying `account_id` + `gsc_property` — is written by the server
+ * actions in `apps/web/app/app/connection/actions.ts` (`saveProjectProperty`, `unmapProject`),
+ * in the same posture: service client, explicit tenant filters, `<table> <verb> failed:`
+ * error messages. There is no longer a module between those actions and the table; the
+ * `gsc_connections` write layer this file used to call its sibling was retired once migration
+ * 0021 took the token off that row and left it with nothing to store.
  */
 
 type ServiceClient = ReturnType<typeof createServiceClient>;
 
-/** See `apps/web/lib/gsc/store.ts` for why this is hand-declared rather than imported. */
+/**
+ * Hand-written schema slice for the ONE table this module touches. The service client is cast
+ * to this slice rather than depending on the generated `@pseo/db` types package here; the
+ * shape mirrors the generated types, so the supabase-js generics resolve the same way.
+ *
+ * `PostgrestVersion` is the stack's MEASURED version, matching what the `@pseo/db` generator
+ * pins from the running PostgREST. Hand-declared, it CAN drift from the generated types with
+ * nothing to catch it — and once did: the retired `store.ts` slice claimed "14.5", a version
+ * this stack has never run. It is documentary only, because postgrest-js gates on the MAJOR
+ * prefix (`V extends "14" + string`), so both strings unlock exactly the same client methods.
+ * Measured, not assumed — and worth re-measuring rather than copying if a third slice appears.
+ */
 type GscAccountsDatabase = {
   __InternalSupabase: { PostgrestVersion: "14.14" };
   public: {
