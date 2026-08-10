@@ -39,6 +39,67 @@ export async function loadLatestPull(userId: string, projectId: string): Promise
 }
 
 /**
+ * The stored health of the Google account behind a project's connection (migration 0021).
+ * `invalid` is written when Google itself answered `invalid_grant` on a refresh — by the web
+ * refresh path and, since Task 8, by pull_gsc_data, which is where the deaths are actually
+ * observed.
+ */
+export type GscTokenStatus = "active" | "invalid";
+
+/** Read a project's connection health, tenant-scoped (null when there is no connection). */
+export type LoadTokenStatusFn = (
+  userId: string,
+  projectId: string,
+) => Promise<GscTokenStatus | null>;
+
+/**
+ * Resolve the token health behind a project's connection: gsc_connections.account_id ->
+ * gsc_accounts.token_status, both reads filtered by user_id (constitution NEVER #4 — the
+ * service-role client bypasses RLS, so these filters are the only tenant boundary).
+ *
+ * Null for "there is nothing to warn about": no connection row, no account linked, or an account
+ * belonging to another tenant — which is indistinguishable from a missing one, deliberately, the
+ * same way every other reader in this slice collapses those cases.
+ *
+ * THROWS on a query failure rather than answering "active". The caller (gsc-discovery-shared.ts)
+ * owns the degradation policy and drops the warning, because a stale analysis with no warning is
+ * a far smaller harm than a crashed one the user already paid for — but that is the CALLER's
+ * decision to make explicitly, not a lie told here.
+ *
+ * Two round trips rather than a PostgREST embedded select: the embed needs a declared foreign-key
+ * relationship in the hand-written schema slice (db.ts models `Relationships: []`), and buying a
+ * saved round trip with a typed-schema fiction is not a trade this read needs.
+ */
+export async function loadGscTokenStatus(
+  userId: string,
+  projectId: string,
+): Promise<GscTokenStatus | null> {
+  const client = getServiceClient();
+  const connection = await client
+    .from("gsc_connections")
+    .select("account_id")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (connection.error) {
+    throw new Error(`gsc connection health lookup failed: ${connection.error.message}`);
+  }
+  const accountId = connection.data?.account_id;
+  if (!accountId) return null;
+
+  const account = await client
+    .from("gsc_accounts")
+    .select("token_status")
+    .eq("id", accountId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (account.error) {
+    throw new Error(`gsc account health lookup failed: ${account.error.message}`);
+  }
+  return account.data?.token_status ?? null;
+}
+
+/**
  * The provenance line every discovery tool appends. ONE renderer, because three tools
  * printing the same fact three ways is how they drift apart.
  */
@@ -47,4 +108,17 @@ export function renderPullProvenance(pulledAt: string, now: Date = new Date()): 
   const day = pulledAt.slice(0, 10);
   const age = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
   return `Search Console data pulled ${day} (${age}).`;
+}
+
+/**
+ * The staleness warning that follows the provenance line when the connection behind the data is
+ * dead. Without it the provenance line is actively misleading: "pulled 12 days ago" reads as
+ * "run pull_gsc_data for fresher numbers", when in fact pull_gsc_data cannot succeed at all until
+ * the user re-approves — the state 12 measured cells were in on 2026-08-09.
+ *
+ * Deliberately says the connection expired and not WHY: the user's action is the same for every
+ * cause, and this line sits under an analysis they came here to read, not under an error.
+ */
+export function renderReauthWarning(reconnectUrl: string): string {
+  return `⚠ Your Google connection expired — this data cannot be refreshed. Reconnect: ${reconnectUrl}`;
 }

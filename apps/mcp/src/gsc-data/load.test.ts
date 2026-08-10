@@ -19,7 +19,7 @@ vi.mock("../db.ts", () => ({
   getServiceClient: () => ({}),
 }));
 
-const { loadLatestPull, renderPullProvenance, NO_PULL_MESSAGE } = await import("./load.ts");
+const { loadLatestPull, renderPullProvenance, renderReauthWarning, NO_PULL_MESSAGE } = await import("./load.ts");
 const { SAMPLE_PULL } = await import("./fixtures.ts");
 const { pullResultToJson } = await import("./types.ts");
 
@@ -65,6 +65,15 @@ describe("renderPullProvenance", () => {
   it("renders multiple days back as plural", () => {
     expect(renderPullProvenance("2026-08-06T09:00:00.000Z", NOW)).toBe(
       "Search Console data pulled 2026-08-06 (4 days ago).",
+    );
+  });
+});
+
+describe("renderReauthWarning", () => {
+  it("names the state and carries the link that clears it", () => {
+    expect(renderReauthWarning("https://web.test/api/gsc/connect?project_id=p1")).toBe(
+      "⚠ Your Google connection expired — this data cannot be refreshed. " +
+        "Reconnect: https://web.test/api/gsc/connect?project_id=p1",
     );
   });
 });
