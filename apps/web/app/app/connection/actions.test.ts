@@ -1024,4 +1024,141 @@ describe("saveProjectProperty", () => {
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
     expect(dbRows.gsc_connections).toEqual([]);
   });
+
+  // Constitution NEVER #4. The service-role client bypasses RLS, so the tenant boundary is
+  // the SESSION user id riding on the write — both as a column and as part of the conflict
+  // target, which is what decides WHICH row an upsert lands on.
+  it("writes with the SESSION user id and conflicts on (user_id, project_id)", async () => {
+    await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteFullUser" }),
+    );
+
+    expect(filtersOf("gsc_connections", "upsert")).toEqual([
+      { column: "user_id", value: "user-1" },
+      { column: "project_id", value: PROJECT },
+    ]);
+  });
+
+  /**
+   * A defence pin rather than a reachable state: `projects.id` is a primary key, so a row
+   * belonging to user-2 for a project user-1 owns cannot arise in production. It is
+   * constructible HERE, and that is the point — it makes the conflict target's tenant column
+   * observable. With `user_id` in the target the write lands on a NEW row; without it, the
+   * upsert merges into the foreign tenant's row and this spec goes red.
+   */
+  it("never merges into another tenant's row for the same project", async () => {
+    const otherTenantRow = {
+      id: "conn-other",
+      user_id: "user-2",
+      project_id: PROJECT,
+      account_id: "99999999-9999-4999-8999-999999999999",
+      gsc_property: "sc-domain:not-yours.example",
+    };
+    dbRows = { ...dbRows, gsc_connections: [otherTenantRow] };
+
+    await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+
+    expect(dbRows.gsc_connections).toContainEqual(otherTenantRow);
+    expect(dbRows.gsc_connections).toHaveLength(2);
+  });
+
+  /**
+   * A project id is a client-supplied value like any other. Without this gate the action
+   * would happily write a `gsc_connections` row for (my user, someone else's project) — no
+   * data leak, since every reader filters on user_id too, but a junk row that inflates the
+   * blast-radius count `describeDisconnect` shows the user before they disconnect.
+   */
+  it("refuses a project the caller does not own — before it ever contacts Google", async () => {
+    dbRows = { ...dbRows, projects: [projectRow("user-2")] };
+
+    const out = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("not found") });
+    expect(gscTables).toEqual(["projects"]); // the account was never even read
+    expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
+    expect(dbRows.gsc_connections).toEqual([]);
+  });
+
+  // The same opaque refusal for another user's ACCOUNT: `accessTokenFor` filters on user_id,
+  // so a foreign account id finds nothing to unseal.
+  it("refuses another user's Google account and writes nothing", async () => {
+    dbRows = { ...dbRows, gsc_accounts: [accountRow("user-2")] };
+    const error = captureConsole("error");
+
+    const out = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+
+    expect(out).toEqual({ ok: false, error: expect.any(String) });
+    expect(dbRows.gsc_connections).toEqual([]);
+    expect(error).toHaveBeenCalled();
+  });
+
+  /**
+   * A dead credential must not become an exception the picker renders as "something went
+   * wrong". The page's live fetch already fails for this account, but the token can die
+   * between that render and this click — so the action answers with a sentence that names
+   * the next step instead of throwing.
+   */
+  it("a dead token answers with a reconnect message, not an exception", async () => {
+    const error = captureConsole("error");
+    vi.mocked(refreshAccessToken).mockRejectedValue(
+      new Error("Google token endpoint failed (400): invalid_grant"),
+    );
+
+    const out = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("Reconnect") });
+    expect(dbRows.gsc_connections).toEqual([]);
+    expect(error).toHaveBeenCalled();
+    // The refusal never carries the credential into the user's browser.
+    expect(JSON.stringify(out)).not.toContain(REFRESH_TOKEN);
+  });
+
+  it("rejects with no session and never queries", async () => {
+    signedOut();
+    await expect(
+      saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing()),
+    ).rejects.toThrow(/not authenticated/i);
+    expect(gscTables).toEqual([]);
+  });
+
+  it("refuses malformed ids without querying the DB", async () => {
+    expect(await saveProjectProperty("not-a-uuid", ACCOUNT, "https://a.com/", listing())).toEqual({
+      ok: false,
+      error: expect.stringContaining("not found"),
+    });
+    expect(await saveProjectProperty(PROJECT, "not-a-uuid", "https://a.com/", listing())).toEqual({
+      ok: false,
+      error: expect.stringContaining("not found"),
+    });
+    expect(gscTables).toEqual([]);
+  });
+
+  it("refuses an empty property without contacting Google", async () => {
+    const out = await saveProjectProperty(PROJECT, ACCOUNT, "", listing());
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(gscTables).toEqual([]);
+  });
 });
