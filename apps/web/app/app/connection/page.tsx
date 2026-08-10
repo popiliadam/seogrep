@@ -3,12 +3,7 @@ import { listKeys } from "@pseo/db/api-keys-repo";
 import { formatDate } from "../../../lib/format";
 import { mcpHeaderEndpoint } from "../../../lib/mcp-endpoint";
 import { createClient } from "../../../lib/supabase/server";
-import {
-  createKeyAction,
-  disconnectGscAction,
-  revokeKeyAction,
-  rotateKeyAction,
-} from "./actions";
+import { createKeyAction, revokeKeyAction, rotateKeyAction, unmapProject } from "./actions";
 import { DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
 
@@ -148,13 +143,13 @@ export default async function ConnectionPage() {
                     {project.connected ? "Reconnect" : "Connect"}
                   </a>
                   {/* The island renders the Disconnect button only for a linked project, but
-                      is mounted either way: it must survive the refresh that unlinks the row
-                      to keep showing a revoke Google never confirmed (M-15). */}
+                      is mounted either way. Per-project Disconnect UNLINKS only — the shared
+                      Google grant is dropped from the account level (finding #63). */}
                   <DisconnectButton
                     projectId={project.id}
                     domain={project.domain}
                     connected={project.connected}
-                    disconnectGscAction={disconnectGscAction}
+                    unmapProject={unmapProject}
                   />
                 </span>
               </li>

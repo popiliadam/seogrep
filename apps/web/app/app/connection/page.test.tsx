@@ -52,7 +52,7 @@ vi.mock("./actions", () => ({
   createKeyAction: vi.fn(),
   rotateKeyAction: vi.fn(),
   revokeKeyAction: vi.fn(),
-  disconnectGscAction: vi.fn(),
+  unmapProject: vi.fn(),
 }));
 // Stub the client island so the page test focuses on the RSC's list + masked URL, and
 // surfaces which activeKeyId the page computed and hands down.
@@ -71,7 +71,7 @@ vi.mock("./disconnect-button", () => ({
     projectId: string;
     domain: string;
     connected: boolean;
-    disconnectGscAction: (projectId: string) => Promise<string>;
+    unmapProject: (projectId: string) => Promise<void>;
   }) => (
     <span data-testid="disconnect-island">
       {p.connected ? (
@@ -80,7 +80,7 @@ vi.mock("./disconnect-button", () => ({
           data-testid="disconnect"
           data-project-id={p.projectId}
           data-domain={p.domain}
-          data-has-action={typeof p.disconnectGscAction === "function"}
+          data-has-action={typeof p.unmapProject === "function"}
         >
           Disconnect
         </button>
