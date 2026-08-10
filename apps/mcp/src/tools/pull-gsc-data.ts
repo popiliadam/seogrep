@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { decryptToken, fromByteaHex } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
-import { getServiceClient, type Json } from "../db.ts";
+import { getServiceClient, markGscAccountTokenInvalid, type Json } from "../db.ts";
 import { requireTokenEncryptionKey } from "../env.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
 import { defaultGscApi, runPull, type GscApi } from "../gsc-data/pull.ts";
@@ -43,11 +43,13 @@ import { PreconditionNotMetError } from "./precondition.ts";
  * is the only one that logs (see the branch for why). A FOURTH sits one call EARLIER, at the
  * token refresh: `invalid_grant` means the stored credential is dead and only the USER can
  * replace it, so it carries GscReauthRequiredError — a different type, because its sentence is
- * built from typed fields (which account, which link) rather than passed through. A lookup error,
- * a missing account row, a token that will not decrypt, and every OTHER Google failure —
- * including a 5xx from that same token endpoint — stay plain Errors and keep the generic sentence
- * + the server log line: each of those is a real fault with something for an operator to read,
- * and a transient outage is not a dead credential.
+ * built from typed fields (which account, which link) rather than passed through, and because it
+ * also WRITES what it observed (`token_status='invalid'`) so the account picker and the discovery
+ * tools can say so without repeating the call. A lookup error, a missing account row, a token
+ * that will not decrypt, and every OTHER Google failure — including a 5xx from that same token
+ * endpoint — stay plain Errors and keep the generic sentence + the server log line: each of those
+ * is a real fault with something for an operator to read, and a transient outage is not a dead
+ * credential.
  *
  * The stored jobs row is a pure DATA CARRIER: reserve_id stays null (the spend is on the
  * ledger, sync-surface style), so this never double-charges against a worker reserve.
@@ -299,6 +301,7 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
       // handle. A wider branch (any 403, any Google error) would re-hide the real faults the
       // 2026-08-09 campaign found wearing the generic sentence, so it stays this narrow.
       const property = connection.gsc_property;
+      const accountId = connection.account_id;
       const pull = await runPull({
         refreshToken,
         property,
@@ -312,7 +315,21 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
         // measured invalid_grant failures were in (migration 0021's header). Reading state here
         // would leave the feature blind exactly where credentials actually die.
         //
+        // The write below is what makes the stored column true afterwards, so the account picker
+        // and the discovery tools can warn without repeating this call. It is best-effort by
+        // design: if the status write itself fails, the ORIGINAL diagnosis must still reach the
+        // user — a DB blip that downgraded "reconnect your account" to "try again later" would
+        // leave them retrying a credential that can never work (the same log-and-swallow apps/web
+        // uses on its own refresh path).
         if (isInvalidGrant(error)) {
+          try {
+            await markGscAccountTokenInvalid(getServiceClient(), accountId, ctx.userId);
+          } catch (statusError) {
+            console.error(
+              `pull_gsc_data: failed to mark account ${accountId} invalid after invalid_grant`,
+              statusError,
+            );
+          }
           // THROW, so withCredits RELEASES: a revoked grant is not a purchase. The sentence the
           // user reads is built by the registry from these two fields (gsc-data/reauth-error.ts).
           throw new GscReauthRequiredError(account.google_account_email, gscConnectUrl(project_id));

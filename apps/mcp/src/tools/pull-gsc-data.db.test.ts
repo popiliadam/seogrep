@@ -132,6 +132,17 @@ async function seedConnection(
   return { accountId, accountEmail };
 }
 
+/** Read one account's stored token health back from the database. */
+async function tokenStatusOf(accountId: string): Promise<string | null> {
+  const { data, error } = await service
+    .from("gsc_accounts")
+    .select("token_status")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (error) throw new Error(`token_status read failed: ${error.message}`);
+  return data?.token_status ?? null;
+}
+
 interface LedgerRow {
   delta: number;
   kind: string;
@@ -673,6 +684,61 @@ describe("pull_gsc_data when Google has revoked the stored grant (invalid_grant)
       expect(rows[1]?.delta).toBe(-TOOL_COSTS.pull_gsc_data);
       expect(balanceOf(rows)).toBe(100);
       expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("marks the account invalid so the picker can say so", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `deadmark-${randomUUID()}.example.com`);
+      const { accountId } = await seedConnection(ctx.userId, projectId, PROPERTY);
+      expect(await tokenStatusOf(accountId)).toBe("active"); // the state we are moving away from
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(400, { error: "invalid_grant" })),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      await callThroughRegistry(ctx, tool, projectId);
+
+      expect(await tokenStatusOf(accountId)).toBe("invalid");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE COUNTERWEIGHT, and the reason the classifier is tail-anchored rather than a substring
+   * test. A 503 is a transient outage, not a dead credential: the user must be told to retry,
+   * not sent through an OAuth round — and the account must NOT be branded invalid, which would
+   * make every discovery tool warn about a connection that is perfectly alive.
+   */
+  it("a 503 from Google does NOT mark the account invalid", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `gsc503-${randomUUID()}.example.com`);
+      const { accountId } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(503, {})),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      expect(await tokenStatusOf(accountId)).toBe("active");
+      // …and it keeps the generic crash sentence + the operator's log line.
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      expect(text).not.toMatch(/reconnect/i);
+      expect(errorSpy).toHaveBeenCalledOnce();
+      expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
     } finally {
       errorSpy.mockRestore();
     }
