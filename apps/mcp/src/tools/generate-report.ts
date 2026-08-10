@@ -58,24 +58,29 @@ export interface GenerateReportDeps {
 }
 
 /**
- * Does a gsc_connections row exist for (user, project)? Only used to word the report's
- * "no search data" section: connected-but-not-pulled must not be told to connect (the report
- * contradicted whats_next on a live project, product test 2026-08-07). Same reader shape as
- * pull_gsc_data's loadConnection — the literal table is required because forUser's selectOwn
- * narrows filters to columns common to ALL tenant tables, which excludes project_id. Tenant
- * scope is the explicit user_id filter (constitution NEVER #4).
+ * Is Search Console connected for (user, project)? Only used to word the report's "no search
+ * data" section: connected-but-not-pulled must not be told to connect (the report contradicted
+ * whats_next on a live project, product test 2026-08-07). Same reader shape as pull_gsc_data's
+ * loadConnection — the literal table is required because forUser's selectOwn narrows filters to
+ * columns common to ALL tenant tables, which excludes project_id. Tenant scope is the explicit
+ * user_id filter (constitution NEVER #4).
+ *
+ * CONNECTED IS `account_id !== null`, NOT the existence of the row (migration 0021, same rule
+ * as whats_next and /app/connection). The row survives unmapProject and survives an account
+ * disconnect with `account_id` nulled by `on delete set null`, so row existence made a PAID
+ * report state "Search Console is connected" over a project with no credential behind it.
  */
 async function defaultIsGscConnected(userId: string, projectId: string): Promise<boolean> {
   const { data, error } = await getServiceClient()
     .from("gsc_connections")
-    .select("id")
+    .select("account_id")
     .eq("user_id", userId)
     .eq("project_id", projectId)
     .maybeSingle();
   if (error) {
     throw new Error(`generate_report: connection lookup failed: ${error.message}`);
   }
-  return data !== null;
+  return data?.account_id != null;
 }
 
 const inputSchema = z.object({

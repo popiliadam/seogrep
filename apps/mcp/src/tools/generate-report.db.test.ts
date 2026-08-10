@@ -90,6 +90,27 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * A minimal real `gsc_accounts` row. generate_report never reads the credential — it only asks
+ * whether the connection has an account behind it (migration 0021) — so the ciphertext is a
+ * placeholder satisfying the NOT NULL, as whats-next.db.test.ts seeds it. The row must be REAL
+ * because `gsc_connections.account_id` carries a foreign key to it.
+ */
+async function makeGscAccount(userId: string): Promise<string> {
+  const { data, error } = await service
+    .from("gsc_accounts")
+    .insert({
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `report-account-${randomUUID()}@example.test`,
+      encrypted_refresh_token: "\\xdeadbeef",
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`gsc_accounts seed failed: ${error?.message ?? "no row"}`);
+  return data.id;
+}
+
 /** Seed a SUCCEEDED job carrying `result` for `tool` — the report's input (no reserve of its own). */
 async function seedSucceededJob(
   userId: string,
@@ -262,11 +283,15 @@ describe("generate_report sync charge against the local stack", () => {
     await seedGrant(user.userId, 100);
     const projectId = await makeProject(user.userId, "connected-no-pull.example.com");
     await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
-    // No token here — generate_report's isGscConnected only checks row presence, and migration
-    // 0021 moved the credential off this row onto gsc_accounts entirely (NEVER#8 note, commit).
+    // RE-AIMED: the row used to be seeded with account_id NULL, and the old predicate (row
+    // existence) read it as connected. Since migration 0021 that state is a mapping with no
+    // credential behind it — pinned by the spec below — so "connected" is now seeded the way
+    // the product produces it: a real gsc_accounts row, linked. The credential is still never
+    // read here; only the link is.
     const { error: connErr } = await service.from("gsc_connections").insert({
       user_id: user.userId,
       project_id: projectId,
+      account_id: await makeGscAccount(user.userId),
       gsc_property: "https://connected-no-pull.example.com/",
     });
     if (connErr) throw new Error(`could not seed gsc_connections: ${connErr.message}`);
@@ -278,6 +303,37 @@ describe("generate_report sync charge against the local stack", () => {
     expect(html).toMatch(/Search Console is connected/);
     expect(html).toContain("pull_gsc_data");
     expect(html).not.toContain("connect_gsc");
+  });
+
+  /**
+   * The same 0021 predicate the web page and whats_next already carry, on the surface where
+   * getting it wrong costs MONEY: a project whose account was disconnected (or whose mapping
+   * was cleared) keeps its row, so reading row existence made a PAID report state "Search
+   * Console is connected" over a project with no credential behind it. The report then told
+   * the user to pull data that pull_gsc_data refuses outright.
+   *
+   * `gsc_property` is deliberately non-null: it is what SURVIVES a disconnect, and it is the
+   * column the old reader was implicitly leaning on.
+   */
+  it("(a5) an UNMAPPED row (account_id null) is NOT connected — the paid report still says connect", async () => {
+    const user = await makeUser();
+    await seedGrant(user.userId, 100);
+    const projectId = await makeProject(user.userId, "unmapped-report.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    const { error: connErr } = await service.from("gsc_connections").insert({
+      user_id: user.userId,
+      project_id: projectId,
+      account_id: null, // what unmapProject and an account disconnect both leave behind
+      gsc_property: "https://unmapped-report.example.com/",
+    });
+    if (connErr) throw new Error(`could not seed gsc_connections: ${connErr.message}`);
+
+    const result = await reportTool.run(ctxOf(user), { project_id: projectId });
+    expect(result.isError).toBeUndefined();
+
+    const html = (await reportRows(user.userId))[0]?.html ?? "";
+    expect(html).toContain("connect_gsc");
+    expect(html).not.toMatch(/Search Console is connected/);
   });
 
   it("(a4) crawl but no pull and NOT connected -> the report still tells the user to connect", async () => {

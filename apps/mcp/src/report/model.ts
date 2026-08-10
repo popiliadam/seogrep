@@ -112,7 +112,11 @@ export interface ReportInput {
   readonly generatedAt: string;
   readonly crawl: AuditCrawl | null;
   readonly pull: PullData | null;
-  /** Whether a gsc_connections row exists for this project (see ReportModel.gscConnected). */
+  /**
+   * Whether this project's `gsc_connections` row carries a non-null `account_id` — NOT whether
+   * the row exists (migration 0021; see ReportModel.gscConnected and defaultIsGscConnected).
+   * The row survives an unmap and an account disconnect with the column nulled.
+   */
   readonly gscConnected?: boolean;
 }
 
