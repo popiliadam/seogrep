@@ -200,84 +200,88 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — Faz D dilim 1 UYGULAMASI YARIDA (Task 5'ten devam)
+## 🧪 SIRADAKİ OTURUM — Faz D dilim 1 KOD TAMAM, İNSAN KUYRUĞU AÇIK
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 
-BU BLOK BİR DEVAM TALİMATIDIR, yeni iş değil. Uygulama başladı ve yarıda duruyor.
+BU BLOK BİR TESLİM RAPORUDUR. Kod tarafı BİTTİ. Kalan her kalem İNSAN kararı.
+Yeni bir işçi dispatch etmeden önce aşağıdaki "İNSAN KUYRUĞU"nu oku — sıradaki iş
+kod yazmak değil, merge ve deploy sırasını yürütmek.
 
-=== İLK ÜÇ ADIM, SIRAYLA ===
-1. `git checkout feat/gsc-account-oauth` — zaten oradaysan dokunma. Ağaç TEMİZ olmalı.
-2. OKU: `.superpowers/sdd/2026-08-09-gsc-account-oauth/progress.md` (130 satır).
-   Bu LEDGER'dır ve bağlam sıfırlamasından sağ çıkan tek kayıttır. Hangi task bitti,
-   hangi commit ne yaptı, hangi minor ertelendi, hakemler neyi final incelemeye taşıdı —
-   hepsi orada. `Task <N>: complete` satırı olan task YENİDEN DİSPATCH EDİLMEZ.
-3. OKU: `docs/superpowers/plans/2026-08-09-gsc-account-oauth.md` (plan) ve
-   `docs/superpowers/specs/2026-08-09-gsc-account-oauth-design.md` (spec, operatör onaylı).
+=== NE BİTTİ (2026-08-10/11 oturumu) ===
+Task 5 · 6 · 7 · 7b · 7c · 8 uygulandı ve HEPSİ hakemden geçti (Task 1·2·2b·3·4 önceki
+oturumda bitmişti). 7b ve 7c planda YOKTU — şef ölçüp ekledi (gerekçeler ledger'da).
+Dal: feat/gsc-account-oauth, plan tabanından 56 commit ötede, ağaç temiz.
+LEDGER: .superpowers/sdd/2026-08-09-gsc-account-oauth/progress.md (670 satır) — bağlam
+sıfırlamasından sağ çıkan tek kayıt. Bir şey doğrulamadan önce ORAYA bak.
 
-Sonra `superpowers:subagent-driven-development` skill'ini çağır ve Task 5'ten devam et.
+=== KAPILAR (şef bağımsız koştu, çıkış kodları DOSYADAN okundu) ===
+TURBO_FORCE=1 bash guardrails/verify.sh -> VERIFY: PASS · 16/16 · Cached: 0 · exit 0
+make goals (prod env yüklü) -> 16/16 PASS, 1 SKIP
+bash guardrails/verify-db.sh -> PASS
 
-=== NEREDE KALINDI ===
-BİTTİ + HAKEMLİ: Task 1 · 2 · 2b · 3 · 4   (üçü Fable hakemli)
-SIRADA:          Task 5 → 6 → 7 → 8 → final Fable + verify.sh
-DAL: feat/gsc-account-oauth, main'den 25 commit ötede, ağaç temiz.
-     `test/faz-b-c-full-tour` (ölçüm işi) üstüne YIĞILI — ölçüm PR'ı ÖNCE merge edilir.
+KAPININ ÖLÇMEDİĞİ (ders 7 — söylenmezse yeşil yalan olur):
+· goals/dfs-budget-guard.md SKIP — DFS prod env'i şefte yok. O kalem KANITSIZ.
+· Hiçbir şey gerçek tarayıcıda sürülmedi. Picker bir RSC + client island; kanıt
+  mutasyon testleri, ekran görüntüsü değil.
+· verify.sh 2026-08-10'a kadar ALTI TASK BOYUNCA KIRMIZIYDI ve kimse görmedi
+  (SCHEMA_VERSION=20 vs 21 migration). Sebep: hiçbir task'ın kapısı packages/db'nin
+  UNIT lane'ini içermiyordu. Bu oturumda kapandı; ders aşağıda.
 
-DAL ŞU AN YEŞİL: `guardrails/verify-db.sh` → PASS (108/175/10), şef bağımsız koşup
-dosyadan okudu. Task 2b'nin kapattığı kırık ara durum GEÇTİ.
-NOT: `apps/web` HIZLI lane'inde ~11 kırmızı var ve bunlar TASK 5'İNDİR (callback +
-disconnectGscAction hâlâ eski kripto şeklini kullanıyor). Task 5 bitince yeşile döner.
+=== İNSAN KUYRUĞU — SIRA ÖNEMLİ, kod bunları yapamaz ===
+1. DAL SIRASI: bu dal `test/faz-b-c-full-tour` üstünde duruyor. ÖLÇÜM PR'I ÖNCE MERGE.
+   (Kontrol et: `git merge-base main HEAD` plan tabanı 0c6f335'i kapsıyor mu?)
+2. PRIVACY TARİHİ — MERGE BLOKERİ: apps/web/app/(marketing)/privacy/page.tsx
+   "Effective 9 August 2026" diyor; GERÇEK deploy tarihine çekilmeli. page.test.tsx:39
+   ve :46 literali PİNLİYOR — İKİSİ BİRLİKTE güncellenir (hesaplanan tarih kasten yok).
+3. 0021 CLOUD-APPLY SIRASI — KRİTİK: migration uygulanır uygulanmaz ŞU AN CANLIDA olan
+   kod kırılır (düşen kolonu okuyor); uygulanmadan da yeni kod koşamaz.
+   SIRA: 0021 apply -> hemen mcp deploy -> web deploy.
+   ALTI CANLI BAĞLANTININ TOKEN'I BU ADIMDA TASARIM GEREĞİ SİLİNİR.
+4. DEPLOY SONRASI DOĞRULAMA (deploy geçmesi KANIT DEĞİLDİR):
+   a. Google hesabı başına BİR kez yeniden onay. Bu aynı zamanda operatörün Console'da
+      yaptığı openid+email değişikliğinin İLK KEZ doğrulanabileceği an — `sub` + `email`
+      gerçekten geliyor mu, ÖLÇ.
+   b. Her projenin property'sini picker'dan KAYDET. Otomatik yeniden bağlama YOK
+      (bilinçli kapsam dışı) — eşleme saklanıyor ve picker'da gösteriliyor ama
+      etkinleşmesi için proje başına bir Save gerekiyor.
+   c. Kanıt `connect_gsc` DEĞİL: `pull_gsc_data` gerçekten satır getirmeli (5 kredi).
+5. 0012'nin gsc_connections DELETE grant'i artık ÇAĞRISIZ — fazla yetki. Kendi
+   migration'ını ister; sonraki migration partisine al. Bu merge'e EKLEME.
+6. İki arşiv audit dokümanı (docs/audits/2026-07-20-*, 2026-07-28-hostile-*) bu dalla
+   main geçmişine giriyor. İçerik sorunlu değil, haberin olsun.
 
-=== TASK 5'İN İNSAN ÖNKOŞULU: TAMAM ===
-Operatör Google Cloud Console'a `openid` + `email` scope'unu EKLEDİ (2026-08-09).
-ŞEF BUNU DOĞRULAYAMADI ve doğrulayamaz — kodumuz o scope'ları Task 5 inene kadar
-istemiyor. Task 5 canlıya çıkınca GERÇEK bir onay turu koş ve `sub` + `email`'in
-geldiğini ÖLÇ. "Console'da kaydettim" kanıt değildir.
+=== SONRAKİ OTURUMA BIRAKILAN İKİ TEK SATIRLIK İŞ (park edildi, gerekçesi ledger'da) ===
+· page.tsx:256-258 retainedMappingFor, BAŞARISIZ sites.list okumasını (sites: null) boş
+  listeleme sayıyor -> "No connected Google account lists it right now" diyor, oysa
+  gerçek "okunamadı". C1'in aynı sınıfı: ölçülmeyeni söylemek. Bloklamıyor (sayfa ayrıca
+  hesap düzeyinde okuma-hatası uyarısı gösteriyor) ama düzeltilmeli.
+· property-picker.tsx:199-202 "It is selected below" prop'tan hesaplanıyor; kullanıcı
+  dropdown'da başka bir şey seçince de aynı şeyi iddia etmeye devam ediyor. Kozmetik.
 
-=== TASK 8'E TAŞINMASI ZORUNLU — Fable hakemin bulgusu, şef kabul etti ===
-MCP okuma yolu (`pull-gsc-data.ts` `defaultLoadAccountToken`) `token_status`'ü NE OKUYOR
-NE YAZIYOR. Ama 0021'in kendi başlığı, gözlenen 12 `invalid_grant` ölümünün hepsinin
-`pull_gsc_data` üzerinden görüldüğünü yazıyor — yani artık hiçbir şey kaydetmeyen yol.
-Task 8 reauth sinyalini SAKLI `token_status`'ten türetirse, kimlik bilgilerinin fiilen
-öldüğü yerde KÖR olur. Ya MCP yolu da `token_status` yazmalı, ya da sinyal CANLI
-yenileme hatasından türetilmeli. Bu cümle Task 8'in iş emrine GİRMEZSE doğrudan rework.
+=== BU OTURUMUN DERS ADAYLARI (insan imzası bekliyor — imzasız kural olmaz) ===
+1. Bir task'ın kapısı, o task'ın DEĞDİĞİ her paketin KENDİ test script'ini içerir.
+   Vaka: verify.sh altı task boyunca kırmızıydı; iki test tam da bunu bekliyordu ama
+   hiçbir task'ın dar kapısı packages/db'nin unit lane'ini koşmuyordu. "tsc --noEmit
+   dokunduğum dosyalarda temiz" kapının koştuğu script DEĞİLDİR.
+2. Planın yazdığı bir mutasyon, onu hiç koşmamış bir yazarın HİPOTEZİDİR. Bu planda
+   DÖRT mutasyon iddia ettiği şeyi kırmızıya döndürmedi; dördünde de yanlışı ilk gören
+   işçi oldu ve dördünde de raporlamak doğru karardı.
+3. Bir iddia, konusunu YENİDEN KODLAYAN bir katman sınırında yanlış sebeple yeşil olabilir.
+   İki vaka: bytea kolonu `\x` hex döndüğü için `not.toContain(plaintext)` KALICI yeşildi;
+   sahte sorgu kurucusu `select()`'i umursamadığı için eksik kolon fark edilmezdi.
+   Serileşmiş bir kolona substring iddiası klasik tuzak — önce DECODE et.
+4. N bağımsız spec kümesi olan bir task N commit'tir; bunu iş emri SÖYLER, işçi commit
+   anında keşfetmez (Task 6'nın ~800 satırlık commit'i park edildi).
+5. Şefin kendi kuralı yalana sebep oluyorsa kural geri alınır. Vaka: page.tsx'i Task 6'ya
+   ayırmak, Task 7 sonrası "Disconnect Google erişimini iptal eder" cümlesini YALAN
+   bıraktı. Güvenlik eylemi hakkındaki yanlış cümle, dar kapsamdan daha pahalıdır.
 
-=== MERGE BLOCKER — KAYBOLMASIN ===
-`apps/web/app/(marketing)/privacy/page.tsx` effective date "9 August 2026" diyor ve
-GERÇEK deploy tarihine eşitlenmeli. Bu dal 9 Ağustos'ta merge edilmeyecek, yani tarih
-varış anında yanlış olacak. Sayfa ve `page.test.tsx` BİRLİKTE güncellenir — iki test
-literali kasten donduruyor ("a computed date would silently move with the clock").
-
-=== PLAN YAZARKEN DİKKAT — bu oturumda DÖRT plan hatası çıktı, dördü de şefindi ===
-1. 0021'in kırdığı okuyucular hiçbir task'ta sahipsizdi (Task 2 işçisi buldu) → Task 2b eklendi
-2. Task 2b, tükettiği Task 3/4'ten ÖNCE sıralanmıştı (şef dispatch öncesi yakaladı)
-3. Tarif edilen mutasyon hiçbir testi kırmızıya döndürmüyordu — sahte "geçti" (Task 3 işçisi buldu)
-4. `apps/mcp`, `apps/web`'den import edemez; `accessTokenFor` uygulanamazdı (şef yakaladı)
-Ayrıca bir işçi HİÇ COMMIT ATMADAN "bitti" diye döndü; şef ağacı ölçüp geri gönderdi.
-
-DERS ADAYI (insan imzası bekliyor): *Bir uygulama planı, ilk işçi dispatch edilmeden önce
-"her task'ın TÜKETTİĞİ her arayüz, ondan ÖNCEKİ bir task'ta ÜRETİLİYOR mu ve AYNI paket
-sınırında mı?" diye taranır.* Bu oturumdaki dört plan hatasının üçü bu tek soruyla yakalanırdı.
-
-=== SDD MEKANİĞİ — atlanmayacak adımlar ===
-· Her task: taze işçi → review-package → hakem → (bulgu varsa) fix round + scoped re-review
-· `scripts/task-brief PLAN N` başlıktaki NUMARAYI eşleştirir, sırayı değil (Task 2b elle çıkarıldı)
-· Hakem seçimi: task diff >400 satır YA DA auth/kripto/ledger/RLS'e değiyorsa → **Fable**
-· Mutasyon ZORUNLU ve işçinin RAPORUNA GÜVENİLMEZ — hakem kendi koşsun
-· İşçi dönüşü ölçülür: `git log` boşsa iş bitmemiştir
-· Ledger her task sonunda güncellenir; o olmadan bağlam sıfırlaması bitmiş işi yeniden koşturur
-
-=== KAPILAR ===
-`TURBO_FORCE=1 bash guardrails/verify.sh` (Cached: 0 raporla) · `bash guardrails/verify-db.sh`
-· `make goals` · çıktı DOSYADAN okunur, `cmd | tail` sonrası $? tail'indir
-· #44: kapı yük altında crawl.test.ts T8'de kırmızı verebilir — izole koşuda 13× marj,
-  dalı suçlamadan önce makinenin yükünü ve diff'in hangi workspace'e değdiğini bak
-
-=== ŞEF NELERİ OKUYABİLİR (1. oturumun sandığından fazlası) ===
-· `flyctl logs -a seogrep-mcp` ✅ — #52'nin kökü böyle bulundu, tahminle değil
-· MCP canlı uç ✅ — `set -a && . ~/.zshrc; set +a`, sonra scratchpad'deki mcp.mjs
+=== ŞEF NELERİ OKUYABİLİR ===
+· flyctl logs -a seogrep-mcp ✅ · MCP canlı uç ✅ (`set -a && . ~/.zshrc; set +a`)
 · `dfs_spend_today_usd()` ❌ — Supabase execute_sql izin katmanınca engelli, psql ile DOLANMA
+· make goals'un canlı probları ✅ ama env AÇIKÇA yüklenmeli (şef-Bash ~/.zshrc source etmez)
 ```
 
 ## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)
