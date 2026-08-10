@@ -39,6 +39,15 @@ let gscTables: string[] = [];
 let statements: Statement[] = [];
 /** Every side effect in order, including the Google revoke — the ordering proof. */
 let gscOps: string[] = [];
+/**
+ * PostgREST failures to inject, keyed `op:table` — the fake's only way to fail a statement.
+ * A DB error is the one thing these actions cannot be observed handling any other way, and
+ * every one of them must surface: a swallowed write error tells the user their mapping was
+ * saved when it was not, and a swallowed count error would let `describeDisconnect` promise
+ * that ZERO projects are affected. Added with the guarantees relocated here from the retired
+ * lib/gsc/store.test.ts (task 7b), whose error specs pinned exactly this on the old module.
+ */
+let dbErrors: Record<string, { message: string }> = {};
 
 /** A statement reaches a row only when EVERY filter it carried matches — like PostgREST. */
 function matches(row: Row, filters: Filter[]): boolean {
@@ -51,9 +60,11 @@ function project(row: Row, columns: string): Row {
   return Object.fromEntries(wanted.map((column) => [column, row[column]]));
 }
 
-function record(table: string, op: string, filters: Filter[]): void {
+/** Record the statement and hand back the failure injected for it, if any. */
+function record(table: string, op: string, filters: Filter[]): { message: string } | null {
   statements.push({ table, op, filters });
   gscOps.push(`${op}:${table}`);
+  return dbErrors[`${op}:${table}`] ?? null;
 }
 
 /** The filters carried by the one statement of this shape — fails loudly if there are several. */
@@ -87,17 +98,21 @@ function fakeTable(table: string) {
           return chain;
         },
         maybeSingle: async () => {
-          record(table, "select", filters);
+          const error = record(table, "select", filters);
+          if (error) {
+            return { data: null, error };
+          }
           const row = rowsIn().find((candidate) => matches(candidate, filters)) ?? null;
           return { data: row ? project(row, columns) : null, error: null };
         },
         then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          record(table, "select", filters);
-          const found = rowsIn().filter((row) => matches(row, filters));
+          const error = record(table, "select", filters);
+          const found = error ? [] : rowsIn().filter((row) => matches(row, filters));
           return Promise.resolve({
-            data: options.head ? null : found.map((row) => project(row, columns)),
-            count: options.count ? found.length : null,
-            error: null,
+            data: options.head || error ? null : found.map((row) => project(row, columns)),
+            // A failed count is NULL, not 0 — the distinction the caller must not collapse.
+            count: options.count && !error ? found.length : null,
+            error,
           }).then(onFulfilled, onRejected);
         },
       };
@@ -111,12 +126,14 @@ function fakeTable(table: string) {
           return chain;
         },
         then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          record(table, "update", filters);
-          dbRows = {
-            ...dbRows,
-            [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
-          };
-          return Promise.resolve({ error: null }).then(onFulfilled, onRejected);
+          const error = record(table, "update", filters);
+          if (!error) {
+            dbRows = {
+              ...dbRows,
+              [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
+            };
+          }
+          return Promise.resolve({ error }).then(onFulfilled, onRejected);
         },
       };
       return chain;
@@ -133,11 +150,14 @@ function fakeTable(table: string) {
         .split(",")
         .map((column) => column.trim())
         .filter((column) => column.length > 0);
-      record(
+      const error = record(
         table,
         "upsert",
         target.map((column) => ({ column, value: payload[column] })),
       );
+      if (error) {
+        return Promise.resolve({ error });
+      }
       const rows = rowsIn();
       const conflicting =
         target.length > 0
@@ -159,7 +179,10 @@ function fakeTable(table: string) {
           return chain;
         },
         then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          record(table, "delete", filters);
+          const error = record(table, "delete", filters);
+          if (error) {
+            return Promise.resolve({ error }).then(onFulfilled, onRejected);
+          }
           const doomed = rowsIn().filter((row) => matches(row, filters));
           const survivors = rowsIn().filter((row) => !matches(row, filters));
           const orphaned = new Set(doomed.map((row) => row.id));
@@ -582,6 +605,7 @@ describe("two-level disconnect", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     dbRows = { gsc_accounts: [], gsc_connections: [] };
+    dbErrors = {};
     gscTables = [];
     statements = [];
     gscOps = [];
@@ -655,6 +679,23 @@ describe("two-level disconnect", () => {
       await expect(unmapProject("not-a-uuid")).rejects.toThrow(/not found/i);
 
       expect(gscTables).toEqual([]);
+    });
+
+    // MOVED from lib/gsc/store.test.ts ("throws when the update fails"), re-aimed at the
+    // UPDATE that replaced the retired module's. A swallowed failure here is worse than a
+    // loud one: the action would return normally, the page would re-render as unlinked, and
+    // the project would go on reading Search Console through a mapping the user believes is
+    // gone. The error message stays server-side; only the throw reaches the UI.
+    it("a failed UPDATE throws instead of reporting a silent unmap", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
+      dbErrors = { "update:gsc_connections": { message: "no upd" } };
+
+      await expect(unmapProject(PROJECT)).rejects.toThrow(/unmap failed: no upd/);
+
+      // The mapping is untouched — the state the throw is telling the truth about.
+      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
     });
   });
 
@@ -847,6 +888,28 @@ describe("two-level disconnect", () => {
       expect(gscTables).toEqual([]);
       expect(revokeGoogleToken).not.toHaveBeenCalled();
     });
+
+    // MOVED from lib/gsc/store.test.ts ("throws a clear error when the delete fails"),
+    // re-aimed at the row that now holds the credential. The revoke has already happened by
+    // then, so a swallowed delete error would return `revoked` while OUR copy of the sealed
+    // token stayed in the table — the disconnect half-done and reported as done.
+    it("a failed DELETE throws rather than reporting the disconnect as complete", async () => {
+      signedIn("user-1");
+      const row = accountRow("user-1");
+      dbRows = { gsc_accounts: [row], gsc_connections: [] };
+      dbErrors = { "delete:gsc_accounts": { message: "no del" } };
+
+      await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/delete failed: no del/);
+
+      // The credential is still here — which is exactly what the throw is reporting. (The row
+      // carries the fresh `token_checked_at` the successful refresh stamped on its way past.)
+      expect(dbRows.gsc_accounts).toHaveLength(1);
+      expect(dbRows.gsc_accounts[0]).toMatchObject({
+        id: ACCOUNT,
+        user_id: "user-1",
+        encrypted_refresh_token: row.encrypted_refresh_token,
+      });
+    });
   });
 
   describe("describeDisconnect", () => {
@@ -897,6 +960,19 @@ describe("two-level disconnect", () => {
       signedOut();
       await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/not authenticated/i);
       expect(gscTables).toEqual([]);
+    });
+
+    // MOVED from lib/gsc/store.test.ts ("throws a clear error when the lookup fails"), which
+    // pinned that a failed gsc_connections read is never mistaken for "no row". Here it is
+    // load-bearing in a way it was not there: `count ?? 0` turns a NULL count into the number
+    // this sentence shows the user, so a swallowed error would promise that ZERO projects are
+    // affected right before the click that breaks all of them (finding #63's whole lesson).
+    it("a failed count throws — it never becomes a promise that 0 projects are affected", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 4) };
+      dbErrors = { "select:gsc_connections": { message: "boom" } };
+
+      await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/count failed: boom/);
     });
   });
 });
@@ -967,6 +1043,7 @@ describe("saveProjectProperty", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     dbRows = { gsc_accounts: [], gsc_connections: [], projects: [] };
+    dbErrors = {};
     gscTables = [];
     statements = [];
     gscOps = [];
@@ -1160,5 +1237,60 @@ describe("saveProjectProperty", () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
     expect(gscTables).toEqual([]);
+  });
+
+  /**
+   * MOVED from lib/gsc/store.test.ts ("updates the existing row when one exists"), minus the
+   * token half migration 0021 retired. Re-picking a property for an already-mapped project is
+   * an ordinary thing to do, and `gsc_connections` is UNIQUE on (user_id, project_id) since
+   * migration 0010: the write must MERGE onto the row that is already there. A plain insert
+   * would raise a unique violation, and a conflict target missing `project_id` would leave the
+   * old mapping behind — both invisible in a suite that only ever saves onto an empty table.
+   */
+  it("re-picking a property for an already-mapped project updates the SAME row", async () => {
+    const existing = {
+      id: "conn-1",
+      user_id: "user-1",
+      project_id: PROJECT,
+      account_id: ACCOUNT,
+      gsc_property: "sc-domain:old.example",
+    };
+    dbRows = { ...dbRows, gsc_connections: [existing] };
+
+    expect(
+      await saveProjectProperty(
+        PROJECT,
+        ACCOUNT,
+        "https://a.com/",
+        listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+      ),
+    ).toEqual({ ok: true });
+
+    expect(dbRows.gsc_connections).toEqual([{ ...existing, gsc_property: "https://a.com/" }]);
+  });
+
+  /**
+   * MOVED from lib/gsc/store.test.ts ("throws when the upsert fails"). The disposition changed
+   * with the caller — this action RETURNS its refusals — but the guarantee did not: a failed
+   * write may never come back as `ok`, because the picker would then show the new property as
+   * saved while the project kept reading the old one. The diagnosis goes to the log, and
+   * Postgres's own message never reaches the browser.
+   */
+  it("a failed write answers ok:false — never a saved mapping — and keeps the message server-side", async () => {
+    const error = captureConsole("error");
+    dbErrors = { "upsert:gsc_connections": { message: "deadlock detected" } };
+
+    const out = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com/",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+
+    expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not save") });
+    expect(JSON.stringify(out)).not.toContain("deadlock detected");
+    expect(dbRows.gsc_connections).toEqual([]);
+    expect(error).toHaveBeenCalled();
+    expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
   });
 });
