@@ -1,5 +1,6 @@
 import { getServiceClient } from "../db.ts";
 import { getLatestSucceededPull } from "../queue/boss.ts";
+import { renderReconnectInstruction } from "./reauth-error.ts";
 import { parsePullResult, type PullData } from "./types.ts";
 
 /**
@@ -118,7 +119,13 @@ export function renderPullProvenance(pulledAt: string, now: Date = new Date()): 
  *
  * Deliberately says the connection expired and not WHY: the user's action is the same for every
  * cause, and this line sits under an analysis they came here to read, not under an error.
+ *
+ * A null `reconnectUrl` (no WEB_BASE_URL) drops the LINK, never the warning — same ruling as the
+ * typed refusal: an environment problem must not silently delete a fact about the user's data.
  */
-export function renderReauthWarning(reconnectUrl: string): string {
-  return `⚠ Your Google connection expired — this data cannot be refreshed. Reconnect: ${reconnectUrl}`;
+export function renderReauthWarning(reconnectUrl: string | null): string {
+  return (
+    "⚠ Your Google connection expired — this data cannot be refreshed. " +
+    renderReconnectInstruction(reconnectUrl)
+  );
 }

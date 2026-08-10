@@ -10,7 +10,7 @@ import {
   type PullData,
 } from "../gsc-data/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
-import { gscConnectUrl } from "./connect-gsc.ts";
+import { optionalGscConnectUrl } from "./connect-gsc.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
@@ -41,11 +41,15 @@ export interface DiscoveryToolDeps {
  * The staleness warning, or null when there is nothing to warn about.
  *
  * BEST-EFFORT ON PURPOSE. By the time this runs the analysis is complete and about to be
- * charged, so every failure here — a health read that errors, an unset WEB_BASE_URL — is
- * swallowed and logged rather than thrown. Throwing would release the reserve and answer a
- * WORKING analysis with "failed unexpectedly", which is a strictly worse outcome than an
- * un-warned one and the very failure mode this task exists to remove. The warning is an
- * adornment on delivered data; the delivered data always wins.
+ * charged, so a failing health read is swallowed and logged rather than thrown. Throwing would
+ * release the reserve and answer a WORKING analysis with "failed unexpectedly", which is a
+ * strictly worse outcome than an un-warned one and the very failure mode this task exists to
+ * remove. The warning is an adornment on delivered data; the delivered data always wins.
+ *
+ * An unset WEB_BASE_URL is deliberately NOT one of those swallowed failures any more: the link is
+ * read softly, so the warning still prints and only loses its link (controller ruling). The
+ * catch stays for the health read, which is the failure that genuinely has no sentence to fall
+ * back on.
  *
  * It reads STORED state, unlike pull_gsc_data's own reauth error, which is derived from the
  * refresh failure it just saw. That split is the point: these three tools never call Google, so
@@ -59,7 +63,7 @@ async function reauthWarning(
 ): Promise<string | null> {
   try {
     const status = await loadTokenStatus(userId, projectId);
-    return status === "invalid" ? renderReauthWarning(gscConnectUrl(projectId)) : null;
+    return status === "invalid" ? renderReauthWarning(optionalGscConnectUrl(projectId)) : null;
   } catch (error) {
     console.error(
       `discovery: connection-health warning skipped for project ${projectId}`,

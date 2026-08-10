@@ -70,6 +70,14 @@ describe("renderPullProvenance", () => {
 });
 
 describe("renderReauthWarning", () => {
+  it("keeps the warning when there is no link to give — only the link is lost", () => {
+    const text = renderReauthWarning(null);
+    expect(text).toContain("⚠ Your Google connection expired");
+    expect(text).toContain("cannot be refreshed");
+    expect(text).toContain("Reconnect it from the Connection page");
+    expect(text).not.toContain("null");
+  });
+
   it("names the state and carries the link that clears it", () => {
     expect(renderReauthWarning("https://web.test/api/gsc/connect?project_id=p1")).toBe(
       "⚠ Your Google connection expired — this data cannot be refreshed. " +

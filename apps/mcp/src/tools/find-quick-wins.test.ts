@@ -106,6 +106,31 @@ describe("find_quick_wins staleness warning", () => {
   });
 
   /**
+   * The env-shape half of the same guarantee. With no WEB_BASE_URL there is no honest link, but
+   * the user must still learn that the data under their nose cannot be refreshed — losing the
+   * whole warning to a deploy variable would delete a fact about their own data (controller
+   * ruling; same reasoning as the typed refusal in registry.test.ts).
+   */
+  it("keeps warning when WEB_BASE_URL is unset — the link goes, the warning stays", async () => {
+    const saved = process.env.WEB_BASE_URL;
+    delete process.env.WEB_BASE_URL;
+    try {
+      const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "invalid");
+
+      const result = await tool.run(CTX, { project_id: PROJECT_ID });
+
+      const text = result.content[0]?.text ?? "";
+      expect(result.isError).toBeUndefined();
+      expect(text).toMatch(/connection expired.*cannot be refreshed/i);
+      expect(text).toContain("Reconnect it from the Connection page");
+      expect(text).not.toContain("undefined/api/gsc/connect");
+      expect(text).toContain("running shoes"); // the analysis is untouched
+    } finally {
+      process.env.WEB_BASE_URL = saved;
+    }
+  });
+
+  /**
    * The analysis is already complete and about to be charged when the health read runs, so a
    * failure there must cost the caller the WARNING, never the findings they paid for. Throwing
    * would release the reserve and answer a working analysis with "failed unexpectedly" — the
