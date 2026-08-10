@@ -16,13 +16,25 @@ export interface PropertyOption {
   readonly queryable: boolean;
 }
 
+/**
+ * What an UNMAPPED row still has stored: the property it read before its account went away
+ * (migration 0021, or an account disconnect), plus a ready-to-save choice when some connected
+ * account still lists it — null when none does.
+ */
+export interface RetainedMapping {
+  readonly property: string;
+  readonly choice: string | null;
+}
+
 interface PropertyPickerProps {
   readonly projectId: string;
   /** The project's domain — names this picker in its label and in the group headings. */
   readonly domain: string;
   readonly options: readonly PropertyOption[];
-  /** The stored mapping, encoded; empty when the project has none. */
+  /** The LIVE mapping, encoded; empty when the project has none. */
   readonly current: string;
+  /** The stored property of an unmapped row — named even when it cannot be selected. */
+  readonly retained: RetainedMapping | null;
   /** `resolveGscProperty`'s suggestion, encoded; null when it matched nothing. */
   readonly suggested: string | null;
   /** A stored property that is no longer in the live listing — named, never dropped. */
@@ -103,6 +115,7 @@ export function PropertyPicker({
   domain,
   options,
   current,
+  retained,
   suggested,
   missingProperty,
   alsoMapped,
@@ -114,9 +127,15 @@ export function PropertyPicker({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Until the user touches the control it FOLLOWS the server: the stored mapping if there is
-  // one, otherwise the suggestion. So a refresh caused by another action on this row (a
-  // Disconnect, say) is reflected here rather than leaving a stale-looking selection behind.
+  // Until the user touches the control it FOLLOWS the server: the live mapping if there is
+  // one, otherwise the property this row still has STORED from before its account went away,
+  // otherwise the suggestion. So a refresh caused by another action on this row (a Disconnect,
+  // say) is reflected here rather than leaving a stale-looking selection behind.
+  //
+  // The retained value outranks the suggestion for the reason the live mapping outranks it:
+  // `resolveGscProperty` is opinionated (a domain property beats a url-prefix one), so letting
+  // it win would re-propose a DIFFERENT property to a user who had already chosen — which is
+  // what every row migration 0021 touched did, silently.
   //
   // A choice with no matching option shows NOTHING selected. A `<select>` whose value matches
   // no `<option>` displays the first one instead, so a project whose stored property has
@@ -127,9 +146,21 @@ export function PropertyPicker({
   const offered = new Set(
     options.map((option) => encodeChoice(option.accountId, option.siteUrl)),
   );
-  const preferred = chosen ?? (current || suggested || "");
+  const preferred = chosen ?? (current || retained?.choice || suggested || "");
   const value = offered.has(preferred) ? preferred : "";
   const selectId = `gsc-property-${projectId}`;
+
+  // Shown in BOTH branches below, including the one with NO options — the state every row is
+  // in right after migration 0021, and the one state the stored property is guaranteed to be
+  // the only information there is.
+  const retainedNote =
+    !current && retained ? (
+      <span role="status" className="text-xs text-neutral-500">
+        {retained.choice
+          ? `Saved earlier for this project: ${retained.property}. It is selected below — Save to switch it back on.`
+          : `Saved earlier for this project: ${retained.property}. No connected Google account lists it right now, so nothing reads it yet.`}
+      </span>
+    ) : null;
 
   function submit() {
     const choice = decodeChoice(value);
@@ -154,10 +185,13 @@ export function PropertyPicker({
 
   if (options.length === 0) {
     return (
-      <p className="text-xs text-neutral-500">
-        No Search Console properties are available for this project yet. Connect a Google
-        account that has verified this domain.
-      </p>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs text-neutral-500">
+          No Search Console properties are available for this project yet. Connect a Google
+          account that has verified this domain.
+        </p>
+        {retainedNote}
+      </div>
     );
   }
 
@@ -201,11 +235,12 @@ export function PropertyPicker({
         >
           Save
         </button>
-        {!current && suggested ? (
+        {!current && !retained && suggested ? (
           <span className="text-xs text-neutral-500">Suggested for this domain — save to apply.</span>
         ) : null}
       </div>
 
+      {retainedNote}
       {missingProperty ? (
         <span role="status" className="text-xs text-amber-700">
           {missingProperty} — This property is no longer visible on this account — pick another.

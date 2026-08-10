@@ -17,7 +17,12 @@ import {
 } from "./actions";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
-import { encodeChoice, PropertyPicker, type PropertyOption } from "./property-picker";
+import {
+  encodeChoice,
+  PropertyPicker,
+  type PropertyOption,
+  type RetainedMapping,
+} from "./property-picker";
 
 /** One project row: its identity plus the mapping `gsc_connections` holds for it. */
 interface ProjectConnection {
@@ -222,6 +227,36 @@ function suggestionFor(domain: string, accounts: readonly ConnectedAccount[]): s
     }
   }
   return null;
+}
+
+/**
+ * The property an UNMAPPED row still stores, and where it can be picked up again.
+ *
+ * `account_id IS NULL` + `gsc_property` set is the design's own state (spec line 68): "the
+ * mapping stands, connect to activate it" — what migration 0021 leaves EVERY migrated row in,
+ * and what an account disconnect produces. No surface rendered it: `current` is computed only
+ * when `accountId !== null`, so the row showed "Not connected" beside a freshly recomputed
+ * SUGGESTION and the user's own earlier choice appeared nowhere.
+ *
+ * TWO facts, because two states differ: a connected account that still lists the property gives
+ * the picker a ready-to-save choice; when none lists it (the state right after the migration,
+ * before any account is connected) there is nothing to select — and the stored value is still
+ * the honest thing to show, so it is named either way. Listing is not verification: the save
+ * path re-fetches `sites.list` and re-checks the permission level, because nothing rendered
+ * here is evidence (saveProjectProperty's own ruling).
+ */
+function retainedMappingFor(
+  project: ProjectConnection,
+  accounts: readonly ConnectedAccount[],
+): RetainedMapping | null {
+  if (project.accountId !== null || project.property === null) {
+    return null;
+  }
+  const property = project.property;
+  const host = accounts.find((account) =>
+    (account.sites ?? []).some((site) => site.siteUrl === property),
+  );
+  return { property, choice: host ? encodeChoice(host.id, property) : null };
 }
 
 /**
@@ -462,6 +497,7 @@ export default async function ConnectionPage({
                       ? encodeChoice(project.accountId, project.property)
                       : ""
                   }
+                  retained={retainedMappingFor(project, accounts)}
                   suggested={suggestionFor(project.domain, accounts)}
                   missingProperty={missingPropertyFor(project, accounts)}
                   alsoMapped={alsoMappedCount(project, projects)}

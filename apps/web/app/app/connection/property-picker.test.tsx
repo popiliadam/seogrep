@@ -30,6 +30,7 @@ function props(overrides: Partial<Parameters<typeof PropertyPicker>[0]> = {}) {
     domain: "alpha.example",
     options: [option()],
     current: "",
+    retained: null,
     suggested: null,
     missingProperty: null,
     alsoMapped: 0,
@@ -103,6 +104,64 @@ describe("PropertyPicker", () => {
     );
 
     expect(selectFor().value).toBe(current);
+  });
+
+  /**
+   * `account_id` null with `gsc_property` still set — what migration 0021 and an account
+   * disconnect both leave behind. The confirmation tells the user the property is kept, so it
+   * has to be VISIBLE: `current` is empty for an unmapped row, so the picker fell through to
+   * the suggestion and showed a recomputed answer as though nothing had been chosen. The
+   * suggestion here is a DIFFERENT property, so that fallback cannot pass this spec.
+   */
+  it("pre-selects and NAMES the property an unmapped row still has stored", () => {
+    const retainedChoice = encodeChoice(ACCOUNT_A, URL_PROPERTY);
+    render(
+      <PropertyPicker
+        {...props({
+          options: [option(), option({ siteUrl: URL_PROPERTY })],
+          current: "",
+          retained: { property: URL_PROPERTY, choice: retainedChoice },
+          suggested: encodeChoice(ACCOUNT_A, DOMAIN_PROPERTY),
+        })}
+      />,
+    );
+
+    expect(selectFor().value).toBe(retainedChoice);
+    expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
+    // The suggestion label would claim this value came from a domain match, which it did not.
+    expect(screen.queryByText(/suggested for this domain/i)).toBeNull();
+  });
+
+  /**
+   * The first thing a user sees after the migration: stored property, no account connected yet,
+   * so the dropdown is empty. Its early return dropped the row's state entirely — in the one
+   * branch where the stored property is the only information there is.
+   */
+  it("names the stored property even when there is nothing to select", () => {
+    render(
+      <PropertyPicker
+        {...props({ options: [], retained: { property: URL_PROPERTY, choice: null } })}
+      />,
+    );
+
+    expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
+    expect(screen.getByText(/no connected google account lists it/i)).toBeTruthy();
+  });
+
+  it("says nothing about a retained property once the row is mapped again", () => {
+    const current = encodeChoice(ACCOUNT_A, URL_PROPERTY);
+    render(
+      <PropertyPicker
+        {...props({
+          options: [option({ siteUrl: URL_PROPERTY })],
+          current,
+          retained: { property: URL_PROPERTY, choice: current },
+        })}
+      />,
+    );
+
+    expect(selectFor().value).toBe(current);
+    expect(screen.queryByText(/saved earlier/i)).toBeNull();
   });
 
   /**
