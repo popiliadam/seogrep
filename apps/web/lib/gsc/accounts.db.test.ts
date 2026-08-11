@@ -198,6 +198,54 @@ describe("upsertGscAccount", () => {
     expect(await readTokenStatus(accountId)).toBe("active");
   });
 
+  /**
+   * THE PRIMARY KEY NEVER MOVES.
+   *
+   * PostgREST renders an upsert as `ON CONFLICT … DO UPDATE SET <every supplied column>`, and
+   * `id` used to be one of them. Two concurrent first-consents (a double-submit) both miss the
+   * lookup and both mint a uuid; one inserts, the other conflicts — and the conflict UPDATE
+   * rewrote the row's PRIMARY KEY to the loser's uuid. The winner then held an accountId naming
+   * no row: a stale id, and an FK error the moment `gsc_connections.account_id` referenced it.
+   *
+   * The race is reproduced for real, not simulated: `Promise.all` issues both lookups before
+   * either insert lands, so both genuinely see no row. Every assertion below is a fact about
+   * what SURVIVED — one row, one id, and a ciphertext that opens under it.
+   *
+   * MUTATION TARGET: put `id` back in the write that resolves the conflict (i.e. restore the
+   * single `.upsert({ id, … }, { onConflict: "user_id,google_account_sub" })`) and this spec
+   * goes red — the two calls come back with DIFFERENT ids.
+   */
+  it("a concurrent first-consent never rewrites the row's id (MUTATION TARGET)", async () => {
+    const user = await makeUser();
+    const sub = `sub-${randomUUID()}`;
+    const refreshToken = `1//racing-${randomUUID()}`;
+
+    const [first, second] = await Promise.all([
+      upsertGscAccount(client, { userId: user.id, sub, email: "a@x.com", refreshToken, keyHex: KEY }),
+      upsertGscAccount(client, { userId: user.id, sub, email: "a@x.com", refreshToken, keyHex: KEY }),
+    ]);
+
+    // Both callers name the SAME row — this is the assertion the old conflict-update broke.
+    expect(second.accountId).toBe(first.accountId);
+
+    const rows = await client
+      .from("gsc_accounts")
+      .select("id, encrypted_refresh_token")
+      .eq("user_id", user.id)
+      .eq("google_account_sub", sub);
+    if (rows.error) throw new Error(`race read failed: ${rows.error.message}`);
+    expect(rows.data).toHaveLength(1);
+    expect(rows.data[0]?.id).toBe(first.accountId);
+    // ...and the seal that landed belongs to the id that landed: a ciphertext bound to the
+    // OTHER uuid would not open here, so this catches a stale-AAD write as well as a stale id.
+    expect(
+      decryptToken(fromByteaHex(rows.data[0]!.encrypted_refresh_token), KEY, {
+        userId: user.id,
+        accountId: first.accountId,
+      }),
+    ).toBe(refreshToken);
+  });
+
   it("tenant isolation: two DIFFERENT users each connecting the SAME Google sub get SEPARATE rows (MUTATION TARGET)", async () => {
     // This is the case that breaks if upsertGscAccount's existing-row lookup ever drops its
     // `.eq("user_id", …)` filter: without it, user B's lookup would match user A's row (same

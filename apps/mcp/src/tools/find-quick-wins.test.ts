@@ -126,7 +126,12 @@ describe("find_quick_wins staleness warning", () => {
       expect(text).not.toContain("undefined/api/gsc/connect");
       expect(text).toContain("running shoes"); // the analysis is untouched
     } finally {
-      process.env.WEB_BASE_URL = saved;
+      // Delete-on-undefined, the shape this file's own afterAll and pull-gsc-data.db.test.ts
+      // already use. A bare assignment writes the literal string "undefined" when `saved` is
+      // undefined — harmless only because beforeAll happens to set the variable, which is a
+      // property of the harness, not of this restore.
+      if (saved === undefined) delete process.env.WEB_BASE_URL;
+      else process.env.WEB_BASE_URL = saved;
     }
   });
 

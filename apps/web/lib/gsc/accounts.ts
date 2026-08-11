@@ -68,7 +68,12 @@ type GscAccountsDatabase = {
           token_status?: "active" | "invalid";
           token_checked_at?: string | null;
         };
+        // `id` is deliberately ABSENT: nothing in this module may rewrite a primary key, and
+        // leaving it out of the Update shape is what makes that a compile error rather than a
+        // review note. The credential columns ARE here — a re-consent updates them in place.
         Update: {
+          google_account_email?: string;
+          encrypted_refresh_token?: string;
           token_status?: "active" | "invalid";
           token_checked_at?: string | null;
         };
@@ -82,56 +87,119 @@ type GscAccountsDatabase = {
   };
 };
 
-/**
- * Upsert a Google account for `(userId, sub)`. The token is sealed to the ROW'S OWN id
- * (crypto v4's AAD binding), so the id must be known BEFORE it is sealed — which is why
- * this is two steps (look up or mint the id, then seal, then write) rather than one blind
- * upsert: an insert-placeholder-then-update alternative would briefly store a non-token in
- * a not-null secret column, and this avoids that entirely by writing the row exactly once.
- *
- * The id is generated CLIENT-SIDE (`randomUUID()`) rather than left to the column default,
- * because the caller needs it before the row exists (to seal the token against it) — the
- * DB default only fires on rows the database itself originates.
- *
- * A re-consent (existing `(userId, sub)` row, new token) always writes `token_status:
- * "active"` — re-authorizing IS the fix for a dead credential, so this is also how a row
- * previously marked "invalid" (see `markAccountTokenStatus`) comes back to life.
- */
-export async function upsertGscAccount(
-  client: ServiceClient,
-  args: { userId: string; sub: string; email: string; refreshToken: string; keyHex: string },
-): Promise<{ accountId: string }> {
-  const table = client as unknown as SupabaseClient<GscAccountsDatabase>;
+/** What a consent writes, sealed to the row id it is about to occupy. Never carries `id`. */
+type AccountArgs = {
+  userId: string;
+  sub: string;
+  email: string;
+  refreshToken: string;
+  keyHex: string;
+};
+
+/** The `(userId, sub)` row's id, or null when this account has never been connected here. */
+async function findAccountId(
+  table: SupabaseClient<GscAccountsDatabase>,
+  userId: string,
+  sub: string,
+): Promise<string | null> {
   const existing = await table
     .from("gsc_accounts")
     .select("id")
-    .eq("user_id", args.userId)
-    .eq("google_account_sub", args.sub)
+    .eq("user_id", userId)
+    .eq("google_account_sub", sub)
     .maybeSingle();
   if (existing.error) {
     throw new Error(`gsc_accounts lookup failed: ${existing.error.message}`);
   }
-  const accountId = existing.data?.id ?? randomUUID();
+  return existing.data?.id ?? null;
+}
 
-  const sealed = toByteaHex(
-    encryptToken(args.refreshToken, args.keyHex, { userId: args.userId, accountId }),
-  );
-  const { error } = await table.from("gsc_accounts").upsert(
-    {
-      id: accountId,
-      user_id: args.userId,
-      google_account_sub: args.sub,
-      google_account_email: args.email,
-      encrypted_refresh_token: sealed,
-      token_status: "active",
-      token_checked_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id,google_account_sub" },
-  );
+/** The credential columns, with the token sealed to `accountId` (crypto v4's AAD binding). */
+function sealedCredential(accountId: string, args: AccountArgs) {
+  return {
+    google_account_email: args.email,
+    encrypted_refresh_token: toByteaHex(
+      encryptToken(args.refreshToken, args.keyHex, { userId: args.userId, accountId }),
+    ),
+    // A re-consent always writes "active" — re-authorizing IS the fix for a dead credential,
+    // so this is how a row previously marked "invalid" (markAccountTokenStatus) comes back.
+    token_status: "active" as const,
+    token_checked_at: new Date().toISOString(),
+  };
+}
+
+/** Re-seal an EXISTING row in place, tenant-filtered (NEVER #4). The id never moves. */
+async function updateAccountCredential(
+  table: SupabaseClient<GscAccountsDatabase>,
+  accountId: string,
+  args: AccountArgs,
+): Promise<void> {
+  const { error } = await table
+    .from("gsc_accounts")
+    .update(sealedCredential(accountId, args))
+    .eq("id", accountId)
+    .eq("user_id", args.userId);
   if (error) {
     throw new Error(`gsc_accounts upsert failed: ${error.message}`);
   }
-  return { accountId };
+}
+
+/** Postgres unique_violation — the losing side of a first-consent race, not a fault. */
+const UNIQUE_VIOLATION = "23505";
+
+/**
+ * Store a Google account for `(userId, sub)`, returning the id its credential is sealed to.
+ *
+ * The token is sealed to the ROW'S OWN id (crypto v4's AAD binding), so the id must be known
+ * BEFORE it is sealed — which is why this looks the row up first rather than writing blind.
+ * On the INSERT path the id is generated client-side (`randomUUID()`); the column default only
+ * fires for rows the database itself originates, and by then it is too late to seal against.
+ *
+ * INSERT-OR-UPDATE, NOT UPSERT, and that is the fix rather than a style choice. PostgREST
+ * renders an upsert as `ON CONFLICT … DO UPDATE SET <every supplied column>`, and `id` was one
+ * of them — so a concurrent first-consent double-submit (both lookups miss, both mint an id,
+ * one inserts and the other conflicts) rewrote the row's PRIMARY KEY to the loser's uuid. The
+ * winner then held an `accountId` that no longer named any row: a stale id, and an FK error the
+ * moment `gsc_connections.account_id` referenced it. There is no PostgREST option to exclude a
+ * column from the conflict-update set, so the two paths are separated instead — `id` is written
+ * only where a row is being created, and the Update type above has no `id` at all.
+ *
+ * The race still exists; it is now RESOLVED instead of corrupting. The loser sees 23505, re-reads
+ * the row the winner just created, and re-seals against the WINNER'S id — so both callers come
+ * back with the same account id, one row, and a ciphertext that opens under it.
+ */
+export async function upsertGscAccount(
+  client: ServiceClient,
+  args: AccountArgs,
+): Promise<{ accountId: string }> {
+  const table = client as unknown as SupabaseClient<GscAccountsDatabase>;
+  const existingId = await findAccountId(table, args.userId, args.sub);
+  if (existingId !== null) {
+    await updateAccountCredential(table, existingId, args);
+    return { accountId: existingId };
+  }
+
+  const accountId = randomUUID();
+  const { error } = await table.from("gsc_accounts").insert({
+    id: accountId,
+    user_id: args.userId,
+    google_account_sub: args.sub,
+    ...sealedCredential(accountId, args),
+  });
+  if (!error) {
+    return { accountId };
+  }
+  if (error.code !== UNIQUE_VIOLATION) {
+    throw new Error(`gsc_accounts upsert failed: ${error.message}`);
+  }
+  // Lost the race. Whoever won owns the id now, so adopt it and re-seal against it — our own
+  // uuid was never written anywhere and must not be returned.
+  const winnerId = await findAccountId(table, args.userId, args.sub);
+  if (winnerId === null) {
+    throw new Error(`gsc_accounts upsert failed: ${error.message}`);
+  }
+  await updateAccountCredential(table, winnerId, args);
+  return { accountId: winnerId };
 }
 
 /**
