@@ -200,315 +200,164 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — FAZ B (tam tur) + FAZ C (rakip paritesi)
+## 🧪 SIRADAKİ OTURUM — FAZ D (düzeltme dilimi) · Faz B+C 2026-08-10'da BİTTİ
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 
 SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/2026-08-09-cok-site-kampanya.md   ← 1. oturum: 209 hücre, bulgu #35-#45
-→ docs/testing/product-test-log.md               ← bulgu #1-#34 ve triyaj
+→ docs/testing/2026-08-10-faz-b-tam-tur.md      ← 215 hücre, bulgu #52-#62, B1-B6 cevapları
+→ docs/testing/2026-08-10-faz-c-rakip-paritesi.md ← on kontrol × 7 site vaka tablosu
+→ docs/testing/product-test-log.md               ← bulgu #1-#62 ve triyaj
+→ docs/testing/2026-08-09-cok-site-kampanya.md   ← 1. oturum, bulgu #35-#51
 → docs/testing/2026-08-07-tool-tool-analiz.md    ← 19 tool + [A]-[G] temaları
 
-=== ÖNCEKİ OTURUM (2026-08-09) İKİ İŞ YAPTI ===
-1) Ölçüm kampanyasının 1. oturumu: 209 hücre, 1570 kredi, 9 hipotez, bulgu #35-#45.
-2) FAZ A: bulunan kusurlardan BEŞİ düzeltildi ve CANLIYA ÇIKTI (PR #60 #61 #62 #63 #64).
+=== ÖNCEKİ OTURUM (2026-08-10) NE YAPTI ===
+Faz B tam tur: 215 hücre, 2855 kredi, 0 kredi sapması, 12 delta_mismatch (hepsi
+güvenli yönde). Faz C: 261 sayfa, 0 kredi. Yeni bulgu #52-#62. KOD DEĞİŞTİRİLMEDİ —
+yalnız harness (scripts/testing/) ve belgeler. Bu bir ÖLÇÜM oturumuydu.
 
-FAZ A'NIN ÖLÇÜLEN ETKİSİ — aynı gerçek veride, önce ve sonra:
-  dentnotion kanibalize grup      107 → 18 (#38) → 17 (#48), "dent notion" artık DIŞLANIYOR
-  bigcattr   kanibalize grup       75 → 13
-  "failed unexpectedly" dönen tasarlanmış ret   26 hücre → 0
-  connect_gsc "property null"      → dürüst cümle
-  kiracı izolasyonu                14/14 tool, mesajlar BİREBİR aynı, SIZINTI YOK
-
-=== CANLI DURUM — hepsi ÖLÇÜLDÜ ===
-main 9453a1b · açık PR 0 · uzak dal yalnız main · main CI yeşil, deploy başarılı
-Bakiye 8765 · DFS bugünkü harcama $0.00 (operatör SQL ile okudu) · tavan $3/gün
-MCP endpoint canlı · 19 tool
+=== CANLI DURUM — hepsi ÖLÇÜLDÜ 2026-08-10 ===
+Bakiye 5900 (8755 − 2855, canlı get_credit_balance ile birebir)
+MCP endpoint canlı · 19 tool · main CI yeşil
+DFS: 31 canlı çağrının 31'i başarılı, $3 tavanı HİÇ tetiklenmedi
 ŞEF BASH'İ ~/.zshrc'yi SOURCE ETMEZ → her koşuda: `set -a && . ~/.zshrc; set +a`
-SUPABASE_URL / SERVICE_ROLE şefte YOK ve gerekmiyor — operatör SQL'i kendi koşuyor.
+ŞEF `dfs_spend_today_usd()` OKUYAMAZ (Supabase execute_sql izin katmanınca engelli —
+  bu DOĞRU, psql ile dolanma). Rakam gerekiyorsa operatöre SQL'i ver.
+ŞEF `flyctl logs -a seogrep-mcp` OKUYABİLİR — #52'nin kökü böyle bulundu, tahminle değil.
 
-YEDİ PROJE — kanonik id tablosu (list_projects ile ölçüldü):
-  ⚠ www.noraninsaat.com (dcad126a-…) OPERATÖR KARARIYLA TEST LİSTESİNDEN ÇIKARILDI
-    (2026-08-09). Projesi ve crawl'ı duruyor, kampanyada ÇAĞRILMAZ. Not: GSC'de
-    sc-domain:noraninsaat.com siteOwner olarak MEVCUT, yani #36 tek tıkla çalışırdı —
-    çıkarma teknik bir engelden değil, operatör tercihinden.
-  adstark.com.tr       e2785bf7-9963-4b6a-a6d7-aaed7b550abe  crawl ✅ GSC ✅ https://
-  seogrep.com          4e0caff0-3788-42b2-9f70-6023f6ba6894  crawl ✅ GSC ❌ ← KONTROL GRUBU
-  bayder.com.tr        424cda8f-4d35-408c-b780-1178f7d3b6f7  crawl ✅ GSC ⚠ yanlış property
-  rkturizm.com         3e2068e6-9bcc-4089-b166-ba270d0ffcfc  crawl ✅ GSC ⚠ yanlış property
-  www.bigcattr.com     26b95c84-1099-480f-b85f-d06536c11ba1  crawl ⚠ 1 sayfa 4xx · GSC ✅
-  katrenur.com         12533f04-ead8-407e-95ff-9393b8042e82  crawl ✅ GSC ✅ sc-domain
-  dentnotion.com       fa9340e5-52e6-483e-b7f9-1d10121f42d4  crawl ✅ GSC ✅ https://
+SEKİZ PROJE (yedi kampanya + bir fikstür):
+  adstark.com.tr       e2785bf7-9963-4b6a-a6d7-aaed7b550abe  GSC TOKEN ÖLÜ
+  bayder.com.tr        424cda8f-4d35-408c-b780-1178f7d3b6f7  GSC ✅ (dün yeniden onaylandı)
+  rkturizm.com         3e2068e6-9bcc-4089-b166-ba270d0ffcfc  GSC ✅ (dün yeniden onaylandı)
+  www.bigcattr.com     26b95c84-1099-480f-b85f-d06536c11ba1  GSC TOKEN ÖLÜ · crawl WAF'ta
+  katrenur.com         12533f04-ead8-407e-95ff-9393b8042e82  GSC TOKEN ÖLÜ
+  dentnotion.com       fa9340e5-52e6-483e-b7f9-1d10121f42d4  GSC TOKEN ÖLÜ
+  seogrep.com          4e0caff0-3788-42b2-9f70-6023f6ba6894  GSC yok — KONTROL GRUBU
+  example.net          257ad998-00f3-4189-b9a6-b1ca9f6deea5  SOĞUK FİKSTÜR — ASLA CRAWL ETME
+  ⚠ www.noraninsaat.com kampanya DIŞI (operatör kararı); plan.mjs'te active:false
+YABANCI project_id: dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a
 
-GSC'DE OLUP KAMPANYADA OLMAYAN ALTI SİTE (list_sites ile ölçüldü, hepsi siteOwner):
-  https://ventofurniture.com/ · https://www.calitte.com/ · https://www.miningaa.com/
-  https://www.eykom.com/ · https://www.lastiksa.com/ · sc-domain:pufypancake.com
-  Kampanyanın tek gerçek sınırı ÖRNEK SAYISI: #47 (IDN marka filtresi) ölçümle
-  bulunamadı çünkü sekiz sitenin hiçbiri o şekle sahip değildi. Bu altısı yeni ŞEKİL
-  getirebilir (farklı sektör, farklı property tipi, farklı boyut). Kampanyaya katmak
-  OPERATÖR KARARI — sormadan ekleme, ama Faz B'de örnek yetersizliğine takılırsan
-  seçenek olarak hatırla.
+=== ÖNCE İNSAN — İKİ İŞ, İKİSİ DE ŞEFİN YAPAMAYACAĞI ===
 
-YABANCI project_id (kiracı izolasyonu, operatör verdi):
-  dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a   example.com, başka kiracı
+1. ÜÇ SİTEDE GSC YENİDEN ONAYI HÂLÂ GEREKLİ (#52). 2026-08-10'da denendi:
+   adstark ✅ DÜZELDİ, üçü DÜZELMEDİ (hâlâ invalid_grant, Fly log'uyla ölçüldü).
+     bigcattr   https://seogrep.com/api/gsc/connect?project_id=26b95c84-1099-480f-b85f-d06536c11ba1
+     katrenur   https://seogrep.com/api/gsc/connect?project_id=12533f04-ead8-407e-95ff-9393b8042e82
+     dentnotion https://seogrep.com/api/gsc/connect?project_id=fa9340e5-52e6-483e-b7f9-1d10121f42d4
+   TIKLADIKTAN SONRA ÖLÇ, VARSAYMA — ve `connect_gsc`'ye BAKMA, o ayırt edemiyor:
+   dördü de yeniden onaydan sonra "already connected" dedi, üçünün token'ı ölüyken bile.
+   Tek geçerli sınav `pull_gsc_data`'nın gerçekten satır getirmesidir (5 kredi).
+   NOT: onay akışı neden üçte tutmadı BİLİNMİYOR — tek tıklamayla mı yetinildi, yoksa
+   akışın kendisinde bir sorun mu var, ölçülmedi. Faz D dilim 1'in ilk sorusu bu olmalı.
 
-=== ÖNCE İNSAN: İKİ TIKLAMA — Faz B'den ÖNCE ===
-GSC eşleştirmesi YALNIZ OAuth callback'inde koşar; düzeltmeler mevcut bozuk satırları
-GERİYE DÖNÜK ONARMAZ. Bu iki site aksi hâlde Faz B'de yine ölçülemez.
+2. FAZ D'NİN NE OLACAĞINA KARAR VER — aşağıdaki triyaj önerisi imza bekliyor.
 
-  bayder.com.tr   https://seogrep.com/api/gsc/connect?project_id=424cda8f-4d35-408c-b780-1178f7d3b6f7
-  rkturizm.com    https://seogrep.com/api/gsc/connect?project_id=3e2068e6-9bcc-4089-b166-ba270d0ffcfc
+=== FAZ D TRİYAJ ÖNERİSİ (şefin önerisi; insan imzalar) ===
 
-Link bir property'ye İŞARET ETMEZ — yalnız OAuth akışını başlatır; property'yi sonradan
-BİZİM kodumuz seçer. Eski kalıntıya gitmesinin sebebi linkte değil, matchGscProperty'nin
-domain property'yi tercih edip KULLANILABİLİRLİĞİNE bakmamasıydı. #50 bunu kapattı.
+DİLİM 1 — "bağlantı yalan söylemesin" (#52 + #53). En ağır ikisi, tek kök.
+  · Bağlanma anında KİMLİK BİLGİSİNİ de sına (#51'in yarım bıraktığı yarı): tek ucuz
+    çağrı (token yenileme ya da bir satırlık searchAnalytics). #50 property'yi doğruluyor,
+    kimliği kimse doğrulamıyor.
+  · invalid_grant'ı TİPLİ hataya çevir → "Google bağlantın süresi doldu, şu linkten
+    yeniden onayla" — jenerik çökme cümlesi DEĞİL. #35'in tipli-hata deseni hazır.
+  · Üç GSC analiz tool'unun çıktısına PULL TARİHİNİ yaz. Crawl ailesi bunu 14/14
+    yapıyor, GSC ailesi 18/18 yapmıyor. Ölçüldü, tartışmasız.
+  · İKİ SORU (her düzeltmede): bu veriyi başka kim okuyor? Kuralın iki yarısı var mı?
 
-GSC MCP ile ÖLÇÜLDÜ (2026-08-09, list_sites) — #50 sonrası beklenen düşüş:
-  rkturizm.com     https://rkturizm.com/       siteOwner            ← buraya düşmeli
-                   sc-domain:rkturizm.com      siteUnverifiedUser   ← 403'ün sebebi, elenir
-  bayder.com.tr    https://bayder.com.tr/      siteOwner            ← buraya düşmeli
-                   sc-domain:bayder.com.tr     LİSTEDE YOK
+DİLİM 2 — "satın almadan önce doğruyu söyle" (#54 + #59).
+  · Ön-keşif KIRPILDIĞINDA bunu SÖYLE. `loadSitemapSeeds` erken `break` ediyor ve
+    sinyal vermiyor; `estimateSiteSize` kırpık sayıyı tam sayı gibi döndürüyor.
+    En ucuz düzeltme: "truncated" bayrağı + mesajda "en az ~N" dili.
+  · Ön-keşif SIFIR dönerse cümleyi düşürme, SEBEBİ SÖYLE (bigcattr: 20+50 kredi,
+    tek 4xx sayfa, hiçbir yerde "siteni getiremedik" yok).
 
-siteUnverifiedUser ÖLÇÜLDÜ: işçi ve hakem bunu 403'e uyan tek belgelenmiş seviye diye
-ÇIKARIM yoluyla söylemiş ve "canlı sites.list okunmadı" şerhi düşmüştü. Şerh artık kalktı.
+DİLİM 3 — "locale" (#55 + #56 + #57), migration 0021 ile birlikte.
+  · localeHint() compare_competitors'a da uygulanmalı (0/7 uyarı).
+  · THIN_RESULT_ROWS=5 eşiği en çok gereken yerde susturuyor (rkturizm 11 vs 482).
+  · Kalıcı çözüm 0021: projede ülke/dil alanı. H9 gerekçesi artık n=7'de ölçülü.
 
-TIKLANDIKTAN SONRA ÖLÇ, VARSAYMA: `connect_gsc` ile hangi property'ye bağlandığını oku.
-Beklenen `https://…/`. Çıkmazsa DUR ve raporla — #50 tam bu düşüşü sağlamak için yazıldı.
+DİLİM 4 — ucuz dürüstlük: #60 (auth sayfalarına robots-conflict muafiyeti).
 
-GSC MCP (mcp__gsc__list_sites) ARTIK AKTİF: property listesini ve seviyelerini doğrudan
-okuyabilirsin. SeoGrep'in kendi OAuth'u AYRI bir yetkilendirmedir; ikisi aynı Google
-hesabı ise liste birebir örtüşür, değilse örtüşmez — iddia etmeden önce karşılaştır.
+DİLİM 5 — Faz C'den ürün kararı. RAKAMLA: alt 482 görsel/80 sayfa · OG 147 sayfa ·
+  title↔h1 27 · hız-vekili 39 · yetim 23 · kırık link 74 URL→5 kusur · duplicate 6 grup ·
+  hreflang 11/0 hata · yönlendirme zinciri 0 · zorunlu şema alanı 1.
+  En çok iş çıkaran üçü (alt · OG · title↔h1) ürünün ZATEN çektiği HTML'den ek veri
+  olmadan hesaplanır. En az çıkaran üçü (hreflang · zincir · şema alanı) bu portföyde
+  neredeyse hiç vaka üretmiyor. Kırık link ve yetim sayfa ürünün BENDEN İYİ yapabileceği
+  iki kontrol — tam crawl grafiği onda. KAPSAM GENİŞLETMEK FİYAT SORUSU DOĞURUR (NEVER#6).
 
-=== FAZ A — NE DÜZELTİLDİ ===
+=== AÇIK KALANLAR (bilerek) ===
+#46 fragment birleştirme — B3 ölçülemedi, PAYDA YOK (7 sitenin decay çıktısında
+    fragment'li satır çıkmadı). Mekanizma kodda duruyor.
+#47 IDN marka filtresi — portföyde IDN site YOK, ölçüm üretemez.
+#49 alan adı etiketi ≠ marka — ÖN-KAYITLI EŞİK KARŞILANMADI (1 site). Kural YAZILMADI.
+    ⚠ Eşik oynatma cazibesi gerçekti ve reddedildi: bayder'in `"bağımsız yaşam derneği"`
+    vakası aynı sınıfın ikinci üyesi gibi okunabilir (bayder = o adın kısaltması), ama
+    #49 ön-kayıtta "ülke kodu soyma" diye tanımlanmıştı. Sınıfı veriyi gördükten sonra
+    genişletip kendi eşiğini geçirmek yasak. KISALTMA VAKASI YENİ HİPOTEZ olarak
+    kaydedildi; kendi turunda ölçülür.
+#44 kapı yük altında tekrarlanamıyor — bu oturumda YİNE düştü ve YİNE ölçüldü:
+    izole 3/3 PASS, 362/379/388 ms (5000 ms sınırına karşı 13× marj), tam paralel
+    kapıda >5000 ms. Dalı SUÇLAMADAN önce: diff yalnız scripts/ + docs/ içinde, ikisi
+    de pnpm workspace'lerinin (apps/* · packages/*) DIŞINDA → turbo'nun test görevi
+    onları göremez. Yani dal nedenli olamaz, yapısal olarak.
+#45 gece yarısı penceresi (00:00–00:30 UTC) — dokunulmadı.
+#37/#59 bigcattr WAF — çözüm SeoGrep çıkış IP'sinin müşteri WAF'ında izinli listeye
+    alınması; müşteri teması insan işi.
+#22/#23 adstark HÂLÂ ele geçirilmiş — audit_onpage'in 1. bulgu sayfası
+    /spielbank-bad-reichenhall-kompletter-guide. Operatörde, ürün bulgusu değil.
 
-#35 · tasarlanmış ret çökme gibi gösteriliyordu · 8 TOOL · PR #60
-  Mimari kilit: ücret almamak THROW gerektirir (withCredits yalnız throw'da release eder),
-  anlamlı mesaj RETURN gerektirir. Çözüm: tipli PreconditionNotMetError + registry catch'inde
-  genel daldan ÖNCE tek dal, log YOK. Dal TİPE bakar, metne ASLA.
-  Kapsam: audit_onpage/tech/schema · find_quick_wins/detect_cannibalization/
-  analyze_content_decay · generate_report (2 cümle) · pull_gsc_data (3 cümle).
+=== HARNESS — DEĞİŞTİ, OKU ===
+scripts/testing/tool-sweep.mjs (+ plan.mjs) — self-test 7/7
+  · SITES'a `active` ve `crawl` alanları eklendi; HER selektör kökünden `active` kapılı,
+    `only()` dahil. noraninsaat active:false (satır SİLİNMEDİ — silmek yokluğunun
+    sebebini de silerdi).
+  · coldfixture (example.net) `crawl:false` → hiçbir ücretli hücre ona değmez.
+  · K3 yedi siteye; S6 sınır hücreleri S1 turundan SONRA (gün biterse ekstralarda bitsin).
+  · MUTASYONLA DOĞRULANDI: active:false→true 20 hücre/380 kredi ekliyor;
+    coldfixture crawl:false→true 6 ücretli hücre ekliyor + 4 soğuk hücreyi yok ediyor.
+scripts/testing/parity-probe.mjs + seo-checks.mjs (YENİ) — self-test 18/18
+  · On parite kontrolü, saf predikat, fikstür-pinli. CWV ÖLÇMEZ ve ölçtüğünü iddia etmez.
+  · Kendi kapısı iki GERÇEK hata yakaladı: attr() sondaki boolean niteliği görmüyordu
+    (defer'li script render-bloklayan sayılıyordu), stratifiedSample küçük sitemap'i
+    sıfıra yuvarlıyordu (1. oturumun kör örneklemesinin kazayla yeniden inşası).
 
-#36 · www. projeleri sc-domain property'sine eşleşemiyordu · PR #61
-  GÜVENLİK SINIRI: yalnız TEK literal `www.` soyulur. blog.example.com ASLA
-  sc-domain:example.com'a bağlanamaz. Aday kümesi YAPIYLA {saklanan host, tek-www karşılığı}.
+KAPI BUNLARI GÖRMÜYOR: verify.sh scripts/ dizinini hiç çalıştırmaz. Tek otomatik
+kontrol her iki harness'ın kendi --self-test'idir.
 
-#38 · kanibalizasyon: iki kelimeli marka + URL fragment'leri + Türkçe ı · PR #62
-  Fragment'ler birleşince gösterim/tık TOPLANIR, pozisyon GÖSTERİM-AĞIRLIKLI ortalama,
-  ctr yeniden hesaplanır — eşikler yerinde kalır.
+=== ÖLÇÜM DİSİPLİNİ — bu oturumda İŞE YARAYAN üç şey ===
+· Kendi ölçümümde ÜÇ hata yakalandı ve üçü de rapordan ÖNCE düzeltildi: (1) S4
+  karşılaştırmasını uuid maskelemeden yaptım, 8 tool "farklı" göründü — maskeleyince
+  14/14 aynı çıktı; (2) attr() hatası; (3) bigcattr'ın "6 duplicate grubu" tamamen
+  örnekleme artefaktıydı (çakışan iki alt-sitemap aynı URL'i iki kez verdi), gerçek 0.
+· MEKANİZMAYI KODDAN OKU: #54'ün 6,6 katı tahminle değil `loadSitemapSeeds`'in
+  `if (childTimeout <= 0) break;` satırıyla açıklandı. #56'nın eşiği THIN_RESULT_ROWS=5
+  diye okundu, "muhtemelen bir eşik vardır" denmedi.
+· SUNUCU LOG'U VAR VE ŞEF OKUYABİLİR: #52'nin sebebi `flyctl logs` ile bulundu.
+  1. oturum "sunucu log'u gerekiyor, ölçülemedi" yazmıştı — o sınır artık yok.
 
-#48 · sitelink koşulu pinlenmemiş marka SERP'ini kaçırıyordu · PR #63
-  branded = isBrandedQuery && (isBrandOnlyQuery || looksLikeSitelinks)
-  KABUL EDİLEN BEDEL, TESTLE PİNLİ: ı→i katlaması Türkçe minimal çiftleri birleştirir
-  (tıp/tip). tip.com çıplak "tıp" sorgusunu bastırır. Hakem takası yargıladı; reddedilen
-  alternatif ölçülmüş ÇOĞUNLUK vakayı (yıldız/yildiz.com) geri kırardı.
-
-#50 · sorgulanamayan property'ye "bağlandı" deniyordu · PR #64
-  ⚠ ŞEFİN İŞ EMRİ YANLIŞ PREMİS TAŞIYORDU. Şef "siteRestrictedUser sorgulayamaz" yazdı;
-  Google dokümantasyonu bunun YANLIŞ olduğunu söylüyor — siteOwner, siteFullUser VE
-  siteRestrictedUser üçü de Performance sorgulayabiliyor; sorgulayamayan tek seviye
-  siteUnverifiedUser. İşçi çürüttü, hakem BAĞIMSIZ doğruladı (ikisi de izin tablosunun
-  HAM HTML'ini ayrıştırdı — onay işaretleri görsel, metne düzleşince kayboluyor).
-  Şefin premisi uygulansaydı, Google'ın hizmet vereceği bağlantılar reddedilirdi ve
-  kullanıcı YENİDEN ONAYLA DÜZELTEMEZDİ.
-  packages/core permissionLevel'ı ZATEN okuyup ATIYORDU.
-
-=== FAZ A'DA BİLEREK DÜZELTİLMEYENLER ===
-
-#49 · alan adı etiketi ≠ marka (bigcat vs bigcattr) — 🟡 AÇIK
-  bigcattr'ın 1. sırası hâlâ "bigcat"; token alan adından geliyor. Çözüm "ülke kodunu soy"
-  olurdu: TAHMİN, yönü daha çok bastırma, elde TEK vaka. Ders 13 gereği kural yazılmadı.
-  ÖN-KAYITLI EŞİK (veriyi görmeden sabit): Faz B'de sekiz sitede ≥2 vaka → kural yazmaya
-  değer; 1'de kalırsa bigcattr'ın kendi şekli. VERİYİ GÖRDÜKTEN SONRA EŞİK OYNATMA.
-
-#46 · fragment birleştirme YALNIZ kanibalizasyonda — 🟡 AÇIK
-  find_quick_wins ve analyze_content_decay aynı ham satırları okur, /a ile /a#x'i hâlâ
-  ayrı sayfa sayar. Decay'de somut risk: anchor satırları pencereler arası gelip gittiği
-  için HİÇ VAR OLMAMIŞ bir sayfanın %100 düştüğü raporlanabilir. Mekanizmadan türetildi,
-  CANLI VERİYLE ÖLÇÜLMEDİ.
-
-#47 · IDN alan adlarında marka filtresi ÖLÜ — 🟡 AÇIK
-  brandTokenOf host'u new URL() ile okur → punycode: yıldız.com → token `xnyldzlzac`.
-  ÖLÇÜM BUNU BULAMAZDI — sekiz sitenin hiçbiri IDN değil. Kod okunarak bulundu.
-
-#42 whats_next var olmayan projede isError kurmuyor — 🟢
-#44 kapı yük altında tekrarlanabilir değil (crawl.test.ts T8, 5 sn) — 🟡
-#45 reaper.db.test.ts 00:00–00:30 UTC arasında DETERMİNİSTİK kırmızı — 🟡
-    Test spend_day'i `now − 30dk`'dan türetir, reaper tek UTC gününe sorgular.
-    Bu pencerede koşan CI'da dalı SUÇLAMA. Beş veri noktasıyla kanıtlandı.
-
-=== #51 · BAĞLANTI DOĞRULAMASI TEK TARAFLI — 🟡 AÇIK (şiddeti ÖLÇÜMLE DÜŞÜRÜLDÜ) ===
-2026-08-09, canlıda ölçüldü. #50 sonrası bayder ve rkturizm doğru property'ye düştü
-(https://…, siteOwner). Ama uçtan uca test ikisini AYIRDI:
-
-  rkturizm  pull_gsc_data → "Pulled 90 days of Search Console data."  ✅ 5 kredi
-  bayder    pull_gsc_data → "failed unexpectedly, ref 0b97bae3"       ❌ 0 kredi
-            Fly log'u: Google token endpoint failed (400): invalid_grant
-
-Yani bayder "bağlandı" diyor, DOĞRU property'yi gösteriyor, ve saklı refresh token'ı ÖLÜ.
-Kullanıcının gördüğü: yeşil bağlantı + her çağrıda çökme. Bu, #50'nin sildiği
-"bağlı görünüp ölü olmak" sınıfının BAŞKA BİR BİÇİMİ — ve #50 onu kapsamıyor,
-çünkü #50 property'yi doğruluyor, KİMLİK BİLGİSİNİ doğrulamıyor.
-
-KÖK: bağlanma anında iki şey saklanıyor (property + token) ama YALNIZ BİRİ sınanıyor.
-  · property → permissionLevel'a bakılıyor (#50)
-  · refresh token → HİÇ denenmiyor
-Tek bir ucuz çağrı (örn. token yenileme ya da bir satırlık searchAnalytics) bağlanma
-anında bunu yakalar ve kullanıcı ilk ücretli çağrıda değil, o anda öğrenir.
-
-İKİNCİ, DAHA SESSİZ KUSUR — lib/gsc/store.ts:102-112:
-  const patch = { gsc_property: write.gscProperty };            // HER ZAMAN yazılır
-  if (write.encryptedTokenHex !== null) { patch.encrypted_refresh_token = ... }  // KOŞULLU
-Yani token yazılmasa bile property güncelleniyor. buildConsentUrl `prompt: "consent"`
-kullandığı için Google normalde her onayda taze token döndürür ve bu yol nadirdir —
-ama var, ve tam olarak "property doğru, token ölü" durumunu üretir. Ölçülmedi:
-bayder'ın token'ının neden geçersiz olduğu (iptal mi, yarım kalan onay mı) DIŞARIDAN
-belirlenemedi; sunucu yalnız invalid_grant görüyor.
-
-ÇÖZÜLDÜ VE ŞİDDET DÜŞTÜ (aynı gün, ölçümle). Operatör bayder'a bir kez daha
-bağlandı; SONRASINDA ÖLÇÜLDÜ: connect_gsc → https://bayder.com.tr/,
-pull_gsc_data → "Pulled 90 days of Search Console data." ✅ 5 kredi.
-
-Yani ŞEFİN İLK ÇERÇEVESİ YANLIŞTI: "yeniden bağlanma ölü token'ı iyileştiremiyor"
-diye yazmıştım; ÖLÇÜM İYİLEŞTİRDİĞİNİ gösterdi. buildConsentUrl'ün prompt=consent
-parametresi işini yapıyor ve taze token geliyor. Bulgu 🔴 değil 🟡.
-
-GERİYE KALAN, HÂLÂ GERÇEK BULGU: bağlanma anında property doğrulanıyor (#50) ama
-KİMLİK BİLGİSİ hiç denenmiyor. Bayat/ölü bir token ancak İLK ÜCRETLİ ÇAĞRIDA
-anlaşılıyor, ve o an kullanıcıya "failed unexpectedly, quote reference X" dönüyor.
-Tek ucuz bir çağrı (token yenileme ya da bir satırlık searchAnalytics) bunu bağlanma
-anında yakalar. İş emri ADAYI — #50'nin yarım bıraktığı yarı budur.
-
-FAZ B'DE: bu bir BLOKER DEĞİL, yedi sitenin GSC'si çalışıyor. Kalan iş, bağlanma
-anında kimlik doğrulaması eklemenin değip değmeyeceğine karar vermek.
-
-=== FAZ B — TAM TUR (8 site × 19 tool) ===
-
-NEDEN TEKRAR: 1. oturumun matrisi tool'ları çoğunlukla MUTLU YOLDA ölçtü. #35'in sınıfını
-"iki paylaşılan builder" sanmamın sebebi buydu — generate_report BOŞ projede hiç
-çağrılmamıştı, çünkü K4 yalnız iki DOLU projede koşulmuştu. Sekiz tool'u grep çıkardı,
-ölçüm değil.
-
-FAZ B'NİN KURALI: her tool ÜÇ durumda çağrılır —
-  (1) dolu proje / mutlu yol
-  (2) ÖNKOŞULSUZ proje (crawl yok / GSC yok / pull yok)   ← 1. oturumda EKSİKTİ
-  (3) hatalı girdi (bozuk uuid, olmayan proje, çelişkili argüman)
-
-HARNESS HAZIR: scripts/testing/tool-sweep.mjs (PR #59, hakem PASS)
-  node scripts/testing/tool-sweep.mjs --dry-run --layer=K0 --out=<REPO DIŞI YOL>
-  node scripts/testing/tool-sweep.mjs --layer=K1 --max-credits=3000 --out=<...>
-  --resume çökme sonrası tekrar para harcatmaz · her hücrede ÖLÇÜLEN bakiye deltası
-  --out repo İÇİNDE bir yolu REDDEDER (ham kayıt müşteri URL'i + GSC sorgusu taşır)
-  KAPI BUNU GÖRMÜYOR: verify.sh scripts/ dizinini hiç çalıştırmaz; tek otomatik kontrol
-  harness'ın kendi --self-test'i (yedi iddiası mutasyonla kırmızıya döndürüldü).
-
-ZATEN ÖLÇÜLDÜ, TEKRARLAMA:
-  · S4 kiracı izolasyonu — 14 tool, yabancı ve olmayan proje mesajları BİREBİR aynı,
-    0 kredi, SIZINTI YOK. #50 property eşleştirmesine dokunduğu için BİR KEZ regresyon
-    koşusu anlamlı; tam tekrar gereksiz.
-  · H1 çoklu-h1 hack sinyali — aday kural, %0,40 yanlış-pozitif / 250 sayfa
-  · H2 ortak-sonek — kural yazılmayacak, 1 sitede kaldı
-
-ÖN-KAYITLI SORULAR — veriyi görmeden yazıldı, sonra OYNATMA:
-  B1 · #48 sonrası dentnotion'da hangi gruplar kaldı? (17 grup, 1. sıra artık
-       "dent notion menderes" = marka + İLÇE ADI. Bu AYRI bir yanlış-pozitif sınıfı mı?
-       Sekiz sitede marka+konum deseni kaç kez çıkıyor? ≥2 → iş emri, 1 → şekil.)
-  B2 · #49 kaç sitede? ≥2 → kural, 1 → bigcattr'ın şekli
-  B3 · #46 decay çıktısında fragment'li satırların payı? >%10 → iş emri
-  B4 · #50 sonrası bayder+rkturizm https:// property'sine bağlandı mı, VERİ GELİYOR MU?
-  B5 · bigcattr crawl'ı hâlâ 1 sayfa/4xx mi? (#37 — Fly veri-merkezi IP'si WAF'ta engelli;
-       UA hipotezi ÇÜRÜTÜLDÜ, beş UA da ev IP'sinden 200 alıyor)
-  B6 · #35 sonrası hiçbir tool "failed unexpectedly" dönmüyor mu? (26 → 0 kanıtı)
-
-BÜTÇE: bakiye 8765, tam matris ≈1435 kredi, --max-credits=3000.
-DFS: günlük $3, bugün $0. Premium katmanı GÜNE YAY.
-HARCAMAYI OKUMAK: operatöre `select dfs_spend_today_usd();` sordur.
-/status RAKAMI BASMIYOR — yalnız RPC'nin varlığını bildirir. Eski handoff'un
-"status'tan oku" talimatı UYGULANAMAZ; guardrails/dfs-budget.sh şefte SKIP (exit 97) verir.
-
-=== FAZ C — RAKİP PARİTESİ (operatör onayladı) ===
-
-SORU: piyasa standardı bir SEO denetiminde beklenen ama BİZDE OLMAYAN kontroller neler, ve
-SEKİZ GERÇEK SİTEDE her biri KAÇ VAKA üretirdi?
-
-audit_onpage bugün 13 kural çalıştırıyor (rules/onpage.ts): missing/too_long/too_short/
-duplicate × title+meta, missing/multiple h1, missing/elsewhere canonical, thin_content.
-
-ÖLÇÜLECEK EKSİKLER — her biri için 8 sitede VAKA SAYISI (kural değil, sayı):
-  · görsel `alt` eksikliği          · kırık iç linkler
-  · yetim sayfalar                  · title ↔ h1 uyumsuzluğu
-  · Open Graph eksikleri            · hreflang
-  · sayfa hızı / Core Web Vitals    · zorunlu şema alanları (headline/datePublished/author)
-  · yönlendirme ZİNCİRİ ve döngüsü (#6'nın kalıcı çözümü)
-  · duplicate content (bigcattr iki URL formunu da 200 veriyor — sekizde tek)
-
-YÖNTEM: ürünün tool'larıyla DEĞİL, sayfaları doğrudan çekerek ölç. H1/H2'de bu işe yaradı —
-hipotezler SİTELERİN özelliğiydi, ürünün değil, ve 8 sitede 290 sayfa SIFIR krediye ölçüldü.
-K1'in 70 kredi/site faturası ancak "ürün var olanı yüzeye çıkarıyor mu" sorusu için gerekli.
-
-ÇIKTI: "şu kontrol olsaydı bu portföyde N bulgu üretirdi" tablosu.
-FİYATA DOKUNMA (NEVER#6). Kapsam genişletmek fiyat sorusu doğurur; hangi kontrolün
-eklenmeye değdiğine rakama bakarak İNSAN karar verir.
-
-=== BEŞ KEZ TEKRARLAYAN ŞEKİL — Faz B'de bunu ARA ===
-  #35  doğru mesajlar yazılıydı, TESİSAT kaybediyordu (sınıf 2 değil 8 tool'du)
-  #36  renderer doğruydu, ÇAĞIRAN handler ham null basıyordu — renderer'ın kendi testi
-       ürün bozukken 6/6 YEŞİL kaldı
-  #46  fragment birleştirme burada doğru, AYNI VERİYİ OKUYAN iki tool'da yok
-  #48  kuralın bir yarısı düzeldi, ÖTEKİ YARISI (sitelink koşulu) engelliyordu
-  #50  packages/core permissionLevel'ı ZATEN okuyup ATIYORDU
-
-  İKİ SORU, her düzeltmede sorulacak:
-    1. BU VERİYİ BAŞKA KİM OKUYOR?
-    2. Kuralın İKİ YARISI var mı? Bir yarısını düzeltmek onu çalışır hâle getirmiyor.
-
-=== ÖLÇÜM DİSİPLİNİ — her biri bu oturumda BİR KEZ ihlal edildi ve yakalandı ===
-· Cache'li yeşil kapı ÖLÇÜM DEĞİL. `TURBO_FORCE=1`, `Cached: 0` raporla.
-  (İlk iki commit cache'li bir "VERIFY: PASS" üzerine atıldı; --force ile aynı ağaç
-   KIRMIZIYDI — #44 böyle bulundu.)
-· `cmd | tail` sonrası $? tail'in kodudur. Arka plan bildirimindeki "exit code 0" da
-  son komutun kodudur, kapının değil. Çıktıyı DOSYADAN oku.
-· Ortalamaya karışan bir timeout bulgu gibi okunur ama bulgu değildir (katrenur "2207 ms
-  ile en yavaş" yazılmıştı; ortalama ölü bir URL'in 15 sn'lik zaman aşımını içeriyordu).
-· Örneklem KÖR olabilir: post-sitemap'ten örneklemek page-sitemap'teki deseni YAPISAL
-  olarak göremez. Stratified örnekle.
-· Otomatik eşleştirici anlamsal yargı gerektiren yerde yanlış bayrak kaldırır
-  (bigcattr↔BigCat, bayder↔"Bağımsız Yaşam Derneği"). Ham veriyi OKU.
-· Dal-korelasyonu görünen şey SAAT-korelasyonu olabilir (#45).
-· İŞ EMRİ YAZAN DA ÖLÇMEK ZORUNDA: #50'nin premisi ŞEFİN hatasıydı. Onu yakalayan tek şey
-  iş emrine konan "tahmin etme, doğrula; doğrulayamıyorsan kullanılamaz say" cümlesiydi.
-
-=== KESİN KURALLAR ===
+=== KESİN KURALLAR (değişmedi) ===
 · İDDİA ETMEDEN ÖNCE ÖLÇ. Hangi kapıyı koştuğunu ve NEYİ ölçtüğünü söyle.
-· Kendi testine güvenme: geçtiğinde MUTASYON uygula; kırmızıya dönmüyorsa hiçbir şey
-  ölçmüyor. Bu oturumda 80+ mutasyon koşuldu; hayatta kalan üçün ikisi kanıtlanabilir
-  eşdeğerdi, biri GERÇEK boşluktu ve kapatıldı.
+· Cache'li yeşil kapı ÖLÇÜM DEĞİL — `TURBO_FORCE=1`, `Cached: 0` raporla.
+· `cmd | tail` sonrası $? tail'in kodudur; arka plan bildirimindeki exit code da son
+  komutunkidir. Çıktıyı DOSYADAN oku.
+· Tek canlı örnekten kural üretilmez. Ön-kayıtlı eşikler bunun içindir ve VERİYİ
+  GÖRDÜKTEN SONRA OYNATILMAZ (bu oturumda #49'da tam olarak buna uyuldu).
 · Eşleşmeyen replace SESSİZDİR; her programatik düzenlemeden sonra grep'le teyit et.
-· İddianın kaynağı KOD ise KODA bak; özet belge kanıt DEĞİLDİR.
-· Tek canlı örnekten kural üretilmez. Ön-kayıtlı eşikler bunun içindir.
-· NEVER#2 ledger append-only · NEVER#4 tenant filtresiz sorgu yok · NEVER#5 CI'da paralı
-  API yok · NEVER#6 fiyat insan onayı · NEVER#9 sabit/konvansiyon uydurma
-· NEVER#8 testi geçirmek için testi değiştirme — AMA aşılan bir kuralı pinleyen testi
-  TAŞIMAK ihlal değildir; adıyla raporla ve hakeme yargılat (#48'de tam bu oldu, hakem
-  "legitimate supersession, not weakening" dedi ve taşınan testlerin hâlâ ısırdığını
-  mutasyonla kanıtladı).
+· NEVER#2 ledger append-only · NEVER#4 tenant filtresiz sorgu yok · NEVER#5 CI'da
+  paralı API yok · NEVER#6 fiyat insan onayı · NEVER#8 testi geçirmek için testi
+  değiştirme · NEVER#9 uydurma
 · NEVER#10 tek commit >200 satır böl · task diff >400 satır → hakem her durumda Fable
 · main'e doğrudan push YOK · merge sonrası DELETE BRANCH · dal geride ise
-  `gh pr update-branch` (branch protection zorunlu kılıyor; her merge sonrası bir sonraki
-  PR BEHIND'a düşer ve CI yeniden koşar)
-· Paralel işçi AYNI ağaçta koşmaz. Agent tool'unun isolation:"worktree" seçeneği BU
-  MAKİNEDE ÇALIŞMIYOR (hook düşüyor) → `git worktree add` ile ELLE kur.
-  Eşzamanlı ağır derleme #44'ün sahte kırmızısını üretir → işçilere paket-scoped kapı
-  (`turbo --filter=@pseo/mcp`) verdir, repo-geneli verify.sh YALNIZ seri anlarda ŞEF koşar.
-· Prod DB mutation / secret / dış servis = insana sor. Şefin Supabase execute_sql'i izin
-  katmanınca ENGELLİ ve bu DOĞRU — psql ile DOLANMA, operatöre SQL'i ver.
+  `gh pr update-branch`
+· Paralel işçi AYNI ağaçta koşmaz; repo-geneli verify.sh YALNIZ seri anlarda.
+· Prod DB mutation / secret / dış servis = insana sor.
 
-=== BİTTİ TANIMI ===
-Faz B: B1-B6'nın her birine ya CEVAP ya "ölçülemedi + neden" yazıldı; 19 tool ×
-(dolu · önkoşulsuz · hatalı girdi) tamamlandı; hiçbirinde hata mesajı için ücret
-alınmadığı ÖLÇÜLDÜ; harcanan kredi ve DFS $ ölçümle raporlandı.
-Faz C: on kontrol için 8 sitede vaka sayısı tablosu çıktı; hiçbiri kural olarak
-yazılmadı, hiçbiri fiyata dokunmadı.
+=== BİTTİ TANIMI (Faz D) ===
+İmzalanan dilimlerin her biri: iş emri + taze hakem + guardrails/verify.sh + CANLI
+doğrulama (deploy geçti KANIT SAYILMAZ). #52 için canlı doğrulama, dört sitenin
+yeniden onayı yapıldıktan sonra `pull_gsc_data`'nın gerçekten veri getirmesidir.
 ```
 
 ## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)

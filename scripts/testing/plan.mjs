@@ -30,19 +30,31 @@ import { TOOL_COSTS } from "../../apps/mcp/src/credits/costs.ts";
  * field, so a site whose owner has not clicked is never charged for a Search Console tool.
  */
 export const SITES = Object.freeze([
-  { key: "adstark", domain: "adstark.com.tr", tld: ".com.tr", www: false, gsc: "connected", note: "set up; fresh crawl + GSC — the notebook's 34 findings all come from here; property https://adstark.com.tr/" },
-  { key: "bayder", domain: "bayder.com.tr", tld: ".com.tr", www: false, gsc: "connected", note: "1 sitemap; property sc-domain:bayder.com.tr" },
-  { key: "rkturizm", domain: "rkturizm.com", tld: ".com", www: false, gsc: "connected", note: "1 sitemap; the H9 probe — Turkish business on a .com; property sc-domain:rkturizm.com" },
-  { key: "bigcattr", domain: "www.bigcattr.com", tld: ".com", www: true, gsc: "connected", note: "2 sitemaps; brand carries 'tr', TLD does not; property https://www.bigcattr.com/" },
-  // MEASURED 2026-08-09: connect_gsc reports "already connected ... property null" — the OAuth
-  // round-trip completed but no property was resolved, and the raw null reaches the user as text.
-  // Deliberately NOT "connected": K2's paid tools must not be bought against a connection with no
-  // property until that is understood. K2 will run its S2 (cold) cells here instead, which is the
-  // honest question anyway — what do the GSC tools do with a half-made connection.
-  { key: "noraninsaat", domain: "www.noraninsaat.com", tld: ".com", www: true, gsc: "connected_no_property", note: "1 sitemap; connect_gsc says 'property null' — a connection row with no property" },
-  { key: "katrenur", domain: "katrenur.com", tld: ".com", www: false, gsc: "connected", note: "1 sitemap; property sc-domain:katrenur.com" },
-  { key: "dentnotion", domain: "dentnotion.com", tld: ".com", www: false, gsc: "connected", note: "5 sitemaps; property https://dentnotion.com/" },
-  { key: "seogrep", domain: "seogrep.com", tld: ".com", www: false, gsc: "none", note: "set up; 18-day-old crawl; no GSC — the control group" },
+  { key: "adstark", domain: "adstark.com.tr", tld: ".com.tr", www: false, gsc: "connected", active: true, crawl: true, note: "set up; fresh crawl + GSC — the notebook's 34 findings all come from here; property https://adstark.com.tr/ (re-measured 2026-08-10)" },
+  // bayder + rkturizm: PR #64 (#50) made matchGscProperty read permissionLevel, and the operator
+  // re-approved both. MEASURED 2026-08-10 via connect_gsc, not assumed: each now reports the
+  // https:// property, not the sc-domain one it used to claim. The old notes are kept in the
+  // campaign document, not here — a stale note in a selector table is how a run measures the
+  // wrong thing and reports it confidently.
+  { key: "bayder", domain: "bayder.com.tr", tld: ".com.tr", www: false, gsc: "connected", active: true, crawl: true, note: "1 sitemap; property https://bayder.com.tr/ (was sc-domain: before #50)" },
+  { key: "rkturizm", domain: "rkturizm.com", tld: ".com", www: false, gsc: "connected", active: true, crawl: true, note: "1 sitemap; the H9 probe — Turkish business on a .com; property https://rkturizm.com/ (was sc-domain: before #50)" },
+  { key: "bigcattr", domain: "www.bigcattr.com", tld: ".com", www: true, gsc: "connected", active: true, crawl: true, note: "2 sitemaps; brand carries 'tr', TLD does not; property https://www.bigcattr.com/" },
+  // OPERATOR DECISION 2026-08-09: out of the campaign. The project and its crawl still exist and
+  // GSC still lists sc-domain:noraninsaat.com as siteOwner — the removal is a preference, not a
+  // technical block. `active:false` keeps the row (deleting it would erase why it is absent) and
+  // every selector below filters on it, so no cell can be generated for it by accident.
+  { key: "noraninsaat", domain: "www.noraninsaat.com", tld: ".com", www: true, gsc: "connected", active: false, crawl: false, note: "REMOVED FROM CAMPAIGN by the operator 2026-08-09; project and crawl untouched" },
+  { key: "katrenur", domain: "katrenur.com", tld: ".com", www: false, gsc: "connected", active: true, crawl: true, note: "1 sitemap; property sc-domain:katrenur.com — the only sc-domain property left in the campaign" },
+  { key: "dentnotion", domain: "dentnotion.com", tld: ".com", www: false, gsc: "connected", active: true, crawl: true, note: "5 sitemaps; property https://dentnotion.com/; largest GSC dataset in the portfolio" },
+  { key: "seogrep", domain: "seogrep.com", tld: ".com", www: false, gsc: "none", active: true, crawl: true, note: "set up; crawl but no GSC — the control group, and the only site where 'GSC cold' is a REAL site" },
+  // THE COLD FIXTURE — added 2026-08-10 (operator approved) for Faz B state (2).
+  // MEASURED FIRST: whats_next on all seven campaign sites reports a crawl AND (bar seogrep) GSC
+  // data, so "no crawl yet" is not observable on any of them. That is precisely the hole that let
+  // finding #35 survive the 1st session: generate_report was never called on an empty project
+  // because K4 only ran on two full ones, and eight affected tools had to be found by grep.
+  // example.net is IANA-reserved, can never be a real customer, and `crawl:false` keeps every
+  // charging cell away from it — the project stays empty on purpose, forever.
+  { key: "coldfixture", domain: "example.net", tld: ".net", www: false, gsc: "none", active: true, crawl: false, note: "EMPTY ON PURPOSE: no crawl, no GSC, never charged. The only place the cold branch of the audit trio, generate_report and the GSC family can be measured" },
 ]);
 
 /**
@@ -118,20 +130,33 @@ export function brandOf(domain) {
   return String(domain).replace(/^www\./, "").split(".")[0];
 }
 
-const allSites = () => true;
-const gscConnected = (site) => site.gsc === "connected";
-const gscNotConnected = (site) => site.gsc !== "connected";
-const only = (...keys) => (site) => keys.includes(site.key);
+/**
+ * Every selector is `active`-gated at its root, so a site the operator has taken out of the
+ * campaign cannot re-enter through any single forgotten predicate. `only()` is gated too: naming
+ * a key explicitly must not be a way around the removal.
+ */
+const allSites = (site) => site.active;
+const campaignSites = (site) => site.active && site.crawl;
+const gscConnected = (site) => site.active && site.gsc === "connected";
+const gscNotConnected = (site) => site.active && site.gsc !== "connected";
+const only = (...keys) => (site) => site.active && keys.includes(site.key);
 
 /**
- * Sites where "cold" is actually measurable. adstark and seogrep already carry crawls, so an
- * audit there DELIVERS and COMMITS — it would spend (30+15+5) x 2 = 100 credits to produce six
+ * Sites where "cold" is actually measurable — today exactly one, and that is the point.
+ *
+ * MEASURED 2026-08-10 (whats_next, all seven): every campaign site now reports a crawl, and six
+ * of the seven report Search Console data too. The 1st session's version of this predicate
+ * (`!["adstark","seogrep"]`) was correct on the day it was written and is now a trap: it would
+ * select six sites that all deliver and COMMIT, spending (30+15+5) x 6 = 300 credits to produce
  * `delta_mismatch: true` rows that mean nothing. That flag exists to say "the user paid for an
- * error message"; six known-false entries in it hide the one real occurrence. The question those
- * cells would have answered — does a re-audit of an unchanged crawl charge again — is bought
- * explicitly and cheaply by the K1 S5 audit_onpage cell instead.
+ * error message"; known-false entries in it hide the one real occurrence.
+ *
+ * So the cold branch moved to a project that is empty ON PURPOSE and stays that way (`crawl:
+ * false` keeps every charging cell off it). "Nothing has run here yet" is a product state a real
+ * customer meets on their first minute, and until now it has never been measured on the tools
+ * that greet them.
  */
-const neverCrawled = (site) => !["adstark", "seogrep"].includes(site.key);
+const neverCrawled = (site) => site.active && !site.crawl;
 
 /**
  * The one site every argument-invariant cell runs on. Every call in this sweep authenticates
@@ -142,11 +167,18 @@ const neverCrawled = (site) => !["adstark", "seogrep"].includes(site.key);
 const INVARIANT_SITE = only("adstark");
 
 /**
- * K3 default sites — chosen for SHAPE, not for results, per the campaign: one .com.tr and one
- * .com (H8d's ccTLD warning), and rkturizm is the H9 probe. The campaign says the real K3
- * selection is made from K0's size/ccTLD data, so `--site=` overrides this on the day.
+ * K3 sites. The 1st session bought the premium tools on two sites only, chosen for shape; Faz B
+ * asks the different question — what do the four most expensive tools do across the WHOLE
+ * portfolio — so the tour runs on all seven (operator approved 2026-08-10).
+ *
+ * THE REAL CEILING HERE IS NOT CREDITS, IT IS VENDOR DOLLARS. Seven sites x four tools = 28 live
+ * DataForSEO calls, and the pre-call gate reserves at deliberate over-estimates (~$0.95/site)
+ * against a $3.00/day cap that is a signed human decision. The gate is fail-closed: at the cap it
+ * REFUSES rather than overspends, and that refusal is a recorded outcome like any other. The S6
+ * boundary cells are declared AFTER the S1 tour on purpose — if the day runs out, it must run out
+ * on the extras, not on the tour the phase exists to buy.
  */
-const K3_DEFAULT = only("adstark", "rkturizm");
+const K3_DEFAULT = campaignSites;
 
 /**
  * The static half of the matrix (S1, S2, S5, S6). The S3/S4 half is generated from ID_TOOLS.
@@ -174,11 +206,11 @@ export const PLAN = Object.freeze([
   { layer: "K1", scenario: "S2", tool: "audit_onpage", sites: neverCrawled, needs: ["projectId"], note: "cold: no crawl to audit. Must THROW so withCredits releases (audit-shared.ts) — expected delta 0", args: (c) => ({ project_id: c.projectId }) },
   { layer: "K1", scenario: "S2", tool: "audit_tech", sites: neverCrawled, needs: ["projectId"], args: (c) => ({ project_id: c.projectId }) },
   { layer: "K1", scenario: "S2", tool: "audit_schema", sites: neverCrawled, needs: ["projectId"], args: (c) => ({ project_id: c.projectId }) },
-  { layer: "K1", scenario: "S1", tool: "crawl_site", sites: allSites, needs: ["projectId"], note: "async: the 20 credits are reserved by the WORKER after enqueue, so the delta only lands once the job is terminal — the runner polls before reading the balance", args: (c) => ({ project_id: c.projectId }) },
-  { layer: "K1", scenario: "S1", tool: "get_job_status", sites: allSites, needs: ["jobId"], note: "the terminal read of the crawl this run just enqueued", args: (c) => ({ job_id: c.jobId }) },
-  { layer: "K1", scenario: "S1", tool: "audit_onpage", sites: allSites, needs: ["projectId"], note: "H1 multiple-h1 rate · H2 shared title suffix", args: (c) => ({ project_id: c.projectId }) },
-  { layer: "K1", scenario: "S1", tool: "audit_tech", sites: allSites, needs: ["projectId"], note: "H5: compare 'Redirects surfaced' against curl-counted 3xx", args: (c) => ({ project_id: c.projectId }) },
-  { layer: "K1", scenario: "S1", tool: "audit_schema", sites: allSites, needs: ["projectId"], args: (c) => ({ project_id: c.projectId }) },
+  { layer: "K1", scenario: "S1", tool: "crawl_site", sites: campaignSites, needs: ["projectId"], note: "async: the 20 credits are reserved by the WORKER after enqueue, so the delta only lands once the job is terminal — the runner polls before reading the balance", args: (c) => ({ project_id: c.projectId }) },
+  { layer: "K1", scenario: "S1", tool: "get_job_status", sites: campaignSites, needs: ["jobId"], note: "the terminal read of the crawl this run just enqueued", args: (c) => ({ job_id: c.jobId }) },
+  { layer: "K1", scenario: "S1", tool: "audit_onpage", sites: campaignSites, needs: ["projectId"], note: "H1 multiple-h1 rate · H2 shared title suffix", args: (c) => ({ project_id: c.projectId }) },
+  { layer: "K1", scenario: "S1", tool: "audit_tech", sites: campaignSites, needs: ["projectId"], note: "H5: compare 'Redirects surfaced' against curl-counted 3xx", args: (c) => ({ project_id: c.projectId }) },
+  { layer: "K1", scenario: "S1", tool: "audit_schema", sites: campaignSites, needs: ["projectId"], args: (c) => ({ project_id: c.projectId }) },
   { layer: "K1", scenario: "S6a", tool: "crawl_site", sites: only("bigcattr"), needs: ["projectId"], note: "max_urls minimum, on a www site — the two S6 inputs at once. The MAXIMUM (100) is the default and every S1 crawl already exercises it, so it is not re-bought here", args: (c) => ({ project_id: c.projectId, max_urls: 1 }) },
   { layer: "K1", scenario: "S5", tool: "crawl_site", sites: only("adstark"), needs: ["projectId"], note: "does a second identical crawl charge again", args: (c) => ({ project_id: c.projectId }) },
   { layer: "K1", scenario: "S5", tool: "audit_onpage", sites: only("adstark", "seogrep"), needs: ["projectId"], note: "a re-audit of an unchanged crawl: same output, second charge?", args: (c) => ({ project_id: c.projectId }) },
@@ -206,7 +238,13 @@ export const PLAN = Object.freeze([
   { layer: "K3", scenario: "S6c", tool: "ranked_keywords", sites: only("rkturizm"), needs: ["projectId"], note: "H9: the same .com Turkish site at tr/2792 instead of the en/2840 default. This single pair decides whether migration 0021 is required or can be deferred", args: (c) => ({ project_id: c.projectId, language_code: "tr", location_code: 2792 }) },
 
   // ---- K4 — the report. Two sites, to see whether findings #8/#9/#10 breed again.
-  { layer: "K4", scenario: "S1", tool: "generate_report", sites: only("adstark", "seogrep"), needs: ["projectId"], args: (c) => ({ project_id: c.projectId }) },
+  // The cold cell runs FIRST and is the one this layer exists to buy. Finding #35's eight-tool
+  // blast radius was found by grep, not by measurement, precisely because the 1st session only
+  // ever called generate_report on two FULL projects — the empty-project branch, which is what a
+  // new customer meets, had never been executed once. It must throw so withCredits releases:
+  // expected delta 0, and a nonzero delta here is the finding.
+  { layer: "K4", scenario: "S2", tool: "generate_report", sites: neverCrawled, needs: ["projectId"], note: "cold: nothing to report on. The branch #35 was never measured against", args: (c) => ({ project_id: c.projectId }) },
+  { layer: "K4", scenario: "S1", tool: "generate_report", sites: campaignSites, needs: ["projectId"], note: "the customer-facing artefact, on all seven — #9 (wrong audience) and #10 (bare 'N pages skipped') are counted from these", args: (c) => ({ project_id: c.projectId }) },
 ]);
 
 /**
@@ -242,7 +280,11 @@ export function generatedIdCells() {
       {
         ...base,
         scenario: "S3d",
-        sites: K3_DEFAULT,
+        // Explicitly two sites, NOT K3_DEFAULT. K3_DEFAULT widened to all seven for Faz B because
+        // the premium tools' OUTPUT varies per site; a rejection's output does not. The reasoning
+        // above still holds, so it is pinned rather than left to follow a constant it only ever
+        // shared by coincidence.
+        sites: only("adstark", "rkturizm"),
         needs: ["projectId"],
         note: "PR #56: both supplied must be REJECTED, not silently resolved — and must burn 0 credits. Run on one .com.tr and one .com so the rejection is shown not to be domain-shaped",
         args: (c) => ({ [entry.idArg]: c.projectId, [entry.targetArg]: c.site.domain }),
