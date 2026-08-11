@@ -49,7 +49,7 @@ export default function Page() {
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
       <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Effective 9 August 2026 — applies to everyone who uses SeoGrep.
+        Effective 11 August 2026 — applies to everyone who uses SeoGrep.
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Privacy Policy</h1>
       <p className="mt-4 text-base text-ink/60">

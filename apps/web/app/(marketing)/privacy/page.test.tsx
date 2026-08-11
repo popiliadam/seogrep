@@ -33,17 +33,23 @@ describe("privacy page", () => {
     // 28 July -> 4 August 2026 with the M-25 rewrite of "Your rights" and "Data retention";
     // 4 -> 5 August 2026 when the waitlist came out of "What we collect" and "How we use it";
     // 5 -> 7 August 2026 when Turnstile went live (Cloudflare joined the processor list) and
-    // DataForSEO stopped being conditional.
+    // DataForSEO stopped being conditional;
+    // 7 -> 9 August 2026 when the GSC consent started asking for openid+email, so the policy had
+    // to disclose that we receive and store the connected Google account's email address;
+    // 9 -> 11 August 2026 for a different reason than all of the above: the wording did not
+    // change at all. 9 August was the date the paragraph was WRITTEN, and the branch carrying it
+    // did not merge that day. This date must equal the day the policy actually goes live, so it
+    // was moved on the way out — see the frozen-date test below for why it is never computed.
     // The page's own "Changes to this policy" section promises this date moves when the policy is
     // updated, so leaving it would have made the policy breach its own rule on the way out.
-    expect(text).toContain("Effective 9 August 2026");
+    expect(text).toContain("Effective 11 August 2026");
   });
 
   it("freezes the effective date — a computed date would silently move with the clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2027-03-09T12:00:00Z"));
     render(<Page />);
-    expect(screen.getByText(/Effective 9 August 2026/)).toBeDefined();
+    expect(screen.getByText(/Effective 11 August 2026/)).toBeDefined();
   });
 
   it("does not promise erasure of the append-only credit ledger", () => {
