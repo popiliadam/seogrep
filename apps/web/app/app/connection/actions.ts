@@ -385,6 +385,18 @@ export async function disconnectAccount(accountId: string): Promise<GscRevocatio
  *
  * The count is a query like any other, so it carries the tenant filter (NEVER #4). A foreign
  * account id therefore counts zero rather than reporting another user's project count.
+ *
+ * IT DOES NOT CHECK OWNERSHIP, unlike its sibling {@link disconnectAccount}, and that is a
+ * dependency on a caller rather than an oversight — so it is written down. The only production
+ * caller is `AccountDisconnectPanel`, which is handed its account list by /app/connection's
+ * `listConnectedAccounts`; that read is filtered on the session user, so every id reaching here
+ * through the UI is one the page established the caller owns (pinned in page.test.tsx, "the
+ * panel is handed the caller's OWN accounts only").
+ *
+ * What a DIRECTLY-invoked action call could get out of it is bounded and known: the count is
+ * tenant-filtered, so a foreign id yields a genuine 0 and no other tenant's data — the sentence
+ * is then merely uninformative rather than a leak, and the disconnect it precedes is refused
+ * outright by {@link disconnectAccount}'s (id, user_id) lookup. Both facts are pinned below.
  */
 export async function describeDisconnect(accountId: string): Promise<string> {
   const userId = await requireUserId();

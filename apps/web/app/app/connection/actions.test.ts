@@ -994,6 +994,45 @@ describe("two-level disconnect", () => {
       expect(gscTables).toEqual([]);
     });
 
+    /**
+     * The UUID_RE branch existed in code with no spec on it. It is the same opaque refusal
+     * `disconnectAccount` gives, and it must come BEFORE any query: a malformed id is not a
+     * lookup that happens to miss, and spending a statement on it would make the refusal
+     * distinguishable by timing from a well-formed id that simply is not there.
+     */
+    it("refuses a malformed account id opaquely, before any query", async () => {
+      signedIn("user-1");
+      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
+
+      await expect(describeDisconnect("not-a-uuid")).rejects.toThrow(/account not found/i);
+      // Same sentence a real-but-missing account gets from disconnectAccount — nothing about
+      // the id's fate leaks, and the count that would have been shown is never computed.
+      expect(gscTables).toEqual([]);
+    });
+
+    /**
+     * NO OWNERSHIP CHECK, BOUNDED CONSEQUENCE. Unlike `disconnectAccount`, this function does
+     * not verify the account belongs to the caller — it relies on /app/connection handing it
+     * ids from a tenant-filtered list (pinned in page.test.tsx). What that costs if the action
+     * is invoked directly is exactly this: an uninformative sentence, never another tenant's
+     * numbers. The foreign account here has FIVE mapped projects; the caller must be told zero.
+     *
+     * MUTATION TARGET: drop `.eq("user_id", userId)` from the count and this spec goes red —
+     * the caller reads back a stranger's project count.
+     */
+    it("a foreign account counts ZERO, never the other tenant's real number", async () => {
+      signedIn("user-1");
+      dbRows = {
+        gsc_accounts: [accountRow("user-2", sealed(REFRESH_TOKEN, "user-2"), OTHER_ACCOUNT)],
+        gsc_connections: connectionsFor("user-2", 5, OTHER_ACCOUNT),
+      };
+
+      const text = await describeDisconnect(OTHER_ACCOUNT);
+
+      expect(text).toContain("0 projects");
+      expect(text).not.toContain("5 project");
+    });
+
     // MOVED from lib/gsc/store.test.ts ("throws a clear error when the lookup fails"), which
     // pinned that a failed gsc_connections read is never mistaken for "no row". Here it is
     // load-bearing in a way it was not there: `count ?? 0` turns a NULL count into the number

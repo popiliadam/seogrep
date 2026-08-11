@@ -13,7 +13,7 @@ let connectionRows: {
   account_id: string | null;
   gsc_property: string | null;
 }[] = [];
-let accountRows: { id: string; google_account_email: string }[] = [];
+let accountRows: { id: string; google_account_email: string; user_id?: string }[] = [];
 /** What `sites.list` answers for one account — or the failure it answers with instead. */
 let sitesByAccount: Record<string, { siteUrl: string; permissionLevel: string }[] | Error> = {};
 
@@ -31,20 +31,38 @@ function queryBuilder(table: string, columns: string) {
   const wanted = columns.split(",").map((column) => column.trim());
   const rows: Record<string, unknown>[] =
     table === "projects" ? projectRows : table === "gsc_accounts" ? accountRows : connectionRows;
-  const result = {
-    data: rows.map((row) => Object.fromEntries(wanted.map((column) => [column, row[column]]))),
-    error: null,
-  };
+  const filters: { column: string; value: unknown }[] = [];
+  // It also APPLIES the filters, not merely records them — otherwise "the page hands the
+  // account panel only the caller's accounts" would be green no matter what the page queried,
+  // and a dropped `.eq("user_id", …)` would sail through. A filter is only applied to rows
+  // that CARRY that column, so the fixtures above (which mostly omit `user_id`, since the
+  // tenant scoping is asserted structurally by the NEVER #4 spec) stay unaffected; a fixture
+  // that opts in by declaring `user_id` gets a filter that genuinely bites.
+  function visible() {
+    return rows.filter((row) =>
+      filters.every((filter) => !(filter.column in row) || row[filter.column] === filter.value),
+    );
+  }
+  function result() {
+    return {
+      data: visible().map((row) => Object.fromEntries(wanted.map((column) => [column, row[column]]))),
+      error: null,
+    };
+  }
   const builder = {
     eq(column: string, value: unknown) {
       eqCalls.push({ table, column, value });
+      filters.push({ column, value });
       return builder;
     },
     order() {
-      return Promise.resolve(result);
+      return Promise.resolve(result());
     },
-    then(onFulfilled?: (value: typeof result) => unknown, onRejected?: (reason: unknown) => unknown) {
-      return Promise.resolve(result).then(onFulfilled, onRejected);
+    then(
+      onFulfilled?: (value: ReturnType<typeof result>) => unknown,
+      onRejected?: (reason: unknown) => unknown,
+    ) {
+      return Promise.resolve(result()).then(onFulfilled, onRejected);
     },
   };
   return builder;
@@ -881,6 +899,32 @@ describe("ConnectionPage — the account panel", () => {
     // called with are these — read back under the session user's filter.
     expect(panel.getAttribute("data-has-describe")).toBe("true");
     expect(panel.getAttribute("data-has-disconnect")).toBe("true");
+  });
+
+  /**
+   * WHERE describeDisconnect's OWNERSHIP COMES FROM. The action itself does no ownership check
+   * — a foreign id counts zero rather than being refused — so the guarantee that it is only
+   * ever asked about the caller's OWN accounts is made HERE, by the tenant-filtered read that
+   * produces the panel's list (`AccountDisconnectPanel` calls it with `account.id` and nothing
+   * else). That is a real dependency between two files, and it was recorded in prose only.
+   *
+   * MUTATION TARGET: drop `.eq("user_id", userId)` from `listConnectedAccounts` and this spec
+   * goes red — the other tenant's account appears in the panel, and would then be an id the UI
+   * hands to describeDisconnect.
+   */
+  it("the panel is handed the caller's OWN accounts only — the ids describeDisconnect trusts", async () => {
+    listKeys.mockResolvedValue([]);
+    // These fixtures declare `user_id`, so the fake applies the page's filter for real.
+    accountRows = [
+      { ...account(), user_id: "user-1" },
+      { ...account(SECOND_ACCOUNT_ID, "stranger@example.com"), user_id: "user-2" },
+    ];
+    await renderPage();
+
+    expect(
+      JSON.parse(screen.getByTestId("account-panel").getAttribute("data-accounts") ?? "[]"),
+    ).toEqual([{ id: ACCOUNT_ID, email: "owner@example.com" }]);
+    expect(document.body.textContent).not.toContain("stranger@example.com");
   });
 
   it("is mounted with no accounts at all, so a disconnect notice has somewhere to live", async () => {
