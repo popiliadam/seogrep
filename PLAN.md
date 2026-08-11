@@ -230,11 +230,16 @@ KAPININ ÖLÇMEDİĞİ (ders 7 — söylenmezse yeşil yalan olur):
   UNIT lane'ini içermiyordu. Bu oturumda kapandı; ders aşağıda.
 
 === İNSAN KUYRUĞU — SIRA ÖNEMLİ, kod bunları yapamaz ===
-1. DAL SIRASI: bu dal `test/faz-b-c-full-tour` üstünde duruyor. ÖLÇÜM PR'I ÖNCE MERGE.
-   (Kontrol et: `git merge-base main HEAD` plan tabanı 0c6f335'i kapsıyor mu?)
-2. PRIVACY TARİHİ — MERGE BLOKERİ: apps/web/app/(marketing)/privacy/page.tsx
-   "Effective 9 August 2026" diyor; GERÇEK deploy tarihine çekilmeli. page.test.tsx:39
-   ve :46 literali PİNLİYOR — İKİSİ BİRLİKTE güncellenir (hesaplanan tarih kasten yok).
+1. ✅ BİTTİ — DAL SIRASI. Ölçüm PR'ı [#69] merge edildi (main @ 389eb5e, CI yeşil), dalı
+   silindi, [#70]'in base'i elle `main`'e çevrildi (GitHub yalnız base dal SİLİNİNCE otomatik
+   retarget ediyor; diff 8445'te sabit kaldı = ölçüm işi sızmadı).
+2. ✅ BİTTİ — PRIVACY TARİHİ (operatör kararı: 11 Ağustos). commit 97101f3, üç yer BİRLİKTE:
+   page.tsx:52 + page.test.tsx'in iki literali. Metin değişmedi; 9 Ağustos paragrafın YAZILDIĞI
+   gündü. Geçmiş yorumuna 7->9 (openid+email ile Google hesap e-postasının ifşası) ve 9->11
+   gerekçeleri eklendi — 7->9 hiç yazılmamıştı. Mutasyon: 12 Ağustos yap -> iki pin de KIRMIZI.
+   ⚠️ ZAMAN KISITI: tarih 11 Ağustos'a SABİT. Deploy UTC gece yarısını geçerse tarih YİNE yanlış
+   olur ve aynı üç yer yeniden taşınmalıdır. (Bu, hesaplanan-tarih yasağının bilinçli bedeli:
+   kayan tarih SESSİZCE yanlış olur, sabit tarih GÜRÜLTÜLÜ yanlış olur ve kapıda yakalanır.)
 3. 0021 CLOUD-APPLY SIRASI — KRİTİK: migration uygulanır uygulanmaz ŞU AN CANLIDA olan
    kod kırılır (düşen kolonu okuyor); uygulanmadan da yeni kod koşamaz.
    SIRA: 0021 apply -> hemen mcp deploy -> web deploy.
@@ -252,13 +257,32 @@ KAPININ ÖLÇMEDİĞİ (ders 7 — söylenmezse yeşil yalan olur):
 6. İki arşiv audit dokümanı (docs/audits/2026-07-20-*, 2026-07-28-hostile-*) bu dalla
    main geçmişine giriyor. İçerik sorunlu değil, haberin olsun.
 
-=== SONRAKİ OTURUMA BIRAKILAN İKİ TEK SATIRLIK İŞ (park edildi, gerekçesi ledger'da) ===
-· page.tsx:256-258 retainedMappingFor, BAŞARISIZ sites.list okumasını (sites: null) boş
-  listeleme sayıyor -> "No connected Google account lists it right now" diyor, oysa
-  gerçek "okunamadı". C1'in aynı sınıfı: ölçülmeyeni söylemek. Bloklamıyor (sayfa ayrıca
-  hesap düzeyinde okuma-hatası uyarısı gösteriyor) ama düzeltilmeli.
-· property-picker.tsx:199-202 "It is selected below" prop'tan hesaplanıyor; kullanıcı
-  dropdown'da başka bir şey seçince de aynı şeyi iddia etmeye devam ediyor. Kozmetik.
+=== PARK EDİLENLER KAPANDI (operatör: "bende kalan her şeyi bitir") ===
+Park edilmiş + ertelenmiş 15 kalemin tamamı kapatıldı: 97101f3..0630681, 6 commit.
+Fable hakem Approved (0 Critical, 1 Important) + Important düzeltildi + dar kapsamlı re-review.
+Kapanan başlıklar: iki DÜRÜSTLÜK kusuru (sayfa okumadığı listelemenin "boş" olduğunu iddia
+ediyordu · connect route yorumu YANLIŞ bir Next.js iddiası taşıyordu) · iki GİZLİ hata
+(ON CONFLICT'in PK'yı yeniden yazabilmesi — artık `Update` tipinde `id` yok, yani kusuru geri
+getirmek DERLEME HATASI · env geri yüklemesinin literal "undefined" yazabilmesi) · iki eksik
+KAPSAM (describeDisconnect'in UUID dalı; sahiplik kaynağının pinlenmesi) · yedi kozmetik.
+ÜÇÜNCÜ "yanlış sebeple yeşil" vakası burada yakalandı ve KAPATILDI: page.test.tsx'in sahte
+PostgREST kurucusu filtreleri kaydediyor ama UYGULAMIYORDU — kiracı pini her koşulda yeşil
+olurdu. Uzatıldı; hakem `.eq("user_id")`'ı silip iki spec'i kırmızıya döndürdü ve
+stranger@example.com'un panele sızdığını GÖRDÜ.
+Hakemin Important'ı da kapandı (0630681): insert/update ayrımı, tek upsert'te olmayan bir
+pencere açmıştı — satır arada silinirse PostgREST 0 satır eşler ve HATA DÖNMEZ, kullanıcı
+arkasında hiçbir şey olmayan bir "bağlandı" görürdü. THROW seçildi, insert değil: disconnect
+satırı silmeden ÖNCE Google'a revoke atıyor (actions.ts:352 -> :354-358, hakem kodda doğruladı),
+yani kaybolan satır "revoke zaten atıldı" demek ve token'ın sağ kalıp kalmadığı tam da bu kodun
+bilemeyeceği şey. Saklayıp "bağlandı" demek ders 9'un yasakladığı sınanmamış iddia olurdu.
+
+KALAN ÜÇ MINOR (bilinçli, bloklamıyor — gerekçeleri ledger'da):
+· B2 yarış mutasyonu ZAMANLAMAYA bağlı ("bir kez ısırdı", "her zaman ısırır" değil) — ileride
+  yeşil bir yeniden koşu, düzeltmenin geri alındığı sanılmasın diye kayıtlı.
+· retainedMappingFor permissionLevel'a bakmadan eşleştiği için retained not DISABLED bir
+  seçeneği işaret edebilir; "Select it again below" o durumda UI'da imkânsız (önceden de vardı).
+· Sahte kurucunun filtrelemesi OPT-IN: user_id taşımayan yeni bir fixture sessizce filtrenin
+  dışında kalır ve kiracı iddiası yine boşa düşer. Yorumda yazılı.
 
 === BU OTURUMUN DERS ADAYLARI (insan imzası bekliyor — imzasız kural olmaz) ===
 1. Bir task'ın kapısı, o task'ın DEĞDİĞİ her paketin KENDİ test script'ini içerir.
