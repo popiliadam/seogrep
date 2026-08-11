@@ -33,17 +33,23 @@ describe("privacy page", () => {
     // 28 July -> 4 August 2026 with the M-25 rewrite of "Your rights" and "Data retention";
     // 4 -> 5 August 2026 when the waitlist came out of "What we collect" and "How we use it";
     // 5 -> 7 August 2026 when Turnstile went live (Cloudflare joined the processor list) and
-    // DataForSEO stopped being conditional.
+    // DataForSEO stopped being conditional;
+    // 7 -> 9 August 2026 when the GSC consent started asking for openid+email, so the policy had
+    // to disclose that we receive and store the connected Google account's email address;
+    // 9 -> 11 August 2026 for a different reason than all of the above: the wording did not
+    // change at all. 9 August was the date the paragraph was WRITTEN, and the branch carrying it
+    // did not merge that day. This date must equal the day the policy actually goes live, so it
+    // was moved on the way out — see the frozen-date test below for why it is never computed.
     // The page's own "Changes to this policy" section promises this date moves when the policy is
     // updated, so leaving it would have made the policy breach its own rule on the way out.
-    expect(text).toContain("Effective 7 August 2026");
+    expect(text).toContain("Effective 11 August 2026");
   });
 
   it("freezes the effective date — a computed date would silently move with the clock", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2027-03-09T12:00:00Z"));
     render(<Page />);
-    expect(screen.getByText(/Effective 7 August 2026/)).toBeDefined();
+    expect(screen.getByText(/Effective 11 August 2026/)).toBeDefined();
   });
 
   it("does not promise erasure of the append-only credit ledger", () => {
@@ -107,8 +113,10 @@ describe("privacy page", () => {
   });
 
   it("describes the Search Console connection as read-only and encrypted at rest", () => {
-    // GSC_READONLY_SCOPE (packages/core/src/gsc/client.ts:23) + the sealed bytea token in
-    // apps/web/lib/gsc/store.ts — the policy must claim neither more nor less.
+    // GSC_READONLY_SCOPE (packages/core/src/gsc/client.ts:23) + the sealed bytea token that
+    // apps/web/lib/gsc/accounts.ts writes to gsc_accounts.encrypted_refresh_token (migration
+    // 0021 moved the credential there from gsc_connections, and only service_role can read
+    // the column) — the policy must claim neither more nor less.
     const text = renderedText();
     expect(text).toMatch(/refresh token encrypted at rest/i);
     expect(text).toMatch(/read-only access only/i);

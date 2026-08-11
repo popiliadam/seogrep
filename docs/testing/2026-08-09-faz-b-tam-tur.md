@@ -1,6 +1,6 @@
 # Faz B — tam tur: 19 tool × 7 site × 3 durum
 
-> 2026-08-10 · Kapsam: PLAN.md 🧪 bloğu · Harness `scripts/testing/tool-sweep.mjs`
+> 2026-08-09 · Kapsam: PLAN.md 🧪 bloğu · Harness `scripts/testing/tool-sweep.mjs`
 > Ham JSONL **repo DIŞINDA** (müşteri URL'leri + GSC sorguları taşır).
 > Bu belge KANIT'tır; kural yazmaz, iş emri çıkarmaz, fiyata dokunmaz (NEVER#6).
 

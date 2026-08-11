@@ -2,15 +2,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.fn();
-const maybeSingle = vi.fn();
+const from = vi.fn();
 
-// The connect route reads the project with the CALLER's own client (RLS scopes it to the
-// owner). One fake serves both auth.getUser and the projects read.
+/**
+ * The connect route no longer reads any table (migration 0021): consent is a Google
+ * ACCOUNT's, so there is no project to own and no ownership gate to run. `from` is kept as
+ * a SPY rather than removed — the specs below assert it is never called, which is what
+ * makes a re-introduced project read a test failure instead of a quiet regression.
+ */
 vi.mock("../../../../lib/supabase/server", () => ({
-  createClient: async () => ({
-    auth: { getUser },
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle }) }) }),
-  }),
+  createClient: async () => ({ auth: { getUser }, from }),
 }));
 
 import { GET } from "./route";
@@ -36,10 +37,9 @@ describe("GET /api/gsc/connect", () => {
     vi.clearAllMocks();
   });
 
-  it("redirects an owner to Google's consent screen with read-only scope + signed state", async () => {
+  it("redirects a signed-in user to Google's consent screen with the requested scopes + signed state", async () => {
     stubEnv();
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
 
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     expect(response.status).toBe(307);
@@ -47,11 +47,57 @@ describe("GET /api/gsc/connect", () => {
     expect(location.origin + location.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
     expect(location.searchParams.get("client_id")).toBe("cid.apps.googleusercontent.com");
     expect(location.searchParams.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
+    // Read-only Search Console + the two identity scopes that make Google name the account
+    // (the scope string itself is pinned in lib/gsc/oauth.test.ts).
     expect(location.searchParams.get("scope")).toBe(
-      "https://www.googleapis.com/auth/webmasters.readonly",
+      "https://www.googleapis.com/auth/webmasters.readonly openid email",
     );
     expect(location.searchParams.get("access_type")).toBe("offline");
     expect(location.searchParams.get("state")).toBeTruthy();
+  });
+
+  /**
+   * SPEC RE-AIM (migration 0021), replacing three project-ownership specs this route can no
+   * longer honour — "treats another tenant's / missing project as unknown (RLS returns no
+   * row), not Google" and "rejects a non-uuid project_id as unknown without touching the DB",
+   * plus the ownership half of the first spec above (its `maybeSingle` setup). They pinned a
+   * gate whose SUBJECT is gone: consent now grants access to a Google account, not to one of
+   * the caller's projects, so this route has nothing to check ownership OF.
+   *
+   * What replaces them is the rule that actually holds: `project_id` is inert. The link on
+   * the connection page still carries one until the picker lands, and a value that decides
+   * nothing must not be validated as though it did — including a hostile one.
+   */
+  it.each([
+    ["a well-formed foreign project id", `?project_id=${PROJECT_ID}`],
+    ["a non-uuid project id", "?project_id=not-a-uuid"],
+    ["an injection-shaped value", "?project_id=%27%20or%201%3D1--"],
+    ["no project id at all", ""],
+  ])("ignores the project_id query parameter entirely (%s)", async (_label, query) => {
+    stubEnv();
+    signedIn();
+
+    const response = await GET(new Request(`${BASE}${query}`));
+
+    const location = new URL(response.headers.get("location")!);
+    expect(location.origin + location.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(location.href).not.toContain("not-a-uuid");
+    expect(location.href).not.toContain(PROJECT_ID);
+    expect(from).not.toHaveBeenCalled(); // no table is read on this path at all
+  });
+
+  it("signs a state carrying only the user — no project axis survives the round-trip", async () => {
+    stubEnv();
+    signedIn();
+
+    const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
+    const location = new URL(response.headers.get("location")!);
+    const encoded = location.searchParams.get("state")!.split(".")[0]!;
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as
+      Record<string, unknown>;
+
+    expect(payload.user_id).toBe("user-1");
+    expect(Object.keys(payload).sort()).toEqual(["exp", "nonce", "user_id"]);
   });
 
   /** The `gsc_oauth` cookie the response sets, parsed back into {nonce, verifier}. */
@@ -73,8 +119,6 @@ describe("GET /api/gsc/connect", () => {
   it("commits to an S256 challenge that is the digest of the verifier it stored", async () => {
     stubEnv();
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
-
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     const location = new URL(response.headers.get("location")!);
     const { flow } = issuedFlow(response);
@@ -91,8 +135,6 @@ describe("GET /api/gsc/connect", () => {
   it("keeps the verifier in an httpOnly, SameSite=Lax cookie scoped to the GSC routes", async () => {
     stubEnv();
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
-
     const { setCookie } = issuedFlow(await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`)));
 
     expect(setCookie).toMatch(/HttpOnly/i); // script-invisible: XSS cannot lift the verifier
@@ -106,8 +148,6 @@ describe("GET /api/gsc/connect", () => {
     stubEnv();
     vi.stubEnv("WEB_BASE_URL", "http://localhost:3000");
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
-
     const { setCookie } = issuedFlow(await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`)));
 
     expect(setCookie).not.toMatch(/Secure/i);
@@ -119,30 +159,14 @@ describe("GET /api/gsc/connect", () => {
     getUser.mockResolvedValue({ data: { user: null } });
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     expect(response.headers.get("location")).toBe("https://app.example.com/login");
-    expect(maybeSingle).not.toHaveBeenCalled();
-  });
-
-  it("treats another tenant's / missing project as unknown (RLS returns no row), not Google", async () => {
-    stubEnv();
-    signedIn();
-    maybeSingle.mockResolvedValue({ data: null, error: null }); // RLS-scoped read finds nothing
-    const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
-    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
-  });
-
-  it("rejects a non-uuid project_id as unknown without touching the DB", async () => {
-    stubEnv();
-    signedIn();
-    const response = await GET(new Request(`${BASE}?project_id=not-a-uuid`));
-    expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=unknown_project");
-    expect(maybeSingle).not.toHaveBeenCalled();
+    expect(from).not.toHaveBeenCalled();
   });
 
   it("fails closed to an error when GOOGLE_CLIENT_ID is unset (negative env, never to Google)", async () => {
     stubEnv();
     vi.stubEnv("GOOGLE_CLIENT_ID", "");
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
+    vi.spyOn(console, "error").mockImplementation(() => {}); // the refusal is logged; keep the run quiet
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
   });
@@ -151,7 +175,7 @@ describe("GET /api/gsc/connect", () => {
     stubEnv();
     vi.stubEnv("TOKEN_ENCRYPTION_KEY", "");
     signedIn();
-    maybeSingle.mockResolvedValue({ data: { id: PROJECT_ID }, error: null });
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await GET(new Request(`${BASE}?project_id=${PROJECT_ID}`));
     expect(response.headers.get("location")).toBe("https://app.example.com/app?gsc=error");
   });
@@ -160,14 +184,17 @@ describe("GET /api/gsc/connect", () => {
     // Models a proxy forwarding an attacker-controlled Host into request.url: url.origin is the
     // attacker's, yet the internal 302 must carry the canonical origin, never the spoofed one.
     stubEnv();
+    // The project-not-found redirect this spec used to drive is gone with the ownership gate,
+    // so it drives the internal redirect that remains: a misconfigured deploy.
+    vi.stubEnv("GOOGLE_CLIENT_ID", "");
     signedIn();
-    maybeSingle.mockResolvedValue({ data: null, error: null }); // -> /app?gsc=unknown_project
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const spoofed = new Request(`https://attacker.example/api/gsc/connect?project_id=${PROJECT_ID}`, {
       headers: { host: "attacker.example", "x-forwarded-host": "attacker.example" },
     });
     const location = new URL((await GET(spoofed)).headers.get("location")!);
     expect(location.origin).toBe("https://app.example.com");
-    expect(location.href).toBe("https://app.example.com/app?gsc=unknown_project");
+    expect(location.href).toBe("https://app.example.com/app?gsc=error");
   });
 });
 
@@ -190,7 +217,7 @@ describe("GET /api/gsc/connect — unusable WEB_BASE_URL fails CLOSED (T4)", () 
   async function expectConfigFailure(response: Response): Promise<void> {
     expect(response.status).toBe(500);
     expect(response.headers.get("location")).toBeNull(); // no redirect target AT ALL
-    expect(maybeSingle).not.toHaveBeenCalled(); // no DB round-trip on a broken deploy
+    expect(from).not.toHaveBeenCalled(); // no DB round-trip on a broken deploy
   }
 
   it("returns a 500 config error (no redirect) when WEB_BASE_URL is set but empty", async () => {

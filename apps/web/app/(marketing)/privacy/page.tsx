@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 const SECTIONS = [
   {
     heading: "What we collect",
-    body: "We collect the email address you use to create an account, your account credentials (handled by our authentication provider), and the site data needed to run your analyses. If you connect Google Search Console, we store that connection's Google refresh token encrypted at rest, and we ask Google for read-only access only — SeoGrep never requests permission to change your property. Payments are handled by Paddle, our merchant of record — we never see your full card details.",
+    body: "We collect the email address you use to create an account, your account credentials (handled by our authentication provider), and the site data needed to run your analyses. If you connect Google Search Console, we store that connection's Google refresh token encrypted at rest, and we ask Google for read-only access only — SeoGrep never requests permission to change your property. We also receive the email address of the Google account you connect, and we store it so that you can tell your connected Google accounts apart when you choose which Search Console property belongs to which project. We never use it to contact you. Payments are handled by Paddle, our merchant of record — we never see your full card details.",
   },
   {
     heading: "How we use it",
@@ -25,7 +25,7 @@ const SECTIONS = [
   },
   {
     heading: "Google user data",
-    body: "SeoGrep's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements. In practice, your Search Console data is fetched with your read-only token only to run the analyses and reports you ask for, is stored only on the infrastructure named above that runs the service, is never used for advertising, and is never sold.",
+    body: "SeoGrep's use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements. In practice, your Search Console data is fetched with your read-only token only to run the analyses and reports you ask for, is stored only on the infrastructure named above that runs the service, is never used for advertising, and is never sold. The Google account email address we receive is used for one purpose only — labelling your connected accounts in your own settings so you can tell them apart — and it is likewise never used for advertising and never sold.",
   },
   {
     heading: "AI training",
@@ -49,7 +49,7 @@ export default function Page() {
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
       <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Effective 7 August 2026 — applies to everyone who uses SeoGrep.
+        Effective 11 August 2026 — applies to everyone who uses SeoGrep.
       </p>
       <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Privacy Policy</h1>
       <p className="mt-4 text-base text-ink/60">

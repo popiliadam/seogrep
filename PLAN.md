@@ -200,164 +200,112 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — FAZ D (düzeltme dilimi) · Faz B+C 2026-08-10'da BİTTİ
+## 🧪 SIRADAKİ OTURUM — Faz D dilim 1 KOD TAMAM, İNSAN KUYRUĞU AÇIK
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
 
-SIRAYLA OKU: PLAN.md (BU blok) → CLAUDE.md → contract.md
-→ docs/testing/2026-08-10-faz-b-tam-tur.md      ← 215 hücre, bulgu #52-#62, B1-B6 cevapları
-→ docs/testing/2026-08-10-faz-c-rakip-paritesi.md ← on kontrol × 7 site vaka tablosu
-→ docs/testing/product-test-log.md               ← bulgu #1-#62 ve triyaj
-→ docs/testing/2026-08-09-cok-site-kampanya.md   ← 1. oturum, bulgu #35-#51
-→ docs/testing/2026-08-07-tool-tool-analiz.md    ← 19 tool + [A]-[G] temaları
+BU BLOK BİR TESLİM RAPORUDUR. Kod tarafı BİTTİ. Kalan her kalem İNSAN kararı.
+Yeni bir işçi dispatch etmeden önce aşağıdaki "İNSAN KUYRUĞU"nu oku — sıradaki iş
+kod yazmak değil, merge ve deploy sırasını yürütmek.
 
-=== ÖNCEKİ OTURUM (2026-08-10) NE YAPTI ===
-Faz B tam tur: 215 hücre, 2855 kredi, 0 kredi sapması, 12 delta_mismatch (hepsi
-güvenli yönde). Faz C: 261 sayfa, 0 kredi. Yeni bulgu #52-#62. KOD DEĞİŞTİRİLMEDİ —
-yalnız harness (scripts/testing/) ve belgeler. Bu bir ÖLÇÜM oturumuydu.
+=== NE BİTTİ (2026-08-10/11 oturumu) ===
+Task 5 · 6 · 7 · 7b · 7c · 8 uygulandı ve HEPSİ hakemden geçti (Task 1·2·2b·3·4 önceki
+oturumda bitmişti). 7b ve 7c planda YOKTU — şef ölçüp ekledi (gerekçeler ledger'da).
+Dal: feat/gsc-account-oauth, plan tabanından 56 commit ötede, ağaç temiz.
+LEDGER: .superpowers/sdd/2026-08-09-gsc-account-oauth/progress.md (670 satır) — bağlam
+sıfırlamasından sağ çıkan tek kayıt. Bir şey doğrulamadan önce ORAYA bak.
 
-=== CANLI DURUM — hepsi ÖLÇÜLDÜ 2026-08-10 ===
-Bakiye 5900 (8755 − 2855, canlı get_credit_balance ile birebir)
-MCP endpoint canlı · 19 tool · main CI yeşil
-DFS: 31 canlı çağrının 31'i başarılı, $3 tavanı HİÇ tetiklenmedi
-ŞEF BASH'İ ~/.zshrc'yi SOURCE ETMEZ → her koşuda: `set -a && . ~/.zshrc; set +a`
-ŞEF `dfs_spend_today_usd()` OKUYAMAZ (Supabase execute_sql izin katmanınca engelli —
-  bu DOĞRU, psql ile dolanma). Rakam gerekiyorsa operatöre SQL'i ver.
-ŞEF `flyctl logs -a seogrep-mcp` OKUYABİLİR — #52'nin kökü böyle bulundu, tahminle değil.
+=== KAPILAR (şef bağımsız koştu, çıkış kodları DOSYADAN okundu) ===
+TURBO_FORCE=1 bash guardrails/verify.sh -> VERIFY: PASS · 16/16 · Cached: 0 · exit 0
+make goals (prod env yüklü) -> 16/16 PASS, 1 SKIP
+bash guardrails/verify-db.sh -> PASS
 
-SEKİZ PROJE (yedi kampanya + bir fikstür):
-  adstark.com.tr       e2785bf7-9963-4b6a-a6d7-aaed7b550abe  GSC TOKEN ÖLÜ
-  bayder.com.tr        424cda8f-4d35-408c-b780-1178f7d3b6f7  GSC ✅ (dün yeniden onaylandı)
-  rkturizm.com         3e2068e6-9bcc-4089-b166-ba270d0ffcfc  GSC ✅ (dün yeniden onaylandı)
-  www.bigcattr.com     26b95c84-1099-480f-b85f-d06536c11ba1  GSC TOKEN ÖLÜ · crawl WAF'ta
-  katrenur.com         12533f04-ead8-407e-95ff-9393b8042e82  GSC TOKEN ÖLÜ
-  dentnotion.com       fa9340e5-52e6-483e-b7f9-1d10121f42d4  GSC TOKEN ÖLÜ
-  seogrep.com          4e0caff0-3788-42b2-9f70-6023f6ba6894  GSC yok — KONTROL GRUBU
-  example.net          257ad998-00f3-4189-b9a6-b1ca9f6deea5  SOĞUK FİKSTÜR — ASLA CRAWL ETME
-  ⚠ www.noraninsaat.com kampanya DIŞI (operatör kararı); plan.mjs'te active:false
-YABANCI project_id: dc3914e3-a2a6-45a8-93ea-e7832fd7bf6a
+KAPININ ÖLÇMEDİĞİ (ders 7 — söylenmezse yeşil yalan olur):
+· goals/dfs-budget-guard.md SKIP — DFS prod env'i şefte yok. O kalem KANITSIZ.
+· Hiçbir şey gerçek tarayıcıda sürülmedi. Picker bir RSC + client island; kanıt
+  mutasyon testleri, ekran görüntüsü değil.
+· verify.sh 2026-08-10'a kadar ALTI TASK BOYUNCA KIRMIZIYDI ve kimse görmedi
+  (SCHEMA_VERSION=20 vs 21 migration). Sebep: hiçbir task'ın kapısı packages/db'nin
+  UNIT lane'ini içermiyordu. Bu oturumda kapandı; ders aşağıda.
 
-=== ÖNCE İNSAN — İKİ İŞ, İKİSİ DE ŞEFİN YAPAMAYACAĞI ===
+=== İNSAN KUYRUĞU — SIRA ÖNEMLİ, kod bunları yapamaz ===
+1. ✅ BİTTİ — DAL SIRASI. Ölçüm PR'ı [#69] merge edildi (main @ 389eb5e, CI yeşil), dalı
+   silindi, [#70]'in base'i elle `main`'e çevrildi (GitHub yalnız base dal SİLİNİNCE otomatik
+   retarget ediyor; diff 8445'te sabit kaldı = ölçüm işi sızmadı).
+2. ✅ BİTTİ — PRIVACY TARİHİ (operatör kararı: 11 Ağustos). commit 97101f3, üç yer BİRLİKTE:
+   page.tsx:52 + page.test.tsx'in iki literali. Metin değişmedi; 9 Ağustos paragrafın YAZILDIĞI
+   gündü. Geçmiş yorumuna 7->9 (openid+email ile Google hesap e-postasının ifşası) ve 9->11
+   gerekçeleri eklendi — 7->9 hiç yazılmamıştı. Mutasyon: 12 Ağustos yap -> iki pin de KIRMIZI.
+   ⚠️ ZAMAN KISITI: tarih 11 Ağustos'a SABİT. Deploy UTC gece yarısını geçerse tarih YİNE yanlış
+   olur ve aynı üç yer yeniden taşınmalıdır. (Bu, hesaplanan-tarih yasağının bilinçli bedeli:
+   kayan tarih SESSİZCE yanlış olur, sabit tarih GÜRÜLTÜLÜ yanlış olur ve kapıda yakalanır.)
+3. 0021 CLOUD-APPLY SIRASI — KRİTİK: migration uygulanır uygulanmaz ŞU AN CANLIDA olan
+   kod kırılır (düşen kolonu okuyor); uygulanmadan da yeni kod koşamaz.
+   SIRA: 0021 apply -> hemen mcp deploy -> web deploy.
+   ALTI CANLI BAĞLANTININ TOKEN'I BU ADIMDA TASARIM GEREĞİ SİLİNİR.
+4. DEPLOY SONRASI DOĞRULAMA (deploy geçmesi KANIT DEĞİLDİR):
+   a. Google hesabı başına BİR kez yeniden onay. Bu aynı zamanda operatörün Console'da
+      yaptığı openid+email değişikliğinin İLK KEZ doğrulanabileceği an — `sub` + `email`
+      gerçekten geliyor mu, ÖLÇ.
+   b. Her projenin property'sini picker'dan KAYDET. Otomatik yeniden bağlama YOK
+      (bilinçli kapsam dışı) — eşleme saklanıyor ve picker'da gösteriliyor ama
+      etkinleşmesi için proje başına bir Save gerekiyor.
+   c. Kanıt `connect_gsc` DEĞİL: `pull_gsc_data` gerçekten satır getirmeli (5 kredi).
+5. 0012'nin gsc_connections DELETE grant'i artık ÇAĞRISIZ — fazla yetki. Kendi
+   migration'ını ister; sonraki migration partisine al. Bu merge'e EKLEME.
+6. İki arşiv audit dokümanı (docs/audits/2026-07-20-*, 2026-07-28-hostile-*) bu dalla
+   main geçmişine giriyor. İçerik sorunlu değil, haberin olsun.
 
-1. ÜÇ SİTEDE GSC YENİDEN ONAYI HÂLÂ GEREKLİ (#52). 2026-08-10'da denendi:
-   adstark ✅ DÜZELDİ, üçü DÜZELMEDİ (hâlâ invalid_grant, Fly log'uyla ölçüldü).
-     bigcattr   https://seogrep.com/api/gsc/connect?project_id=26b95c84-1099-480f-b85f-d06536c11ba1
-     katrenur   https://seogrep.com/api/gsc/connect?project_id=12533f04-ead8-407e-95ff-9393b8042e82
-     dentnotion https://seogrep.com/api/gsc/connect?project_id=fa9340e5-52e6-483e-b7f9-1d10121f42d4
-   TIKLADIKTAN SONRA ÖLÇ, VARSAYMA — ve `connect_gsc`'ye BAKMA, o ayırt edemiyor:
-   dördü de yeniden onaydan sonra "already connected" dedi, üçünün token'ı ölüyken bile.
-   Tek geçerli sınav `pull_gsc_data`'nın gerçekten satır getirmesidir (5 kredi).
-   NOT: onay akışı neden üçte tutmadı BİLİNMİYOR — tek tıklamayla mı yetinildi, yoksa
-   akışın kendisinde bir sorun mu var, ölçülmedi. Faz D dilim 1'in ilk sorusu bu olmalı.
+=== PARK EDİLENLER KAPANDI (operatör: "bende kalan her şeyi bitir") ===
+Park edilmiş + ertelenmiş 15 kalemin tamamı kapatıldı: 97101f3..0630681, 6 commit.
+Fable hakem Approved (0 Critical, 1 Important) + Important düzeltildi + dar kapsamlı re-review.
+Kapanan başlıklar: iki DÜRÜSTLÜK kusuru (sayfa okumadığı listelemenin "boş" olduğunu iddia
+ediyordu · connect route yorumu YANLIŞ bir Next.js iddiası taşıyordu) · iki GİZLİ hata
+(ON CONFLICT'in PK'yı yeniden yazabilmesi — artık `Update` tipinde `id` yok, yani kusuru geri
+getirmek DERLEME HATASI · env geri yüklemesinin literal "undefined" yazabilmesi) · iki eksik
+KAPSAM (describeDisconnect'in UUID dalı; sahiplik kaynağının pinlenmesi) · yedi kozmetik.
+ÜÇÜNCÜ "yanlış sebeple yeşil" vakası burada yakalandı ve KAPATILDI: page.test.tsx'in sahte
+PostgREST kurucusu filtreleri kaydediyor ama UYGULAMIYORDU — kiracı pini her koşulda yeşil
+olurdu. Uzatıldı; hakem `.eq("user_id")`'ı silip iki spec'i kırmızıya döndürdü ve
+stranger@example.com'un panele sızdığını GÖRDÜ.
+Hakemin Important'ı da kapandı (0630681): insert/update ayrımı, tek upsert'te olmayan bir
+pencere açmıştı — satır arada silinirse PostgREST 0 satır eşler ve HATA DÖNMEZ, kullanıcı
+arkasında hiçbir şey olmayan bir "bağlandı" görürdü. THROW seçildi, insert değil: disconnect
+satırı silmeden ÖNCE Google'a revoke atıyor (actions.ts:352 -> :354-358, hakem kodda doğruladı),
+yani kaybolan satır "revoke zaten atıldı" demek ve token'ın sağ kalıp kalmadığı tam da bu kodun
+bilemeyeceği şey. Saklayıp "bağlandı" demek ders 9'un yasakladığı sınanmamış iddia olurdu.
 
-2. FAZ D'NİN NE OLACAĞINA KARAR VER — aşağıdaki triyaj önerisi imza bekliyor.
+KALAN ÜÇ MINOR (bilinçli, bloklamıyor — gerekçeleri ledger'da):
+· B2 yarış mutasyonu ZAMANLAMAYA bağlı ("bir kez ısırdı", "her zaman ısırır" değil) — ileride
+  yeşil bir yeniden koşu, düzeltmenin geri alındığı sanılmasın diye kayıtlı.
+· retainedMappingFor permissionLevel'a bakmadan eşleştiği için retained not DISABLED bir
+  seçeneği işaret edebilir; "Select it again below" o durumda UI'da imkânsız (önceden de vardı).
+· Sahte kurucunun filtrelemesi OPT-IN: user_id taşımayan yeni bir fixture sessizce filtrenin
+  dışında kalır ve kiracı iddiası yine boşa düşer. Yorumda yazılı.
 
-=== FAZ D TRİYAJ ÖNERİSİ (şefin önerisi; insan imzalar) ===
+=== BU OTURUMUN DERS ADAYLARI (insan imzası bekliyor — imzasız kural olmaz) ===
+1. Bir task'ın kapısı, o task'ın DEĞDİĞİ her paketin KENDİ test script'ini içerir.
+   Vaka: verify.sh altı task boyunca kırmızıydı; iki test tam da bunu bekliyordu ama
+   hiçbir task'ın dar kapısı packages/db'nin unit lane'ini koşmuyordu. "tsc --noEmit
+   dokunduğum dosyalarda temiz" kapının koştuğu script DEĞİLDİR.
+2. Planın yazdığı bir mutasyon, onu hiç koşmamış bir yazarın HİPOTEZİDİR. Bu planda
+   DÖRT mutasyon iddia ettiği şeyi kırmızıya döndürmedi; dördünde de yanlışı ilk gören
+   işçi oldu ve dördünde de raporlamak doğru karardı.
+3. Bir iddia, konusunu YENİDEN KODLAYAN bir katman sınırında yanlış sebeple yeşil olabilir.
+   İki vaka: bytea kolonu `\x` hex döndüğü için `not.toContain(plaintext)` KALICI yeşildi;
+   sahte sorgu kurucusu `select()`'i umursamadığı için eksik kolon fark edilmezdi.
+   Serileşmiş bir kolona substring iddiası klasik tuzak — önce DECODE et.
+4. N bağımsız spec kümesi olan bir task N commit'tir; bunu iş emri SÖYLER, işçi commit
+   anında keşfetmez (Task 6'nın ~800 satırlık commit'i park edildi).
+5. Şefin kendi kuralı yalana sebep oluyorsa kural geri alınır. Vaka: page.tsx'i Task 6'ya
+   ayırmak, Task 7 sonrası "Disconnect Google erişimini iptal eder" cümlesini YALAN
+   bıraktı. Güvenlik eylemi hakkındaki yanlış cümle, dar kapsamdan daha pahalıdır.
 
-DİLİM 1 — "bağlantı yalan söylemesin" (#52 + #53). En ağır ikisi, tek kök.
-  · Bağlanma anında KİMLİK BİLGİSİNİ de sına (#51'in yarım bıraktığı yarı): tek ucuz
-    çağrı (token yenileme ya da bir satırlık searchAnalytics). #50 property'yi doğruluyor,
-    kimliği kimse doğrulamıyor.
-  · invalid_grant'ı TİPLİ hataya çevir → "Google bağlantın süresi doldu, şu linkten
-    yeniden onayla" — jenerik çökme cümlesi DEĞİL. #35'in tipli-hata deseni hazır.
-  · Üç GSC analiz tool'unun çıktısına PULL TARİHİNİ yaz. Crawl ailesi bunu 14/14
-    yapıyor, GSC ailesi 18/18 yapmıyor. Ölçüldü, tartışmasız.
-  · İKİ SORU (her düzeltmede): bu veriyi başka kim okuyor? Kuralın iki yarısı var mı?
-
-DİLİM 2 — "satın almadan önce doğruyu söyle" (#54 + #59).
-  · Ön-keşif KIRPILDIĞINDA bunu SÖYLE. `loadSitemapSeeds` erken `break` ediyor ve
-    sinyal vermiyor; `estimateSiteSize` kırpık sayıyı tam sayı gibi döndürüyor.
-    En ucuz düzeltme: "truncated" bayrağı + mesajda "en az ~N" dili.
-  · Ön-keşif SIFIR dönerse cümleyi düşürme, SEBEBİ SÖYLE (bigcattr: 20+50 kredi,
-    tek 4xx sayfa, hiçbir yerde "siteni getiremedik" yok).
-
-DİLİM 3 — "locale" (#55 + #56 + #57), migration 0021 ile birlikte.
-  · localeHint() compare_competitors'a da uygulanmalı (0/7 uyarı).
-  · THIN_RESULT_ROWS=5 eşiği en çok gereken yerde susturuyor (rkturizm 11 vs 482).
-  · Kalıcı çözüm 0021: projede ülke/dil alanı. H9 gerekçesi artık n=7'de ölçülü.
-
-DİLİM 4 — ucuz dürüstlük: #60 (auth sayfalarına robots-conflict muafiyeti).
-
-DİLİM 5 — Faz C'den ürün kararı. RAKAMLA: alt 482 görsel/80 sayfa · OG 147 sayfa ·
-  title↔h1 27 · hız-vekili 39 · yetim 23 · kırık link 74 URL→5 kusur · duplicate 6 grup ·
-  hreflang 11/0 hata · yönlendirme zinciri 0 · zorunlu şema alanı 1.
-  En çok iş çıkaran üçü (alt · OG · title↔h1) ürünün ZATEN çektiği HTML'den ek veri
-  olmadan hesaplanır. En az çıkaran üçü (hreflang · zincir · şema alanı) bu portföyde
-  neredeyse hiç vaka üretmiyor. Kırık link ve yetim sayfa ürünün BENDEN İYİ yapabileceği
-  iki kontrol — tam crawl grafiği onda. KAPSAM GENİŞLETMEK FİYAT SORUSU DOĞURUR (NEVER#6).
-
-=== AÇIK KALANLAR (bilerek) ===
-#46 fragment birleştirme — B3 ölçülemedi, PAYDA YOK (7 sitenin decay çıktısında
-    fragment'li satır çıkmadı). Mekanizma kodda duruyor.
-#47 IDN marka filtresi — portföyde IDN site YOK, ölçüm üretemez.
-#49 alan adı etiketi ≠ marka — ÖN-KAYITLI EŞİK KARŞILANMADI (1 site). Kural YAZILMADI.
-    ⚠ Eşik oynatma cazibesi gerçekti ve reddedildi: bayder'in `"bağımsız yaşam derneği"`
-    vakası aynı sınıfın ikinci üyesi gibi okunabilir (bayder = o adın kısaltması), ama
-    #49 ön-kayıtta "ülke kodu soyma" diye tanımlanmıştı. Sınıfı veriyi gördükten sonra
-    genişletip kendi eşiğini geçirmek yasak. KISALTMA VAKASI YENİ HİPOTEZ olarak
-    kaydedildi; kendi turunda ölçülür.
-#44 kapı yük altında tekrarlanamıyor — bu oturumda YİNE düştü ve YİNE ölçüldü:
-    izole 3/3 PASS, 362/379/388 ms (5000 ms sınırına karşı 13× marj), tam paralel
-    kapıda >5000 ms. Dalı SUÇLAMADAN önce: diff yalnız scripts/ + docs/ içinde, ikisi
-    de pnpm workspace'lerinin (apps/* · packages/*) DIŞINDA → turbo'nun test görevi
-    onları göremez. Yani dal nedenli olamaz, yapısal olarak.
-#45 gece yarısı penceresi (00:00–00:30 UTC) — dokunulmadı.
-#37/#59 bigcattr WAF — çözüm SeoGrep çıkış IP'sinin müşteri WAF'ında izinli listeye
-    alınması; müşteri teması insan işi.
-#22/#23 adstark HÂLÂ ele geçirilmiş — audit_onpage'in 1. bulgu sayfası
-    /spielbank-bad-reichenhall-kompletter-guide. Operatörde, ürün bulgusu değil.
-
-=== HARNESS — DEĞİŞTİ, OKU ===
-scripts/testing/tool-sweep.mjs (+ plan.mjs) — self-test 7/7
-  · SITES'a `active` ve `crawl` alanları eklendi; HER selektör kökünden `active` kapılı,
-    `only()` dahil. noraninsaat active:false (satır SİLİNMEDİ — silmek yokluğunun
-    sebebini de silerdi).
-  · coldfixture (example.net) `crawl:false` → hiçbir ücretli hücre ona değmez.
-  · K3 yedi siteye; S6 sınır hücreleri S1 turundan SONRA (gün biterse ekstralarda bitsin).
-  · MUTASYONLA DOĞRULANDI: active:false→true 20 hücre/380 kredi ekliyor;
-    coldfixture crawl:false→true 6 ücretli hücre ekliyor + 4 soğuk hücreyi yok ediyor.
-scripts/testing/parity-probe.mjs + seo-checks.mjs (YENİ) — self-test 18/18
-  · On parite kontrolü, saf predikat, fikstür-pinli. CWV ÖLÇMEZ ve ölçtüğünü iddia etmez.
-  · Kendi kapısı iki GERÇEK hata yakaladı: attr() sondaki boolean niteliği görmüyordu
-    (defer'li script render-bloklayan sayılıyordu), stratifiedSample küçük sitemap'i
-    sıfıra yuvarlıyordu (1. oturumun kör örneklemesinin kazayla yeniden inşası).
-
-KAPI BUNLARI GÖRMÜYOR: verify.sh scripts/ dizinini hiç çalıştırmaz. Tek otomatik
-kontrol her iki harness'ın kendi --self-test'idir.
-
-=== ÖLÇÜM DİSİPLİNİ — bu oturumda İŞE YARAYAN üç şey ===
-· Kendi ölçümümde ÜÇ hata yakalandı ve üçü de rapordan ÖNCE düzeltildi: (1) S4
-  karşılaştırmasını uuid maskelemeden yaptım, 8 tool "farklı" göründü — maskeleyince
-  14/14 aynı çıktı; (2) attr() hatası; (3) bigcattr'ın "6 duplicate grubu" tamamen
-  örnekleme artefaktıydı (çakışan iki alt-sitemap aynı URL'i iki kez verdi), gerçek 0.
-· MEKANİZMAYI KODDAN OKU: #54'ün 6,6 katı tahminle değil `loadSitemapSeeds`'in
-  `if (childTimeout <= 0) break;` satırıyla açıklandı. #56'nın eşiği THIN_RESULT_ROWS=5
-  diye okundu, "muhtemelen bir eşik vardır" denmedi.
-· SUNUCU LOG'U VAR VE ŞEF OKUYABİLİR: #52'nin sebebi `flyctl logs` ile bulundu.
-  1. oturum "sunucu log'u gerekiyor, ölçülemedi" yazmıştı — o sınır artık yok.
-
-=== KESİN KURALLAR (değişmedi) ===
-· İDDİA ETMEDEN ÖNCE ÖLÇ. Hangi kapıyı koştuğunu ve NEYİ ölçtüğünü söyle.
-· Cache'li yeşil kapı ÖLÇÜM DEĞİL — `TURBO_FORCE=1`, `Cached: 0` raporla.
-· `cmd | tail` sonrası $? tail'in kodudur; arka plan bildirimindeki exit code da son
-  komutunkidir. Çıktıyı DOSYADAN oku.
-· Tek canlı örnekten kural üretilmez. Ön-kayıtlı eşikler bunun içindir ve VERİYİ
-  GÖRDÜKTEN SONRA OYNATILMAZ (bu oturumda #49'da tam olarak buna uyuldu).
-· Eşleşmeyen replace SESSİZDİR; her programatik düzenlemeden sonra grep'le teyit et.
-· NEVER#2 ledger append-only · NEVER#4 tenant filtresiz sorgu yok · NEVER#5 CI'da
-  paralı API yok · NEVER#6 fiyat insan onayı · NEVER#8 testi geçirmek için testi
-  değiştirme · NEVER#9 uydurma
-· NEVER#10 tek commit >200 satır böl · task diff >400 satır → hakem her durumda Fable
-· main'e doğrudan push YOK · merge sonrası DELETE BRANCH · dal geride ise
-  `gh pr update-branch`
-· Paralel işçi AYNI ağaçta koşmaz; repo-geneli verify.sh YALNIZ seri anlarda.
-· Prod DB mutation / secret / dış servis = insana sor.
-
-=== BİTTİ TANIMI (Faz D) ===
-İmzalanan dilimlerin her biri: iş emri + taze hakem + guardrails/verify.sh + CANLI
-doğrulama (deploy geçti KANIT SAYILMAZ). #52 için canlı doğrulama, dört sitenin
-yeniden onayı yapıldıktan sonra `pull_gsc_data`'nın gerçekten veri getirmesidir.
+=== ŞEF NELERİ OKUYABİLİR ===
+· flyctl logs -a seogrep-mcp ✅ · MCP canlı uç ✅ (`set -a && . ~/.zshrc; set +a`)
+· `dfs_spend_today_usd()` ❌ — Supabase execute_sql izin katmanınca engelli, psql ile DOLANMA
+· make goals'un canlı probları ✅ ama env AÇIKÇA yüklenmeli (şef-Bash ~/.zshrc source etmez)
 ```
 
 ## 💳 2026-08-06 — DFS TOOL'LARI TRIAL'A KAPATILDI (kod tamam, hakem+PR bekliyor)

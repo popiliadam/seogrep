@@ -13,41 +13,34 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  * extra. (It was first written under apps/mcp and promoted here so the web app no longer
  * deep-imports @pseo/mcp source — one seal format, one home.)
  *
- * Wire format v3 of the sealed buffer (what the `encrypted_refresh_token` bytea holds):
+ * Wire format v4 of the sealed buffer (what `gsc_accounts.encrypted_refresh_token` holds):
  *
- *     magic "SGSL" (4) || version = 3 (1) || key id (1) || iv (12) || tag (16) || ct
+ *     magic "SGSL" (4) || version = 4 (1) || key id (1) || iv (12) || tag (16) || ct
  *
- * Byte-for-byte the v2 layout with a different version stamp. What changed is INVISIBLE
- * in the blob: v3 feeds the owning `(user_id, project_id)` to AES-GCM as Additional
- * Authenticated Data, so the auth tag covers the row identity as well as the ciphertext.
+ * Migration 0021 moved the credential off `gsc_connections` (bound per `(user_id,
+ * project_id)`) onto the new per-account table `gsc_accounts` and DROPPED
+ * `gsc_connections.encrypted_refresh_token` outright. So v4 rebinds the AAD to the new
+ * axis, `(user_id, account_id)`, under a NEW context string and a NEW version byte —
+ * reusing the v3 byte with different AAD content would be a silent semantic change; a
+ * future reader must be able to see from the byte alone that the binding moved.
  *
  * That AAD is deliberately NOT stored in the buffer. It is supplied by the CALLER from
  * the row it is reading, which is the entire point: a sealed blob lifted out of one
- * `gsc_connections` row and written into another user's row is opened with the NEW row's
+ * `gsc_accounts` row and written into another user's row is opened with the NEW row's
  * ids, the tag no longer verifies, and the theft fails closed. Storing the ids inside the
- * blob would move them along with it and bind nothing. Before v3 the ciphertext was
- * cryptographically anonymous — anyone with write access to the table (a `service_role`
- * key, a SQL-injection sink, a restored dump) could hand victim A's Google grant to
- * victim B, and nothing in the crypto could tell. See docs/audits (M-17).
+ * blob would move them along with it and bind nothing. See docs/audits (M-17) for the
+ * original attack this closes.
  *
- * Earlier layouts are still READ, never written:
- *   - v2: same header, version byte 2, no AAD — every connection made before this change.
- *   - v1: no header at all, `iv || tag || ciphertext` — everything before the v2 header.
- * A v2/v1 row stays v2/v1 until its user reconnects; there is no re-seal path (the OAuth
- * callback is the only writer). The column type and the `\x`-hex storage form are
- * unchanged and v3 adds no bytes over v2.
- *
- * WHICH format a buffer is in is decided by the GCM auth tag, NOT by the magic or the
- * version byte — a v1 IV starts with those 4 bytes once in ~2^32, so a header that parses
- * but fails authentication falls through to the next leg instead of being called corrupt.
- * The same property is what closes the downgrade: rewriting a v3 blob's version byte to 2
- * only sends it down a leg that authenticates WITHOUT the AAD, and its tag — computed over
- * that AAD — cannot verify there. No leg is reachable in which the tag is not the last word.
+ * Formats v1/v2/v3 are NOT read any more. They cannot exist in this system: migration
+ * 0021 dropped the only column that ever held them. A buffer that parses as one of those
+ * versions is refused LOUDLY, naming the version and telling the operator to reconnect —
+ * deliberately NOT the opaque "wrong key or corrupt ciphertext" error, because a
+ * format-version byte is not a secret and an unactionable error is a real cost to an
+ * operator staring at it. The opaque error is reserved for the case where a v4-shaped
+ * buffer fails to authenticate (wrong key, unknown key id, mismatched owner, tampering).
  *
  * The 12-byte IV is fresh-random per call, so encrypting the same token twice yields
- * different bytes (semantic security). A wrong key, an unknown key id, a mismatched owner,
- * or a flipped byte all surface the SAME opaque error — it never reveals which leg failed,
- * so the error cannot be used to probe which row a stolen blob belongs to.
+ * different bytes (semantic security).
  *
  * Keys are 64 hex characters = 32 raw bytes (AES-256), validated on every call (see
  * {@link tokenKeyBytes}) so a mis-provisioned key fails loudly, never silently.
@@ -55,11 +48,13 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
 /** Format marker: ASCII "SGSL" (SeoGrep SeaL). It labels the blob, it does not hide it. */
 const MAGIC = Buffer.from("SGSL", "ascii");
-/** Headered, NO owner binding. Read-only now: every connection made before v3 is one. */
-const FORMAT_V2 = 2;
-/** Headered AND bound to its `(user_id, project_id)` via GCM AAD. The only format written. */
-const FORMAT_V3 = 3;
-/** magic(4) || version(1) || key id(1) — the v2/v3 prefix ahead of the v1-shaped body. */
+/**
+ * Headered AND bound to its `(user_id, account_id)` via GCM AAD. The only format read or
+ * written. v1/v2/v3 are refused by name (see the module doc) — migration 0021 dropped the
+ * only column that could hold them, so no such ciphertext can exist in this system.
+ */
+const FORMAT_V4 = 4;
+/** magic(4) || version(1) || key id(1) — the header prefix ahead of the iv/tag/ct body. */
 const HEADER_BYTES = MAGIC.length + 2;
 /** AES-256-GCM standard nonce size. */
 const IV_BYTES = 12;
@@ -89,23 +84,24 @@ const KEY_ID_RE = /^\d{1,3}$/;
 export type TokenKeyEnv = Readonly<Record<string, string | undefined>>;
 
 /**
- * The `gsc_connections` row a sealed token belongs to. `(user_id, project_id)` is UNIQUE on
- * that table (migration 0010), so this pair names exactly one row — and both halves are in
- * hand at all three places the seal is touched: the OAuth callback holds them in the signed
- * state, `disconnectGscAction` holds the session user and the project it was asked about,
- * and `pull_gsc_data` holds the authenticated user and the tool's `project_id`.
+ * The `gsc_accounts` row a sealed token belongs to. Migration 0021 moved the credential off
+ * `gsc_connections` (one per `(user_id, project_id)`) onto this new per-account table, so
+ * the binding axis moves with it: `(user_id, account_id)` names exactly one `gsc_accounts`
+ * row, and both halves are in hand at every place the seal is touched.
  *
- * The row's own `id` is deliberately NOT part of this: the callback writes through an upsert
- * and cannot know the id of a row it may be creating, so binding to it would leave the write
- * path unable to seal at all.
+ * The row's own `id` is deliberately NOT part of this: a writer that upserts an account row
+ * cannot always know the id of a row it may be creating, so binding to it would leave that
+ * write path unable to seal at all.
  */
 export interface TokenOwner {
   readonly userId: string;
-  readonly projectId: string;
+  readonly accountId: string;
 }
 
-/** Domain separator: keeps this AAD from ever colliding with some other use of the ids. */
-const AAD_CONTEXT = "seogrep/gsc-refresh-token";
+// Separate context string: silently changing the AAD CONTENT under the same version byte
+// would mislead a future reader. v4 + a new context makes the change visible, and old
+// blobs are refused BY NAME instead of failing like a "wrong key".
+const AAD_CONTEXT = "seogrep/gsc-refresh-token/account";
 
 /**
  * Encode one owner field as `length(4, big-endian) || utf8 bytes`. Length-prefixed rather
@@ -132,10 +128,10 @@ function aadField(name: string, value: string): Buffer {
  * an id happened to arrive in. Postgres stores `uuid` in canonical lowercase, but every
  * validator these ids pass through is case-INSENSITIVE — `z.uuid()` in pull_gsc_data and the
  * `/^[0-9a-f]{8}-…/i` regexes in the connect route and the connection actions all accept
- * `A1B2…`. Without folding, a connect flow started with a mixed-case project_id would seal
+ * `A1B2…`. Without folding, a connect flow started with a mixed-case account_id would seal
  * under an uppercase AAD into a row that reads back lowercase, and every later read would
  * rebuild the lowercase AAD: the connection could never be opened again (fail-closed, no
- * cross-tenant leak, but permanently bricked). Folding is byte-compatible with every v3 row
+ * cross-tenant leak, but permanently bricked). Folding is byte-compatible with every v4 row
  * already written — those were all sealed from canonical, already-lowercase ids.
  *
  * `toLowerCase` and not `toLocaleLowerCase`: the mapping must not depend on the host locale
@@ -147,7 +143,7 @@ function ownerAad(owner: TokenOwner): Buffer {
   return Buffer.concat([
     Buffer.from(AAD_CONTEXT, "ascii"),
     aadField("userId", owner.userId.toLowerCase()),
-    aadField("projectId", owner.projectId.toLowerCase()),
+    aadField("accountId", owner.accountId.toLowerCase()),
   ]);
 }
 
@@ -240,7 +236,7 @@ function selectActiveKey(
 /**
  * Resolve the keyring in force. The DEFAULT path needs no env change at all: with
  * `TOKEN_ENCRYPTION_KEYS` absent the ring is `{1: TOKEN_ENCRYPTION_KEY}` — the key handed
- * in — and id 1 is active, so every existing deploy starts writing v2 with no coordinated
+ * in — and id 1 is active, so every existing deploy starts writing v4 with no coordinated
  * Netlify+Fly update. Rotation is then purely additive: add key 2 to the ring on both
  * sides, then flip the active id.
  *
@@ -281,22 +277,14 @@ function openGcm(
 }
 
 /**
- * Read one headered layout (v2 or v3 — same bytes, different version stamp and AAD). Null
- * when the header does not parse, the version is not the one asked for, the key id is
- * unknown to the keyring, or authentication fails; every one of those hands the buffer to
- * the next leg. Pass `aad` for v3 and `null` for v2 — since the tag is computed over it,
- * calling this with the wrong pairing simply fails to authenticate, which is what makes a
- * forged version byte a dead end rather than a bypass.
+ * Read the v4 headered layout. Null when the header does not parse, the version is not
+ * v4, the key id is unknown to the keyring, or authentication fails — every one of those
+ * is treated identically by the caller (the opaque error), never distinguished.
  */
-function openHeadered(
-  sealed: Buffer,
-  keyring: TokenKeyring,
-  version: number,
-  aad: Buffer | null,
-): string | null {
+function openHeadered(sealed: Buffer, keyring: TokenKeyring, aad: Buffer): string | null {
   if (sealed.length < MIN_HEADERED_BYTES) return null;
   if (!sealed.subarray(0, MAGIC.length).equals(MAGIC)) return null;
-  if (sealed[MAGIC.length] !== version) return null;
+  if (sealed[MAGIC.length] !== FORMAT_V4) return null;
   const keyId = sealed[MAGIC.length + 1];
   const key = keyId === undefined ? undefined : keyring.keys.get(keyId);
   if (key === undefined) return null;
@@ -310,23 +298,10 @@ function openHeadered(
   );
 }
 
-/** Read the headerless v1 layout. It carries no key id, so every keyring key is tried;
- * the GCM tag decides. A key dropped from the keyring can no longer open these. */
-function openV1(sealed: Buffer, keyring: TokenKeyring): string | null {
-  const iv = sealed.subarray(0, IV_BYTES);
-  const tag = sealed.subarray(IV_BYTES, MIN_SEALED_BYTES);
-  const ciphertext = sealed.subarray(MIN_SEALED_BYTES);
-  for (const key of keyring.keys.values()) {
-    const opened = openGcm(key, iv, tag, ciphertext, null);
-    if (opened !== null) return opened;
-  }
-  return null;
-}
-
 /**
- * Seal a plaintext token with AES-256-GCM, BOUND to the row it is about to be stored in.
- * Returns the v3 wire-format buffer ready for the bytea column. A fresh random IV per call
- * means the output is non-deterministic by design. Only v3 is ever written.
+ * Seal a plaintext token with AES-256-GCM, BOUND to the `gsc_accounts` row it is about to
+ * be stored in. Returns the v4 wire-format buffer ready for the bytea column. A fresh
+ * random IV per call means the output is non-deterministic by design.
  *
  * `owner` is a required parameter, not an option: an optional binding is how M-17 comes
  * back — one future call site forgetting it would silently write an unbound blob. Making
@@ -340,19 +315,25 @@ export function encryptToken(plain: string, keyHex: string, owner: TokenOwner): 
   const cipher = createCipheriv("aes-256-gcm", keyring.activeKey, iv);
   cipher.setAAD(aad);
   const ciphertext = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  const header = Buffer.concat([MAGIC, Buffer.from([FORMAT_V3, keyring.activeKeyId])]);
+  const header = Buffer.concat([MAGIC, Buffer.from([FORMAT_V4, keyring.activeKeyId])]);
   return Buffer.concat([header, iv, cipher.getAuthTag(), ciphertext]);
 }
 
 /**
- * Open a sealed buffer — v3 (owner-bound) first, then v2, then the pre-header v1 layout.
- * `owner` must be the ids of the row the buffer was READ FROM; it is what authenticates a
- * v3 blob and is ignored by the older legs, which carry no binding to check.
+ * Open a sealed buffer. `owner` must be the ids of the `gsc_accounts` row the buffer was
+ * READ FROM; it is what authenticates the blob.
+ *
+ * A buffer whose header names an older version (v1/v2/v3) is refused LOUDLY, by name —
+ * migration 0021 dropped the only column those formats could live in, so no such
+ * ciphertext can legitimately exist any more, and an operator seeing an unactionable
+ * "wrong key" error for what is actually a stale/pre-migration blob is a real cost. That
+ * check is byte-position only (no decryption attempted for those versions) — it is not a
+ * secret, so naming it does not weaken anything.
  *
  * Throws a clear error when the buffer is truncated, and one deliberately opaque error
- * when no key/format/owner combination authenticates: a wrong key, an unknown key id, a
- * blob belonging to another row, and plain tampering all read identically from outside,
- * so neither the keyring nor the true owner of a stolen blob can be probed through it.
+ * when a v4-shaped buffer fails to authenticate: a wrong key, an unknown key id, a blob
+ * belonging to another row, and plain tampering all read identically from outside, so
+ * neither the keyring nor the true owner of a stolen blob can be probed through it.
  */
 export function decryptToken(sealed: Buffer, keyHex: string, owner: TokenOwner): string {
   const keyring = resolveTokenKeyring(keyHex);
@@ -362,10 +343,15 @@ export function decryptToken(sealed: Buffer, keyHex: string, owner: TokenOwner):
       `encrypted token is corrupt: expected at least ${MIN_SEALED_BYTES} bytes, got ${sealed.length}`,
     );
   }
-  const opened =
-    openHeadered(sealed, keyring, FORMAT_V3, aad) ??
-    openHeadered(sealed, keyring, FORMAT_V2, null) ??
-    openV1(sealed, keyring);
+  const looksHeadered =
+    sealed.length >= HEADER_BYTES && sealed.subarray(0, MAGIC.length).equals(MAGIC);
+  const version = looksHeadered ? sealed[MAGIC.length] : undefined;
+  if (version !== undefined && version < FORMAT_V4) {
+    throw new Error(
+      `encrypted token format v${version} is no longer supported — reconnect Google Search Console`,
+    );
+  }
+  const opened = openHeadered(sealed, keyring, aad);
   if (opened !== null) return opened;
   // Never leak the low-level OpenSSL message, any key material, or which leg failed.
   throw new Error("failed to decrypt token: wrong key or corrupt ciphertext");

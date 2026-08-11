@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { GSC_READONLY_SCOPE } from "@pseo/core";
 import {
   buildConsentUrl,
   canQuerySearchAnalytics,
   gscPropertyCandidates,
   matchGscProperty,
+  parseIdTokenClaims,
   resolveGscProperty,
 } from "./oauth";
 
@@ -29,7 +31,12 @@ describe("buildConsentUrl", () => {
     expect(p.get("client_id")).toBe("cid.apps.googleusercontent.com");
     expect(p.get("redirect_uri")).toBe("https://app.example.com/api/gsc/callback");
     expect(p.get("response_type")).toBe("code");
-    expect(p.get("scope")).toBe("https://www.googleapis.com/auth/webmasters.readonly");
+    // The scope string is now READONLY + the two identity scopes, pinned exactly (its old
+    // single-scope form moved here rather than being dropped — see the spec below for WHY
+    // the identity pair is there, and for the unchanged `include_granted_scopes` decision).
+    expect(p.get("scope")).toBe(
+      "https://www.googleapis.com/auth/webmasters.readonly openid email",
+    );
     expect(p.get("access_type")).toBe("offline"); // needed to receive a refresh token
     expect(p.get("prompt")).toBe("consent"); // force refresh-token issue even on re-consent
     expect(p.get("state")).toBe("signed-state-token");
@@ -37,6 +44,89 @@ describe("buildConsentUrl", () => {
     // parameter, so a caller cannot quietly drop the protection by forgetting a field.
     expect(p.get("code_challenge")).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     expect(p.get("code_challenge_method")).toBe("S256");
+  });
+
+  /**
+   * Consent is now a GOOGLE ACCOUNT's, not a project's, so the URL must ask Google WHICH
+   * account this is: `openid` + `email` are what put an `id_token` (carrying `sub`) in the
+   * exchange response. Without them the callback has a refresh token and no way to say
+   * whose it is, which is the whole axis migration 0021 moved the credential onto.
+   *
+   * `include_granted_scopes` stays absent — the incremental-authorization decision pinned
+   * by the spec above is unchanged by adding two scopes to THIS request.
+   */
+  it("requests openid and email beside the Search Console scope", () => {
+    const url = new URL(
+      buildConsentUrl({ clientId: "c", redirectUri: "r", state: "s", codeChallenge: "x" }),
+    );
+    const scope = url.searchParams.get("scope") ?? "";
+    expect(scope).toContain(GSC_READONLY_SCOPE);
+    expect(scope).toContain("openid");
+    expect(scope).toContain("email");
+    expect(url.searchParams.get("include_granted_scopes")).toBeNull();
+  });
+});
+
+/**
+ * `id_token` claim reading. The token is NOT used as a credential here: it arrived over TLS
+ * from Google's own token endpoint moments earlier, in the response to a request carrying
+ * our client_secret, so its origin is already established — signature verification would
+ * add a JWKS fetch and a key cache to re-prove what the transport proved. It is read as a
+ * LABEL. Everything about it is therefore treated as untrusted shape: any malformed input
+ * yields null and the callback refuses the connection rather than guessing at an identity.
+ */
+function makeIdToken(claims: Record<string, unknown>): string {
+  const segment = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${segment({ alg: "RS256", typ: "JWT" })}.${segment(claims)}.not-a-real-signature`;
+}
+
+describe("parseIdTokenClaims", () => {
+  it("reads sub and email from the id_token without verifying it as a credential", () => {
+    const claims = parseIdTokenClaims(makeIdToken({ sub: "s1", email: "a@x.com" }));
+    expect(claims).toEqual({ sub: "s1", email: "a@x.com" });
+  });
+
+  it("keeps only sub and email out of a full Google payload", () => {
+    // Google sends iss/aud/exp/name/picture too; none of them may ride into the DB write.
+    const claims = parseIdTokenClaims(
+      makeIdToken({
+        iss: "https://accounts.google.com",
+        aud: "cid.apps.googleusercontent.com",
+        sub: "104729",
+        email: "owner@example.com",
+        email_verified: true,
+        name: "Owner",
+        exp: 4102444800,
+      }),
+    );
+    expect(claims).toEqual({ sub: "104729", email: "owner@example.com" });
+  });
+
+  /**
+   * Fail CLOSED on every broken shape. A missing claim must never become an empty-string
+   * `sub`: `gsc_accounts` is keyed on `(user_id, google_account_sub)`, so one blank sub
+   * would collapse two of a user's Google accounts onto a single row.
+   */
+  it.each([
+    ["no segments", "not-a-jwt"],
+    ["empty payload segment", "aGVhZGVy..c2ln"],
+    ["payload is not JSON", "aGVhZGVy.bm90LWpzb24.c2ln"],
+    ["payload is not an object", `x.${Buffer.from('"a string"').toString("base64url")}.y`],
+    ["empty string", ""],
+  ])("returns null for a malformed id_token (%s)", (_label, token) => {
+    expect(parseIdTokenClaims(token)).toBeNull();
+  });
+
+  it.each([
+    ["sub missing", { email: "a@x.com" }],
+    ["email missing", { sub: "s1" }],
+    ["sub not a string", { sub: 12345, email: "a@x.com" }],
+    ["email not a string", { sub: "s1", email: null }],
+    ["sub is the empty string", { sub: "", email: "a@x.com" }],
+    ["email is the empty string", { sub: "s1", email: "" }],
+    ["both absent", {}],
+  ])("returns null when the claims are unusable (%s)", (_label, claims) => {
+    expect(parseIdTokenClaims(makeIdToken(claims as Record<string, unknown>))).toBeNull();
   });
 });
 

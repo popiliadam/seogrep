@@ -47,6 +47,27 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * A minimal real `gsc_accounts` row. connect_gsc never reads the credential — it only asks
+ * whether the connection has an account behind it (migration 0021) — so the ciphertext is a
+ * placeholder that satisfies the NOT NULL, exactly as whats-next.db.test.ts seeds it. The row
+ * has to be REAL because `gsc_connections.account_id` carries a foreign key to it.
+ */
+async function makeAccount(userId: string): Promise<string> {
+  const { data, error } = await service
+    .from("gsc_accounts")
+    .insert({
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `connect-gsc-${randomUUID()}@example.test`,
+      encrypted_refresh_token: "\\xdeadbeef",
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`gsc_accounts seed failed: ${error?.message ?? "no row"}`);
+  return data.id;
+}
+
 let priorWebBaseUrl: string | undefined;
 
 beforeAll(async () => {
@@ -86,11 +107,15 @@ describe("connect_gsc against the local stack", () => {
   it("says the project is ALREADY connected, and names the property, instead of re-offering the link", async () => {
     const ctx = await makeCtx();
     const projectId = await makeProject(ctx.userId, "already-connected.example.com");
+    // RE-AIMED: the row used to be seeded with account_id NULL, which this tool then read as
+    // connected. Under migration 0021 that state is a mapping with no credential behind it —
+    // see the spec below — so "already connected" is now seeded the way the product produces
+    // it: a real gsc_accounts row, linked. The credential itself is still never read here.
     const { error } = await service.from("gsc_connections").insert({
       user_id: ctx.userId,
       project_id: projectId,
+      account_id: await makeAccount(ctx.userId),
       gsc_property: "https://already-connected.example.com/",
-      encrypted_refresh_token: Buffer.from("not-a-real-token"),
     });
     if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
 
@@ -100,10 +125,45 @@ describe("connect_gsc against the local stack", () => {
     const text = result.content[0]?.text ?? "";
     expect(text).toMatch(/already connected/i);
     expect(text).toContain("https://already-connected.example.com/");
-    // It must still offer a way to re-connect (property changed, token revoked) — but the
-    // headline may not be the plain "go connect it" of an unconnected project.
+    // It must still offer a way to re-connect (a grant withdrawn at Google) — but the headline
+    // may not be the plain "go connect it" of an unconnected project.
     expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
     expect(text).toMatch(/pull_gsc_data/);
+    // A property change belongs to the picker now, not to a fresh consent.
+    expect(text).toContain(`${WEB_BASE_URL}/app/connection`);
+  });
+
+  /**
+   * DEFECT #52, REPRODUCED BY THE BRANCH THAT EXISTS TO KILL IT. `unmapProject` keeps the row
+   * and nulls its columns, and disconnecting a Google account nulls `account_id` on every
+   * project of that account (`on delete set null`, migration 0021). Reading row EXISTENCE
+   * answered this state with "already connected — property https://…", the byte-identical
+   * sentence measured on four live projects whose tokens were dead — while pull_gsc_data
+   * refused the very same row with "No Search Console connection … Run connect_gsc first".
+   * One tool said connect, the other said you already did.
+   *
+   * The stored `gsc_property` is deliberately NON-null here: it is what survives a disconnect,
+   * and it is precisely what the old predicate printed as proof of a connection.
+   */
+  it("a row whose account_id is NULL is NOT connected — it gets the connect link, not 'already connected'", async () => {
+    const ctx = await makeCtx();
+    const domain = "unmapped.example.com";
+    const projectId = await makeProject(ctx.userId, domain);
+    const { error } = await service.from("gsc_connections").insert({
+      user_id: ctx.userId,
+      project_id: projectId,
+      account_id: null, // the state unmapProject and an account disconnect both leave behind
+      gsc_property: "https://unmapped.example.com/",
+    });
+    if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
+
+    const result = await connectGscTool.run(ctx, { project_id: projectId });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/already connected/i);
+    expect(text).toContain(`To connect Google Search Console for ${domain}`);
+    expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
   });
 
   /**
@@ -127,11 +187,14 @@ describe("connect_gsc against the local stack", () => {
     expect(domain).not.toContain("null"); // keeps the substring check below honest
     const ctx = await makeCtx();
     const projectId = await makeProject(ctx.userId, domain);
+    // RE-AIMED alongside the account_id predicate: "connected but no property matched" is now
+    // a LINKED row whose gsc_property is null, so the account is seeded and the property is
+    // not. The assertion — the raw null never reaches the user — is untouched.
     const { error } = await service.from("gsc_connections").insert({
       user_id: ctx.userId,
       project_id: projectId,
+      account_id: await makeAccount(ctx.userId),
       gsc_property: null,
-      encrypted_refresh_token: Buffer.from("not-a-real-token"),
     });
     if (error) throw new Error(`could not seed gsc_connections: ${error.message}`);
 

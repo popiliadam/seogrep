@@ -1,4 +1,4 @@
-import { GSC_READONLY_SCOPE, type GscSite } from "@pseo/core";
+import { GSC_IDENTITY_SCOPES, GSC_READONLY_SCOPE, type GscSite } from "@pseo/core";
 
 /**
  * Pure helpers for the GSC OAuth redirect + property resolution. Kept out of the route
@@ -11,11 +11,16 @@ const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 /**
  * Build the Google OAuth 2.0 consent URL. `access_type=offline` + `prompt=consent` are
  * what make Google return a refresh token (and re-issue one even if the user consented
- * before) — without them there is nothing to seal at rest. Scope is exactly the read-only
- * Search Console scope and nothing else: SeoGrep never requests write access, and we
- * deliberately do NOT set `include_granted_scopes` — incremental authorization would let
- * an unrelated previously-granted scope ride along on this token, blurring the one-scope
- * discipline this consent is meant to hold.
+ * before) — without them there is nothing to seal at rest.
+ *
+ * Scope is the read-only Search Console scope plus the two IDENTITY scopes (`openid`,
+ * `email`). The identity pair grants no additional data access; it is what makes Google
+ * return an `id_token` naming the account that consented, which since migration 0021 is
+ * the axis the credential is stored on. Still no write access is ever requested, and we
+ * deliberately still do NOT set `include_granted_scopes` — incremental authorization would
+ * let an unrelated previously-granted scope ride along on this token, blurring the
+ * discipline this consent is meant to hold. Asking for a scope by NAME here and inheriting
+ * one silently are different things; only the first is happening.
  *
  * `codeChallenge` is REQUIRED, not optional (L-10): PKCE that a caller can forget is PKCE
  * that eventually is forgotten, and the digest is safe to publish — it is the verifier behind
@@ -32,7 +37,7 @@ export function buildConsentUrl(params: {
     client_id: params.clientId,
     redirect_uri: params.redirectUri,
     response_type: "code",
-    scope: GSC_READONLY_SCOPE,
+    scope: [GSC_READONLY_SCOPE, ...GSC_IDENTITY_SCOPES].join(" "),
     access_type: "offline",
     prompt: "consent",
     state: params.state,
@@ -40,6 +45,39 @@ export function buildConsentUrl(params: {
     code_challenge_method: "S256",
   });
   return `${GOOGLE_AUTH_ENDPOINT}?${query.toString()}`;
+}
+
+/**
+ * Read `sub` (the stable Google account id) and `email` out of an `id_token`'s payload.
+ *
+ * THE SIGNATURE IS NOT VERIFIED, deliberately. This token is not accepted as a credential
+ * from a caller: it is a field of the JSON body Google's own token endpoint just returned
+ * over TLS, in the response to a request authenticated with our `client_secret`. Its origin
+ * is established by that exchange, so a JWKS fetch here would re-prove — at the cost of a
+ * network call and a key cache on the interactive callback path — something already proven.
+ * What this function does instead is treat the token's SHAPE as untrusted: anything that is
+ * not a JWT-looking string with both claims present as strings returns null, and the caller
+ * refuses the connection rather than inventing an identity for it.
+ *
+ * `sub`, not `email`, is the account key (`gsc_accounts.google_account_sub`): an email can
+ * be reassigned to a different person, a sub cannot. An EMPTY string is refused like a
+ * missing claim — `(user_id, google_account_sub)` is a unique key, so one blank sub would
+ * collapse two of a user's Google accounts onto a single row and hand the second consent
+ * the first one's identity.
+ */
+export function parseIdTokenClaims(idToken: string): { sub: string; email: string } | null {
+  const payload = idToken.split(".")[1];
+  if (!payload) return null;
+  try {
+    const json: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (typeof json !== "object" || json === null) return null;
+    const { sub, email } = json as { sub?: unknown; email?: unknown };
+    if (typeof sub !== "string" || sub.length === 0) return null;
+    if (typeof email !== "string" || email.length === 0) return null;
+    return { sub, email };
+  } catch {
+    return null;
+  }
 }
 
 type HostPair = { readonly host: string; readonly apex: string; readonly counterpart: string };

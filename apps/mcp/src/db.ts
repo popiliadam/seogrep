@@ -198,17 +198,22 @@ export type Database = {
         };
         Relationships: [];
       };
-      // Per-project Google Search Console link (migrations 0003 + 0009). Stores the
-      // AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex string) and the
-      // resolved property. The web OAuth callback writes it; pull_gsc_data reads it back
-      // (tenant-scoped by user_id — constitution NEVER #4). gsc_property is migration 0009,
+      // Per-project Google Search Console link (migrations 0003 + 0009 + 0021). Stores the
+      // resolved property and, since 0021, an `account_id` pointing at the `gsc_accounts` row
+      // that actually holds the sealed refresh token — 0021 DROPPED
+      // `gsc_connections.encrypted_refresh_token` outright (the credential moved off the
+      // per-project axis onto the per-account one; see the gsc_accounts table below). The web
+      // OAuth callback writes account_id; pull_gsc_data reads it back tenant-scoped by user_id
+      // (constitution NEVER #4), then resolves the token through gsc_accounts. A null account_id
+      // means "not connected" — same as no row at all — because `on delete set null` (0021) is
+      // how detaching an account normalizes back to that state. gsc_property is migration 0009,
       // which the committed @pseo/db generated types still omit, so it is modeled here.
       gsc_connections: {
         Row: {
           id: string;
           user_id: string;
           project_id: string;
-          encrypted_refresh_token: string | null;
+          account_id: string | null;
           gsc_property: string | null;
           created_at: string;
         };
@@ -216,13 +221,55 @@ export type Database = {
           id?: string;
           user_id: string;
           project_id: string;
-          encrypted_refresh_token?: string | null;
+          account_id?: string | null;
           gsc_property?: string | null;
           created_at?: string;
         };
         Update: {
-          encrypted_refresh_token?: string | null;
+          account_id?: string | null;
           gsc_property?: string | null;
+        };
+        Relationships: [];
+      };
+      // One row per Google account a user has connected (migration 0021), keyed on
+      // (user_id, google_account_sub) — the SUB, never the email, because email can change and
+      // sub cannot. Holds the AES-256-GCM-sealed refresh token (bytea, read back as a \x-hex
+      // string), bound to THIS row's (user_id, id) via the crypto v4 AAD (@pseo/core's
+      // TokenOwner) — a blob moved to another row fails to authenticate there. `authenticated`
+      // has only a column-level grant that EXCLUDES encrypted_refresh_token (migration 0021);
+      // only service_role — this client — can ever reach the ciphertext, so the explicit
+      // `.eq("user_id", …)` on every read is the ONLY tenant guard (constitution NEVER #4), not
+      // a redundant belt-and-suspenders check on top of RLS. The credential write path
+      // (upsertGscAccount / accessTokenFor) lives in apps/web/lib/gsc/accounts.ts (Task 4) —
+      // hand-declared here in the same style rather than imported, matching every other table in
+      // this slice. This app READS the row and writes exactly ONE field of it: markGscAccountTokenInvalid
+      // below stamps token_status='invalid' when Google refuses a refresh, because that death is
+      // observed HERE while the recovery UI lives in the web app. Insert is modelled for the
+      // schema's sake; nothing in apps/mcp inserts.
+      gsc_accounts: {
+        Row: {
+          id: string;
+          user_id: string;
+          google_account_sub: string;
+          google_account_email: string;
+          encrypted_refresh_token: string;
+          token_status: "active" | "invalid";
+          token_checked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          google_account_sub: string;
+          google_account_email: string;
+          encrypted_refresh_token: string;
+          token_status?: "active" | "invalid";
+          token_checked_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          token_status?: "active" | "invalid";
+          token_checked_at?: string | null;
         };
         Relationships: [];
       };
@@ -510,6 +557,47 @@ export async function touchLastUsed(
     .eq("id", keyId);
   if (error) {
     throw new Error(`last_used_at update failed: ${error.message}`);
+  }
+}
+
+/**
+ * Record that Google refused this account's refresh token with `invalid_grant`, so the account
+ * picker and the discovery tools can say "reconnect" instead of guessing.
+ *
+ * WHY IT LIVES HERE AND NOT IN apps/web. `markAccountTokenStatus` already exists in
+ * apps/web/lib/gsc/accounts.ts, and this is deliberately NOT that function: apps/mcp depends on
+ * @pseo/core, @supabase/supabase-js, express, pg-boss, undici and zod — never on apps/web — and
+ * the write cannot move to packages/core either, whose one runtime dependency is zod. The
+ * duplication across the app boundary is the same convention as the hand-declared gsc_accounts
+ * row shape above, for the same reason.
+ *
+ * WHY "INVALID" ONLY. Migration 0021's note on the column and apps/web's twin both draw the same
+ * line: `invalid` means Google specifically said `invalid_grant`. A 5xx, a timeout or a network
+ * error must never reach this function — a transient outage is not a dead credential, and
+ * branding a live account invalid sends the user through an OAuth round for nothing. The MCP
+ * read path has no reason to write `active` back (a re-consent already does that, in the web
+ * upsert), so this helper cannot express it.
+ *
+ * The `.eq("user_id", …)` filter is the ONLY tenant guard: this client is service-role, and
+ * `authenticated` has no UPDATE grant on gsc_accounts at all, so without the filter an
+ * `accountId` from a corrupted connection row could flip a FOREIGN tenant's token_status and
+ * prompt a stranger to re-authorize (constitution NEVER #4).
+ *
+ * Throws on a query error; the caller decides whether to swallow it (pull_gsc_data does, so a
+ * DB blip can never replace the invalid_grant answer the user needs).
+ */
+export async function markGscAccountTokenInvalid(
+  client: ServiceClient,
+  accountId: string,
+  userId: string,
+): Promise<void> {
+  const { error } = await client
+    .from("gsc_accounts")
+    .update({ token_status: "invalid", token_checked_at: new Date().toISOString() })
+    .eq("id", accountId)
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`gsc_accounts status write failed: ${error.message}`);
   }
 }
 

@@ -10,6 +10,7 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
+import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 
 /**
@@ -315,6 +316,33 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // would hide the 12 genuine failures that same campaign found wearing this disguise.
       if (isPreconditionNotMet(error)) {
         return errorResult(error.message);
+      }
+      // The THIRD deliberate refusal with no exit but a throw, and the only one whose cure is
+      // entirely in the USER's hands: Google refused the stored refresh token (invalid_grant),
+      // so no amount of retrying will work and re-approving access fixes it in a minute.
+      //
+      // Unlike the two above, the sentence is BUILT HERE rather than passed through, because the
+      // throw site cannot write it: the money rule forces a throw (withCredits releases only on
+      // one — gsc-data/reauth-error.ts), and the two facts the user needs, WHICH account and
+      // WHERE to reconnect, are the typed fields this error carries. Keyed on the TYPE for the
+      // same reason as the precondition branch: text matching would let a genuine crash that
+      // happens to mention Google wear an "everything is fine, just reconnect" sentence.
+      //
+      // No log line: an operator has nothing to diagnose in a user's revoked Google grant, and
+      // the account row itself already records it (token_status='invalid', written on the
+      // refresh path). Measured 2026-08-09: 12 live cells in exactly this state were answered
+      // with the generic sentence below — and charged for it.
+      //
+      // The "where to fix it" clause is rendered, not interpolated: on a deployment missing
+      // WEB_BASE_URL there is no honest link, and the branch must still produce the actionable
+      // refusal rather than fall back to the generic sentence below (controller ruling —
+      // gsc-data/reauth-error.ts renderReconnectInstruction).
+      if (isGscReauthRequired(error)) {
+        return errorResult(
+          `Your Google Search Console connection for ${error.accountEmail} expired, so this data ` +
+            `could not be refreshed. ${renderReconnectInstruction(error.reconnectUrl)}\n` +
+            "You were not charged.",
+        );
       }
       // The guard has already released any reserve it opened before rethrowing.
       //

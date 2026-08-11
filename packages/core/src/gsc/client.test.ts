@@ -60,10 +60,35 @@ describe("exchangeCodeForTokens", () => {
     expect(tokens).toEqual({
       accessToken: "ya29.access",
       refreshToken: "1//refresh",
+      // This fixture has no `id_token` (it predates the identity scopes), so the mapped set
+      // must carry the same normalized absence `refresh_token` already gets.
+      idToken: null,
       expiresIn: 3599,
       scope: "https://www.googleapis.com/auth/webmasters.readonly",
       tokenType: "Bearer",
     });
+  });
+
+  /**
+   * With {@link GSC_IDENTITY_SCOPES} on the consent URL, Google returns an `id_token`
+   * alongside the tokens. It must survive the camelCase mapping unmodified — the web
+   * callback reads its `sub` to decide WHICH `gsc_accounts` row this consent belongs to,
+   * and a dropped field there would make every consent look like a new account.
+   */
+  it("carries Google's id_token through to idToken when the identity scopes were granted", async () => {
+    const fetchMock = jsonFetch(200, {
+      access_token: "ya29.access",
+      refresh_token: "1//refresh",
+      id_token: "header.payload.signature",
+      expires_in: 3599,
+      scope: "https://www.googleapis.com/auth/webmasters.readonly openid email",
+      token_type: "Bearer",
+    });
+    const tokens = await exchangeCodeForTokens(
+      { code: "auth-code", redirectUri: "https://app.example.com/api/gsc/callback" },
+      { fetch: fetchMock, credentials: CREDENTIALS },
+    );
+    expect(tokens.idToken).toBe("header.payload.signature");
   });
 
   it("returns refreshToken null when Google omits it (prior consent)", async () => {
@@ -104,6 +129,7 @@ describe("refreshAccessToken", () => {
     expect(params.get("client_id")).toBe(CREDENTIALS.clientId);
     expect(tokens.accessToken).toBe("ya29.fresh");
     expect(tokens.refreshToken).toBeNull(); // refresh grants don't return a new refresh token
+    expect(tokens.idToken).toBeNull(); // ...nor an id_token: identity is asked at consent only
   });
 });
 

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { encryptToken, toByteaHex } from "@pseo/core";
 import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
 import { getServiceClient } from "../db.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
@@ -83,12 +84,55 @@ async function ledgerRows(userId: string): Promise<LedgerRow[]> {
 
 const balanceOf = (rows: LedgerRow[]): number => rows.reduce((sum, row) => sum + row.delta, 0);
 
+/**
+ * The staleness warning links back to the web app's connect route, so this suite needs the same
+ * WEB_BASE_URL connect_gsc reads (verify-db.sh exports only the Supabase stack).
+ */
+const WEB_BASE_URL = "https://app.test.seogrep.example";
+// 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
+const KEY = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+let priorWebBaseUrl: string | undefined;
+
 beforeAll(async () => {
+  priorWebBaseUrl = process.env.WEB_BASE_URL;
+  process.env.WEB_BASE_URL = WEB_BASE_URL;
   const { error } = await service.from("jobs").select("id").limit(1);
   if (error) {
     throw new Error(`cannot reach local Supabase (run via the verify-db env): ${error.message}`);
   }
 });
+
+afterAll(() => {
+  if (priorWebBaseUrl === undefined) delete process.env.WEB_BASE_URL;
+  else process.env.WEB_BASE_URL = priorWebBaseUrl;
+});
+
+/** Seed a connected project whose Google account carries `tokenStatus`. */
+async function seedConnection(
+  userId: string,
+  projectId: string,
+  tokenStatus: "active" | "invalid",
+): Promise<void> {
+  const accountId = randomUUID();
+  const acct = await service.from("gsc_accounts").insert({
+    id: accountId,
+    user_id: userId,
+    google_account_sub: `sub-${randomUUID()}`,
+    google_account_email: `discovery-account-${randomUUID()}@example.test`,
+    encrypted_refresh_token: toByteaHex(
+      encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, accountId }),
+    ),
+    token_status: tokenStatus,
+  });
+  if (acct.error) throw new Error(`gsc_accounts seed failed: ${acct.error.message}`);
+  const conn = await service.from("gsc_connections").insert({
+    user_id: userId,
+    project_id: projectId,
+    account_id: accountId,
+    gsc_property: "sc-domain:discovery.example.com",
+  });
+  if (conn.error) throw new Error(`gsc_connections seed failed: ${conn.error.message}`);
+}
 
 interface Case {
   readonly name: ToolName;
@@ -229,5 +273,102 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
     // …and the other tenant's pull was genuinely there to be leaked.
     const owner = await makeFindQuickWinsTool().run(other, { project_id: otherProjectId });
     expect(owner.isError).toBeUndefined();
+  });
+});
+
+/**
+ * STEP 4 — the staleness warning, over the REAL tenant-scoped health read (the fast-lane specs in
+ * find-quick-wins.test.ts inject that read; this one proves it finds the row). Measured
+ * 2026-08-09: analyses were served over data from a connection that had been dead for days, dated
+ * but not flagged, so the only visible next step was to re-run a pull that could never succeed.
+ */
+describe("discovery tools over a DEAD connection — what the CLIENT receives", () => {
+  it.each(CASES)("$name warns, links the reconnect route, and still delivers the analysis", async ({ name, make, expect: needle }) => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const projectId = await makeProject(ctx.userId, `dead-${randomUUID()}.example.com`);
+    await seedConnection(ctx.userId, projectId, "invalid");
+    await recordSucceededPull(service, {
+      userId: ctx.userId,
+      projectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+
+    const result = await callThroughRegistry(ctx, make(), projectId);
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(needle); // the findings are delivered, not replaced
+    expect(text).toContain("Search Console data pulled");
+    expect(text).toMatch(/connection expired.*cannot be refreshed/i);
+    expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+
+    // A delivered analysis IS a purchase: this warning does not make the call free.
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_commit"]);
+    expect(balanceOf(rows)).toBe(100 - TOOL_COSTS[name]);
+  });
+
+  /** THE COUNTERWEIGHT: a live connection must not be branded dead. */
+  it("says nothing about reconnecting when the connection is alive", async () => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const projectId = await makeProject(ctx.userId, `alive-${randomUUID()}.example.com`);
+    await seedConnection(ctx.userId, projectId, "active");
+    await recordSucceededPull(service, {
+      userId: ctx.userId,
+      projectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+
+    const result = await callThroughRegistry(ctx, makeFindQuickWinsTool(), projectId);
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("Search Console data pulled");
+    expect(text).not.toMatch(/connection expired/i);
+  });
+
+  /**
+   * SECURITY (NEVER #4): the health read is filtered by user_id on BOTH hops. A connection row
+   * pointing at another tenant's account — a data anomaly, not a reachable product state — must
+   * read as "nothing to warn about" rather than reporting a stranger's account health.
+   */
+  it("SECURITY: an account belonging to another tenant is not read for the warning", async () => {
+    const owner = await makeCtx();
+    const intruder = await makeCtx();
+    await seedGrant(intruder.userId, 100);
+
+    // The OWNER's dead account.
+    const accountId = randomUUID();
+    const acct = await service.from("gsc_accounts").insert({
+      id: accountId,
+      user_id: owner.userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `owner-${randomUUID()}@example.test`,
+      encrypted_refresh_token: toByteaHex(
+        encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId: owner.userId, accountId }),
+      ),
+      token_status: "invalid",
+    });
+    if (acct.error) throw new Error(`gsc_accounts seed failed: ${acct.error.message}`);
+
+    // The INTRUDER's own project, its connection pointed at the owner's account.
+    const projectId = await makeProject(intruder.userId, `intrude-${randomUUID()}.example.com`);
+    const conn = await service.from("gsc_connections").insert({
+      user_id: intruder.userId,
+      project_id: projectId,
+      account_id: accountId,
+      gsc_property: "sc-domain:intrude.example.com",
+    });
+    if (conn.error) throw new Error(`gsc_connections seed failed: ${conn.error.message}`);
+    await recordSucceededPull(service, {
+      userId: intruder.userId,
+      projectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+
+    const result = await callThroughRegistry(intruder, makeFindQuickWinsTool(), projectId);
+
+    expect(result.content[0]?.text ?? "").not.toMatch(/connection expired/i);
   });
 });

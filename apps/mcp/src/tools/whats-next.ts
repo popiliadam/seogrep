@@ -207,11 +207,14 @@ function isFresh(createdAt: string, now: Date): boolean {
 
 /**
  * Is Search Console connected for (userId, projectId)? Connected = a gsc_connections row exists
- * with a non-null sealed refresh token (the web OAuth callback wrote it). Scoped to the tenant by
- * an explicit user_id filter (constitution NEVER #4) AND project_id — the literal table gives the
- * specific row type, so the project_id filter type-checks (forUser's selectOwn narrows filters to
- * the columns common to ALL tenant tables, which excludes project_id). Same reader shape as
- * pull_gsc_data's loadConnection. A missing / another tenant's connection both read as not-connected.
+ * with a non-null account_id (migration 0021 — the web OAuth callback sets it once a token is
+ * stored on gsc_accounts). Scoped to the tenant by an explicit user_id filter (constitution
+ * NEVER #4) AND project_id — the literal table gives the specific row type, so the project_id
+ * filter type-checks (forUser's selectOwn narrows filters to the columns common to ALL tenant
+ * tables, which excludes project_id). Same reader shape as pull_gsc_data's loadConnection. A
+ * missing / another tenant's connection / a null account_id all read as not-connected — this
+ * router only needs the boolean, never the token itself, so it stops at gsc_connections and
+ * never touches gsc_accounts.
  */
 async function readGscConnected(
   client: ServiceClient,
@@ -220,14 +223,14 @@ async function readGscConnected(
 ): Promise<boolean> {
   const { data, error } = await client
     .from("gsc_connections")
-    .select("encrypted_refresh_token")
+    .select("account_id")
     .eq("user_id", userId)
     .eq("project_id", projectId)
     .maybeSingle();
   if (error) {
     throw new Error(`whats_next: gsc_connections read failed: ${error.message}`);
   }
-  return data?.encrypted_refresh_token != null;
+  return data?.account_id != null;
 }
 
 /** Read the four observable signals for a project (all tenant-scoped, in parallel). */

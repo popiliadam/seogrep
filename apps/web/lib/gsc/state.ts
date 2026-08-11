@@ -3,9 +3,9 @@ import { tokenKeyBytes } from "@pseo/core";
 
 /**
  * Signed, expiring OAuth `state` for the GSC connect flow. The state is the ONLY thing
- * that carries the tenant identity ({user_id, project_id}) across the redirect to Google
- * and back to the callback, so it must be unforgeable and short-lived. It is an HMAC-SHA256
- * MAC over a base64url JSON payload — a compact, stateless token (no server-side store):
+ * that carries the tenant identity ({user_id}) across the redirect to Google and back to
+ * the callback, so it must be unforgeable and short-lived. It is an HMAC-SHA256 MAC over a
+ * base64url JSON payload — a compact, stateless token (no server-side store):
  *
  *     base64url(JSON(payload)) . base64url(HMAC-SHA256(base64url(JSON(payload)), stateKey))
  *
@@ -13,7 +13,13 @@ import { tokenKeyBytes } from "@pseo/core";
  * label, so the state MAC key is a SEPARATE key from the token-encryption key (key
  * separation — the same master secret is never used for two purposes). The callback
  * additionally re-checks the live session against `user_id`, so a leaked state alone
- * cannot bind a project to another signed-in user.
+ * cannot bind a Google account to another signed-in user.
+ *
+ * The payload carried a `project_id` until migration 0021: consent used to link ONE
+ * project, so the project it was for had to survive the round-trip. The credential now
+ * belongs to a Google ACCOUNT and a later picker maps it onto properties, so there is no
+ * project in this flow to carry — and a field the callback no longer reads is a field that
+ * only invites someone to start trusting it again.
  */
 
 /** Default state lifetime: the round-trip to Google's consent screen is quick. */
@@ -24,7 +30,6 @@ const STATE_KEY_INFO = "seogrep:gsc-oauth-state:v1";
 
 export interface StatePayload {
   readonly user_id: string;
-  readonly project_id: string;
   /** Absolute expiry, epoch SECONDS. */
   readonly exp: number;
   /**
@@ -54,17 +59,15 @@ function mac(encodedPayload: string, secretHex: string): Buffer {
   return createHmac("sha256", deriveStateKey(secretHex)).update(encodedPayload).digest();
 }
 
-/** Build a fresh payload for {userId, projectId}, stamping exp (now + ttl) and a nonce. */
+/** Build a fresh payload for {userId}, stamping exp (now + ttl) and a nonce. */
 export function freshStatePayload(
   userId: string,
-  projectId: string,
   opts: { ttlSeconds?: number; nowMs?: number } = {},
 ): StatePayload {
   const nowMs = opts.nowMs ?? Date.now();
   const ttl = opts.ttlSeconds ?? STATE_TTL_SECONDS;
   return {
     user_id: userId,
-    project_id: projectId,
     exp: Math.floor(nowMs / 1000) + ttl,
     nonce: randomUUID(),
   };
@@ -108,7 +111,6 @@ export function verifyState(token: string, secretHex: string, nowMs: number = Da
   }
   if (
     typeof payload?.user_id !== "string" ||
-    typeof payload?.project_id !== "string" ||
     typeof payload?.exp !== "number" ||
     typeof payload?.nonce !== "string"
   ) {

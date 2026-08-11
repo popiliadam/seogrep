@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi, type MockInstance } from "vitest";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { encryptToken, searchAnalyticsQuery, toByteaHex } from "@pseo/core";
+import { encryptToken, refreshAccessToken, searchAnalyticsQuery, toByteaHex } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
@@ -20,11 +20,18 @@ import { makePullGscDataTool } from "./pull-gsc-data.ts";
  *       (the sync surface never touches a jobs reserve);
  *   (b) no connection -> THROWS "connect_gsc first" and RELEASES (net 0), no jobs row;
  *   (c) a connection with no matched property -> THROWS and RELEASES (net 0), no jobs row.
- * A SECOND block below asserts the same three connection states as the CLIENT receives them —
- * through the registry's catch, which is where the sentence used to be lost. A THIRD block does
+ * A SECOND block below asserts the same two connection states as the CLIENT receives them —
+ * through the registry's catch, which is where the sentence used to be lost. (Migration 0021
+ * retired a third state that lived here, "connection exists but has no stored token yet":
+ * gsc_connections.encrypted_refresh_token is gone and gsc_accounts.encrypted_refresh_token is
+ * NOT NULL, so account_id now names either a real token or nothing — same message as no
+ * connection. See the commit message for the full per-assertion account.) A THIRD block does
  * the same for the Google 403, the one refusal that is BOTH user-actionable and operator-worthy:
  * the client gets a permission sentence, the log keeps Google's verbatim message, and the ledger
  * still nets to zero — with a 500 and a token-endpoint 403 beside it to hold the branch narrow.
+ * A FOURTH block covers the dead grant (invalid_grant): a typed, FREE refusal naming the account
+ * and the link that revives it. A FIFTH is the mutation-tested tenant guard on the gsc_accounts
+ * read itself (NEVER #4).
  */
 
 // 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
@@ -90,19 +97,50 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
-/** Seed a gsc_connections row with a sealed refresh token and (optionally) a matched property. */
+/**
+ * Seed a connected project: a real gsc_accounts row carrying a sealed refresh token (migration
+ * 0021 axis — sealed to {userId, accountId}, never {userId, projectId}), linked from
+ * gsc_connections.account_id, with (optionally) a matched property. Returns the minted account's
+ * id AND email: the id so a caller can read back its token_status (the reauth specs below), the
+ * email because the reauth sentence names the account the user has to reconnect.
+ */
 async function seedConnection(
   userId: string,
   projectId: string,
   property: string | null,
-): Promise<void> {
+): Promise<{ accountId: string; accountEmail: string }> {
+  const accountId = randomUUID();
+  const accountEmail = `pull-account-${randomUUID()}@example.test`;
+  const acctResult = await service.from("gsc_accounts").insert({
+    id: accountId,
+    user_id: userId,
+    google_account_sub: `sub-${randomUUID()}`,
+    google_account_email: accountEmail,
+    encrypted_refresh_token: toByteaHex(
+      encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, accountId }),
+    ),
+  });
+  if (acctResult.error) throw new Error(`gsc_accounts seed failed: ${acctResult.error.message}`);
+
   const { error } = await service.from("gsc_connections").insert({
     user_id: userId,
     project_id: projectId,
-    encrypted_refresh_token: toByteaHex(encryptToken(`1//refresh-${randomUUID()}`, KEY, { userId, projectId })),
+    account_id: accountId,
     gsc_property: property,
   });
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
+  return { accountId, accountEmail };
+}
+
+/** Read one account's stored token health back from the database. */
+async function tokenStatusOf(accountId: string): Promise<string | null> {
+  const { data, error } = await service
+    .from("gsc_accounts")
+    .select("token_status")
+    .eq("id", accountId)
+    .maybeSingle();
+  if (error) throw new Error(`token_status read failed: ${error.message}`);
+  return data?.token_status ?? null;
 }
 
 interface LedgerRow {
@@ -135,11 +173,26 @@ async function pullJobs(userId: string): Promise<{ id: string; status: string; r
 
 const balanceOf = (rows: LedgerRow[]): number => rows.reduce((sum, row) => sum + row.delta, 0);
 
+/**
+ * The reauth sentence links back to the web app's connect route, so this suite needs the same
+ * WEB_BASE_URL connect_gsc reads (verify-db.sh exports only the Supabase stack). Set + restored
+ * exactly the way connect-gsc.db.test.ts does it.
+ */
+const WEB_BASE_URL = "https://app.test.seogrep.example";
+let priorWebBaseUrl: string | undefined;
+
 beforeAll(async () => {
+  priorWebBaseUrl = process.env.WEB_BASE_URL;
+  process.env.WEB_BASE_URL = WEB_BASE_URL;
   const { error } = await service.from("gsc_connections").select("id").limit(1);
   if (error) {
     throw new Error(`cannot reach local Supabase (run via the verify-db env): ${error.message}`);
   }
+});
+
+afterAll(() => {
+  if (priorWebBaseUrl === undefined) delete process.env.WEB_BASE_URL;
+  else process.env.WEB_BASE_URL = priorWebBaseUrl;
 });
 
 describe("pull_gsc_data sync charge against the local stack", () => {
@@ -244,17 +297,6 @@ async function callThroughRegistry(
   return call({ params: { name: tool.name, arguments: { project_id: projectId, days: 90 } } });
 }
 
-/** Seed a connection row with NO refresh token — the "approved nothing yet" state. */
-async function seedConnectionWithoutToken(userId: string, projectId: string): Promise<void> {
-  const { error } = await service.from("gsc_connections").insert({
-    user_id: userId,
-    project_id: projectId,
-    encrypted_refresh_token: null,
-    gsc_property: null,
-  });
-  if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
-}
-
 /** Assert the shared shape of a designed refusal: verbatim text, no crash dressing, net 0. */
 async function expectRefusal(
   ctx: AuthContext,
@@ -296,27 +338,6 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
     }
   });
 
-  it("connection with no stored token: the re-approve sentence verbatim, nets to zero", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      const ctx = await makeCtx();
-      await seedGrant(ctx.userId, 100);
-      const projectId = await makeProject(ctx.userId, `notoken-${randomUUID()}.example.com`);
-      await seedConnectionWithoutToken(ctx.userId, projectId);
-
-      const result = await callThroughRegistry(ctx, pullTool(), projectId);
-
-      await expectRefusal(
-        ctx,
-        result,
-        "This project's Search Console connection has no stored token yet. Re-run connect_gsc and approve access.",
-        errorSpy,
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
-  });
-
   /** The live state of www.noraninsaat.com on 2026-08-09 (campaign finding #36) — the sentence it should have received. */
   it("connection with no matched property: the reconnect sentence verbatim, nets to zero", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -339,29 +360,33 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
     }
   });
 
-  it("the three refusals are DIFFERENT sentences — the states are not collapsed into one", async () => {
-    // The isolation pin's opposite. The audits deliberately collapse three causes into one
-    // sentence because telling them apart would leak another tenant's data; here the three
-    // states are all the caller's OWN connection, and the next action differs each time, so
-    // collapsing them would destroy exactly what makes the refusal actionable.
+  /**
+   * Migration 0021 retired the third state that used to sit here ("connection exists but has
+   * no stored token yet" — encrypted_refresh_token dropped from gsc_connections outright, and
+   * gsc_accounts.encrypted_refresh_token is NOT NULL, so an account_id either names a row with
+   * a token or is null, same as "not connected"). Two designed refusals remain, and this spec's
+   * job shrinks to the same claim over the smaller set: they must not collapse into one sentence.
+   */
+  it("the two refusals are DIFFERENT sentences — the states are not collapsed into one", async () => {
+    // The isolation pin's opposite. The audits deliberately collapse causes into one sentence
+    // because telling them apart would leak another tenant's data; here both states are the
+    // caller's OWN connection, and the next action differs each time, so collapsing them would
+    // destroy exactly what makes the refusal actionable.
     const ctx = await makeCtx();
     await seedGrant(ctx.userId, 100);
     const noConn = await makeProject(ctx.userId, `d1-${randomUUID()}.example.com`);
-    const noToken = await makeProject(ctx.userId, `d2-${randomUUID()}.example.com`);
-    await seedConnectionWithoutToken(ctx.userId, noToken);
     const noProp = await makeProject(ctx.userId, `d3-${randomUUID()}.example.com`);
     await seedConnection(ctx.userId, noProp, null);
 
     const texts: string[] = [];
-    for (const projectId of [noConn, noToken, noProp]) {
+    for (const projectId of [noConn, noProp]) {
       const result = await callThroughRegistry(ctx, pullTool(), projectId);
       expect(result.isError).toBe(true);
       texts.push(result.content[0]?.text ?? "");
     }
-    expect(new Set(texts).size).toBe(3);
+    expect(new Set(texts).size).toBe(2);
     expect(texts[0]).toContain("Run connect_gsc first");
-    expect(texts[1]).toContain("no stored token yet");
-    expect(texts[2]).toContain("no matched property yet");
+    expect(texts[1]).toContain("no matched property yet");
   });
 
   /**
@@ -567,6 +592,277 @@ describe("pull_gsc_data when Google refuses the property (403)", () => {
       expect(result.content[0]?.text ?? "").toMatch(/failed unexpectedly/);
       expect(result.content[0]?.text ?? "").not.toContain("Users and permissions");
       expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * THE DEAD GRANT — the failure this task exists for. Migration 0021's own header records that
+ * all 12 observed invalid_grant deaths were seen THROUGH pull_gsc_data, the one path that
+ * recorded nothing: the user was charged 5 credits and told to report a bug about a credential
+ * they could have replaced in a minute (2026-08-09 campaign, "failed unexpectedly — quote
+ * reference 3f9c1a20").
+ *
+ * The invalid_grant Error is NOT hand-written: it is produced by the REAL @pseo/core token
+ * client driven by a fake `fetch` (zero network, NEVER #5), so the message the classifier matches
+ * is the message core actually builds. Reword `tokenError` and these specs fail, instead of the
+ * branch silently falling back to the generic sentence.
+ */
+
+/** Build the Error core throws when Google's token endpoint refuses the refresh token. */
+async function coreTokenError(status: number, payload: Record<string, unknown>): Promise<Error> {
+  const refusingFetch = async (): Promise<Response> =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  try {
+    await refreshAccessToken("1//dead-refresh-token", {
+      fetch: refusingFetch,
+      credentials: { clientId: "test-client-id", clientSecret: "test-client-secret" },
+    });
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error(`expected the core token client to throw on ${status}`);
+}
+
+/** A Google port whose REFRESH fails; searchAnalytics.query is never reached. */
+function refreshFailingApi(error: Error): GscApi {
+  return {
+    refreshAccessToken: async () => {
+      throw error;
+    },
+    searchAnalyticsQuery: async () => {
+      throw new Error("searchAnalytics.query must not be reached when the refresh failed");
+    },
+  };
+}
+
+describe("pull_gsc_data when Google has revoked the stored grant (invalid_grant)", () => {
+  const PROPERTY = "sc-domain:dead-grant.example.com";
+
+  it("turns invalid_grant into an actionable message and burns ZERO credits", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `dead-${randomUUID()}.example.com`);
+      const { accountEmail } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(
+          await coreTokenError(400, {
+            error: "invalid_grant",
+            error_description: "Token has been expired or revoked.",
+          }),
+        ),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      // WHAT THE USER GETS: which account died, what to do, and that it was free.
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(new RegExp(`connection for ${accountEmail} expired.*reconnect`, "i"));
+      expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+      expect(text).toContain("You were not charged.");
+      expect(text).not.toContain("failed unexpectedly");
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // Google's own vocabulary stays out of the user's sentence.
+      expect(text).not.toMatch(/invalid_grant/);
+      // A designed refusal: nothing for an operator to diagnose, so no log line.
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      // THE MONEY PIN — the load-bearing assertion. Returning an error result instead of
+      // throwing would COMMIT 5 credits for a call that fetched nothing.
+      const rows = await ledgerRows(ctx.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(rows[1]?.delta).toBe(-TOOL_COSTS.pull_gsc_data);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE GUARANTEE UNDER A MISCONFIGURED ENVIRONMENT. With WEB_BASE_URL unset there is no honest
+   * link to print — but the refusal must NOT fall back to "failed unexpectedly", which is the
+   * exact sentence this path exists to abolish, in the exact situation it was written for. Driven
+   * end to end (registry catch + real ledger), not just at the renderer, because the fallback that
+   * matters is the one the CLIENT receives. Signed lessons 5 and 6: env-reading code is negative-
+   * tested with the real prod variable name.
+   */
+  it("with no WEB_BASE_URL the refusal survives without its link — and is still free", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const savedBaseUrl = process.env.WEB_BASE_URL;
+    delete process.env.WEB_BASE_URL;
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `nobase-${randomUUID()}.example.com`);
+      const { accountId, accountEmail } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(400, { error: "invalid_grant" })),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+      const text = result.content[0]?.text ?? "";
+
+      // THE ASSERTION THAT MATTERS: never the crash sentence, whatever the environment.
+      expect(text).not.toContain("failed unexpectedly");
+      expect(text).not.toMatch(/reference [0-9a-f]{8}/);
+      // Still actionable, and no half-built link.
+      expect(text).toContain(accountEmail);
+      expect(text).toMatch(/expired/i);
+      expect(text).toContain("Reconnect it from the Connection page");
+      expect(text).not.toContain("undefined/api/gsc/connect");
+      expect(text).toContain("You were not charged.");
+
+      // Unchanged by the missing env: still free, and the account is still marked.
+      expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+      expect(await pullJobs(ctx.userId)).toHaveLength(0);
+      expect(await tokenStatusOf(accountId)).toBe("invalid");
+    } finally {
+      if (savedBaseUrl === undefined) delete process.env.WEB_BASE_URL;
+      else process.env.WEB_BASE_URL = savedBaseUrl;
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("marks the account invalid so the picker can say so", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `deadmark-${randomUUID()}.example.com`);
+      const { accountId } = await seedConnection(ctx.userId, projectId, PROPERTY);
+      expect(await tokenStatusOf(accountId)).toBe("active"); // the state we are moving away from
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(400, { error: "invalid_grant" })),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      await callThroughRegistry(ctx, tool, projectId);
+
+      expect(await tokenStatusOf(accountId)).toBe("invalid");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE COUNTERWEIGHT, and the reason the classifier is tail-anchored rather than a substring
+   * test. A 503 is a transient outage, not a dead credential: the user must be told to retry,
+   * not sent through an OAuth round — and the account must NOT be branded invalid, which would
+   * make every discovery tool warn about a connection that is perfectly alive.
+   */
+  it("a 503 from Google does NOT mark the account invalid", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `gsc503-${randomUUID()}.example.com`);
+      const { accountId } = await seedConnection(ctx.userId, projectId, PROPERTY);
+
+      const tool = makePullGscDataTool({
+        api: refreshFailingApi(await coreTokenError(503, {})),
+        encryptionKey: KEY,
+        now: () => REFERENCE,
+      });
+      const result = await callThroughRegistry(ctx, tool, projectId);
+
+      expect(await tokenStatusOf(accountId)).toBe("active");
+      // …and it keeps the generic crash sentence + the operator's log line.
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      expect(text).not.toMatch(/reconnect/i);
+      expect(errorSpy).toHaveBeenCalledOnce();
+      expect(balanceOf(await ledgerRows(ctx.userId))).toBe(100);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * TENANT ISOLATION on the gsc_accounts read itself (NEVER #4) — the spec the MUTATION step in
+ * this task pins. account_id on a connection is only ever minted by the web write path for its
+ * OWN caller, so this state is not reachable through the real product; it is seeded directly to
+ * prove the read stays tenant-scoped even under a data anomaly (a bug elsewhere, or a crafted
+ * row), rather than trusting that account_id always belongs to the reading user.
+ *
+ * Mutated by hand for this task: deleting the `.eq("user_id", userId)` filter from
+ * defaultLoadAccountToken (pull-gsc-data.ts) turns this red — the read then finds the
+ * intruder's foreign account_id, decryptToken's AAD mismatch throws a DIFFERENT message ("wrong
+ * key or corrupt ciphertext", not "not found"), and both assertions on `logged` fail. Restoring
+ * the filter turns it back green. See task-2b-report.md for the exact before/after command output.
+ */
+describe("pull_gsc_data — gsc_accounts read is tenant-scoped (mutation-tested)", () => {
+  it("SECURITY: a connection whose account_id belongs to another tenant is refused, not read", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const owner = await makeCtx();
+      const intruder = await makeCtx();
+      await seedGrant(intruder.userId, 100);
+
+      // owner's REAL gsc_accounts row, holding their real sealed token.
+      const accountId = randomUUID();
+      const acctResult = await service.from("gsc_accounts").insert({
+        id: accountId,
+        user_id: owner.userId,
+        google_account_sub: `sub-${randomUUID()}`,
+        google_account_email: `owner-${randomUUID()}@example.test`,
+        encrypted_refresh_token: toByteaHex(
+          encryptToken(`1//owner-secret-${randomUUID()}`, KEY, {
+            userId: owner.userId,
+            accountId,
+          }),
+        ),
+      });
+      if (acctResult.error) {
+        throw new Error(`gsc_accounts seed failed: ${acctResult.error.message}`);
+      }
+
+      // intruder's OWN project, its connection row pointed at the OWNER's account — the
+      // anomalous state this spec exists to refuse.
+      const projectId = await makeProject(intruder.userId, `intrude-${randomUUID()}.example.com`);
+      const connResult = await service.from("gsc_connections").insert({
+        user_id: intruder.userId,
+        project_id: projectId,
+        account_id: accountId,
+        gsc_property: "sc-domain:intrude.example.com",
+      });
+      if (connResult.error) {
+        throw new Error(`gsc_connections seed failed: ${connResult.error.message}`);
+      }
+
+      const result = await callThroughRegistry(intruder, pullTool(), projectId);
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toMatch(/failed unexpectedly/);
+      // Never the owner's plaintext, and never Google's decrypt-failure wording either — a
+      // wrong-tenant read is reported as a lookup miss, not surfaced as a crypto failure.
+      expect(text).not.toMatch(/owner-secret/);
+
+      expect(errorSpy).toHaveBeenCalledOnce();
+      const logged = errorSpy.mock.calls[0]?.join(" ") ?? "";
+      expect(logged).toContain("not found");
+      expect(logged).toContain(accountId);
+
+      // Refused before any Google call: reserved, released, no pull job, no charge.
+      const rows = await ledgerRows(intruder.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await pullJobs(intruder.userId)).toHaveLength(0);
     } finally {
       errorSpy.mockRestore();
     }

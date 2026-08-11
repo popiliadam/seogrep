@@ -33,6 +33,7 @@ describe("connect_gsc input schema", () => {
 });
 
 const CONNECT_URL = "https://app.example.test/api/gsc/connect?project_id=p-1";
+const PICKER_URL = "https://app.example.test/app/connection";
 
 describe("connect_gsc already-connected copy", () => {
   it("names the matched property and points at pull_gsc_data", () => {
@@ -40,11 +41,51 @@ describe("connect_gsc already-connected copy", () => {
       domain: "adstark.com.tr",
       property: "https://adstark.com.tr/",
       connectUrl: CONNECT_URL,
+      pickerUrl: PICKER_URL,
     });
     expect(text).toMatch(/already connected/i);
     expect(text).toContain("https://adstark.com.tr/");
     expect(text).toMatch(/pull_gsc_data/);
     expect(text).toContain(CONNECT_URL);
+  });
+
+  /**
+   * RE-AIMED from "If you need to connect a DIFFERENT property … re-approve here". Migration
+   * 0021 moved the property choice out of the OAuth callback and onto /app/connection — the
+   * callback stores a Google ACCOUNT and writes no connection row — so that sentence sent the
+   * user through a Google round trip that CANNOT change which property a project reads. The
+   * assertion that survives is "a property change has somewhere to happen"; where it happens
+   * changed, so the link did.
+   */
+  it("sends a PROPERTY change to the picker, and says approving again will not do it", () => {
+    const text = renderAlreadyConnected({
+      domain: "adstark.com.tr",
+      property: "https://adstark.com.tr/",
+      connectUrl: CONNECT_URL,
+      pickerUrl: PICKER_URL,
+    });
+    expect(text).toContain(PICKER_URL);
+    expect(text).toMatch(/different property/i);
+    expect(text).toMatch(/does not change which property/i);
+    // The connect link survives for the one job it still has: a withdrawn grant.
+    expect(text).toMatch(/revoked on google's side/i);
+  });
+
+  /**
+   * The unmatched branch carried the same stale instruction ("once the property is verified,
+   * re-approve access here"). Verifying a property in Search Console does not make the OAuth
+   * callback pick it any more; a human picks it on the Connection page.
+   */
+  it("sends an unmatched property to the picker once it is verified", () => {
+    const text = renderAlreadyConnected({
+      domain: "www.noraninsaat.com",
+      property: null,
+      connectUrl: CONNECT_URL,
+      pickerUrl: PICKER_URL,
+    });
+    expect(text).toMatch(/once the property is verified/i);
+    expect(text).toContain(PICKER_URL);
+    expect(text).toContain(CONNECT_URL); // still offered, for an account that lost access
   });
 
   /**
@@ -58,6 +99,7 @@ describe("connect_gsc already-connected copy", () => {
       domain: "www.noraninsaat.com",
       property: null,
       connectUrl: CONNECT_URL,
+      pickerUrl: PICKER_URL,
     });
     expect(text).not.toContain("null");
     expect(text).not.toMatch(/undefined/);
@@ -68,6 +110,7 @@ describe("connect_gsc already-connected copy", () => {
       domain: "www.noraninsaat.com",
       property: null,
       connectUrl: CONNECT_URL,
+      pickerUrl: PICKER_URL,
     });
     expect(text).toContain("www.noraninsaat.com"); // WHICH domain we looked for
     expect(text).toMatch(/no.*matched|matched it/i);

@@ -12,29 +12,48 @@ import { resolveBaseUrl } from "../../../../lib/site";
 import { freshStatePayload, signState, STATE_TTL_SECONDS } from "../../../../lib/gsc/state";
 
 /**
- * Step 1 of the GSC OAuth link-out. A signed-in user arrives here (via the connect_gsc
- * tool's link) for one of THEIR projects; we mint a signed, expiring `state` binding
- * {user_id, project_id} and redirect to Google's consent screen. No token or secret is
- * involved yet — only the public client_id, the callback redirect, and the state.
+ * Step 1 of the GSC OAuth link-out. A signed-in user arrives here; we mint a signed,
+ * expiring `state` binding {user_id} and redirect to Google's consent screen. No token or
+ * secret is involved yet — only the public client_id, the callback redirect, and the state.
  *
- * Ownership is enforced two ways: the project is read with the CALLER's own RLS-scoped
- * client (another tenant's / a missing project simply returns no row), and the state the
- * callback later trusts is signed here only after that check passes. No redirect target is
- * ever read from the request. Node runtime: state signing uses node:crypto.
+ * WHAT IS BEING CONNECTED CHANGED (migration 0021). Consent used to be granted FOR ONE
+ * PROJECT: the caller passed `project_id`, this route proved they owned it with their own
+ * RLS-scoped client, and the state carried it to the callback. The refresh token now lives
+ * per GOOGLE ACCOUNT (`gsc_accounts`) and a separate picker maps that account onto
+ * properties, so there is no project in this flow to own — and therefore no ownership gate
+ * left to run here. What the route still proves is the only thing the callback needs: a
+ * LIVE SESSION, whose user id the state is signed with and which the callback re-checks.
+ *
+ * `project_id` may still arrive in the query (the connection page's existing link sends
+ * one) and is deliberately IGNORED rather than validated — validating a parameter nothing
+ * reads would only suggest it still decides something. The page's link is rewritten with
+ * the account picker.
+ *
+ * No redirect target is ever read from the request. Node runtime: state signing uses
+ * node:crypto.
  */
 export const runtime = "nodejs";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function redirect(path: string, base: string): NextResponse {
   return NextResponse.redirect(new URL(path, base));
 }
 
-export async function GET(request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  const projectId = url.searchParams.get("project_id") ?? "";
+export async function GET(_request: Request): Promise<Response> {
+  // Deliberately unread (see the file doc above). It stays declared for ONE reason, and it is
+  // not the framework: `export async function GET()` with no parameter is valid TypeScript and
+  // valid Next.js — a caller that passes an argument does not oblige the callee to declare one.
+  // What binds is route.test.ts, which calls `GET(...)` directly at 14 sites (two of them
+  // pinning that a spoofed Host changes nothing), so dropping the parameter cascades TS2554
+  // through a file that is not being touched here.
+  //
+  // The `_` prefix is decorative: this repo's ESLint config is `tseslint.configs.recommended`
+  // plus a `no-console` rule and carries NO `argsIgnorePattern`, so an unused `_request` is an
+  // error like any other. `void` is what actually silences it, and it marks the non-use
+  // honestly rather than hiding it; same idiom as apps/mcp/src/db.ts's
+  // `void _dfsSpendIsNotTenantScopable`.
+  void _request;
 
-  // Canonical origin for every SAME-APP redirect below. url.origin is the request Host, which
+  // Canonical origin for every SAME-APP redirect below. The request Host, which
   // a proxy can let an attacker spoof, so internal 302 Locations must be built from the
   // canonical WEB_BASE_URL (A-I4) — the same origin the OAuth redirect_uri already uses —
   // never from the request.
@@ -66,11 +85,6 @@ export async function GET(request: Request): Promise<Response> {
     return redirect("/login", base);
   }
 
-  // A non-uuid can own no project — reject before any DB round-trip.
-  if (!UUID_RE.test(projectId)) {
-    return redirect("/app?gsc=unknown_project", base);
-  }
-
   // Fail closed on missing configuration (signed lesson #5): a broken deploy must not
   // build an `undefined` Google link. These are read the same way the rest of the app
   // reads env (process.env at request time).
@@ -81,27 +95,12 @@ export async function GET(request: Request): Promise<Response> {
     return redirect("/app?gsc=error", base);
   }
 
-  // Ownership gate via the caller's RLS-scoped client: another tenant's project (or a
-  // missing one) returns no row and is indistinguishable.
-  const { data: project, error } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (error) {
-    console.error("gsc connect: project lookup failed:", error.message);
-    return redirect("/app?gsc=error", base);
-  }
-  if (!project) {
-    return redirect("/app?gsc=unknown_project", base);
-  }
-
   // Mint the state AND the per-flow secret together (L-10). Only the S256 DIGEST of the
   // verifier goes to Google; the verifier itself, plus the state's nonce, stay in an httpOnly
   // cookie this origin alone can read. The callback demands that cookie and destroys it, which
   // is what makes an otherwise-stateless state single-use — and PKCE then binds the returned
   // code to this browser, so a code injected into someone else's callback cannot be redeemed.
-  const payload = freshStatePayload(user.id, projectId);
+  const payload = freshStatePayload(user.id);
   const codeVerifier = createCodeVerifier();
   const consentUrl = buildConsentUrl({
     clientId,

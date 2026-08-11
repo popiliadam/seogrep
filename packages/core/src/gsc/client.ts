@@ -23,6 +23,17 @@ const WEBMASTERS_BASE = "https://www.googleapis.com/webmasters/v3";
 export const GSC_READONLY_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 
 /**
+ * The identity scopes requested BESIDE the Search Console one. They add no data access:
+ * they make Google return an `id_token` whose `sub` names the Google account that just
+ * consented. Since migration 0021 the refresh token is stored per ACCOUNT
+ * (`gsc_accounts`, keyed on `(user_id, google_account_sub)`), so without these a consent
+ * yields a credential nobody can attribute — and connecting a second Google account would
+ * be indistinguishable from re-consenting with the first. `email` is stored alongside it
+ * purely as the human-readable label the account picker shows.
+ */
+export const GSC_IDENTITY_SCOPES = ["openid", "email"] as const;
+
+/**
  * Application deadlines. Bare `fetch` has NO default timeout, so without these a Google
  * socket held open blocks the awaiting caller until the PLATFORM kills the request — an
  * OAuth callback or a credit-reserved MCP tool holding its slot the whole time. The
@@ -69,10 +80,17 @@ export interface RequestDeps {
   readonly timeoutMs?: number;
 }
 
-/** A normalized (camelCase) Google token response. `refreshToken` is null when absent. */
+/**
+ * A normalized (camelCase) Google token response. `refreshToken` is null when absent.
+ *
+ * `idToken` is likewise nullable: Google returns it only when the request asked for the
+ * identity scopes ({@link GSC_IDENTITY_SCOPES}) — i.e. on the authorization_code exchange
+ * — and never on a refresh grant, which shares this type.
+ */
 export interface GoogleTokenSet {
   readonly accessToken: string;
   readonly refreshToken: string | null;
+  readonly idToken: string | null;
   readonly expiresIn: number;
   readonly scope: string;
   readonly tokenType: string;
@@ -109,12 +127,14 @@ function resolveCredentials(deps: TokenDeps): GoogleCredentials {
 /**
  * Map a raw Google token JSON payload to our camelCase shape. `refresh_token` is present
  * only on the first authorization_code exchange (and only with access_type=offline +
- * prompt=consent); refresh grants omit it, so we normalize the absence to null.
+ * prompt=consent); refresh grants omit it, so we normalize the absence to null. `id_token`
+ * is present only when the identity scopes were requested, and is normalized the same way.
  */
 function toTokenSet(payload: Record<string, unknown>): GoogleTokenSet {
   return {
     accessToken: String(payload.access_token ?? ""),
     refreshToken: typeof payload.refresh_token === "string" ? payload.refresh_token : null,
+    idToken: typeof payload.id_token === "string" ? payload.id_token : null,
     expiresIn: typeof payload.expires_in === "number" ? payload.expires_in : 0,
     scope: typeof payload.scope === "string" ? payload.scope : "",
     tokenType: typeof payload.token_type === "string" ? payload.token_type : "",
