@@ -24,6 +24,13 @@ export interface PropertyOption {
 export interface RetainedMapping {
   readonly property: string;
   readonly choice: string | null;
+  /**
+   * Whether EVERY connected account's `sites.list` was actually read for this render. False
+   * means at least one failed, so a `choice` of null proves nothing about the property: it may
+   * still be listed on the account we could not reach. Without this the note asserted absence
+   * from a failed read.
+   */
+  readonly listingComplete: boolean;
 }
 
 interface PropertyPickerProps {
@@ -92,6 +99,36 @@ function plural(count: number, noun: string): string {
 }
 
 /**
+ * The second half of the retained-property note: what is true about that property RIGHT NOW,
+ * for the render the user is actually looking at. Four states, and two of them used to be
+ * asserted when they were not known.
+ *
+ *   - it IS the current selection            — one click (Save) finishes the job;
+ *   - it is offered but something else is    — "It is selected below" was computed from the
+ *     selected now                             props alone, so it kept claiming the retained
+ *                                              value was selected AFTER the user picked a
+ *                                              different option in the dropdown;
+ *   - no account lists it, every listing     — genuinely absent, and saying so is the point:
+ *     was read                                 this is the state every row is in right after
+ *                                              migration 0021;
+ *   - no account lists it and some listing   — UNKNOWN. A failed `sites.list` is not an empty
+ *     could NOT be read                        one, and the page's account-level warning
+ *                                              already tells the user a read failed, so this
+ *                                              says what it does not know rather than
+ *                                              inventing an absence.
+ */
+function retainedStatus(retained: RetainedMapping, selected: string): string {
+  if (retained.choice !== null) {
+    return retained.choice === selected
+      ? "It is selected below — Save to switch it back on."
+      : "Select it again below to switch it back on.";
+  }
+  return retained.listingComplete
+    ? "No connected Google account lists it right now, so nothing reads it yet."
+    : "We could not read every connected Google account, so whether it is still listed is unknown.";
+}
+
+/**
  * Client island for ONE project row: choose which Search Console property it reads.
  *
  * This is the surface migration 0021 made necessary. The OAuth callback used to match the
@@ -156,9 +193,7 @@ export function PropertyPicker({
   const retainedNote =
     !current && retained ? (
       <span role="status" className="text-xs text-neutral-500">
-        {retained.choice
-          ? `Saved earlier for this project: ${retained.property}. It is selected below — Save to switch it back on.`
-          : `Saved earlier for this project: ${retained.property}. No connected Google account lists it right now, so nothing reads it yet.`}
+        {`Saved earlier for this project: ${retained.property}. ${retainedStatus(retained, value)}`}
       </span>
     ) : null;
 

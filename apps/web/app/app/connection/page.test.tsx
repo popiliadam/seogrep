@@ -142,7 +142,7 @@ vi.mock("./property-picker", async (importOriginal) => ({
   PropertyPicker: (p: {
     projectId: string;
     current: string;
-    retained: { property: string; choice: string | null } | null;
+    retained: { property: string; choice: string | null; listingComplete: boolean } | null;
     suggested: string | null;
     missingProperty: string | null;
     alsoMapped: number;
@@ -155,6 +155,7 @@ vi.mock("./property-picker", async (importOriginal) => ({
       data-current={p.current}
       data-retained={p.retained ? p.retained.property : ""}
       data-retained-choice={p.retained?.choice ?? ""}
+      data-retained-listing-complete={p.retained ? String(p.retained.listingComplete) : ""}
       data-suggested={p.suggested ?? ""}
       data-missing={p.missingProperty ?? ""}
       data-also-mapped={String(p.alsoMapped)}
@@ -650,6 +651,38 @@ describe("ConnectionPage — the property picker", () => {
     await renderPage();
 
     const picker = pickerOf(PROJECT_A.domain);
+    expect(picker.getAttribute("data-retained")).toBe("https://alpha.example/");
+    expect(picker.getAttribute("data-retained-choice")).toBe("");
+    // Nothing was left unread, so "no account lists it" is a fact the picker may state.
+    expect(picker.getAttribute("data-retained-listing-complete")).toBe("true");
+  });
+
+  /**
+   * `sites: null` is a FAILED read, not an empty listing. Folded through `?? []` it looked like
+   * an account that answered "nothing", so a retained property nobody could confirm came out of
+   * the picker as "No connected Google account lists it right now" — an absence derived from a
+   * question that was never answered. `missingPropertyFor` already refuses this inference for a
+   * MAPPED row; the unmapped path now refuses it too.
+   *
+   * MUTATION TARGET: hard-code `listingComplete: true` in `retainedMappingFor` and this spec
+   * goes red on its first assertion.
+   */
+  it("cannot say a retained property is listed nowhere when a listing failed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, null, "https://alpha.example/")];
+    // TWO accounts: one answers and does not list the property, the other cannot be read at
+    // all. The readable one alone would make the absence look established — it is not.
+    accountRows = [account(), account(SECOND_ACCOUNT_ID, "second@example.com")];
+    sitesByAccount = {
+      [ACCOUNT_ID]: [site("sc-domain:somewhere-else.example")],
+      [SECOND_ACCOUNT_ID]: new Error("Google token endpoint failed (400): invalid_grant"),
+    };
+    await renderPage();
+
+    const picker = pickerOf(PROJECT_A.domain);
+    expect(picker.getAttribute("data-retained-listing-complete")).toBe("false");
     expect(picker.getAttribute("data-retained")).toBe("https://alpha.example/");
     expect(picker.getAttribute("data-retained-choice")).toBe("");
   });

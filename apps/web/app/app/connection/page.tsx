@@ -244,6 +244,14 @@ function suggestionFor(domain: string, accounts: readonly ConnectedAccount[]): s
  * the honest thing to show, so it is named either way. Listing is not verification: the save
  * path re-fetches `sites.list` and re-checks the permission level, because nothing rendered
  * here is evidence (saveProjectProperty's own ruling).
+ *
+ * A THIRD fact, because "no account lists it" and "we could not ask every account" are not the
+ * same sentence. `sites: null` is a FAILED read, and folding it into `?? []` made an unread
+ * account look like an account that answered "nothing" — so the picker told the user no
+ * connected account lists their property when the truth was that we could not find out.
+ * `listingComplete` carries that distinction across, and it is the same principle
+ * {@link missingPropertyFor} already applies to a MAPPED row: if the live fetch failed we know
+ * nothing about the property's fate, and saying it is absent would be an invention.
  */
 function retainedMappingFor(
   project: ProjectConnection,
@@ -256,7 +264,13 @@ function retainedMappingFor(
   const host = accounts.find((account) =>
     (account.sites ?? []).some((site) => site.siteUrl === property),
   );
-  return { property, choice: host ? encodeChoice(host.id, property) : null };
+  return {
+    property,
+    choice: host ? encodeChoice(host.id, property) : null,
+    // Every account answered. With no accounts at all this is vacuously true, which is right:
+    // the post-migration state really does list the property nowhere.
+    listingComplete: accounts.every((account) => account.sites !== null),
+  };
 }
 
 /**

@@ -120,7 +120,7 @@ describe("PropertyPicker", () => {
         {...props({
           options: [option(), option({ siteUrl: URL_PROPERTY })],
           current: "",
-          retained: { property: URL_PROPERTY, choice: retainedChoice },
+          retained: { property: URL_PROPERTY, choice: retainedChoice, listingComplete: true },
           suggested: encodeChoice(ACCOUNT_A, DOMAIN_PROPERTY),
         })}
       />,
@@ -140,12 +140,67 @@ describe("PropertyPicker", () => {
   it("names the stored property even when there is nothing to select", () => {
     render(
       <PropertyPicker
-        {...props({ options: [], retained: { property: URL_PROPERTY, choice: null } })}
+        {...props({
+          options: [],
+          retained: { property: URL_PROPERTY, choice: null, listingComplete: true },
+        })}
       />,
     );
 
     expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
     expect(screen.getByText(/no connected google account lists it/i)).toBeTruthy();
+  });
+
+  /**
+   * THE SAME SHAPE, ONE FACT LESS. `listingComplete: false` means at least one connected
+   * account's `sites.list` could not be read, so "no connected Google account lists it" is not
+   * something anyone here knows — it is the inference `missingPropertyFor` already refuses to
+   * make for a mapped row. The note must name the unknown instead of asserting the absence.
+   *
+   * MUTATION TARGET: make `retainedStatus` ignore `listingComplete` (return the "No connected
+   * Google account lists it" sentence for every null choice) and this spec goes red on its
+   * first assertion.
+   */
+  it("does NOT claim the property is listed nowhere when a listing could not be read", () => {
+    render(
+      <PropertyPicker
+        {...props({
+          options: [],
+          retained: { property: URL_PROPERTY, choice: null, listingComplete: false },
+        })}
+      />,
+    );
+
+    expect(screen.queryByText(/no connected google account lists it/i)).toBeNull();
+    expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
+    expect(screen.getByText(/whether it is still listed is unknown/i)).toBeTruthy();
+  });
+
+  /**
+   * "It is selected below" is a claim about the CURRENT render, not about the props. It used to
+   * be computed from `retained.choice` alone, so it survived the user picking something else in
+   * the dropdown — telling them the retained property was selected while a different one was.
+   */
+  it("stops claiming the retained property is selected once the user picks another", () => {
+    const retainedChoice = encodeChoice(ACCOUNT_A, URL_PROPERTY);
+    render(
+      <PropertyPicker
+        {...props({
+          options: [option(), option({ siteUrl: URL_PROPERTY })],
+          retained: { property: URL_PROPERTY, choice: retainedChoice, listingComplete: true },
+        })}
+      />,
+    );
+
+    expect(screen.getByText(/it is selected below/i)).toBeTruthy();
+
+    fireEvent.change(selectFor(), { target: { value: encodeChoice(ACCOUNT_A, DOMAIN_PROPERTY) } });
+
+    expect(screen.queryByText(/it is selected below/i)).toBeNull();
+    // The property is still named — it is still what this row has stored — with the click the
+    // user would now have to make to get back to it.
+    expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
+    expect(screen.getByText(/select it again below/i)).toBeTruthy();
   });
 
   it("says nothing about a retained property once the row is mapped again", () => {
@@ -155,7 +210,7 @@ describe("PropertyPicker", () => {
         {...props({
           options: [option({ siteUrl: URL_PROPERTY })],
           current,
-          retained: { property: URL_PROPERTY, choice: current },
+          retained: { property: URL_PROPERTY, choice: current, listingComplete: true },
         })}
       />,
     );
