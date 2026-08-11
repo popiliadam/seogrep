@@ -17,8 +17,12 @@ import {
 } from "./actions";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
+// `encodeChoice` comes from ./choice, NOT from ./property-picker: this file is a Server
+// Component and the picker is `"use client"`, so importing a VALUE from it makes the call a
+// client reference and the render throws. Types are erased, so they may still come from there.
+// See ./choice for the outage this caused.
+import { encodeChoice } from "./choice";
 import {
-  encodeChoice,
   PropertyPicker,
   type PropertyOption,
   type RetainedMapping,

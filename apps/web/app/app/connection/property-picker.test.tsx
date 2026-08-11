@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 
-import { decodeChoice, encodeChoice, PropertyPicker, type PropertyOption } from "./property-picker";
+import { decodeChoice, encodeChoice } from "./choice";
+import { PropertyPicker, type PropertyOption } from "./property-picker";
 
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 const ACCOUNT_A = "44444444-4444-4444-8444-444444444444";

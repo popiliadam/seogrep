@@ -184,7 +184,7 @@ vi.mock("./property-picker", async (importOriginal) => ({
 }));
 
 import ConnectionPage from "./page";
-import { encodeChoice } from "./property-picker";
+import { encodeChoice } from "./choice";
 
 const ACTIVE = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
