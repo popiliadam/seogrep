@@ -246,6 +246,88 @@ describe("upsertGscAccount", () => {
     ).toBe(refreshToken);
   });
 
+  /**
+   * NO SUCCESS WITH NOTHING BEHIND IT.
+   *
+   * Splitting insert from update opened a window the single upsert did not have: if the
+   * `(userId, sub)` row is deleted between the lookup and the update — the same user
+   * disconnecting the account while a consent is in flight — PostgREST matches zero rows and
+   * returns NO error. `upsertGscAccount` would then hand the callback an accountId naming no
+   * row, the callback would redirect `?connected=<id>`, and the user would read "Google account
+   * connected" with no credential stored anywhere.
+   *
+   * The window is reproduced by its CAUSE, not by mocking its outcome: the row is really
+   * deleted, and the lookup is made to return the stale id the real race would have returned.
+   * Only the lookup is synthetic — the UPDATE runs for real, against the real table, and it is
+   * the real PostgREST response (zero rows, no error) that the assertion turns on. Same posture
+   * as the status-write spec below: a real first read, a synthetic second half.
+   *
+   * MUTATION TARGET: drop the `.select("id")` + empty-result check from
+   * `updateAccountCredential` and this spec goes red — the call resolves with an accountId for
+   * a row that does not exist.
+   */
+  it("refuses to report success when the row vanished between the lookup and the write (MUTATION TARGET)", async () => {
+    const user = await makeUser();
+    const sub = `sub-${randomUUID()}`;
+    const { accountId } = await upsertGscAccount(client, {
+      userId: user.id,
+      sub,
+      email: "a@x.com",
+      refreshToken: "t1",
+      keyHex: KEY,
+    });
+
+    // The concurrent disconnect, sequenced deterministically. Tenant-filtered like every other
+    // statement in this file (NEVER #4).
+    const deleted = await client
+      .from("gsc_accounts")
+      .delete()
+      .eq("id", accountId)
+      .eq("user_id", user.id);
+    if (deleted.error) throw new Error(`delete failed: ${deleted.error.message}`);
+
+    // ...and the lookup that already ran before it, still holding the id it saw.
+    const realFrom = client.from.bind(client);
+    let fromCalls = 0;
+    const spy = vi.spyOn(client, "from").mockImplementation(((table: string) => {
+      fromCalls += 1;
+      if (table === "gsc_accounts" && fromCalls === 1) {
+        const stale = {
+          select: () => stale,
+          eq: () => stale,
+          maybeSingle: async () => ({ data: { id: accountId }, error: null }),
+        };
+        return stale;
+      }
+      return realFrom(table as never);
+      // See the double-cast note on the status-write spec below for what forces this.
+    }) as unknown as typeof client.from);
+
+    try {
+      await expect(
+        upsertGscAccount(client, {
+          userId: user.id,
+          sub,
+          email: "a@x.com",
+          refreshToken: "t2",
+          keyHex: KEY,
+        }),
+      ).rejects.toThrow(/gsc_accounts upsert failed/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // And nothing was resurrected: a failed consent stores no credential at all, rather than
+    // re-creating the account the user just disconnected with a token we cannot vouch for.
+    const rows = await client
+      .from("gsc_accounts")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("google_account_sub", sub);
+    if (rows.error) throw new Error(`post-failure read failed: ${rows.error.message}`);
+    expect(rows.data).toEqual([]);
+  });
+
   it("tenant isolation: two DIFFERENT users each connecting the SAME Google sub get SEPARATE rows (MUTATION TARGET)", async () => {
     // This is the case that breaks if upsertGscAccount's existing-row lookup ever drops its
     // `.eq("user_id", …)` filter: without it, user B's lookup would match user A's row (same

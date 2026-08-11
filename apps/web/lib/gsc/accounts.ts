@@ -128,19 +128,50 @@ function sealedCredential(accountId: string, args: AccountArgs) {
   };
 }
 
-/** Re-seal an EXISTING row in place, tenant-filtered (NEVER #4). The id never moves. */
+/**
+ * Re-seal an EXISTING row in place, tenant-filtered (NEVER #4). The id never moves.
+ *
+ * IT REFUSES A ZERO-ROW UPDATE, and that is not defensiveness — it closes a window splitting
+ * insert from update opened, which the single upsert did not have. If the `(userId, sub)` row
+ * is deleted between {@link findAccountId} and this write — the same user disconnecting the
+ * account while a consent is in flight — PostgREST matches NOTHING and returns NO ERROR. The
+ * consent would then return an `accountId` naming no row, the callback would redirect
+ * `?connected=<id>`, and the user would be told the connection succeeded with no credential
+ * stored anywhere. `.select("id")` makes the write report what it actually touched.
+ *
+ * THROW, NOT FALL THROUGH TO INSERT, deliberately. Re-inserting looks friendlier and is wrong
+ * twice over. `disconnectAccount` revokes the grant at GOOGLE before it deletes the row, so a
+ * vanished row means a revoke has already been issued against this account's authorization —
+ * and whether the refresh token we are holding survived it is precisely the thing we cannot
+ * find out from here. Storing it and reporting success would be the unverified promise M-15
+ * and signed lesson 9 exist to forbid. It would also silently resurrect a row the user had just
+ * explicitly deleted, inside the request that was meant to be a re-consent. Throwing sends the
+ * callback to its `/app?gsc=error` redirect: the user is told it did not work and connects
+ * again, which takes the clean insert path with a credential minted AFTER the revoke. One extra
+ * round trip buys a stored credential that is known to be live.
+ *
+ * The message keeps the `gsc_accounts upsert failed:` prefix every other failure here uses, so
+ * nothing downstream has to learn a new shape.
+ */
 async function updateAccountCredential(
   table: SupabaseClient<GscAccountsDatabase>,
   accountId: string,
   args: AccountArgs,
 ): Promise<void> {
-  const { error } = await table
+  const { data, error } = await table
     .from("gsc_accounts")
     .update(sealedCredential(accountId, args))
     .eq("id", accountId)
-    .eq("user_id", args.userId);
+    .eq("user_id", args.userId)
+    .select("id");
   if (error) {
     throw new Error(`gsc_accounts upsert failed: ${error.message}`);
+  }
+  if ((data ?? []).length === 0) {
+    throw new Error(
+      `gsc_accounts upsert failed: account ${accountId} disappeared before its credential ` +
+        "was written — nothing was stored",
+    );
   }
 }
 
