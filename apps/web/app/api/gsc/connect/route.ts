@@ -39,11 +39,18 @@ function redirect(path: string, base: string): NextResponse {
 }
 
 export async function GET(_request: Request): Promise<Response> {
-  // Deliberately unread (see the file doc above) — the parameter still has to exist because
-  // Next.js's route dispatch always passes a Request, and route.test.ts calls GET directly
-  // with a spoofed one specifically to prove nothing is read from it. `void` marks the
-  // non-use honestly instead of hiding it from the linter; same idiom as
-  // apps/mcp/src/db.ts's `void _dfsSpendIsNotTenantScopable`.
+  // Deliberately unread (see the file doc above). It stays declared for ONE reason, and it is
+  // not the framework: `export async function GET()` with no parameter is valid TypeScript and
+  // valid Next.js — a caller that passes an argument does not oblige the callee to declare one.
+  // What binds is route.test.ts, which calls `GET(...)` directly at 14 sites (two of them
+  // pinning that a spoofed Host changes nothing), so dropping the parameter cascades TS2554
+  // through a file that is not being touched here.
+  //
+  // The `_` prefix is decorative: this repo's ESLint config is `tseslint.configs.recommended`
+  // plus a `no-console` rule and carries NO `argsIgnorePattern`, so an unused `_request` is an
+  // error like any other. `void` is what actually silences it, and it marks the non-use
+  // honestly rather than hiding it; same idiom as apps/mcp/src/db.ts's
+  // `void _dfsSpendIsNotTenantScopable`.
   void _request;
 
   // Canonical origin for every SAME-APP redirect below. The request Host, which
