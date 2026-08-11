@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { SavePropertyResult } from "./actions";
+import { decodeChoice, encodeChoice } from "./choice";
 
 /** One selectable Search Console property, on one of the user's connected Google accounts. */
 export interface PropertyOption {
@@ -55,26 +56,6 @@ interface PropertyPickerProps {
   ) => Promise<SavePropertyResult>;
 }
 
-/**
- * ONE `<select>` has to carry TWO facts — which Google account, and which property on it —
- * because a user may connect several Google accounts and the same property string can appear
- * under more than one of them. The pair is joined by a SPACE: a uuid contains none, and
- * neither a url-prefix property nor an `sc-domain:` one may contain one either, so the split
- * is unambiguous where `:` (inside every domain property) or `/` (inside every url one) would
- * not be.
- */
-export function encodeChoice(accountId: string, siteUrl: string): string {
-  return `${accountId} ${siteUrl}`;
-}
-
-/** The inverse. Anything that is not a non-empty pair is refused rather than half-read. */
-export function decodeChoice(value: string): { accountId: string; property: string } | null {
-  const separator = value.indexOf(" ");
-  if (separator <= 0) return null;
-  const accountId = value.slice(0, separator);
-  const property = value.slice(separator + 1);
-  return property.length === 0 ? null : { accountId, property };
-}
 
 /** The options of one Google account, in the order the account was first seen. */
 function groupByAccount(options: readonly PropertyOption[]) {
