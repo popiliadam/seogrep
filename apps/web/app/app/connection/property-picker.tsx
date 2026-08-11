@@ -276,9 +276,12 @@ export function PropertyPicker({
       </div>
 
       {retainedNote}
+      {/* `alert`, not `status`: this reports a LOSS the user has to act on (the project has
+          stopped reading data until they pick again), which is the same class of message as
+          the page's account-level read-failure warning — and that one is already an alert. */}
       {missingProperty ? (
-        <span role="status" className="text-xs text-amber-700">
-          {missingProperty} — This property is no longer visible on this account — pick another.
+        <span role="alert" className="text-xs text-amber-700">
+          {missingProperty} is no longer visible on this account — pick another.
         </span>
       ) : null}
       {alsoMapped > 0 ? (

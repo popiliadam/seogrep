@@ -353,7 +353,10 @@ export default async function ConnectionPage({
 }) {
   const params = await searchParams;
   const callbackError = CALLBACK_ERRORS.get(firstValue(params.error) ?? "");
-  const connected = firstValue(params.connected) !== undefined;
+  // Truthiness, not mere presence: `?connected=` with an EMPTY value is not an account id, and
+  // announcing a stored account from it would be a success message with nothing behind it. The
+  // real callback always carries one, so this closes a state only a crafted URL can reach.
+  const connected = Boolean(firstValue(params.connected));
 
   const supabase = await createClient();
   const {

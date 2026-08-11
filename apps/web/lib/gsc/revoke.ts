@@ -20,8 +20,14 @@ import type { FetchLike } from "@pseo/core";
 const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 
 /**
- * Ask Google to revoke ONE refresh token. Revoking a refresh token invalidates the whole
- * grant — every access token derived from it — which is exactly what Disconnect promises.
+ * Ask Google to drop ONE grant, naming it with a token it issued for that grant.
+ *
+ * Google's revoke endpoint accepts EITHER a refresh token or an access token and revokes the
+ * whole grant in both cases — every token derived from it — which is exactly what Disconnect
+ * promises. The doc used to say "revoke ONE refresh token" two lines above a parameter the
+ * only caller deliberately feeds an ACCESS token: `disconnectAccount` routes through
+ * `accessTokenFor` so that every unseal of a `gsc_accounts` credential stays inside the one
+ * module owning that table (and its tenant filter). Hence `token`, not `refreshToken`.
  *
  * BEST-EFFORT by contract: this never throws and never logs.
  *   - never throws, so a Google-side failure can NEVER block the local deletion that
@@ -34,7 +40,7 @@ const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
  * whether Google acknowledged, for callers (and tests) that care.
  */
 export async function revokeGoogleToken(
-  refreshToken: string,
+  token: string,
   deps: { readonly fetch?: FetchLike } = {},
 ): Promise<boolean> {
   const doFetch = deps.fetch ?? fetch;
@@ -42,7 +48,7 @@ export async function revokeGoogleToken(
     const response = await doFetch(REVOKE_ENDPOINT, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ token: refreshToken }).toString(),
+      body: new URLSearchParams({ token }).toString(),
     });
     return response.ok;
   } catch {

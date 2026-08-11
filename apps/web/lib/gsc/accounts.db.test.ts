@@ -391,6 +391,21 @@ describe("accessTokenFor", () => {
 
     const realFrom = client.from.bind(client);
     let fromCalls = 0;
+    // THE DOUBLE CAST IS LOAD-BEARING, and it genuinely switches off checking for this
+    // expression — so what forces it is recorded here rather than in a task report the next
+    // reader will not have. All three failures below were MEASURED, not assumed:
+    //
+    //   - unannotated arrow, no cast: `client.from` is generically overloaded per table name,
+    //     so the parameter collapses to the union's first table key — TS2345 on the argument,
+    //     and TS2367 on `table === "gsc_accounts"`, which is then provably false;
+    //   - `(table: string)`, no cast: TS2345 alone (the annotation stops the collapse but the
+    //     arrow still does not satisfy the overload set);
+    //   - a SINGLE cast: TS2352 — "neither type sufficiently overlaps" — whose own remedy text
+    //     prescribes converting to `unknown` first, plus TS2589 (instantiation too deep).
+    //
+    // Alternatives ruled out: the real overload set is not expressible at a call site, and
+    // mocking the whole client would lose the point of this spec, which is a REAL first read
+    // against a REAL database with only the second write made to fail.
     const spy = vi.spyOn(client, "from").mockImplementation(((table: string) => {
       fromCalls += 1;
       if (table === "gsc_accounts" && fromCalls > 1) {

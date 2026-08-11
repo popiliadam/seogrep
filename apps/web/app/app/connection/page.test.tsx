@@ -506,6 +506,17 @@ describe("ConnectionPage — what the OAuth callback sent us back with", () => {
     },
   );
 
+  // `?connected=` with nothing after it is not an account id, so there is no stored account to
+  // report. Unreachable from the real callback, which always carries one — but a success
+  // message with nothing behind it is a success message all the same.
+  it("says nothing for ?connected= with an empty value", async () => {
+    listKeys.mockResolvedValue([]);
+    await renderPage({ connected: "" });
+
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/google account connected/i);
+  });
+
   it("a repeated param uses the first value only", async () => {
     listKeys.mockResolvedValue([]);
     await renderPage({ error: ["identity", "verify"] });

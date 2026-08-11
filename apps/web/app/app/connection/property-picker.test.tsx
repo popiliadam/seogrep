@@ -347,11 +347,11 @@ describe("PropertyPicker", () => {
   it("marks a stored property the live listing no longer contains", () => {
     render(<PropertyPicker {...props({ missingProperty: URL_PROPERTY })} />);
 
-    const notice = screen.getByRole("status");
+    // An ALERT, not a status: the project has stopped reading data until the user picks
+    // again, the same class of message as the page's own account-level read-failure warning.
+    const notice = screen.getByRole("alert");
     expect(notice.textContent).toContain(URL_PROPERTY);
-    expect(notice.textContent).toContain(
-      "This property is no longer visible on this account — pick another.",
-    );
+    expect(notice.textContent).toContain("is no longer visible on this account — pick another.");
   });
 
   /**

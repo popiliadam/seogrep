@@ -189,7 +189,11 @@ describe("markGscAccountTokenInvalid — the one gsc_accounts write apps/mcp per
       .eq("id", accountId)
       .maybeSingle();
     if (error) throw new Error(`token_status read failed: ${error.message}`);
-    return { status: data?.token_status as string, checkedAt: (data?.token_checked_at as string | null) ?? null };
+    // `maybeSingle` resolves a missing row to null, and `as string` used to cast that away —
+    // in the file whose own header preaches reading the row back. A vanished row would then
+    // surface as `undefined` inside an assertion instead of as the failure it is.
+    if (!data) throw new Error(`token_status read failed: no gsc_accounts row ${accountId}`);
+    return { status: data.token_status, checkedAt: data.token_checked_at };
   }
 
   it("marks the caller's OWN account invalid and stamps when it was observed", async () => {
