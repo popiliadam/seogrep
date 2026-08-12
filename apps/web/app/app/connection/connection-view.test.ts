@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { inventoryRows } from "./connection-view";
 
@@ -40,4 +43,33 @@ describe("inventoryRows", () => {
       ["siteUnverifiedUser", false],
     ]);
   });
+});
+
+/** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * ADDED BY THE IMPLEMENTER, not by the plan, because the plan's own boundary mutation proved
+ * nothing. It asked for `"use client"` at the top of `account-inventory.tsx` and predicted
+ * `rsc-boundary.test.ts` would go red. It did not: the whole suite stayed 152/152 green — and
+ * correctly so. That guard skips CAPITALISED specifiers on purpose, because a client COMPONENT
+ * is exactly what a Server Component is supposed to import; it is rendered, never called.
+ *
+ * The mutation that reproduces the 2026-08-11 outage shape for THESE files is a different one:
+ * put the directive on `connection-view.ts`, whose `inventoryRows` is CALLED, while rendering,
+ * by the directive-free `account-inventory.tsx`. That was measured too, and it also left the
+ * suite fully green — `rsc-boundary.test.ts` only walks `page.tsx` and `actions.ts`, so nothing
+ * followed the second hop. Both new modules were therefore unpinned in the exact way the outage
+ * was unpinned.
+ *
+ * So this pins them, by the same condition Next itself uses: a directive only counts at the very
+ * top of a file, which is also the only place either mutation can put it.
+ */
+describe("the new connection modules stay importable from the server", () => {
+  for (const moduleName of ["connection-view.ts", "account-inventory.tsx"]) {
+    it(`${moduleName} carries no "use client" directive`, () => {
+      const source = readFileSync(resolve(HERE, moduleName), "utf8");
+      expect(/^\s*["']use client["']/.test(source)).toBe(false);
+    });
+  }
 });

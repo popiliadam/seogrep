@@ -15,6 +15,7 @@ import {
   saveProjectProperty,
   unmapProject,
 } from "./actions";
+import { AccountInventory } from "./account-inventory";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
 // `encodeChoice` comes from ./choice, NOT from ./property-picker: this file is a Server
@@ -450,6 +451,17 @@ export default async function ConnectionPage({
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
+        {/* What each connected account can actually READ — `sites.list`'s answer had only ever
+            produced dropdown options, so a user could not see anywhere what Google gives them
+            access to. Per account, because that is the scope the answer has: the page-level
+            sentences below summarise ACROSS accounts, this names one. `projects` and `accounts`
+            are already loaded above; no query is added. */}
+        {accounts.map((account) => (
+          <div key={account.id} className="flex flex-col gap-1">
+            <h4 className="text-xs font-medium text-neutral-700">{account.email}</h4>
+            <AccountInventory sites={account.sites} projects={projects} accountId={account.id} />
+          </div>
+        ))}
         {/* Said ONCE, by the page, because the state belongs to the account list and not to any
             project. Every project row used to say it instead, so a user with nine projects read
             the same paragraph nine times — repetition that carried no more information than one

@@ -1052,3 +1052,41 @@ describe("ConnectionPage — the account panel", () => {
     expect(screen.getByTestId("account-panel").getAttribute("data-accounts")).toBe("[]");
   });
 });
+
+describe("the property inventory", () => {
+  it("lists what the account can read, with permission and what uses it", async () => {
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [mapping(PROJECT_A.id, ACCOUNT_ID, "https://alpha.example/")];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = [
+      site("https://alpha.example/"),
+      site("https://spare.example/", "siteUnverifiedUser"),
+    ];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(within(inventory).getByText("https://alpha.example/")).toBeTruthy();
+    expect(within(inventory).getByText("siteUnverifiedUser")).toBeTruthy();
+    // NOT /alpha\.example/ — that regex also matches the siteUrl cell above, and `getByText`
+    // throws on more than one hit. Assert the sentence that only the usage cell can produce.
+    expect(within(inventory).getByText("Read by alpha.example")).toBeTruthy();
+    expect(within(inventory).getByText(/Not used — this account cannot query it/)).toBeTruthy();
+  });
+
+  it("says the listing could NOT be read rather than claiming the account has nothing", async () => {
+    // The page logs the failed `sites.list` on purpose; silence it here so the run stays
+    // pristine, exactly as the other failed-read specs above do.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    projectRows = [PROJECT_A];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = new Error("403");
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(within(inventory).getByText(/could not be read/i)).toBeTruthy();
+    expect(within(inventory).queryByText(/Not used/)).toBeNull();
+  });
+});
