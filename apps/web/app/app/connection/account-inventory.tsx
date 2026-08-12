@@ -38,9 +38,14 @@ export function AccountInventory({
   const rows = inventoryRows(sites, projects, accountId);
   if (rows.length === 0) {
     return (
+      // The FACT only, no remedy. The page-level sentence right below this one already says
+      // what to do about it ("Verify a property in Search Console, or connect a different
+      // Google account"), and the plan's original wording repeated that remedy verbatim — with
+      // three such accounts the user read the same instruction four times in a row. The split
+      // follows the scopes: this line is account-specific truth, the summary below is the
+      // cross-account one, and the remedy belongs to the summary.
       <p data-testid="account-inventory" className="text-xs text-neutral-500">
-        This Google account has no Search Console properties. Verify a property in Search
-        Console, then reload this page.
+        No Search Console properties on this account.
       </p>
     );
   }

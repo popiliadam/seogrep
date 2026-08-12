@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -25,8 +25,32 @@ import { describe, expect, it } from "vitest";
 /** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** Server Components in this directory. A file is one unless it says `"use client"`. */
-const SERVER_MODULES = ["page.tsx", "actions.ts"];
+/**
+ * A file is a client module when — and only when — the directive is the FIRST thing in it.
+ * That is the position Next reads, and the only position either half of this file may use:
+ * the derivation below, and the per-import check further down.
+ */
+function isClientModule(source: string): boolean {
+  return source.trimStart().startsWith('"use client"');
+}
+
+/**
+ * Server Components in this directory — DERIVED from the directory, never listed by hand.
+ *
+ * It WAS listed by hand (`["page.tsx", "actions.ts"]`), and the hand-kept list went stale
+ * exactly as a hand-kept list does: by the time Task 2 landed, the directory held FIVE server
+ * modules and three of them — `choice.ts`, `connection-view.ts`, `account-inventory.tsx` — were
+ * never scanned at all. The gap was measured, not theorised: putting `"use client"` on
+ * `connection-view.ts`, whose `inventoryRows` is CALLED while rendering by the directive-free
+ * `account-inventory.tsx`, left the whole suite green. That is the 2026-08-11 outage shape,
+ * one module further out, sailing past the guard written to stop it.
+ *
+ * Deriving it means a module added tomorrow is covered the day it is added, by nobody.
+ */
+const SERVER_MODULES = readdirSync(HERE)
+  .filter((name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name))
+  .filter((name) => !isClientModule(readFileSync(resolve(HERE, name), "utf8")))
+  .sort();
 
 /** `import { a, type B } from "./x"` → {source: "./x", specifiers: ["a", "type B"]}. */
 function importsOf(source: string): { source: string; specifiers: string[] }[] {
@@ -65,13 +89,18 @@ function readLocal(from: string): string | null {
 describe("the RSC boundary of the connection page", () => {
   for (const moduleName of SERVER_MODULES) {
     it(`${moduleName} imports no runtime value from a "use client" module`, () => {
+      // The "this file itself carries no directive" assertion that stood here is GONE, not
+      // weakened: `SERVER_MODULES` is now derived by that very predicate, so a module with the
+      // directive never reaches this loop and the assertion could no longer fail. What it used
+      // to protect — a hand-listed file quietly turning client — is covered by the derivation,
+      // and the derivation's own failure mode (matching nothing, and passing vacuously) is
+      // covered by the spec below it.
       const source = readFileSync(resolve(HERE, moduleName), "utf8");
-      expect(source.startsWith('"use client"')).toBe(false);
 
       const offenders: string[] = [];
       for (const statement of importsOf(source)) {
         const imported = readLocal(statement.source);
-        if (imported === null || !imported.trimStart().startsWith('"use client"')) continue;
+        if (imported === null || !isClientModule(imported)) continue;
         // A client COMPONENT is exactly what a Server Component is supposed to import — it is
         // rendered, never called. A client FUNCTION is the defect. The convention that
         // separates them is capitalisation, which React itself already requires of components.
@@ -92,6 +121,31 @@ describe("the RSC boundary of the connection page", () => {
       ).toEqual([]);
     });
   }
+
+  /**
+   * A derived list has one failure mode a hand-written list does not: matching NOTHING, and
+   * passing vacuously — a wrong path, a filter that eats too much, and the loop above runs zero
+   * times while the file reports green. So the list is asserted to actually contain the server
+   * modules of this directory, including the three the hand-written list had missed.
+   *
+   * It names them rather than counting them: a count would have to be edited by hand on every
+   * new module, which is the habit that produced the stale list in the first place.
+   */
+  it("scans every server module here, not a hand-kept subset", () => {
+    expect(SERVER_MODULES).toEqual(
+      expect.arrayContaining([
+        "account-inventory.tsx",
+        "actions.ts",
+        "choice.ts",
+        "connection-view.ts",
+        "page.tsx",
+      ]),
+    );
+    // And the client islands stay OUT: scanning them would flag their own legitimate internals.
+    expect(SERVER_MODULES).not.toContain("property-picker.tsx");
+    expect(SERVER_MODULES).not.toContain("disconnect-button.tsx");
+    expect(SERVER_MODULES).not.toContain("key-panel.tsx");
+  });
 
   it("./choice carries no directive, so both sides may import it", () => {
     const source = readFileSync(resolve(HERE, "choice.ts"), "utf8");
