@@ -893,6 +893,62 @@ describe("ConnectionPage — the account-level connect control", () => {
     expect(screen.getByRole("link", { name: "Connect Google account" })).toBeTruthy();
   });
 
+  /**
+   * THE STATE THE MOVE LEFT UNCOVERED, and the reason this page needs TWO sentences rather than
+   * one condition. The row paragraph that was removed fired on `options.length === 0` — nothing
+   * to pick, whatever the cause. Its replacement fires on `accounts.length === 0`, which is
+   * STRICTLY NARROWER: an account can be connected and list no property at all, which is exactly
+   * what picking the wrong Google account at the consent screen produces.
+   *
+   * Nothing else speaks in that state: the amber warning wants `sites === null` (a FAILED read,
+   * not an empty listing), `needsReconsent` is false for an unmapped project, and the picker
+   * now renders nothing. So the page would show a connected account, no picker, and no
+   * explanation — one state further into the dead end this whole task exists to close.
+   *
+   * No spec exercised an EMPTY listing before this one: every account fixture either listed
+   * something or threw. That is why the gap survived review.
+   */
+  it("explains a connected account that lists NOTHING — an empty listing is not a failed one", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [] }; // read fine; Google simply has nothing on it
+    await renderPage();
+
+    expect(
+      screen.getAllByText(/None of your connected Google accounts lists a Search Console property/),
+    ).toHaveLength(1);
+    // NOT the zero-account sentence: an account IS connected, so asking the user to connect one
+    // "to choose which property each project reads" would be false.
+    expect(
+      screen.queryByText(/Connect a Google account to choose which Search Console property/),
+    ).toBeNull();
+    // And no invented read failure — nothing failed.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(pickerOf(PROJECT_A.domain).getAttribute("data-options")).toBe("[]");
+  });
+
+  /**
+   * THE OTHER HALF OF THAT SENTENCE'S HONESTY. A `sites.list` that FAILED tells us nothing about
+   * what the account lists, so "none of them lists a property" would be an absence derived from
+   * a question never answered — the inference `missingPropertyFor` and `listingComplete` already
+   * refuse for a row. The amber warning owns this state, and it says something the user can act
+   * on that the empty-listing sentence does not.
+   */
+  it("says nothing about the listing when a read FAILED — the amber warning owns that state", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: new Error("Google token endpoint failed (400): invalid_grant") };
+    await renderPage();
+
+    expect(
+      screen.queryByText(/None of your connected Google accounts lists a Search Console property/),
+    ).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/could not read the search console/i);
+  });
+
   it("is there for a user with no accounts and no projects at all", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [];

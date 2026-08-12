@@ -375,6 +375,11 @@ export default async function ConnectionPage({
       ])
     : [[] as ProjectConnection[], [] as ConnectedAccount[]];
   const options = propertyOptions(accounts);
+  // Whether EVERY account actually answered `sites.list`. The same refusal `retainedMappingFor`
+  // and `missingPropertyFor` already make: a failed read is not an empty one, so "none of them
+  // lists a property" may only be said when nothing was left unread. When something was, the
+  // amber warning below is the honest sentence and this one stays quiet.
+  const listingComplete = accounts.every((account) => account.sites !== null);
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
   // ONE read of the template feeds both forms the server accepts, so they can never point at
   // different hosts: the personal URL below, and the key-free endpoint header auth uses (L-15).
@@ -449,11 +454,24 @@ export default async function ConnectionPage({
             project. Every project row used to say it instead, so a user with nine projects read
             the same paragraph nine times — repetition that carried no more information than one
             sentence would, and buried the only control that could act on it. The second half is
-            there because the first half alarms: nothing about the projects is lost or paused. */}
+            there because the first half alarms: nothing about the projects is lost or paused.
+
+            TWO sentences, because the row paragraph these replace covered a WIDER state than
+            "no account is connected": it appeared whenever there was nothing to pick. Connecting
+            the wrong Google account reaches the other half of that — an account IS connected and
+            lists no property — where the first sentence would be false and the amber warning
+            below stays silent (it wants a FAILED read, not an empty one). Left with one sentence
+            this page went blank in exactly the state this change exists to close. */}
         {accounts.length === 0 ? (
           <p className="text-sm text-neutral-600">
             Connect a Google account to choose which Search Console property each project
             reads. Your projects stay exactly as they are — crawls and audits do not need it.
+          </p>
+        ) : options.length === 0 && listingComplete ? (
+          <p className="text-sm text-neutral-600">
+            None of your connected Google accounts lists a Search Console property, so there is
+            nothing for a project to read yet. Verify a property in Search Console, or connect a
+            different Google account.
           </p>
         ) : null}
         {/* A plain <a>, like the old per-project link: this is the route handler that mints a
