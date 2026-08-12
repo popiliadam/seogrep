@@ -29,9 +29,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * A file is a client module when — and only when — the directive is the FIRST thing in it.
  * That is the position Next reads, and the only position either half of this file may use:
  * the derivation below, and the per-import check further down.
+ *
+ * BOTH QUOTE STYLES. Next honours `'use client'` exactly as it honours `"use client"`, and this
+ * predicate used to see only the double-quoted spelling — so the whole point of this guard came
+ * apart on one character: `'use client'` on `connection-view.ts` left the suite 156/156 green.
+ * Nothing else in the repo would have caught it either; the ESLint config carries a single rule
+ * (`no-console`), there is no Prettier config, and `verify.sh` runs typecheck/lint/test/build.
+ * A guard written because a green suite hid an outage may not have a spelling it cannot see.
  */
 function isClientModule(source: string): boolean {
-  return source.trimStart().startsWith('"use client"');
+  return /^["']use client["']/.test(source.trimStart());
 }
 
 /**
@@ -152,7 +159,9 @@ describe("the RSC boundary of the connection page", () => {
     // Directives are only directives at the very top of a file; the prose above mentions both
     // names on purpose, so match the statement, not the word.
     const code = source.replace(/\/\*\*[\s\S]*?\*\//g, "");
-    expect(code.includes('"use client"')).toBe(false);
+    // THE SAME BLINDNESS, third instance in this file: this used to look for the double-quoted
+    // spelling only, so `'use client'` in ./choice would have passed it too. Both styles now.
+    expect(/["']use client["']/.test(code)).toBe(false);
     expect(code.includes("server-only")).toBe(false);
   });
 });
