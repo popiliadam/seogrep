@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
-import { forUser, getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
 import { enqueueJob } from "../queue/boss.ts";
