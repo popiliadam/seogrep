@@ -111,18 +111,23 @@ export type Database = {
           user_id: string;
           domain: string;
           created_at: string;
+          // null = aktif. Migration 0022. Bir tarih = kullanıcı bu projeyi ekrandan
+          // çıkardı; satır ve bütün geçmişi duruyor.
+          archived_at: string | null;
         };
         Insert: {
           id?: string;
           user_id: string;
           domain: string;
           created_at?: string;
+          archived_at?: string | null;
         };
         Update: {
           id?: string;
           user_id?: string;
           domain?: string;
           created_at?: string;
+          archived_at?: string | null;
         };
         Relationships: [];
       };
