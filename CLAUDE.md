@@ -84,6 +84,29 @@ Haftalık compost: haftanın FAIL'lerinden ≤3 kural önerisi; insan imzalamada
 10. Hipotezi test etmeden önce kendi araştırma çıktın YENİDEN okunur — cevap çoğu kez zaten eldeki
     dokümandadır (Smithery server-card vakası).
 
+### İmzalı dersler (insan onayı 2026-08-13 — "dersleri imzalıyorum, CLAUDE.md'ye işle")
+
+11. **Yanlış ölçüm, hiç ölçmemekten tehlikelidir — çünkü sorgulanmaz.** Bir dizginin testte pinli olup
+    olmadığı aranırken KAYNAKTAKİ literal değil, EN KISA AYIRT EDİCİ PARÇA ve `/i` ile aranır; testler
+    regex'le iddia eder, kaynak literaliyle değil. (Faz D: şef "hiçbir test pinlemiyor, grep'le
+    doğruladım" dedi; test `/no search console properties/i` ile pinliyordu. İşçi güvenseydi pinli bir
+    iddia sessizce silinir, NEVER#8 ihlal edilirdi.)
+12. **Test double'ı gerçek çalışma zamanından hoşgörülü olduğunda, eksik kısıt GEÇEN TESTE dönüşür.**
+    Beş vaka: `bytea` hex tautolojisi · kolon projeksiyonunu umursamayan sahte kurucu · filtreleri
+    kaydedip UYGULAMAYAN sahte kurucu · `page.test.tsx`'in client bileşenleri mock'laması · vitest'te
+    RSC sınırının hiç olmaması — **sonuncusu üretimi ~1 saat düşürdü** (`encodeChoice`, 2026-08-11).
+    Yeşil bir test, ancak KASTEN bozulup kırmızıya döndüğü ölçüldüyse kanıttır.
+13. **Planın yazdığı mutasyon bir HİPOTEZDİR** — yazan onu koşmamıştır. Altı prescribed mutasyon
+    hiçbir şeyi kırmızıya döndürmedi; altısını da işçi yakaladı ve raporlamak her seferinde doğru
+    karardı. İş emri bunu AÇIKÇA söyler, yoksa işçi sahte bir "geçti" rapor eder.
+14. **"Delik kalmadı" derken HANGİ EKSENİ varyantladığın yazılır.** Ledger "beşinci delik aradım, yok"
+    diyordu — yalnız TIRNAK eksenini aramıştı; bütün-dal hakemi POZİSYON eksenini değiştirdi ve anında
+    buldu. Tek bir kapıda altı delik çıktı (kapsam · direktif tırnağı · spec tırnağı · import kaynağı
+    tırnağı · direktif pozisyonu · süslü-parantezsiz import biçimleri) ve altısını farklı roller buldu.
+15. **Bir task'ın kapısı, o task'ın DEĞDİĞİ her paketin KENDİ test script'ini içerir.** `verify.sh` altı
+    task boyunca kırmızıydı ve iki test tam da onu bekliyordu; hiçbir dar kapı `packages/db`'nin unit
+    lane'ini koşmuyordu. "`tsc --noEmit` dokunduğum dosyalarda temiz" kapının koştuğu script DEĞİLDİR.
+
 ## Komutlar
 
 `make verify` (kapı) · `make goals` (kalıcı hedefler) · `make dev` (web dev server)
