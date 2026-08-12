@@ -59,10 +59,19 @@ const SERVER_MODULES = readdirSync(HERE)
   .filter((name) => !isClientModule(readFileSync(resolve(HERE, name), "utf8")))
   .sort();
 
-/** `import { a, type B } from "./x"` → {source: "./x", specifiers: ["a", "type B"]}. */
+/**
+ * `import { a, type B } from "./x"` → {source: "./x", specifiers: ["a", "type B"]}.
+ *
+ * BOTH QUOTE STYLES on the module SOURCE too — the fourth and last instance of the same
+ * blindness in this file. It was measured before it was fixed: the exact line that took
+ * production down on 2026-08-11, `import { encodeChoice } from './property-picker'`, written
+ * with single quotes, was INVISIBLE to this scanner and the whole gate reported 7/7 green.
+ * A quote character is not a boundary, and this guard exists precisely because a green suite
+ * once hid an outage.
+ */
 function importsOf(source: string): { source: string; specifiers: string[] }[] {
   const found: { source: string; specifiers: string[] }[] = [];
-  const pattern = /import\s+(type\s+)?\{([^}]*)\}\s*from\s*"([^"]+)"/g;
+  const pattern = /import\s+(type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
   for (const match of source.matchAll(pattern)) {
     const [, typeOnlyClause, body, from] = match;
     if (typeOnlyClause) continue; // `import type { … }` — erased wholesale
