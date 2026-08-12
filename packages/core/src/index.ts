@@ -19,3 +19,6 @@ export * from "./keys/api-key.js";
 // same seal format + client.
 export * from "./gsc/crypto.js";
 export * from "./gsc/client.js";
+// Pure property-string rules, shared because BOTH runtimes need them: the web connection
+// flow and the MCP tools must agree on what a property points at and who may query it.
+export * from "./gsc/property.js";
