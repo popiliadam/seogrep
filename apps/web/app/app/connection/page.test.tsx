@@ -843,6 +843,112 @@ describe("ConnectionPage — the account-level connect control", () => {
     ).toEqual([]);
   });
 
+  /**
+   * THE EMPTY STATE IS THE PAGE'S SENTENCE, NOT THE ROW'S. It used to be the row's: every
+   * project rendered the same "No Search Console properties are available…" paragraph, so an
+   * operator with nine projects who had just disconnected their account read the same thing
+   * nine times and the only way back was a link with the weight of body text. The explanation
+   * belongs where the state does — to the account list — and is asserted here to appear ONCE.
+   *
+   * The `combobox` assertion is the brief's, kept verbatim, but note what it can and cannot
+   * prove HERE: this file stubs PropertyPicker, so no real `<select>` could render either way.
+   * The claim that an optionless picker renders no dropdown is pinned for real in
+   * property-picker.test.tsx, "renders no dropdown at all".
+   */
+  it("explains the empty state ONCE at page level, not once per project", async () => {
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [];
+    accountRows = [];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    expect(
+      screen.getAllByText(/Connect a Google account to choose which Search Console property/),
+    ).toHaveLength(1);
+    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+  });
+
+  /**
+   * ADDED BY THE IMPLEMENTER, not by the plan, because the plan's own mutation proved the spec
+   * above does not pin what it claims to. Loosening the page's `accounts.length === 0` guard to
+   * `>= 0` left the whole suite GREEN: the spec above renders with no accounts, so a sentence
+   * that shows unconditionally still appears exactly once there. Nothing anywhere asserted the
+   * sentence STOPS. This does — and with it, the mutation goes red.
+   *
+   * It is also the substance of the fix, not bookkeeping: a "Connect a Google account" sentence
+   * left standing beside two connected accounts is the same noise the row paragraph was, only
+   * moved up a level.
+   */
+  it("stops saying it once an account is connected — the sentence is the EMPTY state's", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("sc-domain:alpha.example")] };
+    await renderPage();
+
+    expect(
+      screen.queryByText(/Connect a Google account to choose which Search Console property/),
+    ).toBeNull();
+    // The way to add ANOTHER account is still on the page — the sentence goes, the control stays.
+    expect(screen.getByRole("link", { name: "Connect Google account" })).toBeTruthy();
+  });
+
+  /**
+   * THE STATE THE MOVE LEFT UNCOVERED, and the reason this page needs TWO sentences rather than
+   * one condition. The row paragraph that was removed fired on `options.length === 0` — nothing
+   * to pick, whatever the cause. Its replacement fires on `accounts.length === 0`, which is
+   * STRICTLY NARROWER: an account can be connected and list no property at all, which is exactly
+   * what picking the wrong Google account at the consent screen produces.
+   *
+   * Nothing else speaks in that state: the amber warning wants `sites === null` (a FAILED read,
+   * not an empty listing), `needsReconsent` is false for an unmapped project, and the picker
+   * now renders nothing. So the page would show a connected account, no picker, and no
+   * explanation — one state further into the dead end this whole task exists to close.
+   *
+   * No spec exercised an EMPTY listing before this one: every account fixture either listed
+   * something or threw. That is why the gap survived review.
+   */
+  it("explains a connected account that lists NOTHING — an empty listing is not a failed one", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [] }; // read fine; Google simply has nothing on it
+    await renderPage();
+
+    expect(
+      screen.getAllByText(/None of your connected Google accounts lists a Search Console property/),
+    ).toHaveLength(1);
+    // NOT the zero-account sentence: an account IS connected, so asking the user to connect one
+    // "to choose which property each project reads" would be false.
+    expect(
+      screen.queryByText(/Connect a Google account to choose which Search Console property/),
+    ).toBeNull();
+    // And no invented read failure — nothing failed.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(pickerOf(PROJECT_A.domain).getAttribute("data-options")).toBe("[]");
+  });
+
+  /**
+   * THE OTHER HALF OF THAT SENTENCE'S HONESTY. A `sites.list` that FAILED tells us nothing about
+   * what the account lists, so "none of them lists a property" would be an absence derived from
+   * a question never answered — the inference `missingPropertyFor` and `listingComplete` already
+   * refuse for a row. The amber warning owns this state, and it says something the user can act
+   * on that the empty-listing sentence does not.
+   */
+  it("says nothing about the listing when a read FAILED — the amber warning owns that state", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: new Error("Google token endpoint failed (400): invalid_grant") };
+    await renderPage();
+
+    expect(
+      screen.queryByText(/None of your connected Google accounts lists a Search Console property/),
+    ).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/could not read the search console/i);
+  });
+
   it("is there for a user with no accounts and no projects at all", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [];
@@ -944,5 +1050,101 @@ describe("ConnectionPage — the account panel", () => {
     await renderPage();
 
     expect(screen.getByTestId("account-panel").getAttribute("data-accounts")).toBe("[]");
+  });
+});
+
+describe("the property inventory", () => {
+  it("lists what the account can read, with permission and what uses it", async () => {
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [mapping(PROJECT_A.id, ACCOUNT_ID, "https://alpha.example/")];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = [
+      site("https://alpha.example/"),
+      site("https://spare.example/", "siteUnverifiedUser"),
+    ];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(within(inventory).getByText("https://alpha.example/")).toBeTruthy();
+    expect(within(inventory).getByText("siteUnverifiedUser")).toBeTruthy();
+    // NOT /alpha\.example/ — that regex also matches the siteUrl cell above, and `getByText`
+    // throws on more than one hit. Assert the sentence that only the usage cell can produce.
+    expect(within(inventory).getByText("Read by alpha.example")).toBeTruthy();
+    expect(within(inventory).getByText(/Not used — this account cannot query it/)).toBeTruthy();
+  });
+
+  /**
+   * The fourth inventory state the spec requires (line 99) and the only one nothing asserted:
+   * queryable AND unused. It is a DIFFERENT sentence from the unqueryable one — bare, with no
+   * reason clause — because there is nothing to explain: the account can read the property,
+   * we simply do not. Merging the two branches, or appending a reason to this one, would tell
+   * the user a working property is broken.
+   *
+   * MUTATION TARGET: collapse `account-inventory.tsx`'s ternary to the "cannot query it"
+   * string and this goes red twice over — the exact-string match below, and the negative one.
+   */
+  it("marks a queryable property nothing reads as plain Not used, with no reason attached", async () => {
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, ACCOUNT_ID, "https://alpha.example/")];
+    accountRows = [account()];
+    // Both siteOwner, so both are queryable; only the first one is read by a project.
+    sitesByAccount[ACCOUNT_ID] = [site("https://alpha.example/"), site("https://spare.example/")];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    // An EXACT string, not /Not used/: the "cannot query it" variant contains those two words,
+    // so a regex would pass on the wrong branch — which is the whole distinction being pinned.
+    expect(within(inventory).getByText("Not used")).toBeTruthy();
+    expect(within(inventory).queryByText(/cannot query it/)).toBeNull();
+    expect(within(inventory).getByText("Read by alpha.example")).toBeTruthy();
+  });
+
+  /**
+   * The empty inventory — a listing we DID read that answered with nothing. It had zero
+   * coverage, which mattered more than usual here: this sentence is the one the controller
+   * approved by hand during Task 2 (the fact alone, remedy deliberately left to the page-level
+   * summary so three connected accounts do not repeat the same instruction four times), and
+   * until now it could have been reworded or deleted with a fully green suite.
+   *
+   * It also pins the honesty split the 2026-08-11 defect came from: read-and-empty is NOT
+   * could-not-read, and the two must never share a sentence.
+   */
+  it("says an account that lists nothing has nothing — the fact only, not the remedy", async () => {
+    projectRows = [PROJECT_A];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = [];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(
+      within(inventory).getByText("No Search Console properties on this account."),
+    ).toBeTruthy();
+    // NOT the unreadable wording: an empty answer we received is not an answer we missed.
+    expect(within(inventory).queryByText(/could not be read/i)).toBeNull();
+    // And NOT the remedy, which belongs to the cross-account summary below this line. The page
+    // still says it once — asserted here on the whole document, so the split is pinned from
+    // both sides rather than the instruction merely going missing.
+    expect(within(inventory).queryByText(/verify a property in search console/i)).toBeNull();
+    expect(screen.getByText(/verify a property in search console/i)).toBeTruthy();
+  });
+
+  it("says the listing could NOT be read rather than claiming the account has nothing", async () => {
+    // The page logs the failed `sites.list` on purpose; silence it here so the run stays
+    // pristine, exactly as the other failed-read specs above do.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    projectRows = [PROJECT_A];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = new Error("403");
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(within(inventory).getByText(/could not be read/i)).toBeTruthy();
+    expect(within(inventory).queryByText(/Not used/)).toBeNull();
   });
 });

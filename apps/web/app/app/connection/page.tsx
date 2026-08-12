@@ -15,6 +15,7 @@ import {
   saveProjectProperty,
   unmapProject,
 } from "./actions";
+import { AccountInventory } from "./account-inventory";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
 // `encodeChoice` comes from ./choice, NOT from ./property-picker: this file is a Server
@@ -375,6 +376,11 @@ export default async function ConnectionPage({
       ])
     : [[] as ProjectConnection[], [] as ConnectedAccount[]];
   const options = propertyOptions(accounts);
+  // Whether EVERY account actually answered `sites.list`. The same refusal `retainedMappingFor`
+  // and `missingPropertyFor` already make: a failed read is not an empty one, so "none of them
+  // lists a property" may only be said when nothing was left unread. When something was, the
+  // amber warning below is the honest sentence and this one stays quiet.
+  const listingComplete = accounts.every((account) => account.sites !== null);
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
   // ONE read of the template feeds both forms the server accepts, so they can never point at
   // different hosts: the personal URL below, and the key-free endpoint header auth uses (L-15).
@@ -445,13 +451,50 @@ export default async function ConnectionPage({
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
+        {/* What each connected account can actually READ — `sites.list`'s answer had only ever
+            produced dropdown options, so a user could not see anywhere what Google gives them
+            access to. Per account, because that is the scope the answer has: the page-level
+            sentences below summarise ACROSS accounts, this names one. `projects` and `accounts`
+            are already loaded above; no query is added. */}
+        {accounts.map((account) => (
+          <div key={account.id} className="flex flex-col gap-1">
+            <h4 className="text-xs font-medium text-neutral-700">{account.email}</h4>
+            <AccountInventory sites={account.sites} projects={projects} accountId={account.id} />
+          </div>
+        ))}
+        {/* Said ONCE, by the page, because the state belongs to the account list and not to any
+            project. Every project row used to say it instead, so a user with nine projects read
+            the same paragraph nine times — repetition that carried no more information than one
+            sentence would, and buried the only control that could act on it. The second half is
+            there because the first half alarms: nothing about the projects is lost or paused.
+
+            TWO sentences, because the row paragraph these replace covered a WIDER state than
+            "no account is connected": it appeared whenever there was nothing to pick. Connecting
+            the wrong Google account reaches the other half of that — an account IS connected and
+            lists no property — where the first sentence would be false and the amber warning
+            below stays silent (it wants a FAILED read, not an empty one). Left with one sentence
+            this page went blank in exactly the state this change exists to close. */}
+        {accounts.length === 0 ? (
+          <p className="text-sm text-neutral-600">
+            Connect a Google account to choose which Search Console property each project
+            reads. Your projects stay exactly as they are — crawls and audits do not need it.
+          </p>
+        ) : options.length === 0 && listingComplete ? (
+          <p className="text-sm text-neutral-600">
+            None of your connected Google accounts lists a Search Console property, so there is
+            nothing for a project to read yet. Verify a property in Search Console, or connect a
+            different Google account.
+          </p>
+        ) : null}
         {/* A plain <a>, like the old per-project link: this is the route handler that mints a
             signed state and 302s to Google, and next/link would prefetch it and start the flow.
             Rendered unconditionally — with no accounts it is the ONLY way to connect one, and
-            with several it is how the next one is added. */}
+            with several it is how the next one is added. Styled as the primary action it is:
+            with nothing connected, this link is the page's entire way forward, and it used to
+            carry the visual weight of body text. Element and accessible name are unchanged. */}
         <a
           href={GSC_CONNECT_PATH}
-          className="self-start font-medium text-neutral-700 hover:text-neutral-900"
+          className="self-start rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700"
         >
           Connect Google account
         </a>
