@@ -133,6 +133,34 @@ describe("loadOwnProject against the local stack", () => {
     const missingText = missing.ok === false ? missing.error : "";
     expect(foreignText.replace(theirProjectId, "<id>")).toBe(missingText.replace(nobodys, "<id>"));
   });
+
+  /**
+   * The PROJECTION proof. The fast lane's loader is a hand-written fake, so it cannot notice
+   * that the real read asks for a column: a fake that ignores the projection turns a wrong or
+   * missing column name into a passing test (signed lesson 12, three shipped cases). Only the
+   * real query against the real table can fail on `archived_at`. Both values are read, because
+   * a loader that hardcoded `archivedAt: null` would satisfy the active case alone.
+   */
+  it("(b2) carries archived_at off the real row — null while active, the stamp once archived", async () => {
+    const ctx = await makeCtx();
+    const projectId = await makeProject(ctx.userId, `archive-${randomUUID()}.example.com`);
+    expect((await loadOwnProject(ctx.userId, projectId))?.archivedAt).toBeNull();
+
+    const stamp = "2026-08-13T00:00:00+00:00";
+    const { error } = await service
+      .from("projects")
+      .update({ archived_at: stamp })
+      .eq("id", projectId);
+    if (error) throw new Error(`archive update failed: ${error.message}`);
+
+    const archived = await loadOwnProject(ctx.userId, projectId);
+    expect(archived?.archivedAt).not.toBeNull();
+    expect(Date.parse(archived?.archivedAt ?? "")).toBe(Date.parse(stamp));
+
+    // And the resolver refuses it — through the REAL loader, not an injected one.
+    const resolved = await resolveTarget(ctx.userId, { project_id: projectId }, loadOwnProject);
+    expect(resolved).toMatchObject({ ok: false, error: expect.stringMatching(/archived/i) });
+  });
 });
 
 describe("ranked_keywords project_id path against the local stack", () => {

@@ -21,10 +21,16 @@ import { normalizeDomain } from "./setup-project.ts";
  *      used to probe which project ids exist (the get_job_status pattern).
  */
 
-/** A tenant's project as the domain tools need it: the id they passed and the domain to use. */
+/**
+ * A tenant's project as the tools need it: the id they passed, the domain to use, and whether
+ * the tenant has archived it. `archivedAt` is null for an active project (migration 0022) —
+ * it is carried on the ref rather than filtered away in the query so a caller can TELL the two
+ * apart and say so, instead of an archived project silently reading as "no such project".
+ */
 export interface ProjectRef {
   readonly id: string;
   readonly domain: string;
+  readonly archivedAt: string | null;
 }
 
 /** Tenant-scoped project loader. Injected in tests; the default reads the real table. */
@@ -38,11 +44,14 @@ export async function loadOwnProject(
   userId: string,
   projectId: string,
 ): Promise<ProjectRef | null> {
-  return forUser(getServiceClient(), userId).selectOwnById<ProjectRef>(
-    "projects",
-    projectId,
-    "id, domain",
-  );
+  const row = await forUser(getServiceClient(), userId).selectOwnById<{
+    id: string;
+    domain: string;
+    archived_at: string | null;
+  }>("projects", projectId, "id, domain, archived_at");
+  return row === null
+    ? null
+    : { id: row.id, domain: row.domain, archivedAt: row.archived_at };
 }
 
 /** The optional `project_id` input field, worded the same way in all three tools. */
@@ -86,6 +95,17 @@ export const AMBIGUOUS_SUBJECT_MESSAGE =
   "not guess which one you meant. Drop one and run it again. You were not charged.";
 
 /**
+ * The ONE sentence an archived project gets, wherever it is asked for. It is a constant rather
+ * than nine copies for the reason this repo has already paid for: a hand-maintained list of
+ * places to repeat a check grows holes — the `rsc-boundary` gate had SIX, every one of them a
+ * spot someone forgot. It names the repair, because a refusal a caller cannot act on is a
+ * dead end; `track_gsc_property` and /app/connection are the two ways back.
+ */
+export const ARCHIVED_PROJECT_MESSAGE =
+  "That project is archived, so it is not being tracked right now. Restore it with " +
+  "track_gsc_property, or from the Connection page in SeoGrep.";
+
+/**
  * The one sentence a project id that did not resolve gets. It interpolates ONLY the id the
  * caller supplied, so an unknown id and another tenant's id produce byte-identical text.
  */
@@ -122,6 +142,14 @@ export async function resolveTarget(
     const project = await loadProject(userId, projectId);
     if (!project) {
       return { ok: false, error: projectNotFoundMessage(projectId) };
+    }
+    // AFTER the ownership gate above, never before it. An archive check that ran first would
+    // answer another tenant's archived project with "that project is archived" — which says the
+    // row EXISTS, and turns this resolver into the existence oracle the not-found sentence was
+    // written to avoid. Missing, another tenant's, and another tenant's ARCHIVED must all leave
+    // through the same sentence.
+    if (project.archivedAt !== null) {
+      return { ok: false, error: ARCHIVED_PROJECT_MESSAGE };
     }
     const normalized = normalizeDomain(project.domain);
     if (!normalized.ok) {

@@ -22,7 +22,7 @@ const RENDER_INPUT = { language_code: "en", location_code: 2840 } as const;
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
-const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "adstark.com.tr" };
+const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "adstark.com.tr", archivedAt: null };
 
 /** Models the real loader: rows are keyed by (userId, projectId), so nobody sees another tenant's. */
 const loadProject: LoadProjectFn = async (userId, projectId) =>
