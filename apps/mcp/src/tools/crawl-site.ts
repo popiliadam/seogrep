@@ -5,6 +5,11 @@ import { TOOL_COSTS } from "../credits/costs.ts";
 import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
 import { enqueueJob } from "../queue/boss.ts";
 import {
+  ARCHIVED_PROJECT_MESSAGE,
+  loadOwnProject,
+  type ProjectRef,
+} from "./project-target.ts";
+import {
   CONFIRMATION_THRESHOLD_CREDITS,
   defineTool,
   errorResult,
@@ -62,10 +67,7 @@ export type EstimateFn = (
  * pre-discovery/confirmation branches are exercisable in the fast (DB-less) lane; production
  * and the DB specs use the default, which is the real ownership gate.
  */
-export type ProjectResolver = (
-  ctx: AuthContext,
-  projectId: string,
-) => Promise<{ id: string; domain: string } | null>;
+export type ProjectResolver = (ctx: AuthContext, projectId: string) => Promise<ProjectRef | null>;
 
 export interface CrawlSiteDeps {
   readonly enqueue?: EnqueueFn;
@@ -98,17 +100,13 @@ const inputSchema = z.object({
     ),
 });
 
-/** The tenant-scoped ownership read: a missing project and another tenant's both resolve to null. */
-async function defaultResolveProject(
-  ctx: AuthContext,
-  projectId: string,
-): Promise<{ id: string; domain: string } | null> {
-  return forUser(getServiceClient(), ctx.userId).selectOwnById<{ id: string; domain: string }>(
-    "projects",
-    projectId,
-    "id, domain",
-  );
-}
+/**
+ * The tenant-scoped ownership read: a missing project and another tenant's both resolve to null.
+ * It is the SHARED loadOwnProject rather than a second read of its own — a per-tool project read
+ * is a per-tool place for the archive check to be forgotten.
+ */
+const defaultResolveProject: ProjectResolver = (ctx, projectId) =>
+  loadOwnProject(ctx.userId, projectId);
 
 /**
  * A full-crawl PROJECTION at the FROZEN rate — it invents no price. `credits` is simply the
@@ -239,6 +237,13 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
         return errorResult(
           `No project found with id ${project_id}. Create one with setup_project first.`,
         );
+      }
+      // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
+      // indistinguishable from one that does not exist (see project-target.ts). Refusing here —
+      // before enqueue — is also what makes it free: crawl_site's only charge belongs to the
+      // worker, and no job is created.
+      if (project.archivedAt !== null) {
+        return errorResult(ARCHIVED_PROJECT_MESSAGE);
       }
 
       // Empty/absent include_paths = whole-site (no scope); only a non-empty array scopes.
