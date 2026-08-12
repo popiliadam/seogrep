@@ -150,6 +150,11 @@ describe("PropertyPicker", () => {
 
     expect(screen.getByText(new RegExp(`saved earlier.*${URL_PROPERTY}`, "i"))).toBeTruthy();
     expect(screen.getByText(/no connected google account lists it/i)).toBeTruthy();
+    // And NO dropdown. This spec asserted only the note, so the early return's actual subject —
+    // that an empty `<select>` is not rendered — was unpinned in the very shape the operator
+    // hits after migration 0021. An empty control looks like there is something to choose and
+    // is the noise the zero-account screen was rebuilt to remove.
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
   /**

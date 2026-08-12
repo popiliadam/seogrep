@@ -1074,6 +1074,64 @@ describe("the property inventory", () => {
     expect(within(inventory).getByText(/Not used — this account cannot query it/)).toBeTruthy();
   });
 
+  /**
+   * The fourth inventory state the spec requires (line 99) and the only one nothing asserted:
+   * queryable AND unused. It is a DIFFERENT sentence from the unqueryable one — bare, with no
+   * reason clause — because there is nothing to explain: the account can read the property,
+   * we simply do not. Merging the two branches, or appending a reason to this one, would tell
+   * the user a working property is broken.
+   *
+   * MUTATION TARGET: collapse `account-inventory.tsx`'s ternary to the "cannot query it"
+   * string and this goes red twice over — the exact-string match below, and the negative one.
+   */
+  it("marks a queryable property nothing reads as plain Not used, with no reason attached", async () => {
+    projectRows = [PROJECT_A];
+    connectionRows = [mapping(PROJECT_A.id, ACCOUNT_ID, "https://alpha.example/")];
+    accountRows = [account()];
+    // Both siteOwner, so both are queryable; only the first one is read by a project.
+    sitesByAccount[ACCOUNT_ID] = [site("https://alpha.example/"), site("https://spare.example/")];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    // An EXACT string, not /Not used/: the "cannot query it" variant contains those two words,
+    // so a regex would pass on the wrong branch — which is the whole distinction being pinned.
+    expect(within(inventory).getByText("Not used")).toBeTruthy();
+    expect(within(inventory).queryByText(/cannot query it/)).toBeNull();
+    expect(within(inventory).getByText("Read by alpha.example")).toBeTruthy();
+  });
+
+  /**
+   * The empty inventory — a listing we DID read that answered with nothing. It had zero
+   * coverage, which mattered more than usual here: this sentence is the one the controller
+   * approved by hand during Task 2 (the fact alone, remedy deliberately left to the page-level
+   * summary so three connected accounts do not repeat the same instruction four times), and
+   * until now it could have been reworded or deleted with a fully green suite.
+   *
+   * It also pins the honesty split the 2026-08-11 defect came from: read-and-empty is NOT
+   * could-not-read, and the two must never share a sentence.
+   */
+  it("says an account that lists nothing has nothing — the fact only, not the remedy", async () => {
+    projectRows = [PROJECT_A];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount[ACCOUNT_ID] = [];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    const inventory = screen.getByTestId("account-inventory");
+    expect(
+      within(inventory).getByText("No Search Console properties on this account."),
+    ).toBeTruthy();
+    // NOT the unreadable wording: an empty answer we received is not an answer we missed.
+    expect(within(inventory).queryByText(/could not be read/i)).toBeNull();
+    // And NOT the remedy, which belongs to the cross-account summary below this line. The page
+    // still says it once — asserted here on the whole document, so the split is pinned from
+    // both sides rather than the instruction merely going missing.
+    expect(within(inventory).queryByText(/verify a property in search console/i)).toBeNull();
+    expect(screen.getByText(/verify a property in search console/i)).toBeTruthy();
+  });
+
   it("says the listing could NOT be read rather than claiming the account has nothing", async () => {
     // The page logs the failed `sites.list` on purpose; silence it here so the run stays
     // pristine, exactly as the other failed-read specs above do.
