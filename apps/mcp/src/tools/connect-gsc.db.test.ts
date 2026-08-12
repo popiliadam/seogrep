@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
 import { connectGscTool } from "./connect-gsc.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 
 /**
  * DB-integration specs for connect_gsc against a LOCAL Supabase stack. The tenant-scoped
@@ -209,6 +210,31 @@ describe("connect_gsc against the local stack", () => {
     expect(text).toMatch(/matched it/i);
     expect(text).toMatch(/verify a property/i);
     expect(text).toContain(`${WEB_BASE_URL}/api/gsc/connect?project_id=${projectId}`);
+  });
+
+  /**
+   * The per-tool archive proof. The refusal is written ONCE in project-target.ts and has its own
+   * spec there — but that spec cannot tell whether connect_gsc reaches it. A tool that kept its
+   * own project read would hand out a connect link for a project the tenant has archived, and
+   * the resolver's spec would stay green. So the assertion comes out of THIS tool's own run.
+   */
+  it("refuses an ARCHIVED project and issues no connect link", async () => {
+    const ctx = await makeCtx();
+    // The fixture domain carries no form of the matched word, so an unrelated message quoting
+    // the domain could not pass itself off as the archive refusal.
+    const projectId = await makeProject(ctx.userId, "retired-shop.com");
+    const { error } = await service
+      .from("projects")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", projectId);
+    if (error) throw new Error(`archive update failed: ${error.message}`);
+
+    const result = await connectGscTool.run(ctx, { project_id: projectId });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+    expect(result.content[0]?.text).toMatch(/archived/i);
+    expect(result.content[0]?.text ?? "").not.toContain("/api/gsc/connect");
   });
 
   it("treats another tenant's project id as not found (no link issued)", async () => {
