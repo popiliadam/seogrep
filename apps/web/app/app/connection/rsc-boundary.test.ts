@@ -94,32 +94,83 @@ const SERVER_MODULES = readdirSync(HERE)
 /**
  * `import { a, type B } from "./x"` → {source: "./x", specifiers: ["a", "type B"]}.
  *
- * BOTH QUOTE STYLES on the module SOURCE too — the fourth and last instance of the same
- * blindness in this file. It was measured before it was fixed: the exact line that took
- * production down on 2026-08-11, `import { encodeChoice } from './property-picker'`, written
- * with single quotes, was INVISIBLE to this scanner and the whole gate reported 7/7 green.
- * A quote character is not a boundary, and this guard exists precisely because a green suite
- * once hid an outage.
+ * EVERY BINDING FORM, not only the braced one — the SIXTH hole, found by varying the import
+ * FORM rather than its spelling, and measured before it was fixed. This scanner used to
+ * require a `{ … }` clause, so all three of these, prepended to `account-inventory.tsx`,
+ * left the gate 8/8 green while binding client values into a Server Component:
+ *
+ *     import * as picker from "./property-picker";
+ *     import picked from "./property-picker";
+ *     export { encodeChoice } from "./property-picker";
+ *
+ * A brace is not a boundary either. The clause is now captured whole and split afterwards, so
+ * a default binding, a namespace binding and a re-export all reach the same check.
+ *
+ * BOTH QUOTE STYLES on the module SOURCE too — the fourth instance of the same blindness in
+ * this file. It was measured before it was fixed: the exact line that took production down on
+ * 2026-08-11, `import { encodeChoice } from './property-picker'`, written with single quotes,
+ * was INVISIBLE to this scanner and the whole gate reported 7/7 green. A quote character is
+ * not a boundary, and this guard exists precisely because a green suite once hid an outage.
  */
 function importsOf(source: string): { source: string; specifiers: string[] }[] {
   const found: { source: string; specifiers: string[] }[] = [];
-  const pattern = /import\s+(type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g;
+  // The clause may span lines (a long brace list does), but never a statement: no clause
+  // contains a `;` or a quote, so excluding both keeps one match to one statement.
+  const pattern = /(?:^|[;\n])\s*(?:import|export)\s+(type\s+)?([^;'"]*?)\s*from\s*["']([^"']+)["']/g;
   for (const match of source.matchAll(pattern)) {
-    const [, typeOnlyClause, body, from] = match;
+    const [, typeOnlyClause, clause, from] = match;
     if (typeOnlyClause) continue; // `import type { … }` — erased wholesale
     // Both groups are non-optional in the pattern, but `matchAll` types them as possibly
     // undefined. Skip rather than assert: a guard that throws on its own parsing tells the
     // reader nothing about the boundary it exists to check.
-    if (body === undefined || from === undefined) continue;
+    if (clause === undefined || from === undefined) continue;
+    const braced = clause.match(/\{([\s\S]*)\}/);
     found.push({
       source: from,
-      specifiers: body
-        .split(",")
-        .map((entry) => entry.trim())
+      specifiers: [...clause.replace(/\{[\s\S]*\}/, " ").split(","), ...(braced?.[1] ?? "").split(",")]
+        .map((entry) => entry.trim().replace(/\s+/g, " "))
         .filter((entry) => entry.length > 0),
     });
   }
   return found;
+}
+
+/** What a specifier BINDS locally: `a as b` binds `b`, `* as ns` binds `ns`, `a` binds `a`. */
+function localNameOf(specifier: string): string {
+  return specifier.match(/\bas\s+([A-Za-z_$][\w$]*)$/)?.[1] ?? specifier;
+}
+
+/**
+ * The runtime VALUES one statement pulls out of a client module — the offenders, named.
+ *
+ * A client COMPONENT is exactly what a Server Component is supposed to import: it is rendered,
+ * never called. A client FUNCTION is the defect. The convention that separates them is
+ * capitalisation, which React itself already requires of components, and it is applied to the
+ * LOCAL binding (`encodeChoice as ec` is still a lowercase value at the call site).
+ *
+ * A namespace binding has no capitalisation to read — it is the whole module — so it is judged
+ * by what the importing file actually TOUCHES: `ns.Widget` is rendered and fine, `ns.helper` is
+ * called and is the defect. `export * from` re-exports every value blind, so it is always one.
+ */
+function clientValuesOf(statement: { specifiers: string[] }, importer: string): string[] {
+  const offenders: string[] = [];
+  for (const specifier of statement.specifiers) {
+    if (specifier.startsWith("type ")) continue; // erased before any of this matters
+    if (specifier === "*") {
+      offenders.push("export * (every value, re-exported blind)");
+      continue;
+    }
+    const local = localNameOf(specifier);
+    if (specifier.startsWith("*")) {
+      for (const use of importer.matchAll(new RegExp(`\\b${local}\\.([A-Za-z_$][\\w$]*)`, "g"))) {
+        const member = use[1];
+        if (member !== undefined && !/^[A-Z]/.test(member)) offenders.push(`${local}.${member}`);
+      }
+      continue;
+    }
+    if (!/^[A-Z]/.test(local)) offenders.push(specifier);
+  }
+  return [...new Set(offenders)];
 }
 
 function readLocal(from: string): string | null {
@@ -149,12 +200,7 @@ describe("the RSC boundary of the connection page", () => {
       for (const statement of importsOf(source)) {
         const imported = readLocal(statement.source);
         if (imported === null || !isClientModule(imported)) continue;
-        // A client COMPONENT is exactly what a Server Component is supposed to import — it is
-        // rendered, never called. A client FUNCTION is the defect. The convention that
-        // separates them is capitalisation, which React itself already requires of components.
-        const values = statement.specifiers
-          .filter((entry) => !entry.startsWith("type "))
-          .filter((entry) => !/^[A-Z]/.test(entry));
+        const values = clientValuesOf(statement, source);
         if (values.length > 0) {
           offenders.push(`${statement.source} → ${values.join(", ")}`);
         }
@@ -210,6 +256,36 @@ describe("the RSC boundary of the connection page", () => {
     // excluding modules it is supposed to scan.
     expect(isClientModule('// this module is not "use client"\nexport const a = 1;\n')).toBe(false);
     expect(isClientModule('export const a = 1;\n"use client";\n')).toBe(false);
+  });
+
+  /**
+   * The scanner's other half, pinned the same way and for the same reason: the three forms
+   * below were all invisible while the gate reported 8/8 green, and a hole that needs a real
+   * file to reproduce is one nobody re-runs.
+   */
+  it("names the client values a statement binds, in every import form", () => {
+    const importer =
+      'import * as picker from "./property-picker";\n' +
+      'import picked from "./property-picker";\n' +
+      'export { encodeChoice, type PropertyOption } from "./property-picker";\n' +
+      'import { PropertyPicker } from "./property-picker";\n' +
+      "const encoded = picker.encodeChoice(a, b);\nconst node = <picker.Widget />;\n";
+    const statements = importsOf(importer);
+
+    expect(statements).toHaveLength(4);
+    // A rendered component is not an offender in ANY form: neither the named `PropertyPicker`
+    // nor the member `picker.Widget` appears here, while every lowercase value does.
+    expect(statements.flatMap((statement) => clientValuesOf(statement, importer))).toEqual([
+      "picker.encodeChoice",
+      "picked",
+      "encodeChoice",
+    ]);
+    // `export * from` names nothing, so nothing can be judged: it re-exports every value blind.
+    expect(
+      importsOf('export * from "./property-picker";\n').map((statement) =>
+        clientValuesOf(statement, ""),
+      ),
+    ).toEqual([["export * (every value, re-exported blind)"]]);
   });
 
   it("./choice carries no directive, so both sides may import it", () => {
