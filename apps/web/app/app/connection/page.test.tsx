@@ -843,6 +843,56 @@ describe("ConnectionPage — the account-level connect control", () => {
     ).toEqual([]);
   });
 
+  /**
+   * THE EMPTY STATE IS THE PAGE'S SENTENCE, NOT THE ROW'S. It used to be the row's: every
+   * project rendered the same "No Search Console properties are available…" paragraph, so an
+   * operator with nine projects who had just disconnected their account read the same thing
+   * nine times and the only way back was a link with the weight of body text. The explanation
+   * belongs where the state does — to the account list — and is asserted here to appear ONCE.
+   *
+   * The `combobox` assertion is the brief's, kept verbatim, but note what it can and cannot
+   * prove HERE: this file stubs PropertyPicker, so no real `<select>` could render either way.
+   * The claim that an optionless picker renders no dropdown is pinned for real in
+   * property-picker.test.tsx, "renders no dropdown at all".
+   */
+  it("explains the empty state ONCE at page level, not once per project", async () => {
+    projectRows = [PROJECT_A, PROJECT_B];
+    connectionRows = [];
+    accountRows = [];
+    listKeys.mockResolvedValue([]);
+    await renderPage();
+
+    expect(
+      screen.getAllByText(/Connect a Google account to choose which Search Console property/),
+    ).toHaveLength(1);
+    expect(screen.queryAllByRole("combobox")).toHaveLength(0);
+  });
+
+  /**
+   * ADDED BY THE IMPLEMENTER, not by the plan, because the plan's own mutation proved the spec
+   * above does not pin what it claims to. Loosening the page's `accounts.length === 0` guard to
+   * `>= 0` left the whole suite GREEN: the spec above renders with no accounts, so a sentence
+   * that shows unconditionally still appears exactly once there. Nothing anywhere asserted the
+   * sentence STOPS. This does — and with it, the mutation goes red.
+   *
+   * It is also the substance of the fix, not bookkeeping: a "Connect a Google account" sentence
+   * left standing beside two connected accounts is the same noise the row paragraph was, only
+   * moved up a level.
+   */
+  it("stops saying it once an account is connected — the sentence is the EMPTY state's", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [account()];
+    sitesByAccount = { [ACCOUNT_ID]: [site("sc-domain:alpha.example")] };
+    await renderPage();
+
+    expect(
+      screen.queryByText(/Connect a Google account to choose which Search Console property/),
+    ).toBeNull();
+    // The way to add ANOTHER account is still on the page — the sentence goes, the control stays.
+    expect(screen.getByRole("link", { name: "Connect Google account" })).toBeTruthy();
+  });
+
   it("is there for a user with no accounts and no projects at all", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [];

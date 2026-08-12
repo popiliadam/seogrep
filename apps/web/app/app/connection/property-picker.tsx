@@ -199,16 +199,11 @@ export function PropertyPicker({
     });
   }
 
+  // No options means no account is connected (or none lists anything). A row cannot fix that
+  // and nine rows repeating so is noise, not information — the page says it once, above. What
+  // survives here is the one thing that IS per-row: the property this project had stored.
   if (options.length === 0) {
-    return (
-      <div className="flex flex-col gap-1">
-        <p className="text-xs text-neutral-500">
-          No Search Console properties are available for this project yet. Connect a Google
-          account that has verified this domain.
-        </p>
-        {retainedNote}
-      </div>
-    );
+    return retainedNote ? <div className="flex flex-col gap-1">{retainedNote}</div> : null;
   }
 
   return (

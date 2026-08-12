@@ -372,15 +372,6 @@ describe("PropertyPicker", () => {
     expect(screen.getByText(/also mapped to 1 other project(?!s)/i)).toBeTruthy();
   });
 
-  // Never a silently empty dropdown: with nothing to choose from there is no <select> at all,
-  // and the reason is on screen instead.
-  it("explains an empty listing instead of rendering an empty dropdown", () => {
-    render(<PropertyPicker {...props({ options: [] })} />);
-
-    expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByText(/no search console properties/i)).toBeTruthy();
-  });
-
   it("cannot save nothing: the button is inert until a property is chosen", () => {
     const p = props();
     render(<PropertyPicker {...p} />);
@@ -389,5 +380,74 @@ describe("PropertyPicker", () => {
     expect((screen.getByRole("button", { name: /save/i }) as HTMLButtonElement).disabled).toBe(true);
     save();
     expect(p.saveProjectProperty).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * NO OPTIONS AT ALL — the state every row is in with no Google account connected, and the one
+ * the operator hit right after disconnecting. Nine rows each repeating the same paragraph is
+ * noise, not information: the page now explains it ONCE, above the list, and the row is left
+ * with the only fact that is genuinely per-row — the property it had stored.
+ *
+ * WHERE "explains an empty listing instead of rendering an empty dropdown" WENT. That spec is
+ * gone from this file; BOTH of its assertions survive, one in each place the claim now lives:
+ *   - `queryByRole("combobox")` is null       -> the first spec below, verbatim (and stricter:
+ *                                                the Save button has to be absent too);
+ *   - `getByText(/no search console           -> page.test.tsx, "explains the empty state ONCE
+ *      properties/i)` — "the reason is on         at page level, not once per project", where
+ *      screen instead"                            it is also pinned to appear exactly once.
+ * The claim was never dropped, only relocated: what changed is WHOSE job it is to say it.
+ */
+describe("with no properties available", () => {
+  it("renders no dropdown at all — an empty select offers a choice that does not exist", () => {
+    render(
+      <PropertyPicker
+        projectId={PROJECT_ID}
+        domain="alpha.example"
+        options={[]}
+        current=""
+        retained={null}
+        suggested={null}
+        missingProperty={null}
+        alsoMapped={0}
+        saveProjectProperty={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /save/i })).toBeNull();
+  });
+
+  it("still names the property this project had stored — the loss is itself information", () => {
+    render(
+      <PropertyPicker
+        projectId={PROJECT_ID}
+        domain="alpha.example"
+        options={[]}
+        current=""
+        retained={{ property: "sc-domain:alpha.example", choice: null, listingComplete: true }}
+        suggested={null}
+        missingProperty={null}
+        alsoMapped={0}
+        saveProjectProperty={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Saved earlier for this project: sc-domain:alpha\.example/)).toBeTruthy();
+  });
+
+  it("says nothing per row — the explanation belongs to the page, not to nine rows", () => {
+    render(
+      <PropertyPicker
+        projectId={PROJECT_ID}
+        domain="alpha.example"
+        options={[]}
+        current=""
+        retained={null}
+        suggested={null}
+        missingProperty={null}
+        alsoMapped={0}
+        saveProjectProperty={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/No Search Console properties are available/)).toBeNull();
   });
 });

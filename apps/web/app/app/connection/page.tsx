@@ -445,13 +445,26 @@ export default async function ConnectionPage({
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
+        {/* Said ONCE, by the page, because the state belongs to the account list and not to any
+            project. Every project row used to say it instead, so a user with nine projects read
+            the same paragraph nine times — repetition that carried no more information than one
+            sentence would, and buried the only control that could act on it. The second half is
+            there because the first half alarms: nothing about the projects is lost or paused. */}
+        {accounts.length === 0 ? (
+          <p className="text-sm text-neutral-600">
+            Connect a Google account to choose which Search Console property each project
+            reads. Your projects stay exactly as they are — crawls and audits do not need it.
+          </p>
+        ) : null}
         {/* A plain <a>, like the old per-project link: this is the route handler that mints a
             signed state and 302s to Google, and next/link would prefetch it and start the flow.
             Rendered unconditionally — with no accounts it is the ONLY way to connect one, and
-            with several it is how the next one is added. */}
+            with several it is how the next one is added. Styled as the primary action it is:
+            with nothing connected, this link is the page's entire way forward, and it used to
+            carry the visual weight of body text. Element and accessible name are unchanged. */}
         <a
           href={GSC_CONNECT_PATH}
-          className="self-start font-medium text-neutral-700 hover:text-neutral-900"
+          className="self-start rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700"
         >
           Connect Google account
         </a>
