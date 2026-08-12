@@ -26,9 +26,41 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
- * A file is a client module when — and only when — the directive is the FIRST thing in it.
- * That is the position Next reads, and the only position either half of this file may use:
- * the derivation below, and the per-import check further down.
+ * Everything before the first statement: leading `//` lines and `/* … *\/` blocks, in any
+ * order and any number. Only the LEADING run is removed — a comment further down the file is
+ * left alone, so a module that merely mentions the directive in prose is unaffected.
+ */
+function stripLeadingComments(source: string): string {
+  let rest = source.trimStart();
+  for (;;) {
+    if (rest.startsWith("//")) {
+      const lineEnd = rest.indexOf("\n");
+      rest = (lineEnd === -1 ? "" : rest.slice(lineEnd + 1)).trimStart();
+      continue;
+    }
+    if (rest.startsWith("/*")) {
+      const blockEnd = rest.indexOf("*/");
+      if (blockEnd === -1) return ""; // unterminated: there is no statement after it
+      rest = rest.slice(blockEnd + 2).trimStart();
+      continue;
+    }
+    return rest;
+  }
+}
+
+/**
+ * A file is a client module when the directive is its first STATEMENT — leading comments do
+ * not move it. React and Next both read the directive through a leading comment block, and
+ * this file used to claim the opposite in prose ("the directive is the FIRST thing in it"),
+ * which was simply wrong about the rule it exists to enforce.
+ *
+ * That wrong sentence was also a hole, and the worst of the family, because it poisons BOTH
+ * halves at once: a comment-preceded client module stays inside the derived `SERVER_MODULES`
+ * (so it is scanned as if it were a server module) AND goes unrecognised as an import source
+ * (so importing a value from it is not flagged). Measured before it was fixed — two lines,
+ * `// utilities for the connection surface` above `"use client";`, prepended to
+ * `connection-view.ts`, left the suite 156/156 green. This repo's house style opens nearly
+ * every file with a doc comment, so the trigger is one habitual keystroke away.
  *
  * BOTH QUOTE STYLES. Next honours `'use client'` exactly as it honours `"use client"`, and this
  * predicate used to see only the double-quoted spelling — so the whole point of this guard came
@@ -38,7 +70,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  * A guard written because a green suite hid an outage may not have a spelling it cannot see.
  */
 function isClientModule(source: string): boolean {
-  return /^["']use client["']/.test(source.trimStart());
+  return /^["']use client["']/.test(stripLeadingComments(source));
 }
 
 /**
@@ -161,6 +193,23 @@ describe("the RSC boundary of the connection page", () => {
     expect(SERVER_MODULES).not.toContain("property-picker.tsx");
     expect(SERVER_MODULES).not.toContain("disconnect-button.tsx");
     expect(SERVER_MODULES).not.toContain("key-panel.tsx");
+  });
+
+  /**
+   * The predicate itself, pinned directly rather than only through a file on disk. Both halves
+   * of this gate route through `isClientModule`, so a position it cannot see is a hole in both
+   * — and a hole that needs a real file to reproduce is one nobody re-runs. These four cases
+   * are the positions React and Next actually accept, plus the one they do not.
+   */
+  it("sees the directive under leading comments — the position React and Next also honour", () => {
+    expect(isClientModule('// utilities for the connection surface\n"use client";\n')).toBe(true);
+    expect(isClientModule("/** doc block */\n'use client';\n")).toBe(true);
+    expect(isClientModule('/** doc */\n// and a line note\n"use client";\n')).toBe(true);
+    // A directive that is not first is not a directive, and prose is not code: a file that
+    // only MENTIONS the words must stay a server module, or the derivation would start
+    // excluding modules it is supposed to scan.
+    expect(isClientModule('// this module is not "use client"\nexport const a = 1;\n')).toBe(false);
+    expect(isClientModule('export const a = 1;\n"use client";\n')).toBe(false);
   });
 
   it("./choice carries no directive, so both sides may import it", () => {
