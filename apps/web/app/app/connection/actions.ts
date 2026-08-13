@@ -440,6 +440,52 @@ export interface SavePropertyDeps {
   readonly listSites?: (accessToken: string) => Promise<GscSite[]>;
 }
 
+/** One account's live Search Console listing, or the sentence explaining why we have none. */
+type AccountListing =
+  | { readonly ok: true; readonly sites: readonly GscSite[] }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Read ONE connected account's `sites.list` LIVE, for the actions that must VERIFY a property
+ * rather than trust what a browser sent. Shared by {@link saveProjectProperty} and
+ * {@link trackProperty} because they ask Google the same question, and a second answer to one
+ * question is a second truth.
+ *
+ * Nothing is cached, here or on the page: a property can be removed (or an account demoted)
+ * between the render and the click, and re-reading is the only way the answer describes the
+ * account as it is NOW.
+ *
+ * A dead credential, a retired encryption key, a foreign account id and a Google outage all
+ * land in the same refusal — they are not distinguished for the USER, because every one of them
+ * is answered by reconnecting the account — while the log keeps the diagnosis. Nothing from
+ * `caught` is returned: its message can carry Google's own text, and this string reaches a
+ * browser.
+ */
+async function readAccountSites(
+  service: ServiceClient,
+  accountId: string,
+  userId: string,
+  label: string,
+  deps: SavePropertyDeps,
+): Promise<AccountListing> {
+  const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    console.error(`${label}: TOKEN_ENCRYPTION_KEY is not configured`);
+    return { ok: false, error: "Search Console is not configured. Please try again later." };
+  }
+  try {
+    const accessToken = await accessTokenFor(service, accountId, userId, encryptionKey);
+    return { ok: true, sites: await (deps.listSites ?? listSites)(accessToken) };
+  } catch (caught) {
+    console.error(`${label}: could not read sites.list for account ${accountId}:`, caught);
+    return {
+      ok: false,
+      error:
+        "Could not read this Google account's properties. Reconnect the account and try again.",
+    };
+  }
+}
+
 /**
  * Map ONE project to ONE Search Console property on ONE connected Google account.
  *
@@ -497,32 +543,12 @@ export async function saveProjectProperty(
     return { ok: false, error: "That project or Google account was not found." };
   }
 
-  const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encryptionKey) {
-    console.error("saveProjectProperty: TOKEN_ENCRYPTION_KEY is not configured");
-    return { ok: false, error: "Search Console is not configured. Please try again later." };
+  const listing = await readAccountSites(service, accountId, userId, "saveProjectProperty", deps);
+  if (!listing.ok) {
+    return listing;
   }
 
-  let sites: GscSite[];
-  try {
-    const accessToken = await accessTokenFor(service, accountId, userId, encryptionKey);
-    sites = await (deps.listSites ?? listSites)(accessToken);
-  } catch (caught) {
-    // A dead credential, a retired encryption key, a foreign account id and a Google outage
-    // all land here. They are not distinguished for the USER — every one of them is answered
-    // by reconnecting the account — but the log keeps the diagnosis. Nothing from `caught` is
-    // returned: its message can carry Google's own text, and this string reaches a browser.
-    console.error(
-      `saveProjectProperty: could not read sites.list for account ${accountId}:`,
-      caught,
-    );
-    return {
-      ok: false,
-      error: "Could not read this Google account's properties. Reconnect the account and try again.",
-    };
-  }
-
-  const hit = sites.find((site) => site.siteUrl === property);
+  const hit = listing.sites.find((site) => site.siteUrl === property);
   if (!hit) {
     return { ok: false, error: "That property is not listed on this Google account." };
   }
