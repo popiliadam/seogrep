@@ -236,9 +236,16 @@ describe("the RSC boundary of the connection page", () => {
       ]),
     );
     // And the client islands stay OUT: scanning them would flag their own legitimate internals.
+    // This half also PINS THE DIRECTIVE on each of them. A client module that loses `"use
+    // client"` does not fail loudly — it silently joins `SERVER_MODULES`, where its own hooks
+    // and handlers are perfectly legal imports, so it would pass the loop above while breaking
+    // at render. Naming them here is what makes that loss visible.
     expect(SERVER_MODULES).not.toContain("property-picker.tsx");
     expect(SERVER_MODULES).not.toContain("disconnect-button.tsx");
     expect(SERVER_MODULES).not.toContain("key-panel.tsx");
+    expect(SERVER_MODULES).not.toContain("tracked-projects.tsx");
+    expect(SERVER_MODULES).not.toContain("property-library.tsx");
+    expect(SERVER_MODULES).not.toContain("archive-list.tsx");
   });
 
   /**
