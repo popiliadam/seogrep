@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupConnectionRows, inventoryRows, type ProjectRow } from "./connection-view";
+import {
+  groupConnectionRows,
+  inventoryRows,
+  matchesQuery,
+  type ProjectRow,
+} from "./connection-view";
 
 const ACC = "44444444-4444-4444-8444-444444444444";
 const OTHER = "55555555-5555-4555-8555-555555555555";
@@ -193,5 +198,33 @@ describe("groupConnectionRows", () => {
       ["siteOwner", true],
       ["siteUnverifiedUser", false],
     ]);
+  });
+});
+
+/**
+ * The predicate every group filters through. Pure and directive-free on purpose: the search box
+ * is a client island, but a Server Component reads this module too, so the matcher may not live
+ * beside the island (see ./choice for the outage that rule came from).
+ */
+describe("matchesQuery", () => {
+  it("keeps everything while the box is empty — including a blank-looking query", () => {
+    expect(matchesQuery("", "sc-domain:balerin.com")).toBe(true);
+    expect(matchesQuery("   ", "sc-domain:balerin.com")).toBe(true);
+    // Even a row with nothing to match on: an empty box filters nothing at all.
+    expect(matchesQuery("", null)).toBe(true);
+  });
+
+  it("matches any part of any value, ignoring case and surrounding space", () => {
+    expect(matchesQuery("BALERIN", "sc-domain:balerin.com")).toBe(true);
+    expect(matchesQuery("  balerin  ", "sc-domain:balerin.com")).toBe(true);
+    // A row is kept when ANY of its strings matches: a project is findable by the property it
+    // reads, not only by its own domain.
+    expect(matchesQuery("rkturizm", "adstark.com.tr", "https://rkturizm.com/")).toBe(true);
+  });
+
+  it("drops a row nothing on it matches, and never matches on a missing value", () => {
+    expect(matchesQuery("balerin", "adstark.com.tr", null)).toBe(false);
+    expect(matchesQuery("null", null)).toBe(false);
+    expect(matchesQuery("balerin")).toBe(false);
   });
 });
