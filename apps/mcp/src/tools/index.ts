@@ -20,6 +20,7 @@ import { generateReportTool } from "./generate-report.ts";
 import { whatsNextTool } from "./whats-next.ts";
 import { listGscPropertiesTool } from "./list-gsc-properties.ts";
 import { trackGscPropertyTool } from "./track-gsc-property.ts";
+import { untrackProjectTool } from "./untrack-project.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
@@ -43,6 +44,7 @@ export { generateReportTool, makeGenerateReportTool } from "./generate-report.ts
 export { whatsNextTool, makeWhatsNextTool } from "./whats-next.ts";
 export { listGscPropertiesTool, makeListGscPropertiesTool } from "./list-gsc-properties.ts";
 export { trackGscPropertyTool, makeTrackGscPropertyTool } from "./track-gsc-property.ts";
+export { untrackProjectTool, makeUntrackProjectTool } from "./untrack-project.ts";
 
 /**
  * The production tool set, in tools/list order. The composition root (server.ts
@@ -71,4 +73,5 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   whatsNextTool,
   listGscPropertiesTool,
   trackGscPropertyTool,
+  untrackProjectTool,
 ];
