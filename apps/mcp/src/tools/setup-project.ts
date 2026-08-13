@@ -71,7 +71,7 @@ export async function openTrackedProject(
 
   const existing = await readProject(client, userId, domain);
   if (existing) {
-    return await resolveExisting(client, userId, domain, existing);
+    return await resolveExisting(userId, domain, existing);
   }
 
   // Race-safe insert: ON CONFLICT (user_id, domain) DO NOTHING (ignoreDuplicates). A row is
@@ -97,7 +97,7 @@ export async function openTrackedProject(
   if (!winner) {
     throw new Error("projects upsert reported a conflict but no existing row was found");
   }
-  return await resolveExisting(client, userId, domain, winner);
+  return await resolveExisting(userId, domain, winner);
 }
 
 /** setup_project's own wording for each outcome — unchanged, and its alone. */
@@ -167,7 +167,6 @@ async function readProject(
  * again picks the same project back up rather than starting an empty one.
  */
 async function resolveExisting(
-  client: ReturnType<typeof getServiceClient>,
   userId: string,
   domain: string,
   row: ProjectRow,
@@ -175,15 +174,52 @@ async function resolveExisting(
   if (row.archived_at === null) {
     return { ok: true, project: { id: row.id, domain, outcome: "existing" } };
   }
-  const { error } = await client
+  if (!(await restoreOwnProject(userId, row.id))) {
+    return { ok: false, error: notRestoredMessage(domain, row.id) };
+  }
+  return { ok: true, project: { id: row.id, domain, outcome: "restored" } };
+}
+
+/**
+ * Clear `archived_at` on ONE of this tenant's projects; false when the write matched no row.
+ *
+ * BOTH filters ride on the UPDATE (constitution NEVER #4). That is not a duplicate of the read
+ * that found the row: this client is service-role and bypasses RLS, so this `.eq` is the only
+ * thing standing between a stray project id and another tenant's row.
+ *
+ * …and the row comes back, because a zero-row UPDATE is not an error in PostgREST. Without
+ * `.select().maybeSingle()` this function could only report "nothing was WRONG", never that
+ * anything was WRITTEN — and setup_project said "Restored …" on the strength of that. Its twin
+ * `archiveOwnProject` (untrack-project.ts) has always asked for the row back; these two write
+ * the same column on the same table and may not disagree about what success means.
+ *
+ * EXPORTED so the tenant filter is measurable. Through the tool, `readProject` refuses a
+ * stranger before this runs, so mutating the filter away leaves every tool-level spec green;
+ * the DB lane drives this function head-on with a mismatched (userId, projectId) pair instead.
+ */
+export async function restoreOwnProject(userId: string, projectId: string): Promise<boolean> {
+  const { data, error } = await getServiceClient()
     .from("projects")
     .update({ archived_at: null })
-    .eq("id", row.id)
-    // The tenant filter belongs on the WRITE too, not only on the read that found the row
-    // (constitution NEVER #4) — this client bypasses RLS, so the filter is the whole guard.
-    .eq("user_id", userId);
+    .eq("id", projectId)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
   if (error) {
     throw new Error(`projects restore failed: ${error.message}`);
   }
-  return { ok: true, project: { id: row.id, domain, outcome: "restored" } };
+  return data !== null;
+}
+
+/**
+ * The restore matched no row although the read a moment earlier found one. Rare by
+ * construction, and deliberately NOT reported as success: the caller asked for the domain to
+ * be tracked again and it is still in the archive.
+ */
+function notRestoredMessage(domain: string, projectId: string): string {
+  return (
+    `Nothing was changed: "${domain}" (project_id: ${projectId}) is still in your archive — ` +
+    "the update matched no row, so the project changed while this ran. Run list_projects to " +
+    "see where it stands, then run setup_project again."
+  );
 }
