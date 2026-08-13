@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { encryptToken, toByteaHex } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
@@ -23,8 +23,12 @@ import { makeTrackGscPropertyTool } from "./track-gsc-property.ts";
  * fixture, whose whole point is that the normalizer must refuse it.
  */
 
-// 64-hex (32-byte) AES-256 test key. Unmistakably a test value, never a real key.
-const KEY = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
+// 64-hex (32-byte) AES-256 test key, DERIVED at runtime rather than written as a literal: to a
+// secret scanner a 64-hex string in the source is indistinguishable from a real key, and the
+// three that used to live in these `.db.test.ts` files took the `no-secrets` gate red on
+// 2026-08-13. Hashing a fixed, public phrase keeps the key deterministic across runs while
+// leaving nothing secret-shaped in the file for a scanner — or a future commit — to trip over.
+const KEY = createHash("sha256").update("seogrep db-test token key").digest("hex");
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const SITES_ENDPOINT = "https://www.googleapis.com/webmasters/v3/sites";
 
