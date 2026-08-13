@@ -126,6 +126,36 @@ function unrecognisedMessage(property: string): string {
 }
 
 /**
+ * Exactly one account answered and it lists the property — but another account did not answer
+ * at all, and it might list the property too. Had it answered, {@link ambiguousMessage} would
+ * be refusing right now.
+ *
+ * So SeoGrep refuses here as well (controller ruling, 2026-08-13). Proceeding would let a
+ * transient Google outage decide WHICH CREDENTIAL a project binds to — the one thing the
+ * ambiguity guard exists to never guess — and it would contradict this tool's own rule that an
+ * absence we did not observe is not an absence, at the point where the stakes are highest.
+ *
+ * Only reachable with two or more connected accounts: with one account, an unreadable account
+ * produces no matches at all and the not-listed / unreadable branch answers first. So the cost
+ * of failing closed is small, and it is paid only by the user who has the ambiguity to begin
+ * with — who can settle it in one re-run with `account_id`.
+ */
+function undecidableMessage(
+  property: string,
+  foundOn: string,
+  unreadable: readonly string[],
+): string {
+  return (
+    `"${property}" is listed on ${foundOn}, but the Search Console properties of ` +
+    `${unreadable.join(", ")} could not be read just now — so whether that account lists it too ` +
+    "is unknown, and SeoGrep will not let an outage decide which account a project reads " +
+    "through. Nothing was changed. Either run this again with account_id set to the account you " +
+    "want it read through (list_gsc_properties prints the ids), or wait until the other account " +
+    "can be read and run it again."
+  );
+}
+
+/**
  * Two accounts list the same property — real on the operator's own account. SeoGrep does not
  * guess which one: the choice binds the project to a credential, and the wrong guess is only
  * discovered when the data stops arriving.
@@ -219,6 +249,14 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       }
       if (alsoListedElsewhere !== undefined) {
         return errorResult(ambiguousMessage(property, matches));
+      }
+      // The ambiguity guard above can only weigh the accounts that ANSWERED. If one did not,
+      // it might list this property too — see undecidableMessage for why that is a refusal
+      // rather than a proceed. The `accountId === undefined` clause states the rule fully even
+      // though the candidate filter above already implies it: when the caller names an account,
+      // no other account is ever asked, so nothing can be left unread behind their back.
+      if (unreadable.length > 0 && accountId === undefined) {
+        return errorResult(undecidableMessage(property, match.account.email, unreadable));
       }
       const { account, site } = match;
 

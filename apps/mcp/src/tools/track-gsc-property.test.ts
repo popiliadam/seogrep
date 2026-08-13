@@ -243,13 +243,45 @@ describe("track_gsc_property", () => {
     expect(run.recorder.opened).toEqual([]);
   });
 
-  it("still finds the property on a healthy account when ANOTHER account cannot be read", async () => {
+  it("REFUSES to bind when a healthy account lists it but ANOTHER account could not be read", async () => {
+    // CONTROLLER RULING (2026-08-13). This spec previously pinned the OPPOSITE — that the tool
+    // proceeds on the healthy account. The required BEHAVIOUR changed, so the spec changed with
+    // it: that is a scope change, not a weakened assertion (NEVER #8 forbids editing a test to
+    // make code pass, which is not what this is).
+    //
+    // Why the behaviour changed: the ambiguity guard can only weigh accounts that ANSWERED. The
+    // silent one might list this property too, and had it answered the tool would be refusing.
+    // Proceeding therefore lets a transient Google outage decide which credential the project
+    // binds to — the single thing the ambiguity guard exists to never guess.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const run = await callTool(
       { property: TRACKED.siteUrl },
       { sitesListFails: true, secondAccountSites: [TRACKED] },
     );
     errorSpy.mockRestore();
+
+    expect(run.isError).toBe(true);
+    // (a) it says where the property WAS found…
+    expect(run.text).toContain(SECOND_ACCOUNT_EMAIL);
+    // (b) …and names the account that could not be read.
+    expect(run.text).toContain(ACCOUNT_EMAIL);
+    expect(run.text).toMatch(/could not be read/i);
+    // (c) both ways forward.
+    expect(run.text).toMatch(/account_id/);
+    expect(run.text).toMatch(/wait until|run it again/i);
+    // Nothing was bound and nothing was created.
+    expect(run.recorder.opened).toEqual([]);
+    expect(run.recorder.mapped).toEqual([]);
+  });
+
+  it("still binds when the caller NAMES the account, even though another one is unreadable", async () => {
+    // The first way forward the refusal above offers must actually work — a refusal pointing at
+    // a remedy that also fails is a dead end. Naming an account means no other account is asked,
+    // so nothing is left unread behind the caller's back and there is nothing to fail closed on.
+    const run = await callTool(
+      { property: TRACKED.siteUrl, account_id: SECOND_ACCOUNT_ID },
+      { sitesListFails: true, secondAccountSites: [TRACKED] },
+    );
 
     expect(run.isError).toBe(false);
     expect(run.recorder.mapped[0]?.accountId).toBe(SECOND_ACCOUNT_ID);
