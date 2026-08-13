@@ -774,6 +774,37 @@ export const DOC_PROSE = {
       "One clear next step for the project, a short reason, and the next two or three steps — all in " +
       "plain language, naming the exact tools to run.",
   },
+
+  list_gsc_properties: {
+    lead:
+      "`list_gsc_properties` shows every Search Console property on the Google accounts you have " +
+      "connected — each one's permission level, whether SeoGrep can read its performance data, and " +
+      "which project reads it. It is the tool to reach for when a property you can see in Search " +
+      "Console does not seem to be available here.",
+    whatItDoes:
+      "For each connected Google account it asks Google for that account's property list, then lines " +
+      "each property up against your projects. A property your account cannot query is **still " +
+      "listed**, marked `NOT QUERYABLE` with its permission level, so a property is never silently " +
+      "missing. Nothing is cached: the list is read live, every time.",
+    preExampleSections: [
+      {
+        heading: "When an account cannot be read",
+        body:
+          "If Google refuses — an expired connection, an outage — that account is reported as **could " +
+          "not be read**, never as an account with no properties. An absence we did not observe is " +
+          "not an absence, and the difference is what tells you to reconnect rather than to go and " +
+          "verify a property that was there all along. The other accounts are still listed.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which Search Console properties can SeoGrep see?" +
+      "\n\nThen map one to a project on the Connection page, or with " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc) if the account is not connected yet.",
+    returns:
+      "One block per connected Google account: its email and `account_id`, then one line per " +
+      "property with its permission level, the projects reading it through that account, and — where " +
+      "it applies — why SeoGrep cannot query it.",
+  },
 };
 
 // ---------------------------------------------------------------------------
