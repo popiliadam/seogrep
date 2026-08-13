@@ -123,7 +123,7 @@ bağımlılığı `zod` ve bu dosya onu da gerektirmiyor.
 | **Search Console'dan ekle** | kullanılmayan property başına bir satır | `Takibe al` (sorgulanamayanlar disabled + sebebi satırda) |
 | **Arşiv** | arşivlenmiş proje başına bir satır | `Geri al` |
 
-Başta arama kutusu ve durum filtresi. Dokuz dropdown kalkar; ad-tutmayan eşleme `Değiştir`
+Başta arama kutusu ve ~~durum filtresi~~. Dokuz dropdown kalkar; ad-tutmayan eşleme `Değiştir`
 altında mevcut `PropertyPicker` ile yapılır — o bileşen **silinmez**, yeri değişir.
 
 **Dosya bölünmesi.** `page.tsx` bugün 609 satır. Yeni bileşenler ayrı dosyalara:
@@ -192,6 +192,17 @@ projeden veri çekmeye devam eder. Planda **açık bir task** olarak durur, vars
 
 Yarım bırakılırsa kusur şu olur: *"çıkardım ama `whats_next` hâlâ onu öneriyor."* Yukarıdaki
 tablo uygulama planında **tek tek task** olur; toplu "arşiv desteği eklendi" maddesi yazılmaz.
+
+## Sapmalar — imzalı, sonradan eklendi
+
+**2026-08-13 · durum filtresi YAPILMADI (operatör onaylı takip diliminde karar verildi).**
+Yukarıdaki §3 "başta arama kutusu ve durum filtresi" diyordu. Arama kutusu ve kütüphanenin
+katlanması yapıldı; **durum filtresi bilinçli olarak yapılmadı.** Gerekçe: sayfanın üç grubu
+(takipte · kütüphane · arşiv) ZATEN durum eksenidir; bir durum açılırı, yerleşimin hâlihazırda
+ifade ettiği ekseni ikinci kez filtrelerdi. Gerekirse ayrı iş olarak açılır.
+
+Bu not, vaadin izsiz kaybolmaması için yazıldı: bu spec'i okuyan üçüncü oturum, §3'ü açık bir
+boşluk sanmasın. Kaybolan bir vaat, bu dalın düzelttiği hatanın ta kendisiydi.
 
 ## Kapsam DIŞI — bilinçli
 
