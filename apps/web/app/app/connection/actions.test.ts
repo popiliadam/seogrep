@@ -28,269 +28,10 @@ vi.mock("@pseo/db/api-keys-repo", () => ({
   revokeKey: vi.fn(),
 }));
 
-/** A fake row of either GSC table — column bag, so one builder serves both. */
-type Row = Record<string, unknown>;
-type Filter = { column: string; value: unknown };
-/** One issued statement: which table, which verb, and every filter it carried. */
-type Statement = { table: string; op: string; filters: Filter[] };
-
-let dbRows: Record<string, Row[]> = { gsc_accounts: [], gsc_connections: [], projects: [] };
-let gscTables: string[] = [];
-let statements: Statement[] = [];
-/** Every side effect in order, including the Google revoke — the ordering proof. */
-let gscOps: string[] = [];
-/**
- * PostgREST failures to inject, keyed `op:table` — the fake's only way to fail a statement.
- * A DB error is the one thing these actions cannot be observed handling any other way, and
- * every one of them must surface: a swallowed write error tells the user their mapping was
- * saved when it was not, and a swallowed count error would let `describeDisconnect` promise
- * that ZERO projects are affected. Added with the guarantees relocated here from the retired
- * lib/gsc/store.test.ts (task 7b), whose error specs pinned exactly this on the old module.
- */
-let dbErrors: Record<string, { message: string }> = {};
-/**
- * Fired just BEFORE a statement runs, keyed `op:table`. The one thing this fake could not
- * otherwise express: the world changing BETWEEN two statements of the SAME action — a project
- * row deleted, or handed to another owner, after the ownership read found it and before the
- * write lands on it. That race is precisely what the zero-row proof on each UPDATE exists for,
- * and without a hook the read and the write always agree, so the proof would look untestable
- * (and, being untestable, would be deleted by the next person who tidies).
- */
-let dbHooks: Record<string, () => void> = {};
-/**
- * Rows this fake mints an `id` for, because production does: `projects.id` defaults to
- * `gen_random_uuid()` and `openProjectForDomain` reads that id straight back out of the INSERT
- * to map a property to it. `gsc_connections` is deliberately NOT minted — its specs assert the
- * written payload byte for byte and no action reads that row's id back, so giving it a column
- * production would give it too would only make those assertions lie about what was written.
- */
-let mintedIds = 0;
-function mintId(table: string, payload: Row): Row {
-  return table === "projects" && payload.id === undefined
-    ? { id: `minted-project-${(mintedIds += 1)}`, ...payload }
-    : payload;
-}
-
-/** A statement reaches a row only when EVERY filter it carried matches — like PostgREST. */
-function matches(row: Row, filters: Filter[]): boolean {
-  return filters.every((f) => row[f.column] === f.value);
-}
-
-/** Return only the columns the statement asked for, as PostgREST does. */
-function project(row: Row, columns: string): Row {
-  const wanted = columns.split(",").map((column) => column.trim());
-  return Object.fromEntries(wanted.map((column) => [column, row[column]]));
-}
-
-/** Record the statement and hand back the failure injected for it, if any. */
-function record(table: string, op: string, filters: Filter[]): { message: string } | null {
-  statements.push({ table, op, filters });
-  gscOps.push(`${op}:${table}`);
-  dbHooks[`${op}:${table}`]?.();
-  return dbErrors[`${op}:${table}`] ?? null;
-}
-
-/** The filters carried by the one statement of this shape — fails loudly if there are several. */
-function filtersOf(table: string, op: string): Filter[] {
-  const hits = statements.filter((s) => s.table === table && s.op === op);
-  const [only, ...rest] = hits;
-  if (!only || rest.length > 0) {
-    throw new Error(`expected exactly one ${op} on ${table}, saw ${hits.length}`);
-  }
-  return only.filters;
-}
-
-/**
- * A PostgREST-ish builder over `dbRows`. `lib/gsc/accounts.ts` and the actions' own
- * gsc_connections statements (NOT mocked here) run for REAL against it, so a forgotten
- * tenant filter would be VISIBLE: an unfiltered delete would take another user's row out of
- * `dbRows` and fail the isolation specs below.
- *
- * The gsc_accounts DELETE also emulates migration 0021's `on delete set null` on
- * `gsc_connections.account_id`. That makes the "mappings survive" assertion meaningful about
- * THIS code — it proves the action nulls no `gsc_property` and deletes no connection row —
- * while the FK behaviour itself is pinned where it lives, in the migration's own db test.
- */
-function fakeTable(table: string) {
-  const rowsIn = (): Row[] => dbRows[table] ?? [];
-  return {
-    select: (columns: string, options: { count?: string; head?: boolean } = {}) => {
-      const filters: Filter[] = [];
-      const chain = {
-        eq(column: string, value: unknown) {
-          filters.push({ column, value });
-          return chain;
-        },
-        maybeSingle: async () => {
-          const error = record(table, "select", filters);
-          if (error) {
-            return { data: null, error };
-          }
-          const row = rowsIn().find((candidate) => matches(candidate, filters)) ?? null;
-          return { data: row ? project(row, columns) : null, error: null };
-        },
-        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          const error = record(table, "select", filters);
-          const found = error ? [] : rowsIn().filter((row) => matches(row, filters));
-          return Promise.resolve({
-            data: options.head || error ? null : found.map((row) => project(row, columns)),
-            // A failed count is NULL, not 0 — the distinction the caller must not collapse.
-            count: options.count && !error ? found.length : null,
-            error,
-          }).then(onFulfilled, onRejected);
-        },
-      };
-      return chain;
-    },
-    update: (patch: Row) => {
-      const filters: Filter[] = [];
-      /**
-       * Run the UPDATE and report the two things PostgREST reports SEPARATELY: whether the
-       * statement failed, and which rows it actually matched. A zero-row UPDATE is not an
-       * error there — `error === null` says nothing was WRONG, never that anything was
-       * WRITTEN — so this fake must be able to answer `data: null, error: null`. That state is
-       * the whole reason the archive/restore writes ask for the row back.
-       */
-      const run = (): { rows: Row[]; error: { message: string } | null } => {
-        const error = record(table, "update", filters);
-        if (error) {
-          return { rows: [], error };
-        }
-        const hit = rowsIn().filter((row) => matches(row, filters));
-        dbRows = {
-          ...dbRows,
-          [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
-        };
-        return { rows: hit.map((row) => ({ ...row, ...patch })), error: null };
-      };
-      const chain = {
-        eq(column: string, value: unknown) {
-          filters.push({ column, value });
-          return chain;
-        },
-        select(columns: string) {
-          return {
-            maybeSingle: async () => {
-              const { rows, error } = run();
-              const [first] = rows;
-              return { data: error || !first ? null : project(first, columns), error };
-            },
-          };
-        },
-        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          return Promise.resolve({ error: run().error }).then(onFulfilled, onRejected);
-        },
-      };
-      return chain;
-    },
-    /**
-     * PostgREST `upsert(row, { onConflict })`. There is no `.eq()` to inspect here, so the
-     * CONFLICT TARGET is recorded as this statement's filters — which is exactly what it is:
-     * the columns that decide WHICH row a write lands on. Dropping `user_id` from either the
-     * target or the payload therefore shows up as a missing/undefined filter (constitution
-     * NEVER #4), and the merge below lands on a different row, so both halves are observable.
-     */
-    upsert: (payload: Row, options: { onConflict?: string; ignoreDuplicates?: boolean } = {}) => {
-      const target = (options.onConflict ?? "")
-        .split(",")
-        .map((column) => column.trim())
-        .filter((column) => column.length > 0);
-      /**
-       * `ignoreDuplicates` is ON CONFLICT DO NOTHING: the conflicting row is left EXACTLY as
-       * it is and NO row comes back. That empty answer is a signal, not an absence — it is how
-       * `openProjectForDomain` learns a concurrent first call won the (user_id, domain) slot
-       * between its read and its write, and must read the winner back instead of claiming it
-       * inserted anything.
-       */
-      const run = (): { rows: Row[]; error: { message: string } | null } => {
-        const error = record(
-          table,
-          "upsert",
-          target.map((column) => ({ column, value: payload[column] })),
-        );
-        if (error) {
-          return { rows: [], error };
-        }
-        const rows = rowsIn();
-        const conflicting =
-          target.length > 0
-            ? rows.find((row) => target.every((column) => row[column] === payload[column]))
-            : undefined;
-        if (conflicting && options.ignoreDuplicates) {
-          return { rows: [], error: null };
-        }
-        const stored = conflicting ? { ...conflicting, ...payload } : mintId(table, payload);
-        dbRows = {
-          ...dbRows,
-          [table]: conflicting
-            ? rows.map((row) => (row === conflicting ? stored : row))
-            : [...rows, stored],
-        };
-        return { rows: [stored], error: null };
-      };
-      const chain = {
-        select(columns: string) {
-          return {
-            then(
-              onFulfilled?: (value: unknown) => unknown,
-              onRejected?: (reason: unknown) => unknown,
-            ) {
-              const { rows, error } = run();
-              return Promise.resolve({
-                data: error ? null : rows.map((row) => project(row, columns)),
-                error,
-              }).then(onFulfilled, onRejected);
-            },
-          };
-        },
-        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          return Promise.resolve({ error: run().error }).then(onFulfilled, onRejected);
-        },
-      };
-      return chain;
-    },
-    delete: () => {
-      const filters: Filter[] = [];
-      const chain = {
-        eq(column: string, value: unknown) {
-          filters.push({ column, value });
-          return chain;
-        },
-        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          const error = record(table, "delete", filters);
-          if (error) {
-            return Promise.resolve({ error }).then(onFulfilled, onRejected);
-          }
-          const doomed = rowsIn().filter((row) => matches(row, filters));
-          const survivors = rowsIn().filter((row) => !matches(row, filters));
-          const orphaned = new Set(doomed.map((row) => row.id));
-          const next = { ...dbRows, [table]: survivors };
-          // Migration 0021: `on delete set null`, never cascade.
-          dbRows =
-            table === "gsc_accounts"
-              ? {
-                  ...next,
-                  gsc_connections: (next.gsc_connections ?? []).map((row) =>
-                    orphaned.has(row.account_id) ? { ...row, account_id: null } : row,
-                  ),
-                }
-              : next;
-          return Promise.resolve({ error: null }).then(onFulfilled, onRejected);
-        },
-      };
-      return chain;
-    },
-  };
-}
-
-vi.mock("@pseo/db/server", () => ({
-  createServiceClient: vi.fn(() => ({
-    from: (table: string) => {
-      gscTables.push(table);
-      return fakeTable(table);
-    },
-  })),
-}));
+vi.mock("@pseo/db/server", async () => {
+  const { fakeDbServerModule } = await import("./fixtures/fake-db");
+  return fakeDbServerModule();
+});
 
 const getUser = vi.fn();
 vi.mock("../../../lib/supabase/server", () => ({
@@ -312,6 +53,7 @@ vi.mock("../../../lib/gsc/revoke", () => ({
 import { revalidatePath } from "next/cache";
 import { encryptToken, generateApiKey, refreshAccessToken, toByteaHex } from "@pseo/core";
 import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
+import { db, filtersOf, type Row } from "./fixtures/fake-db";
 import {
   createKeyAction,
   describeDisconnect,
@@ -321,9 +63,6 @@ import {
   saveProjectProperty,
   unmapProject,
 } from "./actions";
-// The track / untrack / restore family moved to its own `"use server"` module when actions.ts
-// went past the 800-line house maximum. The specs below are unchanged and still drive it.
-import { restoreProject, trackProperty, untrackProject } from "./tracking-actions";
 
 const generateApiKeyMock = vi.mocked(generateApiKey);
 const countActiveKeysMock = vi.mocked(countActiveKeys);
@@ -663,7 +402,7 @@ describe("two-level disconnect", () => {
       tokenType: "Bearer",
     });
     revokeGoogleToken.mockImplementation(async () => {
-      gscOps.push("revoke");
+      db.ops.push("revoke");
       return true;
     });
   });
@@ -685,11 +424,11 @@ describe("two-level disconnect", () => {
     vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    dbRows = { gsc_accounts: [], gsc_connections: [] };
-    dbErrors = {};
-    gscTables = [];
-    statements = [];
-    gscOps = [];
+    db.rows = { gsc_accounts: [], gsc_connections: [] };
+    db.errors = {};
+    db.tables = [];
+    db.statements = [];
+    db.ops = [];
   });
 
   describe("unmapProject", () => {
@@ -702,28 +441,28 @@ describe("two-level disconnect", () => {
       signedIn("user-1");
       // Held by reference: each seal uses a fresh random IV, so the row is compared as-is.
       const account = accountRow("user-1");
-      dbRows = { gsc_accounts: [account], gsc_connections: [connectionRow(PROJECT, "user-1")] };
+      db.rows = { gsc_accounts: [account], gsc_connections: [connectionRow(PROJECT, "user-1")] };
 
       await unmapProject(PROJECT);
 
       expect(revokeGoogleToken).not.toHaveBeenCalled();
       // Nor is the credential even READ: no statement touches gsc_accounts, so the account
       // row (and every other project hanging off it) is untouched by a per-project unmap.
-      expect(gscTables).toEqual(["gsc_connections"]);
-      expect(dbRows.gsc_accounts).toEqual([account]);
+      expect(db.tables).toEqual(["gsc_connections"]);
+      expect(db.rows.gsc_accounts).toEqual([account]);
     });
 
     it("clears account_id and gsc_property but KEEPS the connection row", async () => {
       signedIn("user-1");
-      dbRows = {
+      db.rows = {
         gsc_accounts: [accountRow("user-1")],
         gsc_connections: [connectionRow(PROJECT, "user-1")],
       };
 
       await unmapProject(PROJECT);
 
-      expect(gscOps).toEqual(["update:gsc_connections"]);
-      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1", null, null)]);
+      expect(db.ops).toEqual(["update:gsc_connections"]);
+      expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1", null, null)]);
       expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
     });
 
@@ -733,7 +472,7 @@ describe("two-level disconnect", () => {
     it("cannot reach ANOTHER user's project: both tenant filters ride on the UPDATE", async () => {
       signedIn("user-1");
       const otherTenantRow = connectionRow(PROJECT, "user-2");
-      dbRows = { gsc_accounts: [], gsc_connections: [otherTenantRow] };
+      db.rows = { gsc_accounts: [], gsc_connections: [otherTenantRow] };
 
       await unmapProject(PROJECT);
 
@@ -741,17 +480,17 @@ describe("two-level disconnect", () => {
         { column: "user_id", value: "user-1" },
         { column: "project_id", value: PROJECT },
       ]);
-      expect(dbRows.gsc_connections).toEqual([otherTenantRow]);
+      expect(db.rows.gsc_connections).toEqual([otherTenantRow]);
     });
 
     it("rejects with no session and never touches the connection", async () => {
       signedOut();
-      dbRows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
+      db.rows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
 
       await expect(unmapProject(PROJECT)).rejects.toThrow(/not authenticated/i);
 
-      expect(gscTables).toEqual([]);
-      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
+      expect(db.tables).toEqual([]);
+      expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
     });
 
     it("rejects a malformed project id without querying the DB", async () => {
@@ -759,7 +498,7 @@ describe("two-level disconnect", () => {
 
       await expect(unmapProject("not-a-uuid")).rejects.toThrow(/not found/i);
 
-      expect(gscTables).toEqual([]);
+      expect(db.tables).toEqual([]);
     });
 
     // MOVED from lib/gsc/store.test.ts ("throws when the update fails"), re-aimed at the
@@ -769,13 +508,13 @@ describe("two-level disconnect", () => {
     // gone. The error message stays server-side; only the throw reaches the UI.
     it("a failed UPDATE throws instead of reporting a silent unmap", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
-      dbErrors = { "update:gsc_connections": { message: "no upd" } };
+      db.rows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
+      db.errors = { "update:gsc_connections": { message: "no upd" } };
 
       await expect(unmapProject(PROJECT)).rejects.toThrow(/unmap failed: no upd/);
 
       // The mapping is untouched — the state the throw is telling the truth about.
-      expect(dbRows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
+      expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
       expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
     });
   });
@@ -783,7 +522,7 @@ describe("two-level disconnect", () => {
   describe("disconnectAccount", () => {
     it("disconnecting an account revokes at Google and keeps every gsc_property", async () => {
       signedIn("user-1");
-      dbRows = {
+      db.rows = {
         gsc_accounts: [accountRow("user-1")],
         gsc_connections: connectionsFor("user-1", 3),
       };
@@ -791,13 +530,13 @@ describe("two-level disconnect", () => {
       await disconnectAccount(ACCOUNT);
 
       expect(revokeGoogleToken).toHaveBeenCalledOnce();
-      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(db.rows.gsc_accounts).toEqual([]);
       // Migration 0021's whole point: the credential goes, the MAPPING stays. Every row keeps
       // its gsc_property and merely loses its account_id (`on delete set null`), which is the
       // exact state the migration itself produced — one reconnect, no re-picking properties.
-      const connections = dbRows.gsc_connections;
+      const connections = db.rows.gsc_connections;
       if (!connections) {
-        throw new Error("expected dbRows.gsc_connections to be populated by the fake DB seed");
+        throw new Error("expected db.rows.gsc_connections to be populated by the fake DB seed");
       }
       expect(connections).toHaveLength(3);
       expect(connections.every((row) => row.account_id === null)).toBe(true);
@@ -811,7 +550,7 @@ describe("two-level disconnect", () => {
     it("revokes the token opened from gsc_accounts, THEN deletes the account row", async () => {
       signedIn("user-1");
       const row = accountRow("user-1");
-      dbRows = { gsc_accounts: [row], gsc_connections: [] };
+      db.rows = { gsc_accounts: [row], gsc_connections: [] };
 
       const outcome = await disconnectAccount(ACCOUNT);
 
@@ -822,7 +561,7 @@ describe("two-level disconnect", () => {
       expect(revokeGoogleToken).not.toHaveBeenCalledWith(row.encrypted_refresh_token);
       // Ownership read, then the credential read + status stamp inside accessTokenFor, then
       // the revoke, and only then the delete.
-      expect(gscOps).toEqual([
+      expect(db.ops).toEqual([
         "select:gsc_accounts",
         "select:gsc_accounts",
         "update:gsc_accounts",
@@ -833,7 +572,7 @@ describe("two-level disconnect", () => {
         { column: "id", value: ACCOUNT },
         { column: "user_id", value: "user-1" },
       ]);
-      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(db.rows.gsc_accounts).toEqual([]);
       expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
     });
 
@@ -843,17 +582,17 @@ describe("two-level disconnect", () => {
     // of a call that failed.
     it("reports `unconfirmed` when Google does not acknowledge, and still deletes locally", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
       const warn = captureConsole("warn");
       revokeGoogleToken.mockImplementation(async () => {
-        gscOps.push("revoke");
+        db.ops.push("revoke");
         return false; // e.g. Google answered 400 invalid_token, or the request failed
       });
 
       await expect(disconnectAccount(ACCOUNT)).resolves.toBe("unconfirmed");
 
-      expect(gscOps.at(-1)).toBe("delete:gsc_accounts");
-      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(db.ops.at(-1)).toBe("delete:gsc_accounts");
+      expect(db.rows.gsc_accounts).toEqual([]);
       // The operator gets the diagnosis, keyed to the row, and never the secret itself.
       expect(logged(warn)).toMatch(ACCOUNT);
       expect(logged(warn)).toMatch(/not acknowledge/i);
@@ -867,7 +606,7 @@ describe("two-level disconnect", () => {
     it("an unopenable seal (rotated key) reports `not_attempted` and LOGS the skipped revoke", async () => {
       signedIn("user-1");
       const sealedWithRetiredKey = sealed(REFRESH_TOKEN, "user-1", OTHER_KEY);
-      dbRows = {
+      db.rows = {
         gsc_accounts: [accountRow("user-1", sealedWithRetiredKey)],
         gsc_connections: [],
       };
@@ -876,7 +615,7 @@ describe("two-level disconnect", () => {
       await expect(disconnectAccount(ACCOUNT)).resolves.toBe("not_attempted");
 
       expect(revokeGoogleToken).not.toHaveBeenCalled();
-      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(db.rows.gsc_accounts).toEqual([]);
       expect(logged(error)).toMatch(ACCOUNT);
       expect(logged(error)).toMatch(/skipped/i);
       // Neither the sealed bytes nor the key may reach the log.
@@ -891,7 +630,7 @@ describe("two-level disconnect", () => {
     // be trapped) survives as this: the refresh Google refuses.
     it("a credential Google has killed reports `not_attempted` and still deletes locally", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
       const error = captureConsole("error");
       vi.mocked(refreshAccessToken).mockRejectedValue(
         new Error("Google token endpoint failed (400): invalid_grant"),
@@ -900,7 +639,7 @@ describe("two-level disconnect", () => {
       await expect(disconnectAccount(ACCOUNT)).resolves.toBe("not_attempted");
 
       expect(revokeGoogleToken).not.toHaveBeenCalled();
-      expect(dbRows.gsc_accounts).toEqual([]);
+      expect(db.rows.gsc_accounts).toEqual([]);
       expect(logged(error)).toMatch(ACCOUNT);
       expect(logged(error)).toMatch(/skipped/i);
       expect(logged(error)).not.toMatch(REFRESH_TOKEN);
@@ -912,25 +651,25 @@ describe("two-level disconnect", () => {
     it("fails CLOSED when TOKEN_ENCRYPTION_KEY is MALFORMED: nothing revoked, nothing deleted", async () => {
       signedIn("user-1");
       vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY.slice(0, 63)); // present but 63 hex chars
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
 
       await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/64 hex characters/i);
 
       expect(revokeGoogleToken).not.toHaveBeenCalled();
-      expect(gscOps).toEqual(["select:gsc_accounts"]);
-      expect(dbRows.gsc_accounts).toHaveLength(1);
+      expect(db.ops).toEqual(["select:gsc_accounts"]);
+      expect(db.rows.gsc_accounts).toHaveLength(1);
     });
 
     it("fails CLOSED when TOKEN_ENCRYPTION_KEY is missing: nothing revoked, nothing deleted", async () => {
       signedIn("user-1");
       vi.stubEnv("TOKEN_ENCRYPTION_KEY", "");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
 
       await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not configured/i);
 
       expect(revokeGoogleToken).not.toHaveBeenCalled();
-      expect(gscOps).toEqual(["select:gsc_accounts"]);
-      expect(dbRows.gsc_accounts).toHaveLength(1);
+      expect(db.ops).toEqual(["select:gsc_accounts"]);
+      expect(db.rows.gsc_accounts).toHaveLength(1);
     });
 
     // Moved from the project-level action and re-aimed at the account. Same opaque message for
@@ -940,7 +679,7 @@ describe("two-level disconnect", () => {
       signedIn("user-1");
       // Held by reference: each seal uses a fresh random IV, so the row is compared as-is.
       const otherTenantRow = accountRow("user-2");
-      dbRows = { gsc_accounts: [otherTenantRow], gsc_connections: [] };
+      db.rows = { gsc_accounts: [otherTenantRow], gsc_connections: [] };
 
       await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not found/i);
 
@@ -949,19 +688,19 @@ describe("two-level disconnect", () => {
         { column: "id", value: ACCOUNT },
         { column: "user_id", value: "user-1" },
       ]);
-      expect(gscOps).toEqual(["select:gsc_accounts"]); // no delete statement was ever issued
-      expect(dbRows.gsc_accounts).toEqual([otherTenantRow]);
+      expect(db.ops).toEqual(["select:gsc_accounts"]); // no delete statement was ever issued
+      expect(db.rows.gsc_accounts).toEqual([otherTenantRow]);
       expect(revokeGoogleToken).not.toHaveBeenCalled();
     });
 
     it("rejects with no session and never touches the account", async () => {
       signedOut();
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
 
       await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/not authenticated/i);
 
-      expect(gscTables).toEqual([]);
-      expect(dbRows.gsc_accounts).toHaveLength(1);
+      expect(db.tables).toEqual([]);
+      expect(db.rows.gsc_accounts).toHaveLength(1);
       expect(revokeGoogleToken).not.toHaveBeenCalled();
     });
 
@@ -970,7 +709,7 @@ describe("two-level disconnect", () => {
 
       await expect(disconnectAccount("not-a-uuid")).rejects.toThrow(/not found/i);
 
-      expect(gscTables).toEqual([]);
+      expect(db.tables).toEqual([]);
       expect(revokeGoogleToken).not.toHaveBeenCalled();
     });
 
@@ -981,16 +720,16 @@ describe("two-level disconnect", () => {
     it("a failed DELETE throws rather than reporting the disconnect as complete", async () => {
       signedIn("user-1");
       const row = accountRow("user-1");
-      dbRows = { gsc_accounts: [row], gsc_connections: [] };
-      dbErrors = { "delete:gsc_accounts": { message: "no del" } };
+      db.rows = { gsc_accounts: [row], gsc_connections: [] };
+      db.errors = { "delete:gsc_accounts": { message: "no del" } };
 
       await expect(disconnectAccount(ACCOUNT)).rejects.toThrow(/delete failed: no del/);
 
       // The credential is still here — which is exactly what the throw is reporting. (The row
       // carries the fresh `token_checked_at` the successful refresh stamped on its way past.)
-      const accounts = dbRows.gsc_accounts;
+      const accounts = db.rows.gsc_accounts;
       if (!accounts) {
-        throw new Error("expected dbRows.gsc_accounts to be populated by the fake DB seed");
+        throw new Error("expected db.rows.gsc_accounts to be populated by the fake DB seed");
       }
       expect(accounts).toHaveLength(1);
       expect(accounts[0]).toMatchObject({
@@ -1006,14 +745,14 @@ describe("two-level disconnect", () => {
     // project in front of you. The number is the whole point of the sentence.
     it("the confirmation names how many projects it will affect", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
 
       expect(await describeDisconnect(ACCOUNT)).toContain("5 project");
     });
 
     it("counts ONLY the caller's projects on THIS account (constitution NEVER #4)", async () => {
       signedIn("user-1");
-      dbRows = {
+      db.rows = {
         gsc_accounts: [accountRow("user-1")],
         gsc_connections: [
           connectionRow("mine", "user-1", ACCOUNT),
@@ -1047,7 +786,7 @@ describe("two-level disconnect", () => {
      */
     it("promises no free revival: kept, yes — but saved once per project", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 3) };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 3) };
 
       const text = await describeDisconnect(ACCOUNT);
 
@@ -1059,7 +798,7 @@ describe("two-level disconnect", () => {
 
     it("says nothing about revocation being confirmed — it has not happened yet", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 2) };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 2) };
 
       const text = await describeDisconnect(ACCOUNT);
 
@@ -1071,7 +810,7 @@ describe("two-level disconnect", () => {
     it("rejects with no session and never queries", async () => {
       signedOut();
       await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/not authenticated/i);
-      expect(gscTables).toEqual([]);
+      expect(db.tables).toEqual([]);
     });
 
     /**
@@ -1082,12 +821,12 @@ describe("two-level disconnect", () => {
      */
     it("refuses a malformed account id opaquely, before any query", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 5) };
 
       await expect(describeDisconnect("not-a-uuid")).rejects.toThrow(/account not found/i);
       // Same sentence a real-but-missing account gets from disconnectAccount — nothing about
       // the id's fate leaks, and the count that would have been shown is never computed.
-      expect(gscTables).toEqual([]);
+      expect(db.tables).toEqual([]);
     });
 
     /**
@@ -1102,7 +841,7 @@ describe("two-level disconnect", () => {
      */
     it("a foreign account counts ZERO, never the other tenant's real number", async () => {
       signedIn("user-1");
-      dbRows = {
+      db.rows = {
         gsc_accounts: [accountRow("user-2", sealed(REFRESH_TOKEN, "user-2"), OTHER_ACCOUNT)],
         gsc_connections: connectionsFor("user-2", 5, OTHER_ACCOUNT),
       };
@@ -1120,8 +859,8 @@ describe("two-level disconnect", () => {
     // affected right before the click that breaks all of them (finding #63's whole lesson).
     it("a failed count throws — it never becomes a promise that 0 projects are affected", async () => {
       signedIn("user-1");
-      dbRows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 4) };
-      dbErrors = { "select:gsc_connections": { message: "boom" } };
+      db.rows = { gsc_accounts: [accountRow("user-1")], gsc_connections: connectionsFor("user-1", 4) };
+      db.errors = { "select:gsc_connections": { message: "boom" } };
 
       await expect(describeDisconnect(ACCOUNT)).rejects.toThrow(/count failed: boom/);
     });
@@ -1182,7 +921,7 @@ describe("saveProjectProperty", () => {
       scope: "https://www.googleapis.com/auth/webmasters.readonly",
       tokenType: "Bearer",
     });
-    dbRows = {
+    db.rows = {
       projects: [projectRow("user-1")],
       gsc_accounts: [accountRow("user-1")],
       gsc_connections: [],
@@ -1193,11 +932,11 @@ describe("saveProjectProperty", () => {
     vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    dbRows = { gsc_accounts: [], gsc_connections: [], projects: [] };
-    dbErrors = {};
-    gscTables = [];
-    statements = [];
-    gscOps = [];
+    db.rows = { gsc_accounts: [], gsc_connections: [], projects: [] };
+    db.errors = {};
+    db.tables = [];
+    db.statements = [];
+    db.ops = [];
   });
 
   /** Capture a server-side diagnostic instead of printing it into the test output. */
@@ -1209,14 +948,14 @@ describe("saveProjectProperty", () => {
   it("refuses a property the live account does not list", async () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://not-mine.com/", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
   });
 
   it("refuses a property the account cannot QUERY", async () => {
     const sites = [{ siteUrl: "https://a.com/", permissionLevel: "siteUnverifiedUser" }];
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing(...sites));
     expect(out).toEqual({ ok: false, error: expect.stringContaining("cannot query") });
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
   });
 
   it("writes the mapping when the property is listed AND queryable", async () => {
@@ -1224,7 +963,7 @@ describe("saveProjectProperty", () => {
     expect(
       await saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing(...sites)),
     ).toEqual({ ok: true });
-    expect(dbRows.gsc_connections).toEqual([
+    expect(db.rows.gsc_connections).toEqual([
       {
         user_id: "user-1",
         project_id: PROJECT,
@@ -1250,7 +989,7 @@ describe("saveProjectProperty", () => {
       listing({ siteUrl: "https://beta.example/", permissionLevel: "siteOwner" }),
     );
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
   });
 
   // Constitution NEVER #4. The service-role client bypasses RLS, so the tenant boundary is
@@ -1285,7 +1024,7 @@ describe("saveProjectProperty", () => {
       account_id: "99999999-9999-4999-8999-999999999999",
       gsc_property: "sc-domain:not-yours.example",
     };
-    dbRows = { ...dbRows, gsc_connections: [otherTenantRow] };
+    db.rows = { ...db.rows, gsc_connections: [otherTenantRow] };
 
     await saveProjectProperty(
       PROJECT,
@@ -1294,8 +1033,8 @@ describe("saveProjectProperty", () => {
       listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
     );
 
-    expect(dbRows.gsc_connections).toContainEqual(otherTenantRow);
-    expect(dbRows.gsc_connections).toHaveLength(2);
+    expect(db.rows.gsc_connections).toContainEqual(otherTenantRow);
+    expect(db.rows.gsc_connections).toHaveLength(2);
   });
 
   /**
@@ -1305,7 +1044,7 @@ describe("saveProjectProperty", () => {
    * blast-radius count `describeDisconnect` shows the user before they disconnect.
    */
   it("refuses a project the caller does not own — before it ever contacts Google", async () => {
-    dbRows = { ...dbRows, projects: [projectRow("user-2")] };
+    db.rows = { ...db.rows, projects: [projectRow("user-2")] };
 
     const out = await saveProjectProperty(
       PROJECT,
@@ -1315,15 +1054,15 @@ describe("saveProjectProperty", () => {
     );
 
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not found") });
-    expect(gscTables).toEqual(["projects"]); // the account was never even read
+    expect(db.tables).toEqual(["projects"]); // the account was never even read
     expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
   });
 
   // The same opaque refusal for another user's ACCOUNT: `accessTokenFor` filters on user_id,
   // so a foreign account id finds nothing to unseal.
   it("refuses another user's Google account and writes nothing", async () => {
-    dbRows = { ...dbRows, gsc_accounts: [accountRow("user-2")] };
+    db.rows = { ...db.rows, gsc_accounts: [accountRow("user-2")] };
     const error = captureConsole("error");
 
     const out = await saveProjectProperty(
@@ -1334,7 +1073,7 @@ describe("saveProjectProperty", () => {
     );
 
     expect(out).toEqual({ ok: false, error: expect.any(String) });
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
     expect(error).toHaveBeenCalled();
   });
 
@@ -1358,7 +1097,7 @@ describe("saveProjectProperty", () => {
     );
 
     expect(out).toEqual({ ok: false, error: expect.stringContaining("Reconnect") });
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
     expect(error).toHaveBeenCalled();
     // The refusal never carries the credential into the user's browser.
     expect(JSON.stringify(out)).not.toContain(REFRESH_TOKEN);
@@ -1369,7 +1108,7 @@ describe("saveProjectProperty", () => {
     await expect(
       saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing()),
     ).rejects.toThrow(/not authenticated/i);
-    expect(gscTables).toEqual([]);
+    expect(db.tables).toEqual([]);
   });
 
   it("refuses malformed ids without querying the DB", async () => {
@@ -1381,13 +1120,13 @@ describe("saveProjectProperty", () => {
       ok: false,
       error: expect.stringContaining("not found"),
     });
-    expect(gscTables).toEqual([]);
+    expect(db.tables).toEqual([]);
   });
 
   it("refuses an empty property without contacting Google", async () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
-    expect(gscTables).toEqual([]);
+    expect(db.tables).toEqual([]);
   });
 
   /**
@@ -1406,7 +1145,7 @@ describe("saveProjectProperty", () => {
       account_id: ACCOUNT,
       gsc_property: "sc-domain:old.example",
     };
-    dbRows = { ...dbRows, gsc_connections: [existing] };
+    db.rows = { ...db.rows, gsc_connections: [existing] };
 
     expect(
       await saveProjectProperty(
@@ -1417,7 +1156,7 @@ describe("saveProjectProperty", () => {
       ),
     ).toEqual({ ok: true });
 
-    expect(dbRows.gsc_connections).toEqual([{ ...existing, gsc_property: "https://a.com/" }]);
+    expect(db.rows.gsc_connections).toEqual([{ ...existing, gsc_property: "https://a.com/" }]);
   });
 
   /**
@@ -1429,7 +1168,7 @@ describe("saveProjectProperty", () => {
    */
   it("a failed write answers ok:false — never a saved mapping — and keeps the message server-side", async () => {
     const error = captureConsole("error");
-    dbErrors = { "upsert:gsc_connections": { message: "deadlock detected" } };
+    db.errors = { "upsert:gsc_connections": { message: "deadlock detected" } };
 
     const out = await saveProjectProperty(
       PROJECT,
@@ -1440,620 +1179,8 @@ describe("saveProjectProperty", () => {
 
     expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not save") });
     expect(JSON.stringify(out)).not.toContain("deadlock detected");
-    expect(dbRows.gsc_connections).toEqual([]);
+    expect(db.rows.gsc_connections).toEqual([]);
     expect(error).toHaveBeenCalled();
     expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
-  });
-});
-
-/**
- * TRACK / UNTRACK / RESTORE — the web half of `track_gsc_property` and `untrack_project`.
- *
- * THE TWO SURFACES MUST NOT DISAGREE ABOUT THE SAME ACTION, so every case below is one the
- * MCP tools already answered, re-asked here: the validation ORDER (listed → queryable →
- * recognisable domain → project → mapping), the refusal that happens BEFORE any project row
- * exists, archive-never-delete, the zero-row proof on each UPDATE, and idempotency in both
- * directions.
- *
- * `lib/gsc/accounts.ts` runs for REAL against the fake tables (only `refreshAccessToken` is
- * mocked) and `sites.list` is injected, so these specs make zero live requests — constitution
- * NEVER #5 — while still exercising the real unseal and its tenant filter.
- */
-describe("track / untrack / restore", () => {
-  const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
-  const ACCOUNT = "44444444-4444-4444-8444-444444444444";
-  const PROJECT = "33333333-3333-4333-8333-333333333333";
-  const REFRESH_TOKEN = "1//the-refresh-token";
-  const ACCESS_TOKEN = "ya29.the-access-token";
-  /**
-   * A domain with NO reserved suffix and no word any assertion below looks for. The two
-   * fixtures this branch already burned on — `archived.example` (Task 3) and `not-yours.test`
-   * (Task 6) — were both refused by a normalizer for their TLD alone, so the refusal echoed
-   * the fixture's own name and the spec passed against unmodified source. `.com` is refused by
-   * nothing, so every refusal here has to come from the code under test.
-   */
-  const DOMAIN = "zephyrbrook.com";
-  const PROPERTY = `sc-domain:${DOMAIN}`;
-  /** Listed by Google, queryable, and NOT a website — `propertyToDomain` answers null. */
-  const APP_PROPERTY = "android-app://com.zephyrbrook.reader";
-  const ARCHIVED_AT = "2026-08-01T00:00:00.000Z";
-
-  function accountRow(userId: string): Row {
-    return {
-      id: ACCOUNT,
-      user_id: userId,
-      google_account_sub: "google-sub-1",
-      google_account_email: "owner@example.com",
-      encrypted_refresh_token: toByteaHex(
-        encryptToken(REFRESH_TOKEN, ENC_KEY, { userId, accountId: ACCOUNT }),
-      ),
-      token_status: "active",
-      token_checked_at: null,
-    };
-  }
-
-  function projectRow(userId: string, over: Row = {}): Row {
-    return { id: PROJECT, user_id: userId, domain: DOMAIN, archived_at: null, ...over };
-  }
-
-  /** `sites.list` as Google answers it, injected so no request is ever made. */
-  function listing(...sites: { siteUrl: string; permissionLevel: string }[]) {
-    return { listSites: async () => sites };
-  }
-
-  /** The default: this account owns the property and Google will answer queries for it. */
-  const OWNED = listing({ siteUrl: PROPERTY, permissionLevel: "siteOwner" });
-
-  /** The project row the action created or reused — read back, never assumed. */
-  function onlyProject(): Row {
-    const rows = dbRows.projects ?? [];
-    const [only, ...rest] = rows;
-    if (!only || rest.length > 0) {
-      throw new Error(`expected exactly one project row, saw ${rows.length}`);
-    }
-    return only;
-  }
-
-  beforeEach(() => {
-    vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY);
-    signedIn("user-1");
-    vi.mocked(refreshAccessToken).mockResolvedValue({
-      accessToken: ACCESS_TOKEN,
-      refreshToken: null,
-      idToken: null,
-      expiresIn: 3599,
-      scope: "https://www.googleapis.com/auth/webmasters.readonly",
-      tokenType: "Bearer",
-    });
-    dbRows = { projects: [], gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
-  });
-
-  afterEach(() => {
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-    dbRows = { gsc_accounts: [], gsc_connections: [], projects: [] };
-    dbErrors = {};
-    dbHooks = {};
-    gscTables = [];
-    statements = [];
-    gscOps = [];
-  });
-
-  /** Capture a server-side diagnostic instead of printing it into the test output. */
-  function captureConsole(level: "warn" | "error") {
-    return vi.spyOn(console, level).mockImplementation(() => {});
-  }
-
-  describe("trackProperty", () => {
-    it("opens the project for the property's domain and maps it", async () => {
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      const project = onlyProject();
-      expect(project).toMatchObject({ user_id: "user-1", domain: DOMAIN });
-      expect(dbRows.gsc_connections).toEqual([
-        {
-          user_id: "user-1",
-          project_id: project.id,
-          account_id: ACCOUNT,
-          gsc_property: PROPERTY,
-        },
-      ]);
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-    });
-
-    // Nothing arriving from the client is evidence — the same rule saveProjectProperty and
-    // track_gsc_property both state. The picker's own list is minutes old at best.
-    it("refuses a property the LIVE listing does not carry, and opens no project", async () => {
-      const out = await trackProperty(
-        ACCOUNT,
-        PROPERTY,
-        listing({ siteUrl: "https://elsewhere.org/", permissionLevel: "siteOwner" }),
-      );
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
-      expect(dbRows.projects).toEqual([]);
-      expect(dbRows.gsc_connections).toEqual([]);
-    });
-
-    /**
-     * VALIDATION ORDER, step 2. A project SeoGrep cannot answer for is worse than no project:
-     * it reads as tracked and returns nothing (measured live 2026-08-09). So the refusal has to
-     * land BEFORE the row exists, which is why this spec asserts the `projects` table was never
-     * even reached rather than merely that it ended up empty.
-     */
-    it("refuses an unqueryable property BEFORE any project row exists", async () => {
-      const out = await trackProperty(
-        ACCOUNT,
-        PROPERTY,
-        listing({ siteUrl: PROPERTY, permissionLevel: "siteUnverifiedUser" }),
-      );
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("cannot query") });
-      expect(gscTables).not.toContain("projects");
-      expect(dbRows.projects).toEqual([]);
-      expect(dbRows.gsc_connections).toEqual([]);
-    });
-
-    /**
-     * VALIDATION ORDER, step 3. `android-app://` properties are listed by `sites.list` and can
-     * be owned outright, so this arrives past both earlier gates — and names no website, so
-     * there is nothing to track. Same rule as `unrecognisedMessage` in track_gsc_property.
-     */
-    it("refuses a property that names no website BEFORE any project row exists", async () => {
-      const out = await trackProperty(
-        ACCOUNT,
-        APP_PROPERTY,
-        listing({ siteUrl: APP_PROPERTY, permissionLevel: "siteOwner" }),
-      );
-
-      expect(out).toEqual({ ok: false, error: expect.stringMatching(/does not recognise/i) });
-      expect(gscTables).not.toContain("projects");
-      expect(dbRows.projects).toEqual([]);
-    });
-
-    /**
-     * VALIDATION ORDER, step 4 — the SHARED HOST GATE, and the divergence it closes.
-     *
-     * Until Task 8.5 this action opened a project for ANY property whose domain merely had the
-     * right SHAPE, while `track_gsc_property` and `setup_project` refused internal / reserved
-     * names outright (`normalizeDomain`). Two surfaces, same verb, opposite answers. The gate
-     * now lives in @pseo/core and both call it.
-     *
-     * THE FIXTURE CANNOT ANSWER FOR THE CODE. This branch has twice shipped a spec that passed
-     * against unmodified source because a refusal echoed the fixture's own name back
-     * (`archived.example`, Task 3; `not-yours.test`, Task 6) — and reserved TLDs are this
-     * spec's whole subject, so the trap is live here. `silverpine.corp` shares no substring
-     * with the sentence asserted below, and the strongest claim made here is not about wording
-     * at all: the `projects` table is never REACHED. A refusal that arrived after a row existed
-     * would still carry the right sentence and still fail this spec.
-     */
-    it("refuses a reserved / internal host BEFORE any project row exists", async () => {
-      const reserved = "sc-domain:silverpine.corp";
-
-      const out = await trackProperty(
-        ACCOUNT,
-        reserved,
-        listing({ siteUrl: reserved, permissionLevel: "siteOwner" }),
-      );
-
-      expect(out).toEqual({
-        ok: false,
-        error: expect.stringMatching(/internal or reserved names cannot be tracked/i),
-      });
-      expect(gscTables).not.toContain("projects");
-      expect(dbRows.projects).toEqual([]);
-      expect(dbRows.gsc_connections).toEqual([]);
-    });
-
-    /**
-     * ARCHIVE, NEVER DELETE — this is what makes coming back free. The archived row keeps its
-     * id, and so its crawls, reports and mapping; a second row for the same domain is both
-     * impossible (unique (user_id, domain), migration 0010) and would orphan all of it.
-     */
-    it("brings an ARCHIVED project back on its own id instead of opening a second one", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
-      expect(dbRows.gsc_connections).toEqual([
-        { user_id: "user-1", project_id: PROJECT, account_id: ACCOUNT, gsc_property: PROPERTY },
-      ]);
-    });
-
-    /**
-     * THE RACE, and the ONLY thing that separates ON CONFLICT DO NOTHING from a plain upsert on
-     * this path. Added because dropping `ignoreDuplicates` reddened nothing at first: the action
-     * READS before it writes, so in every single-threaded spec the insert either finds the row
-     * already (and never runs) or conflicts with nothing. The branch is reachable only when a
-     * concurrent first call takes the (user_id, domain) slot BETWEEN this action's read and its
-     * write — which is what the hook does.
-     *
-     * The winner is ARCHIVED on purpose. DO NOTHING declines to touch it and returns no row, so
-     * the action must read the winner back — and reading it back is what runs the archive check
-     * on it. A plain upsert returns the winner's id straight out of the write, skips that check,
-     * and maps a property onto a project still sitting in the archive.
-     */
-    it("a concurrent first call wins the slot: the winner is read back, archive check included", async () => {
-      dbHooks = {
-        "upsert:projects": () => {
-          dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-        },
-      };
-
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
-      expect(dbRows.gsc_connections).toEqual([
-        { user_id: "user-1", project_id: PROJECT, account_id: ACCOUNT, gsc_property: PROPERTY },
-      ]);
-    });
-
-    it("tracking an ALREADY-tracked property is idempotent: same project, one mapping", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
-
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
-      expect(dbRows.gsc_connections).toHaveLength(1);
-    });
-
-    /**
-     * SILENT RE-POINTING STAYS (controller ruling, 2026-08-13). A project already mapped to a
-     * different property is re-pointed with no warning and no confirmation step, because
-     * `saveProjectProperty` — the picker's Save, on this same table — does the byte-identical
-     * upsert. Two surfaces disagreeing about one action is worse than either answer.
-     */
-    it("re-points a project already mapped elsewhere, silently and onto the SAME row", async () => {
-      dbRows = {
-        ...dbRows,
-        projects: [projectRow("user-1")],
-        gsc_connections: [
-          {
-            id: "conn-1",
-            user_id: "user-1",
-            project_id: PROJECT,
-            account_id: ACCOUNT,
-            gsc_property: "https://old.zephyrbrook.com/",
-          },
-        ],
-      };
-
-      // `toEqual`, not `toMatchObject`: a warning field smuggled onto the success would fail.
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      expect(dbRows.gsc_connections).toEqual([
-        {
-          id: "conn-1",
-          user_id: "user-1",
-          project_id: PROJECT,
-          account_id: ACCOUNT,
-          gsc_property: PROPERTY,
-        },
-      ]);
-    });
-
-    /**
-     * FAIL CLOSED ON A LISTING WE NEVER GOT BACK. An absence we did not observe is not an
-     * absence — the account may well list this property — so nothing is opened and nothing is
-     * mapped. This is the single-account shape of track_gsc_property's undecidable refusal:
-     * the web action always NAMES its account, so no other account is ever consulted and the
-     * "one account answered, another did not" state cannot arise here.
-     */
-    it("a listing that could not be read tracks NOTHING", async () => {
-      const error = captureConsole("error");
-      vi.mocked(refreshAccessToken).mockRejectedValue(
-        new Error("Google token endpoint failed (400): invalid_grant"),
-      );
-
-      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("Reconnect") });
-      expect(gscTables).not.toContain("projects");
-      expect(dbRows.projects).toEqual([]);
-      expect(dbRows.gsc_connections).toEqual([]);
-      expect(error).toHaveBeenCalled();
-      expect(JSON.stringify(out)).not.toContain(REFRESH_TOKEN);
-    });
-
-    /**
-     * Constitution NEVER #4. Another tenant holds a project for the SAME domain, which is
-     * legitimate — two users may track one site. The read must not find it, so this call opens
-     * the caller's OWN project and leaves the stranger's row untouched.
-     */
-    it("never lands on another tenant's project of the same domain", async () => {
-      const otherTenantRow = projectRow("user-2");
-      dbRows = { ...dbRows, projects: [otherTenantRow] };
-
-      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
-
-      expect(filtersOf("projects", "select")).toEqual([
-        { column: "user_id", value: "user-1" },
-        { column: "domain", value: DOMAIN },
-      ]);
-      expect(dbRows.projects).toContainEqual(otherTenantRow);
-      expect(dbRows.projects).toHaveLength(2);
-      const mine = (dbRows.projects ?? []).find((row) => row.user_id === "user-1");
-      expect(mine?.id).not.toBe(PROJECT);
-      expect(dbRows.gsc_connections).toEqual([
-        { user_id: "user-1", project_id: mine?.id, account_id: ACCOUNT, gsc_property: PROPERTY },
-      ]);
-    });
-
-    // NEVER #4 again, on the WRITE: the service-role client bypasses RLS, so the session user
-    // riding both as a column and inside the conflict target is the whole boundary.
-    it("maps with the SESSION user id and conflicts on (user_id, project_id)", async () => {
-      await trackProperty(ACCOUNT, PROPERTY, OWNED);
-
-      expect(filtersOf("gsc_connections", "upsert")).toEqual([
-        { column: "user_id", value: "user-1" },
-        { column: "project_id", value: onlyProject().id },
-      ]);
-    });
-
-    /**
-     * The restore UPDATE PROVES it matched a row. PostgREST answers a zero-row UPDATE with no
-     * error at all, so reporting success from `error === null` would tell the user their
-     * archived project is tracked again while it is still in the archive. The hook deletes the
-     * row between the ownership read and the write — the race the proof exists for.
-     */
-    it("a restore that matched NO row is a refusal, not a silent success", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-      dbHooks = {
-        "update:projects": () => {
-          dbRows = { ...dbRows, projects: [] };
-        },
-      };
-
-      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
-
-      expect(out).toEqual({ ok: false, error: expect.stringMatching(/nothing was tracked/i) });
-      expect(dbRows.gsc_connections).toEqual([]);
-    });
-
-    it("carries both tenant filters on the restore UPDATE", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-
-      await trackProperty(ACCOUNT, PROPERTY, OWNED);
-
-      expect(filtersOf("projects", "update")).toEqual([
-        { column: "id", value: PROJECT },
-        { column: "user_id", value: "user-1" },
-      ]);
-    });
-
-    it("rejects with no session and never queries", async () => {
-      signedOut();
-      await expect(trackProperty(ACCOUNT, PROPERTY, OWNED)).rejects.toThrow(/not authenticated/i);
-      expect(gscTables).toEqual([]);
-    });
-
-    it("refuses a malformed account id without querying the DB", async () => {
-      expect(await trackProperty("not-a-uuid", PROPERTY, OWNED)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not found"),
-      });
-      expect(gscTables).toEqual([]);
-    });
-
-    it("refuses an empty property without contacting Google", async () => {
-      expect(await trackProperty(ACCOUNT, "", OWNED)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not listed"),
-      });
-      expect(gscTables).toEqual([]);
-      expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
-    });
-
-    it("a failed mapping write answers ok:false and keeps the DB message server-side", async () => {
-      const error = captureConsole("error");
-      dbErrors = { "upsert:gsc_connections": { message: "deadlock detected" } };
-
-      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not save") });
-      expect(JSON.stringify(out)).not.toContain("deadlock detected");
-      expect(dbRows.gsc_connections).toEqual([]);
-      expect(error).toHaveBeenCalled();
-    });
-  });
-
-  describe("untrackProject", () => {
-    /**
-     * IT ARCHIVES, IT NEVER DELETES, and the surviving mapping is what makes restore free. A
-     * DELETE would cascade `gsc_connections` away and orphan every job, so a domain added again
-     * later could never re-attach its own past.
-     */
-    it("stamps archived_at and leaves the Search Console mapping untouched", async () => {
-      const mapping = {
-        id: "conn-1",
-        user_id: "user-1",
-        project_id: PROJECT,
-        account_id: ACCOUNT,
-        gsc_property: PROPERTY,
-      };
-      dbRows = { ...dbRows, projects: [projectRow("user-1")], gsc_connections: [mapping] };
-
-      expect(await untrackProject(PROJECT)).toEqual({ ok: true });
-
-      expect(onlyProject().archived_at).toEqual(expect.any(String));
-      expect(dbRows.gsc_connections).toEqual([mapping]);
-      // Only `projects` is touched — never the mapping, and never the ledger (NEVER #2).
-      expect(gscTables).toEqual(["projects", "projects"]);
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-    });
-
-    /**
-     * IDEMPOTENT, AND WITHOUT RE-STAMPING: no write runs, so the date the tenant actually put
-     * the project away survives a second call.
-     */
-    it("an already-archived project succeeds without re-stamping the date", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-
-      expect(await untrackProject(PROJECT)).toEqual({ ok: true });
-
-      expect(onlyProject().archived_at).toBe(ARCHIVED_AT);
-      expect(gscOps).toEqual(["select:projects"]);
-      // Nothing was written, but the view that offered Untrack was wrong about where this
-      // project stood — a stale page must still be corrected, or the button looks inert.
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-    });
-
-    it("refuses another tenant's project opaquely and archives nothing", async () => {
-      const otherTenantRow = projectRow("user-2");
-      dbRows = { ...dbRows, projects: [otherTenantRow] };
-
-      expect(await untrackProject(PROJECT)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not found"),
-      });
-      expect(dbRows.projects).toEqual([otherTenantRow]);
-      expect(gscOps).toEqual(["select:projects"]);
-    });
-
-    it("carries both tenant filters on the UPDATE", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
-
-      await untrackProject(PROJECT);
-
-      expect(filtersOf("projects", "update")).toEqual([
-        { column: "id", value: PROJECT },
-        { column: "user_id", value: "user-1" },
-      ]);
-    });
-
-    /**
-     * The zero-row proof, head-on: `error === null` on an UPDATE that matched nothing says the
-     * statement was fine, never that anything changed. Reporting "stopped tracking" from it is
-     * exactly the defect Task 4's referee found in setup_project's twin write.
-     */
-    it("an UPDATE that matched NO row is a refusal, not a silent success", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
-      dbHooks = {
-        "update:projects": () => {
-          dbRows = { ...dbRows, projects: [] };
-        },
-      };
-
-      expect(await untrackProject(PROJECT)).toEqual({
-        ok: false,
-        error: expect.stringMatching(/nothing was archived/i),
-      });
-    });
-
-    it("a failed UPDATE answers ok:false and keeps the DB message server-side", async () => {
-      const error = captureConsole("error");
-      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
-      dbErrors = { "update:projects": { message: "deadlock detected" } };
-
-      const out = await untrackProject(PROJECT);
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not stop tracking") });
-      expect(JSON.stringify(out)).not.toContain("deadlock detected");
-      expect(onlyProject().archived_at).toBeNull();
-      expect(error).toHaveBeenCalled();
-      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
-    });
-
-    it("rejects with no session and never queries", async () => {
-      signedOut();
-      await expect(untrackProject(PROJECT)).rejects.toThrow(/not authenticated/i);
-      expect(gscTables).toEqual([]);
-    });
-
-    it("refuses a malformed project id without querying the DB", async () => {
-      expect(await untrackProject("not-a-uuid")).toEqual({
-        ok: false,
-        error: expect.stringContaining("not found"),
-      });
-      expect(gscTables).toEqual([]);
-    });
-  });
-
-  describe("restoreProject", () => {
-    it("clears archived_at on a project the caller owns", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-
-      expect(await restoreProject(PROJECT)).toEqual({ ok: true });
-
-      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-    });
-
-    it("restoring an ACTIVE project succeeds without writing", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
-
-      expect(await restoreProject(PROJECT)).toEqual({ ok: true });
-
-      expect(gscOps).toEqual(["select:projects"]);
-      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
-    });
-
-    it("refuses another tenant's project opaquely and restores nothing", async () => {
-      const otherTenantRow = projectRow("user-2", { archived_at: ARCHIVED_AT });
-      dbRows = { ...dbRows, projects: [otherTenantRow] };
-
-      expect(await restoreProject(PROJECT)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not found"),
-      });
-      expect(dbRows.projects).toEqual([otherTenantRow]);
-      expect(gscOps).toEqual(["select:projects"]);
-    });
-
-    it("carries both tenant filters on the UPDATE", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-
-      await restoreProject(PROJECT);
-
-      expect(filtersOf("projects", "update")).toEqual([
-        { column: "id", value: PROJECT },
-        { column: "user_id", value: "user-1" },
-      ]);
-    });
-
-    it("an UPDATE that matched NO row is a refusal, not a silent success", async () => {
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-      dbHooks = {
-        "update:projects": () => {
-          dbRows = { ...dbRows, projects: [] };
-        },
-      };
-
-      expect(await restoreProject(PROJECT)).toEqual({
-        ok: false,
-        error: expect.stringMatching(/nothing was restored/i),
-      });
-    });
-
-    it("a failed UPDATE answers ok:false and keeps the DB message server-side", async () => {
-      const error = captureConsole("error");
-      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
-      dbErrors = { "update:projects": { message: "deadlock detected" } };
-
-      const out = await restoreProject(PROJECT);
-
-      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not restore") });
-      expect(JSON.stringify(out)).not.toContain("deadlock detected");
-      expect(onlyProject().archived_at).toBe(ARCHIVED_AT);
-      expect(error).toHaveBeenCalled();
-      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
-    });
-
-    it("rejects with no session and never queries", async () => {
-      signedOut();
-      await expect(restoreProject(PROJECT)).rejects.toThrow(/not authenticated/i);
-      expect(gscTables).toEqual([]);
-    });
-
-    it("refuses a malformed project id without querying the DB", async () => {
-      expect(await restoreProject("not-a-uuid")).toEqual({
-        ok: false,
-        error: expect.stringContaining("not found"),
-      });
-      expect(gscTables).toEqual([]);
-    });
   });
 });
