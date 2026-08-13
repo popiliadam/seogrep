@@ -49,8 +49,17 @@ export interface NextStep {
   readonly allSet: boolean;
 }
 
-/** A tracked project, projected to what the router shows. */
-export interface ProjectRef {
+/**
+ * A tracked project, projected to what the ROUTER shows — id and domain, nothing else.
+ *
+ * NOT `project-target.ts`'s `ProjectRef`, which additionally carries `archivedAt`. Both were
+ * exported under the one name, and nothing collided only because no module imported both: a
+ * reader who greps `ProjectRef` lands on whichever the editor opens first and reasons about
+ * the wrong shape — which for a type whose missing field IS the archive gate is a bad way to
+ * find out. The archive-bearing one keeps the general name; this local projection is named for
+ * what it is and where it is used.
+ */
+export interface ProjectChoice {
   readonly id: string;
   readonly domain: string;
 }
@@ -63,7 +72,7 @@ export interface ProjectRef {
  */
 export type WhatsNextState =
   | { readonly kind: "no_projects" }
-  | { readonly kind: "choose_project"; readonly projects: readonly ProjectRef[] }
+  | { readonly kind: "choose_project"; readonly projects: readonly ProjectChoice[] }
   | { readonly kind: "project_not_found"; readonly projectId: string }
   | { readonly kind: "project_archived" }
   | { readonly kind: "project"; readonly domain: string; readonly signals: ProjectSignals };

@@ -3,7 +3,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { encryptToken, toByteaHex } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
 import { getServiceClient } from "../db.ts";
-import { makeListGscPropertiesTool } from "./list-gsc-properties.ts";
+import {
+  defaultLoadMappings,
+  listAccountSitesFor,
+  makeListGscPropertiesTool,
+} from "./list-gsc-properties.ts";
 
 /**
  * DB-integration proof for list_gsc_properties' PRODUCTION path — the one the fast-lane spec
@@ -155,10 +159,11 @@ async function seedMappedProject(
   domain: string,
   accountId: string,
   property: string,
+  archivedAt: string | null = null,
 ): Promise<void> {
   const { data, error } = await service
     .from("projects")
-    .insert({ user_id: userId, domain })
+    .insert({ user_id: userId, domain, archived_at: archivedAt })
     .select("id")
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
@@ -250,6 +255,74 @@ describe("list_gsc_properties over the real database + the real Google client", 
     expect(text).not.toContain(ownerAccount.accountId);
     expect(text).not.toContain(ownerAccount.email);
     expect(text).not.toContain("sc-domain:owner-only.example.com");
+  });
+
+  /**
+   * THE TWO GUARDS THE TOOL CANNOT EXERCISE, driven head-on — the shape untrack-project's DB
+   * spec uses for `archiveOwnProject`, for the same reason: through the handler each of these
+   * sits BEHIND a read that already refuses, so deleting the filter changes no output and
+   * reddens nothing. An unreachable guard is an unmeasured one.
+   */
+  describe("the tenant filters no tool-level call can reach", () => {
+    it("defaultLoadMappings sees only the caller's projects, and only the tracked ones", async () => {
+      const owner = await makeCtx();
+      const intruder = await makeCtx();
+      const ownerAccount = await seedAccount(owner.userId, `m-owner-${randomUUID()}@example.test`);
+      const ownerDomain = `owner-mapping-${randomUUID()}.example.com`;
+      await seedMappedProject(
+        owner.userId,
+        ownerDomain,
+        ownerAccount.accountId,
+        "sc-domain:owner-mapping.example.com",
+      );
+      const intruderAccount = await seedAccount(
+        intruder.userId,
+        `m-intruder-${randomUUID()}@example.test`,
+      );
+      const intruderDomain = `intruder-mapping-${randomUUID()}.example.com`;
+      await seedMappedProject(
+        intruder.userId,
+        intruderDomain,
+        intruderAccount.accountId,
+        "sc-domain:intruder-mapping.example.com",
+      );
+      const archivedDomain = `intruder-archived-${randomUUID()}.example.com`;
+      await seedMappedProject(
+        intruder.userId,
+        archivedDomain,
+        intruderAccount.accountId,
+        "sc-domain:intruder-archived.example.com",
+        new Date().toISOString(),
+      );
+
+      const domains = (await defaultLoadMappings(intruder.userId)).map((row) => row.domain);
+
+      // Non-empty on purpose: a broken read that returned NOTHING would also satisfy the two
+      // exclusions below, so the inclusion is what makes them mean anything.
+      expect(domains).toContain(intruderDomain);
+      // MUTATION: drop `forUser` from either statement and this goes red — the other tenant's
+      // project arrives (constitution NEVER #4).
+      expect(domains).not.toContain(ownerDomain);
+      // MUTATION: drop `.is("archived_at", null)` and this goes red. The doc comment claims
+      // archived projects are left out; nothing else in the suite makes that claim true.
+      expect(domains).not.toContain(archivedDomain);
+    });
+
+    it("listAccountSitesFor refuses a (userId, accountId) pair that does not belong together", async () => {
+      const owner = await makeCtx();
+      const intruder = await makeCtx();
+      const ownerAccount = await seedAccount(owner.userId, `s-owner-${randomUUID()}@example.test`);
+
+      // The message is asserted, not merely the throw. Without the `.eq("user_id", …)` the row
+      // IS found and the failure moves to `decryptToken` — the AAD is bound to the OWNER's id,
+      // so it still throws, and a bare `rejects.toThrow()` would pass against a read that had
+      // just handed a stranger another tenant's sealed credential.
+      await expect(listAccountSitesFor(ownerAccount.accountId, intruder.userId)).rejects.toThrow(
+        /no account .* for this user/i,
+      );
+      // It refused on the row read: nothing was unsealed and Google was never asked.
+      expect(hits).toEqual([]);
+    });
   });
 
   it("reports an account whose sealed token will not open as UNREADABLE, not as empty", async () => {

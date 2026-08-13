@@ -80,8 +80,15 @@ export const loadGscAccounts: LoadGscAccountsFn = async (userId) => {
  * Projects + their `gsc_connections` mapping, joined in memory. ARCHIVED projects are left out
  * for the same reason list_projects hides them: the tenant stopped tracking them, so they are
  * not part of "what reads this property".
+ *
+ * EXPORTED SO ITS TENANT FILTER CAN BE MEASURED, which through the tool it cannot be. `readBy`
+ * only ever matches a mapping whose `accountId` is one of the rendered accounts, and those come
+ * from `loadGscAccounts` — already tenant-scoped — so an UNFILTERED read here loads every
+ * tenant's projects and then silently discards them: the tool's output is byte-identical and
+ * every spec stays green. The guard is real, the leak it prevents is real, and the only place
+ * either is visible is head-on (signed lesson 14 / the untrack-project.db.test.ts pattern).
  */
-const defaultLoadMappings: LoadProjectMappingsFn = async (userId) => {
+export const defaultLoadMappings: LoadProjectMappingsFn = async (userId) => {
   const tenant = forUser(getServiceClient(), userId);
   const [projects, connections] = await Promise.all([
     tenant.selectOwn("projects", "id, domain").is("archived_at", null),
