@@ -805,6 +805,48 @@ export const DOC_PROSE = {
       "property with its permission level, the projects reading it through that account, and — where " +
       "it applies — why SeoGrep cannot query it.",
   },
+
+  track_gsc_property: {
+    lead:
+      "`track_gsc_property` turns a Search Console property into a tracked project in one call. " +
+      "It works out the site's domain from the property, opens the project for it — or brings it " +
+      "back from your archive — and links the property to it, ready for " +
+      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).",
+    whatItDoes:
+      "Pass a property exactly as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
+      "prints it. SeoGrep re-reads your Google accounts live and only accepts a property one of " +
+      "them actually lists — what you type is never taken as proof it exists. If you already have " +
+      "a project for that domain, it is reused rather than duplicated, so running this twice is " +
+      "safe. If the same property sits on two of your connected accounts, SeoGrep asks which one " +
+      "to read it through instead of guessing, and you re-run with `account_id`.",
+    preExampleSections: [
+      {
+        heading: "When it refuses",
+        body:
+          "A property your account cannot query is refused **before** any project is created — a " +
+          "project that looks tracked but can answer nothing is worse than no project, so the " +
+          "answer names the permission level and what to do about it. A property no connected " +
+          "account lists is refused the same way. And if Google could not be reached at all, you " +
+          "are told the account could not be read, never that the property is missing: an absence " +
+          "we did not observe is not an absence.",
+      },
+      {
+        heading: "Archived projects",
+        body:
+          "If you archived the project for this domain earlier, this brings back the **same " +
+          "project** — its id, its crawls and its reports are all still there. Nothing is started " +
+          "from scratch and no second project is created for the same site.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Track sc-domain:example.com in SeoGrep." +
+      "\n\nRun [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) first if you are " +
+      "not sure how a property is spelled.",
+    returns:
+      "The project the property was attached to — its domain and `project_id`, whether it was " +
+      "created, already tracked or restored from your archive, which Google account it now reads " +
+      "through, and the tools to run next.",
+  },
 };
 
 // ---------------------------------------------------------------------------

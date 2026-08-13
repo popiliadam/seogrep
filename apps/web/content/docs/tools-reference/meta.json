@@ -20,6 +20,7 @@
     "compare-competitors",
     "generate-report",
     "whats-next",
-    "list-gsc-properties"
+    "list-gsc-properties",
+    "track-gsc-property"
   ]
 }
