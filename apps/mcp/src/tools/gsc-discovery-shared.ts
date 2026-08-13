@@ -12,6 +12,11 @@ import {
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { optionalGscConnectUrl } from "./connect-gsc.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
+import {
+  ARCHIVED_PROJECT_MESSAGE,
+  loadOwnProject,
+  type LoadProjectFn,
+} from "./project-target.ts";
 
 /**
  * Shared builder for the three discovery tools (find_quick_wins / detect_cannibalization /
@@ -35,6 +40,12 @@ export interface DiscoveryToolDeps {
   readonly loadPull?: LoadPullFn;
   /** The connection-health reader (default: the real tenant-scoped loadGscTokenStatus). */
   readonly loadTokenStatus?: LoadTokenStatusFn;
+  /**
+   * The tenant-scoped project reader the archive gate uses (default: the real loadOwnProject).
+   * A PORT like loadPull, because this lane's fast specs are DB-less by construction — the
+   * default reaches getServiceClient, which requires the full prod env.
+   */
+  readonly loadProject?: LoadProjectFn;
 }
 
 /**
@@ -85,12 +96,37 @@ export function makeDiscoveryTool(
 ): RegisteredTool {
   const loadPull = deps.loadPull ?? loadLatestPull;
   const loadTokenStatus = deps.loadTokenStatus ?? loadGscTokenStatus;
+  const loadProject = deps.loadProject ?? loadOwnProject;
   return defineTool({
     name,
     description,
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
     handler: async (ctx, { project_id }) => {
+      // THE ARCHIVE GATE, first — before the pull read, because an archived project has nothing
+      // to analyze whatever pull is stored against it, and "run pull_gsc_data first" would be the
+      // wrong instruction for a site the tenant removed (pull_gsc_data refuses it too).
+      //
+      // It needs its OWN project read: everything below resolves through the succeeded pull JOB
+      // by project_id and never touches `projects`, which is why the shared by-id resolver — the
+      // one place this sentence lives — did not reach these three tools. loadOwnProject IS that
+      // resolver, not a second one. Same shape, same reasoning, same ordering as the audit
+      // slice's makeAuditTool.
+      //
+      // A project that does not resolve (unknown id, or another tenant's) is deliberately NOT
+      // refused here: it falls through to the pull read exactly as before, so another tenant's
+      // ARCHIVED project answers NO_PULL_MESSAGE like any other id that is not yours. Answering
+      // "that project is archived" would say the row EXISTS — the existence oracle
+      // project-target.ts's ordering rule exists to prevent.
+      //
+      // THROW, and TYPED: withCredits COMMITS a handler that RETURNS, so an errorResult here
+      // would charge 10 credits for a refusal, and the registry keys on the ERROR TYPE to render
+      // a designed refusal's sentence verbatim instead of the generic crash sentence.
+      const project = await loadProject(ctx.userId, project_id);
+      if (project !== null && project.archivedAt !== null) {
+        throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
+      }
+
       const load = await loadPull(ctx.userId, project_id);
       if (!load.ok) {
         // THROW so withCredits RELEASES the reserve — no charge when there is nothing to

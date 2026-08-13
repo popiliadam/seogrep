@@ -22,11 +22,11 @@ import { PreconditionNotMetError, isPreconditionNotMet } from "./precondition.ts
  * the six PRICED tools that use these builders are named and charged for real in the db lane
  * (audit-onpage.db.test.ts, gsc-discovery.db.test.ts), which is also where the ledger nets to zero.
  *
- * makeAuditTool's archive gate reads `projects` through an injected port for that same DB-less
- * reason, so every audit builder below passes NO_PROJECT — "this id did not resolve", which is
- * what an unknown id and another tenant's id both read as, and the state under which the gate
- * stands aside. Nothing here asserts anything about the gate; it is measured over the REAL
- * reader, per tool and on the ledger, in audit-onpage.db.test.ts.
+ * The builders' archive gate reads `projects` through an injected port for that same DB-less
+ * reason, so every builder below passes NO_PROJECT — "this id did not resolve", which is what an
+ * unknown id and another tenant's id both read as, and the state under which the gate stands
+ * aside. Nothing here asserts anything about the gate; it is measured over the REAL reader, per
+ * tool and on the ledger, in the db lane.
  */
 
 const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
@@ -119,6 +119,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
     try {
       const tool = makeDiscoveryTool("get_job_status", "d", () => "unreachable", {
         loadPull: async () => ({ ok: false, error: NO_PULL_MESSAGE }),
+        loadProject: NO_PROJECT,
       });
       const result = await callTool(tool, "get_job_status");
 
