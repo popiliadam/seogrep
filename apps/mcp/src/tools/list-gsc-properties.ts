@@ -62,7 +62,7 @@ export interface ListGscPropertiesDeps {
 }
 
 /** Accounts, ordered by email so the output does not depend on scan order. */
-const defaultLoadAccounts: LoadGscAccountsFn = async (userId) => {
+export const loadGscAccounts: LoadGscAccountsFn = async (userId) => {
   const { data, error } = await forUser(getServiceClient(), userId).selectOwn(
     "gsc_accounts",
     "id, google_account_email",
@@ -119,7 +119,7 @@ const defaultLoadMappings: LoadProjectMappingsFn = async (userId) => {
  * a stale property list is worse than a slow one, and a dead credential SHOULD fail here — that
  * failure is the most useful thing this tool can report about an account.
  */
-const defaultListAccountSites: ListAccountSitesFn = async (accountId, userId) => {
+export const listAccountSitesFor: ListAccountSitesFn = async (accountId, userId) => {
   const row = await forUser(getServiceClient(), userId).selectOwnById<{
     encrypted_refresh_token: string;
   }>("gsc_accounts", accountId, "encrypted_refresh_token");
@@ -195,9 +195,9 @@ const UNQUERYABLE_FOOTER =
  * zero database.
  */
 export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): RegisteredTool {
-  const loadAccounts = deps.loadAccounts ?? defaultLoadAccounts;
+  const loadAccounts = deps.loadAccounts ?? loadGscAccounts;
   const loadMappings = deps.loadMappings ?? defaultLoadMappings;
-  const listAccountSites = deps.listAccountSites ?? defaultListAccountSites;
+  const listAccountSites = deps.listAccountSites ?? listAccountSitesFor;
   return defineTool({
     name: "list_gsc_properties",
     description:
