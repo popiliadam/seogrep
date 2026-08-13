@@ -119,8 +119,8 @@ describe("list_gsc_properties", () => {
   });
 
   it("does not render an unreadable account as an empty property list", async () => {
-    // An absence we did not observe is not an absence — AccountInventory's own rule
-    // (apps/web/app/app/connection/account-inventory.tsx). The log line is silenced AND
+    // An absence we did not observe is not an absence — the rule /app/connection's property
+    // library renders the same listing under. The log line is silenced AND
     // asserted: the user gets a sentence, the operator gets the underlying failure.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const out = await callTool({}, { sitesListFails: true });

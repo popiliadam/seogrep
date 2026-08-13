@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import type { SavePropertyResult } from "./action-support";
 import type { GscRevocationOutcome } from "./actions";
 
 interface DisconnectButtonProps {
@@ -10,7 +11,7 @@ interface DisconnectButtonProps {
   readonly domain: string;
   /** Whether the DB still holds a link. The BUTTON depends on it; the island does not. */
   readonly connected: boolean;
-  readonly unmapProject: (projectId: string) => Promise<void>;
+  readonly unmapProject: (projectId: string) => Promise<SavePropertyResult>;
 }
 
 /**
@@ -27,8 +28,11 @@ interface DisconnectButtonProps {
  * Task 6 mounts in the account section. Repeating it here would be worse than silence — it
  * would tell the user their Google access might be gone when nothing ever asked for it.
  *
- * The failure message is deliberately generic (as in KeyPanel): the server action's own
- * wording distinguishes a missing link from another user's, and neither belongs in the UI.
+ * A REFUSAL IS THE SERVER'S OWN SENTENCE, verbatim, exactly as in `PropertyPicker`. The generic
+ * notice below is for a THROW only — a crash nobody has words for. The distinction is not
+ * cosmetic: `unmapProject` refuses an archived project, so the one way in (a stale tab, rendered
+ * while the project was still tracked) used to be answered with "Please try again", which cannot
+ * work, instead of the sentence naming the way back.
  */
 export function DisconnectButton({
   projectId,
@@ -44,7 +48,11 @@ export function DisconnectButton({
     setError(null);
     startTransition(async () => {
       try {
-        await unmapProject(projectId);
+        const result = await unmapProject(projectId);
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
         router.refresh();
       } catch (caught) {
         console.error("disconnect failed:", caught);

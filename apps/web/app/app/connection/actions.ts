@@ -222,21 +222,28 @@ export type GscRevocationOutcome = "revoked" | "unconfirmed" | "not_attempted";
  * is how that tab learns it is stale. It also puts this surface back in step with MCP, where
  * `untrack_project`/`restore_project` are the only verbs an archived project answers to.
  *
- * It THROWS rather than returning a sentence, because that is this action's existing shape
- * (void, throw-on-refusal) and `DisconnectButton` already turns any throw into its one generic
- * notice. A missing or foreign project still falls through to the UPDATE that matches nothing,
- * exactly as before — the read added here answers ONE question, and gives no new signal about
- * which project ids exist.
+ * ITS REFUSALS ARE RETURNED, not thrown, which is the rule the other four actions on this page
+ * already follow (`saveProjectProperty` here; `trackProperty`, `untrackProject` and
+ * `restoreProject` in ./tracking-actions). It used to throw, and the archive refusal made that
+ * untenable rather than merely inconsistent: a thrown message does not reach the browser at all
+ * in a production build — Next replaces it with a digest — so `DisconnectButton` could only ever
+ * answer a stale tab with "Please try again", advice that cannot work, while the one sentence
+ * naming the way back (Restore) was discarded on the server.
+ *
+ * A missing or foreign project still falls through to the UPDATE that matches nothing and
+ * returns `ok` — the read added here answers ONE question, and gives no new signal about which
+ * project ids exist. Only a missing session still throws (there is no user to address), and only
+ * a failed READ still throws, exactly as in `saveProjectProperty`.
  */
-export async function unmapProject(projectId: string): Promise<void> {
+export async function unmapProject(projectId: string): Promise<SavePropertyResult> {
   const userId = await requireUserId();
   if (!UUID_RE.test(projectId)) {
-    throw new Error("Connection not found");
+    return { ok: false, error: "That connection was not found." };
   }
   const service = createServiceClient();
   const project = await readOwnProject(service, userId, projectId);
   if (project !== null && project.archivedAt !== null) {
-    throw new Error(ARCHIVED_PROJECT);
+    return { ok: false, error: ARCHIVED_PROJECT };
   }
   const { error } = await service
     .from("gsc_connections")
@@ -244,9 +251,13 @@ export async function unmapProject(projectId: string): Promise<void> {
     .eq("user_id", userId)
     .eq("project_id", projectId);
   if (error) {
-    throw new Error(`gsc_connections unmap failed: ${error.message}`);
+    // The diagnosis goes to the log; the browser gets a sentence carrying none of PostgREST's
+    // own text, as every other refusal on this page does.
+    console.error("unmapProject: gsc_connections unmap failed:", error.message);
+    return { ok: false, error: "Could not disconnect. Please try again." };
   }
   revalidatePath(CONNECTION_PATH);
+  return { ok: true };
 }
 
 /**

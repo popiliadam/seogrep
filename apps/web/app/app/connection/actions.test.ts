@@ -507,27 +507,36 @@ describe("two-level disconnect", () => {
       expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
     });
 
-    it("rejects a malformed project id without querying the DB", async () => {
+    it("refuses a malformed project id without querying the DB", async () => {
       signedIn("user-1");
 
-      await expect(unmapProject("not-a-uuid")).rejects.toThrow(/not found/i);
+      await expect(unmapProject("not-a-uuid")).resolves.toEqual({
+        ok: false,
+        error: expect.stringMatching(/not found/i),
+      });
 
       expect(db.tables).toEqual([]);
     });
 
     // MOVED from lib/gsc/store.test.ts ("throws when the update fails"), re-aimed at the
     // UPDATE that replaced the retired module's. A swallowed failure here is worse than a
-    // loud one: the action would return normally, the page would re-render as unlinked, and
+    // loud one: the action would report success, the page would re-render as unlinked, and
     // the project would go on reading Search Console through a mapping the user believes is
-    // gone. The error message stays server-side; only the throw reaches the UI.
-    it("a failed UPDATE throws instead of reporting a silent unmap", async () => {
+    // gone. PostgREST's own text stays server-side — the browser gets a sentence, the log
+    // gets the diagnosis (mutation: return `error.message` as the sentence and this goes red).
+    it("a failed UPDATE refuses instead of reporting a silent unmap", async () => {
       signedIn("user-1");
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       db.rows = { gsc_accounts: [], gsc_connections: [connectionRow(PROJECT, "user-1")] };
       db.errors = { "update:gsc_connections": { message: "no upd" } };
 
-      await expect(unmapProject(PROJECT)).rejects.toThrow(/unmap failed: no upd/);
+      const result = await unmapProject(PROJECT);
 
-      // The mapping is untouched — the state the throw is telling the truth about.
+      expect(result).toEqual({ ok: false, error: expect.stringMatching(/could not disconnect/i) });
+      expect(result.ok === false && result.error).not.toMatch(/no upd/);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("unmap failed"), "no upd");
+      errorSpy.mockRestore();
+      // The mapping is untouched — the state the refusal is telling the truth about.
       expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
       expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
     });
@@ -540,9 +549,13 @@ describe("two-level disconnect", () => {
      * click there used to null `gsc_property` and falsify that sentence for a row the user is
      * no longer looking at.
      *
-     * MUTATION (run, not assumed): delete the `archivedAt !== null` throw in `unmapProject`
+     * MUTATION (run, not assumed): delete the `archivedAt !== null` refusal in `unmapProject`
      * and this goes red on the row assertion — the UPDATE lands and `gsc_property` becomes
      * null. Seeding the project row is what makes that reachable: the read is the gate.
+     *
+     * The sentence is RETURNED, and that half matters as much as the refusal: a thrown message
+     * never reaches the browser in a production build, so the only reader of the way back
+     * (Restore) would have been the server log.
      */
     it("refuses an ARCHIVED project and leaves its retained mapping intact", async () => {
       signedIn("user-1");
@@ -552,7 +565,10 @@ describe("two-level disconnect", () => {
         projects: [projectRow("user-1", "2026-08-12T10:00:00.000Z")],
       };
 
-      await expect(unmapProject(PROJECT)).rejects.toThrow(/archive/i);
+      await expect(unmapProject(PROJECT)).resolves.toEqual({
+        ok: false,
+        error: expect.stringMatching(/archive.*restore it first/is),
+      });
 
       expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
       // It refused on the READ: no UPDATE was ever issued, so nothing had to be undone.
@@ -574,7 +590,7 @@ describe("two-level disconnect", () => {
         projects: [projectRow("user-2", "2026-08-12T10:00:00.000Z")],
       };
 
-      await expect(unmapProject(PROJECT)).resolves.toBeUndefined();
+      await expect(unmapProject(PROJECT)).resolves.toEqual({ ok: true });
 
       expect(db.ops).toEqual(["select:projects", "update:gsc_connections"]);
       expect(db.rows.gsc_connections).toEqual([otherTenantRow]);

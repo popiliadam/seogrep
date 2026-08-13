@@ -230,7 +230,7 @@ describe("track_gsc_property", () => {
   });
 
   it("does not call a property NOT LISTED when the account could not be read at all", async () => {
-    // An absence we did not observe is not an absence (AccountInventory's rule). Telling the
+    // An absence we did not observe is not an absence. Telling the
     // user their property is not listed would send them to Search Console to verify a property
     // that was there all along; the answer is to reconnect.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);

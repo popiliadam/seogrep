@@ -104,8 +104,8 @@ describe("PropertyLibrary", () => {
 
   /**
    * State three, and the rule that governs it: an absence we did not observe is not an absence.
-   * `account-inventory.tsx` already refuses to render a failed listing as an empty one, and
-   * these two surfaces must not disagree about the same fact.
+   * The MCP tool `list_gsc_properties` already refuses to render a failed listing as an empty
+   * one, and these two surfaces must not disagree about the same fact.
    */
   it("renders a failed listing as unreadable, never as an empty list", () => {
     render(<PropertyLibrary accounts={[account({ rows: null })]} trackProperty={ok()} />);

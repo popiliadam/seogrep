@@ -137,7 +137,9 @@ vi.mock("./disconnect-button", () => ({
     projectId: string;
     domain: string;
     connected: boolean;
-    unmapProject: (projectId: string) => Promise<void>;
+    // The stub only reports THAT it was handed an action; the real result shape is pinned in
+    // disconnect-button.test.tsx, so this deliberately does not restate it.
+    unmapProject: (projectId: string) => Promise<unknown>;
   }) => (
     <span data-testid="disconnect-island">
       {p.connected ? (

@@ -20,7 +20,7 @@ import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
  * re-decided here, because a second answer to the same question is a second truth:
  *
  *   1. A FAILED `sites.list` is never rendered as an empty list. An absence we did not observe
- *      is not an absence (AccountInventory's own words) — the account is reported unreadable.
+ *      is not an absence — the account is reported unreadable.
  *   2. An UNUSABLE property is SHOWN, with its permission level and the reason. Hiding it
  *      leaves the user comparing this list against Search Console and finding a hole; the
  *      permission rule itself comes from @pseo/core's canQuerySearchAnalytics, never re-derived.
