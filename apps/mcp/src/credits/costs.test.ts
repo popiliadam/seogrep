@@ -27,11 +27,17 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       audit_schema: 5,
       generate_report: 15,
       whats_next: 0,
+      list_gsc_properties: 0,
+      track_gsc_property: 0,
+      untrack_project: 0,
     });
   });
 
-  it("has exactly 19 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(19);
+  // 19 -> 22 on 2026-08-13: the operator approved THREE new 0-credit tools (the Search Console
+  // property-management surface). This pin protects the human-approved table, and the table's
+  // SCOPE grew — no existing number changed, so this is a re-signature, not a weakened assertion.
+  it("has exactly 22 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(22);
   });
 
   it("exposes only non-negative integer costs", () => {

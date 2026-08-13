@@ -30,6 +30,12 @@ export const TOOL_COSTS = {
   audit_schema: 5,
   generate_report: 15,
   whats_next: 0,
+  // The Search Console property-management surface (2026-08-13, operator-approved scope
+  // change): three tools that read and rewrite the user's OWN mapping rows and call no paid
+  // API, so all three are 0. No existing number moved — the table grew by three zeros.
+  list_gsc_properties: 0,
+  track_gsc_property: 0,
+  untrack_project: 0,
 } as const;
 
 export type ToolName = keyof typeof TOOL_COSTS;
