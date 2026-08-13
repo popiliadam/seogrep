@@ -35,6 +35,11 @@ function rowKey(accountId: string, siteUrl: string): string {
   return `${accountId} ${siteUrl}`;
 }
 
+/** What a closed fold says about itself. A fold with no count is a fold nobody opens. */
+function foldLabel(count: number): string {
+  return count === 1 ? "Show 1 available property" : `Show ${count} available properties`;
+}
+
 /**
  * ADD FROM SEARCH CONSOLE — every property that is not being read yet, one row, one button.
  *
@@ -105,37 +110,50 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
                 : "Every Search Console property on this account is already tracked."}
             </p>
           ) : (
-            <ul className="flex flex-col gap-1">
-              {account.rows.map((row) => (
-                <li
-                  key={rowKey(account.accountId, row.siteUrl)}
-                  className="flex flex-col gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs"
-                >
-                  <span className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-neutral-800">{row.siteUrl}</span>
-                    <button
-                      type="button"
-                      disabled={isPending || !row.queryable}
-                      onClick={() => track(account.accountId, row.siteUrl)}
-                      aria-label={`Track ${row.siteUrl}`}
-                      className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
-                    >
-                      Track
-                    </button>
-                  </span>
-                  {!row.queryable ? (
-                    <span className="text-amber-700">
-                      {`Google will not answer search data at this account's access level (${row.permissionLevel}), so SeoGrep cannot track it. Ask the property's owner for full access.`}
+            // THE ROWS, AND ONLY THE ROWS, ARE BEHIND THE FOLD. Both sentences above it are
+            // absences a user must not have to click to discover, and the amber one is a
+            // FAILURE — folding it away would turn "we could not ask" into a quiet account,
+            // the inference this whole surface refuses.
+            //
+            // `<details>` rather than a button and a piece of state: the disclosure it gives is
+            // keyboard-operable and screen-reader-announced for free, works with no JS at all,
+            // and holds its own open/closed — so nothing here can get out of step with it.
+            <details className="flex flex-col gap-1">
+              <summary className="cursor-pointer text-xs text-neutral-600 marker:text-neutral-400">
+                {foldLabel(account.rows.length)}
+              </summary>
+              <ul className="flex flex-col gap-1 pt-1">
+                {account.rows.map((row) => (
+                  <li
+                    key={rowKey(account.accountId, row.siteUrl)}
+                    className="flex flex-col gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs"
+                  >
+                    <span className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-neutral-800">{row.siteUrl}</span>
+                      <button
+                        type="button"
+                        disabled={isPending || !row.queryable}
+                        onClick={() => track(account.accountId, row.siteUrl)}
+                        aria-label={`Track ${row.siteUrl}`}
+                        className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                      >
+                        Track
+                      </button>
                     </span>
-                  ) : null}
-                  {errors[rowKey(account.accountId, row.siteUrl)] ? (
-                    <span role="alert" className="text-red-600">
-                      {errors[rowKey(account.accountId, row.siteUrl)]}
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+                    {!row.queryable ? (
+                      <span className="text-amber-700">
+                        {`Google will not answer search data at this account's access level (${row.permissionLevel}), so SeoGrep cannot track it. Ask the property's owner for full access.`}
+                      </span>
+                    ) : null}
+                    {errors[rowKey(account.accountId, row.siteUrl)] ? (
+                      <span role="alert" className="text-red-600">
+                        {errors[rowKey(account.accountId, row.siteUrl)]}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
       ))}

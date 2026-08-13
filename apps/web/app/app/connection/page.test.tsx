@@ -336,6 +336,32 @@ describe("ConnectionPage — three groups instead of one dropdown per project", 
     expect(within(groupOf(/^tracked sites$/i)).getAllByRole("listitem")).toHaveLength(3);
   });
 
+  /**
+   * THE DEFAULT VIEW, at the operator's live scale. Taking the dropdowns to zero made the page
+   * TALLER — 2697px → 10051px measured after PR #75 — because 26 unused properties stopped being
+   * repeated `<option>`s and became 26 always-expanded rows (3592px of them). jsdom has no
+   * layout, so height cannot be read here; the structure it comes from can be.
+   *
+   * MUTATION TARGET: open the library's `<details>` by default and this goes red at 29.
+   */
+  it("opens with the property library folded away — only the projects are in view", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B, PROJECT_C];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount = {
+      [ACCOUNT_ID]: Array.from({ length: 26 }, (_, i) => site(`sc-domain:${i}.ordu.example`)),
+    };
+    await renderPage();
+
+    // Rendered, so nothing was dropped to shorten the page…
+    expect(within(groupOf(/^add from search console$/i)).getAllByRole("listitem")).toHaveLength(26);
+    // …and reachable without opening anything: the three project rows, and nothing else.
+    expect(
+      screen.getAllByRole("listitem").filter((row) => row.closest("details")?.open !== false),
+    ).toHaveLength(3);
+  });
+
   it("gives every project a row and names what it reads, with no trip to Google per row", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_A, PROJECT_B];
