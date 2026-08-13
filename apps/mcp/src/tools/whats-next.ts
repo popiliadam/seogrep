@@ -293,10 +293,13 @@ async function loadWhatsNextState(
   }
 
   const client = getServiceClient();
-  const { data, error } = await forUser(client, userId).selectOwn(
-    "projects",
-    "id, domain, created_at",
-  );
+  // Archived projects are left OUT of the routing list rather than refused: without a
+  // project_id the caller named nothing to refuse, and a project they stopped tracking must
+  // not become the "next step" — nor pad a choose_project list. Active rows only (migration
+  // 0022); `.is(…, null)` is the PostgREST null filter (`.eq(…, null)` matches nothing).
+  const { data, error } = await forUser(client, userId)
+    .selectOwn("projects", "id, domain, created_at")
+    .is("archived_at", null);
   if (error) {
     throw new Error(`whats_next: projects list failed: ${error.message}`);
   }

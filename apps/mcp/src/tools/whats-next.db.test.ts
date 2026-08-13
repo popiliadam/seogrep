@@ -53,6 +53,22 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * Archive a project by stamping archived_at (migration 0022) — what untracking does. THROWS
+ * when no row matched, so a fixture that archives nothing cannot pass as a green assertion.
+ */
+async function archiveProject(projectId: string): Promise<void> {
+  const { data, error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId)
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(`archive seed failed: ${error?.message ?? "no row matched"}`);
+  }
+}
+
 /** Seed a SUCCEEDED job carrying `result` for `tool` — the signal whats_next reads (no reserve). */
 async function seedSucceededJob(
   userId: string,
@@ -211,5 +227,29 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     expect(text).toMatch(/No project found/i);
     expect(text).not.toContain("tenant-b.example.com");
     expect(await ledgerCount(userA.userId)).toBe(0);
+  });
+
+  it("(g) no project_id: an archived project is not routed to — the one active project is auto-selected", async () => {
+    const user = await makeUser();
+    await makeProject(user.userId, "kept-shop.example.com");
+    const retiredId = await makeProject(user.userId, "retired-shop.example.com");
+    await archiveProject(retiredId);
+
+    const text = await runFor(user); // no project_id — routes from the project LIST
+    expect(text).toContain("kept-shop.example.com");
+    expect(text).toContain("crawl_site"); // auto-selected, not asked to choose
+    expect(text).not.toContain("retired-shop.example.com");
+    expect(text).not.toContain(retiredId); // the choose_project list names ids, so pin that too
+  });
+
+  it("(h) a tenant whose only project is archived is pointed at setup_project", async () => {
+    const user = await makeUser();
+    const onlyId = await makeProject(user.userId, "retired-shop.example.com");
+    await archiveProject(onlyId);
+
+    const text = await runFor(user);
+    expect(text).toMatch(/no projects/i);
+    expect(text).toContain("setup_project");
+    expect(text).not.toContain("retired-shop.example.com");
   });
 });
