@@ -1613,6 +1613,40 @@ describe("track / untrack / restore", () => {
     });
 
     /**
+     * VALIDATION ORDER, step 4 — the SHARED HOST GATE, and the divergence it closes.
+     *
+     * Until Task 8.5 this action opened a project for ANY property whose domain merely had the
+     * right SHAPE, while `track_gsc_property` and `setup_project` refused internal / reserved
+     * names outright (`normalizeDomain`). Two surfaces, same verb, opposite answers. The gate
+     * now lives in @pseo/core and both call it.
+     *
+     * THE FIXTURE CANNOT ANSWER FOR THE CODE. This branch has twice shipped a spec that passed
+     * against unmodified source because a refusal echoed the fixture's own name back
+     * (`archived.example`, Task 3; `not-yours.test`, Task 6) — and reserved TLDs are this
+     * spec's whole subject, so the trap is live here. `silverpine.corp` shares no substring
+     * with the sentence asserted below, and the strongest claim made here is not about wording
+     * at all: the `projects` table is never REACHED. A refusal that arrived after a row existed
+     * would still carry the right sentence and still fail this spec.
+     */
+    it("refuses a reserved / internal host BEFORE any project row exists", async () => {
+      const reserved = "sc-domain:silverpine.corp";
+
+      const out = await trackProperty(
+        ACCOUNT,
+        reserved,
+        listing({ siteUrl: reserved, permissionLevel: "siteOwner" }),
+      );
+
+      expect(out).toEqual({
+        ok: false,
+        error: expect.stringMatching(/internal or reserved names cannot be tracked/i),
+      });
+      expect(gscTables).not.toContain("projects");
+      expect(dbRows.projects).toEqual([]);
+      expect(dbRows.gsc_connections).toEqual([]);
+    });
+
+    /**
      * ARCHIVE, NEVER DELETE — this is what makes coming back free. The archived row keeps its
      * id, and so its crawls, reports and mapping; a second row for the same domain is both
      * impossible (unique (user_id, domain), migration 0010) and would orphan all of it.

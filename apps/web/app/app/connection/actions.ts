@@ -6,6 +6,7 @@ import {
   listSites,
   mcpUrlFor,
   mcpUrlTemplate,
+  normalizeDomain,
   propertyToDomain,
   tokenKeyBytes,
   type GscSite,
@@ -600,15 +601,14 @@ export async function saveProjectProperty(
  *   6. EVERY UPDATE PROVES IT MATCHED A ROW. PostgREST answers a zero-row UPDATE with no error
  *      at all, so `error === null` says nothing was WRONG, never that anything was WRITTEN.
  *
- * ONE KNOWN DIVERGENCE, recorded rather than papered over. `track_gsc_property` opens its
- * project through `openTrackedProject` (apps/mcp), which runs `normalizeDomain` and so refuses
- * internal / reserved names (`foo.internal`, `x.local`) that `propertyToDomain` accepts on
- * shape alone. That gate lives on `nonPublicHostnameReason` in the MCP crawler, and apps/web
- * cannot import it — copying its reserved-TLD list here would create a SECOND copy of a
- * security list, which is worse than the gap it closes. The gap itself is theoretical: the
- * string reaching here came from Google's own DNS-verified `sites.list`, and the crawl-time
- * origin gate still refuses even a stored non-public domain. The real fix is to promote
- * `normalizeDomain` into a shared package; it is out of this task's scope and reported.
+ *   7. THE HOST GATE IS SHARED, not re-decided. `track_gsc_property` refuses internal /
+ *      reserved names (`foo.internal`, `x.local`) that `propertyToDomain` accepts on shape
+ *      alone, and until Task 8.5 this surface did not — it OPENED a project for
+ *      `sc-domain:foo.internal`, measured, which is exactly the disagreement rule 1 forbids.
+ *      The cause was structural rather than a decision: the gate lived in the MCP crawler and
+ *      apps/web could not import it, and copying its reserved-TLD list here would have been a
+ *      SECOND copy of a security list. `normalizeDomain` now lives in @pseo/core and BOTH
+ *      surfaces call it — one list, one verdict.
  *
  * Refusals are RETURNED, not thrown, because every one of them is something the user can act
  * on and the caller shows the sentence as-is. Only a missing session throws (there is no user
@@ -826,13 +826,24 @@ export async function trackProperty(
     };
   }
 
-  // STEP 4 — the project.
-  const opened = await openProjectForDomain(service, userId, domain);
+  // STEP 4 — may that host be tracked AT ALL? `propertyToDomain` only checks a domain's
+  // SHAPE, so it accepts internal / reserved names (`foo.internal`, `x.local`, `a.test`) that
+  // `normalizeDomain` refuses. This is the SAME gate `openTrackedProject` (apps/mcp) applies —
+  // one implementation in @pseo/core since Task 8.5, not a second copy — so both surfaces now
+  // answer the same verb the same way. The server's own sentence is what the user sees; it
+  // names the reason without echoing anything the browser sent.
+  const normalized = normalizeDomain(domain);
+  if (!normalized.ok) {
+    return { ok: false, error: `${normalized.error} No project was opened for it.` };
+  }
+
+  // STEP 5 — the project.
+  const opened = await openProjectForDomain(service, userId, normalized.domain);
   if (!opened.ok) {
     return opened;
   }
 
-  // STEP 5 — the mapping. Same write as saveProjectProperty, including the silent re-point:
+  // STEP 6 — the mapping. Same write as saveProjectProperty, including the silent re-point:
   // the tenant id rides BOTH as a column and inside the conflict target, so the row can only
   // ever land on this tenant's (user_id, project_id) slot (NEVER #4).
   const { error } = await service.from("gsc_connections").upsert(
