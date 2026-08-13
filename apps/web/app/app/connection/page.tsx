@@ -18,6 +18,9 @@ import {
 } from "./actions";
 import { restoreProject, trackProperty, untrackProject } from "./tracking-actions";
 import { ArchiveList } from "./archive-list";
+// A COMPONENT, not a value: `ConnectionFilter` is rendered, never called, so a Server Component
+// may import it from a `"use client"` module. `useConnectionQuery` beside it may NOT come here.
+import { ConnectionFilter } from "./connection-filter";
 import { groupConnectionRows, type ProjectRow } from "./connection-view";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
@@ -560,16 +563,21 @@ export default async function ConnectionPage({
           </p>
         ) : null}
 
-        <TrackedProjects
-          rows={trackedRowsFor(groups.tracked, projects, accounts, options)}
-          trackProperty={trackProperty}
-          untrackProject={untrackProject}
-        />
-        <PropertyLibrary
-          accounts={libraryAccountsFor(accounts, projects)}
-          trackProperty={trackProperty}
-        />
-        <ArchiveList rows={groups.archived} restoreProject={restoreProject} />
+        {/* One search box for all three groups (design §3). It wraps them rather than sitting
+            beside them because the query has to reach every group AND past the library's fold:
+            the user asking "where is that site?" does not know which group holds it. */}
+        <ConnectionFilter>
+          <TrackedProjects
+            rows={trackedRowsFor(groups.tracked, projects, accounts, options)}
+            trackProperty={trackProperty}
+            untrackProject={untrackProject}
+          />
+          <PropertyLibrary
+            accounts={libraryAccountsFor(accounts, projects)}
+            trackProperty={trackProperty}
+          />
+          <ArchiveList rows={groups.archived} restoreProject={restoreProject} />
+        </ConnectionFilter>
       </div>
 
       <div className="flex flex-col gap-2">
