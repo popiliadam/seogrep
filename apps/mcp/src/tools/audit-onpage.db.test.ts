@@ -7,6 +7,7 @@ import { getJob } from "../queue/boss.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import { NO_CRAWL_MESSAGE } from "../audit/load.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { auditOnpageTool } from "./audit-onpage.ts";
 import { auditTechTool } from "./audit-tech.ts";
@@ -64,6 +65,15 @@ async function makeProject(userId: string, domain: string): Promise<string> {
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
   return data.id;
+}
+
+/** Archive an existing project the way untrack_project does: stamp `archived_at` (0022). */
+async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (error) throw new Error(`archive update failed: ${error.message}`);
 }
 
 /** Seed a succeeded crawl job carrying `result` — the audit's input, no reserve of its own. */
@@ -291,5 +301,88 @@ describe("audit tools with no crawl — what the CLIENT receives", () => {
     expect(texts[2]).toBe(texts[0]);
     // …and the other tenant's crawl was genuinely there to be leaked.
     expect((await auditOnpageTool.run(other, { project_id: otherProjectId })).isError).toBeUndefined();
+  });
+});
+
+/**
+ * THE ARCHIVE GATE for the three audits. They resolve a project through the CRAWL (a succeeded
+ * jobs row) and never read `projects` at all, which is exactly why the shared by-id resolver —
+ * the one place the archive sentence lives — never reached them: 50 credits' worth of paid
+ * surface over a site the tenant had removed from their account.
+ *
+ * Named per tool rather than once on makeAuditTool, for the reason PR #75's Task 3 paid for: a
+ * check inside a shared function does not prove that every caller reaches it. Three registered
+ * tools, three prices, three separate runs through the registry.
+ */
+describe("audit tools over an ARCHIVED project — what the CLIENT receives", () => {
+  it.each(AUDIT_TOOLS)(
+    "$name refuses with the archive sentence and nets to zero over a crawl it would otherwise bill",
+    async ({ name, tool }) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const ctx = await makeCtx();
+        await seedGrant(ctx.userId, 100);
+        // The domain deliberately carries NO word this spec's assertions match on: a fixture
+        // named "archived.example" would let the refusal echo its own input back and pass
+        // against unmodified source (three such tautologies shipped in PR #75).
+        const projectId = await makeProject(ctx.userId, `shop-${randomUUID()}.example.com`);
+        // A REAL crawl, so the ledger assertion below is ALIVE. Without this seed the tool
+        // refuses with NO_CRAWL_MESSAGE and nets to zero whether the archive gate exists or
+        // not — a "no credits charged" assertion that cannot fail, which is precisely the
+        // dead assertion the sibling crawl task shipped. With it, an ungated tool renders a
+        // finding, RETURNS, and withCredits COMMITS the reserve.
+        await seedSucceededCrawl(ctx.userId, projectId, CRAWL_RESULT);
+        await archiveProject(projectId);
+
+        const result = await callThroughRegistry(ctx, tool, projectId);
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+        // The constant is shared with generate_report / crawl_site / connect_gsc / pull_gsc_data;
+        // this pins that what arrives is the ARCHIVE sentence and not some other shared string.
+        expect(result.content[0]?.text).toMatch(/archiv/i);
+        expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+        expect(result.content[0]?.text).not.toMatch(/reference/i);
+        expect(errorSpy).not.toHaveBeenCalled();
+        // …and NOT the audit it would have produced from the seeded crawl.
+        expect(result.content[0]?.text).not.toMatch(/missing meta description/i);
+
+        // THE MONEY PROOF, on the ledger rather than by assertion: reserve then RELEASE, no
+        // commit row anywhere, balance back to the full grant.
+        const rows = await ledgerRows(ctx.userId);
+        expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+        expect(rows[1]?.delta).toBe(-TOOL_COSTS[name]);
+        expect(rows[1]?.tool).toBe(name);
+        expect(rows.some((r) => r.kind === "spend_commit")).toBe(false);
+        expect(balanceOf(rows)).toBe(100);
+        // No result row written: still just the seeded crawl job.
+        expect(await jobCount(ctx.userId)).toBe(1);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+
+  /**
+   * THE ORDERING PIN. The gate must sit AFTER the ownership filter, never before it: another
+   * tenant's ARCHIVED project must stay byte-identical to one that does not exist. Answering
+   * "that project is archived" would say the row EXISTS and turn a paid tool into an existence
+   * oracle — the rule project-target.ts states and generate_report / pull_gsc_data both follow.
+   */
+  it("another tenant's ARCHIVED project is indistinguishable from one that does not exist", async () => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 200);
+
+    const other = await makeCtx();
+    const otherProjectId = await makeProject(other.userId, `shop-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(other.userId, otherProjectId, CRAWL_RESULT);
+    await archiveProject(otherProjectId);
+
+    const stranger = await callThroughRegistry(ctx, auditOnpageTool, otherProjectId);
+    const nowhere = await callThroughRegistry(ctx, auditOnpageTool, randomUUID());
+
+    expect(stranger.content[0]?.text).toBe(NO_CRAWL_MESSAGE);
+    expect(nowhere.content[0]?.text).toBe(stranger.content[0]?.text);
+    expect(stranger.content[0]?.text).not.toMatch(/archiv/i);
   });
 });
