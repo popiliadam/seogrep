@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { SavePropertyResult } from "./action-support";
-import type { ArchivedRow } from "./connection-view";
+import { useConnectionQuery } from "./connection-filter";
+import { matchesQuery, type ArchivedRow } from "./connection-view";
 
 interface ArchiveListProps {
   readonly rows: readonly ArchivedRow[];
@@ -32,6 +33,10 @@ const GENERIC_FAILURE = "Could not restore that site. Please try again.";
  */
 export function ArchiveList({ rows, restoreProject }: ArchiveListProps) {
   const router = useRouter();
+  // The archive is the ONLY place a removed site can be found, so the search has to reach it:
+  // a box that skipped this group would send the user looking for a site that is right here.
+  const query = useConnectionQuery();
+  const shown = rows.filter((row) => matchesQuery(query, row.domain, row.property));
   const [isPending, startTransition] = useTransition();
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
 
@@ -64,9 +69,13 @@ export function ArchiveList({ rows, restoreProject }: ArchiveListProps) {
           Nothing is archived. Removing a site puts it here, with its history and its Search
           Console property kept, so bringing it back costs one click.
         </p>
+      ) : shown.length === 0 ? (
+        // Only reachable while filtering. Saying "Nothing is archived" because a query matched
+        // nothing would answer "where did my site go?" with a plain falsehood.
+        <p className="text-sm text-neutral-600">Nothing in the archive matches that search.</p>
       ) : (
         <ul className="flex flex-col gap-1">
-          {rows.map((row) => (
+          {shown.map((row) => (
             <li
               key={row.projectId}
               className="flex flex-col gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"

@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
 import type { SavePropertyResult } from "./action-support";
-import type { TrackedRow } from "./connection-view";
+import { useConnectionQuery } from "./connection-filter";
+import { matchesQuery, type TrackedRow } from "./connection-view";
 
 /** One tracked project as this group renders it: the grouper's row, plus the page's extras. */
 export interface TrackedProjectRow extends TrackedRow {
@@ -70,6 +71,13 @@ function statusOf(row: TrackedProjectRow): string {
  */
 export function TrackedProjects({ rows, trackProperty, untrackProject }: TrackedProjectsProps) {
   const router = useRouter();
+  // Filtered on FOUR strings, not on the domain alone: `adstark.com.tr` reads
+  // `https://rkturizm.com/` on the operator's live account, so a project has to be findable by
+  // what it reads, by what it still holds, and by what it has merely been offered.
+  const query = useConnectionQuery();
+  const shown = rows.filter((row) =>
+    matchesQuery(query, row.domain, row.property, row.retained, row.suggestion?.property),
+  );
   const [isPending, startTransition] = useTransition();
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [opened, setOpened] = useState<Readonly<Record<string, boolean>>>({});
@@ -102,9 +110,13 @@ export function TrackedProjects({ rows, trackProperty, untrackProject }: Tracked
           No sites are tracked yet. Add one from Search Console below, or create a project from
           your MCP client with the setup_project tool.
         </p>
+      ) : shown.length === 0 ? (
+        // Only reachable while filtering. The sentence above is a claim about the ACCOUNT, and
+        // making a query say it would tell an operator with nine projects that they have none.
+        <p className="text-sm text-neutral-600">No tracked site matches that search.</p>
       ) : (
         <ul className="flex flex-col gap-1">
-          {rows.map((row) => (
+          {shown.map((row) => (
             <li
               key={row.projectId}
               className="flex flex-col gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"

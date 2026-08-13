@@ -370,6 +370,8 @@ describe("ConnectionPage — three groups instead of one dropdown per project", 
       expect.stringContaining("sc-domain:21.ordu.example"),
     ]);
     expect(hits[0]?.closest("details")).toBeNull();
+    // …and the box is the SECTION's: the three project rows are filtered out by it too.
+    expect(inView()).toHaveLength(1);
   });
 
   it("gives every project a row and names what it reads, with no trip to Google per row", async () => {
