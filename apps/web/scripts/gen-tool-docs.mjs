@@ -852,6 +852,42 @@ export const DOC_PROSE = {
       "created, already tracked or restored from your archive, which Google account it now reads " +
       "through, and the tools to run next.",
   },
+
+  untrack_project: {
+    lead:
+      "`untrack_project` stops tracking one of your projects by moving it to your **archive**. " +
+      "Nothing is deleted: the project, its crawls and reports, and its Search Console link stay " +
+      "exactly as they are, and " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) brings the same project " +
+      "back unchanged.",
+    whatItDoes:
+      "Pass the `project_id` of a project you no longer want on your dashboard — " +
+      "[`list_projects`](/docs/tools-reference/list-projects) prints the ids. SeoGrep marks it " +
+      "archived and stops treating it as tracked. Running it again on a project that is already " +
+      "archived is a **success, not an error**, and it does not change the date you archived it.",
+    preExampleSections: [
+      {
+        heading: "Why it archives instead of deleting",
+        body:
+          "Archiving is what makes coming back free. Everything that hangs off the project — its " +
+          "crawl history, its reports, and the Search Console property it reads through — stays " +
+          "attached to the **same project id**, so restoring it is not a rebuild. Deleting would " +
+          "throw that away and a re-added site would start from nothing.\n\n" +
+          "To bring a project back, track its property again with " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property), or set the same " +
+          "domain up again with [`setup_project`](/docs/tools-reference/setup-project) — either " +
+          "one restores the original project in place.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Stop tracking my old-site.com project.\n\n" +
+      "Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the " +
+      "`project_id`.",
+    returns:
+      "Confirmation that the project was archived — its domain and `project_id` — together with " +
+      "how to bring it back. A project that is already archived says so and nothing changes. A " +
+      "`project_id` that is not yours is reported exactly like an id that does not exist.",
+  },
 };
 
 // ---------------------------------------------------------------------------

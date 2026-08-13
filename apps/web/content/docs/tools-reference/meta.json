@@ -21,6 +21,7 @@
     "generate-report",
     "whats-next",
     "list-gsc-properties",
-    "track-gsc-property"
+    "track-gsc-property",
+    "untrack-project"
   ]
 }
