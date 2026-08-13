@@ -1,6 +1,7 @@
 import { listSites, mcpUrlFor, mcpUrlTemplate, type GscSite } from "@pseo/core";
 import { listKeys } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
+import type { ReactNode } from "react";
 import { formatDate } from "../../../lib/format";
 import { accessTokenFor } from "../../../lib/gsc/accounts";
 import { canQuerySearchAnalytics, resolveGscProperty } from "../../../lib/gsc/oauth";
@@ -15,13 +16,16 @@ import {
   saveProjectProperty,
   unmapProject,
 } from "./actions";
-import { AccountInventory } from "./account-inventory";
+import { restoreProject, trackProperty, untrackProject } from "./tracking-actions";
+import { ArchiveList } from "./archive-list";
+import { groupConnectionRows, type ProjectRow } from "./connection-view";
 import { AccountDisconnectPanel, DisconnectButton } from "./disconnect-button";
 import { KeyPanel } from "./key-panel";
+import { PropertyLibrary, type LibraryAccount } from "./property-library";
+import { TrackedProjects, type TrackedProjectRow } from "./tracked-projects";
 // `encodeChoice` comes from ./choice, NOT from ./property-picker: this file is a Server
 // Component and the picker is `"use client"`, so importing a VALUE from it makes the call a
-// client reference and the render throws. Types are erased, so they may still come from there.
-// See ./choice for the outage this caused.
+// client reference and the render throws. Types are erased. See ./choice for the outage.
 import { encodeChoice } from "./choice";
 import {
   PropertyPicker,
@@ -29,22 +33,18 @@ import {
   type RetainedMapping,
 } from "./property-picker";
 
-/** One project row: its identity plus the mapping `gsc_connections` holds for it. */
-interface ProjectConnection {
-  readonly id: string;
-  readonly domain: string;
-  /** The Google account this project reads through, or null when it is unmapped. */
-  readonly accountId: string | null;
-  /** The property string stored for it — survives an account disconnect (0021). */
-  readonly property: string | null;
-}
-
 /** One connected Google account, with the property list read LIVE for this render. */
 interface ConnectedAccount {
   readonly id: string;
   readonly email: string;
   /** `sites.list` as of now, or null when it could not be read at all. */
   readonly sites: readonly GscSite[] | null;
+}
+
+/** The account and property one suggestion names — the account rides with it deliberately. */
+interface Suggestion {
+  readonly accountId: string;
+  readonly property: string;
 }
 
 /** A repeated query param (?error=a&error=b) arrives as an array; only the first counts. */
@@ -55,11 +55,7 @@ function firstValue(raw: string | string[] | undefined): string | undefined {
 /**
  * What the OAuth callback can send the user back here with. Every message is a LITERAL: the
  * raw param is never echoed (the success one carries an account id), and an unknown value
- * renders nothing, so a crafted `?error=` can produce no output. A Map, not a record, so an
- * inherited key like "constructor" cannot resolve — the same posture as GscBanner.
- *
- * These four had NO reader until now: the callback has been redirecting here since the
- * account-based OAuth landed, and all four arrived silently.
+ * renders nothing. A Map, not a record, so "constructor" cannot resolve — as in GscBanner.
  */
 const CALLBACK_ERRORS: ReadonlyMap<string, string> = new Map([
   [
@@ -83,12 +79,9 @@ const CONNECTED_MESSAGE =
 
 /**
  * Consent belongs to a GOOGLE ACCOUNT, not to a project, so the link carries NO `project_id`.
- *
- * It used to. Migration 0021 moved the credential to `gsc_accounts`, Task 5 dropped the
- * project from the OAuth state, and the connect route now ignores the parameter outright — so
- * the old `?project_id=<id>` promised a project-scoped consent that cannot happen, and its
- * placement (one link per project row) offered a fresh Google round trip at exactly the moment
- * the user needed the property picker instead.
+ * It used to: migration 0021 moved the credential to `gsc_accounts`, Task 5 dropped the project
+ * from the OAuth state, and the route now ignores the parameter — so the old `?project_id=<id>`
+ * promised a project-scoped consent that cannot happen.
  */
 const GSC_CONNECT_PATH = "/api/gsc/connect";
 
@@ -102,17 +95,23 @@ const GSC_CONNECT_PATH = "/api/gsc/connect";
  * "Connected" is `account_id !== null`, NOT the existence of the row. Since migration 0021
  * the credential lives on `gsc_accounts` and `gsc_connections` is the MAPPING: `unmapProject`
  * clears `account_id` and keeps the row, and disconnecting an account nulls the same column
- * via `on delete set null` while every `gsc_property` survives. Reading row existence would
- * have shown both of those states as "Connected" — a Disconnect that visibly does nothing.
+ * via `on delete set null` while every `gsc_property` survives.
+ *
+ * `archived_at` IS SELECTED AND IS DELIBERATELY NOT FILTERED. This page is the one surface that
+ * must RENDER archived projects — the archive is how a removed site is found again — so the
+ * `.is("archived_at", null)` every MCP list path carries would empty that group. "List paths
+ * hide archived rows" is met one layer up instead: `groupConnectionRows` splits on this column,
+ * so an archived project reaches the archive and nothing else. Until it was read at all, an
+ * archived project would simply have appeared under Tracked sites.
  */
 async function listProjectConnections(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-): Promise<ProjectConnection[]> {
+): Promise<ProjectRow[]> {
   const [projects, connections] = await Promise.all([
     supabase
       .from("projects")
-      .select("id, domain")
+      .select("id, domain, archived_at")
       .eq("user_id", userId)
       .order("domain", { ascending: true }),
     supabase
@@ -127,7 +126,11 @@ async function listProjectConnections(
     throw new Error(`gsc_connections lookup failed: ${connections.error.message}`);
   }
 
-  const rows = (projects.data ?? []) as unknown as { id: string; domain: string }[];
+  const rows = (projects.data ?? []) as unknown as {
+    id: string;
+    domain: string;
+    archived_at: string | null;
+  }[];
   const mappings = new Map(
     (
       (connections.data ?? []) as unknown as {
@@ -142,24 +145,24 @@ async function listProjectConnections(
     domain: row.domain,
     accountId: mappings.get(row.id)?.account_id ?? null,
     property: mappings.get(row.id)?.gsc_property ?? null,
+    // The one place snake_case becomes camelCase for this column (the grouper's own name).
+    archivedAt: row.archived_at ?? null,
   }));
 }
 
 /**
  * The caller's Google accounts, each with its property list read LIVE.
  *
- * NOTHING IS CACHED, deliberately. A cache of `sites.list` would grow its own staleness
- * problem — a property removed in Search Console would stay selectable — and a dead token
- * SHOULD make this call fail: that failure is the single most useful thing this page can
- * show. It is also why a failure never throws: a credential that stopped working must render
- * as "reconnect this account", not as a 500 that hides the rest of the page (the API keys
- * live here too).
+ * NOTHING IS CACHED, deliberately. A cache of `sites.list` would grow its own staleness problem
+ * — a property removed in Search Console would stay selectable — and a dead token SHOULD make
+ * this call fail: that failure is the most useful thing this page can show. It is also why a
+ * failure never throws: a credential that stopped working must render as "reconnect this
+ * account", not as a 500 that takes the API keys down with it.
  *
  * The row list comes from the caller's own RLS-scoped client — `authenticated` holds a
- * column-level SELECT grant on `gsc_accounts` that EXCLUDES the ciphertext (migration 0021),
- * so the credential is unreachable from here. Only `accessTokenFor` needs the service client,
- * and its read is filtered on (id, user_id) — the tenant guard, since service-role bypasses
- * RLS (NEVER #4).
+ * column-level SELECT grant on `gsc_accounts` that EXCLUDES the ciphertext (migration 0021).
+ * Only `accessTokenFor` needs the service client, and its read is filtered on (id, user_id) —
+ * the tenant guard, since service-role bypasses RLS (NEVER #4).
  */
 async function listConnectedAccounts(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -216,19 +219,17 @@ function propertyOptions(accounts: readonly ConnectedAccount[]): PropertyOption[
 }
 
 /**
- * `resolveGscProperty`'s answer for one project, as an encoded picker choice — or null.
- *
- * This is the whole change of role: the same function that USED to decide the mapping inside
- * the OAuth callback now proposes one. Its logic is untouched, including the refusal that
- * keeps `blog.example.com` off the apex property, so the suggestion can never propose a bind
- * the old code would have refused. The accounts are walked in order and the first usable
- * match wins.
+ * `resolveGscProperty`'s answer for one project — or null. The function that USED to decide the
+ * mapping inside the OAuth callback now proposes one; its logic is untouched, including the
+ * refusal that keeps `blog.example.com` off the apex, so it can never propose a bind the old
+ * code would have refused. First usable match wins, and the ACCOUNT rides with the property:
+ * the same string can be listed on two different Google accounts.
  */
-function suggestionFor(domain: string, accounts: readonly ConnectedAccount[]): string | null {
+function suggestionFor(domain: string, accounts: readonly ConnectedAccount[]): Suggestion | null {
   for (const account of accounts) {
     const match = resolveGscProperty(domain, account.sites ?? []);
     if (match.kind === "matched") {
-      return encodeChoice(account.id, match.property);
+      return { accountId: account.id, property: match.property };
     }
   }
   return null;
@@ -239,27 +240,17 @@ function suggestionFor(domain: string, accounts: readonly ConnectedAccount[]): s
  *
  * `account_id IS NULL` + `gsc_property` set is the design's own state (spec line 68): "the
  * mapping stands, connect to activate it" — what migration 0021 leaves EVERY migrated row in,
- * and what an account disconnect produces. No surface rendered it: `current` is computed only
- * when `accountId !== null`, so the row showed "Not connected" beside a freshly recomputed
- * SUGGESTION and the user's own earlier choice appeared nowhere.
+ * and what an account disconnect produces.
  *
- * TWO facts, because two states differ: a connected account that still lists the property gives
- * the picker a ready-to-save choice; when none lists it (the state right after the migration,
- * before any account is connected) there is nothing to select — and the stored value is still
- * the honest thing to show, so it is named either way. Listing is not verification: the save
- * path re-fetches `sites.list` and re-checks the permission level, because nothing rendered
- * here is evidence (saveProjectProperty's own ruling).
- *
- * A THIRD fact, because "no account lists it" and "we could not ask every account" are not the
- * same sentence. `sites: null` is a FAILED read, and folding it into `?? []` made an unread
- * account look like an account that answered "nothing" — so the picker told the user no
- * connected account lists their property when the truth was that we could not find out.
- * `listingComplete` carries that distinction across, and it is the same principle
- * {@link missingPropertyFor} already applies to a MAPPED row: if the live fetch failed we know
- * nothing about the property's fate, and saying it is absent would be an invention.
+ * THREE facts, because three states differ: an account still listing the property gives the
+ * picker a ready-to-save choice; nobody listing it (the post-migration state) leaves nothing to
+ * select, and the stored value is still the honest thing to name; and a FAILED `sites.list` is
+ * neither — folding it into `?? []` made an unread account look like one that answered
+ * "nothing", so `listingComplete` carries the distinction {@link missingPropertyFor} already
+ * makes. Listing is not verification either way: the save path re-reads and re-checks.
  */
 function retainedMappingFor(
-  project: ProjectConnection,
+  project: ProjectRow,
   accounts: readonly ConnectedAccount[],
 ): RetainedMapping | null {
   if (project.accountId !== null || project.property === null) {
@@ -272,22 +263,19 @@ function retainedMappingFor(
   return {
     property,
     choice: host ? encodeChoice(host.id, property) : null,
-    // Every account answered. With no accounts at all this is vacuously true, which is right:
-    // the post-migration state really does list the property nowhere.
+    // Vacuously true with no accounts, which is right: nothing lists it after the migration.
     listingComplete: accounts.every((account) => account.sites !== null),
   };
 }
 
 /**
- * A stored property that its own account no longer lists — the property was deleted, or the
- * account's access to it was withdrawn. Reported, never swallowed: the alternative is a
- * dropdown that silently forgets the project's selection, and the loss is itself information.
- *
- * Only claimed when the account's listing was actually READ. If the live fetch failed we know
- * nothing about the property's fate, and saying it vanished would be an invention.
+ * A stored property that its own account no longer lists — deleted, or access withdrawn.
+ * Reported, never swallowed: the alternative is a dropdown that silently forgets the project's
+ * selection, and the loss is itself information. Only claimed when the listing was actually
+ * READ: if the live fetch failed, saying it vanished would be an invention.
  */
 function missingPropertyFor(
-  project: ProjectConnection,
+  project: ProjectRow,
   accounts: readonly ConnectedAccount[],
 ): string | null {
   if (project.property === null || project.accountId === null) {
@@ -301,55 +289,144 @@ function missingPropertyFor(
 }
 
 /**
- * Whether this project's row should offer a re-consent: it IS mapped, and the account it is
- * mapped to could not be read. That is the only state a trip to Google actually fixes.
- *
- * An UNMAPPED project is deliberately excluded, and that is the point of the control moving.
- * A user who has already connected an account and merely has not chosen a property for this
- * project needs the picker below the row — sending them back through a Google consent round
- * would re-grant something they already granted and still leave the property unchosen.
- */
-function needsReconsent(
-  project: ProjectConnection,
-  accounts: readonly ConnectedAccount[],
-): boolean {
-  if (project.accountId === null) {
-    return false;
-  }
-  const account = accounts.find((candidate) => candidate.id === project.accountId);
-  return account !== undefined && account.sites === null;
-}
-
-/**
  * How many OTHER projects read the same property. Allowed on purpose — one domain property
  * can legitimately cover two projects — so this is a note the picker shows, never a block.
- * Only live mappings count: a row whose account was disconnected keeps its `gsc_property`
- * but reads nothing.
+ *
+ * Only LIVE mappings count, and only TRACKED projects: a row whose account was disconnected
+ * keeps its `gsc_property` and reads nothing, and an archived project appears nowhere but the
+ * archive — naming it would answer "who else is affected?" with someone the user cannot see.
  */
-function alsoMappedCount(
-  project: ProjectConnection,
-  projects: readonly ProjectConnection[],
-): number {
+function alsoMappedCount(project: ProjectRow, projects: readonly ProjectRow[]): number {
   if (project.property === null || project.accountId === null) {
     return 0;
   }
   return projects.filter(
     (other) =>
       other.id !== project.id &&
+      other.archivedAt === null &&
       other.accountId !== null &&
       other.property === project.property,
   ).length;
 }
 
 /**
+ * The "Change" surface one tracked row opens: the existing `PropertyPicker`, plus the control
+ * that unlinks the project without archiving it.
+ *
+ * THE PICKER IS NOT DELETED BY THIS REDESIGN and this is why. The library below maps a property
+ * onto the project its name implies; `adstark.com.tr` reads `https://rkturizm.com/` on the
+ * operator's live account, and no name-based path can ever produce that. So the picker stays —
+ * behind a disclosure, which is what took nine dropdowns off the page: they are no longer
+ * rendered up front.
+ *
+ * Disconnect rides here because it answers the same question ("what does this project read?")
+ * with "nothing". It is NOT Remove: Remove archives the whole project, this only clears the
+ * mapping. Null when there is neither a property to pick nor a mapping to drop, because
+ * `TrackedProjects` hides its Change button exactly then.
+ */
+function changeSurfaceFor(
+  project: ProjectRow,
+  projects: readonly ProjectRow[],
+  accounts: readonly ConnectedAccount[],
+  options: readonly PropertyOption[],
+  suggestion: Suggestion | null,
+): ReactNode {
+  if (options.length === 0 && project.accountId === null) {
+    return null;
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <PropertyPicker
+        projectId={project.id}
+        domain={project.domain}
+        options={options}
+        current={
+          project.accountId !== null && project.property !== null
+            ? encodeChoice(project.accountId, project.property)
+            : ""
+        }
+        retained={retainedMappingFor(project, accounts)}
+        suggested={
+          suggestion === null ? null : encodeChoice(suggestion.accountId, suggestion.property)
+        }
+        missingProperty={missingPropertyFor(project, accounts)}
+        alsoMapped={alsoMappedCount(project, projects)}
+        saveProjectProperty={saveProjectProperty}
+      />
+      <DisconnectButton
+        projectId={project.id}
+        domain={project.domain}
+        connected={project.accountId !== null}
+        unmapProject={unmapProject}
+      />
+    </div>
+  );
+}
+
+/**
+ * The tracked group, with the two things the grouper cannot know: each domain's suggestion and
+ * the node its Change button opens. Driven by `tracked`, never by `projects`, so the grouper's
+ * archive split is the ONLY thing deciding what appears here.
+ */
+function trackedRowsFor(
+  tracked: ReturnType<typeof groupConnectionRows>["tracked"],
+  projects: readonly ProjectRow[],
+  accounts: readonly ConnectedAccount[],
+  options: readonly PropertyOption[],
+): TrackedProjectRow[] {
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  return tracked.flatMap((row) => {
+    const project = byId.get(row.projectId);
+    if (project === undefined) return [];
+    const suggestion = suggestionFor(project.domain, accounts);
+    return [
+      {
+        ...row,
+        suggestion,
+        picker: changeSurfaceFor(project, projects, accounts, options, suggestion),
+      },
+    ];
+  });
+}
+
+/**
+ * What each account still has FREE. `groupConnectionRows` is scoped to ONE account (the same
+ * property string can sit on two, and a project reads it through exactly one), so the library —
+ * and only the library — is computed once per account.
+ *
+ * A failed `sites.list` stays NULL all the way down: `?? []` here would turn "we could not ask"
+ * into "the account has nothing", the one inference this page refuses everywhere else.
+ */
+function libraryAccountsFor(
+  accounts: readonly ConnectedAccount[],
+  projects: readonly ProjectRow[],
+): LibraryAccount[] {
+  return accounts.map((account) => ({
+    accountId: account.id,
+    email: account.email,
+    rows:
+      account.sites === null
+        ? null
+        : groupConnectionRows({ projects, sites: account.sites, accountId: account.id }).library,
+    listed: account.sites?.length ?? 0,
+  }));
+}
+
+/**
  * /app/connection — personal API keys + personal MCP URL + the Search Console surface: which
- * Google accounts are connected, and which property each project reads through them.
+ * Google accounts are connected, which site each project reads, what is still free to take,
+ * and what has been put away.
+ *
+ * THREE GROUPS, NOT NINE DROPDOWNS. Measured on the operator's live page (2026-08-13): one
+ * Google account, 27 properties, 26 unused, and a 28-option `<select>` repeated once per
+ * project — 243 `<option>` elements over 2697px, each expressing one fact. Tracked sites says
+ * what every project reads, the library what is still free, the archive where a removed site
+ * went; the dropdown survives only behind a row's Change button.
  *
  * The /app layout already guards the session; this RSC reads the caller's OWN keys, projects,
  * mappings and accounts through their authenticated client (RLS owner-SELECT). All mutations
- * live in the server actions, and the two client islands (picker, account disconnect) hold no
- * state the database does not already own. The page only ever shows the MASKED MCP URL; the
- * full URL is revealed once, client-side, at creation time.
+ * live in the server actions, and the client islands hold no state the database does not
+ * already own. Only the MASKED MCP URL is ever shown here.
  */
 export default async function ConnectionPage({
   searchParams,
@@ -359,8 +436,7 @@ export default async function ConnectionPage({
   const params = await searchParams;
   const callbackError = CALLBACK_ERRORS.get(firstValue(params.error) ?? "");
   // Truthiness, not mere presence: `?connected=` with an EMPTY value is not an account id, and
-  // announcing a stored account from it would be a success message with nothing behind it. The
-  // real callback always carries one, so this closes a state only a crafted URL can reach.
+  // announcing a stored account from it would be a success message with nothing behind it.
   const connected = Boolean(firstValue(params.connected));
 
   const supabase = await createClient();
@@ -374,12 +450,16 @@ export default async function ConnectionPage({
         listProjectConnections(supabase, user.id),
         listConnectedAccounts(supabase, user.id),
       ])
-    : [[] as ProjectConnection[], [] as ConnectedAccount[]];
+    : [[] as ProjectRow[], [] as ConnectedAccount[]];
   const options = propertyOptions(accounts);
+  // ONE tracked group and ONE archive for the whole page. `groupConnectionRows` is scoped to a
+  // single account and neither group depends on one, so calling it per account would repeat
+  // every row N times; the account-shaped arguments are empty here and the library, which DOES
+  // depend on the account, is taken per account in `libraryAccountsFor`.
+  const groups = groupConnectionRows({ projects, sites: [], accountId: "" });
   // Whether EVERY account actually answered `sites.list`. The same refusal `retainedMappingFor`
   // and `missingPropertyFor` already make: a failed read is not an empty one, so "none of them
-  // lists a property" may only be said when nothing was left unread. When something was, the
-  // amber warning below is the honest sentence and this one stays quiet.
+  // lists a property" may only be said when nothing was left unread.
   const listingComplete = accounts.every((account) => account.sites !== null);
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
   // ONE read of the template feeds both forms the server accepts, so they can never point at
@@ -429,20 +509,16 @@ export default async function ConnectionPage({
             {CONNECTED_MESSAGE}
           </p>
         ) : null}
-        {/* This paragraph is the only place the user learns what Disconnect does, so it says
-            what the action actually does and nothing more. It used to promise a revoke at
-            Google; since the credential moved to the Google ACCOUNT (migration 0021) the
-            per-project button no longer performs one, and leaving the old wording would have
-            told the user their Search Console access was revoked while the grant was live.
-            The last sentence used to end at "a separate step on the Google account itself"
-            because that step had no control here — it does now, so it names it. */}
+        {/* The only place the user learns what removing a site does, so it says what the
+            actions actually do and nothing more. It used to promise a revoke at Google; since
+            the credential moved to the ACCOUNT (0021) no per-project control performs one. */}
         <p className="text-sm text-neutral-600">
           Link a project to Search Console so its tools can read your real query and click
-          data. Connecting sends you to Google and back. Disconnecting removes the link
-          between this project and Search Console. It does not revoke SeoGrep&apos;s access to
-          your Google account, so your other projects keep working; to drop that access
-          altogether, use Disconnect next to the Google account under Connected Google
-          accounts below.
+          data. Connecting sends you to Google and back. Removing a site archives it — its
+          history and its Search Console property are kept, so bringing it back costs one
+          click. Removing a site does not revoke SeoGrep&apos;s access to your Google account,
+          so your other projects keep working; to drop that access altogether, use Disconnect
+          next to the Google account under Connected Google accounts below.
         </p>
 
         <h3 className="text-sm font-medium text-neutral-700">Connected Google accounts</h3>
@@ -451,29 +527,11 @@ export default async function ConnectionPage({
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
-        {/* What each connected account can actually READ — `sites.list`'s answer had only ever
-            produced dropdown options, so a user could not see anywhere what Google gives them
-            access to. Per account, because that is the scope the answer has: the page-level
-            sentences below summarise ACROSS accounts, this names one. `projects` and `accounts`
-            are already loaded above; no query is added. */}
-        {accounts.map((account) => (
-          <div key={account.id} className="flex flex-col gap-1">
-            <h4 className="text-xs font-medium text-neutral-700">{account.email}</h4>
-            <AccountInventory sites={account.sites} projects={projects} accountId={account.id} />
-          </div>
-        ))}
-        {/* Said ONCE, by the page, because the state belongs to the account list and not to any
-            project. Every project row used to say it instead, so a user with nine projects read
-            the same paragraph nine times — repetition that carried no more information than one
-            sentence would, and buried the only control that could act on it. The second half is
-            there because the first half alarms: nothing about the projects is lost or paused.
-
-            TWO sentences, because the row paragraph these replace covered a WIDER state than
-            "no account is connected": it appeared whenever there was nothing to pick. Connecting
-            the wrong Google account reaches the other half of that — an account IS connected and
-            lists no property — where the first sentence would be false and the amber warning
-            below stays silent (it wants a FAILED read, not an empty one). Left with one sentence
-            this page went blank in exactly the state this change exists to close. */}
+        {/* Said ONCE, by the page: the state belongs to the account list, not to any project.
+            Every project row used to say it, so nine projects meant nine copies. TWO sentences,
+            because "no account is connected" is strictly narrower than "nothing to pick":
+            connecting the WRONG Google account reaches the other half, where the first is false
+            and the amber warning stays silent (it wants a FAILED read, not an empty one). */}
         {accounts.length === 0 ? (
           <p className="text-sm text-neutral-600">
             Connect a Google account to choose which Search Console property each project
@@ -486,12 +544,9 @@ export default async function ConnectionPage({
             different Google account.
           </p>
         ) : null}
-        {/* A plain <a>, like the old per-project link: this is the route handler that mints a
-            signed state and 302s to Google, and next/link would prefetch it and start the flow.
-            Rendered unconditionally — with no accounts it is the ONLY way to connect one, and
-            with several it is how the next one is added. Styled as the primary action it is:
-            with nothing connected, this link is the page's entire way forward, and it used to
-            carry the visual weight of body text. Element and accessible name are unchanged. */}
+        {/* A plain <a>: this route mints a signed state and 302s to Google, and next/link
+            would prefetch it and start the flow. Unconditional — with no accounts it is the
+            only way to connect one, and it is the repair the amber warning points at. */}
         <a
           href={GSC_CONNECT_PATH}
           className="self-start rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700"
@@ -505,72 +560,16 @@ export default async function ConnectionPage({
           </p>
         ) : null}
 
-        {projects.length === 0 ? (
-          <p className="text-sm text-neutral-600">
-            No projects yet. Create one from your MCP client with the setup_project tool.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1">
-            {projects.map((project) => (
-              <li
-                key={project.id}
-                className="flex flex-col gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm"
-              >
-                <span className="flex items-center justify-between gap-4">
-                  <span className="text-neutral-800">{project.domain}</span>
-                  <span className="flex items-center gap-3 text-neutral-500">
-                    {project.accountId !== null ? (
-                      <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
-                        Connected
-                      </span>
-                    ) : (
-                      <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-500">
-                        Not connected
-                      </span>
-                    )}
-                    {/* The ONLY per-row trip to Google, and only for the one state a trip
-                        fixes: a mapped project whose account credential no longer works. An
-                        unmapped project is served by the picker below the row, not by a fresh
-                        consent — and the consent it would start is account-wide anyway, so it
-                        carries no project_id. */}
-                    {needsReconsent(project, accounts) ? (
-                      <a
-                        href={GSC_CONNECT_PATH}
-                        className="font-medium text-neutral-700 hover:text-neutral-900"
-                      >
-                        Reconnect
-                      </a>
-                    ) : null}
-                    {/* The island renders the Disconnect button only for a linked project, but
-                        is mounted either way. Per-project Disconnect UNLINKS only — the shared
-                        Google grant is dropped from the account level (finding #63). */}
-                    <DisconnectButton
-                      projectId={project.id}
-                      domain={project.domain}
-                      connected={project.accountId !== null}
-                      unmapProject={unmapProject}
-                    />
-                  </span>
-                </span>
-                <PropertyPicker
-                  projectId={project.id}
-                  domain={project.domain}
-                  options={options}
-                  current={
-                    project.accountId !== null && project.property !== null
-                      ? encodeChoice(project.accountId, project.property)
-                      : ""
-                  }
-                  retained={retainedMappingFor(project, accounts)}
-                  suggested={suggestionFor(project.domain, accounts)}
-                  missingProperty={missingPropertyFor(project, accounts)}
-                  alsoMapped={alsoMappedCount(project, projects)}
-                  saveProjectProperty={saveProjectProperty}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+        <TrackedProjects
+          rows={trackedRowsFor(groups.tracked, projects, accounts, options)}
+          trackProperty={trackProperty}
+          untrackProject={untrackProject}
+        />
+        <PropertyLibrary
+          accounts={libraryAccountsFor(accounts, projects)}
+          trackProperty={trackProperty}
+        />
+        <ArchiveList rows={groups.archived} restoreProject={restoreProject} />
       </div>
 
       <div className="flex flex-col gap-2">
