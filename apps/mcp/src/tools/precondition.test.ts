@@ -21,10 +21,19 @@ import { PreconditionNotMetError, isPreconditionNotMet } from "./precondition.ts
  * What is under test is the shared builder + the registry catch, neither of which reads the name;
  * the six PRICED tools that use these builders are named and charged for real in the db lane
  * (audit-onpage.db.test.ts, gsc-discovery.db.test.ts), which is also where the ledger nets to zero.
+ *
+ * The builders' archive gate reads `projects` through an injected port for that same DB-less
+ * reason, so every builder below passes NO_PROJECT — "this id did not resolve", which is what an
+ * unknown id and another tenant's id both read as, and the state under which the gate stands
+ * aside. Nothing here asserts anything about the gate; it is measured over the REAL reader, per
+ * tool and on the ledger, in the db lane.
  */
 
 const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 const PROJECT_ID = "0e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7";
+
+/** The project port's "did not resolve" answer — the archive gate stands aside on it. */
+const NO_PROJECT = async () => null;
 
 /** A minimal fake MCP Server that records the handlers registerAll installs. */
 function fakeServer() {
@@ -89,6 +98,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
     try {
       const tool = makeAuditTool("whats_next", "d", () => "unreachable", {
         loadCrawl: async () => ({ ok: false, error: NO_CRAWL_MESSAGE }),
+        loadProject: NO_PROJECT,
       });
       const result = await callTool(tool, "whats_next");
 
@@ -109,6 +119,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
     try {
       const tool = makeDiscoveryTool("get_job_status", "d", () => "unreachable", {
         loadPull: async () => ({ ok: false, error: NO_PULL_MESSAGE }),
+        loadProject: NO_PROJECT,
       });
       const result = await callTool(tool, "get_job_status");
 
@@ -129,6 +140,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
         ok: true,
         crawl: { pages: [], skipped: [], fetchedAt: "2026-08-09T00:00:00.000Z" },
       }),
+      loadProject: NO_PROJECT,
     });
     const result = await callTool(tool, "whats_next");
     expect(result.isError).toBeUndefined();
@@ -176,6 +188,7 @@ describe("a genuine crash is still reported as one", () => {
         loadCrawl: async () => {
           throw new Error('relation "public.jobs" does not exist');
         },
+        loadProject: NO_PROJECT,
       });
       const result = await callTool(tool, "whats_next");
 

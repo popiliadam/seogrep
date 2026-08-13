@@ -4,6 +4,7 @@ import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { encryptToken, toByteaHex } from "@pseo/core";
 import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { getServiceClient } from "../db.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
@@ -64,6 +65,24 @@ async function makeProject(userId: string, domain: string): Promise<string> {
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
   return data.id;
+}
+
+/** Archive an existing project the way untrack_project does: stamp `archived_at` (0022). */
+async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (error) throw new Error(`archive update failed: ${error.message}`);
+}
+
+async function jobCount(userId: string): Promise<number> {
+  const { count, error } = await service
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+  if (error) throw new Error(`jobs count failed: ${error.message}`);
+  return count ?? 0;
 }
 
 interface LedgerRow {
@@ -370,5 +389,93 @@ describe("discovery tools over a DEAD connection — what the CLIENT receives", 
     const result = await callThroughRegistry(intruder, makeFindQuickWinsTool(), projectId);
 
     expect(result.content[0]?.text ?? "").not.toMatch(/connection expired/i);
+  });
+});
+
+/**
+ * THE ARCHIVE GATE for the three discovery tools. They resolve a project through the stored
+ * PULL (a succeeded jobs row) and never read `projects` at all, which is exactly why the shared
+ * by-id resolver — the one place the archive sentence lives — never reached them: 30 credits'
+ * worth of paid surface over a site the tenant had removed from their account.
+ *
+ * Named per tool rather than once on makeDiscoveryTool, for the reason PR #75's Task 3 paid for:
+ * a check inside a shared function does not prove that every caller reaches it.
+ */
+describe("discovery tools over an ARCHIVED project — what the CLIENT receives", () => {
+  it.each(CASES)(
+    "$name refuses with the archive sentence and nets to zero over a pull it would otherwise bill",
+    async ({ name, make, expect: needle }) => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const ctx = await makeCtx();
+        await seedGrant(ctx.userId, 100);
+        // The domain carries NO word this spec's assertions match on — a fixture named
+        // "archived.example" would let the refusal echo its own input back and pass against
+        // unmodified source (three such tautologies shipped in PR #75).
+        const projectId = await makeProject(ctx.userId, `shop-${randomUUID()}.example.com`);
+        // A REAL pull, so the ledger assertion below is ALIVE: without it the tool refuses with
+        // NO_PULL_MESSAGE and nets to zero whether the gate exists or not — an assertion that
+        // cannot fail. With it, an ungated tool delivers the analysis, RETURNS, and COMMITS.
+        await recordSucceededPull(service, {
+          userId: ctx.userId,
+          projectId,
+          result: pullResultToJson(SAMPLE_PULL),
+        });
+        await archiveProject(projectId);
+
+        const result = await callThroughRegistry(ctx, make(), projectId);
+
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+        // The constant is shared with generate_report / crawl_site / connect_gsc / the audits;
+        // this pins that what arrives is the ARCHIVE sentence and not some other shared string.
+        expect(result.content[0]?.text).toMatch(/archiv/i);
+        expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+        expect(result.content[0]?.text).not.toMatch(/reference/i);
+        expect(errorSpy).not.toHaveBeenCalled();
+        // …and NOT the analysis it would have produced from the seeded pull.
+        expect(result.content[0]?.text).not.toMatch(needle);
+
+        // THE MONEY PROOF, on the ledger rather than by assertion: reserve then RELEASE, no
+        // commit row anywhere, balance back to the full grant.
+        const rows = await ledgerRows(ctx.userId);
+        expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+        expect(rows[1]?.delta).toBe(-TOOL_COSTS[name]);
+        expect(rows[1]?.tool).toBe(name);
+        expect(rows.some((r) => r.kind === "spend_commit")).toBe(false);
+        expect(balanceOf(rows)).toBe(100);
+        // No result row written: still just the seeded pull job.
+        expect(await jobCount(ctx.userId)).toBe(1);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
+
+  /**
+   * THE ORDERING PIN. The gate sits AFTER the ownership filter, never before it: another
+   * tenant's ARCHIVED project must stay byte-identical to one that does not exist. Answering
+   * "that project is archived" would say the row EXISTS and turn a paid tool into an existence
+   * oracle — the rule project-target.ts states and generate_report / pull_gsc_data both follow.
+   */
+  it("another tenant's ARCHIVED project is indistinguishable from one that does not exist", async () => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 200);
+
+    const other = await makeCtx();
+    const otherProjectId = await makeProject(other.userId, `shop-${randomUUID()}.example.com`);
+    await recordSucceededPull(service, {
+      userId: other.userId,
+      projectId: otherProjectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+    await archiveProject(otherProjectId);
+
+    const stranger = await callThroughRegistry(ctx, makeFindQuickWinsTool(), otherProjectId);
+    const nowhere = await callThroughRegistry(ctx, makeFindQuickWinsTool(), randomUUID());
+
+    expect(stranger.content[0]?.text).toBe(NO_PULL_MESSAGE);
+    expect(nowhere.content[0]?.text).toBe(stranger.content[0]?.text);
+    expect(stranger.content[0]?.text).not.toMatch(/archiv/i);
   });
 });

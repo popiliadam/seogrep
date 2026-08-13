@@ -39,7 +39,14 @@ function buildFindQuickWins(pulledAt: string, loadTokenStatus: LoadTokenStatusFn
     "get_job_status",
     "d",
     (pull) => formatQuickWins(findQuickWins(pull)),
-    { loadPull: async () => ({ ok: true, pull: SAMPLE_PULL, pulledAt }), loadTokenStatus },
+    {
+      loadPull: async () => ({ ok: true, pull: SAMPLE_PULL, pulledAt }),
+      loadTokenStatus,
+      // The archive gate's project port, stubbed to "this id did not resolve" so this lane stays
+      // DB-less (the real reader opens a service client). The gate itself is measured over the
+      // real reader, per tool and on the ledger, in gsc-discovery.db.test.ts.
+      loadProject: async () => null,
+    },
   );
 }
 

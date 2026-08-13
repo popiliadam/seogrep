@@ -336,6 +336,43 @@ describe("ConnectionPage — three groups instead of one dropdown per project", 
     expect(within(groupOf(/^tracked sites$/i)).getAllByRole("listitem")).toHaveLength(3);
   });
 
+  /**
+   * THE DEFAULT VIEW AND THE SEARCH BOX, at the operator's live scale. Taking the dropdowns to
+   * zero made the page TALLER — 2697px → 10051px after PR #75 — because 26 unused properties
+   * stopped being repeated `<option>`s and became 26 always-expanded rows (3592px). jsdom has no
+   * layout, so height cannot be read here; the structure it comes from can be, and moves: 29
+   * rows in view before the fold, 3 after. MUTATIONS: `<details open>` reddens the count;
+   * unwrapping `<ConnectionFilter>` in page.tsx reddens the box and the filtered rows.
+   */
+  it("opens with the library folded away, and one search box that reaches into it", async () => {
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A, PROJECT_B, PROJECT_C];
+    connectionRows = [];
+    accountRows = [account()];
+    sitesByAccount = {
+      [ACCOUNT_ID]: Array.from({ length: 26 }, (_, i) => site(`sc-domain:${i}.ordu.example`)),
+    };
+    await renderPage();
+
+    // Rendered, so nothing was dropped to shorten the page…
+    expect(within(groupOf(/^add from search console$/i)).getAllByRole("listitem")).toHaveLength(26);
+    // …and reachable without opening anything: the three project rows, and nothing else.
+    const inView = () =>
+      screen.getAllByRole("listitem").filter((row) => row.closest("details")?.open !== false);
+    expect(inView()).toHaveLength(3);
+
+    // ONE box for the whole section, and a hit does not stay behind the fold.
+    expect(screen.getAllByRole("searchbox")).toHaveLength(1);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "21.ordu" } });
+    const hits = within(groupOf(/^add from search console$/i)).getAllByRole("listitem");
+    expect(hits.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("sc-domain:21.ordu.example"),
+    ]);
+    expect(hits[0]?.closest("details")).toBeNull();
+    // …and the box is the SECTION's: the three project rows are filtered out by it too.
+    expect(inView()).toHaveLength(1);
+  });
+
   it("gives every project a row and names what it reads, with no trip to Google per row", async () => {
     listKeys.mockResolvedValue([]);
     projectRows = [PROJECT_A, PROJECT_B];

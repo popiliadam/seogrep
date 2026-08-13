@@ -246,6 +246,7 @@ describe("the RSC boundary of the connection page", () => {
     expect(SERVER_MODULES).not.toContain("tracked-projects.tsx");
     expect(SERVER_MODULES).not.toContain("property-library.tsx");
     expect(SERVER_MODULES).not.toContain("archive-list.tsx");
+    expect(SERVER_MODULES).not.toContain("connection-filter.tsx");
   });
 
   /**

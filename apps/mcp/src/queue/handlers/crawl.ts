@@ -1,5 +1,6 @@
 import { boundCrawlResult, crawlSite, type CrawlResult } from "../../crawler/crawl.ts";
-import { forUser, getServiceClient, type Json, type JobRow } from "../../db.ts";
+import { getServiceClient, type Json, type JobRow } from "../../db.ts";
+import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "../../tools/project-target.ts";
 import { getJobForUser } from "../boss.ts";
 import type { ToolHandler } from "../worker.ts";
 
@@ -85,18 +86,32 @@ export async function resolveProjectOrigin(userId: string, job: JobRow): Promise
   if (!job.project_id) {
     throw new Error("crawl_site: job has no project to crawl");
   }
-  const { data, error } = await forUser(getServiceClient(), userId)
-    .selectOwn("projects", "id, domain")
-    .eq("id", job.project_id)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`crawl_site: project lookup failed: ${error.message}`);
-  }
-  if (!data) {
+  // The SHARED by-id resolver, not a read of this handler's own: a per-caller project read is a
+  // per-caller place for the archive check below to be forgotten — which is precisely how this
+  // path was missed when the surface got its gate. It carries the same tenant filter the
+  // hand-written read had (selectOwnById -> .eq("user_id", …)), so the cross-tenant guarantee
+  // above is unchanged; only the wording of a lookup FAILURE moved (it now names the table
+  // rather than the tool, and get_job_status prints the tool beside it anyway).
+  const project = await loadOwnProject(userId, job.project_id);
+  if (!project) {
     throw new Error("crawl_site: project not found for this account");
   }
-  const { domain } = data as unknown as { domain: string };
-  return `https://${domain}`;
+  // ARCHIVED AT PICKUP. The surface refuses an archived project before it ever enqueues, so a
+  // job can only reach here archived by being queued while the project was still live and picked
+  // up afterwards. Refusing it now costs the tenant nothing — the job has not started — which is
+  // what separates it from cancelling a RUNNING crawl (that would be data loss, and is
+  // deliberately not done).
+  //
+  // THROW, never return: executeJob wraps this in withCredits, where returning COMMITS the
+  // 20-credit reserve and throwing RELEASES it. So this is the same shape as the empty-crawl
+  // refusal below — a run that delivered nothing must cost nothing. The message is the shared
+  // sentence verbatim (no "crawl_site:" prefix, unlike the operator diagnostics around it):
+  // get_job_status renders jobs.error to the USER as written, and this is a refusal they can act
+  // on, not a fault for an operator to read.
+  if (project.archivedAt !== null) {
+    throw new Error(ARCHIVED_PROJECT_MESSAGE);
+  }
+  return `https://${project.domain}`;
 }
 
 /**

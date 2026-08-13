@@ -36,6 +36,33 @@ export function inventoryRows(
   }));
 }
 
+/**
+ * Does one row survive what the user typed into the search box?
+ *
+ * Every group filters through this, so the answer to "where is that site?" cannot depend on
+ * which group happens to hold it — the reason the box is at the top of the section rather than
+ * inside the library. A row is kept when ANY of its strings contains the query, because a
+ * project is findable by the property it reads as well as by its own domain (`adstark.com.tr`
+ * reads `https://rkturizm.com/` on the operator's live account).
+ *
+ * An EMPTY query keeps everything: the box filters, it never hides. Trimmed, so a stray space
+ * is not a filter that matches nothing.
+ *
+ * Pure and directive-free, like everything else here. The search box is a `"use client"` island
+ * and this is called while a client component renders — but `page.tsx` reads this module too,
+ * so the predicate may not live beside the island (see ./choice for the outage).
+ */
+export function matchesQuery(
+  query: string,
+  ...values: readonly (string | null | undefined)[]
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return true;
+  }
+  return values.some((value) => value != null && value.toLowerCase().includes(needle));
+}
+
 /** One project as the connection page reads it out of the database. */
 export interface ProjectRow {
   readonly id: string;

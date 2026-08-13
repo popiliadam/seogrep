@@ -22,6 +22,39 @@ const ROWS = [
   { siteUrl: "https://www.bigcattr.com/", permissionLevel: "siteUnverifiedUser", queryable: false },
 ];
 
+/**
+ * The operator's live shape: 26 properties nothing reads (measured 2026-08-13). The count is the
+ * whole point of the fold, so the fixture carries it rather than standing in with two rows.
+ *
+ * `ordu` is a place name: no assertion below matches on it, and it carries no word this file
+ * matches on ("track", "propert", "read", "show", "available").
+ */
+const MANY = Array.from({ length: 26 }, (_, index) => ({
+  siteUrl: `sc-domain:${index}.ordu.example`,
+  permissionLevel: "siteOwner",
+  queryable: true,
+}));
+
+/** The `<details>` an element sits inside, or null when nothing folds it away. */
+function foldOf(element: Element): HTMLDetailsElement | null {
+  return element.closest("details");
+}
+
+/** Rendered AND reachable without opening anything — the default view, as a count. */
+function visibleRowCount(): number {
+  return screen.queryAllByRole("listitem").filter((row) => foldOf(row)?.open !== false).length;
+}
+
+/**
+ * Open one account's fold. jsdom neither hides nor un-clicks the contents of a closed
+ * `<details>`, so a spec that acts on a row would pass here while the row was unreachable in a
+ * browser — the test double being more permissive than the runtime, which is how this directory
+ * shipped an outage. The specs that CLICK a row therefore open the fold first, for real.
+ */
+function openFold(index = 0) {
+  fireEvent.click(screen.getAllByText(/^Show \d+ available propert(y|ies)$/)[index] as HTMLElement);
+}
+
 function account(overrides: Partial<LibraryAccount> = {}): LibraryAccount {
   return {
     accountId: ACC,
@@ -127,6 +160,7 @@ describe("PropertyLibrary", () => {
     const trackProperty = ok();
     render(<PropertyLibrary accounts={[account()]} trackProperty={trackProperty} />);
 
+    openFold();
     fireEvent.click(screen.getByRole("button", { name: /balerin\.com/i }));
 
     // The ACCOUNT rides with the property: the same property string can be listed on two
@@ -145,6 +179,7 @@ describe("PropertyLibrary", () => {
     const trackProperty = vi.fn().mockResolvedValue({ ok: false, error: sentence });
     render(<PropertyLibrary accounts={[account()]} trackProperty={trackProperty} />);
 
+    openFold();
     fireEvent.click(screen.getByRole("button", { name: /balerin\.com/i }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(sentence));
@@ -176,6 +211,7 @@ describe("PropertyLibrary", () => {
       />,
     );
 
+    openFold(1);
     fireEvent.click(screen.getByRole("button", { name: /zephyrbrook\.com/i }));
 
     await waitFor(() =>
@@ -183,11 +219,92 @@ describe("PropertyLibrary", () => {
     );
   });
 
+  /**
+   * WHY THE FOLD EXISTS, measured on the live page after PR #75 (2026-08-13): the nine
+   * dropdowns went ("<select>" 9→0, "<option>" 243→0) and the page got TALLER — 2697px → 10051px
+   * — because 26 unused properties that used to be repeated options are now 26 always-expanded
+   * rows, 3592px of them. The approved design (spec §3) had a fold and the plan dropped it.
+   *
+   * jsdom has NO LAYOUT: `scrollHeight` is 0 for every element and closed-`<details>` content is
+   * neither hidden nor removed here, so height cannot be asserted in this environment. What CAN
+   * be asserted is the structure height follows from — how many rows the default view reaches
+   * without opening anything — so that is what these specs measure.
+   */
+  it("folds its rows away by default and says how many are behind the fold", () => {
+    render(<PropertyLibrary accounts={[account({ rows: MANY, listed: 27 })]} trackProperty={ok()} />);
+
+    // Every row is rendered — the fold hides, it does not drop — and none is in the default view.
+    expect(screen.queryAllByRole("listitem")).toHaveLength(26);
+    expect(visibleRowCount()).toBe(0);
+
+    // The count is what makes a closed fold legible: "something is here, this much of it".
+    const summary = screen.getByText("Show 26 available properties");
+    expect(summary.tagName).toBe("SUMMARY");
+    expect(foldOf(summary)?.open).toBe(false);
+  });
+
+  it("opens on a click of its own summary, with no client state to hold it", () => {
+    render(<PropertyLibrary accounts={[account({ rows: MANY, listed: 27 })]} trackProperty={ok()} />);
+
+    fireEvent.click(screen.getByText("Show 26 available properties"));
+
+    expect(visibleRowCount()).toBe(26);
+  });
+
+  /** One row left, one sentence: the plural is not a detail when the fold is the only label. */
+  it("counts one property in the singular", () => {
+    render(
+      <PropertyLibrary
+        accounts={[account({ rows: [ROWS[0] as (typeof ROWS)[number]], listed: 27 })]}
+        trackProperty={ok()}
+      />,
+    );
+
+    expect(screen.getByText("Show 1 available property")).toBeTruthy();
+  });
+
+  /**
+   * THE FOLD MAY NOT HIDE A FAILURE. An absence we did not observe is not an absence, and a
+   * disclosure that swallows "we could not ask" turns the unread account into a quiet one — the
+   * same inference this component refuses everywhere else, reintroduced by the collapse.
+   */
+  it("never folds away a failed listing", () => {
+    render(<PropertyLibrary accounts={[account({ rows: null })]} trackProperty={ok()} />);
+
+    expect(foldOf(screen.getByText(/could not be read/i))).toBeNull();
+  });
+
+  /** Same rule for both empty-library sentences: nothing to fold, and nothing folded. */
+  it("never folds away either empty-library sentence", () => {
+    render(<PropertyLibrary accounts={[account({ rows: [], listed: 0 })]} trackProperty={ok()} />);
+    expect(foldOf(screen.getByText(/no search console properties on this account/i))).toBeNull();
+    cleanup();
+
+    render(<PropertyLibrary accounts={[account({ rows: [], listed: 27 })]} trackProperty={ok()} />);
+    expect(foldOf(screen.getByText(/every search console property on this account/i))).toBeNull();
+  });
+
+  /**
+   * The reason a property cannot be taken stays in ITS OWN ROW, next to the disabled control —
+   * the live defect PR #75 fixed. A fold moves rows; it may not move that sentence back out.
+   */
+  it("keeps the unqueryable reason in its own row once the fold is open", () => {
+    render(<PropertyLibrary accounts={[account()]} trackProperty={ok()} />);
+
+    fireEvent.click(screen.getByText("Show 2 available properties"));
+
+    const blocked = within(screen.getAllByRole("listitem")[1] as HTMLElement);
+    expect(blocked.getByRole("button", { name: /bigcattr\.com/i }).hasAttribute("disabled")).toBe(true);
+    expect(blocked.getByText(/cannot/i)).toBeTruthy();
+    expect(blocked.getByText(/siteUnverifiedUser/)).toBeTruthy();
+  });
+
   it("survives a thrown action without leaking its message", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const trackProperty = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
     render(<PropertyLibrary accounts={[account()]} trackProperty={trackProperty} />);
 
+    openFold();
     fireEvent.click(screen.getByRole("button", { name: /balerin\.com/i }));
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/try again/i));
