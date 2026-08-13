@@ -11,6 +11,10 @@ import { defineTool, errorResult, textResult } from "./registry.ts";
  * DB level — the (user_id, domain) unique constraint (migration 0010) plus an ON CONFLICT
  * DO NOTHING upsert: the loser's insert is a no-op and it reads back the winner's row, so two
  * concurrent first calls still produce ONE row with consistent created: true/false flags.
+ *
+ * Idempotency covers the ARCHIVE too: a domain the tenant had archived comes back on its
+ * original id (archived_at cleared) instead of being registered a second time — see
+ * returnExisting.
  */
 
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
@@ -79,7 +83,7 @@ export const setupProjectTool = defineTool({
 
     const existing = await readProject(client, ctx.userId, normalized.domain);
     if (existing) {
-      return alreadyExists(normalized.domain, existing);
+      return await returnExisting(client, ctx.userId, normalized.domain, existing);
     }
 
     // Race-safe insert: ON CONFLICT (user_id, domain) DO NOTHING (ignoreDuplicates). A row is
@@ -107,19 +111,27 @@ export const setupProjectTool = defineTool({
     if (!winner) {
       throw new Error("projects upsert reported a conflict but no existing row was found");
     }
-    return alreadyExists(normalized.domain, winner);
+    return await returnExisting(client, ctx.userId, normalized.domain, winner);
   },
 });
 
-/** Tenant-scoped read of a project id by (user_id, domain); null when absent. */
+/** An existing project row as this tool needs it: its id and whether it sits in the archive. */
+type ProjectRow = { readonly id: string; readonly archived_at: string | null };
+
+/**
+ * Tenant-scoped read of a project by (user_id, domain); null when absent. Deliberately
+ * unfiltered on archived_at: an archived row still OCCUPIES the (user_id, domain) unique
+ * slot (migration 0010), so hiding it here would only send the insert into a conflict it
+ * cannot resolve.
+ */
 async function readProject(
   client: ReturnType<typeof getServiceClient>,
   userId: string,
   domain: string,
-): Promise<{ id: string } | null> {
+): Promise<ProjectRow | null> {
   const { data, error } = await client
     .from("projects")
-    .select("id")
+    .select("id, archived_at")
     .eq("user_id", userId)
     .eq("domain", domain)
     .maybeSingle();
@@ -129,8 +141,36 @@ async function readProject(
   return data;
 }
 
-function alreadyExists(domain: string, row: { id: string }) {
+/**
+ * Report the row that already holds this domain — restoring it first when the tenant had
+ * archived it. Restoring is the only correct answer there: a second row is impossible
+ * (unique (user_id, domain), migration 0010), and would in any case orphan the crawls,
+ * reports and Search Console link that hang off the original id. So setting a domain up
+ * again picks the same project back up rather than starting an empty one.
+ */
+async function returnExisting(
+  client: ReturnType<typeof getServiceClient>,
+  userId: string,
+  domain: string,
+  row: ProjectRow,
+) {
+  if (row.archived_at === null) {
+    return textResult(
+      `Project already exists for "${domain}" (project_id: ${row.id}, created: false).`,
+    );
+  }
+  const { error } = await client
+    .from("projects")
+    .update({ archived_at: null })
+    .eq("id", row.id)
+    // The tenant filter belongs on the WRITE too, not only on the read that found the row
+    // (constitution NEVER #4) — this client bypasses RLS, so the filter is the whole guard.
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`projects restore failed: ${error.message}`);
+  }
   return textResult(
-    `Project already exists for "${domain}" (project_id: ${row.id}, created: false).`,
+    `Restored "${domain}" from your archive — it is tracked again ` +
+      `(project_id: ${row.id}, created: false).`,
   );
 }

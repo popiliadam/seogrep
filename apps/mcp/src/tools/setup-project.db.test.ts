@@ -8,7 +8,8 @@ import { setupProjectTool } from "./setup-project.ts";
  * DB-integration proofs for setup_project against a LOCAL Supabase stack (test:db
  * lane; export env via guardrails/verify-db.sh). Proves: first call creates, repeat
  * calls are idempotent by (user_id, domain) — INCLUDING across URL/host forms that
- * normalize to the same domain — and one tenant never sees another's projects.
+ * normalize to the same domain — one tenant never sees another's projects, and a domain the
+ * tenant had archived comes BACK on the same id instead of being registered a second time.
  */
 
 function requireEnv(name: string): string {
@@ -45,6 +46,35 @@ async function projectRows(userId: string): Promise<{ id: string; domain: string
   return data ?? [];
 }
 
+/**
+ * Archive the tenant's row by stamping archived_at (migration 0022) — what untracking does.
+ * THROWS when no row matched, so a fixture that archives nothing cannot read as a pass.
+ */
+async function archiveProject(userId: string, domain: string): Promise<string> {
+  const { data, error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("domain", domain)
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(`archive seed failed for ${domain}: ${error?.message ?? "no row matched"}`);
+  }
+  return data.id;
+}
+
+/** Read one project's archived_at straight from the table (null = actively tracked). */
+async function archivedAt(projectId: string): Promise<string | null> {
+  const { data, error } = await service
+    .from("projects")
+    .select("archived_at")
+    .eq("id", projectId)
+    .single();
+  if (error || !data) throw new Error(`archived_at read failed: ${error?.message ?? "no row"}`);
+  return data.archived_at;
+}
+
 beforeAll(async () => {
   const { error } = await service.from("projects").select("id").limit(1);
   if (error) {
@@ -76,6 +106,25 @@ describe("setup_project against the local stack", () => {
     const rows = await projectRows(ctx.userId);
     expect(rows).toHaveLength(1);
     expect(second.content[0]?.text).toContain(rows[0]!.id);
+  });
+
+  it("brings an archived domain back: the SAME project id, archived_at cleared, still one row", async () => {
+    const ctx = await makeCtx();
+    const created = await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
+    expect(created.content[0]?.text).toMatch(/created: true/);
+    const projectId = await archiveProject(ctx.userId, "retired-shop.com");
+
+    const again = await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
+
+    expect(again.isError).toBeUndefined();
+    const text = again.content[0]?.text ?? "";
+    // The user's history hangs off this id — a second registration would orphan it, and the
+    // (user_id, domain) unique constraint (migration 0010) makes one impossible anyway.
+    expect(text).toContain(projectId);
+    expect(text).toMatch(/created: false/);
+    expect(text).toMatch(/restored/i);
+    expect(await projectRows(ctx.userId)).toHaveLength(1);
+    expect(await archivedAt(projectId)).toBeNull(); // tracked again, not merely reported
   });
 
   it("returns an isError result for an invalid domain and inserts nothing", async () => {
