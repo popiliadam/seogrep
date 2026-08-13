@@ -14,7 +14,7 @@ import { defineTool, errorResult, textResult } from "./registry.ts";
  *
  * Idempotency covers the ARCHIVE too: a domain the tenant had archived comes back on its
  * original id (archived_at cleared) instead of being registered a second time — see
- * returnExisting.
+ * resolveExisting.
  */
 
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
