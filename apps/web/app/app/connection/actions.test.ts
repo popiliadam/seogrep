@@ -48,6 +48,28 @@ let gscOps: string[] = [];
  * lib/gsc/store.test.ts (task 7b), whose error specs pinned exactly this on the old module.
  */
 let dbErrors: Record<string, { message: string }> = {};
+/**
+ * Fired just BEFORE a statement runs, keyed `op:table`. The one thing this fake could not
+ * otherwise express: the world changing BETWEEN two statements of the SAME action — a project
+ * row deleted, or handed to another owner, after the ownership read found it and before the
+ * write lands on it. That race is precisely what the zero-row proof on each UPDATE exists for,
+ * and without a hook the read and the write always agree, so the proof would look untestable
+ * (and, being untestable, would be deleted by the next person who tidies).
+ */
+let dbHooks: Record<string, () => void> = {};
+/**
+ * Rows this fake mints an `id` for, because production does: `projects.id` defaults to
+ * `gen_random_uuid()` and `openProjectForDomain` reads that id straight back out of the INSERT
+ * to map a property to it. `gsc_connections` is deliberately NOT minted — its specs assert the
+ * written payload byte for byte and no action reads that row's id back, so giving it a column
+ * production would give it too would only make those assertions lie about what was written.
+ */
+let mintedIds = 0;
+function mintId(table: string, payload: Row): Row {
+  return table === "projects" && payload.id === undefined
+    ? { id: `minted-project-${(mintedIds += 1)}`, ...payload }
+    : payload;
+}
 
 /** A statement reaches a row only when EVERY filter it carried matches — like PostgREST. */
 function matches(row: Row, filters: Filter[]): boolean {
@@ -64,6 +86,7 @@ function project(row: Row, columns: string): Row {
 function record(table: string, op: string, filters: Filter[]): { message: string } | null {
   statements.push({ table, op, filters });
   gscOps.push(`${op}:${table}`);
+  dbHooks[`${op}:${table}`]?.();
   return dbErrors[`${op}:${table}`] ?? null;
 }
 
@@ -121,20 +144,41 @@ function fakeTable(table: string) {
     },
     update: (patch: Row) => {
       const filters: Filter[] = [];
+      /**
+       * Run the UPDATE and report the two things PostgREST reports SEPARATELY: whether the
+       * statement failed, and which rows it actually matched. A zero-row UPDATE is not an
+       * error there — `error === null` says nothing was WRONG, never that anything was
+       * WRITTEN — so this fake must be able to answer `data: null, error: null`. That state is
+       * the whole reason the archive/restore writes ask for the row back.
+       */
+      const run = (): { rows: Row[]; error: { message: string } | null } => {
+        const error = record(table, "update", filters);
+        if (error) {
+          return { rows: [], error };
+        }
+        const hit = rowsIn().filter((row) => matches(row, filters));
+        dbRows = {
+          ...dbRows,
+          [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
+        };
+        return { rows: hit.map((row) => ({ ...row, ...patch })), error: null };
+      };
       const chain = {
         eq(column: string, value: unknown) {
           filters.push({ column, value });
           return chain;
         },
+        select(columns: string) {
+          return {
+            maybeSingle: async () => {
+              const { rows, error } = run();
+              const [first] = rows;
+              return { data: error || !first ? null : project(first, columns), error };
+            },
+          };
+        },
         then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
-          const error = record(table, "update", filters);
-          if (!error) {
-            dbRows = {
-              ...dbRows,
-              [table]: rowsIn().map((row) => (matches(row, filters) ? { ...row, ...patch } : row)),
-            };
-          }
-          return Promise.resolve({ error }).then(onFulfilled, onRejected);
+          return Promise.resolve({ error: run().error }).then(onFulfilled, onRejected);
         },
       };
       return chain;
@@ -146,31 +190,64 @@ function fakeTable(table: string) {
      * target or the payload therefore shows up as a missing/undefined filter (constitution
      * NEVER #4), and the merge below lands on a different row, so both halves are observable.
      */
-    upsert: (payload: Row, options: { onConflict?: string } = {}) => {
+    upsert: (payload: Row, options: { onConflict?: string; ignoreDuplicates?: boolean } = {}) => {
       const target = (options.onConflict ?? "")
         .split(",")
         .map((column) => column.trim())
         .filter((column) => column.length > 0);
-      const error = record(
-        table,
-        "upsert",
-        target.map((column) => ({ column, value: payload[column] })),
-      );
-      if (error) {
-        return Promise.resolve({ error });
-      }
-      const rows = rowsIn();
-      const conflicting =
-        target.length > 0
-          ? rows.find((row) => target.every((column) => row[column] === payload[column]))
-          : undefined;
-      dbRows = {
-        ...dbRows,
-        [table]: conflicting
-          ? rows.map((row) => (row === conflicting ? { ...row, ...payload } : row))
-          : [...rows, payload],
+      /**
+       * `ignoreDuplicates` is ON CONFLICT DO NOTHING: the conflicting row is left EXACTLY as
+       * it is and NO row comes back. That empty answer is a signal, not an absence — it is how
+       * `openProjectForDomain` learns a concurrent first call won the (user_id, domain) slot
+       * between its read and its write, and must read the winner back instead of claiming it
+       * inserted anything.
+       */
+      const run = (): { rows: Row[]; error: { message: string } | null } => {
+        const error = record(
+          table,
+          "upsert",
+          target.map((column) => ({ column, value: payload[column] })),
+        );
+        if (error) {
+          return { rows: [], error };
+        }
+        const rows = rowsIn();
+        const conflicting =
+          target.length > 0
+            ? rows.find((row) => target.every((column) => row[column] === payload[column]))
+            : undefined;
+        if (conflicting && options.ignoreDuplicates) {
+          return { rows: [], error: null };
+        }
+        const stored = conflicting ? { ...conflicting, ...payload } : mintId(table, payload);
+        dbRows = {
+          ...dbRows,
+          [table]: conflicting
+            ? rows.map((row) => (row === conflicting ? stored : row))
+            : [...rows, stored],
+        };
+        return { rows: [stored], error: null };
       };
-      return Promise.resolve({ error: null });
+      const chain = {
+        select(columns: string) {
+          return {
+            then(
+              onFulfilled?: (value: unknown) => unknown,
+              onRejected?: (reason: unknown) => unknown,
+            ) {
+              const { rows, error } = run();
+              return Promise.resolve({
+                data: error ? null : rows.map((row) => project(row, columns)),
+                error,
+              }).then(onFulfilled, onRejected);
+            },
+          };
+        },
+        then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
+          return Promise.resolve({ error: run().error }).then(onFulfilled, onRejected);
+        },
+      };
+      return chain;
     },
     delete: () => {
       const filters: Filter[] = [];
@@ -239,10 +316,13 @@ import {
   createKeyAction,
   describeDisconnect,
   disconnectAccount,
+  restoreProject,
   revokeKeyAction,
   rotateKeyAction,
   saveProjectProperty,
+  trackProperty,
   unmapProject,
+  untrackProject,
 } from "./actions";
 
 const generateApiKeyMock = vi.mocked(generateApiKey);
@@ -1363,5 +1443,583 @@ describe("saveProjectProperty", () => {
     expect(dbRows.gsc_connections).toEqual([]);
     expect(error).toHaveBeenCalled();
     expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * TRACK / UNTRACK / RESTORE — the web half of `track_gsc_property` and `untrack_project`.
+ *
+ * THE TWO SURFACES MUST NOT DISAGREE ABOUT THE SAME ACTION, so every case below is one the
+ * MCP tools already answered, re-asked here: the validation ORDER (listed → queryable →
+ * recognisable domain → project → mapping), the refusal that happens BEFORE any project row
+ * exists, archive-never-delete, the zero-row proof on each UPDATE, and idempotency in both
+ * directions.
+ *
+ * `lib/gsc/accounts.ts` runs for REAL against the fake tables (only `refreshAccessToken` is
+ * mocked) and `sites.list` is injected, so these specs make zero live requests — constitution
+ * NEVER #5 — while still exercising the real unseal and its tenant filter.
+ */
+describe("track / untrack / restore", () => {
+  const ENC_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+  const ACCOUNT = "44444444-4444-4444-8444-444444444444";
+  const PROJECT = "33333333-3333-4333-8333-333333333333";
+  const REFRESH_TOKEN = "1//the-refresh-token";
+  const ACCESS_TOKEN = "ya29.the-access-token";
+  /**
+   * A domain with NO reserved suffix and no word any assertion below looks for. The two
+   * fixtures this branch already burned on — `archived.example` (Task 3) and `not-yours.test`
+   * (Task 6) — were both refused by a normalizer for their TLD alone, so the refusal echoed
+   * the fixture's own name and the spec passed against unmodified source. `.com` is refused by
+   * nothing, so every refusal here has to come from the code under test.
+   */
+  const DOMAIN = "zephyrbrook.com";
+  const PROPERTY = `sc-domain:${DOMAIN}`;
+  /** Listed by Google, queryable, and NOT a website — `propertyToDomain` answers null. */
+  const APP_PROPERTY = "android-app://com.zephyrbrook.reader";
+  const ARCHIVED_AT = "2026-08-01T00:00:00.000Z";
+
+  function accountRow(userId: string): Row {
+    return {
+      id: ACCOUNT,
+      user_id: userId,
+      google_account_sub: "google-sub-1",
+      google_account_email: "owner@example.com",
+      encrypted_refresh_token: toByteaHex(
+        encryptToken(REFRESH_TOKEN, ENC_KEY, { userId, accountId: ACCOUNT }),
+      ),
+      token_status: "active",
+      token_checked_at: null,
+    };
+  }
+
+  function projectRow(userId: string, over: Row = {}): Row {
+    return { id: PROJECT, user_id: userId, domain: DOMAIN, archived_at: null, ...over };
+  }
+
+  /** `sites.list` as Google answers it, injected so no request is ever made. */
+  function listing(...sites: { siteUrl: string; permissionLevel: string }[]) {
+    return { listSites: async () => sites };
+  }
+
+  /** The default: this account owns the property and Google will answer queries for it. */
+  const OWNED = listing({ siteUrl: PROPERTY, permissionLevel: "siteOwner" });
+
+  /** The project row the action created or reused — read back, never assumed. */
+  function onlyProject(): Row {
+    const rows = dbRows.projects ?? [];
+    const [only, ...rest] = rows;
+    if (!only || rest.length > 0) {
+      throw new Error(`expected exactly one project row, saw ${rows.length}`);
+    }
+    return only;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("TOKEN_ENCRYPTION_KEY", ENC_KEY);
+    signedIn("user-1");
+    vi.mocked(refreshAccessToken).mockResolvedValue({
+      accessToken: ACCESS_TOKEN,
+      refreshToken: null,
+      idToken: null,
+      expiresIn: 3599,
+      scope: "https://www.googleapis.com/auth/webmasters.readonly",
+      tokenType: "Bearer",
+    });
+    dbRows = { projects: [], gsc_accounts: [accountRow("user-1")], gsc_connections: [] };
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    dbRows = { gsc_accounts: [], gsc_connections: [], projects: [] };
+    dbErrors = {};
+    dbHooks = {};
+    gscTables = [];
+    statements = [];
+    gscOps = [];
+  });
+
+  /** Capture a server-side diagnostic instead of printing it into the test output. */
+  function captureConsole(level: "warn" | "error") {
+    return vi.spyOn(console, level).mockImplementation(() => {});
+  }
+
+  describe("trackProperty", () => {
+    it("opens the project for the property's domain and maps it", async () => {
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      const project = onlyProject();
+      expect(project).toMatchObject({ user_id: "user-1", domain: DOMAIN });
+      expect(dbRows.gsc_connections).toEqual([
+        {
+          user_id: "user-1",
+          project_id: project.id,
+          account_id: ACCOUNT,
+          gsc_property: PROPERTY,
+        },
+      ]);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    // Nothing arriving from the client is evidence — the same rule saveProjectProperty and
+    // track_gsc_property both state. The picker's own list is minutes old at best.
+    it("refuses a property the LIVE listing does not carry, and opens no project", async () => {
+      const out = await trackProperty(
+        ACCOUNT,
+        PROPERTY,
+        listing({ siteUrl: "https://elsewhere.org/", permissionLevel: "siteOwner" }),
+      );
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+      expect(dbRows.projects).toEqual([]);
+      expect(dbRows.gsc_connections).toEqual([]);
+    });
+
+    /**
+     * VALIDATION ORDER, step 2. A project SeoGrep cannot answer for is worse than no project:
+     * it reads as tracked and returns nothing (measured live 2026-08-09). So the refusal has to
+     * land BEFORE the row exists, which is why this spec asserts the `projects` table was never
+     * even reached rather than merely that it ended up empty.
+     */
+    it("refuses an unqueryable property BEFORE any project row exists", async () => {
+      const out = await trackProperty(
+        ACCOUNT,
+        PROPERTY,
+        listing({ siteUrl: PROPERTY, permissionLevel: "siteUnverifiedUser" }),
+      );
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("cannot query") });
+      expect(gscTables).not.toContain("projects");
+      expect(dbRows.projects).toEqual([]);
+      expect(dbRows.gsc_connections).toEqual([]);
+    });
+
+    /**
+     * VALIDATION ORDER, step 3. `android-app://` properties are listed by `sites.list` and can
+     * be owned outright, so this arrives past both earlier gates — and names no website, so
+     * there is nothing to track. Same rule as `unrecognisedMessage` in track_gsc_property.
+     */
+    it("refuses a property that names no website BEFORE any project row exists", async () => {
+      const out = await trackProperty(
+        ACCOUNT,
+        APP_PROPERTY,
+        listing({ siteUrl: APP_PROPERTY, permissionLevel: "siteOwner" }),
+      );
+
+      expect(out).toEqual({ ok: false, error: expect.stringMatching(/does not recognise/i) });
+      expect(gscTables).not.toContain("projects");
+      expect(dbRows.projects).toEqual([]);
+    });
+
+    /**
+     * ARCHIVE, NEVER DELETE — this is what makes coming back free. The archived row keeps its
+     * id, and so its crawls, reports and mapping; a second row for the same domain is both
+     * impossible (unique (user_id, domain), migration 0010) and would orphan all of it.
+     */
+    it("brings an ARCHIVED project back on its own id instead of opening a second one", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
+      expect(dbRows.gsc_connections).toEqual([
+        { user_id: "user-1", project_id: PROJECT, account_id: ACCOUNT, gsc_property: PROPERTY },
+      ]);
+    });
+
+    /**
+     * THE RACE, and the ONLY thing that separates ON CONFLICT DO NOTHING from a plain upsert on
+     * this path. Added because dropping `ignoreDuplicates` reddened nothing at first: the action
+     * READS before it writes, so in every single-threaded spec the insert either finds the row
+     * already (and never runs) or conflicts with nothing. The branch is reachable only when a
+     * concurrent first call takes the (user_id, domain) slot BETWEEN this action's read and its
+     * write — which is what the hook does.
+     *
+     * The winner is ARCHIVED on purpose. DO NOTHING declines to touch it and returns no row, so
+     * the action must read the winner back — and reading it back is what runs the archive check
+     * on it. A plain upsert returns the winner's id straight out of the write, skips that check,
+     * and maps a property onto a project still sitting in the archive.
+     */
+    it("a concurrent first call wins the slot: the winner is read back, archive check included", async () => {
+      dbHooks = {
+        "upsert:projects": () => {
+          dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+        },
+      };
+
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
+      expect(dbRows.gsc_connections).toEqual([
+        { user_id: "user-1", project_id: PROJECT, account_id: ACCOUNT, gsc_property: PROPERTY },
+      ]);
+    });
+
+    it("tracking an ALREADY-tracked property is idempotent: same project, one mapping", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
+
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
+      expect(dbRows.gsc_connections).toHaveLength(1);
+    });
+
+    /**
+     * SILENT RE-POINTING STAYS (controller ruling, 2026-08-13). A project already mapped to a
+     * different property is re-pointed with no warning and no confirmation step, because
+     * `saveProjectProperty` — the picker's Save, on this same table — does the byte-identical
+     * upsert. Two surfaces disagreeing about one action is worse than either answer.
+     */
+    it("re-points a project already mapped elsewhere, silently and onto the SAME row", async () => {
+      dbRows = {
+        ...dbRows,
+        projects: [projectRow("user-1")],
+        gsc_connections: [
+          {
+            id: "conn-1",
+            user_id: "user-1",
+            project_id: PROJECT,
+            account_id: ACCOUNT,
+            gsc_property: "https://old.zephyrbrook.com/",
+          },
+        ],
+      };
+
+      // `toEqual`, not `toMatchObject`: a warning field smuggled onto the success would fail.
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      expect(dbRows.gsc_connections).toEqual([
+        {
+          id: "conn-1",
+          user_id: "user-1",
+          project_id: PROJECT,
+          account_id: ACCOUNT,
+          gsc_property: PROPERTY,
+        },
+      ]);
+    });
+
+    /**
+     * FAIL CLOSED ON A LISTING WE NEVER GOT BACK. An absence we did not observe is not an
+     * absence — the account may well list this property — so nothing is opened and nothing is
+     * mapped. This is the single-account shape of track_gsc_property's undecidable refusal:
+     * the web action always NAMES its account, so no other account is ever consulted and the
+     * "one account answered, another did not" state cannot arise here.
+     */
+    it("a listing that could not be read tracks NOTHING", async () => {
+      const error = captureConsole("error");
+      vi.mocked(refreshAccessToken).mockRejectedValue(
+        new Error("Google token endpoint failed (400): invalid_grant"),
+      );
+
+      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("Reconnect") });
+      expect(gscTables).not.toContain("projects");
+      expect(dbRows.projects).toEqual([]);
+      expect(dbRows.gsc_connections).toEqual([]);
+      expect(error).toHaveBeenCalled();
+      expect(JSON.stringify(out)).not.toContain(REFRESH_TOKEN);
+    });
+
+    /**
+     * Constitution NEVER #4. Another tenant holds a project for the SAME domain, which is
+     * legitimate — two users may track one site. The read must not find it, so this call opens
+     * the caller's OWN project and leaves the stranger's row untouched.
+     */
+    it("never lands on another tenant's project of the same domain", async () => {
+      const otherTenantRow = projectRow("user-2");
+      dbRows = { ...dbRows, projects: [otherTenantRow] };
+
+      expect(await trackProperty(ACCOUNT, PROPERTY, OWNED)).toEqual({ ok: true });
+
+      expect(filtersOf("projects", "select")).toEqual([
+        { column: "user_id", value: "user-1" },
+        { column: "domain", value: DOMAIN },
+      ]);
+      expect(dbRows.projects).toContainEqual(otherTenantRow);
+      expect(dbRows.projects).toHaveLength(2);
+      const mine = (dbRows.projects ?? []).find((row) => row.user_id === "user-1");
+      expect(mine?.id).not.toBe(PROJECT);
+      expect(dbRows.gsc_connections).toEqual([
+        { user_id: "user-1", project_id: mine?.id, account_id: ACCOUNT, gsc_property: PROPERTY },
+      ]);
+    });
+
+    // NEVER #4 again, on the WRITE: the service-role client bypasses RLS, so the session user
+    // riding both as a column and inside the conflict target is the whole boundary.
+    it("maps with the SESSION user id and conflicts on (user_id, project_id)", async () => {
+      await trackProperty(ACCOUNT, PROPERTY, OWNED);
+
+      expect(filtersOf("gsc_connections", "upsert")).toEqual([
+        { column: "user_id", value: "user-1" },
+        { column: "project_id", value: onlyProject().id },
+      ]);
+    });
+
+    /**
+     * The restore UPDATE PROVES it matched a row. PostgREST answers a zero-row UPDATE with no
+     * error at all, so reporting success from `error === null` would tell the user their
+     * archived project is tracked again while it is still in the archive. The hook deletes the
+     * row between the ownership read and the write — the race the proof exists for.
+     */
+    it("a restore that matched NO row is a refusal, not a silent success", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+      dbHooks = {
+        "update:projects": () => {
+          dbRows = { ...dbRows, projects: [] };
+        },
+      };
+
+      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
+
+      expect(out).toEqual({ ok: false, error: expect.stringMatching(/nothing was tracked/i) });
+      expect(dbRows.gsc_connections).toEqual([]);
+    });
+
+    it("carries both tenant filters on the restore UPDATE", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+
+      await trackProperty(ACCOUNT, PROPERTY, OWNED);
+
+      expect(filtersOf("projects", "update")).toEqual([
+        { column: "id", value: PROJECT },
+        { column: "user_id", value: "user-1" },
+      ]);
+    });
+
+    it("rejects with no session and never queries", async () => {
+      signedOut();
+      await expect(trackProperty(ACCOUNT, PROPERTY, OWNED)).rejects.toThrow(/not authenticated/i);
+      expect(gscTables).toEqual([]);
+    });
+
+    it("refuses a malformed account id without querying the DB", async () => {
+      expect(await trackProperty("not-a-uuid", PROPERTY, OWNED)).toEqual({
+        ok: false,
+        error: expect.stringContaining("not found"),
+      });
+      expect(gscTables).toEqual([]);
+    });
+
+    it("refuses an empty property without contacting Google", async () => {
+      expect(await trackProperty(ACCOUNT, "", OWNED)).toEqual({
+        ok: false,
+        error: expect.stringContaining("not listed"),
+      });
+      expect(gscTables).toEqual([]);
+      expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
+    });
+
+    it("a failed mapping write answers ok:false and keeps the DB message server-side", async () => {
+      const error = captureConsole("error");
+      dbErrors = { "upsert:gsc_connections": { message: "deadlock detected" } };
+
+      const out = await trackProperty(ACCOUNT, PROPERTY, OWNED);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not save") });
+      expect(JSON.stringify(out)).not.toContain("deadlock detected");
+      expect(dbRows.gsc_connections).toEqual([]);
+      expect(error).toHaveBeenCalled();
+    });
+  });
+
+  describe("untrackProject", () => {
+    /**
+     * IT ARCHIVES, IT NEVER DELETES, and the surviving mapping is what makes restore free. A
+     * DELETE would cascade `gsc_connections` away and orphan every job, so a domain added again
+     * later could never re-attach its own past.
+     */
+    it("stamps archived_at and leaves the Search Console mapping untouched", async () => {
+      const mapping = {
+        id: "conn-1",
+        user_id: "user-1",
+        project_id: PROJECT,
+        account_id: ACCOUNT,
+        gsc_property: PROPERTY,
+      };
+      dbRows = { ...dbRows, projects: [projectRow("user-1")], gsc_connections: [mapping] };
+
+      expect(await untrackProject(PROJECT)).toEqual({ ok: true });
+
+      expect(onlyProject().archived_at).toEqual(expect.any(String));
+      expect(dbRows.gsc_connections).toEqual([mapping]);
+      // Only `projects` is touched — never the mapping, and never the ledger (NEVER #2).
+      expect(gscTables).toEqual(["projects", "projects"]);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    /**
+     * IDEMPOTENT, AND WITHOUT RE-STAMPING: no write runs, so the date the tenant actually put
+     * the project away survives a second call.
+     */
+    it("an already-archived project succeeds without re-stamping the date", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+
+      expect(await untrackProject(PROJECT)).toEqual({ ok: true });
+
+      expect(onlyProject().archived_at).toBe(ARCHIVED_AT);
+      expect(gscOps).toEqual(["select:projects"]);
+      // Nothing was written, but the view that offered Untrack was wrong about where this
+      // project stood — a stale page must still be corrected, or the button looks inert.
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    it("refuses another tenant's project opaquely and archives nothing", async () => {
+      const otherTenantRow = projectRow("user-2");
+      dbRows = { ...dbRows, projects: [otherTenantRow] };
+
+      expect(await untrackProject(PROJECT)).toEqual({
+        ok: false,
+        error: expect.stringContaining("not found"),
+      });
+      expect(dbRows.projects).toEqual([otherTenantRow]);
+      expect(gscOps).toEqual(["select:projects"]);
+    });
+
+    it("carries both tenant filters on the UPDATE", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
+
+      await untrackProject(PROJECT);
+
+      expect(filtersOf("projects", "update")).toEqual([
+        { column: "id", value: PROJECT },
+        { column: "user_id", value: "user-1" },
+      ]);
+    });
+
+    /**
+     * The zero-row proof, head-on: `error === null` on an UPDATE that matched nothing says the
+     * statement was fine, never that anything changed. Reporting "stopped tracking" from it is
+     * exactly the defect Task 4's referee found in setup_project's twin write.
+     */
+    it("an UPDATE that matched NO row is a refusal, not a silent success", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
+      dbHooks = {
+        "update:projects": () => {
+          dbRows = { ...dbRows, projects: [] };
+        },
+      };
+
+      expect(await untrackProject(PROJECT)).toEqual({
+        ok: false,
+        error: expect.stringMatching(/nothing was archived/i),
+      });
+    });
+
+    it("a failed UPDATE answers ok:false and keeps the DB message server-side", async () => {
+      const error = captureConsole("error");
+      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
+      dbErrors = { "update:projects": { message: "deadlock detected" } };
+
+      const out = await untrackProject(PROJECT);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not stop tracking") });
+      expect(JSON.stringify(out)).not.toContain("deadlock detected");
+      expect(onlyProject().archived_at).toBeNull();
+      expect(error).toHaveBeenCalled();
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+    });
+
+    it("rejects with no session and never queries", async () => {
+      signedOut();
+      await expect(untrackProject(PROJECT)).rejects.toThrow(/not authenticated/i);
+      expect(gscTables).toEqual([]);
+    });
+
+    it("refuses a malformed project id without querying the DB", async () => {
+      expect(await untrackProject("not-a-uuid")).toEqual({
+        ok: false,
+        error: expect.stringContaining("not found"),
+      });
+      expect(gscTables).toEqual([]);
+    });
+  });
+
+  describe("restoreProject", () => {
+    it("clears archived_at on a project the caller owns", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+
+      expect(await restoreProject(PROJECT)).toEqual({ ok: true });
+
+      expect(onlyProject()).toMatchObject({ id: PROJECT, archived_at: null });
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    it("restoring an ACTIVE project succeeds without writing", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1")] };
+
+      expect(await restoreProject(PROJECT)).toEqual({ ok: true });
+
+      expect(gscOps).toEqual(["select:projects"]);
+      expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
+    });
+
+    it("refuses another tenant's project opaquely and restores nothing", async () => {
+      const otherTenantRow = projectRow("user-2", { archived_at: ARCHIVED_AT });
+      dbRows = { ...dbRows, projects: [otherTenantRow] };
+
+      expect(await restoreProject(PROJECT)).toEqual({
+        ok: false,
+        error: expect.stringContaining("not found"),
+      });
+      expect(dbRows.projects).toEqual([otherTenantRow]);
+      expect(gscOps).toEqual(["select:projects"]);
+    });
+
+    it("carries both tenant filters on the UPDATE", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+
+      await restoreProject(PROJECT);
+
+      expect(filtersOf("projects", "update")).toEqual([
+        { column: "id", value: PROJECT },
+        { column: "user_id", value: "user-1" },
+      ]);
+    });
+
+    it("an UPDATE that matched NO row is a refusal, not a silent success", async () => {
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+      dbHooks = {
+        "update:projects": () => {
+          dbRows = { ...dbRows, projects: [] };
+        },
+      };
+
+      expect(await restoreProject(PROJECT)).toEqual({
+        ok: false,
+        error: expect.stringMatching(/nothing was restored/i),
+      });
+    });
+
+    it("a failed UPDATE answers ok:false and keeps the DB message server-side", async () => {
+      const error = captureConsole("error");
+      dbRows = { ...dbRows, projects: [projectRow("user-1", { archived_at: ARCHIVED_AT })] };
+      dbErrors = { "update:projects": { message: "deadlock detected" } };
+
+      const out = await restoreProject(PROJECT);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("Could not restore") });
+      expect(JSON.stringify(out)).not.toContain("deadlock detected");
+      expect(onlyProject().archived_at).toBe(ARCHIVED_AT);
+      expect(error).toHaveBeenCalled();
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+    });
+
+    it("rejects with no session and never queries", async () => {
+      signedOut();
+      await expect(restoreProject(PROJECT)).rejects.toThrow(/not authenticated/i);
+      expect(gscTables).toEqual([]);
+    });
+
+    it("refuses a malformed project id without querying the DB", async () => {
+      expect(await restoreProject("not-a-uuid")).toEqual({
+        ok: false,
+        error: expect.stringContaining("not found"),
+      });
+      expect(gscTables).toEqual([]);
+    });
   });
 });
