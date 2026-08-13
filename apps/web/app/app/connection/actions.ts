@@ -9,8 +9,10 @@ import { accessTokenFor } from "../../../lib/gsc/accounts";
 import { canQuerySearchAnalytics } from "../../../lib/gsc/oauth";
 import { revokeGoogleToken } from "../../../lib/gsc/revoke";
 import {
+  ARCHIVED_PROJECT,
   CONNECTION_PATH,
   readAccountSites,
+  readOwnProject,
   requireUserId,
   UUID_RE,
   type SavePropertyDeps,
@@ -209,6 +211,22 @@ export type GscRevocationOutcome = "revoked" | "unconfirmed" | "not_attempted";
  * UPDATE (constitution NEVER #4 — the service-role client bypasses RLS, so this filter is
  * the only tenant boundary). A forged project id therefore reaches nothing rather than
  * being found and refused, and no error distinguishes "not yours" from "not linked".
+ *
+ * AN ARCHIVED PROJECT IS REFUSED, and that is the promise being kept rather than a new rule.
+ * The archive row on /app/connection renders "Keeps {property}" — the stored mapping is the
+ * whole reason untracking archives instead of deleting, and restoring is free precisely
+ * because nobody has to pick the property again. This action nulls `gsc_property`, so letting
+ * it run on an archived project would quietly falsify that sentence for a row the user is no
+ * longer looking at. The archive UI offers Restore and nothing else; the only way in is a
+ * STALE TAB whose tracked list was rendered before the project was put away, and the refusal
+ * is how that tab learns it is stale. It also puts this surface back in step with MCP, where
+ * `untrack_project`/`restore_project` are the only verbs an archived project answers to.
+ *
+ * It THROWS rather than returning a sentence, because that is this action's existing shape
+ * (void, throw-on-refusal) and `DisconnectButton` already turns any throw into its one generic
+ * notice. A missing or foreign project still falls through to the UPDATE that matches nothing,
+ * exactly as before — the read added here answers ONE question, and gives no new signal about
+ * which project ids exist.
  */
 export async function unmapProject(projectId: string): Promise<void> {
   const userId = await requireUserId();
@@ -216,6 +234,10 @@ export async function unmapProject(projectId: string): Promise<void> {
     throw new Error("Connection not found");
   }
   const service = createServiceClient();
+  const project = await readOwnProject(service, userId, projectId);
+  if (project !== null && project.archivedAt !== null) {
+    throw new Error(ARCHIVED_PROJECT);
+  }
   const { error } = await service
     .from("gsc_connections")
     .update({ account_id: null, gsc_property: null })
@@ -436,6 +458,20 @@ export async function describeDisconnect(accountId: string): Promise<string> {
  * filtered the same way. The write then carries the session user id both as a column and
  * inside its conflict target, so it can only ever land on this tenant's row (NEVER #4 — the
  * service-role client bypasses RLS, so these filters are the whole boundary).
+ *
+ * THE PROJECT MUST ALSO BE TRACKED, not merely owned. The picker only ever renders for a
+ * project in the tracked list, so an archived one arrives through a STALE TAB — and mapping a
+ * property onto a project the tenant has put away writes state nothing will ever read, while
+ * the archive row goes on advertising a different stored property. The two surfaces are kept
+ * in step here rather than re-decided: MCP answers an archived project with
+ * `ARCHIVED_PROJECT_MESSAGE` and points at restore, and this returns the web wording of the
+ * same verdict. Note the deliberate asymmetry with `trackProperty` (./tracking-actions), which
+ * RESTORES: it resolves a project by DOMAIN and its whole job is to start tracking, so an
+ * archived row is the thing it was asked to bring back. This one is handed an ID and asked
+ * only to re-point a mapping, so silently un-archiving would be a second, unrequested verb.
+ *
+ * The refusal is checked BEFORE the Google round trip: the answer cannot change it, and a
+ * foregone `sites.list` is a needless call on the user's own credential.
  */
 export async function saveProjectProperty(
   projectId: string,
@@ -454,19 +490,14 @@ export async function saveProjectProperty(
   }
 
   const service = createServiceClient();
-  const owned = await service
-    .from("projects")
-    .select("id")
-    .eq("id", projectId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (owned.error) {
-    throw new Error(`projects lookup failed: ${owned.error.message}`);
-  }
-  if (!owned.data) {
+  const owned = await readOwnProject(service, userId, projectId);
+  if (owned === null) {
     // Same opaque wording as a malformed id: nothing distinguishes "no such project" from
     // "not yours", so the action cannot be used to probe for other users' project ids.
     return { ok: false, error: "That project or Google account was not found." };
+  }
+  if (owned.archivedAt !== null) {
+    return { ok: false, error: ARCHIVED_PROJECT };
   }
 
   const listing = await readAccountSites(service, accountId, userId, "saveProjectProperty", deps);

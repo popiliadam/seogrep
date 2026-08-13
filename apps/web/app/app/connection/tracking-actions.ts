@@ -7,8 +7,10 @@ import { canQuerySearchAnalytics } from "../../../lib/gsc/oauth";
 import {
   CONNECTION_PATH,
   readAccountSites,
+  readOwnProject,
   requireUserId,
   UUID_RE,
+  type OwnedProject,
   type SavePropertyDeps,
   type SavePropertyResult,
   type ServiceClient,
@@ -56,12 +58,6 @@ import {
  * to address) and only a failed READ throws (`saveProjectProperty`'s existing split).
  */
 
-/** A project this tenant owns, and whether it currently sits in the archive. */
-interface OwnedProject {
-  readonly id: string;
-  readonly archivedAt: string | null;
-}
-
 /** A project request that resolved, or the one sentence explaining why it could not. */
 type OpenedProject =
   | { readonly ok: true; readonly projectId: string }
@@ -108,24 +104,6 @@ async function writeArchivedAt(
     return "failed";
   }
   return data === null ? "no_row" : "written";
-}
-
-/** Tenant-scoped read of one project by id; null for missing AND for another tenant's. */
-async function readOwnProjectById(
-  service: ServiceClient,
-  userId: string,
-  projectId: string,
-): Promise<OwnedProject | null> {
-  const { data, error } = await service
-    .from("projects")
-    .select("id, archived_at")
-    .eq("id", projectId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`projects lookup failed: ${error.message}`);
-  }
-  return data ? { id: data.id, archivedAt: data.archived_at } : null;
 }
 
 /**
@@ -318,7 +296,7 @@ export async function untrackProject(projectId: string): Promise<SavePropertyRes
     return { ok: false, error: PROJECT_NOT_FOUND };
   }
   const service = createServiceClient();
-  const project = await readOwnProjectById(service, userId, projectId);
+  const project = await readOwnProject(service, userId, projectId);
   if (!project) {
     // A missing project and another tenant's leave through the SAME sentence, so this cannot
     // be used to learn which project ids exist.
@@ -366,7 +344,7 @@ export async function restoreProject(projectId: string): Promise<SavePropertyRes
     return { ok: false, error: PROJECT_NOT_FOUND };
   }
   const service = createServiceClient();
-  const project = await readOwnProjectById(service, userId, projectId);
+  const project = await readOwnProject(service, userId, projectId);
   if (!project) {
     return { ok: false, error: PROJECT_NOT_FOUND };
   }
