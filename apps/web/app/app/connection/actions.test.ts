@@ -384,6 +384,16 @@ describe("two-level disconnect", () => {
     };
   }
 
+  /**
+   * A project row as `projects` really holds one. `archived_at` is ALWAYS present — writing the
+   * column out is not decoration: `unmapProject`'s archive gate reads it, and a fixture that
+   * omitted it would let the gate be judged against a shape production never produces (the
+   * tolerant-double trap, signed lesson 12).
+   */
+  function projectRow(userId: string, archivedAt: string | null = null): Row {
+    return { id: PROJECT, user_id: userId, domain: "alpha.example", archived_at: archivedAt };
+  }
+
   /** N mapped projects on one account — the blast radius `describeDisconnect` must name. */
   function connectionsFor(userId: string, count: number, accountId = ACCOUNT): Row[] {
     return Array.from({ length: count }, (_unused, index) =>
@@ -424,7 +434,7 @@ describe("two-level disconnect", () => {
     vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
-    db.rows = { gsc_accounts: [], gsc_connections: [] };
+    db.rows = { gsc_accounts: [], gsc_connections: [], projects: [] };
     db.errors = {};
     db.tables = [];
     db.statements = [];
@@ -448,7 +458,8 @@ describe("two-level disconnect", () => {
       expect(revokeGoogleToken).not.toHaveBeenCalled();
       // Nor is the credential even READ: no statement touches gsc_accounts, so the account
       // row (and every other project hanging off it) is untouched by a per-project unmap.
-      expect(db.tables).toEqual(["gsc_connections"]);
+      // `projects` IS read — that is the archive gate below, and it reads no credential.
+      expect(db.tables).toEqual(["projects", "gsc_connections"]);
       expect(db.rows.gsc_accounts).toEqual([account]);
     });
 
@@ -457,11 +468,14 @@ describe("two-level disconnect", () => {
       db.rows = {
         gsc_accounts: [accountRow("user-1")],
         gsc_connections: [connectionRow(PROJECT, "user-1")],
+        // A TRACKED project, seeded rather than absent: this is the positive half of the
+        // archive gate below, and without a row here the gate would never be exercised at all.
+        projects: [projectRow("user-1")],
       };
 
       await unmapProject(PROJECT);
 
-      expect(db.ops).toEqual(["update:gsc_connections"]);
+      expect(db.ops).toEqual(["select:projects", "update:gsc_connections"]);
       expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1", null, null)]);
       expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/app/connection");
     });
@@ -516,6 +530,54 @@ describe("two-level disconnect", () => {
       // The mapping is untouched — the state the throw is telling the truth about.
       expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
       expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+    });
+
+    /**
+     * THE ARCHIVE ROW'S PROMISE, defended where it can actually be broken. /app/connection
+     * renders an archived project as "Keeps {property}" — the retained mapping is the whole
+     * reason untracking archives instead of deleting. Nothing in the archive UI offers this
+     * action, so the way in is a STALE TAB rendered while the project was still tracked; one
+     * click there used to null `gsc_property` and falsify that sentence for a row the user is
+     * no longer looking at.
+     *
+     * MUTATION (run, not assumed): delete the `archivedAt !== null` throw in `unmapProject`
+     * and this goes red on the row assertion — the UPDATE lands and `gsc_property` becomes
+     * null. Seeding the project row is what makes that reachable: the read is the gate.
+     */
+    it("refuses an ARCHIVED project and leaves its retained mapping intact", async () => {
+      signedIn("user-1");
+      db.rows = {
+        gsc_accounts: [],
+        gsc_connections: [connectionRow(PROJECT, "user-1")],
+        projects: [projectRow("user-1", "2026-08-12T10:00:00.000Z")],
+      };
+
+      await expect(unmapProject(PROJECT)).rejects.toThrow(/archive/i);
+
+      expect(db.rows.gsc_connections).toEqual([connectionRow(PROJECT, "user-1")]);
+      // It refused on the READ: no UPDATE was ever issued, so nothing had to be undone.
+      expect(db.ops).toEqual(["select:projects"]);
+      expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
+    });
+
+    // ANOTHER TENANT'S archived project may not become a signal either. The read is filtered
+    // on (id, user_id), so it comes back empty and this behaves exactly like an unknown id —
+    // the same fall-through to an UPDATE that matches nothing. Dropping `.eq("user_id", …)`
+    // from `readOwnProject` turns this into the archive refusal above, i.e. an oracle for
+    // "that id exists and is archived, somewhere else" (NEVER #4).
+    it("does not read another tenant's archive state through a shared project id", async () => {
+      signedIn("user-1");
+      const otherTenantRow = connectionRow(PROJECT, "user-2");
+      db.rows = {
+        gsc_accounts: [],
+        gsc_connections: [otherTenantRow],
+        projects: [projectRow("user-2", "2026-08-12T10:00:00.000Z")],
+      };
+
+      await expect(unmapProject(PROJECT)).resolves.toBeUndefined();
+
+      expect(db.ops).toEqual(["select:projects", "update:gsc_connections"]);
+      expect(db.rows.gsc_connections).toEqual([otherTenantRow]);
     });
   });
 
@@ -901,8 +963,14 @@ describe("saveProjectProperty", () => {
     };
   }
 
-  function projectRow(userId: string, id: string = PROJECT): Row {
-    return { id, user_id: userId, domain: "alpha.example" };
+  /**
+   * `archived_at` is ALWAYS written out, because production always has it: the fake projects
+   * only the columns a statement asked for, so a fixture omitting it would hand
+   * `saveProjectProperty` an `undefined` no real row can produce — and a double more tolerant
+   * than the runtime is how a missing constraint turns into a passing test (signed lesson 12).
+   */
+  function projectRow(userId: string, archivedAt: string | null = null, id: string = PROJECT): Row {
+    return { id, user_id: userId, domain: "alpha.example", archived_at: archivedAt };
   }
 
   /** `sites.list` as Google answers it, injected so no request is ever made. */
@@ -949,6 +1017,34 @@ describe("saveProjectProperty", () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://not-mine.com/", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
     expect(db.rows.gsc_connections).toEqual([]);
+  });
+
+  /**
+   * AN ARCHIVED PROJECT IS NOT A TARGET. The picker renders only for tracked projects, so this
+   * arrives through a STALE TAB — and a mapping written onto a project the tenant put away is
+   * state nothing will ever read, while the archive row goes on advertising a different stored
+   * property. MCP already refuses the same request (ARCHIVED_PROJECT_MESSAGE); this is the web
+   * wording of the one verdict.
+   *
+   * The refusal lands BEFORE Google: `listing` is deliberately given the property the caller
+   * asks for, so a save that got as far as the listing would SUCCEED. Nothing but the archive
+   * check can produce this refusal.
+   *
+   * MUTATION (run, not assumed): delete the `owned.archivedAt !== null` branch and this goes
+   * red twice — `{ ok: true }` comes back and a `gsc_connections` row appears.
+   */
+  it("refuses a project sitting in the ARCHIVE, before it asks Google anything", async () => {
+    db.rows = { ...db.rows, projects: [projectRow("user-1", "2026-08-12T10:00:00.000Z")] };
+    const sites = [{ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }];
+
+    const out = await saveProjectProperty(PROJECT, ACCOUNT, "https://a.com/", listing(...sites));
+
+    expect(out).toEqual({ ok: false, error: expect.stringMatching(/archive/i) });
+    expect(db.rows.gsc_connections).toEqual([]);
+    // Not one statement past the project read, so no credential was opened and no round trip
+    // was spent on an answer that could not have changed the outcome.
+    expect(db.ops).toEqual(["select:projects"]);
+    expect(vi.mocked(revalidatePath)).not.toHaveBeenCalled();
   });
 
   it("refuses a property the account cannot QUERY", async () => {

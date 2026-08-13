@@ -78,11 +78,15 @@ function isClientModule(source: string): boolean {
  *
  * It WAS listed by hand (`["page.tsx", "actions.ts"]`), and the hand-kept list went stale
  * exactly as a hand-kept list does: by the time Task 2 landed, the directory held FIVE server
- * modules and three of them — `choice.ts`, `connection-view.ts`, `account-inventory.tsx` — were
- * never scanned at all. The gap was measured, not theorised: putting `"use client"` on
- * `connection-view.ts`, whose `inventoryRows` is CALLED while rendering by the directive-free
- * `account-inventory.tsx`, left the whole suite green. That is the 2026-08-11 outage shape,
- * one module further out, sailing past the guard written to stop it.
+ * modules and three of them — `choice.ts`, `connection-view.ts` and the since-deleted
+ * `account-inventory.tsx` — were never scanned at all. The gap was measured, not theorised:
+ * putting `"use client"` on `connection-view.ts`, whose `inventoryRows` was CALLED while
+ * rendering by that directive-free component, left the whole suite green. That is the
+ * 2026-08-11 outage shape, one module further out, sailing past the guard written to stop it.
+ *
+ * The component is gone and the list still covers it, which is the whole argument for deriving:
+ * a hand-kept list would need editing on a DELETION too, and the version that forgets is the
+ * version that passes.
  *
  * Deriving it means a module added tomorrow is covered the day it is added, by nobody.
  */
@@ -96,8 +100,9 @@ const SERVER_MODULES = readdirSync(HERE)
  *
  * EVERY BINDING FORM, not only the braced one — the SIXTH hole, found by varying the import
  * FORM rather than its spelling, and measured before it was fixed. This scanner used to
- * require a `{ … }` clause, so all three of these, prepended to `account-inventory.tsx`,
- * left the gate 8/8 green while binding client values into a Server Component:
+ * require a `{ … }` clause, so all three of these, prepended to a directive-free module in
+ * this directory, left the gate 8/8 green while binding client values into a Server
+ * Component:
  *
  *     import * as picker from "./property-picker";
  *     import picked from "./property-picker";
@@ -224,11 +229,16 @@ describe("the RSC boundary of the connection page", () => {
    *
    * It names them rather than counting them: a count would have to be edited by hand on every
    * new module, which is the habit that produced the stale list in the first place.
+   *
+   * `account-inventory.tsx` used to head this list and was deleted with its last import; the
+   * name is NOT simply dropped — `action-support.ts` takes its place, because a shrinking list
+   * of names is a guard quietly losing coverage, and this one carries the two server modules
+   * (`actions.ts`, `tracking-actions.ts`) that import it.
    */
   it("scans every server module here, not a hand-kept subset", () => {
     expect(SERVER_MODULES).toEqual(
       expect.arrayContaining([
-        "account-inventory.tsx",
+        "action-support.ts",
         "actions.ts",
         "choice.ts",
         "connection-view.ts",

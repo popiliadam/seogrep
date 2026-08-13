@@ -16,4 +16,9 @@ pnpm install --frozen-lockfile
 # Store'u okur, bu yüzden install'dan SONRA (CI'daki licenses job'ının yerel karşılığı).
 bash guardrails/check-licenses.sh
 pnpm turbo run typecheck lint test build
+# Üretilmiş tool sayfaları ↔ registry drift'i. `apps/mcp/dist`'i OKUDUĞU için build'den SONRA.
+# Bu satır olmadan kontrol yalnız `make goals` içinde yaşıyordu ve `make goals` HİÇBİR CI job'ında
+# koşmuyor — yani bayat bir tools-reference sayfası hiçbir zorunlu kapıyı kırmızıya döndürmüyordu
+# (imzalı ders 15: kapı, dokunulan yüzeyin kendi kontrolünü içerir).
+node apps/web/scripts/gen-tool-docs.mjs --check
 echo "VERIFY: PASS"

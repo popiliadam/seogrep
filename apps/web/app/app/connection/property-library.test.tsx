@@ -58,7 +58,7 @@ function openFold(index = 0) {
 function account(overrides: Partial<LibraryAccount> = {}): LibraryAccount {
   return {
     accountId: ACC,
-    email: "suleymanncapar@gmail.com",
+    email: "owner@example.test",
     rows: ROWS,
     listed: 4,
     ...overrides,
@@ -121,7 +121,7 @@ describe("PropertyLibrary", () => {
   it("renders one row per unused property, under the account it belongs to", () => {
     render(<PropertyLibrary accounts={[account()]} trackProperty={ok()} />);
 
-    expect(screen.getByRole("heading", { name: /suleymanncapar@gmail\.com/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /owner@example\.test/ })).toBeTruthy();
     const rows = screen.getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     expect(within(rows[0] as HTMLElement).getByText("sc-domain:balerin.com")).toBeTruthy();
@@ -203,7 +203,7 @@ describe("PropertyLibrary", () => {
           account({ rows: [ROWS[0] as (typeof ROWS)[number]] }),
           account({
             accountId: other,
-            email: "second@gmail.com",
+            email: "second@example.test",
             rows: [{ siteUrl: "sc-domain:zephyrbrook.com", permissionLevel: "siteOwner", queryable: true }],
           }),
         ]}

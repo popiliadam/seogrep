@@ -53,6 +53,53 @@ export async function requireUserId(): Promise<string> {
 export type SavePropertyResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 /**
+ * The sentence every action owes a request aimed at an ARCHIVED project. It names the way back
+ * rather than the refusal alone, because the project is not gone — /app/connection lists it in
+ * the archive with a Restore button, and that is the one click this asks for.
+ *
+ * It is the web wording of the MCP tools' `ARCHIVED_PROJECT_MESSAGE` (project-target.ts): same
+ * verdict, surface-appropriate route back.
+ */
+export const ARCHIVED_PROJECT =
+  "That project is in the archive, so it is not being tracked right now. Restore it first.";
+
+/** A project this tenant owns, and whether it currently sits in the archive. */
+export interface OwnedProject {
+  readonly id: string;
+  readonly archivedAt: string | null;
+}
+
+/**
+ * Tenant-scoped read of one project by id; null for missing AND for another tenant's.
+ *
+ * BOTH filters ride on the SELECT (constitution NEVER #4): this client is service-role and
+ * bypasses RLS, so the `.eq("user_id", …)` is the only thing standing between a stray project
+ * id and another tenant's row. Missing and foreign are indistinguishable on purpose, so no
+ * caller can turn this into a probe for which project ids exist.
+ *
+ * It lives here rather than beside any one action because THREE actions across two
+ * `"use server"` modules ask the same question — `saveProjectProperty` and `unmapProject`
+ * (./actions), `untrackProject` and `restoreProject` (./tracking-actions) — and a second answer
+ * to one question is a second truth.
+ */
+export async function readOwnProject(
+  service: ServiceClient,
+  userId: string,
+  projectId: string,
+): Promise<OwnedProject | null> {
+  const { data, error } = await service
+    .from("projects")
+    .select("id, archived_at")
+    .eq("id", projectId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`projects lookup failed: ${error.message}`);
+  }
+  return data ? { id: data.id, archivedAt: data.archived_at } : null;
+}
+
+/**
  * The one outward call these actions make, injectable so tests reach zero live requests
  * (constitution NEVER #5).
  *

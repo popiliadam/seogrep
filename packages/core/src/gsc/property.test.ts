@@ -17,6 +17,17 @@ describe("propertyToDomain", () => {
     expect(propertyToDomain("sc-domain:BALERIN.com")).toBe("balerin.com");
   });
 
+  /**
+   * FQDN'in sondaki noktası. `property.ts`'in `.replace(/\.+$/, "")`'i HİÇBİR testle pinli
+   * değildi: silindiğinde süit yeşil kalıyordu, çünkü hiçbir vaka sonda nokta taşımıyordu.
+   * Google `sc-domain:` değerini kök nokta ile de verebilir ve nokta kalırsa DOMAIN_RE
+   * eşleşmez → property null'a düşer, yani "tanımadım" cevabı tanıdığı bir stringe verilir.
+   * MUTASYON KOŞULDU: replace silindi → bu spec kırmızı.
+   */
+  it("FQDN'in sondaki noktasını atar", () => {
+    expect(propertyToDomain("sc-domain:balerin.com.")).toBe("balerin.com");
+  });
+
   it("tanınmayan biçimi YARIM OKUMAZ, reddeder", () => {
     expect(propertyToDomain("")).toBeNull();
     expect(propertyToDomain("sc-domain:")).toBeNull();

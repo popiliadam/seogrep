@@ -52,7 +52,19 @@ export function nonPublicHostnameReason(hostname: string): string | null {
   return null;
 }
 
-const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+/**
+ * The public-domain SHAPE: at least two labels, valid characters, TLD 2-63 chars, 253 max.
+ *
+ * EXPORTED, because `../gsc/property.ts` needs the same rule and used to carry its own copy of
+ * this literal — inside the SAME package, where an import costs one line. Two copies of one
+ * regex is two answers to "what is a domain": let them drift and `propertyToDomain` starts
+ * accepting shapes `normalizeDomain` refuses, which is exactly the one-gate story both
+ * functions exist to tell.
+ *
+ * It is a shape check only. Whether a well-shaped name may be TRACKED is
+ * `nonPublicHostnameReason`'s question, and both callers ask it separately.
+ */
+export const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export type NormalizedDomain = { readonly ok: true; readonly domain: string } | {
   readonly ok: false;

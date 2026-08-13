@@ -13,13 +13,11 @@
  * identically.
  */
 
+import { DOMAIN_RE } from "../net/hostname.js";
+
 const SC_DOMAIN_PREFIX = "sc-domain:";
 
-/**
- * The same shape `normalizeDomain` (./net/hostname.ts) enforces, copied from it rather than
- * recalled: at least two labels, valid characters, TLD 2-63 chars.
- */
-const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
 
 /**
  * The host a property string refers to, or null when the string is not a form we recognise.
