@@ -1,33 +1,36 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import {
-  generateApiKey,
-  listSites,
-  mcpUrlFor,
-  mcpUrlTemplate,
-  tokenKeyBytes,
-  type GscSite,
-} from "@pseo/core";
+import { generateApiKey, mcpUrlFor, mcpUrlTemplate, tokenKeyBytes } from "@pseo/core";
 import { countActiveKeys, createKey, listKeys, revokeKey } from "@pseo/db/api-keys-repo";
 import { createServiceClient } from "@pseo/db/server";
 import { captureKeyCreated } from "../../../lib/analytics";
 import { accessTokenFor } from "../../../lib/gsc/accounts";
 import { canQuerySearchAnalytics } from "../../../lib/gsc/oauth";
 import { revokeGoogleToken } from "../../../lib/gsc/revoke";
-import { createClient } from "../../../lib/supabase/server";
+import {
+  CONNECTION_PATH,
+  readAccountSites,
+  requireUserId,
+  UUID_RE,
+  type SavePropertyDeps,
+  type SavePropertyResult,
+  type ServiceClient,
+} from "./action-support";
 
 /**
- * Server actions for /app/connection. Each action re-derives the user from the
- * validated session (getUser) — NEVER from a client-supplied value — and touches only
- * that user's rows. The plaintext key exists solely in the return value of a
- * create/rotate call (shown once); it is never persisted, logged, or re-derivable.
- * Writes use the service-role client (authenticated has SELECT only); reads that need
- * RLS scoping happen in the RSC with the caller's own client.
+ * Server actions for /app/connection: API keys, and the two-level Search Console disconnect.
+ * Each action re-derives the user from the validated session (getUser) — NEVER from a
+ * client-supplied value — and touches only that user's rows. The plaintext key exists solely
+ * in the return value of a create/rotate call (shown once); it is never persisted, logged, or
+ * re-derivable. Writes use the service-role client (authenticated has SELECT only); reads that
+ * need RLS scoping happen in the RSC with the caller's own client.
+ *
+ * TRACK / UNTRACK / RESTORE live in `./tracking-actions` — this file was 940 lines, past the
+ * 800-line house maximum, and Tasks 9-10 import the tracking trio. What both files share sits
+ * in `./action-support`, which carries no directive because a `"use server"` module may export
+ * nothing but async functions.
  */
-
-const CONNECTION_PATH = "/app/connection";
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Cap on simultaneously-active keys per user, enforced on BOTH mint paths (M-22).
 //
@@ -41,25 +44,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // growth, not a money or security invariant.
 const MAX_ACTIVE_KEYS = 5;
 
-type ServiceClient = ReturnType<typeof createServiceClient>;
-
 export interface GeneratedKeyResult {
   /** Plaintext key — returned once for display, never stored. */
   readonly key: string;
   readonly prefix: string;
   /** Full personal MCP URL embedding the plaintext key — shown once. */
   readonly mcpUrl: string;
-}
-
-async function requireUserId(): Promise<string> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    throw new Error("Not authenticated");
-  }
-  return user.id;
 }
 
 /**
@@ -422,24 +412,6 @@ export async function describeDisconnect(accountId: string): Promise<string> {
   );
 }
 
-/** What the picker gets back: a success, or one sentence it may show the user verbatim. */
-export type SavePropertyResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
-
-/**
- * The one outward call this action makes, injectable so tests reach zero live requests
- * (constitution NEVER #5).
- *
- * It is a parameter of an exported SERVER ACTION, so a caller can in principle supply it.
- * That buys them nothing: a function is not serializable across the action boundary, and even
- * a listing they somehow controlled would only let them store a property string against THEIR
- * OWN project — the account is still opened with `accessTokenFor`'s tenant-filtered read, so
- * every later Search Console call still runs on their own token and simply 403s. Nothing
- * crosses a tenant, and nothing is read that they could not already read.
- */
-export interface SavePropertyDeps {
-  readonly listSites?: (accessToken: string) => Promise<GscSite[]>;
-}
-
 /**
  * Map ONE project to ONE Search Console property on ONE connected Google account.
  *
@@ -497,32 +469,12 @@ export async function saveProjectProperty(
     return { ok: false, error: "That project or Google account was not found." };
   }
 
-  const encryptionKey = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encryptionKey) {
-    console.error("saveProjectProperty: TOKEN_ENCRYPTION_KEY is not configured");
-    return { ok: false, error: "Search Console is not configured. Please try again later." };
+  const listing = await readAccountSites(service, accountId, userId, "saveProjectProperty", deps);
+  if (!listing.ok) {
+    return listing;
   }
 
-  let sites: GscSite[];
-  try {
-    const accessToken = await accessTokenFor(service, accountId, userId, encryptionKey);
-    sites = await (deps.listSites ?? listSites)(accessToken);
-  } catch (caught) {
-    // A dead credential, a retired encryption key, a foreign account id and a Google outage
-    // all land here. They are not distinguished for the USER — every one of them is answered
-    // by reconnecting the account — but the log keeps the diagnosis. Nothing from `caught` is
-    // returned: its message can carry Google's own text, and this string reaches a browser.
-    console.error(
-      `saveProjectProperty: could not read sites.list for account ${accountId}:`,
-      caught,
-    );
-    return {
-      ok: false,
-      error: "Could not read this Google account's properties. Reconnect the account and try again.",
-    };
-  }
-
-  const hit = sites.find((site) => site.siteUrl === property);
+  const hit = listing.sites.find((site) => site.siteUrl === property);
   if (!hit) {
     return { ok: false, error: "That property is not listed on this Google account." };
   }

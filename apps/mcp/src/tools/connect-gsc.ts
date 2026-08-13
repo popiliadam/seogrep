@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { forUser, getServiceClient } from "../db.ts";
+import { getServiceClient } from "../db.ts";
 import { optionalWebBaseUrl, requireWebBaseUrl } from "../env.ts";
+import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "./project-target.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
@@ -124,20 +125,23 @@ export const connectGscTool = defineTool({
   }),
   handler: async (ctx, { project_id }) => {
     // Tenant-scoped ownership gate: a missing project and another tenant's project are
-    // indistinguishable here (the read is filtered to ctx.userId), so nothing leaks.
-    const { data, error } = await forUser(getServiceClient(), ctx.userId)
-      .selectOwn("projects", "id, domain")
-      .eq("id", project_id)
-      .maybeSingle();
-    if (error) {
-      throw new Error(`connect_gsc: project lookup failed: ${error.message}`);
-    }
-    if (!data) {
+    // indistinguishable here (the read is filtered to ctx.userId), so nothing leaks. The read is
+    // the SHARED loadOwnProject rather than a second one of its own — a per-tool project read is
+    // a per-tool place for the archive check below to be forgotten.
+    const project = await loadOwnProject(ctx.userId, project_id);
+    if (!project) {
       return errorResult(
         `No project found with id ${project_id}. Create one with setup_project first.`,
       );
     }
-    const { domain } = data as unknown as { domain: string };
+    // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
+    // indistinguishable from one that does not exist (see project-target.ts). connect_gsc costs
+    // 0 credits, so the refusal has no ledger to avoid — it avoids handing out a connect link
+    // for a project that is not being tracked.
+    if (project.archivedAt !== null) {
+      return errorResult(ARCHIVED_PROJECT_MESSAGE);
+    }
+    const { domain } = project;
 
     // Is it ALREADY connected? The answer sits in gsc_connections and used to go unread, so a
     // connected project got the same "go connect it" copy as an unconnected one (live product

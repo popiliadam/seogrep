@@ -181,4 +181,30 @@ describe("whats_next tool metadata + handler wiring", () => {
     expect(result.content[0]?.text).toContain("injected.example");
     expect(result.content[0]?.text).toContain("pull_gsc_data");
   });
+
+  /**
+   * The per-tool archive proof. It injects the PROJECT LOADER, not the state loader: injecting
+   * the state would skip the very code path under test and prove only that a rendered string
+   * comes back. The refusal itself lives once, in project-target.ts; this asserts whats_next
+   * goes through it.
+   *
+   * It also runs with NO Supabase env, which pins a second property: the archive answer returns
+   * before any signal read. Were the service client reached, it would throw on the missing env
+   * rather than answer.
+   */
+  it("refuses an ARCHIVED project instead of routing it — and reads no further", async () => {
+    const domain = "retired-shop.com"; // carries no form of the matched word
+    expect(domain).not.toMatch(/archiv/i);
+    const archived = makeWhatsNextTool({
+      loadProject: async (_userId, projectId) => ({
+        id: projectId,
+        domain,
+        archivedAt: "2026-08-13T00:00:00Z",
+      }),
+    });
+    const result = await archived.run(CTX, { project_id: "11111111-1111-4111-8111-111111111111" });
+    expect(result.content[0]?.text).toMatch(/archived/i);
+    // It must not go on to recommend a next step for a project that is not being tracked.
+    expect(result.content[0]?.text).not.toMatch(/next step/i);
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AMBIGUOUS_SUBJECT_MESSAGE,
+  ARCHIVED_PROJECT_MESSAGE,
   NO_SUBJECT_MESSAGE,
   projectNotFoundMessage,
   resolveTarget,
@@ -19,14 +20,38 @@ import {
 const MINE = "11111111-1111-4111-8111-111111111111";
 const THEIRS = "22222222-2222-4222-8222-222222222222";
 const NOBODYS = "33333333-3333-4333-8333-333333333333";
+const MINE_ARCHIVED = "44444444-4444-4444-8444-444444444444";
+const THEIRS_ARCHIVED = "55555555-5555-4555-8555-555555555555";
+
+/**
+ * MEASURED, not chosen for looks. The first draft of this fixture used "archived.example",
+ * and the archive spec below went GREEN against the UNCHANGED resolver: `.example` is a
+ * reserved name, so normalizeDomain refused it with `"archived.example" is not a public
+ * domain` — a refusal whose text carries the fixture's own name straight into /archived/i.
+ * The domain must therefore be PUBLIC (so the resolver reaches the archive branch at all) and
+ * must not contain the word being matched. Both are asserted, not assumed.
+ */
+const ARCHIVED_DOMAIN = "retired-shop.com";
 
 /**
  * A loader that models the ONE property the real one has: rows are keyed by (userId, projectId),
  * so a caller only ever sees their own. THEIRS exists — it just belongs to someone else.
+ * Archived rows are rows: the loader still returns them, exactly as the real tenant-scoped read
+ * does. Refusing them is the RESOLVER's job, and a fake that hid them would prove nothing.
  */
 const store: Record<string, ProjectRef> = {
-  [`user-1/${MINE}`]: { id: MINE, domain: "adstark.com.tr" },
-  [`user-2/${THEIRS}`]: { id: THEIRS, domain: "other-tenant.example" },
+  [`user-1/${MINE}`]: { id: MINE, domain: "adstark.com.tr", archivedAt: null },
+  [`user-1/${MINE_ARCHIVED}`]: {
+    id: MINE_ARCHIVED,
+    domain: ARCHIVED_DOMAIN,
+    archivedAt: "2026-08-13T00:00:00Z",
+  },
+  [`user-2/${THEIRS}`]: { id: THEIRS, domain: "other-tenant.example", archivedAt: null },
+  [`user-2/${THEIRS_ARCHIVED}`]: {
+    id: THEIRS_ARCHIVED,
+    domain: "other-tenant-retired.com",
+    archivedAt: "2026-08-13T00:00:00Z",
+  },
 };
 
 const loadProject: LoadProjectFn = async (userId, projectId) =>
@@ -51,7 +76,7 @@ describe("resolveTarget", () => {
     expect(resolved).toEqual({
       ok: true,
       domain: "adstark.com.tr",
-      project: { id: MINE, domain: "adstark.com.tr" },
+      project: { id: MINE, domain: "adstark.com.tr", archivedAt: null },
     });
   });
 
@@ -112,9 +137,62 @@ describe("resolveTarget", () => {
     const legacy: LoadProjectFn = async () => ({
       id: MINE,
       domain: "HTTPS://Legacy.Example.COM/x",
+      archivedAt: null,
     });
     const resolved = await resolveTarget("user-1", { project_id: MINE }, legacy);
     expect(resolved.ok === true && resolved.domain).toBe("legacy.example.com");
+  });
+});
+
+/**
+ * The archive refusal. It lives HERE, in the one resolver, rather than in each tool: a check
+ * copied into nine handlers is a check the ninth handler forgets (the `rsc-boundary` gate grew
+ * SIX holes exactly that way). Each converted tool has its own spec proving it comes through
+ * here — one check in one place does not prove every caller reaches it.
+ */
+describe("resolveTarget — archived projects", () => {
+  it("refuses an archived project of the caller's own", async () => {
+    // The fixture may not smuggle the matched word in, and it must be a domain the normalizer
+    // ACCEPTS — otherwise the refusal under test is the normalizer's, not the archive check's.
+    expect(ARCHIVED_DOMAIN).not.toMatch(/archiv/i);
+    expect(await resolveTarget("user-1", { target: ARCHIVED_DOMAIN }, loadProject)).toMatchObject({
+      ok: true,
+    });
+    const resolved = await resolveTarget("user-1", { project_id: MINE_ARCHIVED }, loadProject);
+    // Asserted by regex, not by the source literal: a test that re-states the string it is
+    // pinning proves only that the string was copied twice (signed lesson 11).
+    expect(resolved).toMatchObject({ ok: false, error: expect.stringMatching(/archived/i) });
+  });
+
+  it("names the repair in the refusal instead of leaving the caller stuck", () => {
+    expect(ARCHIVED_PROJECT_MESSAGE).toMatch(/track_gsc_property|connection page/i);
+  });
+
+  it("still resolves an active project exactly as before", async () => {
+    const resolved = await resolveTarget("user-1", { project_id: MINE }, loadProject);
+    expect(resolved).toMatchObject({ ok: true, domain: "adstark.com.tr" });
+  });
+
+  /**
+   * ORDER PROOF — the reason the archive check sits AFTER the ownership check. If it came
+   * first, another tenant's archived project would be answered "that project is archived",
+   * which says the row EXISTS. Today missing and other-tenant are indistinguishable; an
+   * archived other-tenant project must stay in that same indistinguishable class.
+   */
+  it("answers another tenant's ARCHIVED project as not-found, never as archived", async () => {
+    const theirs = await resolveTarget("user-1", { project_id: THEIRS_ARCHIVED }, loadProject);
+    const nobodys = await resolveTarget("user-1", { project_id: NOBODYS }, loadProject);
+    const theirText = theirs.ok === false ? theirs.error : "";
+    const nobodyText = nobodys.ok === false ? nobodys.error : "";
+    expect(theirText).toBe(projectNotFoundMessage(THEIRS_ARCHIVED));
+    expect(theirText).not.toMatch(/archived/i);
+    expect(theirText.replace(THEIRS_ARCHIVED, "<id>")).toBe(nobodyText.replace(NOBODYS, "<id>"));
+  });
+
+  /** A bare target names no project, so nothing can be archived about it — and no read happens. */
+  it("leaves the bare-target path untouched", async () => {
+    const resolved = await resolveTarget("user-1", { target: "example.com" }, loadProject);
+    expect(resolved).toEqual({ ok: true, domain: "example.com", project: null });
   });
 });
 
@@ -124,7 +202,9 @@ describe("subjectLabel", () => {
   });
 
   it("names the project a resolved target came from", () => {
-    expect(subjectLabel("adstark.com.tr", { id: MINE, domain: "adstark.com.tr" })).toBe(
+    expect(
+      subjectLabel("adstark.com.tr", { id: MINE, domain: "adstark.com.tr", archivedAt: null }),
+    ).toBe(
       'your project "adstark.com.tr"',
     );
   });

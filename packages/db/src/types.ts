@@ -313,18 +313,21 @@ export type Database = {
       }
       projects: {
         Row: {
+          archived_at: string | null
           created_at: string
           domain: string
           id: string
           user_id: string
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string
           domain: string
           id?: string
           user_id: string
         }
         Update: {
+          archived_at?: string | null
           created_at?: string
           domain?: string
           id?: string

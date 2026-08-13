@@ -7,16 +7,23 @@ import { defineTool, textResult } from "./registry.ts";
  * the query is tenant-scoped by construction (constitution NEVER #4); an empty result
  * returns actionable guidance rather than a bare empty list. Ordering is applied in
  * memory (oldest first) so the output is deterministic regardless of scan order.
+ *
+ * Archived projects are HIDDEN here, not refused. The by-id tools refuse (project-target.ts's
+ * ARCHIVED_PROJECT_MESSAGE) because the caller named a specific project and deserves to know
+ * why it will not answer; a list was asked "what am I tracking?", and something the tenant
+ * stopped tracking is simply not part of that answer. Nothing is lost: setup_project on the
+ * same domain brings the row back on its original id.
  */
 export const listProjectsTool = defineTool({
   name: "list_projects",
   description: "List the website domains you are tracking (oldest first).",
   inputSchema: z.object({}),
   handler: async (ctx) => {
-    const { data, error } = await forUser(getServiceClient(), ctx.userId).selectOwn(
-      "projects",
-      "id, domain, created_at",
-    );
+    const { data, error } = await forUser(getServiceClient(), ctx.userId)
+      .selectOwn("projects", "id, domain, created_at")
+      // Active rows only (migration 0022). `.is(…, null)` is the PostgREST null filter —
+      // `.eq(…, null)` compares against the literal string and matches nothing.
+      .is("archived_at", null);
     if (error) {
       throw new Error(`projects list failed: ${error.message}`);
     }

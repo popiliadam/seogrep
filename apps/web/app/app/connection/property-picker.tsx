@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import type { SavePropertyResult } from "./actions";
+import type { SavePropertyResult } from "./action-support";
 import { decodeChoice, encodeChoice } from "./choice";
 
 /** One selectable Search Console property, on one of the user's connected Google accounts. */

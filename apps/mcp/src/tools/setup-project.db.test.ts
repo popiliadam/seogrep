@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { setupProjectTool } from "./setup-project.ts";
+import { restoreOwnProject, setupProjectTool } from "./setup-project.ts";
 
 /**
  * DB-integration proofs for setup_project against a LOCAL Supabase stack (test:db
  * lane; export env via guardrails/verify-db.sh). Proves: first call creates, repeat
  * calls are idempotent by (user_id, domain) — INCLUDING across URL/host forms that
- * normalize to the same domain — and one tenant never sees another's projects.
+ * normalize to the same domain — one tenant never sees another's projects, and a domain the
+ * tenant had archived comes BACK on the same id instead of being registered a second time.
  */
 
 function requireEnv(name: string): string {
@@ -45,6 +46,35 @@ async function projectRows(userId: string): Promise<{ id: string; domain: string
   return data ?? [];
 }
 
+/**
+ * Archive the tenant's row by stamping archived_at (migration 0022) — what untracking does.
+ * THROWS when no row matched, so a fixture that archives nothing cannot read as a pass.
+ */
+async function archiveProject(userId: string, domain: string): Promise<string> {
+  const { data, error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("domain", domain)
+    .select("id")
+    .single();
+  if (error || !data) {
+    throw new Error(`archive seed failed for ${domain}: ${error?.message ?? "no row matched"}`);
+  }
+  return data.id;
+}
+
+/** Read one project's archived_at straight from the table (null = actively tracked). */
+async function archivedAt(projectId: string): Promise<string | null> {
+  const { data, error } = await service
+    .from("projects")
+    .select("archived_at")
+    .eq("id", projectId)
+    .single();
+  if (error || !data) throw new Error(`archived_at read failed: ${error?.message ?? "no row"}`);
+  return data.archived_at;
+}
+
 beforeAll(async () => {
   const { error } = await service.from("projects").select("id").limit(1);
   if (error) {
@@ -76,6 +106,25 @@ describe("setup_project against the local stack", () => {
     const rows = await projectRows(ctx.userId);
     expect(rows).toHaveLength(1);
     expect(second.content[0]?.text).toContain(rows[0]!.id);
+  });
+
+  it("brings an archived domain back: the SAME project id, archived_at cleared, still one row", async () => {
+    const ctx = await makeCtx();
+    const created = await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
+    expect(created.content[0]?.text).toMatch(/created: true/);
+    const projectId = await archiveProject(ctx.userId, "retired-shop.com");
+
+    const again = await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
+
+    expect(again.isError).toBeUndefined();
+    const text = again.content[0]?.text ?? "";
+    // The user's history hangs off this id — a second registration would orphan it, and the
+    // (user_id, domain) unique constraint (migration 0010) makes one impossible anyway.
+    expect(text).toContain(projectId);
+    expect(text).toMatch(/created: false/);
+    expect(text).toMatch(/restored/i);
+    expect(await projectRows(ctx.userId)).toHaveLength(1);
+    expect(await archivedAt(projectId)).toBeNull(); // tracked again, not merely reported
   });
 
   it("returns an isError result for an invalid domain and inserts nothing", async () => {
@@ -132,5 +181,47 @@ describe("setup_project against the local stack", () => {
     expect(texts.filter((t) => /created: true/.test(t))).toHaveLength(1);
     expect(texts.filter((t) => /created: false/.test(t))).toHaveLength(forms.length - 1);
     for (const text of texts) expect(text).toContain(rows[0]!.id);
+  });
+});
+
+/**
+ * THE RESTORE WRITE, DRIVEN HEAD-ON — the twin of untrack_project's `archiveOwnProject` pin,
+ * and for the same reason. `setup_project` reads the project first, so at TOOL level the
+ * ownership read refuses a stranger before the UPDATE ever runs: delete the write's own
+ * `.eq("user_id", …)` and every tool-level spec above stays GREEN (measured, 2026-08-13). A
+ * guard that no reachable path exercises is a guard nobody is measuring, so the writer is
+ * exported and called directly with a mismatched (userId, projectId) pair.
+ *
+ * The zero-row half is pinned the same way: PostgREST answers an UPDATE that matched NOTHING
+ * with `error === null`, so before this the tool said "Restored …" for a write that wrote
+ * nothing. Both halves are one function's contract, so both are asserted on that function.
+ */
+describe("restoreOwnProject against the local stack", () => {
+  it("is tenant-filtered on the WRITE: a foreign user_id matches no row", async () => {
+    const owner = await makeCtx();
+    const intruder = await makeCtx();
+    await setupProjectTool.run(owner, { domain: `stonefeather-${randomUUID()}.com` });
+    const [project] = await projectRows(owner.userId);
+    const projectId = project!.id;
+    const archivedFirst = await archiveProject(owner.userId, project!.domain);
+    expect(archivedFirst).toBe(projectId);
+
+    const stranger = await restoreOwnProject(intruder.userId, projectId);
+
+    // It reports honestly that it changed nothing…
+    expect(stranger).toBe(false);
+    // …and the owner's project is still in the archive rather than silently un-archived.
+    expect(await archivedAt(projectId)).not.toBeNull();
+    // The filter blocks the stranger, not the row: the owner still gets their project back.
+    expect(await restoreOwnProject(owner.userId, projectId)).toBe(true);
+    expect(await archivedAt(projectId)).toBeNull();
+  });
+
+  it("reports a write that matched NO row instead of calling it a restore", async () => {
+    const owner = await makeCtx();
+
+    // A project id that exists for nobody. PostgREST returns error === null for this UPDATE,
+    // so anything that reads `error` alone would call it a success.
+    expect(await restoreOwnProject(owner.userId, randomUUID())).toBe(false);
   });
 });

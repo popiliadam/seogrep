@@ -28,7 +28,7 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 
 const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
-const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "example.com" };
+const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "example.com", archivedAt: null };
 
 /** Models the real loader: rows are keyed by (userId, projectId), so nobody sees another tenant's. */
 const loadProject: LoadProjectFn = async (userId, projectId) =>

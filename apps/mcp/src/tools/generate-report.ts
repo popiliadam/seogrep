@@ -1,11 +1,12 @@
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
 import { z } from "zod";
 import { base58Encode } from "@pseo/core";
-import { forUser, getServiceClient, type ServiceClient } from "../db.ts";
+import { getServiceClient, type ServiceClient } from "../db.ts";
 import { requireWebBaseUrl } from "../env.ts";
 import { loadLatestCrawl, type LoadCrawlFn } from "../audit/index.ts";
 import { loadLatestPull, type LoadPullFn } from "../gsc-data/index.ts";
 import { buildReportModel, renderReportHtml, resolveReportTitle } from "../report/index.ts";
+import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "./project-target.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
@@ -149,12 +150,10 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
 
       // Tenant-scoped ownership gate: an unknown project and another tenant's project are
       // indistinguishable here (read filtered to ctx.userId), so nothing leaks. THROW (release).
+      // The read is the SHARED loadOwnProject, not a second one of its own: a per-tool project
+      // read is a per-tool place for the archive check below to be forgotten.
       const client = getServiceClient();
-      const project = await forUser(client, ctx.userId).selectOwnById<{ domain: string }>(
-        "projects",
-        project_id,
-        "domain",
-      );
+      const project = await loadOwnProject(ctx.userId, project_id);
       if (!project) {
         // TYPED so the registry renders this verbatim instead of the generic crash sentence.
         // Echoing project_id back leaks nothing: it is the caller's own input, and the read
@@ -163,6 +162,13 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
         throw new PreconditionNotMetError(
           `No project found with id ${project_id}. Create one with setup_project first.`,
         );
+      }
+      // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
+      // indistinguishable from one that does not exist (see project-target.ts). TYPED, so the
+      // registry renders the sentence verbatim, and a THROW so withCredits RELEASES the reserve —
+      // being told a project is archived costs nothing.
+      if (project.archivedAt !== null) {
+        throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
       }
 
       // Read the latest crawl AND pull through the shared ports. Both may be absent; a not-ok

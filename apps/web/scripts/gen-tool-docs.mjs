@@ -774,6 +774,120 @@ export const DOC_PROSE = {
       "One clear next step for the project, a short reason, and the next two or three steps — all in " +
       "plain language, naming the exact tools to run.",
   },
+
+  list_gsc_properties: {
+    lead:
+      "`list_gsc_properties` shows every Search Console property on the Google accounts you have " +
+      "connected — each one's permission level, whether SeoGrep can read its performance data, and " +
+      "which project reads it. It is the tool to reach for when a property you can see in Search " +
+      "Console does not seem to be available here.",
+    whatItDoes:
+      "For each connected Google account it asks Google for that account's property list, then lines " +
+      "each property up against your projects. A property your account cannot query is **still " +
+      "listed**, marked `NOT QUERYABLE` with its permission level, so a property is never silently " +
+      "missing. Nothing is cached: the list is read live, every time.",
+    preExampleSections: [
+      {
+        heading: "When an account cannot be read",
+        body:
+          "If Google refuses — an expired connection, an outage — that account is reported as **could " +
+          "not be read**, never as an account with no properties. An absence we did not observe is " +
+          "not an absence, and the difference is what tells you to reconnect rather than to go and " +
+          "verify a property that was there all along. The other accounts are still listed.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which Search Console properties can SeoGrep see?" +
+      "\n\nThen map one to a project on the Connection page, or with " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc) if the account is not connected yet.",
+    returns:
+      "One block per connected Google account: its email and `account_id`, then one line per " +
+      "property with its permission level, the projects reading it through that account, and — where " +
+      "it applies — why SeoGrep cannot query it.",
+  },
+
+  track_gsc_property: {
+    lead:
+      "`track_gsc_property` turns a Search Console property into a tracked project in one call. " +
+      "It works out the site's domain from the property, opens the project for it — or brings it " +
+      "back from your archive — and links the property to it, ready for " +
+      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).",
+    whatItDoes:
+      "Pass a property exactly as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
+      "prints it. SeoGrep re-reads your Google accounts live and only accepts a property one of " +
+      "them actually lists — what you type is never taken as proof it exists. If you already have " +
+      "a project for that domain, it is reused rather than duplicated, so running this twice is " +
+      "safe. If the same property sits on two of your connected accounts, SeoGrep asks which one " +
+      "to read it through instead of guessing, and you re-run with `account_id`.",
+    preExampleSections: [
+      {
+        heading: "When it refuses",
+        body:
+          "A property your account cannot query is refused **before** any project is created — a " +
+          "project that looks tracked but can answer nothing is worse than no project, so the " +
+          "answer names the permission level and what to do about it. A property no connected " +
+          "account lists is refused the same way. And if Google could not be reached at all, you " +
+          "are told the account could not be read, never that the property is missing: an absence " +
+          "we did not observe is not an absence.\n\n" +
+          "The same rule applies when only **some** of your accounts answer. If the property is " +
+          "listed on an account that answered while another account could not be read, SeoGrep " +
+          "refuses rather than binding: the silent account might list it too, and a passing " +
+          "outage must not decide which Google account a project reads through. Re-run with " +
+          "`account_id` to settle it yourself, or try again once the other account is readable.",
+      },
+      {
+        heading: "Archived projects",
+        body:
+          "If you archived the project for this domain earlier, this brings back the **same " +
+          "project** — its id, its crawls and its reports are all still there. Nothing is started " +
+          "from scratch and no second project is created for the same site.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Track sc-domain:example.com in SeoGrep." +
+      "\n\nRun [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) first if you are " +
+      "not sure how a property is spelled.",
+    returns:
+      "The project the property was attached to — its domain and `project_id`, whether it was " +
+      "created, already tracked or restored from your archive, which Google account it now reads " +
+      "through, and the tools to run next.",
+  },
+
+  untrack_project: {
+    lead:
+      "`untrack_project` stops tracking one of your projects by moving it to your **archive**. " +
+      "Nothing is deleted: the project, its crawls and reports, and its Search Console link stay " +
+      "exactly as they are, and " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) brings the same project " +
+      "back unchanged.",
+    whatItDoes:
+      "Pass the `project_id` of a project you no longer want on your dashboard — " +
+      "[`list_projects`](/docs/tools-reference/list-projects) prints the ids. SeoGrep marks it " +
+      "archived and stops treating it as tracked. Running it again on a project that is already " +
+      "archived is a **success, not an error**, and it does not change the date you archived it.",
+    preExampleSections: [
+      {
+        heading: "Why it archives instead of deleting",
+        body:
+          "Archiving is what makes coming back free. Everything that hangs off the project — its " +
+          "crawl history, its reports, and the Search Console property it reads through — stays " +
+          "attached to the **same project id**, so restoring it is not a rebuild. Deleting would " +
+          "throw that away and a re-added site would start from nothing.\n\n" +
+          "To bring a project back, track its property again with " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property), or set the same " +
+          "domain up again with [`setup_project`](/docs/tools-reference/setup-project) — either " +
+          "one restores the original project in place.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Stop tracking my old-site.com project.\n\n" +
+      "Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the " +
+      "`project_id`.",
+    returns:
+      "Confirmation that the project was archived — its domain and `project_id` — together with " +
+      "how to bring it back. A project that is already archived says so and nothing changes. A " +
+      "`project_id` that is not yours is reported exactly like an id that does not exist.",
+  },
 };
 
 // ---------------------------------------------------------------------------

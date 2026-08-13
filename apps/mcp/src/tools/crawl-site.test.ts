@@ -78,7 +78,11 @@ describe("crawl_site surface rejects invalid input before enqueuing", () => {
 // All hermetic: the project resolver + estimate + enqueue are injected, so no DB / network.
 
 const PID = "11111111-1111-4111-8111-111111111111";
-const resolveProject: ProjectResolver = async () => ({ id: PID, domain: "big.example.com" });
+const resolveProject: ProjectResolver = async () => ({
+  id: PID,
+  domain: "big.example.com",
+  archivedAt: null, // active — the archived case has its own spec below
+});
 const estimateOf = (pages: number | null): EstimateFn => async () => ({
   pages,
   source: pages === null ? "unknown" : "sitemap",
@@ -240,6 +244,40 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(result.isError).toBeUndefined();
+  });
+
+  /**
+   * The per-tool archive proof. The refusal itself lives in ONE place (project-target.ts) and
+   * has its own spec there — but that spec cannot see whether crawl_site actually goes through
+   * it. A tool that kept its own project read would leave the resolver's spec green and archive
+   * nothing. So each converted tool asserts the refusal through its OWN handler.
+   *
+   * Nothing is enqueued, which is what makes the refusal free: crawl_site charges in the WORKER
+   * (charge: "worker"), so a call that never reaches enqueue never reaches the ledger.
+   */
+  it("refuses an ARCHIVED project — nothing enqueued, no pre-discovery", async () => {
+    let estimateCalled = false;
+    const estimate: EstimateFn = async () => {
+      estimateCalled = true;
+      return { pages: 30, source: "sitemap" };
+    };
+    const { fn: enqueue, calls } = captureEnqueue();
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      estimate,
+      resolveProject: async () => ({
+        id: PID,
+        // The fixture domain carries no form of the matched word, so the assertion below cannot
+        // pass off an unrelated message as the archive refusal.
+        domain: "retired-shop.com",
+        archivedAt: "2026-08-13T00:00:00Z",
+      }),
+    });
+    const result = await tool.run(CTX, { project_id: PID });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toMatch(/archived/i);
+    expect(calls).toHaveLength(0);
+    expect(estimateCalled).toBe(false);
   });
 
   it("still fails ownership BEFORE any pre-discovery when the project is not found", async () => {

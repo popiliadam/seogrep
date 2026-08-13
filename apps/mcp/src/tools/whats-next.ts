@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { forUser, getServiceClient, type ServiceClient } from "../db.ts";
 import { getLatestSucceededResult } from "../queue/boss.ts";
+import {
+  ARCHIVED_PROJECT_MESSAGE,
+  loadOwnProject,
+  type LoadProjectFn,
+} from "./project-target.ts";
 import { defineTool, textResult, type RegisteredTool, type ToolResult } from "./registry.ts";
 
 /**
@@ -50,11 +55,17 @@ export interface ProjectRef {
   readonly domain: string;
 }
 
-/** The resolved routing state — one of: no projects, pick-a-project, unknown id, or a project. */
+/**
+ * The resolved routing state — no projects, pick-a-project, unknown id, an ARCHIVED project, or
+ * a project to route. `project_archived` is its own state rather than a flavour of
+ * `project_not_found`: the caller owns the project and can bring it back, and a router that
+ * answered "no such project" would send them to setup_project to create a duplicate.
+ */
 export type WhatsNextState =
   | { readonly kind: "no_projects" }
   | { readonly kind: "choose_project"; readonly projects: readonly ProjectRef[] }
   | { readonly kind: "project_not_found"; readonly projectId: string }
+  | { readonly kind: "project_archived" }
   | { readonly kind: "project"; readonly domain: string; readonly signals: ProjectSignals };
 
 /**
@@ -195,6 +206,8 @@ export function renderWhatsNext(state: WhatsNextState): string {
         `No project found with id ${state.projectId}. Run list_projects to see your projects, or ` +
         "setup_project to add a new one."
       );
+    case "project_archived":
+      return ARCHIVED_PROJECT_MESSAGE;
     case "project":
       return formatNextStep(state.domain, decideProjectNextStep(state.signals));
   }
@@ -264,22 +277,29 @@ async function loadWhatsNextState(
   userId: string,
   input: { projectId?: string },
   now: Date,
+  loadProject: LoadProjectFn,
 ): Promise<WhatsNextState> {
-  const client = getServiceClient();
-  const tenant = forUser(client, userId);
-
   if (input.projectId) {
-    const project = await tenant.selectOwnById<{ domain: string }>(
-      "projects",
-      input.projectId,
-      "domain",
-    );
+    // The SHARED resolver, not a project read of its own — a per-tool read is a per-tool place
+    // for the archive check to be forgotten.
+    const project = await loadProject(userId, input.projectId);
     if (!project) return { kind: "project_not_found", projectId: input.projectId };
-    const signals = await readProjectSignals(client, userId, input.projectId, now);
+    // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
+    // indistinguishable from one that does not exist (see project-target.ts). Returning here
+    // also means no signal read runs for a project that is not being tracked.
+    if (project.archivedAt !== null) return { kind: "project_archived" };
+    const signals = await readProjectSignals(getServiceClient(), userId, input.projectId, now);
     return { kind: "project", domain: project.domain, signals };
   }
 
-  const { data, error } = await tenant.selectOwn("projects", "id, domain, created_at");
+  const client = getServiceClient();
+  // Archived projects are left OUT of the routing list rather than refused: without a
+  // project_id the caller named nothing to refuse, and a project they stopped tracking must
+  // not become the "next step" — nor pad a choose_project list. Active rows only (migration
+  // 0022); `.is(…, null)` is the PostgREST null filter (`.eq(…, null)` matches nothing).
+  const { data, error } = await forUser(client, userId)
+    .selectOwn("projects", "id, domain, created_at")
+    .is("archived_at", null);
   if (error) {
     throw new Error(`whats_next: projects list failed: ${error.message}`);
   }
@@ -301,6 +321,12 @@ export interface WhatsNextDeps {
   readonly loadState?: (userId: string, input: { projectId?: string }) => Promise<WhatsNextState>;
   /** Clock for freshness (default: real). Injected so the default loader is deterministic in tests. */
   readonly now?: () => Date;
+  /**
+   * Tenant-scoped project resolver (default: the shared loadOwnProject). Injected so the
+   * project_id branch — ownership, then archive — is exercisable without a DB. Ignored when
+   * `loadState` is injected, which replaces the whole loader.
+   */
+  readonly loadProject?: LoadProjectFn;
 }
 
 const inputSchema = z.object({
@@ -317,7 +343,9 @@ type WhatsNextInput = z.infer<typeof inputSchema>;
 
 export function makeWhatsNextTool(deps: WhatsNextDeps = {}): RegisteredTool {
   const now = deps.now ?? (() => new Date());
-  const loadState = deps.loadState ?? ((userId, input) => loadWhatsNextState(userId, input, now()));
+  const loadProject = deps.loadProject ?? loadOwnProject;
+  const loadState =
+    deps.loadState ?? ((userId, input) => loadWhatsNextState(userId, input, now(), loadProject));
   return defineTool<WhatsNextInput>({
     name: "whats_next",
     description:

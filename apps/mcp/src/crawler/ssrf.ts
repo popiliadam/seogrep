@@ -17,7 +17,10 @@
  *    with the IPv4-carrying transition forms (mapped / translated / compatible / 6to4)
  *    decided by the IPv4 rules on the address they carry;
  *  - nonPublicHostnameReason(hostname): cheap string gate for single-label and
- *    reserved/internal TLDs (skips pointless DNS and closes names that never resolve);
+ *    reserved/internal TLDs (skips pointless DNS and closes names that never resolve).
+ *    It now LIVES in @pseo/core (net/hostname) and is re-exported from here: apps/web needs
+ *    the same verdict and cannot import from apps/mcp, and a second copy of a reserved-TLD
+ *    list is worse than the gap it closes. Every caller and every pin here is unchanged;
  *  - checkPublicHost(hostname, lookup): resolves the name and fails if ANY resolved
  *    address is blocked. The DNS lookup is injectable so tests never touch real DNS.
  *
@@ -35,6 +38,7 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { nonPublicHostnameReason } from "@pseo/core";
 
 /** Strip a single pair of surrounding brackets (URL.hostname keeps IPv6 bracketed). */
 function stripBrackets(host: string): string {
@@ -245,36 +249,12 @@ export function isBlockedIp(ip: string): boolean {
   return true; // family === 0 → unparseable → fail closed
 }
 
-/** Hostnames whose last label marks a non-public / reserved / internal namespace. */
-const NON_PUBLIC_TLDS: ReadonlySet<string> = new Set([
-  "localhost",
-  "local",
-  "internal",
-  "test",
-  "invalid",
-  "example",
-  "onion",
-  "lan",
-  "home",
-  "corp",
-  "intranet",
-  "private",
-]);
-
 /**
- * Short English reason when `hostname` is a non-public name, else null. Pure. Lowercases
- * and strips a trailing dot first. Non-public when: it is a single label (no dot); its last
- * label is a reserved/internal pseudo-TLD; or it is `home.arpa` / `*.home.arpa`. IP literals
- * are NOT this function's concern — callers vet those with isBlockedIp.
+ * The name gate, re-exported from its new home in @pseo/core (net/hostname). `import` + a
+ * separate `export` rather than `export … from`, because `checkPublicHost` below CALLS it and
+ * `export … from` creates no local binding (the exact mistake Task 2 made and caught).
  */
-export function nonPublicHostnameReason(hostname: string): string | null {
-  const host = hostname.toLowerCase().replace(/\.+$/, "");
-  if (!host.includes(".")) return "single-label (non-public) hostname";
-  if (host === "home.arpa" || host.endsWith(".home.arpa")) return "reserved home.arpa name";
-  const lastLabel = host.slice(host.lastIndexOf(".") + 1);
-  if (NON_PUBLIC_TLDS.has(lastLabel)) return `non-public TLD ".${lastLabel}"`;
-  return null;
-}
+export { nonPublicHostnameReason };
 
 /** Injectable DNS resolver (all A/AAAA records). Faked in tests so DNS is never real. */
 export type LookupFn = (

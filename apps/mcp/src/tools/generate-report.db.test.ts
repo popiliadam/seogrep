@@ -7,6 +7,7 @@ import { base58Encode } from "@pseo/core";
 import { getServiceClient, type Database, type Json } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makeGenerateReportTool } from "./generate-report.ts";
 
@@ -88,6 +89,15 @@ async function makeProject(userId: string, domain: string): Promise<string> {
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
   return data.id;
+}
+
+/** Archive an existing project the way the product will: stamp `archived_at` (migration 0022). */
+async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (error) throw new Error(`archive update failed: ${error.message}`);
 }
 
 /**
@@ -501,6 +511,44 @@ describe("generate_report refusals — what the CLIENT receives", () => {
       const rows = await ledgerRows(user.userId);
       expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
       expect(rows[1]?.delta).toBe(-TOOL_COSTS.generate_report);
+      expect(balanceOf(rows)).toBe(100);
+      expect(await reportRows(user.userId)).toHaveLength(0);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * The per-tool archive proof. The refusal is written ONCE in project-target.ts and has its own
+   * spec there — but that spec cannot tell whether generate_report reaches it. A tool that kept
+   * its own project read would report happily on an archived project and leave the resolver's
+   * spec green, so the assertion has to come out of THIS tool's own run.
+   *
+   * The project is deliberately given a crawl: without one the "no crawl or pull" refusal would
+   * fire first and this spec would pass while proving nothing about the archive.
+   */
+  it("an ARCHIVED project: the archive sentence verbatim, no report, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const user = await makeUser();
+      await seedGrant(user.userId, 100);
+      const projectId = await makeProject(user.userId, `archived-${randomUUID()}.example.com`);
+      await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+      await archiveProject(projectId);
+
+      const result = await callThroughRegistry(ctxOf(user), reportTool, projectId);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+      expect(result.content[0]?.text).toMatch(/archived/i);
+      // A designed refusal, not a crash: the registry must render it verbatim and log nothing.
+      expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
+      expect(errorSpy).not.toHaveBeenCalled();
+
+      // Reserved then RELEASED — the caller pays nothing for being told the project is archived,
+      // and the ledger keeps every row it wrote (append-only, NEVER #2).
+      const rows = await ledgerRows(user.userId);
+      expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
       expect(balanceOf(rows)).toBe(100);
       expect(await reportRows(user.userId)).toHaveLength(0);
     } finally {

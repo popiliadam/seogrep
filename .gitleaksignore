@@ -1,0 +1,33 @@
+# gitleaks findings allowed BY FINGERPRINT (`commit:file:rule:startline`).
+#
+# Read `.gitleaks.toml` first: allowlisting a fake fixture BY VALUE there is this repo's normal
+# route, and it covers past and future commits at once. This file exists for the case that route
+# cannot reach — a literal that is GONE from the source but still sits in committed diffs.
+#
+# WHY A FINGERPRINT FILE AT ALL. `gitleaks detect` scans git HISTORY (816 commits at the time of
+# writing), so deleting a value from a working-tree file does not clear a finding whose diff is
+# already committed. The only other way to clear it is rewriting history, which the operator
+# considered and REJECTED on 2026-08-13. These three lines are the other half of that decision.
+#
+# ---------------------------------------------------------------------------------------------
+# 2026-08-13 — three findings, ONE synthetic value, `generic-api-key` rule.
+#
+# All three are the same string used as a `TOKEN_ENCRYPTION_KEY` test fixture in the three GSC
+# `.db.test.ts` files named below. It is not a credential and never was one: it is a hand-written
+# counting pattern — 1a 2b 3c 4d 5e 6f 70 81 92 a3 b4 c5 d6 e7 f8 09 — written out twice to reach
+# 32 bytes, and each commit that introduced it carries the comment "Unmistakably a test value,
+# never a real key". Nothing was rotated because there is nothing to rotate: no live system, env
+# var or deploy secret has ever held this value. It seals fixture rows in a local Supabase during
+# `test:db` and is thrown away with them.
+#
+# The source no longer contains the literal either (removed in the same commit that added this
+# file): all three files now DERIVE the key with `createHash("sha256")` over a fixed public
+# phrase. So no future commit can reintroduce it and no fourth fingerprint can appear here —
+# these three cover exactly the three commits already in history.
+#
+#   apps/mcp/src/tools/untrack-project.db.test.ts:31       introduced by commit 4716f0fd
+4716f0fdb53ebd634c35f7a6baf7310df65a0de2:apps/mcp/src/tools/untrack-project.db.test.ts:generic-api-key:31
+#   apps/mcp/src/tools/track-gsc-property.db.test.ts:27    introduced by commit d76a24dc
+d76a24dc0c6690ba356841810af8faa145e45f9c:apps/mcp/src/tools/track-gsc-property.db.test.ts:generic-api-key:27
+#   apps/mcp/src/tools/list-gsc-properties.db.test.ts:28   introduced by commit 6299ee5b
+6299ee5b7e3055a980ca58507e67b6f871bb0b62:apps/mcp/src/tools/list-gsc-properties.db.test.ts:generic-api-key:28
