@@ -338,12 +338,11 @@ describe("ConnectionPage — three groups instead of one dropdown per project", 
 
   /**
    * THE DEFAULT VIEW AND THE SEARCH BOX, at the operator's live scale. Taking the dropdowns to
-   * zero made the page TALLER — 2697px → 10051px measured after PR #75 — because 26 unused
-   * properties stopped being repeated `<option>`s and became 26 always-expanded rows (3592px).
-   * jsdom has no layout, so height cannot be read here; the structure it comes from can be.
-   *
-   * MUTATION TARGETS: open the library's `<details>` by default → the visible-row count goes
-   * red; unwrap `<ConnectionFilter>` in page.tsx → the box and the filtered rows go red.
+   * zero made the page TALLER — 2697px → 10051px after PR #75 — because 26 unused properties
+   * stopped being repeated `<option>`s and became 26 always-expanded rows (3592px). jsdom has no
+   * layout, so height cannot be read here; the structure it comes from can be, and moves: 29
+   * rows in view before the fold, 3 after. MUTATIONS: `<details open>` reddens the count;
+   * unwrapping `<ConnectionFilter>` in page.tsx reddens the box and the filtered rows.
    */
   it("opens with the library folded away, and one search box that reaches into it", async () => {
     listKeys.mockResolvedValue([]);
