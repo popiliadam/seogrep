@@ -28,6 +28,7 @@ const OTHER_USER = "user-2";
 const CTX: AuthContext = { userId: USER, keyId: "key-1" };
 
 const ACCOUNT_ID = "acct-owner";
+const SECOND_ACCOUNT_ID = "acct-owner-two";
 const OTHER_ACCOUNT_ID = "acct-second";
 const OTHER_TENANT_ACCOUNT_ID = "acct-foreign";
 
@@ -37,6 +38,8 @@ interface World {
   readonly sites?: readonly GscSite[];
   /** Make that call fail, the way a dead credential or a Google outage does. */
   readonly sitesListFails?: boolean;
+  /** A SECOND healthy account on the caller, for the failure-isolation spec. */
+  readonly secondAccountSites?: readonly GscSite[];
   /** Projects reading a property, defaulting to ACCOUNT_ID when no account is named. */
   readonly mappings?: readonly { property: string; domain: string; accountId?: string }[];
   /** Call as somebody else — their own account lists their own property. */
@@ -48,22 +51,29 @@ const FOREIGN_SITE: GscSite = {
   permissionLevel: "siteOwner",
 };
 
-function accountsOf(userId: string): GscAccountSummary[] {
-  return userId === USER
-    ? [{ id: ACCOUNT_ID, email: "first@mail.test" }]
-    : userId === OTHER_USER
-      ? [{ id: OTHER_TENANT_ACCOUNT_ID, email: "second@mail.test" }]
-      : [];
+function accountsOf(userId: string, world: World = {}): GscAccountSummary[] {
+  if (userId === USER) {
+    const first = { id: ACCOUNT_ID, email: "first@mail.test" };
+    return world.secondAccountSites
+      ? [first, { id: SECOND_ACCOUNT_ID, email: "healthy@mail.test" }]
+      : [first];
+  }
+  return userId === OTHER_USER
+    ? [{ id: OTHER_TENANT_ACCOUNT_ID, email: "second@mail.test" }]
+    : [];
 }
 
 function toolFor(world: World) {
   return makeListGscPropertiesTool({
-    loadAccounts: (userId) => Promise.resolve(accountsOf(userId)),
+    loadAccounts: (userId) => Promise.resolve(accountsOf(userId, world)),
     listAccountSites: (accountId, userId) => {
-      if (!accountsOf(userId).some((account) => account.id === accountId)) {
+      if (!accountsOf(userId, world).some((account) => account.id === accountId)) {
         throw new Error(`fixture: account ${accountId} is not owned by ${userId}`);
       }
       if (accountId === OTHER_TENANT_ACCOUNT_ID) return Promise.resolve([FOREIGN_SITE]);
+      if (accountId === SECOND_ACCOUNT_ID) {
+        return Promise.resolve([...(world.secondAccountSites ?? [])]);
+      }
       if (world.sitesListFails) return Promise.reject(new Error("fixture: sites.list refused"));
       return Promise.resolve([...(world.sites ?? [])]);
     },
@@ -125,6 +135,31 @@ describe("list_gsc_properties", () => {
     // because the empty-account sentence is "No Search Console properties on this account."
     // This literal is what a failure-path-turned-empty-list would actually print.
     expect(out).not.toMatch(/no search console properties/i);
+  });
+
+  it("keeps listing the healthy accounts when ONE account cannot be read", async () => {
+    // The docs page promises exactly this ("The other accounts are still listed") and the
+    // module header claims it; nothing measured it while every fixture had a single account.
+    // Hoisting the per-account try/catch out of `accounts.map` breaks the promise, and this
+    // spec is what turns that red.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const out = await callTool(
+      {},
+      {
+        sitesListFails: true,
+        secondAccountSites: [
+          { siteUrl: "https://still-listed.test/", permissionLevel: "siteOwner" },
+        ],
+      },
+    );
+    errorSpy.mockRestore();
+    // The sick account is named AND diagnosed…
+    expect(out).toContain("first@mail.test");
+    expect(out).toMatch(/could not be read/i);
+    // …in the SAME answer that still carries the healthy account's inventory.
+    expect(out).toContain("healthy@mail.test");
+    expect(out).toContain("https://still-listed.test/");
+    expect(out).toMatch(/siteOwner/);
   });
 
   it("never shows another tenant's account or its properties", async () => {
