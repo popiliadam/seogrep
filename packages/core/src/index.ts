@@ -13,6 +13,12 @@ export * from "./email/welcome.js";
 
 export * from "./keys/api-key.js";
 
+// The hostname gate BOTH runtimes have to agree on: which names are non-public, and what a
+// tracked domain canonicalizes to. Promoted here from apps/mcp on 2026-08-13 because the web
+// action could not reach it and was opening projects the MCP tools refused — and a second copy
+// of a reserved-TLD list is worse than the gap it closes.
+export * from "./net/hostname.js";
+
 // GSC at-rest token crypto + the bare-fetch Google Search Console client. Promoted here
 // from apps/mcp so the web OAuth routes consume one BUILT implementation (no @pseo/mcp
 // source deep-import / transpile) and the MCP `pull_gsc_data` read path shares the exact

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { nonPublicHostnameReason } from "../crawler/ssrf.ts";
+import { normalizeDomain, type NormalizedDomain } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
@@ -17,51 +17,19 @@ import { defineTool, errorResult, textResult } from "./registry.ts";
  * resolveExisting.
  */
 
-const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-
-export type NormalizedDomain = { readonly ok: true; readonly domain: string } | {
-  readonly ok: false;
-  readonly error: string;
-};
-
 /**
- * Canonicalize a domain input. Accepts a bare host or a full URL; extracts the host,
- * lowercases it, drops any trailing dot (FQDN) — the scheme/path/port/query fall away
- * with the URL parse. Returns a descriptive English error for anything that is not a
- * valid public domain (no host, single label, illegal characters, or an internal /
- * reserved name such as foo.internal / x.local).
+ * The domain canonicalizer, re-exported from its new home in @pseo/core (net/hostname).
+ * `import` + a separate `export` rather than `export … from`, because `openTrackedProject`
+ * below CALLS it and `export … from` creates no local binding (the exact mistake Task 2 made
+ * and caught).
+ *
+ * It moved because apps/web needs the SAME gate: the web's `trackProperty` was opening
+ * projects for `sc-domain:foo.internal` that this tool refuses, and copying the reserved-TLD
+ * list into apps/web would have been a second copy of a security list. Every caller here
+ * (project-target.ts, compare-competitors.ts) and every pin is unchanged.
  */
-export function normalizeDomain(raw: string): NormalizedDomain {
-  const trimmed = raw.trim();
-  if (trimmed === "") {
-    return { ok: false, error: "Domain is required (received an empty value)." };
-  }
-  let host: string;
-  try {
-    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed);
-    host = new URL(hasScheme ? trimmed : `https://${trimmed}`).hostname;
-  } catch {
-    return { ok: false, error: `"${raw}" is not a valid domain or URL.` };
-  }
-  const domain = host.toLowerCase().replace(/\.+$/, "");
-  if (!DOMAIN_RE.test(domain)) {
-    return {
-      ok: false,
-      error: `"${raw}" is not a valid domain — expected a host like "example.com".`,
-    };
-  }
-  // Reject internal / reserved names that pass DOMAIN_RE but must never be tracked or
-  // crawled (foo.internal, metadata.google.internal, x.local, a.test, ...). The crawl-time
-  // origin gate (crawler/ssrf.ts) additionally refuses any PRE-EXISTING stored domain that
-  // would only now be judged non-public.
-  if (nonPublicHostnameReason(domain) !== null) {
-    return {
-      ok: false,
-      error: `"${raw}" is not a public domain — internal or reserved names cannot be tracked.`,
-    };
-  }
-  return { ok: true, domain };
-}
+export { normalizeDomain };
+export type { NormalizedDomain };
 
 /** What happened to the project row: it was inserted, it was already active, or it came back. */
 export type ProjectOutcome = "created" | "existing" | "restored";

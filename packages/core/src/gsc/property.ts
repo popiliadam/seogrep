@@ -6,18 +6,18 @@
  * mean two truths.
  *
  * THERE IS NO SSRF GATE HERE, and that is not an omission. `nonPublicHostnameReason`
- * (apps/mcp/src/crawler/ssrf.ts) exists for a domain the USER typed. The string arriving
- * here comes from Google's own `sites.list` response. The real defence still stands at
- * crawl time: the origin gate refuses even a STORED domain (see the note at
- * setup-project.ts:49). All that happens here is a SHAPE check — the same one
- * `normalizeDomain` uses — so that web and MCP behave identically.
+ * (./net/hostname.ts) exists for a domain the USER typed. The string arriving here comes from
+ * Google's own `sites.list` response. The real defence still stands at crawl time: the origin
+ * gate refuses even a STORED domain (see the note in ./net/hostname.ts). All that happens here
+ * is a SHAPE check — the same one `normalizeDomain` uses — so that web and MCP behave
+ * identically.
  */
 
 const SC_DOMAIN_PREFIX = "sc-domain:";
 
 /**
- * The same shape `normalizeDomain` (apps/mcp/src/tools/setup-project.ts) enforces, copied
- * from it rather than recalled: at least two labels, valid characters, TLD 2-63 chars.
+ * The same shape `normalizeDomain` (./net/hostname.ts) enforces, copied from it rather than
+ * recalled: at least two labels, valid characters, TLD 2-63 chars.
  */
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
