@@ -10,6 +10,7 @@ import { formatPullSummary } from "../gsc-data/format.ts";
 import { GscReauthRequiredError, isInvalidGrant } from "../gsc-data/reauth-error.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { optionalGscConnectUrl } from "./connect-gsc.ts";
+import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "./project-target.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
 /**
@@ -21,15 +22,15 @@ import { PreconditionNotMetError } from "./precondition.ts";
  * It is a defineTool with the DEFAULT "surface" charge: reserve -> handler -> commit / release.
  * withCredits COMMITS a handler that RETURNS and RELEASES only on a THROW, so the money rule
  * is: anything that means "no pull happened" must THROW (no charge), and a stored pull must
- * RETURN (charge 5). Concretely — a missing connection, an unmatched property, and a failed
- * Google call all THROW (released, never charged); only a completed, stored pull commits. A
- * pull that returns zero rows is still a delivered pull and DOES commit (the account genuinely
- * has no data — the discovery tools then report "no findings").
+ * RETURN (charge 5). Concretely — an ARCHIVED project, a missing connection, an unmatched
+ * property, and a failed Google call all THROW (released, never charged); only a completed,
+ * stored pull commits. A pull that returns zero rows is still a delivered pull and DOES commit
+ * (the account genuinely has no data — the discovery tools then report "no findings").
  *
- * Those throws are not all the same KIND, and the registry sorts them by TYPE. The two CONNECTION
- * states below — no connection, no matched property — are designed refusals with a sentence
- * already written for the user, so they carry PreconditionNotMetError and reach the client
- * verbatim. (Migration 0021 retired a third state that used to sit between them, "connection
+ * Those throws are not all the same KIND, and the registry sorts them by TYPE. The ARCHIVE
+ * refusal at the top of the handler and the two CONNECTION states below — no connection, no
+ * matched property — are designed refusals with a sentence already written for the user, so they
+ * carry PreconditionNotMetError and reach the client verbatim. (Migration 0021 retired a third state that used to sit between them, "connection
  * exists but has no stored token yet": the credential moved to gsc_accounts, whose
  * encrypted_refresh_token is NOT NULL, so a connection's account_id is now either unset — "not
  * connected", same message as no row — or names an account that, by construction, has a token.
@@ -229,6 +230,29 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
     handler: async (ctx: AuthContext, { project_id, days }) => {
+      // THE ARCHIVE GATE, first — before the connection read, because an archived project has
+      // nothing to pull whatever its connection says, and "run connect_gsc" would be the wrong
+      // instruction for a site the tenant removed.
+      //
+      // It needs its OWN project read: everything below resolves through `gsc_connections` by
+      // project_id and never touches `projects`, which is why the shared by-id resolver — the
+      // one place the sentence lives — did not reach this tool. loadOwnProject is that resolver,
+      // not a second one.
+      //
+      // A project that does not resolve (unknown id, or another tenant's) is deliberately NOT
+      // refused here: it falls through to the connection read exactly as before, so an archived
+      // project of ANOTHER tenant answers "no connection" like any other id that is not yours.
+      // Answering "that project is archived" would say the row EXISTS — the existence oracle
+      // project-target.ts's ordering rule exists to prevent.
+      //
+      // THROW, and TYPED: withCredits COMMITS a handler that RETURNS, so an errorResult here
+      // would charge 5 credits for a refusal, and the registry keys on the ERROR TYPE to render
+      // a designed refusal's sentence verbatim instead of the generic crash sentence.
+      const project = await loadOwnProject(ctx.userId, project_id);
+      if (project !== null && project.archivedAt !== null) {
+        throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
+      }
+
       const connection = await loadConnection(ctx.userId, project_id);
       // Both mean "nothing to pull" -> THROW so withCredits RELEASES (no charge), and TYPED so
       // the registry renders each sentence verbatim rather than replacing it with the generic

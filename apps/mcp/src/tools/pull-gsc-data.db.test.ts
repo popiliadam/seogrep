@@ -10,6 +10,7 @@ import type { GscApi } from "../gsc-data/pull.ts";
 import { CURRENT_ROWS, FIXTURE_WINDOWS, PREVIOUS_ROWS, rawGoogleResponse } from "../gsc-data/fixtures.ts";
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makePullGscDataTool } from "./pull-gsc-data.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 
 /**
  * DB-integration proof for the pull_gsc_data SYNC PRICED tool (5 credits) against a LOCAL
@@ -95,6 +96,15 @@ async function makeProject(userId: string, domain: string): Promise<string> {
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
   return data.id;
+}
+
+/** Archive an existing project the way untrack_project does: stamp `archived_at` (0022). */
+async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (error) throw new Error(`archive update failed: ${error.message}`);
 }
 
 /**
@@ -355,6 +365,37 @@ describe("pull_gsc_data refusals — what the CLIENT receives", () => {
         "This project's Search Console connection has no matched property yet. Reconnect once the property is verified in Search Console.",
         errorSpy,
       );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /**
+   * THE ARCHIVE GATE, from THIS tool's own run. pull_gsc_data resolves a project through
+   * `gsc_connections` by project_id, never through `projects`, which is exactly why the shared
+   * by-id resolver's own spec cannot say anything about it — it is the one read path the gate
+   * did not reach.
+   *
+   * The project is seeded FULLY CONNECTED (account + matched property) on purpose: with the
+   * connection refusals cleared out of the way, an ungated tool pulls the two fixture windows,
+   * RETURNS, and withCredits commits 5 credits over a site the tenant removed. So the balance
+   * assertion inside expectRefusal is what actually holds the gate up, not the sentence.
+   */
+  it("an ARCHIVED project: the archive sentence verbatim, no pull, nets to zero", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const ctx = await makeCtx();
+      await seedGrant(ctx.userId, 100);
+      const projectId = await makeProject(ctx.userId, `retired-shop-${randomUUID()}.com`);
+      await seedConnection(ctx.userId, projectId, "sc-domain:retired-shop.com");
+      await archiveProject(projectId);
+
+      const result = await callThroughRegistry(ctx, pullTool(), projectId);
+
+      await expectRefusal(ctx, result, ARCHIVED_PROJECT_MESSAGE, errorSpy);
+      // The constant is shared with generate_report / crawl_site / connect_gsc; this pins that
+      // what arrives here is the archive sentence and not some other shared string.
+      expect(result.content[0]?.text).toMatch(/archived/i);
     } finally {
       errorSpy.mockRestore();
     }
