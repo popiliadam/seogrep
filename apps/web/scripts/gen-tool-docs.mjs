@@ -828,7 +828,12 @@ export const DOC_PROSE = {
           "answer names the permission level and what to do about it. A property no connected " +
           "account lists is refused the same way. And if Google could not be reached at all, you " +
           "are told the account could not be read, never that the property is missing: an absence " +
-          "we did not observe is not an absence.",
+          "we did not observe is not an absence.\n\n" +
+          "The same rule applies when only **some** of your accounts answer. If the property is " +
+          "listed on an account that answered while another account could not be read, SeoGrep " +
+          "refuses rather than binding: the silent account might list it too, and a passing " +
+          "outage must not decide which Google account a project reads through. Re-run with " +
+          "`account_id` to settle it yourself, or try again once the other account is readable.",
       },
       {
         heading: "Archived projects",
