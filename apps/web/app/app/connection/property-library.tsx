@@ -56,8 +56,9 @@ function foldLabel(count: number): string {
  * attribute remains a courtesy either way: `trackProperty` re-reads `sites.list` and re-checks
  * the permission level, because nothing arriving from this component is evidence.
  *
- * AN UNREADABLE ACCOUNT RENDERS AS UNREADABLE, never as an account with nothing on it. Same
- * rule, same wording as `account-inventory.tsx`: an absence we did not observe is not an absence.
+ * AN UNREADABLE ACCOUNT RENDERS AS UNREADABLE, never as an account with nothing on it — an
+ * absence we did not observe is not an absence. The MCP tool `list_gsc_properties` renders the
+ * same listing under the same rule, and the two surfaces may not disagree about it.
  */
 export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProps) {
   const router = useRouter();

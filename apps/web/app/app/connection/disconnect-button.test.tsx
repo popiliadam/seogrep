@@ -19,7 +19,7 @@ function props(overrides: Partial<Parameters<typeof DisconnectButton>[0]> = {}) 
     projectId: PROJECT_ID,
     domain: "alpha.example",
     connected: true,
-    unmapProject: vi.fn().mockResolvedValue(undefined),
+    unmapProject: vi.fn().mockResolvedValue({ ok: true } as const),
     ...overrides,
   };
 }
@@ -77,6 +77,29 @@ describe("DisconnectButton", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(screen.queryByRole("status")).toBeNull();
     expect(container.textContent).not.toMatch(/disconnected|removed|unlinked|done/i);
+  });
+
+  /**
+   * A REFUSAL IS THE SERVER'S SENTENCE, verbatim — the reason `unmapProject` returns one instead
+   * of throwing. The archived project is the case that forced it: the row was rendered as
+   * tracked, the project was archived in another tab, and "Please try again" is advice that
+   * cannot work — every retry refuses for the same reason, and the click the user actually needs
+   * (Restore) is named only by the server.
+   */
+  it("shows the server's own refusal verbatim, never generic retry advice", async () => {
+    const refusal =
+      "That project is in the archive, so it is not being tracked right now. Restore it first.";
+    const p = props({ unmapProject: vi.fn().mockResolvedValue({ ok: false, error: refusal }) });
+    render(<DisconnectButton {...p} />);
+
+    clickDisconnect();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(refusal);
+    expect(alert.textContent).not.toMatch(/try again/i);
+    // A refusal wrote nothing, so there is nothing to re-read — and a refresh would replace the
+    // sentence with the same stale row that produced the click.
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("surfaces an error (role=alert) and does NOT refresh when the action rejects", async () => {
