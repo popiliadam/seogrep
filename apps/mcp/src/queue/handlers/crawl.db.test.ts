@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient, type JobRow } from "../../db.ts";
+import { ARCHIVED_PROJECT_MESSAGE } from "../../tools/project-target.ts";
 import { clearToolHandlers, executeJob, registerToolHandler } from "../worker.ts";
 import { createCrawlHandler, resolveProjectOrigin } from "./crawl.ts";
 import { startFixtureSite } from "../../crawler/fixtures/site-server.ts";
@@ -55,6 +56,15 @@ async function makeProject(userId: string, domain: string): Promise<string> {
     .single();
   if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
   return data.id;
+}
+
+/** Archive an existing project the way untrack_project does: stamp `archived_at` (0022). */
+async function archiveProject(projectId: string): Promise<void> {
+  const { error } = await service
+    .from("projects")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", projectId);
+  if (error) throw new Error(`archive update failed: ${error.message}`);
 }
 
 async function makeQueuedCrawlJob(userId: string, projectId: string | null): Promise<string> {
@@ -301,6 +311,61 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     // returned nothing, not a write.
     const parent = await service.from("projects").select("user_id").eq("id", otherProject).single();
     expect(parent.data?.user_id).toBe(other);
+  });
+
+  /**
+   * THE ARCHIVE RACE — a job queued while the project was live, picked up after the tenant
+   * archived it. crawl_site's SURFACE already refuses an archived project for free (it resolves
+   * through loadOwnProject before enqueueing), so the only way into this state is a job that was
+   * legal when it was written. Nothing is lost by refusing it here: the job has NOT started, so
+   * this is not the mid-flight cancellation the spec deliberately declined.
+   *
+   * The money assertion is the point. A handler that RETURNS commits the 20-credit reserve, so
+   * the guard has to THROW: the job settles `failed` and the ledger shows reserve+release, net
+   * zero, with every row it wrote still there (append-only, NEVER #2).
+   */
+  it("default resolver refuses a project archived AFTER the job was queued — no crawl, released", async () => {
+    const owner = await makeUser();
+    await seedGrant(owner, 100);
+    const projectId = await makeProject(owner, "retired-shop.com");
+    const jobId = await makeQueuedCrawlJob(owner, projectId); // queued while the project is live
+    await archiveProject(projectId); // ...and archived before the worker gets to it
+
+    let crawlRan = false;
+    registerToolHandler(
+      "crawl_site",
+      createCrawlHandler({
+        // Default resolver on purpose: the archive gate lives inside it. The stub returns a
+        // SUCCESSFUL one-page crawl, which is what makes the ledger assertion below load-bearing:
+        // an empty result would hit the "no pages could be crawled" throw and release the reserve
+        // anyway, so a removed archive gate would still show release and the money assertion
+        // would prove nothing (measured — the 0-page version of this stub left it dead).
+        crawl: async (origin) => {
+          crawlRan = true;
+          return {
+            pages: [{
+              url: origin, status: 200, title: null, metaDescription: null, h1s: [],
+              canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+            }],
+            skipped: [],
+            fetchedAt: new Date().toISOString(),
+          };
+        },
+      }),
+    );
+    await executeJob({ jobId, userId: owner, tool: "crawl_site", payload: {} });
+
+    expect(crawlRan).toBe(false); // the site of an archived project is never fetched
+    const job = await getJobRow(jobId);
+    expect(job.status).toBe("failed");
+    // The SAME sentence the tool surfaces say, verbatim — get_job_status renders jobs.error as
+    // written, so a worker-only wording would be a second answer to the same question.
+    expect(job.error).toBe(ARCHIVED_PROJECT_MESSAGE);
+
+    const rows = await ledger(owner);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(rows.find((r) => r.kind === "spend_reserve")?.delta).toBe(-20);
+    expect(rows.reduce((sum, r) => sum + r.delta, 0)).toBe(100); // charged NOTHING
   });
 
   it("default resolver aborts a job with no project before any crawl (0017 SET NULL path)", async () => {
