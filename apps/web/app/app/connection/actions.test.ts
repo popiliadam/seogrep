@@ -316,14 +316,14 @@ import {
   createKeyAction,
   describeDisconnect,
   disconnectAccount,
-  restoreProject,
   revokeKeyAction,
   rotateKeyAction,
   saveProjectProperty,
-  trackProperty,
   unmapProject,
-  untrackProject,
 } from "./actions";
+// The track / untrack / restore family moved to its own `"use server"` module when actions.ts
+// went past the 800-line house maximum. The specs below are unchanged and still drive it.
+import { restoreProject, trackProperty, untrackProject } from "./tracking-actions";
 
 const generateApiKeyMock = vi.mocked(generateApiKey);
 const countActiveKeysMock = vi.mocked(countActiveKeys);
