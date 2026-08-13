@@ -166,21 +166,17 @@ describe("list_gsc_properties", () => {
     expect(out).not.toMatch(/could not be read/i);
   });
 
-  it("tells a user with no connected account how to connect one, and costs 0 credits", async () => {
+  it("tells a user with no connected account how to connect one", async () => {
     const out = await callTool({}, { asUser: "user-with-nothing" });
     expect(out).toMatch(/connect_gsc/);
-    expect(listGscPropertiesMetadata().description).toMatch(/0 credits/i);
-    expect(listGscPropertiesMetadata().name).toBe("list_gsc_properties");
+    expect(out).not.toMatch(/could not be read/i);
   });
 
-  it("takes no parameters", () => {
-    const schema = listGscPropertiesMetadata().inputJsonSchema as {
-      properties?: Record<string, unknown>;
-    };
+  it("is a 0-credit tool that takes no parameters", () => {
+    const tool = toolFor({});
+    expect(tool.name).toBe("list_gsc_properties");
+    expect(tool.description).toMatch(/0 credits/i);
+    const schema = tool.inputJsonSchema as { properties?: Record<string, unknown> };
     expect(Object.keys(schema.properties ?? {})).toEqual([]);
   });
 });
-
-function listGscPropertiesMetadata() {
-  return toolFor({});
-}

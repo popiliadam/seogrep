@@ -156,7 +156,7 @@ function renderSite(
   const usage = readers.length > 0 ? `read by ${readers.join(", ")}` : "not used by any project";
   const note = canQuerySearchAnalytics(site.permissionLevel)
     ? ""
-    : " — NOT QUERYABLE: SeoGrep cannot be granted Search Console data at this permission level";
+    : " — NOT QUERYABLE: SeoGrep cannot read Search Console data at this permission level";
   return `  - ${site.siteUrl} (${site.permissionLevel}) — ${usage}${note}`;
 }
 
