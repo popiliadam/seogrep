@@ -5,6 +5,36 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🗄️ 2026-08-13 — GSC PROPERTY TAKİBİ CANLIDA (4 PR, `main` @ `731c98f`)
+
+- **Operatör şikâyeti kapandı:** "connection sekmesinde GSC alanı darma duman." Ölçülmüştü: 27 property,
+  9 projede aynı 27 seçenekli dropdown → **243 `<option>`**, ve yalnız **1'i** işe yarıyordu.
+- **Sonuç canlıda ölçüldü** (1280px, `readyState: complete`, CSS yüklü): `<select>` **9 → 0** ·
+  `<option>` **243 → 0** · sayfa **2697 → 1827px** · üç grup (Tracked sites · Add from Search Console
+  *(katlı)* · Archive) · arama kutusu üç grubu birden süzüyor.
+- **Yeni yetenek:** property'yi takibe al / çıkar / geri getir. "Çıkar" = **arşiv, silme değil** —
+  geçmiş işler ve GSC eşlemesi korunur, geri alma **aynı `id`** ile döner (migration `0022`,
+  tek nullable kolon; `unique (user_id, domain)` sayesinde restore ayrı kod yolu değil).
+- **MCP 19 → 22 tool**, üçü de **0 kredi** (operatör onayı 2026-08-13, NEVER#6; `TOOL_COSTS` pin'i
+  19→22, hiçbir mevcut rakam değişmedi): `list_gsc_properties` · `track_gsc_property` · `untrack_project`.
+- **PARA DELİĞİ KAPANDI — 8 ücretli tool arşivlenmiş projeye fatura kesiyordu.** RED koşusu kanıtladı:
+  `crawl` kuyruğu (20) · `pull_gsc_data` (5) · `audit_onpage`/`audit_tech`/`audit_schema` (30/15/5) ·
+  üç GSC-keşif tool'u (10'ar). Toplam **100 kredi**. Hepsi iki paylaşılan fabrika + iki tekil yerde,
+  **tipli `throw` ile** — `withCredits` dönüşte COMMIT eder, yalnız throw'da RELEASE eder.
+  Her ret defter seviyesinde pinli: `[grant, spend_reserve, spend_release]`, `spend_commit` YOK.
+- **Canlı maruziyet SIFIR:** ölçüldü, üretimde arşivlenmiş proje **0** ve ilk arşivleme tarihi `null` →
+  hiçbir kiracı bu yollardan hiç ücretlendirilmedi. `credit_ledger` **699 satır / 5940** — dokunulmadı.
+- PR'lar: **[#75](https://github.com/popiliadam/seogrep/pull/75)** (arşiv özelliği, 46 commit) ·
+  **[#76](https://github.com/popiliadam/seogrep/pull/76)** (8 tool + katlama + arama) ·
+  **#77** (8 kalem kapandı, **24 gerekçeyle reddedildi**; GitHub 502 yüzünden "CLOSED" görünüyor ama
+  içeriği main'de — `29b4a40` main'in atası) · **[#78](https://github.com/popiliadam/seogrep/pull/78)**
+  (arşiv reddi artık sunucunun kendi cümlesini gösteriyor).
+- **Süreç:** 11 task + 4 dilim, her biri taze hakemden geçti (4 Opus, 7 Fable — NEVER#10).
+  **Planın 11 task'ın 8'inde hatası çıktı** ve hepsini işçi/hakem yakaladı; en ağırı bir para hatasıydı
+  (`errorResult` dönmek rezervi commit ediyor → reddedilen kullanıcı 15 kredi öderdi).
+- `~/.claude/rules/qa-loop.md` düzeltildi: "kapı" diye ezberlettiği 7 komutun **5'i bu projede yok**
+  (başka projenin Python kapısıydı). Artık proje-agnostik + iki projenin kapısı ayrı ayrı.
+
 ### 🛡️ 2026-07-28 gece — DÜŞMANCA AUDIT REMEDIATION (dal `fix/hostile-audit-remediation`, 71 commit)
 - Kaynak: `docs/audits/2026-07-28-hostile-full-repository-audit.md` (Codex, 54 bulgu, **NO-GO**).
 - **53/53 bulgu HEAD'e karşı yeniden doğrulandı → 0 NOT REPRODUCIBLE.** Audit teknik olarak sağlam çıktı.
@@ -200,7 +230,80 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 🧪 SIRADAKİ OTURUM — GSC bağlantı yüzeyi CANLIDA ama picker yarım
+## 🧪 SIRADAKİ OTURUM — GSC property takibi BİTTİ; sıradaki iş operatörün seçimi
+
+```
+Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
+
+BU BLOK BİR DEVAM TALİMATIDIR. Bir önceki oturumun işi (GSC property takibi) TAMAMEN BİTTİ ve
+CANLIDA. Yeni bir iş seçilmeden önce aşağıdaki AÇIK KALEMLER okunur — hiçbiri acil değildir.
+
+=== CANLI DURUM — ölçüldü, tahmin değil (2026-08-13) ===
+main @ 731c98f. Açık PR yok, açık dal yok, çalışma ağacı temiz.
+· Migration 0022 CLOUD'A UYGULANDI (MCP apply_migration; şema doğrulandı: archived_at var,
+  nullable, default'suz). Repo-only DEĞİL.
+· credit_ledger 699 satır / toplam 5940 — bu iş boyunca DOKUNULMADI (NEVER#2 canlı mühür).
+· MCP 22/22 tool, /healthz 200, web 200.
+· /app/connection ölçüldü (1280px, readyState complete, CSS yüklü):
+  select 0 · option 0 · sayfa 1827px · katlama 1827→2707→1827 · arama kutusu 1 · konsol hatası 0.
+· Üretimde ARŞİVLENMİŞ PROJE = 0 → sekiz yeni arşiv kapısı henüz SOĞUK çalışıyor.
+  İlk gerçek "çıkar → tool çağır" dizisi onların ilk canlı sınavı olacak; o an defteri kontrol et.
+
+=== AÇIK KALEMLER — hepsi gerekçeli ve hakem onaylı, hiçbiri acil değil ===
+1. `apps/mcp/src/crawler/crawl.test.ts` T8 byte-bütçe spec'i eşzamanlı turbo yükü altında ara sıra
+   flake veriyor (tekrar koşuda yeşil). Kapı koşularına maliyet çıkarıyor.
+2. `disconnect-button.tsx` — `disconnectAccount`'ın bozuk-deploy hatası (eksik/bozuk
+   TOKEN_ENCRYPTION_KEY) hâlâ "Please try again." diyor; tekrar denemek config arızasını düzeltmez.
+   Arşiv vakasından FARKI: burada kaybolan eyleme-çağıran bir cümle yok.
+3. `unmapProject` check-then-act atomik değil (kiracı-kendi, milisaniye, parasız). KAPATILAMAZ:
+   `archived_at` `projects`'te, UPDATE `gsc_connections`'ta — PostgREST koşulu ifade edemiyor.
+   Yeni migration + cloud-apply ister. İki hakem de reddi doğruladı.
+4. `defaultLoadMappings`'in `gsc_connections` filtresi pinsiz — BİLEREK. `0017`'deki bileşik FK
+   `(user_id, project_id) → projects(user_id, id)` yanlış cevabı ŞEMA DÜZEYİNDE imkânsız kılıyor;
+   değiştirilmemiş kaynağa karşı geçecek bir iddia yazmak anayasa ihlali olurdu.
+5. `list_gsc_properties` ölçekte PostgREST'in 1000-satır kesmesine takılabilir (ölçülmedi).
+6. Spec §3'ün "durum filtresi" vaadi YAPILMADI ve sapma spec'e imzalı olarak işlendi
+   (üç grup zaten durum eksenidir). Bir daha "açık boşluk" sanılmasın.
+
+=== KAPININ ÖLÇMEDİĞİ — bunu bilmeden "yeşil" deme ===
+· `guardrails/verify.sh` HİÇ secret kontrolü koşmaz VE DB şeritlerini koşmaz.
+· DB şeritleri: `guardrails/verify-db.sh:67-69` (db · mcp · web). CI her dalda koşuyor.
+· Secret: CI `ci.yml:60` gitleaks job'ı + `make goals` → `no-secrets`.
+· `make goals` env'siz koşulursa BEŞ hedef sessizce SKIP eder; `PROD_URL`+`MCP_SMOKE_URL`
+  yüklendiğinde tek SKIP `dfs-budget-guard` kalır (DFS prod env yok → O KALEM KANITSIZ).
+· **MERGE-COMMIT ZORUNLU:** `.gitleaksignore` parmak izleri commit SHA'sına bağlı; squash ya da
+  rebase secret kapısını `main`'de kırmızıya çevirir. (Üç sentetik test anahtarı, gerekçeli.)
+· `gitleaks detect` çalışma ağacını değil GEÇMİŞİ tarar — literali dosyadan silmek yetmez.
+
+=== BU OTURUMUN İMZA BEKLEYEN DERSLERİ (insan imzalamadan kural olmaz) ===
+1. **Bir sayıyı kullanmadan önce onu üreten aracın doğru durumda olduğunu doğrula.** Şef sayfayı
+   CSS yüklenmeden ölçtü (10051px), "%272 regresyon" ilan etti ve ona dayanarak bir görev başlattı.
+   Yerleşmiş ölçüm 2613px'ti — regresyon YOKTU. Aynı tuzağa ikinci kez düşülürken `viewportW: 0`
+   kontrolüyle yakalandı.
+2. **Yazma uç noktasında 502, "işlem olmadı" demek DEĞİLDİR.** PR #77'nin merge'i ilk çağrıda
+   sunucu tarafında GERÇEKLEŞTİ; 502 cevabın kaybıydı. Şef beş kez daha denedi ve 405'leri
+   "birleşemiyor" diye okudu. Hata alınca ÖNCE sonucu ölç, sonra tekrar dene.
+3. **Ertelenmiş kalem listesi bir yapılacaklar listesi değil, karar bekleyen sorular listesidir.**
+   32 kalem bırakılmıştı; işçilere "değmeyeni gerekçeyle REDDET" yetkisi verilince 8 kapandı,
+   24 reddedildi, net ~70 satır. Körlemesine tüketmek ~1000 satır sıfır-değer üretirdi.
+   Her iki hakem de reddedilenlerin TAMAMINA katıldı; birinde reddin gerekçesi işçinin
+   savunduğundan daha güçlü çıktı.
+4. **Süreci riske göre ölçekle.** Para ve kiracı izolasyonu taze hakem hak ediyor; buton yerleşimi
+   etmiyor. Bu oturumda ikisine de aynı ağırlık uygulandı ve zamanın bir kısmı orada gitti.
+5. **Prescribed fixture de hipotezdir, mutasyon gibi.** Şefin yazdığı ÜÇ fixture tautolojiydi
+   (`archived.example` · `not-yours.test` · `.internal`) — üçü de ret mesajının fixture'ın KENDİ
+   ADINI içermesi yüzünden değiştirilmemiş kaynağa karşı geçerdi. Üçünü de işçiler yakaladı.
+   Not: `.internal` brief'i bu tuzağı AÇIKÇA uyarıyordu ve yine ona düştü.
+
+=== ŞEF NELERİ OKUYABİLİR (bu oturumda kanıtlandı) ===
+· Supabase MCP: `execute_sql` (okuma) · `apply_migration` (YAZMA — 0022 böyle uygulandı) ·
+  `list_migrations` ✅ — şema, defter ve migration geçmişi ölçülebilir.
+· Tarayıcı: `/app/connection` oturum ister; operatör giriş yaptıysa şef DOM ölçebilir
+  (bu oturumda ölçtü). Ölçmeden ÖNCE `window.innerWidth` ve `readyState` kontrol et.
+· `gh pr checks` / `gh run watch` ✅ · flyctl logs ✅ · Netlify fonksiyon log'u ❌ (CLI+token YOK).
+```
+
+## 🗄️ 2026-08-12 handoff — GSC bağlantı yüzeyi / picker (*2026-08-13'te TAMAMLANDI, tarihsel*)
 
 ```
 Proje: SeoGrep. Dizin: "/Users/apple/dev/pseo web saas"
