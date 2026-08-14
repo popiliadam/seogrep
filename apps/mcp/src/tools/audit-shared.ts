@@ -1,6 +1,13 @@
 import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
-import { loadLatestCrawl, type AuditCrawl, type LoadCrawlFn } from "../audit/index.ts";
+import {
+  loadLatestCrawl,
+  writeAuditRun,
+  type AuditCrawl,
+  type AuditReport,
+  type AuditRunWriter,
+  type LoadCrawlFn,
+} from "../audit/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 import {
@@ -22,12 +29,38 @@ import {
  * findings is a delivered audit and DOES commit.
  */
 
-/** Turn a loaded crawl into the tool's text output (rule engine + formatter). */
-export type RenderAudit = (crawl: AuditCrawl) => string;
+/**
+ * What one audit produced: the rule engine's STRUCTURAL report, and the text the tool returns.
+ *
+ * Both halves come out of ONE call so the row and the reply can never describe different runs —
+ * a builder that re-ran the engine to get something to store would be storing a second
+ * measurement that merely resembles the one the caller was shown.
+ */
+export interface AuditRendering {
+  readonly report: AuditReport;
+  readonly text: string;
+}
+
+/**
+ * Turn a loaded crawl into the tool's output (rule engine + formatter).
+ *
+ * The three priced audits return an `AuditRendering`, and returning one is what puts a run in
+ * `audit_runs`. A bare string stays legal — some callers of this builder have no rule engine and
+ * therefore no structural report to record — and such a tool writes no row, which is exactly what
+ * "there is nothing structural here to store" should mean. The three that DO produce a report are
+ * pinned individually (audit-runs.db.test.ts), because a check inside a shared function proves
+ * nothing about which callers reach it.
+ */
+export type RenderAudit = (crawl: AuditCrawl) => string | AuditRendering;
 
 export interface AuditToolDeps {
   /** The crawl loader (default: the real tenant-scoped loadLatestCrawl). Injected in tests. */
   readonly loadCrawl?: LoadCrawlFn;
+  /**
+   * The audit-run recorder (default: the real `writeAuditRun`). A PORT for the same reason
+   * loadCrawl is one — and so a spec can make the write fail without breaking a database.
+   */
+  readonly writeRun?: AuditRunWriter;
   /**
    * The tenant-scoped project reader the archive gate uses (default: the real loadOwnProject).
    * A PORT like loadCrawl, because this lane's fast specs are DB-less by construction — the
@@ -48,6 +81,7 @@ export function makeAuditTool(
 ): RegisteredTool {
   const loadCrawl = deps.loadCrawl ?? loadLatestCrawl;
   const loadProject = deps.loadProject ?? loadOwnProject;
+  const writeRun = deps.writeRun ?? writeAuditRun;
   return defineTool({
     name,
     description,
@@ -90,7 +124,28 @@ export function makeAuditTool(
         // the user, that uniformity is what keeps project existence unobservable.
         throw new PreconditionNotMetError(load.error);
       }
-      return textResult(render(load.crawl));
+
+      const rendered = render(load.crawl);
+      if (typeof rendered === "string") return textResult(rendered);
+
+      // THE RUN IS RECORDED BEFORE THE REPORT IS HANDED OVER, and the write is not guarded.
+      // withCredits commits a handler that RETURNS and releases one that THROWS, so an error
+      // that escapes here costs the tenant nothing (audit/runs.ts states the same contract from
+      // the other side). Caught and logged instead, the shape would be the house's worst: a
+      // charged caller, a delivered report, and a panel that says the audit never ran.
+      //
+      // The job id is required rather than optional-and-skipped: `CrawlLoad.jobId` is optional
+      // only so DB-less fakes keep compiling, and a report with nowhere to point would otherwise
+      // become a SILENTLY unrecorded run — the one failure mode this whole write exists to
+      // remove. Fail closed, before the reply is built.
+      if (load.jobId === undefined) {
+        throw new Error(`${name}: crawl load carried no job id — the audit run cannot be recorded`);
+      }
+      await writeRun(
+        { userId: ctx.userId, projectId: project_id, crawlJobId: load.jobId, tool: name },
+        rendered.report,
+      );
+      return textResult(rendered.text);
     },
   });
 }

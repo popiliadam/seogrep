@@ -9,7 +9,21 @@ import { parseCrawlResult, type AuditCrawl } from "./crawl-data.ts";
  */
 
 export type CrawlLoad =
-  | { readonly ok: true; readonly crawl: AuditCrawl }
+  | {
+      readonly ok: true;
+      readonly crawl: AuditCrawl;
+      /**
+       * The `jobs` row the crawl was read from — what `audit_runs.crawl_job_id` records, so an
+       * audit run can be traced back to the exact crawl it judged (migration 0024).
+       *
+       * OPTIONAL on the type, ALWAYS present from this loader. It is optional so that the
+       * DB-less fakes injected as `loadCrawl` in the fast lane keep compiling; that leniency is
+       * paid for at the call site rather than here — `makeAuditTool` THROWS when a tool that
+       * produces a structural report is handed a load with no job id, so a missing id fails
+       * closed (no charge) instead of silently skipping the write.
+       */
+      readonly jobId?: string;
+    }
   | { readonly ok: false; readonly error: string };
 
 /** The action-suggesting message an audit gives when there is nothing to audit yet. */
@@ -29,5 +43,5 @@ export async function loadLatestCrawl(userId: string, projectId: string): Promis
   if (!latest) return { ok: false, error: NO_CRAWL_MESSAGE };
   const crawl = parseCrawlResult(latest.result);
   if (!crawl || crawl.pages.length === 0) return { ok: false, error: NO_CRAWL_MESSAGE };
-  return { ok: true, crawl };
+  return { ok: true, crawl, jobId: latest.jobId };
 }
