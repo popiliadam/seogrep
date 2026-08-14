@@ -106,6 +106,11 @@ function pullWith(api: GscApi, rowLimit?: number): Promise<Awaited<ReturnType<ty
   });
 }
 
+/** Drain the microtask queue so every already-started promise chain has run to its next await. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
 /**
  * THE CAP FLAG IS MEASURED ON GOOGLE'S ANSWER. `capped` used to be computed from the PARSED
  * row count, which is the count AFTER parseSearchAnalyticsRows drops malformed rows — so a
@@ -140,5 +145,73 @@ describe("runPull — the row cap is read from the RAW response, before parsing"
 
     expect(pull.current.capped).toBe(false);
     expect(pull.previous.capped).toBe(false);
+  });
+});
+
+/**
+ * THE TWO WINDOWS GO OUT TOGETHER, and both halves of that are pinned: that they actually
+ * overlap, and that overlapping did not make the FAILURE nondeterministic. The second is the
+ * one with teeth — Promise.all would reject with whichever window failed first, and the tool
+ * above turns that error into three different sentences for the user (dead grant / refused
+ * property / generic crash), so a race there is a race over what the user is told.
+ */
+describe("runPull — both windows are fetched concurrently", () => {
+  it("starts the previous-window query before the current one has resolved", async () => {
+    const release: (() => void)[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>((resolve) => release.push(resolve));
+        inFlight -= 1;
+        return rawGoogleResponse(CURRENT_ROWS);
+      },
+    };
+
+    const pending = pullWith(api).catch(() => undefined); // never leave a rejection dangling
+    await flush();
+
+    // Both calls are in the air with neither answered: sequential code cannot reach 2 here.
+    expect(release).toHaveLength(2);
+    expect(maxInFlight).toBe(2);
+
+    while (release.length > 0) release.shift()!();
+    await pending;
+  });
+
+  it("surfaces the CURRENT window's error when BOTH windows fail — even though previous failed first", async () => {
+    const previousError = new Error("previous window exploded");
+    const currentError = new Error("invalid_grant: token has been expired or revoked");
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async (_token, _property, body) => {
+        // The PREVIOUS window rejects immediately; the current one only several ticks later.
+        // Under Promise.all that ordering decides the outcome, and this test would read the
+        // previous window's error. Under a fixed current-then-previous read it cannot.
+        if (body.startDate === FIXTURE_WINDOWS.previous.start_date) throw previousError;
+        await flush();
+        throw currentError;
+      },
+    };
+
+    await expect(pullWith(api)).rejects.toBe(currentError);
+  });
+
+  it("re-throws the ORIGINAL error object, so the tool's invalid_grant / 403 classification still sees it", async () => {
+    const onlyPreviousFails = new Error("Google searchAnalytics.query failed (403): nope");
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async (_token, _property, body) =>
+        body.startDate === FIXTURE_WINDOWS.previous.start_date
+          ? Promise.reject(onlyPreviousFails)
+          : rawGoogleResponse(CURRENT_ROWS),
+    };
+
+    // Only the previous window failed, so ITS error is the one that must surface — identity,
+    // not a wrapper: the caller keys on the message prefix and on instanceof.
+    await expect(pullWith(api)).rejects.toBe(onlyPreviousFails);
   });
 });

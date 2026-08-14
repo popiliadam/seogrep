@@ -5,9 +5,9 @@ import type { PullData } from "./types.ts";
 
 /**
  * Orchestrate one pull: mint a fresh access token from the stored refresh token, then run
- * searchAnalytics.query for the current AND previous windows and normalize both into a
- * PullData. The Google surface is a single injected PORT (GscApi), so the whole pull runs
- * with ZERO network in tests (constitution NEVER #5) while production wires the real
+ * searchAnalytics.query for the current AND previous windows CONCURRENTLY and normalize both
+ * into a PullData. The Google surface is a single injected PORT (GscApi), so the whole pull
+ * runs with ZERO network in tests (constitution NEVER #5) while production wires the real
  * @pseo/core client.
  *
  * v0 query shape (documented limitations, not bugs): dimensions are [query, page]; a single
@@ -81,16 +81,27 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
 
   const { accessToken } = await api.refreshAccessToken(input.refreshToken);
 
-  const currentResponse = await api.searchAnalyticsQuery(
-    accessToken,
-    input.property,
-    queryBody(windows.current, rowLimit),
-  );
-  const previousResponse = await api.searchAnalyticsQuery(
-    accessToken,
-    input.property,
-    queryBody(windows.previous, rowLimit),
-  );
+  // The two windows are INDEPENDENT reads of the same property with the same token, so they go
+  // out together: the pull is a synchronous tool and its latency was two full Google round-trips
+  // laid end to end for no reason.
+  //
+  // allSettled, not Promise.all, and the difference is the whole point. Promise.all rejects with
+  // whichever call fails FIRST, so when both windows fail — the ordinary case, since they fail
+  // for the SAME reason (a dead grant, a property the account cannot read) — the error that
+  // reaches the tool would be decided by a race. The tool above classifies that error into three
+  // different user-facing sentences, so a race there is a race over what the user is told.
+  // Settling both and then reading them in a FIXED order (current, then previous) keeps the
+  // thrown value deterministic and byte-identical to the sequential version, which surfaced the
+  // current window's failure because it was simply the one that ran first.
+  const [current, previous] = await Promise.allSettled([
+    api.searchAnalyticsQuery(accessToken, input.property, queryBody(windows.current, rowLimit)),
+    api.searchAnalyticsQuery(accessToken, input.property, queryBody(windows.previous, rowLimit)),
+  ]);
+  // Re-throw the ORIGINAL error object (not a wrapper): the tool's invalid_grant / 403
+  // classification reads its message and instanceof, so anything else would re-hide the two
+  // designed refusals behind the generic crash sentence.
+  if (current.status === "rejected") throw current.reason;
+  if (previous.status === "rejected") throw previous.reason;
 
   return {
     days: input.days,
@@ -105,13 +116,13 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
     // must not be an equality that one unexpected row can step over.
     current: {
       ...windows.current,
-      rows: parseSearchAnalyticsRows(currentResponse),
-      capped: countSearchAnalyticsRows(currentResponse) >= rowLimit,
+      rows: parseSearchAnalyticsRows(current.value),
+      capped: countSearchAnalyticsRows(current.value) >= rowLimit,
     },
     previous: {
       ...windows.previous,
-      rows: parseSearchAnalyticsRows(previousResponse),
-      capped: countSearchAnalyticsRows(previousResponse) >= rowLimit,
+      rows: parseSearchAnalyticsRows(previous.value),
+      capped: countSearchAnalyticsRows(previous.value) >= rowLimit,
     },
   };
 }
