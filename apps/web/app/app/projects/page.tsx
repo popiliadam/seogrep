@@ -2,7 +2,14 @@ import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../..
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import type { ConnectionRow, JobRow } from "../../../lib/projects/signals";
 import { createClient } from "../../../lib/supabase/server";
+import { AddDomainBanner } from "./add-domain-banner";
+import { AddDomainForm } from "./add-domain-form";
 import { ProjectList } from "./project-list";
+
+/** A repeated query param (?added=a&added=b) arrives as an array; only the first value counts. */
+function firstValue(raw: string | string[] | undefined): string | undefined {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -153,10 +160,14 @@ async function cardInputFor(
 }
 
 /**
- * /app/projects — a READ-ONLY view of every site you track: what has been crawled, what Search
- * Console reads, and the one next step. Nothing here mutates anything; every action still lives
- * in the MCP tools, which is why the empty state names `setup_project` rather than offering a
- * button.
+ * /app/projects — every site you track: what has been crawled, what Search Console reads, and
+ * the one next step. It reads, and it does exactly ONE thing: add a domain. That single write
+ * goes through `openTrackedProject` (@pseo/db/projects), the same route `setup_project` calls —
+ * the panel owns no second way to create a project. Everything else (crawls, audits, Search
+ * Console pulls) still runs through the assistant.
+ *
+ * The form answers by redirecting back here with a status in the query string, which is what
+ * `searchParams` (a promise in Next 16) carries into AddDomainBanner.
  *
  * The /app layout already guards the session. Every read here goes through the caller's
  * AUTHENTICATED client, so RLS is the real tenant gate — this page never touches the service
@@ -168,7 +179,12 @@ async function cardInputFor(
  * `get_job_status` say. That layer is where the specs are — vitest has no RSC boundary, so a
  * spec that rendered this function would be more permissive than the runtime (signed lesson 12).
  */
-export default async function ProjectsPage() {
+export default async function ProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -196,11 +212,19 @@ export default async function ProjectsPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">Projects</h1>
         <p className="text-sm text-neutral-600">
-          Every site you track, oldest first. This page only reads — crawls, audits and Search
-          Console pulls all run through your assistant, and the next step below is the same one
-          the whats_next tool gives.
+          Every site you track, oldest first. Add a domain here; crawls, audits and Search Console
+          pulls all run through your assistant, and the next step below is the same one the
+          whats_next tool gives.
         </p>
       </header>
+
+      <AddDomainBanner
+        added={firstValue(params.added)}
+        domain={firstValue(params.domain)}
+        error={firstValue(params.error)}
+      />
+      <AddDomainForm />
+
       <ProjectList cards={cards} />
     </section>
   );
