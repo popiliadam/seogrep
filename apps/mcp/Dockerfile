@@ -47,11 +47,15 @@ RUN pnpm install --frozen-lockfile
 # Full pruned source, plus the root tsconfig the app extends (prune omits it).
 COPY --from=pruner /app/out/full/ .
 COPY tsconfig.base.json ./tsconfig.base.json
-# Build the workspace dependency first: @pseo/mcp imports @pseo/core, whose package.json
-# resolves to ./dist, so core's dist must exist for BOTH the mcp compile (its .d.ts) and
-# runtime (its .js). This is a bare `pnpm --filter` build (not turbo), so `^build` does not
-# fire automatically — core is compiled explicitly here, before the app that consumes it.
+# Build the workspace dependencies first: @pseo/mcp imports @pseo/core AND @pseo/db, whose
+# package.json exports resolve to ./dist, so their dist must exist for BOTH the mcp compile
+# (their .d.ts) and runtime (their .js). This is a bare `pnpm --filter` build (not turbo), so
+# `^build` does not fire automatically — each dependency is compiled explicitly here, in
+# dependency order (db itself imports core), before the app that consumes them. This hand-kept
+# list is exactly what broke on 2026-08-14: mcp gained the @pseo/db dependency, verify.sh
+# stayed green (turbo builds ^build), and only this Dockerfile still listed core alone.
 RUN pnpm --filter @pseo/core run build
+RUN pnpm --filter @pseo/db run build
 RUN pnpm --filter @pseo/mcp run build
 
 # 3. Minimal runtime image: production dependencies + built output only.
@@ -61,10 +65,11 @@ ENV NODE_ENV=production
 ENV MODE=web
 COPY --from=pruner /app/out/json/ .
 RUN pnpm install --frozen-lockfile --prod
-# The prod install links @pseo/core as a workspace symlink
-# (apps/mcp/node_modules/@pseo/core -> ../../../../packages/core), so its compiled dist
-# must sit at the real workspace path for `import "@pseo/core"` to resolve at runtime.
+# The prod install links @pseo/core and @pseo/db as workspace symlinks
+# (apps/mcp/node_modules/@pseo/core -> ../../../../packages/core, same for db), so their
+# compiled dist must sit at the real workspace paths for the imports to resolve at runtime.
 COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
 COPY --from=builder /app/apps/mcp/dist ./apps/mcp/dist
 USER node
 EXPOSE 8080
