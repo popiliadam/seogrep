@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { LegalPage } from "../../../components/legal-page";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -51,30 +51,11 @@ const SECTIONS: readonly Section[] = [
 
 export default function Page() {
   return (
-    <section className="mx-auto w-full max-w-3xl px-4 py-16 sm:py-20">
-      <p className="inline-flex rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-sm font-semibold text-accent-strong">
-        Effective 5 August 2026 — applies to every SeoGrep account.
-      </p>
-      <h1 className="mt-6 text-4xl font-bold tracking-tight text-ink sm:text-5xl">Terms of Service</h1>
-      <p className="mt-4 text-base text-ink/60">
-        A plain-language summary of how SeoGrep works during beta, and the terms you agree to when you use it.
-      </p>
-      <div className="mt-12 flex flex-col gap-10">
-        {SECTIONS.map((section) => (
-          <section key={section.heading} className="flex flex-col gap-3">
-            <h2 className="text-xl font-semibold text-ink">{section.heading}</h2>
-            <p className="text-base text-ink/70">{section.body}</p>
-            {section.link ? (
-              <Link
-                href={section.link.href}
-                className="rounded text-sm font-medium text-accent-strong hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-strong"
-              >
-                {section.link.label} <span aria-hidden="true">→</span>
-              </Link>
-            ) : null}
-          </section>
-        ))}
-      </div>
-    </section>
+    <LegalPage
+      effective="Effective 5 August 2026 — applies to every SeoGrep account."
+      title="Terms of Service"
+      intro="A plain-language summary of how SeoGrep works during beta, and the terms you agree to when you use it."
+      sections={SECTIONS}
+    />
   );
 }
