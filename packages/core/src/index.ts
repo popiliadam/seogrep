@@ -28,3 +28,9 @@ export * from "./gsc/client.js";
 // Pure property-string rules, shared because BOTH runtimes need them: the web connection
 // flow and the MCP tools must agree on what a property points at and who may query it.
 export * from "./gsc/property.js";
+
+// The "where does this project stand" half of the guide, promoted from apps/mcp so apps/web can
+// show the SAME next step and the SAME crawl summary the MCP tools return. Both are PURE — the
+// tenant-scoped reads and the tool definitions stay in apps/mcp, which re-exports what moved.
+export * from "./guide/next-step.js";
+export * from "./guide/crawl-summary.js";
