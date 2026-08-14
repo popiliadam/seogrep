@@ -1,103 +1,86 @@
 import { z } from "zod";
 import { normalizeDomain, type NormalizedDomain } from "@pseo/core";
-import { getServiceClient } from "../db.ts";
+import {
+  openTrackedProject as openTrackedProjectWith,
+  restoreOwnProject as restoreOwnProjectWith,
+  type ProjectOutcome,
+  type ProjectResolution,
+  type ProjectsClient,
+  type TrackedProject,
+} from "@pseo/db/projects";
+import type { Database as GeneratedSchema } from "@pseo/db/types";
+import { getServiceClient, type Database as GatewaySchema } from "../db.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
  * setup_project — register (or return) a tracked domain for the tenant. 0 credits.
- * Idempotent by (user_id, domain): a second call for the same site returns the existing
- * project rather than creating a duplicate. A tenant-scoped read-first serves the common
- * repeat call, and the residual race of two truly-simultaneous first calls is closed at the
- * DB level — the (user_id, domain) unique constraint (migration 0010) plus an ON CONFLICT
- * DO NOTHING upsert: the loser's insert is a no-op and it reads back the winner's row, so two
- * concurrent first calls still produce ONE row with consistent created: true/false flags.
  *
- * Idempotency covers the ARCHIVE too: a domain the tenant had archived comes back on its
- * original id (archived_at cleared) instead of being registered a second time — see
- * resolveExisting.
+ * THE ROUTE ITSELF NO LONGER LIVES HERE. `openTrackedProject` moved to `@pseo/db/projects`
+ * when /app/projects grew an "Add domain" form: two surfaces open projects, and the whole
+ * point of one route is that the `normalizeDomain` gate inside it cannot be forgotten by a
+ * caller. That module's header carries the invariants (idempotent by (user_id, domain),
+ * race-safe upsert, archive restore, explicit tenant filters).
+ *
+ * What stays here is what is genuinely this tool's own: the service-role client it hands the
+ * shared route, and setup_project's own wording for each outcome. Everything the previous
+ * callers imported from this module — `openTrackedProject`, `restoreOwnProject`,
+ * `normalizeDomain`, the three types, `setupProjectTool` — is still exported from here with
+ * the same signatures, so `track-gsc-property.ts`, `project-target.ts` and
+ * `compare-competitors.ts` are untouched.
  */
 
 /**
- * The domain canonicalizer, re-exported from its new home in @pseo/core (net/hostname).
- * `import` + a separate `export` rather than `export … from`, because `openTrackedProject`
- * below CALLS it and `export … from` creates no local binding (the exact mistake Task 2 made
- * and caught).
- *
- * It moved because apps/web needs the SAME gate: the web's `trackProperty` was opening
- * projects for `sc-domain:foo.internal` that this tool refuses, and copying the reserved-TLD
- * list into apps/web would have been a second copy of a security list. Every caller here
- * (project-target.ts, compare-competitors.ts) and every pin is unchanged.
+ * The domain canonicalizer, re-exported from its home in @pseo/core (net/hostname).
+ * `import` + a separate `export` rather than `export … from`, because a re-export creates no
+ * local binding — the exact mistake Task 2 made and caught. It is re-exported (not merely
+ * available from core) because this module's own specs and several callers import it here.
  */
 export { normalizeDomain };
-export type { NormalizedDomain };
+export type { NormalizedDomain, ProjectOutcome, ProjectResolution, TrackedProject };
 
-/** What happened to the project row: it was inserted, it was already active, or it came back. */
-export type ProjectOutcome = "created" | "existing" | "restored";
-
-/** The project a tracking request landed on, and how it got there. */
-export interface TrackedProject {
-  readonly id: string;
-  readonly domain: string;
-  readonly outcome: ProjectOutcome;
-}
-
-/** A project request that resolved, or the one sentence explaining why it could not. */
-export type ProjectResolution =
-  | { readonly ok: true; readonly project: TrackedProject }
-  | { readonly ok: false; readonly error: string };
+/** `T`, but only while `A` and `B` are mutually assignable — otherwise `never`. */
+type IfSameShape<A, B, T> = [A] extends [B] ? ([B] extends [A] ? T : never) : never;
 
 /**
- * THE project-opening route: normalize the domain, then create the project, return the
- * existing one, or restore it from the archive — the whole invariant described in this
- * module's header, in one function.
+ * apps/mcp keeps its own hand-written `Database` slice (src/db.ts) while @pseo/db carries the
+ * GENERATED one, so the two `SupabaseClient<…>` instantiations are different TYPES describing
+ * the same rows of the same table, and handing one to the other needs a cast.
  *
- * It is a function rather than inline handler code because setup_project is no longer its
- * only caller: track_gsc_property opens a project from a Search Console property string and
- * routes through HERE. That matters beyond tidiness. `propertyToDomain` (packages/core) only
- * checks a domain's SHAPE, so it accepts hosts `normalizeDomain` refuses — `foo.internal`,
- * `x.local`, `a.test`. A second creation route would write those rows straight past a gate
- * this one enforces; there is one route, so there is one gate.
+ * The cast is confined to this one function and it is not taken on faith: the return type below
+ * collapses to `never` the moment this app's `projects` slice and @pseo/db's stop being mutually
+ * assignable, and a function that returns `never` cannot return a client — so the drift lands as
+ * a typecheck failure (the gate's own step) rather than as a cast that has quietly become a lie.
+ * Row AND Insert AND Update are compared, because the shared route reads, inserts and updates.
  */
+type CheckedProjectsClient = IfSameShape<
+  GatewaySchema["public"]["Tables"]["projects"]["Row"],
+  GeneratedSchema["public"]["Tables"]["projects"]["Row"],
+  IfSameShape<
+    GatewaySchema["public"]["Tables"]["projects"]["Insert"],
+    GeneratedSchema["public"]["Tables"]["projects"]["Insert"],
+    IfSameShape<
+      GatewaySchema["public"]["Tables"]["projects"]["Update"],
+      GeneratedSchema["public"]["Tables"]["projects"]["Update"],
+      ProjectsClient
+    >
+  >
+>;
+
+function projectsClient(): CheckedProjectsClient {
+  return getServiceClient() as unknown as ProjectsClient;
+}
+
+/** setup_project's route, on this app's service-role client. Signature unchanged. */
 export async function openTrackedProject(
   userId: string,
   rawDomain: string,
 ): Promise<ProjectResolution> {
-  const normalized = normalizeDomain(rawDomain);
-  if (!normalized.ok) {
-    return { ok: false, error: normalized.error };
-  }
-  const { domain } = normalized;
-  const client = getServiceClient();
+  return await openTrackedProjectWith(projectsClient(), userId, rawDomain);
+}
 
-  const existing = await readProject(client, userId, domain);
-  if (existing) {
-    return await resolveExisting(userId, domain, existing);
-  }
-
-  // Race-safe insert: ON CONFLICT (user_id, domain) DO NOTHING (ignoreDuplicates). A row is
-  // returned ONLY when THIS call inserted it (created: true); an empty result means a
-  // concurrent first call won the row between our read and this write, so we read it back
-  // and report created: false — one row, consistent flags, no unique-violation surfaced.
-  const upserted = await client
-    .from("projects")
-    .upsert({ user_id: userId, domain }, {
-      onConflict: "user_id,domain",
-      ignoreDuplicates: true,
-    })
-    .select("id");
-  if (upserted.error) {
-    throw new Error(`projects upsert failed: ${upserted.error.message}`);
-  }
-  const insertedId = upserted.data?.[0]?.id;
-  if (insertedId) {
-    return { ok: true, project: { id: insertedId, domain, outcome: "created" } };
-  }
-
-  const winner = await readProject(client, userId, domain);
-  if (!winner) {
-    throw new Error("projects upsert reported a conflict but no existing row was found");
-  }
-  return await resolveExisting(userId, domain, winner);
+/** Clear `archived_at` on ONE of this tenant's projects. Signature unchanged. */
+export async function restoreOwnProject(userId: string, projectId: string): Promise<boolean> {
+  return await restoreOwnProjectWith(projectsClient(), userId, projectId);
 }
 
 /** setup_project's own wording for each outcome — unchanged, and its alone. */
@@ -132,94 +115,3 @@ export const setupProjectTool = defineTool({
       : errorResult(resolved.error);
   },
 });
-
-/** An existing project row as this tool needs it: its id and whether it sits in the archive. */
-type ProjectRow = { readonly id: string; readonly archived_at: string | null };
-
-/**
- * Tenant-scoped read of a project by (user_id, domain); null when absent. Deliberately
- * unfiltered on archived_at: an archived row still OCCUPIES the (user_id, domain) unique
- * slot (migration 0010), so hiding it here would only send the insert into a conflict it
- * cannot resolve.
- */
-async function readProject(
-  client: ReturnType<typeof getServiceClient>,
-  userId: string,
-  domain: string,
-): Promise<ProjectRow | null> {
-  const { data, error } = await client
-    .from("projects")
-    .select("id, archived_at")
-    .eq("user_id", userId)
-    .eq("domain", domain)
-    .maybeSingle();
-  if (error) {
-    throw new Error(`projects lookup failed: ${error.message}`);
-  }
-  return data;
-}
-
-/**
- * Report the row that already holds this domain — restoring it first when the tenant had
- * archived it. Restoring is the only correct answer there: a second row is impossible
- * (unique (user_id, domain), migration 0010), and would in any case orphan the crawls,
- * reports and Search Console link that hang off the original id. So setting a domain up
- * again picks the same project back up rather than starting an empty one.
- */
-async function resolveExisting(
-  userId: string,
-  domain: string,
-  row: ProjectRow,
-): Promise<ProjectResolution> {
-  if (row.archived_at === null) {
-    return { ok: true, project: { id: row.id, domain, outcome: "existing" } };
-  }
-  if (!(await restoreOwnProject(userId, row.id))) {
-    return { ok: false, error: notRestoredMessage(domain, row.id) };
-  }
-  return { ok: true, project: { id: row.id, domain, outcome: "restored" } };
-}
-
-/**
- * Clear `archived_at` on ONE of this tenant's projects; false when the write matched no row.
- *
- * BOTH filters ride on the UPDATE (constitution NEVER #4). That is not a duplicate of the read
- * that found the row: this client is service-role and bypasses RLS, so this `.eq` is the only
- * thing standing between a stray project id and another tenant's row.
- *
- * …and the row comes back, because a zero-row UPDATE is not an error in PostgREST. Without
- * `.select().maybeSingle()` this function could only report "nothing was WRONG", never that
- * anything was WRITTEN — and setup_project said "Restored …" on the strength of that. Its twin
- * `archiveOwnProject` (untrack-project.ts) has always asked for the row back; these two write
- * the same column on the same table and may not disagree about what success means.
- *
- * EXPORTED so the tenant filter is measurable. Through the tool, `readProject` refuses a
- * stranger before this runs, so mutating the filter away leaves every tool-level spec green;
- * the DB lane drives this function head-on with a mismatched (userId, projectId) pair instead.
- */
-export async function restoreOwnProject(userId: string, projectId: string): Promise<boolean> {
-  const { data, error } = await getServiceClient()
-    .from("projects")
-    .update({ archived_at: null })
-    .eq("id", projectId)
-    .eq("user_id", userId)
-    .select("id")
-    .maybeSingle();
-  if (error) {
-    throw new Error(`projects restore failed: ${error.message}`);
-  }
-  return data !== null;
-}
-
-/**
- * The restore matched no row although the read a moment earlier found one. Rare by
- * construction, and deliberately NOT reported as success: the caller asked for the domain to
- * be tracked again and it is still in the archive.
- */
-function notRestoredMessage(domain: string, projectId: string): string {
-  return (
-    `Nothing was changed: "${domain}" (project_id: ${projectId}) is still in your archive — ` +
-    "the update matched no row, so the project changed while this ran. Run list_projects to " +
-    "see where it stands, then run setup_project again."
-  );
-}
