@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import type { AuditLine } from "../../../lib/projects/audits";
 import type { ProjectCard } from "../../../lib/projects/card";
 import { formatStamp, type CrawlHistoryEntry } from "../../../lib/projects/history";
 import { formatDate } from "../../../lib/format";
@@ -121,6 +122,46 @@ function CrawlHistory({ entries }: { entries: readonly CrawlHistoryEntry[] }) {
   );
 }
 
+/**
+ * The three audits, each with the date of its last run and that run's numbers — or, when it has
+ * never run, the tool to ask for.
+ *
+ * ALL THREE ALWAYS, including the ones that never ran: the absence is the more useful half, and a
+ * list that quietly omitted them would leave a user who has never run audit_schema with nothing
+ * to notice. The empty line names the MCP tool rather than offering a button, because this panel
+ * starts nothing — audits run through the assistant and land here.
+ */
+function AuditLines({ lines }: { lines: readonly AuditLine[] }) {
+  return (
+    <div className="border-t border-hairline px-7 py-4">
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">Audits</span>
+      <ol className="m-0 mt-2.5 flex list-none flex-col gap-2 p-0">
+        {lines.map((line) => (
+          <li key={line.tool} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span className="font-mono text-[12.5px] text-body">{line.tool}</span>
+            {line.run === null ? (
+              <span className="font-serif text-[13.5px] text-muted">
+                Not run yet — ask your assistant to run {line.tool}
+              </span>
+            ) : (
+              <>
+                <time className="font-mono text-[11px] text-faint" dateTime={line.run.createdAt}>
+                  {formatDate(line.run.createdAt)}
+                </time>
+                {/* No numbers when the stored report could not be read: the date still says the
+                    audit ran, and inventing a 0 would say it found nothing. */}
+                {line.run.summary === null ? null : (
+                  <span className="font-mono text-[11px] text-faint">{line.run.summary}</span>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /** One project: what it is, what has been read for it, and the one thing to do next. */
 export function ProjectCardView({ card }: { card: ProjectCard }) {
   return (
@@ -143,6 +184,8 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
           )}
         </Fact>
       </div>
+
+      <AuditLines lines={card.audits} />
 
       <CrawlHistory entries={card.recentCrawls} />
 
