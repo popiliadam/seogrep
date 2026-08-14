@@ -230,7 +230,49 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
-## 📋 2026-08-14 — OPERATÖR SEÇİMİ: Panel görünürlük ailesi (PLANLANDI — dispatch bekliyor)
+## ✅ 2026-08-14 — PANEL GÖRÜNÜRLÜK AİLESİ CANLIDA (5 PR, tek oturum, `main` @ `db384c0`)
+
+Aşağıdaki plan AYNI GÜN, tek otonom oturumda uygulandı ve canlıya çıktı. Süreç: 4 işçi (Opus) +
+1 küçük ek emir; **4 taze Fable hakemi, 4/4 PASS** (her dilim >400 satır → NEVER#10); toplam
+**~30 mutasyon ekseni, kırmızı üretmeyen tek eksen aynı dilimde pinlenip kapatıldı**.
+
+- **P0** [#80](https://github.com/popiliadam/seogrep/pull/80): merdiven + crawl özeti `@pseo/core`'a
+  (bayt-özdeş; 4 mutasyon kanıtı; dist tuzağı: mcp testleri core'u dist'ten çözer — mutasyon
+  kanıtından önce core build ŞART).
+- **P1** [#81](https://github.com/popiliadam/seogrep/pull/81): `/app/projects` salt-okunur sayfa +
+  nav. Parite: panel `decideProjectNextStep`'i BİZZAT core'dan çağırıyor (import-kimliği +
+  6 fixture + kaynak-grep). Hakem bulgusu (sorgu-şekli pinsiz) aynı dilimde `query-and-nav.test.ts`
+  ile kapandı. Web suite 909→913.
+- **P2** [#82](https://github.com/popiliadam/seogrep/pull/82): 'Recent crawls' — son 5 crawl job'ı,
+  4 durum + damgalar + failed error; geçmiş sorgusuna `result` jsonb GİRMİYOR (kolon listesi TAM
+  eşitlikle pinli, `tool` dahil). 952 test.
+- **P3** [#83](https://github.com/popiliadam/seogrep/pull/83): `openTrackedProject` → `packages/db`
+  (client parametreli; normalize kapısı İÇİNDE), MCP ince sarmalayıcı (949/949 değişmeden),
+  panelde 'Add domain' (oturumdan tenant, paylaşılan rota — sentinel kimlik testi), Overview'a
+  proje sayısı. Yeni bağımlılıklar: `db→core`, `mcp→db` (yalnız workspace-link). 986 web testi.
+- **#84 deploy hotfix** [#84](https://github.com/popiliadam/seogrep/pull/84): **Deploy MCP main'de
+  KIRMIZI düştü** — Dockerfile'ın elle tutulan builder listesi yalnız core'u derliyordu, mcp'nin
+  yeni db bağımlılığı TS2307 verdi. Canlı kesinti YOK (eski imaj kaldı). Fix lokal
+  `docker build` exit 0 ile kanıtlanıp merge edildi; Deploy MCP **success**, canlı ölçüldü
+  (healthz 200, /status uptime 47 sn = taze imaj, schema ready, web 200).
+
+**DERS ADAYI (imza bekler):** imzalı ders 15'in deploy-yüzü — `verify.sh` turbo `^build` ile
+bağımlılığı derlediği için YEŞİLDİ; Dockerfile'ın EL LİSTESİ deploy'da kırmızıyı üretti.
+"Bir pakete workspace bağımlılığı ekleyen task, o paketi tüketen HER imaj tarifini
+(Dockerfile/prune listesi) kontrol eder."
+
+**AÇIK KALEMLER (acil değil):**
+1. `/app/projects` canlı DOM ölçümü oturum ister — operatör giriş yapınca şef ölçecek
+   (readyState + innerWidth kontrolüyle; 2026-08-13 ders 1).
+2. `project-list.tsx` boş-durum metni yalnız `setup_project`'i adlandırıyor; artık panelde de
+   'Add domain' var — kopya güncellemesi aday iş (metni bir test pinliyor, bilinçli dokunulmadı).
+3. İki flake kaydı: `disconnect-button.test.tsx` (tam-suite yükünde 1×) ve `server.test.ts`
+   L-12/throttle (iki oturumda 1'er ×, izole tekrar hep yeşil) — mevcut açık kalem 1'e ekli.
+4. `query-and-nav.test.ts`'in `queryOn`'u ilk `.from("jobs")`'u alıyor — fail-closed ama reorder'da
+   sahte kırmızı üretir; fonksiyon-scope'a taşıma aday iş.
+5. Bayat-crawl zenginleştirmesi Overview'da bilerek yok (tek count sorgusu tercih edildi).
+
+## 📋 2026-08-14 — OPERATÖR SEÇİMİ: Panel görünürlük ailesi (PLANLANDI → YUKARIDA UYGULANDI)
 
 Operatör kararı (2026-08-14 oturumu): kullanıcı hem MCP'yi hem paneli kullansın; MCP'de yapılan
 işin İZİ ve DURUMU panelde görünsün. İş bölümü ilkesi: **MCP = işin yapıldığı yer, panel = görme /
