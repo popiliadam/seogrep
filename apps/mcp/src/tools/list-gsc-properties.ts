@@ -211,24 +211,36 @@ const RECONNECT_LINE =
 /**
  * One account block. `sites === null` means the listing FAILED, not that it is empty.
  *
- * THE STORED STATUS IS REPORTED INDEPENDENTLY OF THE LISTING, in both directions. A dead grant
- * whose `sites.list` happened to succeed (a status written by pull_gsc_data moments ago, a
- * listing served from a still-valid access token) still says so — hiding it because THIS call
- * worked would let the account look healthy right up until the next paid pull fails. And a dead
- * grant whose listing failed gets the reconnect sentence INSTEAD of the transient one, never
- * both: two remedies for one fault is how a user ends up doing neither.
+ * "EXPIRED" IS THE STORED STATUS **OR** A DEATH SEEN DURING THIS REQUEST, and the second half is
+ * not belt-and-braces — without it the feature is blind exactly where credentials actually die.
+ * `account.tokenStatus` was read at the top of the handler, BEFORE `sites.list` ran; on the very
+ * first death there is nothing recorded yet, so a stored-status-only test prints "Try again
+ * shortly" in the one request that just watched Google refuse the token, and the right sentence
+ * arrives only on a SECOND call the user has no reason to make. `sawInvalidGrant` is that same
+ * observation, derived from the failure we just saw — the identical ruling pull_gsc_data's own
+ * catch makes ("derived from the failure we JUST saw, never from the token_status we read
+ * earlier"), and the state all 12 measured invalid_grant failures were in.
  *
- * A listing that failed on an account NOT marked invalid keeps the transient sentence verbatim.
- * The cause of that failure is genuinely unknown here — a 5xx, a timeout, a mis-sealed
- * ciphertext — and "reconnect your Google account" is a costly instruction to give on a guess.
+ * THE STORED STATUS IS STILL REPORTED INDEPENDENTLY OF THE LISTING. A dead grant whose
+ * `sites.list` happened to succeed (a status written by pull_gsc_data moments ago, a listing
+ * served from a still-valid access token) still says so — hiding it because THIS call worked
+ * would let the account look healthy right up until the next paid pull fails. And a dead grant
+ * whose listing failed gets the reconnect sentence INSTEAD of the transient one, never both: two
+ * remedies for one fault is how a user ends up doing neither.
+ *
+ * A listing that failed for ANY OTHER reason keeps the transient sentence verbatim. A 5xx, a
+ * timeout, a mis-sealed ciphertext — the cause is genuinely unknown, and "reconnect your Google
+ * account" is a costly instruction to hand out on a guess. That is why the flag is set from
+ * `isInvalidGrant` and never from "the call threw".
  */
 function renderAccount(
   account: GscAccountSummary,
   sites: readonly GscSite[] | null,
   mappings: readonly ProjectPropertyMapping[],
+  sawInvalidGrant = false,
 ): string {
   const header = `${account.email} (account_id: ${account.id})`;
-  const expired = account.tokenStatus === "invalid";
+  const expired = account.tokenStatus === "invalid" || sawInvalidGrant;
   if (sites === null) {
     return expired
       ? `${header}\n${RECONNECT_LINE}`
@@ -293,6 +305,10 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
           // ONE unreadable account never costs the user the other accounts' inventories — and
           // it is reported as unreadable rather than as empty (rule 1 in the header).
           let sites: GscSite[] | null = null;
+          // A death seen in THIS request, which the row loaded at the top of the handler cannot
+          // know about yet. It is what renderAccount reports on, so the first observation is
+          // already the one that tells the user to reconnect.
+          let sawInvalidGrant = false;
           try {
             sites = [...(await listAccountSites(account.id, ctx.userId))];
           } catch (error) {
@@ -308,6 +324,12 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
             // the log carries it and the user still gets the listing. Narrowed to invalid_grant
             // for the reason the classifier exists — a 5xx must never mark a live account dead.
             if (isInvalidGrant(error)) {
+              // Set BEFORE the write, and never inside its try: the sentence the user reads must
+              // not depend on whether the database accepted the status. A DB blip that silently
+              // downgraded "reconnect" back to "try again later" would leave them retrying a
+              // credential that can never work — the exact failure the write itself is
+              // best-effort to avoid.
+              sawInvalidGrant = true;
               try {
                 await markTokenInvalid(account.id, ctx.userId);
               } catch (statusError) {
@@ -319,7 +341,7 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
               }
             }
           }
-          return { sites, text: renderAccount(account, sites, mappings) };
+          return { sites, text: renderAccount(account, sites, mappings, sawInvalidGrant) };
         }),
       );
       const needsFooter = blocks.some((block) =>

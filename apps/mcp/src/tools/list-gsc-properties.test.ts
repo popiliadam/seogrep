@@ -295,6 +295,47 @@ describe("list_gsc_properties", () => {
       expect(out).not.toMatch(/try again shortly/i);
     });
 
+    it("says reconnect on the FIRST observation, not on the next call", async () => {
+      // THE WINDOW THIS CLOSES. `tokenStatus` is read at the top of the handler, BEFORE
+      // sites.list runs, so on the very first death the column still says "active" — the state
+      // all 12 measured invalid_grant failures were in. Reporting on the stored row alone prints
+      // "Try again shortly" in the one request that just watched Google refuse the token, and
+      // the right sentence arrives only on a SECOND call the user has no reason to make.
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const out = await callTool(
+        {},
+        {
+          tokenStatus: "active",
+          sitesListFails: true,
+          sitesListError: "Google token endpoint failed (400): invalid_grant",
+        },
+      );
+      errorSpy.mockRestore();
+
+      expect(out).toMatch(/connection has expired/i);
+      expect(out).not.toMatch(/try again shortly/i);
+    });
+
+    it("says reconnect on the first observation even if the status write fails", async () => {
+      // The sentence must not depend on whether the DATABASE accepted the status: a blip that
+      // downgraded "reconnect" back to "try again later" would leave the user retrying a
+      // credential that can never work — the very failure the write is best-effort to avoid.
+      statusWriteFails = true;
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const out = await callTool(
+        {},
+        {
+          tokenStatus: "active",
+          sitesListFails: true,
+          sitesListError: "Google token endpoint failed (400): invalid_grant",
+        },
+      );
+      errorSpy.mockRestore();
+
+      expect(out).toMatch(/connection has expired/i);
+      expect(out).not.toMatch(/try again shortly/i);
+    });
+
     it("keeps the transient sentence verbatim when nothing says the account is dead", async () => {
       // A 5xx, a timeout, a mis-sealed ciphertext: the cause is genuinely unknown, and sending
       // the user through an OAuth round on a guess is the mirror-image mistake.
@@ -382,7 +423,10 @@ describe("list_gsc_properties", () => {
       expect(logged).toMatch(/failed to mark account .* invalid/i);
       // The answer is intact — both accounts, the sick one diagnosed and the healthy one listed.
       expect(out).toContain("https://survives.test/");
-      expect(out).toMatch(/could not be read/i);
+      // Diagnosed from the failure we JUST saw, so the DIAGNOSIS survives the failed write: the
+      // user is told to reconnect even though nothing could be recorded about it.
+      expect(out).toMatch(/connection has expired/i);
+      expect(out).not.toMatch(/try again shortly/i);
     });
   });
 
