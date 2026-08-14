@@ -163,6 +163,24 @@ describe("runPull — the row cap is read from the RAW response, before parsing"
     expect(pull.current.capped).toBe(false);
     expect(pull.previous.capped).toBe(false);
   });
+
+  it("stays capped when Google returned MORE rows than the cap (>=, not ==)", async () => {
+    // The spec above sends EXACTLY rowLimit rows, so an equality check passes it — the `>=`
+    // is unpinned by everything else in this file. Google should never overshoot a rowLimit
+    // it was given, which is the point: a cap check must not be an equality that one
+    // unexpected row steps straight over into "not capped", reporting a truncated window as
+    // complete. Overshoot is exactly when the warning matters most.
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponse(CURRENT_ROWS), // 5 well-formed rows
+    };
+
+    const pull = await pullWith(api, 3); // 5 raw rows against a cap of 3
+
+    expect(pull.current.rows).toHaveLength(CURRENT_ROWS.length); // nothing was dropped
+    expect(pull.current.capped).toBe(true);
+    expect(pull.previous.capped).toBe(true);
+  });
 });
 
 /**

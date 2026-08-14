@@ -42,6 +42,20 @@ describe("formatPullSummary surfaces the 15,000-row cap", () => {
     expect(formatPullSummary(capped)).toContain(CAP_WARNING);
   });
 
+  it("adds the cap warning when only the PREVIOUS window filled the cap", () => {
+    // The warning is an OR over the two windows, and the case above only exercises its LEFT
+    // leg — narrowing the condition to `pull.current.capped` alone keeps that one green. The
+    // previous window is the comparison baseline every decay/trend answer is measured against,
+    // so a truncated previous window silently inflates every "lost clicks" number in the
+    // report; it needs the warning at least as much as the current one does.
+    const capped: PullData = {
+      ...SAMPLE_PULL,
+      current: { ...SAMPLE_PULL.current, capped: false },
+      previous: { ...SAMPLE_PULL.previous, capped: true },
+    };
+    expect(formatPullSummary(capped)).toContain(CAP_WARNING);
+  });
+
   it("omits the cap warning when neither window hit the cap", () => {
     const uncapped: PullData = {
       ...SAMPLE_PULL,
