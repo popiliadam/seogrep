@@ -278,6 +278,63 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
+      // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
+      // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.
+      //
+      // Update is `never`, matching the migration: service_role is granted SELECT + INSERT and
+      // deliberately NOT update/delete. A crawl's rows are that crawl's output — there is
+      // nothing here to correct later, and keeping the table append-only means no row can be
+      // moved out from under the next slice's readers. Rows leave only with their parent job or
+      // project (ON DELETE CASCADE).
+      crawl_pages: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          job_id: string;
+          kind: "page" | "skipped";
+          url: string;
+          status: number | null;
+          title: string | null;
+          meta_description: string | null;
+          h1s: Json | null;
+          canonical: string | null;
+          robots_meta: string | null;
+          links: Json | null;
+          word_count: number | null;
+          json_ld_types: Json | null;
+          issues: Json | null;
+          reason: string | null;
+          seq: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          job_id: string;
+          kind: string;
+          url: string;
+          status?: number | null;
+          title?: string | null;
+          meta_description?: string | null;
+          h1s?: Json | null;
+          canonical?: string | null;
+          robots_meta?: string | null;
+          links?: Json | null;
+          word_count?: number | null;
+          json_ld_types?: Json | null;
+          issues?: Json | null;
+          reason?: string | null;
+          seq: number;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // Append-only money ledger. Update is `never` so the type system forbids the
       // mutation the DB armor (migration 0002) also rejects (constitution NEVER #2).
       credit_ledger: {

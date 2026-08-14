@@ -1,5 +1,6 @@
 import { boundCrawlResult, crawlSite, type CrawlResult } from "../../crawler/crawl.ts";
 import { getServiceClient, type Json, type JobRow } from "../../db.ts";
+import { writeCrawlPages, type CrawlPagesWriter } from "./crawl-pages.ts";
 import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "../../tools/project-target.ts";
 import { getJobForUser } from "../boss.ts";
 import type { ToolHandler } from "../worker.ts";
@@ -61,6 +62,8 @@ export function clampIncludePaths(raw: unknown): string[] | undefined {
 export interface CrawlHandlerDeps {
   readonly crawl?: CrawlFn;
   readonly resolveOrigin?: OriginResolver;
+  /** The crawl_pages dual write (default: the real batch insert). Injected to make it fail. */
+  readonly writePages?: CrawlPagesWriter;
 }
 
 /**
@@ -122,6 +125,7 @@ export async function resolveProjectOrigin(userId: string, job: JobRow): Promise
 export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
   const crawl = deps.crawl ?? crawlSite;
   const resolveOrigin = deps.resolveOrigin ?? resolveProjectOrigin;
+  const writePages = deps.writePages ?? writeCrawlPages;
 
   return async ({ jobId, userId, payload }): Promise<Json> => {
     // Re-read the job tenant-scoped to bind this run to its owner's project row.
@@ -160,6 +164,30 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
         `crawl_site: no pages could be crawled for ${origin} (${reasons.slice(0, 1_000)})`,
       );
     }
+
+    // THE DUAL WRITE (migration 0023). The SAME result, also written one row per page into
+    // crawl_pages. `jobs.result` is untouched — same value, same shape, same consumers; this
+    // is an addition beside it, and nothing reads the rows yet (crawl-pages.ts explains why).
+    //
+    // WHY IT RUNS HERE AND NOT AFTER completeJob. The rows have to land where a failure can
+    // still be refused: executeJob writes jobs.result only after the handler returns, and by
+    // then the credit charge has COMMITTED — a throw at that point could no longer fail the
+    // job without marking a charged, delivered run as failed. Inside the handler, the guard's
+    // rules still apply: returning commits the reserve, throwing releases it. So a lost dual
+    // write settles the job `failed` and costs the tenant nothing, which is the only honest
+    // outcome for a run whose output was half-recorded. The cost of that ordering is that a
+    // crawl which fails HERE leaves no jobs.result either — acceptable, because the run is
+    // refunded and re-runnable, and the reverse (silently missing rows under a `succeeded`
+    // job) is exactly the quiet degradation this house refuses.
+    //
+    // project_id is NOT NULL in 0023, so a job with no project cannot be attributed. The
+    // production resolver already refuses such a job before any crawl happens (see
+    // resolveProjectOrigin), so this branch is reachable only through an injected resolver —
+    // and it fails closed rather than dropping the rows on the floor.
+    if (!job.project_id) {
+      throw new Error(`crawl_site: job ${jobId} has no project to attribute crawled pages to`);
+    }
+    await writePages({ jobId, userId, projectId: job.project_id }, result);
 
     // CrawlResult is JSON-serializable end to end (only strings / numbers / null and
     // arrays thereof). The cast bridges the named interface to the structural Json
