@@ -67,7 +67,7 @@
   Try again shortly, or reconnect the account on the Connection page." — reconnect tavsiyesi VAR ama
   ölü/geçici AYRIMI yok), `whats_next` merdiveni (`readGscConnected` yalnız `account_id` okur → ölü
   hesapta bile `pull_gsc_data` önerir) ve TÜM web yüzeyleri. Yazanlar: pull'un `invalid_grant` dalı
-  (`markGscAccountTokenInvalid`) + web `accounts.ts` `markTokenStatus` — `list_gsc_properties` kendi
+  (`markGscAccountTokenInvalid`) + web `accounts.ts` `markAccountTokenStatus` — `list_gsc_properties` kendi
   gözlemlediği `invalid_grant`'i yazmıyor.
 - **B8 bootstrap kopyası çıkmaz sokak**: "Run connect_gsc for one of your projects" — sıfır projeli
   kullanıcının `setup_project` adımı hiç anılmıyor.
