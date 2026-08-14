@@ -6,6 +6,7 @@ import { getServiceClient } from "../db.ts";
 import {
   defaultLoadMappings,
   listAccountSitesFor,
+  loadGscAccounts,
   makeListGscPropertiesTool,
 } from "./list-gsc-properties.ts";
 
@@ -135,6 +136,7 @@ async function seedAccount(
   userId: string,
   email: string,
   sealTo?: string,
+  tokenStatus?: "active" | "invalid",
 ): Promise<{ accountId: string; email: string }> {
   const accountId = randomUUID();
   const { error } = await service.from("gsc_accounts").insert({
@@ -148,6 +150,8 @@ async function seedAccount(
         accountId: sealTo ?? accountId,
       }),
     ),
+    // Omitted entirely when not asked for, so the column DEFAULT is what most specs exercise.
+    ...(tokenStatus === undefined ? {} : { token_status: tokenStatus }),
   });
   if (error) throw new Error(`gsc_accounts seed failed: ${error.message}`);
   return { accountId, email };
@@ -306,6 +310,63 @@ describe("list_gsc_properties over the real database + the real Google client", 
       // MUTATION: drop `.is("archived_at", null)` and this goes red. The doc comment claims
       // archived projects are left out; nothing else in the suite makes that claim true.
       expect(domains).not.toContain(archivedDomain);
+    });
+
+    /**
+     * THE HEALTH COLUMN, HEAD-ON. Through the handler this guard sits behind a read that already
+     * refuses, so deleting the tenant filter changes no output and reddens nothing — the same
+     * shape the two specs around it are written in, for the same reason (signed lesson 14).
+     *
+     * The status is the sharp part. `token_status` decides whether a user is told "reconnect"
+     * or "try again", so an unfiltered read here would not merely leak an email: it would tell
+     * a stranger their Google connection is dead and send them through an OAuth round for
+     * somebody else's revoked grant.
+     */
+    it("loadGscAccounts reads the caller's OWN token_status, never a stranger's", async () => {
+      const owner = await makeCtx();
+      const intruder = await makeCtx();
+      const ownerAccount = await seedAccount(
+        owner.userId,
+        `h-owner-${randomUUID()}@example.test`,
+        undefined,
+        "invalid",
+      );
+      const intruderAccount = await seedAccount(
+        intruder.userId,
+        `h-intruder-${randomUUID()}@example.test`,
+        undefined,
+        "active",
+      );
+
+      const seen = await loadGscAccounts(intruder.userId);
+
+      // Non-empty on purpose: the caller sees their OWN row, so this measures scoping rather
+      // than an empty answer any broken read would also satisfy.
+      expect(seen).toEqual([
+        { id: intruderAccount.accountId, email: intruderAccount.email, tokenStatus: "active" },
+      ]);
+      // MUTATION: drop `forUser` from the statement and this goes red (NEVER #4).
+      expect(seen.map((row) => row.id)).not.toContain(ownerAccount.accountId);
+    });
+
+    /**
+     * The column travels the whole way: a real `invalid` row reaches the rendered block, and it
+     * does so WITHOUT waiting for the listing to fail. Pinned against the real schema because
+     * the fast lane injects `loadAccounts` and so cannot notice a renamed or ungranted column.
+     */
+    it("renders a stored 'invalid' as an expiry, even when sites.list answers fine", async () => {
+      const ctx = await makeCtx();
+      await seedAccount(ctx.userId, `expired-${randomUUID()}@example.test`, undefined, "invalid");
+      google = {
+        siteEntry: [{ siteUrl: "sc-domain:expired-owner.example.com", permissionLevel: "siteOwner" }],
+      };
+
+      const text = await run(ctx);
+
+      expect(text).toMatch(/connection has expired/i);
+      expect(text).not.toMatch(/try again shortly/i);
+      // The inventory is still delivered — the warning adds a fact, it does not remove one.
+      expect(text).toContain("sc-domain:expired-owner.example.com");
     });
 
     it("listAccountSitesFor refuses a (userId, accountId) pair that does not belong together", async () => {
