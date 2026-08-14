@@ -1,5 +1,10 @@
 import { decideProjectNextStep, summarizeCrawlResult, type NextStep } from "@pseo/core";
 import {
+  buildCrawlHistory,
+  type CrawlHistoryEntry,
+  type JobHistoryRow,
+} from "./history";
+import {
   deriveProjectSignals,
   isGscConnected,
   type ConnectionRow,
@@ -38,6 +43,13 @@ export interface ProjectCardInput {
   readonly pull: JobRow | null;
   /** The project's `gsc_connections` row, or null when it has none. */
   readonly connection: ConnectionRow | null;
+  /**
+   * The project's recent `crawl_site` rows in EVERY state, for the card's crawl trail. Optional
+   * because it is a strictly additive read: a caller that does not ask for the trail gets a card
+   * with an empty one, which renders no trail section at all — the same thing a project with no
+   * crawls yet gets. These rows carry no `result` (see `history.ts`).
+   */
+  readonly crawlHistory?: readonly JobHistoryRow[];
 }
 
 /** Everything one card renders. */
@@ -51,6 +63,11 @@ export interface ProjectCard {
    * with no summary line, exactly as `get_job_status` reports success with no detail line.
    */
   readonly crawl: { readonly createdAt: string; readonly summary: string | null } | null;
+  /**
+   * The last few crawl RUNS, newest first, whatever they did — the trail beside the summary
+   * above. Empty when the project has never been crawled, and the card then shows no trail.
+   */
+  readonly recentCrawls: readonly CrawlHistoryEntry[];
   /** When the last SUCCEEDED `pull_gsc_data` ran, or null when none has. */
   readonly pullAt: string | null;
   readonly gsc: GscStatus;
@@ -60,7 +77,7 @@ export interface ProjectCard {
 
 /** Build one project's card. `now` is injected so freshness is deterministic in tests. */
 export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCard {
-  const { project, crawl, pull, connection } = input;
+  const { project, crawl, pull, connection, crawlHistory } = input;
   return {
     projectId: project.id,
     domain: project.domain,
@@ -69,6 +86,7 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
       crawl === null
         ? null
         : { createdAt: crawl.created_at, summary: summarizeCrawlResult(crawl.result) },
+    recentCrawls: buildCrawlHistory(crawlHistory ?? []),
     pullAt: pull?.created_at ?? null,
     gsc: isGscConnected(connection)
       ? { kind: "connected", property: connection?.gsc_property ?? null }
