@@ -33,3 +33,4 @@ export * from "./gsc/property.js";
 // show the SAME next step and the SAME crawl summary the MCP tools return. Both are PURE — the
 // tenant-scoped reads and the tool definitions stay in apps/mcp, which re-exports what moved.
 export * from "./guide/next-step.js";
+export * from "./guide/crawl-summary.js";
