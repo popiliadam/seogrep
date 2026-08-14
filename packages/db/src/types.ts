@@ -66,6 +66,87 @@ export type Database = {
         }
         Relationships: []
       }
+      crawl_pages: {
+        Row: {
+          canonical: string | null
+          created_at: string
+          h1s: Json | null
+          id: string
+          issues: Json | null
+          job_id: string
+          json_ld_types: Json | null
+          kind: string
+          links: Json | null
+          meta_description: string | null
+          project_id: string
+          reason: string | null
+          robots_meta: string | null
+          seq: number
+          status: number | null
+          title: string | null
+          url: string
+          user_id: string
+          word_count: number | null
+        }
+        Insert: {
+          canonical?: string | null
+          created_at?: string
+          h1s?: Json | null
+          id?: string
+          issues?: Json | null
+          job_id: string
+          json_ld_types?: Json | null
+          kind: string
+          links?: Json | null
+          meta_description?: string | null
+          project_id: string
+          reason?: string | null
+          robots_meta?: string | null
+          seq: number
+          status?: number | null
+          title?: string | null
+          url: string
+          user_id: string
+          word_count?: number | null
+        }
+        Update: {
+          canonical?: string | null
+          created_at?: string
+          h1s?: Json | null
+          id?: string
+          issues?: Json | null
+          job_id?: string
+          json_ld_types?: Json | null
+          kind?: string
+          links?: Json | null
+          meta_description?: string | null
+          project_id?: string
+          reason?: string | null
+          robots_meta?: string | null
+          seq?: number
+          status?: number | null
+          title?: string | null
+          url?: string
+          user_id?: string
+          word_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crawl_pages_user_id_job_id_fkey"
+            columns: ["user_id", "job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["user_id", "id"]
+          },
+          {
+            foreignKeyName: "crawl_pages_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
+      }
       credit_ledger: {
         Row: {
           created_at: string
