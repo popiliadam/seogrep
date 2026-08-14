@@ -1,4 +1,5 @@
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
+import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import type { ConnectionRow, JobRow } from "../../../lib/projects/signals";
 import { createClient } from "../../../lib/supabase/server";
 import { ProjectList } from "./project-list";
@@ -68,8 +69,9 @@ async function readConnections(
  * is the crawl's whole stored jsonb: a bulk `select id, tool, result, created_at` would download
  * EVERY historical crawl payload for the tenant just to keep the newest of each pair, which for a
  * project crawled weekly for a year is megabytes thrown away per page view. `.limit(1)` fetches
- * exactly the two payloads a card can show. The cost is 2N small indexed queries, and N is the
- * number of sites one person tracks — the operator's own busiest account has nine.
+ * exactly the two payloads a card can show. The cost is 2N small indexed queries (3N with the
+ * payload-free crawl trail below), and N is the number of sites one person tracks — the
+ * operator's own busiest account has nine.
  */
 async function latestSucceeded(
   supabase: Supabase,
@@ -93,6 +95,42 @@ async function latestSucceeded(
   return (data as unknown as JobRow | null) ?? null;
 }
 
+/**
+ * The project's last few `crawl_site` runs in EVERY state — the trail beside the summary above.
+ *
+ * A DIFFERENT READ from `latestSucceeded`, not a widening of it, because the two want opposite
+ * things. That one wants the newest SUCCEEDED row WITH its `result`, to summarize; this one wants
+ * the newest rows whatever they did and must NOT download `result` — five historical crawl
+ * payloads per project is megabytes fetched to render five status words. So the select lists the
+ * lifecycle columns and nothing else, and `JobHistoryRow` has no `result` field to put one in.
+ *
+ * `tool` is selected as well as filtered on: `buildCrawlHistory` re-applies the filter, and a
+ * projection that omitted the column would hand it `undefined` for every row and quietly empty
+ * every trail. Newest first with `.limit()` — reversed, the limit would truncate at the DATABASE
+ * and hand back the five OLDEST crawls, which no in-memory sort could repair.
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS `jobs_select_own`, and
+ * (user_id, created_at desc) from migration 0009 is exactly this shape.
+ */
+async function recentCrawlRuns(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<JobHistoryRow[]> {
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id, tool, status, created_at, started_at, finished_at, error")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "crawl_site")
+    .order("created_at", { ascending: false })
+    .limit(CRAWL_HISTORY_LIMIT);
+  if (error) {
+    throw new Error(`jobs history lookup failed: ${error.message}`);
+  }
+  return (data ?? []) as unknown as JobHistoryRow[];
+}
+
 /** Gather every row one card is built from. */
 async function cardInputFor(
   supabase: Supabase,
@@ -100,11 +138,18 @@ async function cardInputFor(
   project: ProjectRow,
   connections: Map<string, ConnectionRow>,
 ): Promise<ProjectCardInput> {
-  const [crawl, pull] = await Promise.all([
+  const [crawl, pull, crawlHistory] = await Promise.all([
     latestSucceeded(supabase, userId, project.id, "crawl_site"),
     latestSucceeded(supabase, userId, project.id, "pull_gsc_data"),
+    recentCrawlRuns(supabase, userId, project.id),
   ]);
-  return { project, crawl, pull, connection: connections.get(project.id) ?? null };
+  return {
+    project,
+    crawl,
+    pull,
+    crawlHistory,
+    connection: connections.get(project.id) ?? null,
+  };
 }
 
 /**

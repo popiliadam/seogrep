@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ProjectCard } from "../../../lib/projects/card";
+import { formatStamp, type CrawlHistoryEntry } from "../../../lib/projects/history";
 import { formatDate } from "../../../lib/format";
 
 /**
@@ -57,6 +58,66 @@ function CrawlLine({ card }: { card: ProjectCard }) {
   );
 }
 
+/**
+ * One run's lifecycle stamps, in the order they happen and only the ones that exist. A queued run
+ * has neither a start nor a finish, and a running one has no finish — printing an empty slot for
+ * each would suggest a missing value rather than a job that has not got there yet.
+ */
+function RunStamps({ entry }: { entry: CrawlHistoryEntry }) {
+  const stamps: readonly { label: string; iso: string }[] = [
+    { label: "created", iso: entry.createdAt },
+    ...(entry.startedAt === null ? [] : [{ label: "started", iso: entry.startedAt }]),
+    ...(entry.finishedAt === null ? [] : [{ label: "finished", iso: entry.finishedAt }]),
+  ];
+  return (
+    <span className="text-xs text-neutral-500">
+      {stamps.map((stamp, index) => (
+        <span key={stamp.label}>
+          {index === 0 ? null : " · "}
+          {stamp.label} <time dateTime={stamp.iso}>{formatStamp(stamp.iso)}</time>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The crawl trail: the last few `crawl_site` runs whatever they did, newest first.
+ *
+ * It exists because the fact line above shows the newest SUCCEEDED crawl, which is the honest
+ * thing to summarize and hides the two states a user most needs to see: a run still QUEUED (the
+ * card looks unchanged and the user re-runs the tool), and a run that FAILED (the card silently
+ * keeps showing a three-week-old success). The failure's own message is printed — "it failed" a
+ * user cannot act on is barely better than not saying it.
+ *
+ * `<details>` because it is native: this file is a Server Component with no directive, so there
+ * is no client bundle to open a panel with, and none is needed. Nothing renders when the project
+ * has never been crawled — the "No crawl yet" fact line already says that, once.
+ */
+function CrawlHistory({ entries }: { entries: readonly CrawlHistoryEntry[] }) {
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <details className="rounded-md border border-neutral-200 px-3 py-2">
+      <summary className="cursor-pointer text-sm text-neutral-700">Recent crawls</summary>
+      <ol className="mt-2 flex flex-col gap-2">
+        {entries.map((entry) => (
+          <li key={entry.id} className="flex flex-col gap-0.5">
+            {/* The database's own status word, never a panel-invented synonym: the user has to
+                be able to match this against what get_job_status told the assistant. */}
+            <span className="text-sm text-neutral-700">{entry.status}</span>
+            <RunStamps entry={entry} />
+            {entry.error === null ? null : (
+              <span className="text-xs break-all text-red-700">{entry.error}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 /** One project: what it is, what has been read for it, and the one thing to do next. */
 export function ProjectCardView({ card }: { card: ProjectCard }) {
   return (
@@ -79,6 +140,8 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
           )}
         </Fact>
       </div>
+
+      <CrawlHistory entries={card.recentCrawls} />
 
       {/* The SAME recommendation whats_next gives, so the panel and the assistant never
           disagree — see lib/projects/parity.test.ts. */}
