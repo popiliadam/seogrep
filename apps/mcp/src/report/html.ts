@@ -42,34 +42,45 @@ function fmtNum(value: number): string {
 
 const MARKETING_URL = "https://seogrep.com";
 
-/** Inline stylesheet — deliberately tiny, system-font, readable on a phone. */
+/**
+ * Inline stylesheet — the site's "manpage" aesthetic in email-grade, self-contained form:
+ * warm paper card on a desk backdrop, system serif body (Georgia) + system mono chrome
+ * (Courier New), hairline rules, one amber accent, square corners. No external requests.
+ */
 const STYLE = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #f6f7f9; color: #1a1a1a;
-    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 56px; }
-  header.rpt { border-bottom: 1px solid #e3e5e9; padding-bottom: 16px; margin-bottom: 24px; }
-  h1 { font-size: 24px; margin: 0 0 4px; }
-  .muted { color: #6b7280; font-size: 14px; }
-  section.rpt { background: #fff; border: 1px solid #e3e5e9; border-radius: 12px;
-    padding: 20px; margin: 0 0 20px; }
-  h2 { font-size: 18px; margin: 0 0 12px; }
+  body { margin: 0; padding: 32px 16px 48px; background: #f0ede5; color: #1c1b18;
+    font: 16px/1.65 Georgia, "Times New Roman", serif; }
+  .wrap { max-width: 840px; margin: 0 auto; padding: 40px 36px 48px; background: #faf8f3;
+    border: 1px solid #e2ddd2; box-shadow: 0 24px 48px -24px rgba(28,27,24,0.25); }
+  header.rpt { border-bottom: 1px solid #1c1b18; padding-bottom: 18px; margin-bottom: 28px; }
+  h1 { font-family: Georgia, serif; font-weight: 500; font-size: 30px; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .muted { color: #6b6862; font-family: "Courier New", Courier, monospace; font-size: 13px; }
+  section.rpt { background: #fffdf9; border: 1px solid #e2ddd2;
+    padding: 22px 24px; margin: 0 0 22px; }
+  h2 { font-family: Georgia, serif; font-weight: 500; font-size: 20px; margin: 0 0 12px; }
   .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; }
-  .stat { flex: 1 1 120px; border: 1px solid #eceef1; border-radius: 8px; padding: 12px; }
-  .stat .n { font-size: 22px; font-weight: 600; }
-  .stat .l { color: #6b7280; font-size: 13px; }
+  .stat { flex: 1 1 120px; border: 1px solid #e2ddd2; padding: 14px 12px; }
+  .stat .n { font-family: Georgia, serif; font-size: 26px; font-weight: 500; letter-spacing: -0.01em; }
+  .stat .l { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eceef1; vertical-align: top; }
-  th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e2ddd2; vertical-align: top; }
+  th { color: #a8a294; font-family: "Courier New", Courier, monospace; font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  td { color: #524f48; }
   td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  td.k { word-break: break-word; }
-  ul.issues { margin: 0; padding-left: 18px; }
-  ul.issues li { margin: 2px 0; }
-  h3.toplabel { margin: 16px 0 6px; font-size: 13px; color: #6b7280; font-weight: 600; }
-  .hint { color: #6b7280; font-size: 13px; margin: 12px 0 0; }
-  footer.rpt { text-align: center; color: #9095a0; font-size: 13px; margin-top: 28px; }
-  footer.rpt a { color: #6b7280; }
+  td.k { word-break: break-word; font-family: "Courier New", Courier, monospace; font-size: 13px; }
+  code { font-family: "Courier New", Courier, monospace; font-size: 13px; background: #f5f2ea; padding: 1px 6px; }
+  ul.issues { margin: 0; padding-left: 18px; color: #524f48; }
+  ul.issues li { margin: 3px 0; }
+  h3.toplabel { margin: 18px 0 6px; font-family: "Courier New", Courier, monospace; font-size: 11px;
+    color: #b45309; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
+  .hint { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 12px; margin: 12px 0 0; }
+  footer.rpt { text-align: center; color: #a8a294; font-family: "Courier New", Courier, monospace;
+    font-size: 12px; margin-top: 28px; border-top: 1px solid #e2ddd2; padding-top: 18px; }
+  footer.rpt a { color: #b45309; text-decoration: none; }
 `;
 
 function statBlock(n: number, label: string): string {
