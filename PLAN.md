@@ -272,6 +272,18 @@ bağımlılığı derlediği için YEŞİLDİ; Dockerfile'ın EL LİSTESİ deplo
    sahte kırmızı üretir; fonksiyon-scope'a taşıma aday iş.
 5. Bayat-crawl zenginleştirmesi Overview'da bilerek yok (tek count sorgusu tercih edildi).
 
+## 📋 2026-08-14 — YENİ PLAN DOSYASI: Crawl+Audit derinleştirme ("MCP üzerinden Screaming Frog")
+
+Operatör talebiyle kapsamlı inceleme yapıldı ve plan yazıldı:
+**`docs/plans/2026-08-14-crawl-audit-derinlestirme.md`** — fazlar (crawl_pages pivotu ·
+sinyal genişletmesi · paralel fetch · graf · schema gövdesi · JS rendering · DFS-Lighthouse),
+17 ek gelişim alanı (N1-N17), 5 yeni tool adayı, panel yansıması (audit_runs + trend),
+6 insan-imza kalemi. Ölçülmüş kök bulgular: crawl döngüsü SIRALI (time-budget vakalarının
+sebebi) · JS-render körlüğü (bigcattr 1 sayfa) · jobs.result tek-blob kilidi · audit'ler iz
+bırakmıyor. **Scrapling entegrasyonu gerekçeli REDDEDİLDİ** (sahiplik doğrulaması olmayan
+üründe stealth = abuse vektörü; Python ikinci runtime; SSRF katmanı kopyası).
+Önerilen ilk dilim: **Faz 1.5 paralel fetch** (fiyatsız, bağımsız, canlı önce/sonra ölçülebilir).
+
 ## 📋 2026-08-14 — OPERATÖR SEÇİMİ: Panel görünürlük ailesi (PLANLANDI → YUKARIDA UYGULANDI)
 
 Operatör kararı (2026-08-14 oturumu): kullanıcı hem MCP'yi hem paneli kullansın; MCP'de yapılan

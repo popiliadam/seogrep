@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  attachInLinkCounts,
   boundCrawlResult,
   computeIssues,
   crawlSite,
@@ -13,8 +14,10 @@ import {
   parseHtml,
   parseJsonLdTypes,
   type CrawlResult,
+  type PageRecord,
 } from "./crawl.ts";
 import { startHostileSite } from "./fixtures/hostile-server.ts";
+import { ABOUT_HTML, INDEX_HTML } from "./fixtures/pages.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 import type { LookupFn } from "./ssrf.ts";
 
@@ -679,7 +682,7 @@ describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () =
     } finally {
       await site.close();
     }
-  });
+  }, 15_000);
 });
 
 // --- SSRF origin gate + pre-emission redirect parity (audit §1 Important) --------
@@ -1347,6 +1350,640 @@ describe("crawlSite — the budget is spent on usable URLs, not on rejected ones
       expect(uniq).toHaveLength(4);
     } finally {
       await site.close();
+    }
+  });
+});
+
+/**
+ * Bounded parallel fetching. The 90 s wall clock — not maxUrls — is what actually ends real
+ * crawls: live on three sites the dominant skip reason was "time budget exhausted" at ~25-40
+ * pages. Overlapping page fetches is the only lever that moves that number, and it may not
+ * cost a single one of the crawler's existing guarantees.
+ *
+ * These specs measure CONCURRENCY ITSELF rather than a wall clock: the fake origin below
+ * holds every page request open for a fixed delay and records the highest number of page
+ * fetches simultaneously in flight. No timing assertion, no real network, no real DNS.
+ */
+describe("crawlSite — bounded parallel fetching", () => {
+  const PROBE_ORIGIN = "http://probe.example.com";
+
+  interface Probe {
+    readonly lookup: LookupFn;
+    readonly impl: (input: RequestInfo | URL) => Promise<Response>;
+    /** Highest number of PAGE fetches in flight at the same moment. */
+    readonly peak: () => number;
+    /** Page paths whose request was actually STARTED, in start order. */
+    readonly started: string[];
+  }
+
+  /**
+   * A whole origin served from memory: robots.txt (optionally advertising a Crawl-delay), a
+   * sitemap listing `pages` paths — "/" first, so it dedupes with the crawl's own root seed —
+   * and pages that link to every sibling. The link set is CLOSED (every target is already a
+   * listed path), so the BFS frontier is fully determined and every run is deterministic,
+   * while a maxUrls below the page count still leaves real URLs queued behind the cap.
+   */
+  const makeProbe = (opts: { pages: number; pageDelayMs: number; crawlDelay?: number }): Probe => {
+    const paths = ["/", ...Array.from({ length: opts.pages - 1 }, (_, i) => `/p-${i}`)];
+    const started: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        const delay = opts.crawlDelay === undefined ? "" : `Crawl-delay: ${opts.crawlDelay}\n`;
+        return new Response(`User-agent: *\n${delay}`, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${PROBE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      started.push(path);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // Hold the request open: without a pause every fetch would resolve before the next one
+      // is even launched, and the probe would read 1 whatever the crawler does.
+      await new Promise((resolve) => setTimeout(resolve, opts.pageDelayMs));
+      inFlight--;
+      const links = paths.map((p) => `<a href="${p}">${p}</a>`).join("");
+      return new Response(
+        `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+          `<body><h1>${path}</h1>word word${links}</body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return {
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      impl,
+      peak: () => peak,
+      started,
+    };
+  };
+
+  it("overlaps at most 4 page fetches when robots sets NO Crawl-delay", async () => {
+    const probe = makeProbe({ pages: 12, pageDelayMs: 20 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup });
+      expect(result.pages).toHaveLength(12);
+      // The ceiling, and the fact that it is REACHED — a crawler that never overlapped would
+      // also satisfy "<= 4", and that is the state this whole slice exists to leave behind.
+      expect(probe.peak()).toBe(4);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("stays STRICTLY sequential when robots sets a Crawl-delay (politeness is not negotiable)", async () => {
+    const probe = makeProbe({ pages: 12, pageDelayMs: 20, crawlDelay: 1 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      // crawlDelayCapMs keeps the spec fast; the crawl still sees crawlDelayMs > 0, which is
+      // the only thing the sequential branch keys on.
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, crawlDelayCapMs: 1 });
+      expect(result.pages).toHaveLength(12);
+      expect(probe.peak()).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("never exceeds maxUrls — the in-flight fetches count against the cap", async () => {
+    // maxUrls 6 with the concurrency ceiling at 4: the first wave takes 4, and the SECOND
+    // wave has room for only 2 even though 4 slots and plenty of queued URLs are available.
+    // A crawler that sized its wave by concurrency alone would launch 4 and commit 8 pages
+    // against a 6-page cap — the cap must count what is in flight, not only what is stored.
+    const probe = makeProbe({ pages: 12, pageDelayMs: 10 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, maxUrls: 6 });
+      expect(result.pages).toHaveLength(6);
+      // Not merely "6 pages stored": only 6 page requests were ever EMITTED. The cap bounds
+      // what we take from the site, not just what we keep.
+      expect(probe.started).toHaveLength(6);
+      expect(probe.peak()).toBeLessThanOrEqual(4);
+      expect(result.skipped.every((s) => /max url/i.test(s.reason))).toBe(true);
+      expect(result.skipped.length).toBeGreaterThan(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("starts no new fetch once the time budget is spent, and still commits what was in flight", async () => {
+    // One wave of 4 outlives the budget: the in-flight four finish and are recorded, and the
+    // remaining 8 are drained as "time budget exhausted" without a single extra request.
+    const probe = makeProbe({ pages: 12, pageDelayMs: 60 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, timeBudgetMs: 30 });
+      expect(probe.started).toHaveLength(4);
+      expect(result.pages).toHaveLength(4);
+      const drained = result.skipped.filter((s) => /time budget exhausted/.test(s.reason));
+      expect(drained).toHaveLength(8);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("commits pages in DEQUEUE order even when the fetches finish out of order", async () => {
+    // Determinism is the price of concurrency, and it is paid by committing in claim order.
+    // Here every page in a wave finishes in REVERSE order; the result must not notice.
+    const paths = ["/", "/p-0", "/p-1", "/p-2"];
+    const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${PROBE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // Later paths answer FIRST: "/" waits longest, "/p-2" returns immediately.
+      const delay = (paths.length - paths.indexOf(path)) * 15;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return new Response(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual(paths.map((p) => normalizeUrl(PROBE_ORIGIN + p)));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * The two invariants of the parallel wave that the first round of specs left UNPINNED — the
+ * hakem measured both mutations staying green at 98/98. Each is an accounting guarantee that
+ * only bites when a wave has more than one member, which is why nothing sequential ever
+ * exercised it.
+ */
+describe("crawlSite — parallel wave accounting", () => {
+  const WAVE_ORIGIN = "http://wave.example.com";
+  const waveLookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  const html = (path: string): Response =>
+    new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>some words</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+
+  it("marks a claimed URL visited BEFORE its fetch, so a same-wave redirect cannot store it twice", async () => {
+    // /a redirects onto /b, and BOTH are claimed in the SAME wave. The claim marks `visited`
+    // synchronously, before any request is emitted, so /b is already spoken for when /a's
+    // redirect resolves: /b is stored ONCE, by its own slot, and /a is accounted for as a
+    // redirect. Deferring that mark until a result lands stores /b TWICE — one page, two
+    // records, one of them a silent duplicate in jobs.result.
+    const paths = ["/", "/a", "/b"];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${WAVE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      if (path === "/a") {
+        return new Response(null, { status: 302, headers: { location: `${WAVE_ORIGIN}/b` } });
+      }
+      return html(path);
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(WAVE_ORIGIN, { lookup: waveLookup });
+      const root = normalizeUrl(`${WAVE_ORIGIN}/`);
+      const b = normalizeUrl(`${WAVE_ORIGIN}/b`);
+      // Exactly one record for /b — the assertion the duplicate breaks.
+      expect(result.pages.filter((p) => p.url === b)).toHaveLength(1);
+      expect(result.pages.map((p) => p.url)).toEqual([root, b]);
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${WAVE_ORIGIN}/a`),
+        reason: "redirects to already-crawled URL",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("loses NO claimed URL when the result byte budget fills mid-wave", async () => {
+    // Every /h/ page is individually legal and ~1.9 MB as a RECORD, so the 12 MB result budget
+    // fills partway through a wave whose other members are already fetched. Those members are
+    // not in the queue any more — dropping them there is not a skip, it is a disappearance:
+    // the tenant paid for the crawl and would see neither the page nor a reason.
+    const site = await startHostileSite({ linkCount: 1_000, heavyLinkChars: 1_830 });
+    try {
+      const result = await crawlSite(site.origin + "/heavy", { maxUrls: 30, crawlDelayCapMs: 0 });
+      const requested = [...new Set(site.requested.filter((p) => p === "/heavy" || p.startsWith("/h/")))]
+        .map((p) => normalizeUrl(site.origin + p));
+
+      // PRECONDITION, asserted rather than assumed: more page URLs were fetched than were
+      // stored plus the single page that overflowed — i.e. the budget really did bite with
+      // other members of the same wave already in hand. Without this the spec could pass
+      // vacuously on a run where the overflow happened to land on a wave's last slot.
+      expect(requested.length).toBeGreaterThan(result.pages.length + 1);
+
+      const accounted = new Set([
+        ...result.pages.map((p) => p.url),
+        ...result.skipped.map((s) => s.url),
+      ]);
+      expect(requested.filter((url) => !accounted.has(url))).toEqual([]);
+
+      // And they are accounted for HONESTLY: under the budget's own reason, not some
+      // unrelated bucket.
+      const budgetSkipped = new Set(
+        result.skipped.filter((s) => /result byte budget/i.test(s.reason)).map((s) => s.url),
+      );
+      const storedOrBudgeted = requested.filter(
+        (url) => result.pages.some((p) => p.url === url) || budgetSkipped.has(url),
+      );
+      expect(storedOrBudgeted).toEqual(requested);
+    } finally {
+      await site.close();
+    }
+  }, 15_000);
+});
+
+/**
+ * The FREE per-page signals (Faz 1): everything a PageRecord now carries that costs no extra
+ * request — the response's own timing, byte count and headers, its redirect chain, the BFS
+ * depth the URL was found at, and the crawl-wide inbound-link count.
+ *
+ * The parser-side signals (headings, images, hreflang, og/twitter, lang, content hash) have
+ * their own pure specs in page-signals.test.ts; what is pinned here is that they REACH the
+ * record, plus everything that only exists once a real fetch has happened.
+ */
+describe("crawlSite — free per-page signals", () => {
+  let site: FixtureSite;
+  let result: CrawlResult;
+  const at = (path: string): string => normalizeUrl(site.origin + path);
+  const pageAt = (path: string) => result.pages.find((p) => p.url === at(path));
+
+  beforeAll(async () => {
+    site = await startFixtureSite();
+    result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+  });
+  afterAll(() => site.close());
+
+  it("measures fetchMs over the real request (> 0, and never a bare 0)", () => {
+    // A loopback fetch is fast but not instantaneous; the field rounds UP so a sub-millisecond
+    // measurement reports 1 rather than 0 — 0 would be indistinguishable from "not measured".
+    for (const page of result.pages) {
+      expect(page.fetchMs).toBeGreaterThan(0);
+      expect(Number.isInteger(page.fetchMs)).toBe(true);
+    }
+  });
+
+  it("records htmlBytes as the EXACT decompressed body size", () => {
+    // Pinned against the fixture's own bytes, not a range: the number must be the body, not
+    // a proxy for it (INDEX_HTML carries a non-ASCII em dash, so this also proves the count
+    // is bytes and not characters).
+    expect(pageAt("/")?.htmlBytes).toBe(Buffer.byteLength(INDEX_HTML, "utf8"));
+    expect(pageAt("/about")?.htmlBytes).toBe(Buffer.byteLength(ABOUT_HTML, "utf8"));
+  });
+
+  it("carries the parser signals through to the record", () => {
+    const blog = pageAt("/blog");
+    expect(blog?.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    // Two pages with different copy do not share a fingerprint.
+    expect(blog?.contentHash).not.toBe(pageAt("/about")?.contentHash);
+    // The fixture pages declare no og/twitter/hreflang/lang — absence is null/[] , not undefined.
+    expect(blog?.ogTitle).toBeNull();
+    expect(blog?.twitterCard).toBeNull();
+    expect(blog?.htmlLang).toBeNull();
+    expect(blog?.hreflangs).toEqual([]);
+    expect(blog?.h2Count).toBe(0);
+    expect(blog?.imgCount).toBe(0);
+    expect(blog?.imgMissingAlt).toBe(0);
+  });
+
+  it("reports [] for redirectChain and null for xRobotsTag on a directly served page", () => {
+    expect(pageAt("/")?.redirectChain).toEqual([]);
+    expect(pageAt("/")?.xRobotsTag).toBeNull();
+  });
+
+  it("counts inbound links by SOURCE PAGE, across the crawl", () => {
+    // /about is linked from BOTH "/" and "/blog" -> 2 distinct source pages.
+    expect(pageAt("/about")?.inLinkCount).toBe(2);
+    // "/" is linked back only from /about -> 1. The home page links to /about THREE times
+    // ("/about", "/about/", "/about#team"), and /about still counts as 2, not 4: one page is
+    // one source however many times it links.
+    expect(pageAt("/")?.inLinkCount).toBe(1);
+    // /orphan is reachable only through the sitemap — nothing links to it.
+    expect(pageAt("/orphan")?.inLinkCount).toBe(0);
+  });
+
+  it("gives sitemap seeds depth 0 and a link-discovered page depth 1", () => {
+    // Every sitemap URL is an entry point, so it is depth 0 however deep it sits in the site.
+    for (const path of ["/", "/about", "/blog", "/noindex", "/orphan"]) {
+      expect(pageAt(path)?.depth).toBe(0);
+    }
+    // /weird is in NO sitemap — it is reached only by following a link on the home page.
+    expect(pageAt("/weird")?.depth).toBe(1);
+  });
+});
+
+/**
+ * The transport-level signals need shapes the static fixture cannot serve: a two-hop redirect
+ * chain, an X-Robots-Tag header, and a site with NO sitemap so BFS depth actually increases.
+ * Each spec mocks fetch (as the parallel-wave specs do) so the whole shape is deterministic
+ * and no socket is opened.
+ */
+describe("crawlSite — transport signals and BFS depth", () => {
+  const ORIGIN = "http://signals.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** A 200 text/html response, with optional extra headers. */
+  const html = (body: string, headers: Record<string, string> = {}): Response =>
+    new Response(body, { status: 200, headers: { "content-type": "text/html", ...headers } });
+
+  /** robots.txt allow-all + an OPTIONAL sitemap; anything else is the caller's `route`. */
+  const serve =
+    (route: (path: string) => Response, sitemapPaths: string[] | null) =>
+    async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        if (sitemapPaths === null) return new Response("nope", { status: 404 });
+        const locs = sitemapPaths.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      return route(path);
+    };
+
+  it("records the hops of a 301 -> 302 -> 200 chain, excluding the final URL", async () => {
+    const impl = serve((path) => {
+      if (path === "/r1") return new Response(null, { status: 301, headers: { location: `${ORIGIN}/r2` } });
+      if (path === "/r2") return new Response(null, { status: 302, headers: { location: `${ORIGIN}/final` } });
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`);
+    }, ["/r1", "/direct"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const final = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/final`));
+      // Both hops, in order, and NOT the URL the record is stored under.
+      expect(final?.redirectChain).toEqual([`${ORIGIN}/r1`, `${ORIGIN}/r2`]);
+      expect(final?.status).toBe(200);
+      // A page served without any redirect carries an empty chain, never undefined.
+      const direct = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/direct`));
+      expect(direct?.redirectChain).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reads X-Robots-Tag off the response header (null when the header is absent)", async () => {
+    const impl = serve((path) => {
+      const body = `<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`;
+      return path === "/tagged" ? html(body, { "x-robots-tag": "noindex, nofollow" }) : html(body);
+    }, ["/tagged", "/plain"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const tagged = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/tagged`));
+      const plain = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/plain`));
+      expect(tagged?.xRobotsTag).toBe("noindex, nofollow");
+      expect(plain?.xRobotsTag).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("increases BFS depth per hop: seed 0, its link 1, that page's link 2", async () => {
+    // No sitemap, so the ONLY seed is the homepage and every other page is discovered by
+    // following links: "/" -> /a -> /b -> /c. The depth has to travel with the URL through
+    // the claim/commit wave, which is precisely what this pins.
+    const chain: Record<string, string> = { "/": "/a", "/a": "/b", "/b": "/c", "/c": "" };
+    const impl = serve((path) => {
+      const next = chain[path] ?? "";
+      const link = next ? `<a href="${next}">next</a>` : "";
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w${link}</body></html>`);
+    }, null);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const depthOf = (path: string): number | undefined =>
+        result.pages.find((p) => p.url === normalizeUrl(ORIGIN + path))?.depth;
+      expect(depthOf("/")).toBe(0);
+      expect(depthOf("/a")).toBe(1);
+      expect(depthOf("/b")).toBe(2);
+      expect(depthOf("/c")).toBe(3);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the CLAIMED URL's depth when a page is reached through a redirect", async () => {
+    // "/" (depth 0) links to /gate, which 302s to /landing. /landing is stored at the depth
+    // of the URL that was claimed (1) — a redirect hop is not a level of the site.
+    const impl = serve((path) => {
+      if (path === "/gate") {
+        return new Response(null, { status: 302, headers: { location: `${ORIGIN}/landing` } });
+      }
+      const link = path === "/" ? '<a href="/gate">gate</a>' : "";
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w${link}</body></html>`);
+    }, null);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const landing = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/landing`));
+      expect(landing?.depth).toBe(1);
+      expect(landing?.redirectChain).toEqual([`${ORIGIN}/gate`]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * inLinkCount as a pure function over finished pages. The crawl-level spec above proves it is
+ * WIRED; these prove what it COUNTS, on shapes a fixture site cannot produce (parseHtml
+ * already dedupes a page's links, so a record carrying the same target twice has to be built
+ * by hand — and that is exactly the shape that separates counting SOURCES from counting LINKS).
+ */
+describe("attachInLinkCounts", () => {
+  const page = (url: string, links: string[]): PageRecord => ({
+    url,
+    status: 200,
+    title: null,
+    metaDescription: null,
+    h1s: [],
+    canonical: null,
+    robotsMeta: null,
+    links,
+    wordCount: 0,
+    jsonLdTypes: [],
+    issues: [],
+    fetchMs: 1,
+    htmlBytes: 0,
+    h2Count: 0,
+    h3Count: 0,
+    imgCount: 0,
+    imgMissingAlt: 0,
+    hreflangs: [],
+    ogTitle: null,
+    ogDescription: null,
+    ogImage: null,
+    twitterCard: null,
+    htmlLang: null,
+    xRobotsTag: null,
+    redirectChain: [],
+    contentHash: "",
+    depth: 0,
+    inLinkCount: 0,
+  });
+  const countOf = (pages: PageRecord[], url: string): number | undefined =>
+    attachInLinkCounts(pages).find((p) => p.url === url)?.inLinkCount;
+
+  it("counts two different pages linking the same target as 2", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target"]),
+      page("https://s.test/b", ["https://s.test/target"]),
+      page("https://s.test/target", []),
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(2);
+  });
+
+  it("counts ONE page linking the same target twice as 1 (sources, not links)", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target", "https://s.test/target"]),
+      page("https://s.test/target", []),
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(1);
+  });
+
+  it("normalizes trailing slashes on BOTH sides before matching", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target/"]), // link written with a slash
+      page("https://s.test/target", []), //                    page stored without one
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(1);
+  });
+
+  it("gives an unlinked page 0 and leaves every other field untouched", () => {
+    const orphan = page("https://s.test/orphan", []);
+    const [out] = attachInLinkCounts([orphan]);
+    expect(out?.inLinkCount).toBe(0);
+    expect(out).toEqual({ ...orphan, inLinkCount: 0 });
+    // Pure: the input record is not mutated.
+    expect(orphan.inLinkCount).toBe(0);
+  });
+
+  it("counts a page that links to ITSELF as one source (self-links are not filtered)", () => {
+    // The documented semantics, pinned because the opposite is just as plausible a reading:
+    // the count is over the distinct PAGES that link to a URL, and a self-referencing page is
+    // one of them. A nav that links the current page is the common real shape, so this is the
+    // difference between a homepage reading 1 and reading 0.
+    const pages = [
+      page("https://s.test/self", ["https://s.test/self"]),
+      page("https://s.test/other", []),
+    ];
+    expect(countOf(pages, "https://s.test/self")).toBe(1);
+    // And a self-link does NOT leak into another page's count.
+    expect(countOf(pages, "https://s.test/other")).toBe(0);
+  });
+
+  it("counts a self-link ON TOP of a real inbound link (2 sources, not 1)", () => {
+    const pages = [
+      page("https://s.test/target", ["https://s.test/target"]), // links to itself
+      page("https://s.test/a", ["https://s.test/target"]), //      and one other page links it
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(2);
+  });
+
+  it("ignores links to pages this crawl never stored (it counts what was crawled)", () => {
+    const pages = [page("https://s.test/a", ["https://s.test/never-crawled"])];
+    const out = attachInLinkCounts(pages);
+    expect(out[0]?.inLinkCount).toBe(0);
+  });
+});
+
+/**
+ * contentHash AS WIRED, not as a unit. page-signals.test.ts proves the function strips tags
+ * and collapses whitespace; what only the crawl path can prove is WHICH view of the document
+ * it is handed — parseHtml hashes the SCRIPT/STYLE-STRIPPED content, so a rotating analytics
+ * nonce or an inline CSP token does not make the same copy look like a different page. Hashing
+ * the raw html instead would still pass every pure spec and quietly break duplicate detection
+ * on every real site that carries a per-request inline script.
+ */
+describe("crawlSite — contentHash reads the script-stripped view", () => {
+  const ORIGIN = "http://hash.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** Same visible copy on every page; only the inline script body differs per path. */
+  const page = (path: string, script: string, copy = "The very same words on every page."): string =>
+    `<html><head><title>Same</title><script>${script}</script>` +
+    `<style>.a-${script.length}{color:red}</style></head>` +
+    `<body><h1>Same</h1><p>${copy}</p></body></html>`;
+
+  it("gives two pages with identical copy but different inline scripts the SAME hash", async () => {
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = ["/a", "/b", "/c"].map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // /a and /b: identical visible copy, DIFFERENT inline script (a per-request nonce is
+      // exactly this shape). /c: same script family, different copy — the control.
+      const body =
+        path === "/a"
+          ? page(path, 'var nonce="aaaaaaaa";')
+          : path === "/b"
+            ? page(path, 'var nonce="bbbbbbbbbbbbbbbb";')
+            : page(path, 'var nonce="cccc";', "Entirely different words live here.");
+      return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const hashOf = (path: string): string | undefined =>
+        result.pages.find((p) => p.url === normalizeUrl(ORIGIN + path))?.contentHash;
+      expect(hashOf("/a")).toBeDefined();
+      // The duplicate pair, despite bodies that differ byte-for-byte.
+      expect(hashOf("/a")).toBe(hashOf("/b"));
+      // And the fingerprint still SEPARATES real differences — without this the spec would
+      // also pass on a hash that returned a constant.
+      expect(hashOf("/c")).not.toBe(hashOf("/a"));
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 });

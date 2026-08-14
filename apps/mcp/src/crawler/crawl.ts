@@ -12,6 +12,16 @@
  */
 
 import type { Dispatcher } from "undici";
+import {
+  clampField,
+  contentHash,
+  type Hreflang,
+  type HtmlSignals,
+  MAX_FIELD_CHARS,
+  parseAttrs,
+  parseHtmlSignals,
+  textOf,
+} from "./page-signals.ts";
 import { pinnedDispatcherFor, withPin } from "./pinned-fetch.ts";
 import { parseRobots, type RobotsRules } from "./robots.ts";
 import { decodeEntities, parseSitemap } from "./sitemap.ts";
@@ -22,6 +32,14 @@ import {
   nonPublicHostnameReason,
 } from "./ssrf.ts";
 
+/**
+ * Everything one crawled page contributes to jobs.result.
+ *
+ * The signal block below (fetchMs … inLinkCount) is deliberately FREE: every field comes out
+ * of the response the crawler was already making — its headers, its redirect chain, its timing,
+ * its already-downloaded HTML — or, for inLinkCount, out of one pass over the finished result.
+ * Not one of them costs an extra request.
+ */
 export interface PageRecord {
   readonly url: string;
   readonly status: number;
@@ -35,6 +53,58 @@ export interface PageRecord {
   /** Schema.org @type names declared in the page's JSON-LD blocks ([] when none). */
   readonly jsonLdTypes: string[];
   readonly issues: string[];
+
+  // --- Free signals (no extra request) -------------------------------------------
+  /**
+   * Wall-clock ms from the first request of this page's chain until its body was read,
+   * rounded UP. A measured sub-millisecond fetch reports 1, never 0 — 0 would read as
+   * "not measured". Redirect hops are INCLUDED: the number is what the tenant's visitor
+   * would wait for, not what one hop cost.
+   */
+  readonly fetchMs: number;
+  /**
+   * DECOMPRESSED bytes read off the response body. A body over MAX_HTML_BYTES is never
+   * stored — the crawler REFUSES it and records a skip (see the `too-large` outcome) — so a
+   * stored record's htmlBytes is always a COMPLETE body, and no truncation flag is needed
+   * here. Non-HTML and empty-redirect responses are not stored either.
+   */
+  readonly htmlBytes: number;
+  /** `<h2>` / `<h3>` tag counts (counts, not text — see HtmlSignals). */
+  readonly h2Count: number;
+  readonly h3Count: number;
+  /** `<img>` count, and how many of them have no usable alt (absent OR empty alt). */
+  readonly imgCount: number;
+  readonly imgMissingAlt: number;
+  /** `<link rel="alternate" hreflang=…>` alternates, capped at MAX_HREFLANGS. */
+  readonly hreflangs: Hreflang[];
+  /** OpenGraph values as declared (clamped, null when absent) — not booleans: a rule engine
+   * can derive "og missing" from a null, but it cannot derive the value from a `true`. */
+  readonly ogTitle: string | null;
+  readonly ogDescription: string | null;
+  readonly ogImage: string | null;
+  /** `twitter:card` content, clamped; null when absent. */
+  readonly twitterCard: string | null;
+  /** `<html lang="…">`, clamped; null when absent. */
+  readonly htmlLang: string | null;
+  /** The response's `X-Robots-Tag` header, clamped; null when the header is absent. */
+  readonly xRobotsTag: string | null;
+  /**
+   * The URLs that REDIRECTED to this page, in hop order, excluding the final URL itself
+   * ([] when the page was served directly). Bounded by MAX_REDIRECTS; each entry clamped.
+   */
+  readonly redirectChain: string[];
+  /** SHA-256 (hex) of the page's normalized text — the duplicate-content fingerprint. */
+  readonly contentHash: string;
+  /** BFS depth: a seed (homepage / sitemap URL) is 0, a page discovered on it is 1, … */
+  readonly depth: number;
+  /**
+   * How many DISTINCT pages in this same crawl link to this URL. Two links from one page
+   * count once; a page that links to itself counts as one source (the count is over source
+   * PAGES, and a self-referencing page is one of them). Computed in a single pass after the
+   * crawl, so it only ever sees pages this crawl actually stored — it is not a site-wide
+   * inbound-link count.
+   */
+  readonly inLinkCount: number;
 }
 
 export interface SkippedUrl {
@@ -87,7 +157,7 @@ export interface CrawlOptions {
 }
 
 /** Parsed page signals, before url/status/issues are attached. */
-export interface ParsedHtml {
+export interface ParsedHtml extends HtmlSignals {
   readonly title: string | null;
   readonly metaDescription: string | null;
   readonly h1s: string[];
@@ -100,6 +170,8 @@ export interface ParsedHtml {
   readonly linksTruncated: boolean;
   /** Schema.org @type names from JSON-LD blocks ([] when none/malformed). */
   readonly jsonLdTypes: string[];
+  /** SHA-256 (hex) of the page's normalized text (see page-signals.contentHash). */
+  readonly contentHash: string;
 }
 
 /**
@@ -113,12 +185,8 @@ export interface ParsedHtml {
 const MAX_LINKS_PER_PAGE = 1_000;
 const MAX_H1S_PER_PAGE = 100;
 const MAX_JSONLD_TYPES = 100;
-const MAX_FIELD_CHARS = 2_000;
-
-/** Clamp a stored text field, marking the cut so a truncated value never reads as complete. */
-function clampField(value: string): string {
-  return value.length <= MAX_FIELD_CHARS ? value : `${value.slice(0, MAX_FIELD_CHARS)}…`;
-}
+// MAX_FIELD_CHARS and clampField live in page-signals.ts — the parsers there clamp against the
+// same ceiling, and one spelling of a ceiling is the only way it stays one ceiling.
 
 /** Resolve `href` against `baseUrl`, keeping only http(s); null if invalid. */
 function resolveUrl(href: string, baseUrl: string): string | null {
@@ -130,11 +198,6 @@ function resolveUrl(href: string, baseUrl: string): string | null {
   }
 }
 
-/** Collapse tags to spaces, decode entities, and squeeze whitespace to plain text. */
-function textOf(html: string): string {
-  return decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
-}
-
 /** First capture group of `re` in `html`, entity-decoded and clamped; null if absent/blank. */
 function firstGroup(re: RegExp, html: string): string | null {
   const match = re.exec(html);
@@ -142,16 +205,6 @@ function firstGroup(re: RegExp, html: string): string | null {
   if (group === undefined) return null;
   const value = decodeEntities(group).trim();
   return value ? clampField(value) : null;
-}
-
-/** Parse a tag's attribute string into a lower-cased name -> value map (first wins). */
-function parseAttrs(tag: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const m of tag.matchAll(/([a-z][a-z0-9-]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))/gi)) {
-    const name = (m[1] ?? "").toLowerCase();
-    if (name && !(name in out)) out[name] = decodeEntities(m[3] ?? m[4] ?? m[5] ?? "");
-  }
-  return out;
 }
 
 /**
@@ -283,6 +336,12 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   // not the script-stripped `content` above.
   const jsonLdTypes = parseJsonLdTypes(html);
 
+  // Free signals (headings, images, hreflang, og/twitter, html lang) off the SAME cleaned
+  // view everything else above is parsed from, plus the duplicate-content fingerprint. The
+  // hash is taken over `content` — script/style bodies excluded — so a rotating analytics
+  // nonce or inline CSP token does not make the same copy look like a different page.
+  const signals = parseHtmlSignals(content);
+
   return {
     title,
     metaDescription,
@@ -293,6 +352,8 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
     wordCount,
     linksTruncated,
     jsonLdTypes,
+    contentHash: contentHash(content),
+    ...signals,
   };
 }
 
@@ -376,9 +437,10 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
  * ~20 KB on the wire and 20 MB in memory) and a chunked response carries no length at all.
  * So the crawler counts bytes off the body reader and CANCELS the transfer at the ceiling.
  *
- * Sizing, against the 512 MB machine in apps/mcp/fly.toml: the crawl is SEQUENTIAL, so
- * exactly one body is in flight at a time and the live cost is that body plus the
- * accumulated result (bounded separately). 2 MB is ~20x a large real HTML document. 8 MB
+ * Sizing, against the 512 MB machine in apps/mcp/fly.toml: page fetches overlap up to
+ * MAX_CONCURRENT_FETCHES, so at most that many bodies are in flight at once and the live
+ * cost is those bodies (<= 4 x 2 MB) plus the accumulated result (bounded separately).
+ * Sitemap/robots reads stay strictly sequential. 2 MB is ~20x a large real HTML document. 8 MB
  * lets a legitimately large sitemap through — it already carries ~150k <loc>s, far more than
  * either the 100-URL crawl or the 5000-URL estimate can consume, so the sitemaps.org 50 MB
  * file limit is deliberately NOT honoured on a shared 512 MB machine. robots.txt gets the
@@ -462,6 +524,16 @@ function sameOrigin(a: URL, b: URL): boolean {
   return a.protocol === b.protocol && a.host === b.host;
 }
 
+/**
+ * One response header, trimmed and clamped; null when absent or blank. Repeated headers are
+ * joined by the Headers object itself ("noindex, nofollow"), which is the form a rule engine
+ * wants to read anyway.
+ */
+function headerOrNull(res: Response, name: string): string | null {
+  const value = res.headers.get(name)?.trim();
+  return value ? clampField(value) : null;
+}
+
 function isHtml(contentType: string): boolean {
   const type = contentType.toLowerCase();
   return type.includes("text/html") || type.includes("application/xhtml+xml");
@@ -473,6 +545,14 @@ interface FetchOk {
   readonly finalUrl: string;
   readonly contentType: string;
   readonly body: string;
+  /** Wall clock for the WHOLE chain (first request -> body read), ms, rounded up. */
+  readonly fetchMs: number;
+  /** Decompressed body bytes actually read (0 when the body was not read at all). */
+  readonly htmlBytes: number;
+  /** The final response's `X-Robots-Tag` header, clamped; null when absent. */
+  readonly xRobotsTag: string | null;
+  /** URLs that redirected to `finalUrl`, in hop order, excluding `finalUrl` itself. */
+  readonly redirectChain: string[];
 }
 type FetchOutcome =
   | FetchOk
@@ -481,6 +561,48 @@ type FetchOutcome =
   | { readonly kind: "too-large"; readonly limitBytes: number }
   | { readonly kind: "too-many-redirects" }
   | { readonly kind: "off-origin-redirect"; readonly target: string };
+
+/**
+ * One URL claimed off the crawl queue, awaiting its commit. A `robots` slot was never
+ * fetched (it costs no concurrency slot) but keeps its place so the skip list stays in
+ * dequeue order; a `fetch` slot carries the in-flight request.
+ */
+type PendingSlot =
+  | { readonly kind: "robots"; readonly url: string; readonly depth: number }
+  | {
+      readonly kind: "fetch";
+      readonly url: string;
+      readonly depth: number;
+      readonly outcome: Promise<FetchOutcome>;
+    };
+
+/**
+ * One URL waiting in the BFS queue, carrying the depth it was discovered at. The depth has to
+ * travel WITH the URL: the wave architecture claims a batch off the queue head and commits it
+ * later, so "the depth of whatever we are working on" is not a variable the loop can hold.
+ * A seed (homepage or sitemap URL) is depth 0; a link found on a depth-N page is N+1.
+ */
+interface QueueItem {
+  readonly url: string;
+  readonly depth: number;
+}
+
+/**
+ * How many page fetches may be in flight at once (per crawl — and, since a crawl never
+ * leaves its origin, per origin).
+ *
+ * ONLY applies when robots.txt sets NO Crawl-delay. A Crawl-delay is a politeness contract
+ * the site wrote down, so when one is present the crawl stays STRICTLY sequential (one fetch
+ * in flight, the delay slept between fetches) and is byte-identical to the pre-parallel
+ * crawler. Overlapping fetches while claiming to honor a spacing request would be a lie.
+ *
+ * WHY 4: the 90 s wall-clock budget, not maxUrls, is what actually ends real crawls — live on
+ * three sites the dominant skip reason was "time budget exhausted" at ~25-40 pages. Overlap is
+ * the only lever that moves that number without touching politeness. 4 keeps the worst-case
+ * live bodies at 4 x MAX_HTML_BYTES (8 MB) on the 512 MB machine in apps/mcp/fly.toml, and is
+ * gentle enough that an ordinary origin never sees more than four of our sockets at once.
+ */
+const MAX_CONCURRENT_FETCHES = 4;
 
 /** Release the per-hop pinned dispatchers a chain opened (bodies are consumed by now). */
 async function destroyAll(dispatchers: readonly Dispatcher[]): Promise<void> {
@@ -492,6 +614,8 @@ interface CappedBody {
   readonly text: string;
   /** True when `maxBytes` would have been exceeded and the rest was CANCELLED. */
   readonly truncated: boolean;
+  /** DECOMPRESSED bytes counted off the reader — what actually landed in memory. */
+  readonly bytes: number;
 }
 
 /**
@@ -505,7 +629,7 @@ interface CappedBody {
  * propagates to the caller's existing failure path unchanged.
  */
 async function readCappedText(res: Response, maxBytes: number): Promise<CappedBody> {
-  if (!res.body) return { text: "", truncated: false };
+  if (!res.body) return { text: "", truncated: false, bytes: 0 };
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
@@ -517,12 +641,12 @@ async function readCappedText(res: Response, maxBytes: number): Promise<CappedBo
       // The overflowing chunk is dropped whole rather than sliced: a partial chunk buys
       // nothing here and could end in a half-decoded multi-byte sequence.
       await reader.cancel().catch(() => undefined);
-      return { text: chunks.join(""), truncated: true };
+      return { text: chunks.join(""), truncated: true, bytes: total };
     }
     total += value.byteLength;
     chunks.push(decoder.decode(value, { stream: true }));
   }
-  return { text: chunks.join("") + decoder.decode(), truncated: false };
+  return { text: chunks.join("") + decoder.decode(), truncated: false, bytes: total };
 }
 
 /**
@@ -546,6 +670,13 @@ async function fetchPage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const dispatchers: Dispatcher[] = [];
+  // The chain's own clock and hop trail. Both are free — the requests are happening anyway —
+  // and both are measured across the WHOLE chain, because that is what a visitor experiences.
+  const startedAt = performance.now();
+  // Rounded UP: a measured sub-millisecond fetch must not report 0, which would be
+  // indistinguishable from "never measured".
+  const elapsedMs = (): number => Math.ceil(performance.now() - startedAt);
+  const redirectChain: string[] = [];
   try {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -564,10 +695,23 @@ async function fetchPage(
         ),
       );
       const contentType = res.headers.get("content-type") ?? "";
+      const xRobotsTag = headerOrNull(res, "x-robots-tag");
       if (REDIRECT_STATUS.has(res.status)) {
         const location = res.headers.get("location");
         await res.body?.cancel();
-        if (!location) return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
+        if (!location) {
+          return {
+            kind: "ok",
+            status: res.status,
+            finalUrl: current,
+            contentType,
+            body: "",
+            fetchMs: elapsedMs(),
+            htmlBytes: 0,
+            xRobotsTag,
+            redirectChain,
+          };
+        }
         let next: URL;
         try {
           next = new URL(location, current);
@@ -575,19 +719,42 @@ async function fetchPage(
           return { kind: "error", message: "invalid redirect location" };
         }
         if (!sameOrigin(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
+        // The hop we are LEAVING is what belongs in the chain; the URL finally served is the
+        // record's own `url` and would be a duplicate here.
+        redirectChain.push(clampField(current));
         current = next.toString();
         continue;
       }
       if (!isHtml(contentType)) {
         await res.body?.cancel();
-        return { kind: "ok", status: res.status, finalUrl: current, contentType, body: "" };
+        return {
+          kind: "ok",
+          status: res.status,
+          finalUrl: current,
+          contentType,
+          body: "",
+          fetchMs: elapsedMs(),
+          htmlBytes: 0,
+          xRobotsTag,
+          redirectChain,
+        };
       }
       // A page over the ceiling is REFUSED, not truncated: half a document parses into
       // misleading signals (a "missing title" that is only missing because we stopped
       // reading). The caller records it as skipped with an honest reason instead.
       const capped = await readCappedText(res, MAX_HTML_BYTES);
       if (capped.truncated) return { kind: "too-large", limitBytes: MAX_HTML_BYTES };
-      return { kind: "ok", status: res.status, finalUrl: current, contentType, body: capped.text };
+      return {
+        kind: "ok",
+        status: res.status,
+        finalUrl: current,
+        contentType,
+        body: capped.text,
+        fetchMs: elapsedMs(),
+        htmlBytes: capped.bytes,
+        xRobotsTag,
+        redirectChain,
+      };
     }
     return { kind: "too-many-redirects" };
   } catch (error) {
@@ -1036,8 +1203,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   // entry in the array (the Set below only dedupes the SET, not the array). `visited` already
   // stops it being fetched twice — measured — but a ceiling that drains the queue would count
   // that dead entry as "skipped", inflating the very number this slice is making honest.
-  const queue: string[] = [...new Set(rootInScope ? [rootSeed, ...seeds] : seeds)];
-  const enqueued = new Set<string>(queue);
+  // Seeds are depth 0 by definition: the homepage and every sitemap URL is an entry point,
+  // not something discovered from another page.
+  const seedUrls = [...new Set(rootInScope ? [rootSeed, ...seeds] : seeds)];
+  const queue: QueueItem[] = seedUrls.map((url) => ({ url, depth: 0 }));
+  const enqueued = new Set<string>(seedUrls);
   const visited = new Set<string>();
   const pages: PageRecord[] = [];
   const skipped: SkippedUrl[] = [];
@@ -1059,7 +1229,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     skipped.push({ url, reason });
   };
 
-  const enqueue = (link: string): void => {
+  const enqueue = (link: string, depth: number): void => {
     // The queue only exists to choose the next <= maxUrls pages; beyond MAX_QUEUE_URLS
     // candidates it is pure ballast that can never be fetched.
     if (queue.length >= MAX_QUEUE_URLS) {
@@ -1078,117 +1248,195 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     const norm = normalizeUrl(link);
     if (!visited.has(norm) && !enqueued.has(norm)) {
       enqueued.add(norm);
-      queue.push(norm);
+      // FIRST discovery wins the depth, which is what makes this a BFS depth: the queue is
+      // FIFO, so the first page to link a URL is always the shallowest one that will.
+      queue.push({ url: norm, depth });
     }
   };
 
-  while (queue.length > 0) {
+  // Crawl-delay present => strictly sequential (see MAX_CONCURRENT_FETCHES): the politeness
+  // contract the site wrote down is not negotiable, and concurrency 1 makes the whole loop
+  // below behave exactly as the pre-parallel crawler did.
+  const concurrency = crawlDelayMs > 0 ? 1 : MAX_CONCURRENT_FETCHES;
+  // Set by the result-byte budget, the one limit that stops the crawl from INSIDE a batch.
+  let stopped = false;
+
+  while (queue.length > 0 && !stopped) {
     if (pages.length >= maxUrls) {
-      for (const url of queue.splice(0)) addSkip(url, "max URL limit reached");
+      for (const item of queue.splice(0)) addSkip(item.url, "max URL limit reached");
       break;
     }
     if (Date.now() - started >= timeBudgetMs) {
-      for (const url of queue.splice(0)) addSkip(url, "time budget exhausted");
+      for (const item of queue.splice(0)) addSkip(item.url, "time budget exhausted");
       break;
     }
 
-    const url = queue.shift();
-    if (url === undefined || visited.has(url)) continue;
-    visited.add(url);
+    // --- Claim phase -------------------------------------------------------------
+    // Take up to `room` FETCHABLE URLs off the queue head and launch them together.
+    //
+    // `room` counts the in-flight fetches against maxUrls, so the cap holds WITH requests
+    // outstanding: each fetch can add at most one page, and pages.length + room <= maxUrls.
+    //
+    // The claim loop is synchronous apart from the Crawl-delay sleep (which only runs when
+    // concurrency is 1), and `visited` is marked BEFORE a fetch is started — so no two slots
+    // can ever claim the same URL, with or without overlap.
+    const room = Math.min(concurrency, maxUrls - pages.length);
+    const batch: PendingSlot[] = [];
+    let claimed = 0;
+    while (claimed < room && queue.length > 0) {
+      const item = queue.shift();
+      if (item === undefined || visited.has(item.url)) continue;
+      const next = item.url;
+      visited.add(next);
 
-    const target = new URL(url);
-    if (!robots.isAllowed(target.pathname + target.search)) {
-      addSkip(url, "blocked by robots.txt");
-      continue;
-    }
-
-    if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
-    fetches++;
-
-    const outcome = await fetchPage(url, originUrl, pageTimeoutMs, lookup);
-    if (outcome.kind === "timeout") {
-      addSkip(url, "timeout");
-      continue;
-    }
-    if (outcome.kind === "too-many-redirects") {
-      addSkip(url, "too many redirects");
-      continue;
-    }
-    if (outcome.kind === "off-origin-redirect") {
-      addSkip(url, `off-origin redirect to ${outcome.target}`);
-      continue;
-    }
-    if (outcome.kind === "too-large") {
-      // Honest, actionable, and never silent: the tenant is told the page was too big and
-      // by which bound, rather than seeing it vanish or come back half-parsed.
-      addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
-      continue;
-    }
-    if (outcome.kind === "error") {
-      addSkip(url, `fetch failed: ${outcome.message}`);
-      continue;
-    }
-
-    const finalUrl = normalizeUrl(outcome.finalUrl);
-    if (finalUrl !== url) {
-      if (visited.has(finalUrl)) {
-        // Redirected onto an already-crawled page: the CONTENT is already covered under
-        // finalUrl, but record this URL as skipped so it is accounted for rather than
-        // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
-        // without it, a sitemap URL that redirects to a crawled page reads as a coverage
-        // gap. Benign — the reason string marks it as a redirect, not a failure.
-        addSkip(url, "redirects to already-crawled URL");
+      const target = new URL(next);
+      if (!robots.isAllowed(target.pathname + target.search)) {
+        // Costs no slot: a robots-blocked URL is never fetched. It still takes its place in
+        // the batch so its skip entry lands in dequeue order, exactly as before.
+        batch.push({ kind: "robots", url: next, depth: item.depth });
         continue;
       }
-      visited.add(finalUrl);
-      const finalTarget = new URL(finalUrl);
-      if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
-        addSkip(finalUrl, "blocked by robots.txt");
-        continue;
-      }
-    }
-    if (!isHtml(outcome.contentType)) {
-      addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
-      continue;
+
+      if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
+      fetches++;
+      claimed++;
+      batch.push({
+        kind: "fetch",
+        url: next,
+        depth: item.depth,
+        outcome: fetchPage(next, originUrl, pageTimeoutMs, lookup),
+      });
     }
 
-    // Belt-and-suspenders: parseHtml is written to never throw, but no future
-    // parser bug may be allowed to reject the whole crawl — one bad page becomes
-    // a skipped entry instead.
-    let parsed: ParsedHtml;
-    try {
-      parsed = parseHtml(outcome.body, finalUrl);
-    } catch (error) {
-      addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
-      continue;
+    // --- Commit phase ------------------------------------------------------------
+    // Results are applied in DEQUEUE order, never completion order, so pages[], skipped[] and
+    // the BFS frontier do not depend on which fetch happened to finish first. The queue is
+    // FIFO and discovered links are APPENDED, so taking N off the head at once yields exactly
+    // the URLs, in exactly the order, the sequential crawler visited.
+    const outcomes = await Promise.all(
+      batch.map((slot) => (slot.kind === "fetch" ? slot.outcome : null)),
+    );
+
+    for (const [index, slot] of batch.entries()) {
+      const url = slot.url;
+      const outcome = outcomes[index];
+      if (outcome === null || outcome === undefined) {
+        addSkip(url, "blocked by robots.txt");
+        continue;
+      }
+      if (outcome.kind === "timeout") {
+        addSkip(url, "timeout");
+        continue;
+      }
+      if (outcome.kind === "too-many-redirects") {
+        addSkip(url, "too many redirects");
+        continue;
+      }
+      if (outcome.kind === "off-origin-redirect") {
+        addSkip(url, `off-origin redirect to ${outcome.target}`);
+        continue;
+      }
+      if (outcome.kind === "too-large") {
+        // Honest, actionable, and never silent: the tenant is told the page was too big and
+        // by which bound, rather than seeing it vanish or come back half-parsed.
+        addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
+        continue;
+      }
+      if (outcome.kind === "error") {
+        addSkip(url, `fetch failed: ${outcome.message}`);
+        continue;
+      }
+
+      const finalUrl = normalizeUrl(outcome.finalUrl);
+      if (finalUrl !== url) {
+        if (visited.has(finalUrl)) {
+          // Redirected onto an already-crawled page: the CONTENT is already covered under
+          // finalUrl, but record this URL as skipped so it is accounted for rather than
+          // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
+          // without it, a sitemap URL that redirects to a crawled page reads as a coverage
+          // gap. Benign — the reason string marks it as a redirect, not a failure.
+          addSkip(url, "redirects to already-crawled URL");
+          continue;
+        }
+        visited.add(finalUrl);
+        const finalTarget = new URL(finalUrl);
+        if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
+          addSkip(finalUrl, "blocked by robots.txt");
+          continue;
+        }
+      }
+      if (!isHtml(outcome.contentType)) {
+        addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
+        continue;
+      }
+
+      // Belt-and-suspenders: parseHtml is written to never throw, but no future
+      // parser bug may be allowed to reject the whole crawl — one bad page becomes
+      // a skipped entry instead.
+      let parsed: ParsedHtml;
+      try {
+        parsed = parseHtml(outcome.body, finalUrl);
+      } catch (error) {
+        addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      const record: PageRecord = {
+        url: finalUrl,
+        status: outcome.status,
+        title: parsed.title,
+        metaDescription: parsed.metaDescription,
+        h1s: parsed.h1s,
+        canonical: parsed.canonical,
+        robotsMeta: parsed.robotsMeta,
+        links: parsed.links,
+        wordCount: parsed.wordCount,
+        jsonLdTypes: parsed.jsonLdTypes,
+        issues: computeIssues(parsed),
+        fetchMs: outcome.fetchMs,
+        htmlBytes: outcome.htmlBytes,
+        h2Count: parsed.h2Count,
+        h3Count: parsed.h3Count,
+        imgCount: parsed.imgCount,
+        imgMissingAlt: parsed.imgMissingAlt,
+        hreflangs: parsed.hreflangs,
+        ogTitle: parsed.ogTitle,
+        ogDescription: parsed.ogDescription,
+        ogImage: parsed.ogImage,
+        twitterCard: parsed.twitterCard,
+        htmlLang: parsed.htmlLang,
+        xRobotsTag: outcome.xRobotsTag,
+        redirectChain: outcome.redirectChain,
+        contentHash: parsed.contentHash,
+        // A page reached through a redirect keeps the depth of the URL that was CLAIMED —
+        // the hop chain is not a level of the site.
+        depth: slot.depth,
+        // Filled in by attachInLinkCounts once the crawl is finished; it cannot be known
+        // while pages are still arriving. See the byte-budget note there.
+        inLinkCount: 0,
+      };
+      // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
+      // point is never to hold the 200 MB in the first place. The page that does not fit is
+      // recorded as skipped (never silently dropped) and the crawl stops here, draining the
+      // queue exactly as the maxUrls and time-budget limits do.
+      // Measured with inLinkCount still 0 (it is filled in after the crawl), so the budget
+      // undercounts by the digits of one integer per page — <= 4 bytes against a 12 MB
+      // budget, and boundCrawlResult re-measures the FINAL records before they are persisted.
+      const recordBytes = jsonByteSize(record);
+      if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
+        addSkip(finalUrl, RESULT_BUDGET_REASON);
+        // The rest of THIS batch was already fetched but is not included either — it is
+        // recorded under the same reason, ahead of the queue remnant, so the skip list stays
+        // in dequeue order and no claimed URL vanishes unaccounted for.
+        for (const rest of batch.slice(index + 1)) addSkip(rest.url, RESULT_BUDGET_REASON);
+        for (const queued of queue.splice(0)) addSkip(queued.url, RESULT_BUDGET_REASON);
+        stopped = true;
+        break;
+      }
+      resultBytes += recordBytes;
+      pages.push(record);
+      if (parsed.linksTruncated) linkFloodedPages++;
+      for (const link of parsed.links) enqueue(link, slot.depth + 1);
     }
-    const record: PageRecord = {
-      url: finalUrl,
-      status: outcome.status,
-      title: parsed.title,
-      metaDescription: parsed.metaDescription,
-      h1s: parsed.h1s,
-      canonical: parsed.canonical,
-      robotsMeta: parsed.robotsMeta,
-      links: parsed.links,
-      wordCount: parsed.wordCount,
-      jsonLdTypes: parsed.jsonLdTypes,
-      issues: computeIssues(parsed),
-    };
-    // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
-    // point is never to hold the 200 MB in the first place. The page that does not fit is
-    // recorded as skipped (never silently dropped) and the crawl stops here, draining the
-    // queue exactly as the maxUrls and time-budget limits do.
-    const recordBytes = jsonByteSize(record);
-    if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
-      addSkip(finalUrl, RESULT_BUDGET_REASON);
-      for (const url of queue.splice(0)) addSkip(url, RESULT_BUDGET_REASON);
-      break;
-    }
-    resultBytes += recordBytes;
-    pages.push(record);
-    if (parsed.linksTruncated) linkFloodedPages++;
-    parsed.links.forEach(enqueue);
   }
 
   // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
@@ -1211,7 +1459,49 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         "not queued — narrow the crawl with include_paths to cover them",
     });
   }
-  return { pages, skipped: [...skipped, ...notes], fetchedAt };
+  return { pages: attachInLinkCounts(pages), skipped: [...skipped, ...notes], fetchedAt };
+}
+
+/**
+ * Fill in every page's `inLinkCount` — how many DISTINCT crawled pages link to it — in ONE
+ * pass over the finished result. Pure: returns new records, mutates nothing.
+ *
+ * WHY IT CANNOT BE COUNTED DURING THE CRAWL: a page's inbound links include links from pages
+ * that have not been fetched yet, so the number is only knowable once the crawl is over.
+ *
+ * Counting is by SOURCE PAGE, not by link: two links from the same page to the same target are
+ * one source. Both sides are re-normalized (trailing slash, fragment) so a nav that writes
+ * `/about/` and a page stored as `/about` are the same target. A page that links to itself
+ * counts as one source — it is one of the pages that link there.
+ *
+ * SCOPE, stated so the number is never over-read: it counts links among the pages THIS crawl
+ * stored. A site-wide inbound count would need the whole site; a 25-page crawl of a 500-page
+ * site sees 25 pages' worth of links and says so.
+ */
+export function attachInLinkCounts(pages: readonly PageRecord[]): PageRecord[] {
+  /** target URL -> the distinct source pages that link to it. */
+  const sources = new Map<string, Set<string>>();
+  const norm = (raw: string): string | null => {
+    try {
+      return normalizeUrl(raw);
+    } catch {
+      return null;
+    }
+  };
+  for (const page of pages) {
+    const from = norm(page.url) ?? page.url;
+    for (const link of page.links) {
+      const target = norm(link);
+      if (target === null) continue;
+      const set = sources.get(target);
+      if (set === undefined) sources.set(target, new Set([from]));
+      else set.add(from);
+    }
+  }
+  return pages.map((page) => ({
+    ...page,
+    inLinkCount: sources.get(norm(page.url) ?? page.url)?.size ?? 0,
+  }));
 }
 
 /**
