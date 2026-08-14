@@ -472,24 +472,35 @@ export default async function ConnectionPage({
   const headerEndpoint = mcpHeaderEndpoint(urlTemplate);
 
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Connection</h1>
-        <p className="text-sm text-neutral-600">
+    <section className="flex flex-col gap-10">
+      <header className="animate-[rise_0.5s_ease-out_both]">
+        <p className="m-0 mb-2.5 font-mono text-[11px] tracking-[0.14em] text-accent">DASHBOARD</p>
+        <h1 className="m-0 mb-2 font-serif text-[34px] font-medium tracking-[-0.01em]">Connection</h1>
+        <p className="m-0 max-w-[64ch] font-serif text-[15px] leading-[1.6] text-muted">
           Your personal API key authenticates the SeoGrep MCP server. Generate a key,
           copy it once, and point your MCP client at the personal URL below.
         </p>
       </header>
 
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Personal MCP URL</h2>
+      <div className="bg-terminal text-dark-text animate-[rise_0.5s_ease-out_0.06s_both]">
+        <div className="border-b border-hairline-dark px-6 py-3.5">
+          <h2 className="m-0 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-dark-muted">
+            Your personal MCP URL
+          </h2>
+        </div>
         {maskedMcpUrl ? (
-          <code className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm break-all">
+          <code className="block overflow-x-auto whitespace-nowrap px-6 py-[22px] font-mono text-[14px] tracking-[0.01em]">
             {maskedMcpUrl}
           </code>
         ) : (
-          <p className="text-sm text-neutral-600">Generate a key to reveal your personal MCP URL.</p>
+          <p className="m-0 px-6 py-[22px] font-mono text-[13px] text-dark-muted">
+            Generate a key to reveal your personal MCP URL.
+          </p>
         )}
+        <p className="m-0 px-6 pb-3.5 pt-0 font-mono text-[11px] leading-[1.6] text-dark-muted">
+          Paste once into Claude Desktop, claude.ai, Claude Code, Cursor, or Windsurf. This URL
+          carries your projects and credits — treat it like a password.
+        </p>
       </div>
 
       <KeyPanel
@@ -501,21 +512,21 @@ export default async function ConnectionPage({
       />
 
       <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Google Search Console</h2>
+        <h2 className="m-0 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-faint">Google Search Console</h2>
         {callbackError ? (
-          <p role="alert" className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-600">
+          <p role="alert" className="m-0 border-l-2 border-l-negative bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-negative">
             {callbackError}
           </p>
         ) : null}
         {connected && !callbackError ? (
-          <p role="status" className="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-700">
+          <p role="status" className="m-0 border-l-2 border-l-positive bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-positive">
             {CONNECTED_MESSAGE}
           </p>
         ) : null}
         {/* The only place the user learns what removing a site does, so it says what the
             actions actually do and nothing more. It used to promise a revoke at Google; since
             the credential moved to the ACCOUNT (0021) no per-project control performs one. */}
-        <p className="text-sm text-neutral-600">
+        <p className="m-0 max-w-[78ch] font-serif text-[14px] leading-[1.65] text-muted">
           Link a project to Search Console so its tools can read your real query and click
           data. Connecting sends you to Google and back. Removing a site archives it — its
           history and its Search Console property are kept, so bringing it back costs one
@@ -524,7 +535,7 @@ export default async function ConnectionPage({
           next to the Google account under Connected Google accounts below.
         </p>
 
-        <h3 className="text-sm font-medium text-neutral-700">Connected Google accounts</h3>
+        <h3 className="m-0 font-mono text-[10.5px] font-normal uppercase tracking-[0.12em] text-faint">Connected Google accounts</h3>
         <AccountDisconnectPanel
           accounts={accounts.map((account) => ({ id: account.id, email: account.email }))}
           describeDisconnect={describeDisconnect}
@@ -536,12 +547,12 @@ export default async function ConnectionPage({
             connecting the WRONG Google account reaches the other half, where the first is false
             and the amber warning stays silent (it wants a FAILED read, not an empty one). */}
         {accounts.length === 0 ? (
-          <p className="text-sm text-neutral-600">
+          <p className="m-0 font-serif text-[14px] leading-[1.65] text-muted">
             Connect a Google account to choose which Search Console property each project
             reads. Your projects stay exactly as they are — crawls and audits do not need it.
           </p>
         ) : options.length === 0 && listingComplete ? (
-          <p className="text-sm text-neutral-600">
+          <p className="m-0 font-serif text-[14px] leading-[1.65] text-muted">
             None of your connected Google accounts lists a Search Console property, so there is
             nothing for a project to read yet. Verify a property in Search Console, or connect a
             different Google account.
@@ -552,12 +563,12 @@ export default async function ConnectionPage({
             only way to connect one, and it is the repair the amber warning points at. */}
         <a
           href={GSC_CONNECT_PATH}
-          className="self-start rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+          className="self-start whitespace-nowrap bg-ink px-3.5 py-1.5 font-mono text-[11px] font-semibold text-paper transition-colors duration-150 hover:bg-accent hover:text-paper"
         >
           Connect Google account
         </a>
         {accounts.some((account) => account.sites === null) ? (
-          <p role="alert" className="text-sm text-amber-700">
+          <p role="alert" className="m-0 border-l-2 border-l-accent bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-warn">
             We could not read the Search Console properties on at least one of these accounts.
             Use Connect Google account to grant access again, or try again shortly.
           </p>
@@ -581,27 +592,27 @@ export default async function ConnectionPage({
       </div>
 
       <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium">Keys</h2>
+        <h2 className="m-0 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-faint">Keys</h2>
         {keys.length === 0 ? (
-          <p className="text-sm text-neutral-600">No keys yet.</p>
+          <p className="m-0 font-serif text-[14px] leading-[1.65] text-muted">No keys yet.</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {keys.map((key) => (
               <li
                 key={key.id}
-                className="flex items-center justify-between gap-4 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-4 border border-hairline px-3 py-2 text-sm"
               >
-                <code className={key.revokedAt ? "text-neutral-400" : "text-neutral-800"}>
+                <code className={key.revokedAt ? "text-faintest" : "text-ink"}>
                   {key.keyPrefix}…
                 </code>
-                <span className="flex items-center gap-3 text-neutral-500">
+                <span className="flex items-center gap-3 text-faint">
                   <time dateTime={key.createdAt}>{formatDate(key.createdAt)}</time>
                   {key.revokedAt ? (
-                    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-500">
+                    <span className="bg-hairline-soft px-1.5 py-0.5 text-xs text-faint">
                       Revoked
                     </span>
                   ) : (
-                    <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700">
+                    <span className="bg-positive-badge px-1.5 py-0.5 text-xs text-positive">
                       Active
                     </span>
                   )}

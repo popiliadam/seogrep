@@ -98,27 +98,27 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
         {rows.map((row) => (
           <li
             key={rowKey(account.accountId, row.siteUrl)}
-            className="flex flex-col gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs"
+            className="flex flex-col gap-1 border border-hairline px-2 py-1 text-xs"
           >
             <span className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-neutral-800">{row.siteUrl}</span>
+              <span className="text-ink">{row.siteUrl}</span>
               <button
                 type="button"
                 disabled={isPending || !row.queryable}
                 onClick={() => track(account.accountId, row.siteUrl)}
                 aria-label={`Track ${row.siteUrl}`}
-                className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                className="font-medium text-body hover:text-ink disabled:opacity-60"
               >
                 Track
               </button>
             </span>
             {!row.queryable ? (
-              <span className="text-amber-700">
+              <span className="text-warn">
                 {`Google will not answer search data at this account's access level (${row.permissionLevel}), so SeoGrep cannot track it. Ask the property's owner for full access.`}
               </span>
             ) : null}
             {errors[rowKey(account.accountId, row.siteUrl)] ? (
-              <span role="alert" className="text-red-600">
+              <span role="alert" className="text-negative">
                 {errors[rowKey(account.accountId, row.siteUrl)]}
               </span>
             ) : null}
@@ -130,9 +130,9 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-neutral-700">Add from Search Console</h3>
+      <h3 className="text-sm font-medium text-body">Add from Search Console</h3>
       {accounts.length === 0 ? (
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-muted">
           Connect a Google account to add its Search Console properties here.
         </p>
       ) : null}
@@ -141,7 +141,7 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
         const shown = (account.rows ?? []).filter((row) => matchesQuery(query, row.siteUrl));
         return (
           <div key={account.accountId} className="flex flex-col gap-1">
-            <h4 className="text-xs font-medium text-neutral-700">{account.email}</h4>
+            <h4 className="text-xs font-medium text-body">{account.email}</h4>
             {account.rows === null ? (
               // NO `role="alert"`: the page raises exactly one alert for this state and that is
               // the sentence with the repair in it. Repeating it per account would announce the
@@ -150,12 +150,12 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
               // IT OUTLIVES THE SEARCH BOX TOO. We cannot know whether the query would have
               // matched something on an account we could not read, so "nothing matches" would
               // claim we looked. The honest sentence is this one, whatever is typed.
-              <p className="text-xs text-amber-700">
+              <p className="text-xs text-warn">
                 This account&apos;s Search Console properties could not be read just now, so what
                 it can reach is unknown. Try again shortly, or reconnect the account.
               </p>
             ) : account.rows.length === 0 ? (
-              <p className="text-xs text-neutral-500">
+              <p className="text-xs text-faint">
                 {account.listed === 0
                   ? "No Search Console properties on this account."
                   : "Every Search Console property on this account is already tracked."}
@@ -163,7 +163,7 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
             ) : shown.length === 0 ? (
               // Only reachable while filtering — the account HAS rows. Said out loud rather than
               // rendered as an empty list, which would read as "this account has none".
-              <p className="text-xs text-neutral-500">Nothing on this account matches that search.</p>
+              <p className="text-xs text-faint">Nothing on this account matches that search.</p>
             ) : searching ? (
               // A hit may not stay behind a fold: the box exists to reach past it.
               rowList(account, shown)
@@ -177,7 +177,7 @@ export function PropertyLibrary({ accounts, trackProperty }: PropertyLibraryProp
               // is keyboard-operable and screen-reader-announced for free, works with no JS at
               // all, and holds its own open/closed — nothing here can get out of step with it.
               <details className="flex flex-col gap-1">
-                <summary className="cursor-pointer text-xs text-neutral-600 marker:text-neutral-400">
+                <summary className="cursor-pointer text-xs text-muted marker:text-faintest">
                   {foldLabel(shown.length)}
                 </summary>
                 {rowList(account, shown)}

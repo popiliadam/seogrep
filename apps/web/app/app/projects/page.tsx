@@ -208,24 +208,36 @@ export default async function ProjectsPage({
   const cards = buildProjectCards(inputs, new Date());
 
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Projects</h1>
-        <p className="text-sm text-neutral-600">
-          Every site you track, oldest first. Add a domain here; crawls, audits and Search Console
-          pulls all run through your assistant, and the next step below is the same one the
-          whats_next tool gives.
-        </p>
-      </header>
+    <section>
+      <div className="mb-10 flex flex-wrap items-end justify-between gap-8 animate-[rise_0.5s_ease-out_both]">
+        <header>
+          <p className="m-0 mb-2.5 font-mono text-[11px] tracking-[0.14em] text-accent">DASHBOARD</p>
+          <h1 className="m-0 mb-2 font-serif text-[34px] font-medium tracking-[-0.01em]">Projects</h1>
+          <p className="m-0 max-w-[64ch] font-serif text-[15px] leading-[1.6] text-muted">
+            Every site you track, oldest first. Add a domain here; crawls, audits and Search Console
+            pulls all run through your assistant, and the next step below is the same one the
+            whats_next tool gives.
+          </p>
+        </header>
+        <AddDomainForm />
+      </div>
 
-      <AddDomainBanner
-        added={firstValue(params.added)}
-        domain={firstValue(params.domain)}
-        error={firstValue(params.error)}
-      />
-      <AddDomainForm />
+      <div className="mb-6 empty:mb-0">
+        <AddDomainBanner
+          added={firstValue(params.added)}
+          domain={firstValue(params.domain)}
+          error={firstValue(params.error)}
+        />
+      </div>
 
-      <ProjectList cards={cards} />
+      <div className="animate-[rise_0.5s_ease-out_0.08s_both]">
+        <ProjectList cards={cards} />
+      </div>
+
+      <p className="m-0 mt-10 border border-dashed border-hairline-mid px-7 py-6 font-mono text-[12.5px] leading-[1.8] text-faint animate-[rise_0.5s_ease-out_0.14s_both]">
+        <span className="text-accent">tip</span> · run a crawl from your assistant:{" "}
+        <span className="text-body">“crawl example.com”</span> — results land here and in your chat.
+      </p>
     </section>
   );
 }

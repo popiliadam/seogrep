@@ -16,34 +16,49 @@ export default function Page() {
   );
 
   return (
-    <section className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-20">
-      <div className="flex flex-col items-start gap-4">
-        <p className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-accent-strong">
-          <span aria-hidden="true" className="h-0.5 w-6 rounded-full bg-accent" />
-          Blog
-        </p>
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">What we are building and learning</h1>
-        <p className="max-w-2xl text-ink/70">
+    <section className="mx-auto w-full max-w-[880px] px-5 pb-24 pt-16 sm:px-8">
+      <div className="mb-14 flex justify-between font-mono text-[12px] tracking-[0.06em] text-faint animate-[rise_0.7s_ease-out_both]">
+        <span>SEOGREP(1)</span>
+        <span>CHANGELOG &amp; NOTES</span>
+        <span>SEOGREP(1)</span>
+      </div>
+
+      <div className="flex max-w-[620px] flex-col gap-5 animate-[rise_0.7s_ease-out_0.08s_both]">
+        <p className="m-0 font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">BLOG</p>
+        <h1 className="m-0 font-serif text-4xl font-medium leading-[1.1] tracking-[-0.015em] sm:text-[46px]">
+          What we are building and learning
+        </h1>
+        <p className="m-0 font-serif text-[17px] leading-[1.65] text-body">
           Product notes, SEO workflows, and the thinking behind the tools SeoGrep gives your AI client.
         </p>
       </div>
 
       {posts.length === 0 ? (
-        <p className="mt-12 text-ink/70">No posts yet.</p>
+        <p className="mt-16 font-serif text-body">No posts yet.</p>
       ) : (
-        <ul className="mt-12 flex flex-col gap-8">
+        <ul className="m-0 mt-16 flex list-none flex-col border-t border-ink p-0 animate-[rise_0.7s_ease-out_0.16s_both]">
           {posts.map((post) => (
-            <li key={post.url} className="border-t border-ink/10 pt-8">
-              <article className="flex flex-col items-start gap-2">
-                <time dateTime={post.data.date} className="text-sm text-ink/60">
+            <li key={post.url} className="border-b border-hairline">
+              <article className="grid grid-cols-1 items-start gap-2 py-8 sm:grid-cols-[130px_1fr] sm:gap-9">
+                <time dateTime={post.data.date} className="pt-1.5 font-mono text-[12px] text-faint">
                   {formatDate(post.data.date)}
                 </time>
-                <h2 className="text-xl font-semibold tracking-tight">
-                  <Link href={post.url} className="hover:text-accent-strong">
-                    {post.data.title}
+                <div>
+                  <h2 className="m-0 mb-2 font-serif text-[25px] font-medium leading-[1.3] tracking-[-0.01em]">
+                    <Link href={post.url} className="transition-colors duration-150">
+                      {post.data.title}
+                    </Link>
+                  </h2>
+                  <p className="m-0 font-serif text-[15.5px] leading-[1.6] text-muted">{post.data.description}</p>
+                  <Link
+                    href={post.url}
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    className="mt-3 inline-block font-mono text-[12px] text-accent"
+                  >
+                    Read →
                   </Link>
-                </h2>
-                <p className="max-w-2xl text-ink/70">{post.data.description}</p>
+                </div>
               </article>
             </li>
           ))}

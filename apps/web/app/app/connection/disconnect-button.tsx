@@ -69,13 +69,13 @@ export function DisconnectButton({
           disabled={isPending}
           onClick={disconnect}
           aria-label={`Disconnect ${domain} from Search Console`}
-          className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+          className="font-medium text-body hover:text-ink disabled:opacity-60"
         >
           Disconnect
         </button>
       ) : null}
       {error ? (
-        <span role="alert" className="text-xs text-red-600">
+        <span role="alert" className="text-xs text-negative">
           {error}
         </span>
       ) : null}
@@ -159,21 +159,21 @@ export function AccountDisconnectPanel({
   return (
     <div className="flex flex-col gap-2">
       {accounts.length === 0 ? (
-        <p className="text-sm text-neutral-600">No Google account is connected yet.</p>
+        <p className="text-sm text-muted">No Google account is connected yet.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {accounts.map((account) => (
             <li
               key={account.id}
-              className="flex items-center justify-between gap-4 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-4 border border-hairline px-3 py-2 text-sm"
             >
-              <span className="text-neutral-800">{account.email}</span>
+              <span className="text-ink">{account.email}</span>
               <button
                 type="button"
                 disabled={isPending}
                 onClick={() => ask(account.id)}
                 aria-label={`Disconnect ${account.email} from SeoGrep`}
-                className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                className="font-medium text-body hover:text-ink disabled:opacity-60"
               >
                 Disconnect
               </button>
@@ -183,7 +183,7 @@ export function AccountDisconnectPanel({
       )}
 
       {pending ? (
-        <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="flex flex-col gap-2 border border-accent-badge-border bg-accent-badge-bg p-3 text-sm text-warn">
           <p>{pending.question}</p>
           <span className="flex items-center gap-3">
             <button
@@ -202,18 +202,18 @@ export function AccountDisconnectPanel({
       ) : null}
 
       {error ? (
-        <span role="alert" className="text-sm text-red-600">
+        <span role="alert" className="text-sm text-negative">
           {error}
         </span>
       ) : null}
 
       {outcome === "revoked" ? (
-        <span role="status" className="text-sm text-green-700">
+        <span role="status" className="text-sm text-positive">
           Disconnected. Google confirmed the access was revoked.
         </span>
       ) : null}
       {outcome === "unconfirmed" || outcome === "not_attempted" ? (
-        <span role="alert" className="text-sm text-amber-700">
+        <span role="alert" className="text-sm text-warn">
           Disconnected here, but we could not confirm with Google that the access was dropped.
           Check{" "}
           <a href={GOOGLE_PERMISSIONS_URL} target="_blank" rel="noreferrer" className="underline">

@@ -33,16 +33,24 @@ export default async function ReportsPage() {
   const reports = await listReports(supabase, user.id);
 
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Reports</h1>
-        <p className="text-sm text-neutral-600">
+    <section>
+      <header className="mb-10 animate-[rise_0.5s_ease-out_both]">
+        <p className="m-0 mb-2.5 font-mono text-[11px] tracking-[0.14em] text-accent">DASHBOARD</p>
+        <h1 className="m-0 mb-2 font-serif text-[34px] font-medium tracking-[-0.01em]">Reports</h1>
+        <p className="m-0 max-w-[68ch] font-serif text-[15px] leading-[1.6] text-muted">
           Shareable HTML reports you generated with the generate_report tool, newest first. Anyone
           with a report&apos;s link can view it. Revoke stops a link working for good — the report
           itself is kept, and a new link cannot be issued for it.
         </p>
       </header>
-      <ReportsList reports={reports} />
+      <div className="animate-[rise_0.5s_ease-out_0.06s_both]">
+        <ReportsList reports={reports} />
+      </div>
+      <p className="m-0 mt-10 border border-dashed border-hairline-mid px-7 py-6 font-mono text-[12.5px] leading-[1.8] text-faint animate-[rise_0.5s_ease-out_0.12s_both]">
+        <span className="text-accent">tip</span> · ask your assistant to{" "}
+        <span className="text-body">“generate a report”</span> for a project — it lands here with a
+        public link.
+      </p>
     </section>
   );
 }
@@ -51,40 +59,49 @@ export default async function ReportsPage() {
 function ReportsList({ reports }: { reports: readonly ReportListItem[] }) {
   if (reports.length === 0) {
     return (
-      <p className="text-sm text-neutral-600">
-        No reports yet. Ask your assistant to “generate a report” for a project to create one.
-      </p>
+      <div className="border border-dashed border-hairline-mid bg-card px-8 py-14 text-center">
+        <p aria-hidden="true" className="m-0 mb-3.5 font-mono text-[12px] text-faint">
+          $ generate_report → no runs yet
+        </p>
+        <p className="m-0 mb-2 font-serif text-[22px] font-medium">No reports yet.</p>
+        <p className="mx-auto m-0 max-w-[46ch] font-serif text-[15px] leading-[1.6] text-muted">
+          Ask your assistant to “generate a report” for a project to create one.
+        </p>
+      </div>
     );
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-left text-sm">
+      <table className="w-full border-collapse border-t border-ink text-left">
         <thead>
-          <tr className="border-b border-neutral-200 text-xs uppercase tracking-wide text-neutral-500">
-            <th scope="col" className="py-2 pr-4 font-medium">
+          <tr className="border-b border-hairline font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">
+            <th scope="col" className="py-2.5 pr-5 font-normal">
               Report
             </th>
-            <th scope="col" className="py-2 pr-4 font-medium">
+            <th scope="col" className="w-[150px] py-2.5 pr-5 font-normal">
               Created
             </th>
-            <th scope="col" className="py-2 pl-4 text-right font-medium">
+            <th scope="col" className="py-2.5 pl-5 text-right font-normal">
               Link
             </th>
           </tr>
         </thead>
         <tbody>
           {reports.map((report) => (
-            <tr key={report.id} className="border-b border-neutral-100">
-              <td className="py-2 pr-4">{report.title ?? "Untitled report"}</td>
-              <td className="py-2 pr-4 whitespace-nowrap text-neutral-600">
+            <tr
+              key={report.id}
+              className="border-b border-hairline align-baseline transition-colors duration-150 hover:bg-card"
+            >
+              <td className="py-[15px] pr-5 font-serif text-[16px]">{report.title ?? "Untitled report"}</td>
+              <td className="whitespace-nowrap py-[15px] pr-5 font-mono text-[12px] text-faint">
                 <time dateTime={report.createdAt}>{formatDate(report.createdAt)}</time>
               </td>
-              <td className="py-2 pl-4 text-right">
+              <td className="py-[15px] pl-5 text-right">
                 {report.publicSlug ? (
-                  <span className="inline-flex items-center gap-3">
+                  <span className="inline-flex items-baseline gap-3.5">
                     <Link
                       href={`/r/${report.publicSlug}`}
-                      className="text-neutral-700 hover:text-neutral-900"
+                      className="border-b border-hairline-mid font-mono text-[12px] text-muted transition-colors duration-150 hover:border-accent hover:text-accent"
                     >
                       View
                     </Link>
@@ -95,7 +112,7 @@ function ReportsList({ reports }: { reports: readonly ReportListItem[] }) {
                     />
                   </span>
                 ) : (
-                  <span className="text-neutral-300">—</span>
+                  <span className="font-mono text-[11px] text-faintest">revoked</span>
                 )}
               </td>
             </tr>

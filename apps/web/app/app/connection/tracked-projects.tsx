@@ -104,25 +104,25 @@ export function TrackedProjects({ rows, trackProperty, untrackProject }: Tracked
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-neutral-700">Tracked sites</h3>
+      <h3 className="text-sm font-medium text-body">Tracked sites</h3>
       {rows.length === 0 ? (
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-muted">
           No sites are tracked yet. Add one from Search Console below, or create a project from
           your MCP client with the setup_project tool.
         </p>
       ) : shown.length === 0 ? (
         // Only reachable while filtering. The sentence above is a claim about the ACCOUNT, and
         // making a query say it would tell an operator with nine projects that they have none.
-        <p className="text-sm text-neutral-600">No tracked site matches that search.</p>
+        <p className="text-sm text-muted">No tracked site matches that search.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {shown.map((row) => (
             <li
               key={row.projectId}
-              className="flex flex-col gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+              className="flex flex-col gap-1 border border-hairline px-3 py-2 text-sm"
             >
               <span className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-neutral-800">{row.domain}</span>
+                <span className="text-ink">{row.domain}</span>
                 <span className="flex items-center gap-3">
                   {/* Offered only when nothing is stored: see statusOf for why a suggestion may
                       never speak over a property the user already chose. */}
@@ -138,7 +138,7 @@ export function TrackedProjects({ rows, trackProperty, untrackProject }: Tracked
                         );
                       }}
                       aria-label={`Confirm ${row.suggestion.property} for ${row.domain}`}
-                      className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                      className="font-medium text-body hover:text-ink disabled:opacity-60"
                     >
                       Confirm
                     </button>
@@ -154,7 +154,7 @@ export function TrackedProjects({ rows, trackProperty, untrackProject }: Tracked
                       }
                       aria-expanded={opened[row.projectId] === true}
                       aria-label={`Change the Search Console property for ${row.domain}`}
-                      className="font-medium text-neutral-700 hover:text-neutral-900"
+                      className="font-medium text-body hover:text-ink"
                     >
                       Change
                     </button>
@@ -164,16 +164,16 @@ export function TrackedProjects({ rows, trackProperty, untrackProject }: Tracked
                     disabled={isPending}
                     onClick={() => run(row.projectId, () => untrackProject(row.projectId))}
                     aria-label={`Remove ${row.domain} from tracked sites`}
-                    className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                    className="font-medium text-body hover:text-ink disabled:opacity-60"
                   >
                     Remove
                   </button>
                 </span>
               </span>
-              <span className="text-xs text-neutral-500">{statusOf(row)}</span>
+              <span className="text-xs text-faint">{statusOf(row)}</span>
               {opened[row.projectId] === true ? row.picker : null}
               {errors[row.projectId] ? (
-                <span role="alert" className="text-xs text-red-600">
+                <span role="alert" className="text-xs text-negative">
                   {errors[row.projectId]}
                 </span>
               ) : null}

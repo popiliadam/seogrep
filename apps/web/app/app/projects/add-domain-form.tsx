@@ -15,9 +15,9 @@ import { addDomain } from "./actions";
  */
 export function AddDomainForm() {
   return (
-    <form action={addDomain} className="flex flex-wrap items-end gap-2">
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="font-medium">Add domain</span>
+    <form action={addDomain} className="flex flex-wrap items-end">
+      <label className="flex flex-col">
+        <span className="sr-only">Add domain</span>
         <input
           type="text"
           name="domain"
@@ -26,16 +26,16 @@ export function AddDomainForm() {
           spellCheck={false}
           placeholder="example.com"
           aria-describedby="add-domain-hint"
-          className="w-72 rounded-md border border-neutral-300 px-3 py-2 text-sm"
+          className="w-[220px] border border-r-0 border-hairline-mid bg-card px-3.5 py-[11px] font-mono text-[13px] text-ink outline-none placeholder:text-faintest focus:border-accent"
         />
       </label>
       <button
         type="submit"
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+        className="whitespace-nowrap bg-ink px-5 py-3 font-mono text-[13px] font-semibold text-paper transition-colors duration-150 hover:bg-accent hover:text-paper"
       >
-        Add
+        Add domain
       </button>
-      <p id="add-domain-hint" className="w-full text-xs text-neutral-500">
+      <p id="add-domain-hint" className="m-0 mt-2 w-full font-mono text-[11px] leading-[1.6] text-faint">
         A domain or a URL — SeoGrep stores one canonical form, so adding a site twice returns the
         project you already have.
       </p>

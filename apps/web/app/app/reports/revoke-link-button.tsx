@@ -43,12 +43,12 @@ export function RevokeLinkButton({ reportId, title, revokeReportLinkAction }: Re
         disabled={isPending}
         onClick={revoke}
         aria-label={`Revoke the public link for ${title}`}
-        className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+        className="border-b border-confirm-border font-mono text-[11px] text-negative transition-colors duration-150 hover:border-negative disabled:opacity-60"
       >
         Revoke
       </button>
       {error ? (
-        <span role="alert" className="text-xs text-red-600">
+        <span role="alert" className="font-mono text-[11px] text-negative">
           {error}
         </span>
       ) : null}

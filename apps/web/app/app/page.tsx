@@ -3,7 +3,7 @@ import { getBalance, listLedgerEntries } from "@pseo/db/ledger-read";
 import { GscBanner } from "../../components/gsc-banner";
 import { projectCountLine } from "../../lib/projects/count-line";
 import { createClient } from "../../lib/supabase/server";
-import { LedgerTable, StatCard, formatNumber } from "./ui";
+import { LedgerTable, PageHeader, SpendSparkline, StatCard, formatNumber } from "./ui";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -69,39 +69,102 @@ export default async function OverviewPage({
     );
   }
 
-  const [balance, recent, projectCount] = await Promise.all([
+  const [balance, recent, sparkWindow, projectCount] = await Promise.all([
     getBalance(supabase, user.id),
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 5 }),
+    // A wider window purely for the spend sparkline — the table stays the exact latest five.
+    listLedgerEntries(supabase, user.id, { page: 1, pageSize: 60 }),
     countActiveProjects(supabase, user.id),
   ]);
 
+  // New-account surface: the design's GETTING STARTED card shows until the ledger records any
+  // spend — the same condition the sparkline uses, read from data the page already fetched.
+  const hasSpend = sparkWindow.entries.some((entry) => entry.kind.startsWith("spend_"));
+  const isNewUser = !hasSpend && (projectCount ?? 0) === 0;
+
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Overview</h1>
-        <p className="text-sm text-neutral-600">Your current credit balance and latest activity.</p>
-      </header>
+    <section>
+      <PageHeader
+        title="Overview"
+        right={user.email ? <span className="font-mono text-[12px] text-faint">{user.email}</span> : undefined}
+      />
 
       <GscBanner status={firstValue(params.gsc)} property={firstValue(params.property)} />
 
-      <StatCard
-        label="Available credits"
-        value={formatNumber(balance)}
-        hint="Balance is the running total of your credit ledger."
-      />
+      {isNewUser ? (
+        <div className="mb-12 mt-6 border border-hairline bg-card animate-[rise_0.5s_ease-out_0.04s_both]">
+          <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-hairline px-[30px] py-4">
+            <span className="font-mono text-[11px] font-semibold tracking-[0.14em] text-accent">
+              GETTING STARTED
+            </span>
+            <span className="font-mono text-[11px] text-faint">~2 minutes</span>
+          </div>
+          <ol className="m-0 grid list-none grid-cols-1 p-0 sm:grid-cols-3">
+            <li className="border-b border-hairline-soft px-[30px] py-6 sm:border-b-0 sm:border-r">
+              <p aria-hidden="true" className="m-0 mb-2.5 font-mono text-[13px] text-faint">
+                01
+              </p>
+              <p className="m-0 mb-1.5 font-serif text-[18px]">Copy your MCP URL</p>
+              <Link
+                href="/app/connection"
+                className="border-b border-hairline-mid font-mono text-[12px] text-muted transition-colors duration-150 hover:border-accent hover:text-accent"
+              >
+                Open Connection <span aria-hidden="true">→</span>
+              </Link>
+            </li>
+            <li className="border-b border-hairline-soft px-[30px] py-6 sm:border-b-0 sm:border-r">
+              <p aria-hidden="true" className="m-0 mb-2.5 font-mono text-[13px] text-faint">
+                02
+              </p>
+              <p className="m-0 mb-1.5 font-serif text-[18px]">Paste it into your client</p>
+              <span className="font-mono text-[12px] text-faint">Claude · Cursor · Windsurf</span>
+            </li>
+            <li className="px-[30px] py-6">
+              <p aria-hidden="true" className="m-0 mb-2.5 font-mono text-[13px] text-faint">
+                03
+              </p>
+              <p className="m-0 mb-1.5 font-serif text-[18px]">Ask for your first crawl</p>
+              <span className="font-mono text-[12px] text-faint">“crawl example.com”</span>
+            </li>
+          </ol>
+        </div>
+      ) : null}
 
-      <p className="text-sm text-neutral-600">
-        {projectCountLine(projectCount)}{" "}
-        <Link href="/app/projects" className="underline hover:text-neutral-900">
-          View projects
-        </Link>
-      </p>
+      <div className="mb-12 mt-6 grid grid-cols-1 border border-hairline bg-card sm:grid-cols-2 animate-[rise_0.5s_ease-out_0.06s_both]">
+        <div className="border-b border-hairline sm:border-b-0 sm:border-r">
+          <StatCard
+            label="AVAILABLE CREDITS"
+            value={formatNumber(balance)}
+            hint="Balance is the running total of your credit ledger."
+            aside={<SpendSparkline entries={sparkWindow.entries} />}
+          />
+        </div>
+        <StatCard
+          label="TRACKED PROJECTS"
+          // "—" for zero AND for a failed count: the hint line underneath carries the words
+          // ("No projects yet."), and a second bare "0" on the page would collide with a zero
+          // ledger delta (page.test.tsx finds the delta by its exact text).
+          value={projectCount ? formatNumber(projectCount) : "—"}
+          hint={projectCountLine(projectCount)}
+          action={
+            <Link
+              href="/app/projects"
+              className="mt-3 w-fit border-b border-hairline-mid font-mono text-[11px] text-muted transition-colors duration-150 hover:border-accent hover:text-accent"
+            >
+              View projects <span aria-hidden="true">→</span>
+            </Link>
+          }
+        />
+      </div>
 
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium">Recent activity</h2>
-          <Link href="/app/usage" className="text-sm text-neutral-600 hover:text-neutral-900">
-            View all
+      <div className="animate-[rise_0.5s_ease-out_0.12s_both]">
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="m-0 font-serif text-[21px] font-medium">Recent activity</h2>
+          <Link
+            href="/app/usage"
+            className="border-b border-hairline-mid font-mono text-[12px] text-muted transition-colors duration-150 hover:border-accent hover:text-accent"
+          >
+            View all <span aria-hidden="true">→</span>
           </Link>
         </div>
         <LedgerTable entries={recent.entries} />
