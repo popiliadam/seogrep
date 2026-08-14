@@ -131,10 +131,11 @@ export default async function OverviewPage({
           role="alert"
           className="m-0 mt-6 border-l-2 border-l-negative bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-negative"
         >
+          {/* The trailing clause agrees with the count too — "until it is reconnected" after
+              "3 Google accounts" reads as though one of them is the problem. */}
           {expiredAccounts === 1
-            ? "1 Google account needs reconnection"
-            : `${expiredAccounts} Google accounts need reconnection`}
-          {" — Search Console tools cannot read data until it is reconnected. "}
+            ? "1 Google account needs reconnection — Search Console tools cannot read its data until it is reconnected. "
+            : `${expiredAccounts} Google accounts need reconnection — Search Console tools cannot read their data until they are reconnected. `}
           <Link href="/app/connection" className="underline">
             Open Connection
           </Link>

@@ -153,16 +153,21 @@ describe("OverviewPage", () => {
 
       const alert = screen.getByRole("alert");
       expect(alert.textContent).toMatch(/1 google account needs reconnection/i);
+      // The trailing clause agrees with the count as well.
+      expect(alert.textContent).toMatch(/until it is reconnected/i);
       expect(screen.getByText("Open Connection").getAttribute("href")).toBe("/app/connection");
     });
 
-    it("counts several, and says so in the plural", async () => {
+    it("counts several, and says so in the plural THROUGHOUT", async () => {
       emptyLedger();
       await renderPage({}, 2, 3);
 
-      expect(screen.getByRole("alert").textContent).toMatch(
-        /3 google accounts need reconnection/i,
-      );
+      const alert = screen.getByRole("alert").textContent ?? "";
+      expect(alert).toMatch(/3 google accounts need reconnection/i);
+      // "…until it is reconnected" after "3 Google accounts" reads as though one of the three
+      // is the problem, which is the opposite of what the count just said.
+      expect(alert).toMatch(/until they are reconnected/i);
+      expect(alert).not.toMatch(/until it is reconnected/i);
     });
 
     it("reads the count off gsc_accounts, not off the projects count", async () => {
