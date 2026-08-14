@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { MAX_ROW_LIMIT, runPull, type GscApi } from "./pull.ts";
-import { CURRENT_ROWS, FIXTURE_WINDOWS, PREVIOUS_ROWS, rawGoogleResponse } from "./fixtures.ts";
+import {
+  CURRENT_ROWS,
+  FIXTURE_WINDOWS,
+  PREVIOUS_ROWS,
+  rawGoogleResponse,
+  rawGoogleResponseWithOneBadRow,
+} from "./fixtures.ts";
 
 /**
  * runPull orchestrates the two-window fetch. The Google surface is an injected PORT, so this
@@ -85,5 +91,54 @@ describe("runPull", () => {
     const pull = await runPull({ refreshToken: "r", property: "sc-domain:x", days: 30, reference: REFERENCE, api });
     expect(pull.current.rows).toEqual([]);
     expect(pull.previous.rows).toEqual([]);
+  });
+});
+
+/** Run `runPull` over an api, with the fixture property/days/reference every case shares. */
+function pullWith(api: GscApi, rowLimit?: number): Promise<Awaited<ReturnType<typeof runPull>>> {
+  return runPull({
+    refreshToken: "1//r",
+    property: "sc-domain:shop.test",
+    days: 90,
+    reference: REFERENCE,
+    api,
+    ...(rowLimit === undefined ? {} : { rowLimit }),
+  });
+}
+
+/**
+ * THE CAP FLAG IS MEASURED ON GOOGLE'S ANSWER. `capped` used to be computed from the PARSED
+ * row count, which is the count AFTER parseSearchAnalyticsRows drops malformed rows — so a
+ * window that genuinely filled the cap while carrying one bad row counted rowLimit - 1 and
+ * reported itself complete. The warning that tells a user they are seeing only their top rows
+ * switched itself off in the one case it exists for, and nothing anywhere said so.
+ */
+describe("runPull — the row cap is read from the RAW response, before parsing", () => {
+  it("flags capped when Google filled the page, even though a row was dropped", async () => {
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponseWithOneBadRow(3),
+    };
+
+    const pull = await pullWith(api, 3);
+
+    // Google sent 3 rows (a full page at this cap); one was unparseable, so 2 survive.
+    expect(pull.current.rows).toHaveLength(2);
+    expect(pull.previous.rows).toHaveLength(2);
+    // The page was FULL all the same — both windows must say so.
+    expect(pull.current.capped).toBe(true);
+    expect(pull.previous.capped).toBe(true);
+  });
+
+  it("does not flag capped when Google returned fewer rows than the cap", async () => {
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponseWithOneBadRow(3),
+    };
+
+    const pull = await pullWith(api, 10); // 3 raw rows against a cap of 10
+
+    expect(pull.current.capped).toBe(false);
+    expect(pull.previous.capped).toBe(false);
   });
 });

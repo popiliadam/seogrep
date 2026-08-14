@@ -1,5 +1,5 @@
 import { refreshAccessToken, searchAnalyticsQuery } from "@pseo/core";
-import { parseSearchAnalyticsRows } from "./rows.ts";
+import { countSearchAnalyticsRows, parseSearchAnalyticsRows } from "./rows.ts";
 import { computeWindows, type DateRange } from "./windows.ts";
 import type { PullData } from "./types.ts";
 
@@ -92,15 +92,26 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
     queryBody(windows.previous, rowLimit),
   );
 
-  const currentRows = parseSearchAnalyticsRows(currentResponse);
-  const previousRows = parseSearchAnalyticsRows(previousResponse);
-
   return {
     days: input.days,
     property: input.property,
-    // capped: the window's row count filled the single-page cap, so Google may hold more
-    // (query, page) rows than were fetched — see the file header and formatPullSummary.
-    current: { ...windows.current, rows: currentRows, capped: currentRows.length === rowLimit },
-    previous: { ...windows.previous, rows: previousRows, capped: previousRows.length === rowLimit },
+    // capped: Google returned as many rows as we asked for, so it may hold more (query, page)
+    // rows than were fetched — see the file header and formatPullSummary.
+    //
+    // Measured on the RAW response, before parsing. parseSearchAnalyticsRows drops malformed
+    // rows, so a window that truly filled the cap while carrying one bad row would parse to
+    // rowLimit - 1 and read as "not capped": the truncation warning would switch itself off in
+    // precisely the case it exists for. `>=` rather than `===` for the same reason — a cap check
+    // must not be an equality that one unexpected row can step over.
+    current: {
+      ...windows.current,
+      rows: parseSearchAnalyticsRows(currentResponse),
+      capped: countSearchAnalyticsRows(currentResponse) >= rowLimit,
+    },
+    previous: {
+      ...windows.previous,
+      rows: parseSearchAnalyticsRows(previousResponse),
+      capped: countSearchAnalyticsRows(previousResponse) >= rowLimit,
+    },
   };
 }
