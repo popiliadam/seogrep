@@ -60,10 +60,15 @@
   4999 okutup uyarıyı söndürür. HAM dizi uzunluğuyla kıyaslanmalı.
 
 **Sağlık görünürlüğü (REAL):**
-- **B7 `token_status` hiçbir yüzeyde okunmuyor**: `list_gsc_properties` ölü credential'a "try again
-  shortly" diyor (yanlış tavsiye); Connection sayfası ölü/geçici ayrımını yapamıyor; `whats_next`
-  merdiveni ölü hesapta bile `pull_gsc_data` öneriyor (başarısızlığı garanti öneri). Ayrıca
-  `list_gsc_properties` kendi gözlemlediği `invalid_grant`'i YAZMIYOR (yalnız pull yazıyor).
+- **B7 `token_status` görünürlüğü eksik** *(hakem düzeltmesi 2026-08-15: alan kısmen kablolu)*:
+  kolonu bugün YALNIZ üç discovery tool'u okuyor (`loadGscTokenStatus` → reauth uyarısı,
+  gsc-discovery-shared.ts — Faz A Task 8'in bilinçli tasarımı; SAKIN yeniden kurma/duplike etme).
+  Okumayanlar: `list_gsc_properties` (ölü credential'a bugünkü cümlesi "…could not be read just now…
+  Try again shortly, or reconnect the account on the Connection page." — reconnect tavsiyesi VAR ama
+  ölü/geçici AYRIMI yok), `whats_next` merdiveni (`readGscConnected` yalnız `account_id` okur → ölü
+  hesapta bile `pull_gsc_data` önerir) ve TÜM web yüzeyleri. Yazanlar: pull'un `invalid_grant` dalı
+  (`markGscAccountTokenInvalid`) + web `accounts.ts` `markTokenStatus` — `list_gsc_properties` kendi
+  gözlemlediği `invalid_grant`'i yazmıyor.
 - **B8 bootstrap kopyası çıkmaz sokak**: "Run connect_gsc for one of your projects" — sıfır projeli
   kullanıcının `setup_project` adımı hiç anılmıyor.
 
@@ -102,7 +107,10 @@ PR + CI + merge-commit.
   service-client kiracı-süzgeçli yoldan; GRANT değişikliği gerekirse o parça durur, rapor edilir).
 - **G3 — pull motoru** *(B6 + C1/C2 + claim-c)*: satır tavanı 5.000 → ölçülüp gerekçelenen yeni tavan
   (25k tek istek; depolama matematiği done_when'de), `capped` HAM uzunluktan, iki pencere sorgusu
-  paralel (403/reauth dal semantiği bayt-özdeş). Fiyat 5'te SABİT.
+  paralel (403/reauth dal semantiği bayt-özdeş). Fiyat 5'te SABİT. *Bu bir fiyat-değeri değişimi
+  DEĞİL: Google API'si ücretsiz, istek sayısı aynı (tek sayfa), 5 kredi "iki pencerelik pull" satın
+  almaya devam eder — 5.000 tavanı hiçbir yerde vaat edilmiş ürün sınırı değil, v0 uygulama sınırıdır
+  (docs'ta "limitation" olarak yazılıdır ve docs güncellenir). Karar kaydı §7-2'ye not düşülür.*
 - **G5 — discovery dürüstlüğü** *(B1+B2+B4+B5+B17)*: üç render'a pencere aralığı satırı + capped
   caveat'i; ≥30 gün bayat pull'a yeniden-çek önerisi; `documentOf`/fragment katlama decay+quick-wins'e
   paylaşılan yardımcıyla; kırpma notları ("and N more"). Çıktı metni değişir → pinli testler YENİ
@@ -136,9 +144,9 @@ pinleriyle birlikte oynar), B19 proje-kolonu marka override (migration + ürün 
 |---|---|---|---|
 | `compare_pulls` | İki pull diff'i: yeni/kaybolan sorgular, pozisyon kazanan/kaybeden, sayfa trendi — ham madde DB'de hazır (B14) | Yok | 5–10 |
 | `analyze_ctr_gaps` | Pozisyon ≤5-8 + beklenenin altı CTR → title/meta yeniden yazım listesi (kendi property-eğrisi kıyası; NEVER#7: eğri varsayımı çıktıda beyan edilir) | Yok | 10 |
-| `inspect_url` | URL Inspection örneklemi: verdict, coverage, googleCanonical≠userCanonical, lastCrawlTime, rich-results; kota defteri (dfs budget deseni) | Var (kotalı) | 2-3/URL ya da 10/örneklem |
+| `inspect_url` | URL Inspection örneklemi: verdict, coverage, googleCanonical≠userCanonical, lastCrawlTime, rich-results. **Yeni host sabiti + istemci `packages/core`'a yazılır (NEVER#5 varsayılanı — DFS konumu imzalı İSTİSNAdır, emsal değil)**; kota defteri fikri dfs budget'tan, konumu core/app sınırına uygun kurulur | Var (kotalı) | 2-3/URL ya da 10/örneklem |
 | `pull_gsc_data` v2 paramları | `dimensions` (device/country/date), `type` (`discover` dahil), regex `page_filter`, `dataState:all` | Var | 5 SABİT kalabilir mi → maliyet profili §7'de |
-| `audit_sitemap` (GSC yarısı) | Kardeş plandaki N17'ye `sitemaps.list/get` katmanı: Google'ın gördüğü liste + errors/warnings + lastDownloaded (readonly; `indexed` alanı KULLANILMAZ — deprecated) | Var | kardeş planla birlikte 5 |
+| `audit_sitemap` (GSC yarısı) | Kardeş plandaki N17'ye `sitemaps.list/get` katmanı: Google'ın gördüğü liste + errors/warnings + lastDownloaded (readonly; `indexed` alanı KULLANILMAZ — deprecated) | Var | kardeş planla birlikte 5 — fiyat imzası kardeş planın §7-3'ünde |
 | — `submit_sitemap` | **RET önerisi**: yazma scope'u → consent değişimi → Google doğrulama riski + dışa-etki sınıfı | — | — |
 
 Ufuk (fiyatsız fikir olarak kayda): saatlik veri (`HOUR`+`HOURLY_ALL`, API'de 10 gün — UI'da 24s;
@@ -170,7 +178,8 @@ sitemaps kesişimi — ürünün adındaki işin ta kendisi).
 
 1. Yeni tool fiyatları: `compare_pulls` · `analyze_ctr_gaps` · `inspect_url` (§4 önerileri).
 2. `pull_gsc_data` v2 paramlarının maliyet profili (fiyat 5'te kalsa bile karar kaydı: boyut başına
-   ek Google sorgusu = ek gecikme; hangi boyutlar 5'e dahil).
+   ek Google sorgusu = ek gecikme; hangi boyutlar 5'e dahil). *Not: G3'ün tavan yükseltmesi burada
+   karar kaydı olarak anılır — fiyat-değeri değişimi sayılmama gerekçesi §3-G3'te.*
 3. `submit_sitemap` / yazma scope'u: **RET önerisi** — imzalanırsa kalıcı karar olarak dosyalanır.
 4. Rapora discovery bulgularının eklenmesi (B12 ötesi): 15 kredinin aldığını değiştirir —
    NEVER#6 ruhu; "Top 5 quick wins raporda" evet/hayır.
