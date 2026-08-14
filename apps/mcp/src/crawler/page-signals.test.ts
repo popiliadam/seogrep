@@ -99,6 +99,25 @@ describe("parseHtmlSignals — hreflang alternates", () => {
     expect(hreflangs[0]).toEqual({ lang: "l-0", href: "https://site.test/0" });
   });
 
+  it("keeps the FIRST 50 alternates — the ceiling VALUE, not just 'some ceiling'", () => {
+    // The cap spec above builds its fixture from MAX_HREFLANGS itself, so it slides WITH the
+    // constant: raising 50 to 5000 keeps it green while the record's real bound moves by two
+    // orders of magnitude. The value is pinned here as a literal, and the fixture below is a
+    // hard 60 that does not move — either half alone catches a changed ceiling.
+    expect(MAX_HREFLANGS).toBe(50);
+    const sixty = Array.from(
+      { length: 60 },
+      (_, i) => `<link rel="alternate" hreflang="l-${i}" href="https://site.test/${i}">`,
+    ).join("");
+    const { hreflangs } = parseHtmlSignals(sixty);
+    expect(hreflangs).toHaveLength(50);
+    // TRIMMING ORDER, pinned: the list is cut at the END, so what survives is the first 50
+    // declared — l-0 … l-49, never the last 50 (l-10 … l-59).
+    expect(hreflangs[0]?.lang).toBe("l-0");
+    expect(hreflangs[49]?.lang).toBe("l-49");
+    expect(hreflangs.some((h) => h.lang === "l-50")).toBe(false);
+  });
+
   it("clamps an over-long href to MAX_FIELD_CHARS", () => {
     const long = `https://site.test/${"x".repeat(MAX_FIELD_CHARS + 500)}`;
     const [first] = parseHtmlSignals(`<link rel="alternate" hreflang="en" href="${long}">`).hreflangs;

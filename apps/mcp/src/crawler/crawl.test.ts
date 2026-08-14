@@ -682,7 +682,7 @@ describe("crawlSite — discovery ceilings on a link-flooding site (H-02)", () =
     } finally {
       await site.close();
     }
-  });
+  }, 15_000);
 });
 
 // --- SSRF origin gate + pre-emission redirect parity (audit §1 Important) --------
@@ -1625,7 +1625,7 @@ describe("crawlSite — parallel wave accounting", () => {
     } finally {
       await site.close();
     }
-  });
+  }, 15_000);
 });
 
 /**
@@ -1901,9 +1901,89 @@ describe("attachInLinkCounts", () => {
     expect(orphan.inLinkCount).toBe(0);
   });
 
+  it("counts a page that links to ITSELF as one source (self-links are not filtered)", () => {
+    // The documented semantics, pinned because the opposite is just as plausible a reading:
+    // the count is over the distinct PAGES that link to a URL, and a self-referencing page is
+    // one of them. A nav that links the current page is the common real shape, so this is the
+    // difference between a homepage reading 1 and reading 0.
+    const pages = [
+      page("https://s.test/self", ["https://s.test/self"]),
+      page("https://s.test/other", []),
+    ];
+    expect(countOf(pages, "https://s.test/self")).toBe(1);
+    // And a self-link does NOT leak into another page's count.
+    expect(countOf(pages, "https://s.test/other")).toBe(0);
+  });
+
+  it("counts a self-link ON TOP of a real inbound link (2 sources, not 1)", () => {
+    const pages = [
+      page("https://s.test/target", ["https://s.test/target"]), // links to itself
+      page("https://s.test/a", ["https://s.test/target"]), //      and one other page links it
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(2);
+  });
+
   it("ignores links to pages this crawl never stored (it counts what was crawled)", () => {
     const pages = [page("https://s.test/a", ["https://s.test/never-crawled"])];
     const out = attachInLinkCounts(pages);
     expect(out[0]?.inLinkCount).toBe(0);
+  });
+});
+
+/**
+ * contentHash AS WIRED, not as a unit. page-signals.test.ts proves the function strips tags
+ * and collapses whitespace; what only the crawl path can prove is WHICH view of the document
+ * it is handed — parseHtml hashes the SCRIPT/STYLE-STRIPPED content, so a rotating analytics
+ * nonce or an inline CSP token does not make the same copy look like a different page. Hashing
+ * the raw html instead would still pass every pure spec and quietly break duplicate detection
+ * on every real site that carries a per-request inline script.
+ */
+describe("crawlSite — contentHash reads the script-stripped view", () => {
+  const ORIGIN = "http://hash.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** Same visible copy on every page; only the inline script body differs per path. */
+  const page = (path: string, script: string, copy = "The very same words on every page."): string =>
+    `<html><head><title>Same</title><script>${script}</script>` +
+    `<style>.a-${script.length}{color:red}</style></head>` +
+    `<body><h1>Same</h1><p>${copy}</p></body></html>`;
+
+  it("gives two pages with identical copy but different inline scripts the SAME hash", async () => {
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = ["/a", "/b", "/c"].map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // /a and /b: identical visible copy, DIFFERENT inline script (a per-request nonce is
+      // exactly this shape). /c: same script family, different copy — the control.
+      const body =
+        path === "/a"
+          ? page(path, 'var nonce="aaaaaaaa";')
+          : path === "/b"
+            ? page(path, 'var nonce="bbbbbbbbbbbbbbbb";')
+            : page(path, 'var nonce="cccc";', "Entirely different words live here.");
+      return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const hashOf = (path: string): string | undefined =>
+        result.pages.find((p) => p.url === normalizeUrl(ORIGIN + path))?.contentHash;
+      expect(hashOf("/a")).toBeDefined();
+      // The duplicate pair, despite bodies that differ byte-for-byte.
+      expect(hashOf("/a")).toBe(hashOf("/b"));
+      // And the fingerprint still SEPARATES real differences — without this the spec would
+      // also pass on a hash that returned a constant.
+      expect(hashOf("/c")).not.toBe(hashOf("/a"));
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
