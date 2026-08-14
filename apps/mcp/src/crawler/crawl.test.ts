@@ -1350,3 +1350,277 @@ describe("crawlSite — the budget is spent on usable URLs, not on rejected ones
     }
   });
 });
+
+/**
+ * Bounded parallel fetching. The 90 s wall clock — not maxUrls — is what actually ends real
+ * crawls: live on three sites the dominant skip reason was "time budget exhausted" at ~25-40
+ * pages. Overlapping page fetches is the only lever that moves that number, and it may not
+ * cost a single one of the crawler's existing guarantees.
+ *
+ * These specs measure CONCURRENCY ITSELF rather than a wall clock: the fake origin below
+ * holds every page request open for a fixed delay and records the highest number of page
+ * fetches simultaneously in flight. No timing assertion, no real network, no real DNS.
+ */
+describe("crawlSite — bounded parallel fetching", () => {
+  const PROBE_ORIGIN = "http://probe.example.com";
+
+  interface Probe {
+    readonly lookup: LookupFn;
+    readonly impl: (input: RequestInfo | URL) => Promise<Response>;
+    /** Highest number of PAGE fetches in flight at the same moment. */
+    readonly peak: () => number;
+    /** Page paths whose request was actually STARTED, in start order. */
+    readonly started: string[];
+  }
+
+  /**
+   * A whole origin served from memory: robots.txt (optionally advertising a Crawl-delay), a
+   * sitemap listing `pages` paths — "/" first, so it dedupes with the crawl's own root seed —
+   * and pages that link to every sibling. The link set is CLOSED (every target is already a
+   * listed path), so the BFS frontier is fully determined and every run is deterministic,
+   * while a maxUrls below the page count still leaves real URLs queued behind the cap.
+   */
+  const makeProbe = (opts: { pages: number; pageDelayMs: number; crawlDelay?: number }): Probe => {
+    const paths = ["/", ...Array.from({ length: opts.pages - 1 }, (_, i) => `/p-${i}`)];
+    const started: string[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        const delay = opts.crawlDelay === undefined ? "" : `Crawl-delay: ${opts.crawlDelay}\n`;
+        return new Response(`User-agent: *\n${delay}`, {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${PROBE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      started.push(path);
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // Hold the request open: without a pause every fetch would resolve before the next one
+      // is even launched, and the probe would read 1 whatever the crawler does.
+      await new Promise((resolve) => setTimeout(resolve, opts.pageDelayMs));
+      inFlight--;
+      const links = paths.map((p) => `<a href="${p}">${p}</a>`).join("");
+      return new Response(
+        `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+          `<body><h1>${path}</h1>word word${links}</body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return {
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      impl,
+      peak: () => peak,
+      started,
+    };
+  };
+
+  it("overlaps at most 4 page fetches when robots sets NO Crawl-delay", async () => {
+    const probe = makeProbe({ pages: 12, pageDelayMs: 20 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup });
+      expect(result.pages).toHaveLength(12);
+      // The ceiling, and the fact that it is REACHED — a crawler that never overlapped would
+      // also satisfy "<= 4", and that is the state this whole slice exists to leave behind.
+      expect(probe.peak()).toBe(4);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("stays STRICTLY sequential when robots sets a Crawl-delay (politeness is not negotiable)", async () => {
+    const probe = makeProbe({ pages: 12, pageDelayMs: 20, crawlDelay: 1 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      // crawlDelayCapMs keeps the spec fast; the crawl still sees crawlDelayMs > 0, which is
+      // the only thing the sequential branch keys on.
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, crawlDelayCapMs: 1 });
+      expect(result.pages).toHaveLength(12);
+      expect(probe.peak()).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("never exceeds maxUrls — the in-flight fetches count against the cap", async () => {
+    // maxUrls 6 with the concurrency ceiling at 4: the first wave takes 4, and the SECOND
+    // wave has room for only 2 even though 4 slots and plenty of queued URLs are available.
+    // A crawler that sized its wave by concurrency alone would launch 4 and commit 8 pages
+    // against a 6-page cap — the cap must count what is in flight, not only what is stored.
+    const probe = makeProbe({ pages: 12, pageDelayMs: 10 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, maxUrls: 6 });
+      expect(result.pages).toHaveLength(6);
+      // Not merely "6 pages stored": only 6 page requests were ever EMITTED. The cap bounds
+      // what we take from the site, not just what we keep.
+      expect(probe.started).toHaveLength(6);
+      expect(probe.peak()).toBeLessThanOrEqual(4);
+      expect(result.skipped.every((s) => /max url/i.test(s.reason))).toBe(true);
+      expect(result.skipped.length).toBeGreaterThan(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("starts no new fetch once the time budget is spent, and still commits what was in flight", async () => {
+    // One wave of 4 outlives the budget: the in-flight four finish and are recorded, and the
+    // remaining 8 are drained as "time budget exhausted" without a single extra request.
+    const probe = makeProbe({ pages: 12, pageDelayMs: 60 });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(probe.impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup: probe.lookup, timeBudgetMs: 30 });
+      expect(probe.started).toHaveLength(4);
+      expect(result.pages).toHaveLength(4);
+      const drained = result.skipped.filter((s) => /time budget exhausted/.test(s.reason));
+      expect(drained).toHaveLength(8);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("commits pages in DEQUEUE order even when the fetches finish out of order", async () => {
+    // Determinism is the price of concurrency, and it is paid by committing in claim order.
+    // Here every page in a wave finishes in REVERSE order; the result must not notice.
+    const paths = ["/", "/p-0", "/p-1", "/p-2"];
+    const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${PROBE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // Later paths answer FIRST: "/" waits longest, "/p-2" returns immediately.
+      const delay = (paths.length - paths.indexOf(path)) * 15;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return new Response(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`, {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(PROBE_ORIGIN, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual(paths.map((p) => normalizeUrl(PROBE_ORIGIN + p)));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * The two invariants of the parallel wave that the first round of specs left UNPINNED — the
+ * hakem measured both mutations staying green at 98/98. Each is an accounting guarantee that
+ * only bites when a wave has more than one member, which is why nothing sequential ever
+ * exercised it.
+ */
+describe("crawlSite — parallel wave accounting", () => {
+  const WAVE_ORIGIN = "http://wave.example.com";
+  const waveLookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  const html = (path: string): Response =>
+    new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>some words</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+
+  it("marks a claimed URL visited BEFORE its fetch, so a same-wave redirect cannot store it twice", async () => {
+    // /a redirects onto /b, and BOTH are claimed in the SAME wave. The claim marks `visited`
+    // synchronously, before any request is emitted, so /b is already spoken for when /a's
+    // redirect resolves: /b is stored ONCE, by its own slot, and /a is accounted for as a
+    // redirect. Deferring that mark until a result lands stores /b TWICE — one page, two
+    // records, one of them a silent duplicate in jobs.result.
+    const paths = ["/", "/a", "/b"];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${WAVE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      if (path === "/a") {
+        return new Response(null, { status: 302, headers: { location: `${WAVE_ORIGIN}/b` } });
+      }
+      return html(path);
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(WAVE_ORIGIN, { lookup: waveLookup });
+      const root = normalizeUrl(`${WAVE_ORIGIN}/`);
+      const b = normalizeUrl(`${WAVE_ORIGIN}/b`);
+      // Exactly one record for /b — the assertion the duplicate breaks.
+      expect(result.pages.filter((p) => p.url === b)).toHaveLength(1);
+      expect(result.pages.map((p) => p.url)).toEqual([root, b]);
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${WAVE_ORIGIN}/a`),
+        reason: "redirects to already-crawled URL",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("loses NO claimed URL when the result byte budget fills mid-wave", async () => {
+    // Every /h/ page is individually legal and ~1.9 MB as a RECORD, so the 12 MB result budget
+    // fills partway through a wave whose other members are already fetched. Those members are
+    // not in the queue any more — dropping them there is not a skip, it is a disappearance:
+    // the tenant paid for the crawl and would see neither the page nor a reason.
+    const site = await startHostileSite({ linkCount: 1_000, heavyLinkChars: 1_830 });
+    try {
+      const result = await crawlSite(site.origin + "/heavy", { maxUrls: 30, crawlDelayCapMs: 0 });
+      const requested = [...new Set(site.requested.filter((p) => p === "/heavy" || p.startsWith("/h/")))]
+        .map((p) => normalizeUrl(site.origin + p));
+
+      // PRECONDITION, asserted rather than assumed: more page URLs were fetched than were
+      // stored plus the single page that overflowed — i.e. the budget really did bite with
+      // other members of the same wave already in hand. Without this the spec could pass
+      // vacuously on a run where the overflow happened to land on a wave's last slot.
+      expect(requested.length).toBeGreaterThan(result.pages.length + 1);
+
+      const accounted = new Set([
+        ...result.pages.map((p) => p.url),
+        ...result.skipped.map((s) => s.url),
+      ]);
+      expect(requested.filter((url) => !accounted.has(url))).toEqual([]);
+
+      // And they are accounted for HONESTLY: under the budget's own reason, not some
+      // unrelated bucket.
+      const budgetSkipped = new Set(
+        result.skipped.filter((s) => /result byte budget/i.test(s.reason)).map((s) => s.url),
+      );
+      const storedOrBudgeted = requested.filter(
+        (url) => result.pages.some((p) => p.url === url) || budgetSkipped.has(url),
+      );
+      expect(storedOrBudgeted).toEqual(requested);
+    } finally {
+      await site.close();
+    }
+  });
+});
