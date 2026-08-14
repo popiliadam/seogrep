@@ -376,9 +376,10 @@ const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
  * ~20 KB on the wire and 20 MB in memory) and a chunked response carries no length at all.
  * So the crawler counts bytes off the body reader and CANCELS the transfer at the ceiling.
  *
- * Sizing, against the 512 MB machine in apps/mcp/fly.toml: the crawl is SEQUENTIAL, so
- * exactly one body is in flight at a time and the live cost is that body plus the
- * accumulated result (bounded separately). 2 MB is ~20x a large real HTML document. 8 MB
+ * Sizing, against the 512 MB machine in apps/mcp/fly.toml: page fetches overlap up to
+ * MAX_CONCURRENT_FETCHES, so at most that many bodies are in flight at once and the live
+ * cost is those bodies (<= 4 x 2 MB) plus the accumulated result (bounded separately).
+ * Sitemap/robots reads stay strictly sequential. 2 MB is ~20x a large real HTML document. 8 MB
  * lets a legitimately large sitemap through — it already carries ~150k <loc>s, far more than
  * either the 100-URL crawl or the 5000-URL estimate can consume, so the sitemaps.org 50 MB
  * file limit is deliberately NOT honoured on a shared 512 MB machine. robots.txt gets the
@@ -481,6 +482,32 @@ type FetchOutcome =
   | { readonly kind: "too-large"; readonly limitBytes: number }
   | { readonly kind: "too-many-redirects" }
   | { readonly kind: "off-origin-redirect"; readonly target: string };
+
+/**
+ * One URL claimed off the crawl queue, awaiting its commit. A `robots` slot was never
+ * fetched (it costs no concurrency slot) but keeps its place so the skip list stays in
+ * dequeue order; a `fetch` slot carries the in-flight request.
+ */
+type PendingSlot =
+  | { readonly kind: "robots"; readonly url: string }
+  | { readonly kind: "fetch"; readonly url: string; readonly outcome: Promise<FetchOutcome> };
+
+/**
+ * How many page fetches may be in flight at once (per crawl — and, since a crawl never
+ * leaves its origin, per origin).
+ *
+ * ONLY applies when robots.txt sets NO Crawl-delay. A Crawl-delay is a politeness contract
+ * the site wrote down, so when one is present the crawl stays STRICTLY sequential (one fetch
+ * in flight, the delay slept between fetches) and is byte-identical to the pre-parallel
+ * crawler. Overlapping fetches while claiming to honor a spacing request would be a lie.
+ *
+ * WHY 4: the 90 s wall-clock budget, not maxUrls, is what actually ends real crawls — live on
+ * three sites the dominant skip reason was "time budget exhausted" at ~25-40 pages. Overlap is
+ * the only lever that moves that number without touching politeness. 4 keeps the worst-case
+ * live bodies at 4 x MAX_HTML_BYTES (8 MB) on the 512 MB machine in apps/mcp/fly.toml, and is
+ * gentle enough that an ordinary origin never sees more than four of our sockets at once.
+ */
+const MAX_CONCURRENT_FETCHES = 4;
 
 /** Release the per-hop pinned dispatchers a chain opened (bodies are consumed by now). */
 async function destroyAll(dispatchers: readonly Dispatcher[]): Promise<void> {
@@ -1082,7 +1109,14 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     }
   };
 
-  while (queue.length > 0) {
+  // Crawl-delay present => strictly sequential (see MAX_CONCURRENT_FETCHES): the politeness
+  // contract the site wrote down is not negotiable, and concurrency 1 makes the whole loop
+  // below behave exactly as the pre-parallel crawler did.
+  const concurrency = crawlDelayMs > 0 ? 1 : MAX_CONCURRENT_FETCHES;
+  // Set by the result-byte budget, the one limit that stops the crawl from INSIDE a batch.
+  let stopped = false;
+
+  while (queue.length > 0 && !stopped) {
     if (pages.length >= maxUrls) {
       for (const url of queue.splice(0)) addSkip(url, "max URL limit reached");
       break;
@@ -1092,103 +1126,146 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       break;
     }
 
-    const url = queue.shift();
-    if (url === undefined || visited.has(url)) continue;
-    visited.add(url);
+    // --- Claim phase -------------------------------------------------------------
+    // Take up to `room` FETCHABLE URLs off the queue head and launch them together.
+    //
+    // `room` counts the in-flight fetches against maxUrls, so the cap holds WITH requests
+    // outstanding: each fetch can add at most one page, and pages.length + room <= maxUrls.
+    //
+    // The claim loop is synchronous apart from the Crawl-delay sleep (which only runs when
+    // concurrency is 1), and `visited` is marked BEFORE a fetch is started — so no two slots
+    // can ever claim the same URL, with or without overlap.
+    const room = Math.min(concurrency, maxUrls - pages.length);
+    const batch: PendingSlot[] = [];
+    let claimed = 0;
+    while (claimed < room && queue.length > 0) {
+      const next = queue.shift();
+      if (next === undefined || visited.has(next)) continue;
+      visited.add(next);
 
-    const target = new URL(url);
-    if (!robots.isAllowed(target.pathname + target.search)) {
-      addSkip(url, "blocked by robots.txt");
-      continue;
-    }
-
-    if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
-    fetches++;
-
-    const outcome = await fetchPage(url, originUrl, pageTimeoutMs, lookup);
-    if (outcome.kind === "timeout") {
-      addSkip(url, "timeout");
-      continue;
-    }
-    if (outcome.kind === "too-many-redirects") {
-      addSkip(url, "too many redirects");
-      continue;
-    }
-    if (outcome.kind === "off-origin-redirect") {
-      addSkip(url, `off-origin redirect to ${outcome.target}`);
-      continue;
-    }
-    if (outcome.kind === "too-large") {
-      // Honest, actionable, and never silent: the tenant is told the page was too big and
-      // by which bound, rather than seeing it vanish or come back half-parsed.
-      addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
-      continue;
-    }
-    if (outcome.kind === "error") {
-      addSkip(url, `fetch failed: ${outcome.message}`);
-      continue;
-    }
-
-    const finalUrl = normalizeUrl(outcome.finalUrl);
-    if (finalUrl !== url) {
-      if (visited.has(finalUrl)) {
-        // Redirected onto an already-crawled page: the CONTENT is already covered under
-        // finalUrl, but record this URL as skipped so it is accounted for rather than
-        // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
-        // without it, a sitemap URL that redirects to a crawled page reads as a coverage
-        // gap. Benign — the reason string marks it as a redirect, not a failure.
-        addSkip(url, "redirects to already-crawled URL");
+      const target = new URL(next);
+      if (!robots.isAllowed(target.pathname + target.search)) {
+        // Costs no slot: a robots-blocked URL is never fetched. It still takes its place in
+        // the batch so its skip entry lands in dequeue order, exactly as before.
+        batch.push({ kind: "robots", url: next });
         continue;
       }
-      visited.add(finalUrl);
-      const finalTarget = new URL(finalUrl);
-      if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
-        addSkip(finalUrl, "blocked by robots.txt");
-        continue;
-      }
-    }
-    if (!isHtml(outcome.contentType)) {
-      addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
-      continue;
+
+      if (crawlDelayMs > 0 && fetches > 0) await sleep(crawlDelayMs);
+      fetches++;
+      claimed++;
+      batch.push({
+        kind: "fetch",
+        url: next,
+        outcome: fetchPage(next, originUrl, pageTimeoutMs, lookup),
+      });
     }
 
-    // Belt-and-suspenders: parseHtml is written to never throw, but no future
-    // parser bug may be allowed to reject the whole crawl — one bad page becomes
-    // a skipped entry instead.
-    let parsed: ParsedHtml;
-    try {
-      parsed = parseHtml(outcome.body, finalUrl);
-    } catch (error) {
-      addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
-      continue;
+    // --- Commit phase ------------------------------------------------------------
+    // Results are applied in DEQUEUE order, never completion order, so pages[], skipped[] and
+    // the BFS frontier do not depend on which fetch happened to finish first. The queue is
+    // FIFO and discovered links are APPENDED, so taking N off the head at once yields exactly
+    // the URLs, in exactly the order, the sequential crawler visited.
+    const outcomes = await Promise.all(
+      batch.map((slot) => (slot.kind === "fetch" ? slot.outcome : null)),
+    );
+
+    for (const [index, slot] of batch.entries()) {
+      const url = slot.url;
+      const outcome = outcomes[index];
+      if (outcome === null || outcome === undefined) {
+        addSkip(url, "blocked by robots.txt");
+        continue;
+      }
+      if (outcome.kind === "timeout") {
+        addSkip(url, "timeout");
+        continue;
+      }
+      if (outcome.kind === "too-many-redirects") {
+        addSkip(url, "too many redirects");
+        continue;
+      }
+      if (outcome.kind === "off-origin-redirect") {
+        addSkip(url, `off-origin redirect to ${outcome.target}`);
+        continue;
+      }
+      if (outcome.kind === "too-large") {
+        // Honest, actionable, and never silent: the tenant is told the page was too big and
+        // by which bound, rather than seeing it vanish or come back half-parsed.
+        addSkip(url, `response body exceeded the ${outcome.limitBytes}-byte limit (page not read)`);
+        continue;
+      }
+      if (outcome.kind === "error") {
+        addSkip(url, `fetch failed: ${outcome.message}`);
+        continue;
+      }
+
+      const finalUrl = normalizeUrl(outcome.finalUrl);
+      if (finalUrl !== url) {
+        if (visited.has(finalUrl)) {
+          // Redirected onto an already-crawled page: the CONTENT is already covered under
+          // finalUrl, but record this URL as skipped so it is accounted for rather than
+          // vanishing. audit_tech's skipped/coverage analysis consumes this (T6 finding h):
+          // without it, a sitemap URL that redirects to a crawled page reads as a coverage
+          // gap. Benign — the reason string marks it as a redirect, not a failure.
+          addSkip(url, "redirects to already-crawled URL");
+          continue;
+        }
+        visited.add(finalUrl);
+        const finalTarget = new URL(finalUrl);
+        if (!robots.isAllowed(finalTarget.pathname + finalTarget.search)) {
+          addSkip(finalUrl, "blocked by robots.txt");
+          continue;
+        }
+      }
+      if (!isHtml(outcome.contentType)) {
+        addSkip(finalUrl, `non-HTML (${outcome.contentType || "unknown"})`);
+        continue;
+      }
+
+      // Belt-and-suspenders: parseHtml is written to never throw, but no future
+      // parser bug may be allowed to reject the whole crawl — one bad page becomes
+      // a skipped entry instead.
+      let parsed: ParsedHtml;
+      try {
+        parsed = parseHtml(outcome.body, finalUrl);
+      } catch (error) {
+        addSkip(finalUrl, `parse failed: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      const record: PageRecord = {
+        url: finalUrl,
+        status: outcome.status,
+        title: parsed.title,
+        metaDescription: parsed.metaDescription,
+        h1s: parsed.h1s,
+        canonical: parsed.canonical,
+        robotsMeta: parsed.robotsMeta,
+        links: parsed.links,
+        wordCount: parsed.wordCount,
+        jsonLdTypes: parsed.jsonLdTypes,
+        issues: computeIssues(parsed),
+      };
+      // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
+      // point is never to hold the 200 MB in the first place. The page that does not fit is
+      // recorded as skipped (never silently dropped) and the crawl stops here, draining the
+      // queue exactly as the maxUrls and time-budget limits do.
+      const recordBytes = jsonByteSize(record);
+      if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
+        addSkip(finalUrl, RESULT_BUDGET_REASON);
+        // The rest of THIS batch was already fetched but is not included either — it is
+        // recorded under the same reason, ahead of the queue remnant, so the skip list stays
+        // in dequeue order and no claimed URL vanishes unaccounted for.
+        for (const rest of batch.slice(index + 1)) addSkip(rest.url, RESULT_BUDGET_REASON);
+        for (const queued of queue.splice(0)) addSkip(queued, RESULT_BUDGET_REASON);
+        stopped = true;
+        break;
+      }
+      resultBytes += recordBytes;
+      pages.push(record);
+      if (parsed.linksTruncated) linkFloodedPages++;
+      parsed.links.forEach(enqueue);
     }
-    const record: PageRecord = {
-      url: finalUrl,
-      status: outcome.status,
-      title: parsed.title,
-      metaDescription: parsed.metaDescription,
-      h1s: parsed.h1s,
-      canonical: parsed.canonical,
-      robotsMeta: parsed.robotsMeta,
-      links: parsed.links,
-      wordCount: parsed.wordCount,
-      jsonLdTypes: parsed.jsonLdTypes,
-      issues: computeIssues(parsed),
-    };
-    // T8: the total budget is checked at ACCUMULATION, not by trimming afterwards — the
-    // point is never to hold the 200 MB in the first place. The page that does not fit is
-    // recorded as skipped (never silently dropped) and the crawl stops here, draining the
-    // queue exactly as the maxUrls and time-budget limits do.
-    const recordBytes = jsonByteSize(record);
-    if (resultBytes + recordBytes > MAX_RESULT_BYTES) {
-      addSkip(finalUrl, RESULT_BUDGET_REASON);
-      for (const url of queue.splice(0)) addSkip(url, RESULT_BUDGET_REASON);
-      break;
-    }
-    resultBytes += recordBytes;
-    pages.push(record);
-    if (parsed.linksTruncated) linkFloodedPages++;
-    parsed.links.forEach(enqueue);
   }
 
   // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
