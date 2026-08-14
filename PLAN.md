@@ -230,6 +230,73 @@ Zemin bitti → insan "Faz 2 başlat" der → T1'den (DB şeması+ledger) subage
 **SeoGrep** · domain: **seogrep.com** (Turhost'ta, Netlify DNS'e devredilmiş). Konsept: `grep` — hero: "grep your site for SEO issues."
 Repo: https://github.com/popiliadam/seogrep (2026-07-14 rename; **PRIVATE** — 2026-08-08'de `gh api … --jq .visibility` ile ölçüldü; "geçici public" notu bayattı). Eski karar (Ranklens, 2026-07-10) insan kararıyla iptal; kod sıfır-kalıntı taşındı.
 
+## 📋 2026-08-14 — OPERATÖR SEÇİMİ: Panel görünürlük ailesi (PLANLANDI — dispatch bekliyor)
+
+Operatör kararı (2026-08-14 oturumu): kullanıcı hem MCP'yi hem paneli kullansın; MCP'de yapılan
+işin İZİ ve DURUMU panelde görünsün. İş bölümü ilkesi: **MCP = işin yapıldığı yer, panel = görme /
+yönetme / paylaşma yeri.** Sohbette üretilen analiz panele kopyalanmaz; işin izi yansıtılır.
+
+=== ZEMİN — ölçüldü, tahmin değil (2026-08-14) ===
+· Panel bugün 5 sayfa: Overview (bakiye + son 5 defter satırı) · Connection · Reports · Usage · Billing.
+· Proje satırları YALNIZ Connection'da görünüyor (Tracked/Archive); proje-sağlığı ekranı YOK.
+· Job'lar (crawl) panelde HİÇ görünmüyor; tek iz Usage'daki "-20" satırı.
+· `jobs` RLS HAZIR: `jobs_select_own` (0001) + `grant select to authenticated` (0006) +
+  `(user_id, created_at desc)` index (0009) → **P2 için migration GEREKMİYOR, cloud-apply kuyruğu yok.**
+· `decideProjectNextStep` + `ProjectSignals` saf ve export'lu ama `apps/mcp/src/tools/whats-next.ts`
+  içinde → web import EDEMEZ. Emsal çözüm: `normalizeDomain` aynı gerekçeyle `@pseo/core`'a taşındı
+  (setup-project.ts başlığı, "tek yol = tek kapı").
+
+=== DİLİMLER (sıralı; her biri ayrı PR + taze hakem; UI copy İNGİLİZCE — imzalı ders 4) ===
+**P0 — merdiven taşınması (küçük, saf refactor).** `decideProjectNextStep` / `ProjectSignals` /
+`NextStep` / `FRESHNESS_WINDOW_DAYS` + `formatJobStatus`'un SAF özet yardımcıları
+(`summarizeCrawlResult`, skip-özeti, homepage notu) → `@pseo/core`. MCP eski yolundan re-export
+(davranış sabit — "cleanup" tanımı: verify.sh önce/sonra yeşil, çıktı bayt-özdeş).
+done_when: mevcut 16 whats-next spec'i + job-status spec'leri DEĞİŞMEDEN yeşil; apps/mcp'de
+merdiven gövdesi kalmadı; core'a yeni runtime bağımlılığı girmedi (core'da yalnız zod kalır).
+
+**P1 — /app/projects sayfası (salt-okunur).** Nav'a "Projects". Aktif proje başına bir kart:
+domain · son crawl (tarih + sayfa/sorun özeti, `jobs`'tan RLS ile) · GSC property (`gsc_connections`,
+`account_id !== null` = bağlı — defect #52 tanımı) · son pull tarihi · "Next step: …" satırı
+(P0'daki merdivenin AYNISI — panel kendi mantığını YAZMAZ). Arşivlenmişler bu sayfada listelenmez
+(Connection/Archive zaten var). Okumalar authenticated client + RLS; RSC'de service-role YASAK.
+done_when: sinyalleri bilinen fixture kullanıcıda 5 alan da doğru render; "next step" MCP
+whats_next çıktısıyla AYNI öneriyi veriyor (parite testi — iki yüzey tek fonksiyonu çağırdığının
+kanıtı); web test şeridi + verify.sh yeşil.
+
+**P2 — job görünürlüğü.** P1 kartında (ya da genişleyen satırında) son N crawl job'ı:
+durum (queued/running/succeeded/failed) + zaman damgaları + succeeded'da P0'daki özet
+(sayfa/atlanan/sorun + baskın sebep + **homepage-atlandı uyarısı aynı cümleyle**). Polling/canlı
+yenileme YOK (v0: sayfa yenilenince güncel).
+done_when: dört durumun dördü de fixture'la render ve pinli; homepage-uyarı cümlesi MCP
+çıktısıyla bayt-özdeş; RLS-dışı okuma yok.
+
+**P3 — panelden düz domain ekleme + Overview özet satırı.** (a) Projects'e "Add domain" formu;
+server action MCP'nin `openTrackedProject` invariant'ından geçer (normalize + rezerve-TLD reddi +
+arşivden restore). Konum kararı işçiye bırakılmaz: ya `openTrackedProject` `packages/db`'ye iner
+ya da web-action aynı fonksiyonu paylaşan yerden çağırır — İKİNCİ bir proje-açma yolu YAZILMAZ
+(setup-project.ts başlığındaki gerekçe aynen geçerli). (b) Overview'a tek satır proje özeti
+("3 projects, 1 stale crawl" gibi) + Projects linki.
+done_when: `.internal` reddi ve arşiv-restore'u panel yolundan da ölçüldü (fixture adı ret
+mesajında GEÇMEYEN fixture'larla — imza bekleyen ders 5'teki tautoloji tuzağına dikkat);
+MCP'den açılan proje panelde, panelden açılan MCP `list_projects`'te görünüyor (çift yön ölçümü).
+
+=== BİLEREK DIŞARIDA (yapılmayacak — ayrı karar ister) ===
+· Audit/discovery sonuçlarını KALICILAŞTIRMA (senkron tool'lar iz bırakmıyor; panelde audit sonucu
+  göstermek önce saklama mimarisi ister — küçük UI işi değil; bugünkü tasarımda kalıcı çıktı = rapor).
+· Panelden crawl BAŞLATMA ya da herhangi bir kredi-harcayan aksiyon (fiyat/onay yüzeyi ayrı karar).
+· Canlı yenileme / websocket / bildirim.
+
+=== KAPI (bu ailenin) ===
+`TURBO_FORCE=1 bash guardrails/verify.sh` + değen paketlerin KENDİ test script'leri (imzalı ders 15)
++ `make goals`. DB şeridi yalnız P2'de anlamlı (`jobs` okuması) — CI zaten her dalda koşuyor.
+NEYİ ÖLÇMEZ: görsel doğruluk → şef canlı DOM ölçümü (readyState + innerWidth kontrolüyle —
+2026-08-13 ders 1) ve ekran kanıtı. Diff >400 satır olan dilim → hakem Fable (NEVER#10).
+
+=== İNSAN KUYRUĞU ===
+· Yeni migration YOK, cloud-apply YOK, fiyat değişikliği YOK (hepsi 0-kredi okuma yüzeyi).
+· Tek karar: P3(a)'daki paylaşım konumu (db'ye indirme vs. ortak modül) — şef dispatch'te netleştirir,
+  işçiye muğlak bırakılmaz.
+
 ## 🧪 SIRADAKİ OTURUM — GSC property takibi BİTTİ; sıradaki iş operatörün seçimi
 
 ```
