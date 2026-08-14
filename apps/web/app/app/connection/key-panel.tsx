@@ -70,7 +70,7 @@ export function KeyPanel({
               type="button"
               disabled={isPending}
               onClick={() => run(() => rotateKeyAction(activeKeyId))}
-              className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              className="bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-60"
             >
               Rotate key
             </button>
@@ -83,7 +83,7 @@ export function KeyPanel({
                   return null;
                 })
               }
-              className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 disabled:opacity-60"
+              className="border border-hairline-mid px-4 py-2 text-sm font-medium text-body disabled:opacity-60"
             >
               Revoke key
             </button>
@@ -93,7 +93,7 @@ export function KeyPanel({
             type="button"
             disabled={isPending}
             onClick={() => run(createKeyAction)}
-            className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+            className="bg-ink px-4 py-2 text-sm font-medium text-paper disabled:opacity-60"
           >
             Generate key
           </button>
@@ -101,25 +101,25 @@ export function KeyPanel({
       </div>
 
       {error ? (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-negative">
           {error}
         </p>
       ) : null}
 
       {revealed ? (
-        <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4">
+        <div className="flex flex-col gap-3 border border-accent-badge-border bg-accent-badge-bg p-4">
           <p className="text-sm font-medium text-amber-900">
             Copy your key now — you won&apos;t see this key again.
           </p>
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-neutral-600">API key</span>
-            <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+            <span className="text-xs font-medium text-muted">API key</span>
+            <code className="border border-hairline bg-card px-3 py-2 text-sm break-all">
               {revealed.key}
             </code>
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-neutral-600">Personal MCP URL</span>
-            <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+            <span className="text-xs font-medium text-muted">Personal MCP URL</span>
+            <code className="border border-hairline bg-card px-3 py-2 text-sm break-all">
               {revealed.mcpUrl}
             </code>
           </div>
@@ -129,15 +129,15 @@ export function KeyPanel({
               out the option existed. The URL form stays first and stays the default. */}
           {headerEndpoint ? (
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-neutral-600">Or use header auth</span>
-              <p className="text-xs text-neutral-600">
+              <span className="text-xs font-medium text-muted">Or use header auth</span>
+              <p className="text-xs text-muted">
                 If your client can send custom headers, point it at this fixed URL and pass the key
                 in an <code>x-api-key</code> header instead — then no secret sits in the URL.
               </p>
-              <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+              <code className="border border-hairline bg-card px-3 py-2 text-sm break-all">
                 {headerEndpoint}
               </code>
-              <code className="rounded border border-neutral-200 bg-white px-3 py-2 text-sm break-all">
+              <code className="border border-hairline bg-card px-3 py-2 text-sm break-all">
                 {`x-api-key: ${revealed.key}`}
               </code>
             </div>
@@ -146,12 +146,12 @@ export function KeyPanel({
             <button
               type="button"
               onClick={copyUrl}
-              className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+              className="bg-ink px-4 py-2 text-sm font-medium text-paper"
             >
               Copy MCP URL
             </button>
             {copied ? (
-              <span role="status" className="text-sm text-green-700">
+              <span role="status" className="text-sm text-positive">
                 Copied
               </span>
             ) : null}
