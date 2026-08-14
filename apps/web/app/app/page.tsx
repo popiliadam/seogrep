@@ -1,8 +1,38 @@
 import Link from "next/link";
 import { getBalance, listLedgerEntries } from "@pseo/db/ledger-read";
 import { GscBanner } from "../../components/gsc-banner";
+import { projectCountLine } from "../../lib/projects/count-line";
 import { createClient } from "../../lib/supabase/server";
 import { LedgerTable, StatCard, formatNumber } from "./ui";
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * How many sites the caller currently tracks — ONE `head: true` count, so PostgREST returns the
+ * number and no rows at all; Overview names the figure and links onward rather than listing
+ * anything.
+ *
+ * Same archive rule as /app/projects and `list_projects`: `.is("archived_at", null)`, never
+ * `.eq(…, null)` (PostgREST turns the latter into the STRING "null" and it matches nothing), so
+ * the two pages cannot report different totals for the same account. Through the caller's
+ * AUTHENTICATED client, with an explicit user_id filter beside RLS `projects_select_own`
+ * (constitution NEVER #4).
+ *
+ * A failed count degrades to null — "No projects yet." — rather than taking the whole Overview
+ * down with it: the balance and the ledger below are what the page is FOR.
+ */
+async function countActiveProjects(supabase: Supabase, userId: string): Promise<number | null> {
+  const { count, error } = await supabase
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .is("archived_at", null);
+  if (error) {
+    console.error("overview: projects count failed:", error.message);
+    return null;
+  }
+  return count;
+}
 
 /** A repeated query param (?gsc=a&gsc=b) arrives as an array; only the first value counts. */
 function firstValue(raw: string | string[] | undefined): string | undefined {
@@ -39,9 +69,10 @@ export default async function OverviewPage({
     );
   }
 
-  const [balance, recent] = await Promise.all([
+  const [balance, recent, projectCount] = await Promise.all([
     getBalance(supabase, user.id),
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 5 }),
+    countActiveProjects(supabase, user.id),
   ]);
 
   return (
@@ -58,6 +89,13 @@ export default async function OverviewPage({
         value={formatNumber(balance)}
         hint="Balance is the running total of your credit ledger."
       />
+
+      <p className="text-sm text-neutral-600">
+        {projectCountLine(projectCount)}{" "}
+        <Link href="/app/projects" className="underline hover:text-neutral-900">
+          View projects
+        </Link>
+      </p>
 
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
