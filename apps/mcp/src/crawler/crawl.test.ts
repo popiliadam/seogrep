@@ -1525,3 +1525,102 @@ describe("crawlSite — bounded parallel fetching", () => {
     }
   });
 });
+
+/**
+ * The two invariants of the parallel wave that the first round of specs left UNPINNED — the
+ * hakem measured both mutations staying green at 98/98. Each is an accounting guarantee that
+ * only bites when a wave has more than one member, which is why nothing sequential ever
+ * exercised it.
+ */
+describe("crawlSite — parallel wave accounting", () => {
+  const WAVE_ORIGIN = "http://wave.example.com";
+  const waveLookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  const html = (path: string): Response =>
+    new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>some words</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+
+  it("marks a claimed URL visited BEFORE its fetch, so a same-wave redirect cannot store it twice", async () => {
+    // /a redirects onto /b, and BOTH are claimed in the SAME wave. The claim marks `visited`
+    // synchronously, before any request is emitted, so /b is already spoken for when /a's
+    // redirect resolves: /b is stored ONCE, by its own slot, and /a is accounted for as a
+    // redirect. Deferring that mark until a result lands stores /b TWICE — one page, two
+    // records, one of them a silent duplicate in jobs.result.
+    const paths = ["/", "/a", "/b"];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = paths.map((p) => `<url><loc>${WAVE_ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      if (path === "/a") {
+        return new Response(null, { status: 302, headers: { location: `${WAVE_ORIGIN}/b` } });
+      }
+      return html(path);
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(WAVE_ORIGIN, { lookup: waveLookup });
+      const root = normalizeUrl(`${WAVE_ORIGIN}/`);
+      const b = normalizeUrl(`${WAVE_ORIGIN}/b`);
+      // Exactly one record for /b — the assertion the duplicate breaks.
+      expect(result.pages.filter((p) => p.url === b)).toHaveLength(1);
+      expect(result.pages.map((p) => p.url)).toEqual([root, b]);
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${WAVE_ORIGIN}/a`),
+        reason: "redirects to already-crawled URL",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("loses NO claimed URL when the result byte budget fills mid-wave", async () => {
+    // Every /h/ page is individually legal and ~1.9 MB as a RECORD, so the 12 MB result budget
+    // fills partway through a wave whose other members are already fetched. Those members are
+    // not in the queue any more — dropping them there is not a skip, it is a disappearance:
+    // the tenant paid for the crawl and would see neither the page nor a reason.
+    const site = await startHostileSite({ linkCount: 1_000, heavyLinkChars: 1_830 });
+    try {
+      const result = await crawlSite(site.origin + "/heavy", { maxUrls: 30, crawlDelayCapMs: 0 });
+      const requested = [...new Set(site.requested.filter((p) => p === "/heavy" || p.startsWith("/h/")))]
+        .map((p) => normalizeUrl(site.origin + p));
+
+      // PRECONDITION, asserted rather than assumed: more page URLs were fetched than were
+      // stored plus the single page that overflowed — i.e. the budget really did bite with
+      // other members of the same wave already in hand. Without this the spec could pass
+      // vacuously on a run where the overflow happened to land on a wave's last slot.
+      expect(requested.length).toBeGreaterThan(result.pages.length + 1);
+
+      const accounted = new Set([
+        ...result.pages.map((p) => p.url),
+        ...result.skipped.map((s) => s.url),
+      ]);
+      expect(requested.filter((url) => !accounted.has(url))).toEqual([]);
+
+      // And they are accounted for HONESTLY: under the budget's own reason, not some
+      // unrelated bucket.
+      const budgetSkipped = new Set(
+        result.skipped.filter((s) => /result byte budget/i.test(s.reason)).map((s) => s.url),
+      );
+      const storedOrBudgeted = requested.filter(
+        (url) => result.pages.some((p) => p.url === url) || budgetSkipped.has(url),
+      );
+      expect(storedOrBudgeted).toEqual(requested);
+    } finally {
+      await site.close();
+    }
+  });
+});
