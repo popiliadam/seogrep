@@ -31,8 +31,39 @@ export interface GscApi {
   ): Promise<unknown>;
 }
 
-/** Single-page row cap per window (startRow 0). GSC allows up to 25k; 5k is a sane v0 ceiling. */
-export const MAX_ROW_LIMIT = 5000;
+/**
+ * Single-page row cap per window (startRow 0). Google allows up to 25,000 rows per request;
+ * this is deliberately BELOW that maximum, and the number is a STORAGE budget, not a Google
+ * one — the whole pull lands in one `jobs.result` jsonb blob, so the ceiling is whatever keeps
+ * TWO windows of it inside the band the crawl slice already proved safe for a persisted result
+ * (crawl.ts MAX_RESULT_BYTES = 12,000,000 B, whole result under ~14 MB).
+ *
+ * Measured, not assumed — one stored row is `{query, page, clicks, impressions, ctr, position}`
+ * and its JSON size (UTF-8 bytes) was measured across four row populations:
+ *
+ *   repo fixtures (short strings, rounded metrics)                    ~119 B
+ *   typical live row (32-char query, 72-char URL, FULL float ctr)     ~212 B
+ *   typical NON-ASCII row (Turkish long tail, multi-byte chars)       ~253 B
+ *   pessimistic row (93-char question query, 160-char faceted URL)    ~360 B
+ *
+ * Two windows of N rows is then `219 B envelope + 2 * N * (row + 1)`:
+ *
+ *   N = 25,000 → typical 9.05 MB · non-ASCII 12.70 MB · pessimistic 18.05 MB
+ *   N = 20,000 → typical 7.24 MB · non-ASCII 10.16 MB · pessimistic 14.44 MB
+ *   N = 15,000 → typical 5.43 MB · non-ASCII  7.62 MB · pessimistic 10.83 MB
+ *
+ * So Google's own 25,000 maximum is NOT taken: it puts the non-ASCII case over the 12 MB band
+ * and the pessimistic case at 1.5x it. The pessimistic row is not an outlier here — it is the
+ * population AT the ceiling, because the properties that actually fill a row cap are large
+ * faceted sites whose URLs are long and whose queries are long-tail, so row count and row size
+ * rise together. 15,000 is the round value that keeps even that case (10.83 MB) inside the
+ * proven band, with ~11% headroom below the 16,620 rows/window where it would reach 12 MB —
+ * and it is still 3x the 5,000 v0 ceiling that two live properties were measured pinned
+ * against (docs/testing/2026-08-09-faz-b-tam-tur.md: one window returned 5000/5000).
+ *
+ * Raising this is a one-line change; the pin test in pull.test.ts makes it a DELIBERATE one.
+ */
+export const MAX_ROW_LIMIT = 15000;
 
 /** The default port over the real @pseo/core Google client (the production adapter). */
 export const defaultGscApi: GscApi = {

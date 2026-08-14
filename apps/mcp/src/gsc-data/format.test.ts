@@ -22,9 +22,17 @@ describe("formatPullSummary", () => {
   });
 });
 
-describe("formatPullSummary surfaces the 5,000-row cap", () => {
+/**
+ * The cap warning. Its NUMBER is asserted as a literal on purpose: formatPullSummary derives it
+ * from MAX_ROW_LIMIT, so an expectation built from the same constant would follow the ceiling
+ * wherever it moved and prove only that the sentence contains a number. This half pins WHICH
+ * number a user reads; pull.test.ts pins the constant itself. Either half alone catches a
+ * ceiling that changed without its prose (the `5,000` this replaced was that drift, caught the
+ * moment the ceiling actually moved).
+ */
+describe("formatPullSummary surfaces the 15,000-row cap", () => {
   const CAP_WARNING =
-    "Note: this window hit the 5,000-row cap — results cover the top rows only; comparisons may be partial.";
+    "Note: this window hit the 15,000-row cap — results cover the top rows only; comparisons may be partial.";
 
   it("adds the cap warning when a window's rows filled the cap", () => {
     const capped: PullData = {

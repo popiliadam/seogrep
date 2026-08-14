@@ -112,6 +112,23 @@ async function flush(): Promise<void> {
 }
 
 /**
+ * THE ROW CEILING. It is a storage budget, not a Google one — two windows land in a single
+ * jobs.result jsonb blob — so it is pinned as a LITERAL here, the MAX_HREFLANGS pattern: every
+ * other assertion in this file builds its expectation FROM the constant and therefore slides
+ * with it, which would let the persisted worst case grow by orders of magnitude with the whole
+ * suite green. See pull.ts for the measured bytes-per-row this value is derived from.
+ */
+describe("MAX_ROW_LIMIT — the ceiling VALUE, not just 'some ceiling'", () => {
+  it("is 15,000 rows per window", () => {
+    expect(MAX_ROW_LIMIT).toBe(15000);
+  });
+
+  it("stays below Google's 25,000-per-request maximum (one request, no pagination)", () => {
+    expect(MAX_ROW_LIMIT).toBeLessThanOrEqual(25000);
+  });
+});
+
+/**
  * THE CAP FLAG IS MEASURED ON GOOGLE'S ANSWER. `capped` used to be computed from the PARSED
  * row count, which is the count AFTER parseSearchAnalyticsRows drops malformed rows — so a
  * window that genuinely filled the cap while carrying one bad row counted rowLimit - 1 and
