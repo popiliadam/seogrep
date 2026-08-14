@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { formatDate } from "../../../lib/format";
 import { accessTokenFor } from "../../../lib/gsc/accounts";
 import { canQuerySearchAnalytics, resolveGscProperty } from "../../../lib/gsc/oauth";
+import { lastVerifiedLabel } from "../../../lib/gsc/token-health";
 import { mcpHeaderEndpoint } from "../../../lib/mcp-endpoint";
 import { createClient } from "../../../lib/supabase/server";
 import {
@@ -42,6 +43,15 @@ interface ConnectedAccount {
   readonly email: string;
   /** `sites.list` as of now, or null when it could not be read at all. */
   readonly sites: readonly GscSite[] | null;
+  /**
+   * `gsc_accounts.token_status` — the STORED health, written only after Google itself answered
+   * `invalid_grant` (migration 0021). Read alongside the row rather than inferred from the live
+   * listing above: a failed `sites.list` has a dozen causes and this column has exactly one, so
+   * conflating them is what left this page unable to tell "reconnect" from "try again".
+   */
+  readonly tokenStatus: "active" | "invalid" | null;
+  /** `gsc_accounts.token_checked_at` — when that health was last actually observed. */
+  readonly tokenCheckedAt: string | null;
 }
 
 /** The account and property one suggestion names — the account rides with it deliberately. */
@@ -166,6 +176,12 @@ async function listProjectConnections(
  * column-level SELECT grant on `gsc_accounts` that EXCLUDES the ciphertext (migration 0021).
  * Only `accessTokenFor` needs the service client, and its read is filtered on (id, user_id) —
  * the tenant guard, since service-role bypasses RLS (NEVER #4).
+ *
+ * `token_status` and `token_checked_at` ARE inside that column-level grant — migration 0021
+ * names both explicitly in its `grant select (…) on public.gsc_accounts to authenticated`, and
+ * only `encrypted_refresh_token` is held back — so the health columns ride on this existing
+ * authenticated read rather than needing a second, service-role one. No new GRANT, no new
+ * migration; checked in the migration rather than assumed.
  */
 async function listConnectedAccounts(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -173,12 +189,17 @@ async function listConnectedAccounts(
 ): Promise<ConnectedAccount[]> {
   const { data, error } = await supabase
     .from("gsc_accounts")
-    .select("id, google_account_email")
+    .select("id, google_account_email, token_status, token_checked_at")
     .eq("user_id", userId);
   if (error) {
     throw new Error(`gsc_accounts lookup failed: ${error.message}`);
   }
-  const rows = (data ?? []) as unknown as { id: string; google_account_email: string }[];
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    google_account_email: string;
+    token_status: "active" | "invalid" | null;
+    token_checked_at: string | null;
+  }[];
   if (rows.length === 0) {
     return [];
   }
@@ -192,7 +213,12 @@ async function listConnectedAccounts(
   const service = createServiceClient();
   return Promise.all(
     rows.map(async (row) => {
-      const account = { id: row.id, email: row.google_account_email };
+      const account = {
+        id: row.id,
+        email: row.google_account_email,
+        tokenStatus: row.token_status ?? null,
+        tokenCheckedAt: row.token_checked_at ?? null,
+      };
       if (!encryptionKey) {
         return { ...account, sites: null };
       }
@@ -464,6 +490,11 @@ export default async function ConnectionPage({
   // and `missingPropertyFor` already make: a failed read is not an empty one, so "none of them
   // lists a property" may only be said when nothing was left unread.
   const listingComplete = accounts.every((account) => account.sites !== null);
+  // The accounts the DATABASE says are dead — never inferred from the live listing above, which
+  // fails for a dozen reasons this column has exactly one of.
+  const expiredEmails = accounts
+    .filter((account) => account.tokenStatus === "invalid")
+    .map((account) => account.email);
   const activeKey = keys.find((key) => key.revokedAt === null) ?? null;
   // ONE read of the template feeds both forms the server accepts, so they can never point at
   // different hosts: the personal URL below, and the key-free endpoint header auth uses (L-15).
@@ -537,7 +568,14 @@ export default async function ConnectionPage({
 
         <h3 className="m-0 font-mono text-[10.5px] font-normal uppercase tracking-[0.12em] text-faint">Connected Google accounts</h3>
         <AccountDisconnectPanel
-          accounts={accounts.map((account) => ({ id: account.id, email: account.email }))}
+          accounts={accounts.map((account) => ({
+            id: account.id,
+            email: account.email,
+            tokenStatus: account.tokenStatus,
+            // Formatted HERE, in the Server Component, so the client island never reads a clock
+            // (see lib/gsc/token-health for the hydration reason).
+            lastVerified: lastVerifiedLabel(account.tokenCheckedAt),
+          }))}
           describeDisconnect={describeDisconnect}
           disconnectAccount={disconnectAccount}
         />
@@ -567,10 +605,17 @@ export default async function ConnectionPage({
         >
           Connect Google account
         </a>
+        {/* ONE alert, and it now says WHICH remedy. Unqualified, "try again shortly" is a lie
+            for an account Google has already refused: waiting cannot mint a new refresh token,
+            only re-approving can. The accounts whose `token_status` says exactly that are named,
+            so a user with three accounts and one dead one knows which to reconnect. */}
         {accounts.some((account) => account.sites === null) ? (
           <p role="alert" className="m-0 border-l-2 border-l-accent bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-warn">
             We could not read the Search Console properties on at least one of these accounts.
             Use Connect Google account to grant access again, or try again shortly.
+            {expiredEmails.length > 0
+              ? ` The Google connection for ${expiredEmails.join(", ")} has expired — reconnecting it is the fix, not waiting.`
+              : null}
           </p>
         ) : null}
 

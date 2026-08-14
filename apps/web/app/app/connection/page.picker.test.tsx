@@ -13,7 +13,14 @@ let connectionRows: {
   account_id: string | null;
   gsc_property: string | null;
 }[] = [];
-let accountRows: { id: string; google_account_email: string; user_id?: string }[] = [];
+let accountRows: {
+  id: string;
+  google_account_email: string;
+  user_id?: string;
+  /** The stored credential health the page now reads (migration 0021). */
+  token_status?: "active" | "invalid" | null;
+  token_checked_at?: string | null;
+}[] = [];
 /** What `sites.list` answers for one account — or the failure it answers with instead. */
 let sitesByAccount: Record<string, { siteUrl: string; permissionLevel: string }[] | Error> = {};
 
@@ -229,6 +236,9 @@ function mapping(
 function account(id = ACCOUNT_ID, email = "owner@example.com") {
   return { id, google_account_email: email };
 }
+
+/** What the panel receives for an account whose health was never recorded. */
+const NO_HEALTH = { tokenStatus: null, lastVerified: null };
 
 function site(siteUrl: string, permissionLevel = "siteOwner") {
   return { siteUrl, permissionLevel };
@@ -748,9 +758,56 @@ describe("ConnectionPage — an account whose properties cannot be read", () => 
     ).toBeTruthy();
     // The account is still listed, so the user can disconnect or reconnect it.
     expect(JSON.parse(screen.getByTestId("account-panel").getAttribute("data-accounts") ?? "[]")).toEqual([
-      { id: ACCOUNT_ID, email: "owner@example.com" },
+      { id: ACCOUNT_ID, email: "owner@example.com", ...NO_HEALTH },
     ]);
     expect(error).toHaveBeenCalled();
+  });
+
+  /**
+   * WHICH REMEDY, AND FOR WHICH ACCOUNT. The warning already offered both "reconnect" and "try
+   * again shortly"; unqualified, the second half is a lie for a grant Google has already
+   * refused, and it is the half a user reaches for because it is cheaper. `token_status` is the
+   * one thing that can tell those apart — and with several accounts connected, "at least one of
+   * these" does not say which one to fix.
+   */
+  it("names the account the database knows is dead, and stops offering it a wait", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [
+      { ...account(), token_status: "invalid" },
+      { ...account(SECOND_ACCOUNT_ID, "second@example.com"), token_status: "active" },
+    ];
+    sitesByAccount = {
+      [ACCOUNT_ID]: new Error("Google token endpoint failed (400): invalid_grant"),
+      [SECOND_ACCOUNT_ID]: [site("https://healthy.example/")],
+    };
+    await renderPage();
+
+    const alert = screen.getByRole("alert").textContent ?? "";
+    expect(alert).toMatch(/could not read the search console/i);
+    expect(alert).toMatch(/owner@example\.com/);
+    expect(alert).toMatch(/has expired/i);
+    expect(alert).toMatch(/not waiting/i);
+    // The HEALTHY account is not swept into the accusation.
+    expect(alert).not.toMatch(/second@example\.com/);
+    error.mockRestore();
+  });
+
+  it("leaves the plain transient warning alone when nothing is marked dead", async () => {
+    // A 5xx or a timeout: the cause is unknown, so "try again shortly" is the honest half and
+    // the expiry sentence must not appear on a guess.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    listKeys.mockResolvedValue([]);
+    projectRows = [PROJECT_A];
+    accountRows = [{ ...account(), token_status: "active" }];
+    sitesByAccount = { [ACCOUNT_ID]: new Error("Google answered 503") };
+    await renderPage();
+
+    const alert = screen.getByRole("alert").textContent ?? "";
+    expect(alert).toMatch(/try again shortly/i);
+    expect(alert).not.toMatch(/has expired/i);
+    error.mockRestore();
   });
 
   it("does not attempt Google at all with no encryption key, and still renders", async () => {

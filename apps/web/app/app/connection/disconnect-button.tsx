@@ -87,6 +87,19 @@ export function DisconnectButton({
 export interface ConnectedAccount {
   readonly id: string;
   readonly email: string;
+  /**
+   * The STORED health of this account's credential (`gsc_accounts.token_status`, migration
+   * 0021). Only ever `"invalid"` after Google itself answered `invalid_grant`, so it means
+   * "re-approving is the fix" and never "the network was slow". Optional: a caller with nothing
+   * to say about health omits it, and the row then shows no badge at all.
+   */
+  readonly tokenStatus?: "active" | "invalid" | null;
+  /**
+   * How long ago that health was last observed, ALREADY FORMATTED by the server
+   * (`lib/gsc/token-health`). A string rather than a timestamp on purpose: this is a client
+   * component, and a clock read on both sides of hydration is a mismatch waiting for midnight.
+   */
+  readonly lastVerified?: string | null;
 }
 
 interface AccountDisconnectPanelProps {
@@ -97,6 +110,31 @@ interface AccountDisconnectPanelProps {
 
 /** Where a user finishes a revoke SeoGrep could not confirm. Google's own permissions list. */
 const GOOGLE_PERMISSIONS_URL = "https://myaccount.google.com/permissions";
+
+/**
+ * The one thing a row can say about a credential without asking Google again.
+ *
+ * TWO STATES, NEVER THREE. A dead grant gets a red instruction; anything else gets, at most, the
+ * age of the last observation. There is deliberately no "healthy" badge: a green tick on a row
+ * whose token was last exercised nine days ago would be a claim nobody measured, and the page
+ * already refuses that inference everywhere else (a failed `sites.list` is not an empty one).
+ *
+ * NOT `role="alert"`. The page-level amber warning owns that role, and a second alert per account
+ * would both fragment the announcement and change what `getByRole("alert")` means on this page.
+ * This is a label beside the address it describes.
+ */
+function HealthBadge({ account }: { readonly account: ConnectedAccount }) {
+  if (account.tokenStatus === "invalid") {
+    return (
+      <span className="bg-negative-badge px-1.5 py-0.5 text-xs text-negative">
+        Reconnect needed
+      </span>
+    );
+  }
+  return account.lastVerified ? (
+    <span className="text-xs text-faint">Last verified {account.lastVerified}</span>
+  ) : null;
+}
 
 /**
  * The CREDENTIAL level: drop SeoGrep's access to one Google account.
@@ -168,15 +206,18 @@ export function AccountDisconnectPanel({
               className="flex items-center justify-between gap-4 border border-hairline px-3 py-2 text-sm"
             >
               <span className="text-ink">{account.email}</span>
-              <button
-                type="button"
-                disabled={isPending}
-                onClick={() => ask(account.id)}
-                aria-label={`Disconnect ${account.email} from SeoGrep`}
-                className="font-medium text-body hover:text-ink disabled:opacity-60"
-              >
-                Disconnect
-              </button>
+              <span className="flex items-center gap-3">
+                <HealthBadge account={account} />
+                <button
+                  type="button"
+                  disabled={isPending}
+                  onClick={() => ask(account.id)}
+                  aria-label={`Disconnect ${account.email} from SeoGrep`}
+                  className="font-medium text-body hover:text-ink disabled:opacity-60"
+                >
+                  Disconnect
+                </button>
+              </span>
             </li>
           ))}
         </ul>
