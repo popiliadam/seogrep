@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { PricingTable } from "../../../components/pricing-table";
 import { TOP_UPS, creditsLabel } from "../../../components/pricing-plans";
 
@@ -30,95 +31,137 @@ const POLICIES = [
   "One trial per account.",
 ] as const;
 
+const POLICY_NUMS = ["a.", "b.", "c."] as const;
+
 export default function Page() {
   return (
     <>
-      <section className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-20">
-        <div className="flex flex-col items-start gap-6">
-          <p className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-accent-strong">
-            <span aria-hidden="true" className="h-0.5 w-6 rounded-full bg-accent" />
-            Beta pricing — current plans and credit costs
-          </p>
-          <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-5xl">Pricing that runs on credits</h1>
-          <p className="max-w-2xl text-lg text-ink/70">
+      <section className="mx-auto w-full max-w-[1160px] px-5 pb-[72px] pt-16 sm:px-8">
+        <div className="mb-14 flex justify-between font-mono text-[12px] tracking-[0.06em] text-faint animate-[rise_0.7s_ease-out_both]">
+          <span>SEOGREP(1)</span>
+          <span>PRICING</span>
+          <span>SEOGREP(1)</span>
+        </div>
+
+        <div className="flex max-w-[640px] flex-col gap-6 animate-[rise_0.7s_ease-out_0.08s_both]">
+          <p className="m-0 font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">PRICING</p>
+          <h1 className="m-0 font-serif text-4xl font-medium leading-[1.08] tracking-[-0.015em] text-pretty sm:text-[52px]">
+            Pricing that runs on credits
+          </h1>
+          <p className="m-0 font-serif text-[18px] leading-[1.65] text-body">
             Every plan is a monthly bundle of credits. You spend credits on analysis — crawls, audits, and research —
             never on the AI tokens your own assistant already covers.
           </p>
+          <p className="m-0 font-mono text-[12px] text-faint">Beta pricing — current plans and credit costs.</p>
         </div>
-        <div className="mt-12">
+
+        <div className="mt-16 animate-[rise_0.7s_ease-out_0.16s_both]">
           <h2 className="sr-only">Plans</h2>
           <PricingTable />
         </div>
-      </section>
 
-      <section className="border-t border-ink/10 bg-white/40">
-        <div className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-20">
-          <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">What credits buy</h2>
-          <div className="mt-8 overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm">
-              <caption className="mb-4 text-left text-sm text-ink/60">
-                Current credit costs — what each run spends from your balance.
+        <div className="mt-20 grid grid-cols-1 gap-16 lg:grid-cols-2">
+          <div>
+            <p className="m-0 mb-[18px] font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">
+              WHAT CREDITS BUY
+            </p>
+            <h2 className="m-0 mb-2 font-serif text-[28px] font-medium">Current credit costs</h2>
+            <table className="w-full border-collapse border-t border-ink text-left">
+              <caption className="mb-7 caption-top text-left font-serif text-[15px] italic text-muted">
+                What each run spends from your balance.
               </caption>
-              <thead>
-                <tr className="border-b border-ink/15">
-                  <th scope="col" className="py-3 pr-4 font-semibold text-ink">
-                    What you run
-                  </th>
-                  <th scope="col" className="py-3 pl-4 text-right font-semibold text-ink">
-                    Credits
-                  </th>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">What you run</th>
+                  <th scope="col" aria-hidden="true" />
+                  <th scope="col">Credits</th>
                 </tr>
               </thead>
               <tbody>
                 {CREDIT_COSTS.map((row) => (
-                  <tr key={row.action} className="border-b border-ink/10">
-                    <td className="py-3 pr-4 text-ink/80">{row.action}</td>
-                    <td className="py-3 pl-4 text-right font-mono font-medium text-ink">{row.cost}</td>
+                  <tr key={row.action} className="border-b border-hairline">
+                    <td className="py-[13px] pr-3 font-serif text-[16px] text-body sm:whitespace-nowrap">
+                      {row.action}
+                    </td>
+                    <td aria-hidden="true" className="w-full">
+                      <span className="block -translate-y-1 border-b border-dotted border-hairline-mid" />
+                    </td>
+                    <td className="whitespace-nowrap py-[13px] pl-3 text-right font-mono text-[14px] font-semibold text-ink">
+                      {row.cost}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p className="m-0 mt-6 font-serif text-[14px] leading-[1.6] text-faint">
+              A crawl covers up to 100 pages for 20 credits. Larger sites can be crawled in focused parts with path
+              filters (one crawl per section, e.g. /blog) — tiered large-site crawling is coming.
+            </p>
           </div>
-          <p className="mt-6 max-w-2xl text-sm text-ink/70">
-            A crawl covers up to 100 pages for 20 credits. Larger sites can be crawled in focused parts
-            with path filters (one crawl per section, e.g. /blog) — tiered large-site crawling is coming.
-          </p>
+
+          <div className="flex flex-col gap-14">
+            <div>
+              <p className="m-0 mb-[18px] font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">
+                TOP-UPS
+              </p>
+              <h2 className="m-0 mb-2 font-serif text-[28px] font-medium">Out of credits mid-month?</h2>
+              <p className="m-0 mb-7 font-serif text-[15px] text-muted">Add more without changing plans.</p>
+              <ul className="m-0 grid list-none grid-cols-1 border border-hairline bg-card p-0 sm:grid-cols-3">
+                {TOP_UPS.map((topUp, index) => (
+                  <li
+                    key={topUp.key}
+                    className={`px-5 py-[22px] text-center transition-colors duration-150 hover:bg-paper ${
+                      index < TOP_UPS.length - 1 ? "border-b border-hairline sm:border-b-0 sm:border-r" : ""
+                    }`}
+                  >
+                    <p className="m-0 font-serif text-[26px] font-medium">{topUp.price}</p>
+                    <p className="m-0 mt-1 font-mono text-[12px] font-semibold text-accent">
+                      {creditsLabel(topUp.key)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+              <p className="m-0 mt-3 font-mono text-[11px] text-faint">Prices in USD.</p>
+            </div>
+
+            <div>
+              <p className="m-0 mb-[18px] font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">
+                CREDIT POLICIES
+              </p>
+              <ul className="m-0 flex list-none flex-col border-t border-ink p-0">
+                {POLICIES.map((policy, index) => (
+                  <li
+                    key={policy}
+                    className="flex gap-4 border-b border-hairline py-3.5 font-serif text-[16px] leading-[1.55] text-body"
+                  >
+                    <span aria-hidden="true" className="pt-[3px] font-mono text-[12px] text-faint">
+                      {POLICY_NUMS[index]}
+                    </span>
+                    <span>{policy}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-5xl px-4 py-16 sm:py-20">
-        <div className="grid gap-12 lg:grid-cols-2">
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Credit policies</h2>
-            <ul className="mt-8 flex flex-col gap-4">
-              {POLICIES.map((policy) => (
-                <li key={policy} className="flex gap-3 text-base text-ink/80">
-                  <span aria-hidden="true" className="mt-2 h-0.5 w-4 shrink-0 rounded-full bg-accent" />
-                  <span>{policy}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <h2 className="text-3xl font-semibold tracking-tight text-ink sm:text-4xl">Top-ups</h2>
-            <p className="mt-8 text-base text-ink/80">Out of credits mid-month? Add more without changing plans.</p>
-            <ul className="mt-4 flex flex-col gap-3">
-              {TOP_UPS.map((topUp) => (
-                <li
-                  key={topUp.key}
-                  className="flex items-baseline justify-between gap-4 rounded-xl border border-ink/10 bg-paper px-4 py-3"
-                >
-                  <span className="text-lg font-semibold text-ink">{topUp.price}</span>
-                  <span aria-hidden="true" className="text-ink/40">
-                    →
-                  </span>
-                  <span className="font-medium text-accent-strong">{creditsLabel(topUp.key)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <section className="border-t border-hairline bg-ink text-paper">
+        <div className="mx-auto flex w-full max-w-[1160px] flex-col items-center gap-6 px-5 py-20 text-center sm:px-8">
+          <p className="m-0 font-mono text-[12px] tracking-[0.14em] text-accent-dark">EXIT STATUS</p>
+          <h2 className="m-0 font-serif text-[32px] font-medium tracking-[-0.01em] sm:text-[40px]">
+            Your first match is free.
+          </h2>
+          <p className="m-0 max-w-[48ch] font-serif text-[17px] leading-[1.6] text-[#b8b2a4]">
+            200 credits to begin with, no card required.
+          </p>
+          <Link
+            href="/signup"
+            className="mt-1.5 whitespace-nowrap bg-paper px-7 py-3.5 font-mono text-[14px] font-semibold text-ink transition-colors duration-150 hover:bg-accent-dark hover:text-ink"
+          >
+            Get started free
+          </Link>
         </div>
-        <p className="mt-12 text-sm text-ink/60">Prices in USD.</p>
       </section>
     </>
   );

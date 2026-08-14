@@ -173,7 +173,7 @@ export function PropertyPicker({
   // the only information there is.
   const retainedNote =
     !current && retained ? (
-      <span role="status" className="text-xs text-neutral-500">
+      <span role="status" className="text-xs text-faint">
         {`Saved earlier for this project: ${retained.property}. ${retainedStatus(retained, value)}`}
       </span>
     ) : null;
@@ -221,7 +221,7 @@ export function PropertyPicker({
             setSaved(false);
             setError(null);
           }}
-          className="rounded-md border border-neutral-200 px-2 py-1 text-xs text-neutral-800"
+          className="border border-hairline px-2 py-1 text-xs text-ink"
         >
           <option value="">Select a property…</option>
           {groupByAccount(options).map((group) => (
@@ -242,12 +242,12 @@ export function PropertyPicker({
           type="button"
           disabled={isPending || decodeChoice(value) === null}
           onClick={submit}
-          className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+          className="font-medium text-body hover:text-ink disabled:opacity-60"
         >
           Save
         </button>
         {!current && !retained && suggested ? (
-          <span className="text-xs text-neutral-500">Suggested for this domain — save to apply.</span>
+          <span className="text-xs text-faint">Suggested for this domain — save to apply.</span>
         ) : null}
       </div>
 
@@ -256,22 +256,22 @@ export function PropertyPicker({
           stopped reading data until they pick again), which is the same class of message as
           the page's account-level read-failure warning — and that one is already an alert. */}
       {missingProperty ? (
-        <span role="alert" className="text-xs text-amber-700">
+        <span role="alert" className="text-xs text-warn">
           {missingProperty} is no longer visible on this account — pick another.
         </span>
       ) : null}
       {alsoMapped > 0 ? (
-        <span className="text-xs text-neutral-500">
+        <span className="text-xs text-faint">
           Also mapped to {plural(alsoMapped, "other project")}.
         </span>
       ) : null}
       {error ? (
-        <span role="alert" className="text-xs text-red-600">
+        <span role="alert" className="text-xs text-negative">
           {error}
         </span>
       ) : null}
       {saved && !error ? (
-        <span role="status" className="text-xs text-green-700">
+        <span role="status" className="text-xs text-positive">
           Saved.
         </span>
       ) : null}

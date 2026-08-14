@@ -50,9 +50,9 @@ export function ResetPasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-sm font-medium">
+    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-[22px]">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="password" className="font-mono text-[11px] uppercase tracking-[0.12em] text-faint">
           New password
         </label>
         <input
@@ -64,19 +64,19 @@ export function ResetPasswordForm() {
           minLength={8}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+          className="w-full border border-hairline-mid bg-paper px-3.5 py-3 font-mono text-[14px] text-ink outline-none placeholder:text-faintest focus:border-accent"
         />
-        <p className="text-xs text-neutral-500">At least 8 characters.</p>
+        <p className="m-0 font-mono text-[11px] text-faint">At least 8 characters.</p>
       </div>
       {status === "error" && message ? (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="m-0 font-mono text-[12px] leading-[1.6] text-negative">
           {message}
         </p>
       ) : null}
       <button
         type="submit"
         disabled={status === "submitting"}
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="mt-1 w-full bg-ink py-3.5 text-center font-mono text-[14px] font-semibold text-paper transition-colors duration-150 hover:bg-accent hover:text-paper disabled:opacity-60 disabled:hover:bg-ink"
       >
         Set new password
       </button>

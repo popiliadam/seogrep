@@ -119,17 +119,17 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
         <button
           type="button"
           disabled
-          className="rounded-md bg-neutral-200 px-4 py-2 text-sm font-medium text-neutral-500"
+          className="w-full border border-hairline-mid bg-hairline-soft py-[11px] text-center font-mono text-[13px] font-semibold text-faint"
         >
           {label}
         </button>
-        <span role="alert" className="text-xs text-red-600">
+        <span role="alert" className="font-mono text-[11px] text-negative">
           Checkout could not load.
         </span>
         <button
           type="button"
           onClick={retryInit}
-          className="self-start text-xs font-medium text-neutral-700 underline hover:text-neutral-900"
+          className="self-start border-b border-hairline-mid font-mono text-[11px] text-muted transition-colors duration-150 hover:border-accent hover:text-accent"
         >
           Try again
         </button>
@@ -143,11 +143,11 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
         <button
           type="button"
           disabled
-          className="rounded-md bg-neutral-200 px-4 py-2 text-sm font-medium text-neutral-500"
+          className="w-full border border-hairline-mid bg-hairline-soft py-[11px] text-center font-mono text-[13px] font-semibold text-faint"
         >
           {label}
         </button>
-        <span className="text-xs text-neutral-400">Checkout not configured</span>
+        <span className="font-mono text-[11px] text-faintest">Checkout not configured</span>
       </div>
     );
   }
@@ -160,12 +160,12 @@ export function CheckoutButton({ priceId, userId, label = "Buy" }: CheckoutButto
         onClick={() => {
           void openCheckout();
         }}
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="w-full border border-ink bg-card py-[11px] text-center font-mono text-[13px] font-semibold text-ink transition-colors duration-150 hover:bg-ink hover:text-paper disabled:opacity-60 disabled:hover:bg-card disabled:hover:text-ink"
       >
         {label}
       </button>
       {error ? (
-        <span role="alert" className="text-xs text-red-600">
+        <span role="alert" className="font-mono text-[11px] text-negative">
           {error}
         </span>
       ) : null}

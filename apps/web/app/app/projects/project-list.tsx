@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type { ProjectCard } from "../../../lib/projects/card";
 import { formatStamp, type CrawlHistoryEntry } from "../../../lib/projects/history";
 import { formatDate } from "../../../lib/format";
@@ -16,9 +17,9 @@ import { formatDate } from "../../../lib/format";
 /** One labelled fact inside a card. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-xs uppercase tracking-wide text-neutral-500">{label}</span>
-      <span className="text-sm text-neutral-700">{children}</span>
+    <div className="flex flex-col gap-1 px-7 py-5">
+      <span className="mb-1 font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">{label}</span>
+      <span className="font-serif text-[16px] leading-[1.5] text-body">{children}</span>
     </div>
   );
 }
@@ -38,7 +39,7 @@ function GscLine({ card }: { card: ProjectCard }) {
   }
   return (
     <Fact label="Search Console">
-      <span className="break-all">{card.gsc.property}</span>
+      <span className="break-all font-mono text-[13px]">{card.gsc.property}</span>
     </Fact>
   );
 }
@@ -52,7 +53,7 @@ function CrawlLine({ card }: { card: ProjectCard }) {
     <Fact label="Last crawl">
       <time dateTime={card.crawl.createdAt}>{formatDate(card.crawl.createdAt)}</time>
       {card.crawl.summary ? (
-        <span className="block text-neutral-600">{card.crawl.summary}</span>
+        <span className="mt-1 block font-mono text-[11px] leading-[1.6] text-faint">{card.crawl.summary}</span>
       ) : null}
     </Fact>
   );
@@ -70,7 +71,7 @@ function RunStamps({ entry }: { entry: CrawlHistoryEntry }) {
     ...(entry.finishedAt === null ? [] : [{ label: "finished", iso: entry.finishedAt }]),
   ];
   return (
-    <span className="text-xs text-neutral-500">
+    <span className="font-mono text-[11px] text-faint">
       {stamps.map((stamp, index) => (
         <span key={stamp.label}>
           {index === 0 ? null : " · "}
@@ -99,17 +100,19 @@ function CrawlHistory({ entries }: { entries: readonly CrawlHistoryEntry[] }) {
     return null;
   }
   return (
-    <details className="rounded-md border border-neutral-200 px-3 py-2">
-      <summary className="cursor-pointer text-sm text-neutral-700">Recent crawls</summary>
-      <ol className="mt-2 flex flex-col gap-2">
+    <details className="border-t border-hairline px-7 py-3.5">
+      <summary className="cursor-pointer font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint transition-colors duration-150 hover:text-accent">
+        Recent crawls
+      </summary>
+      <ol className="m-0 mt-3 flex list-none flex-col gap-2.5 p-0">
         {entries.map((entry) => (
           <li key={entry.id} className="flex flex-col gap-0.5">
             {/* The database's own status word, never a panel-invented synonym: the user has to
                 be able to match this against what get_job_status told the assistant. */}
-            <span className="text-sm text-neutral-700">{entry.status}</span>
+            <span className="font-mono text-[11.5px] text-body">{entry.status}</span>
             <RunStamps entry={entry} />
             {entry.error === null ? null : (
-              <span className="text-xs break-all text-red-700">{entry.error}</span>
+              <span className="break-all font-mono text-[11px] text-negative">{entry.error}</span>
             )}
           </li>
         ))}
@@ -121,15 +124,15 @@ function CrawlHistory({ entries }: { entries: readonly CrawlHistoryEntry[] }) {
 /** One project: what it is, what has been read for it, and the one thing to do next. */
 export function ProjectCardView({ card }: { card: ProjectCard }) {
   return (
-    <li className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-base font-semibold break-all">{card.domain}</h2>
-        <span className="text-xs text-neutral-500">
+    <li className="border border-hairline bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-hairline px-7 py-5">
+        <h2 className="m-0 break-all font-mono text-[16px] font-semibold">{card.domain}</h2>
+        <span className="font-mono text-[11px] text-faint">
           Added <time dateTime={card.createdAt}>{formatDate(card.createdAt)}</time>
         </span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 sm:divide-x sm:divide-hairline">
         <CrawlLine card={card} />
         <GscLine card={card} />
         <Fact label="Last Search Console pull">
@@ -145,11 +148,11 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
 
       {/* The SAME recommendation whats_next gives, so the panel and the assistant never
           disagree — see lib/projects/parity.test.ts. */}
-      <div className="flex flex-col gap-0.5 rounded-md bg-neutral-50 p-3">
-        <span className="text-sm font-medium text-neutral-900">
+      <div className="flex flex-col gap-0.5 border-l-2 border-l-accent bg-paper px-7 py-3.5">
+        <span className="font-mono text-[12.5px] font-semibold text-ink">
           Next step: run {card.nextStep.primary}
         </span>
-        <span className="text-sm text-neutral-600">{card.nextStep.reason}</span>
+        <span className="font-serif text-[14px] text-muted">{card.nextStep.reason}</span>
       </div>
     </li>
   );
@@ -157,20 +160,32 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
 
 /**
  * Every tracked project, oldest first — or the empty state, which points at the ONE tool that
- * creates a project. Nothing on this page can create one: /app/projects is read-only, so the
- * empty state has to name the MCP call rather than offer a button that does not exist.
+ * creates a project. Nothing here invents a second creation path: the empty state names the MCP
+ * call (setup_project) and the form above is the panel's single write.
  */
 export function ProjectList({ cards }: { cards: readonly ProjectCard[] }) {
   if (cards.length === 0) {
     return (
-      <p className="text-sm text-neutral-600">
-        No projects yet. Ask your assistant to run the setup_project tool with your website
-        domain — for example “set up example.com” — and it will show up here.
-      </p>
+      <div className="border border-dashed border-hairline-mid bg-card px-8 py-14 text-center">
+        <p aria-hidden="true" className="m-0 mb-3.5 font-mono text-[12px] text-faint">
+          $ list_projects → 0 results
+        </p>
+        <p className="m-0 mb-2 font-serif text-[22px] font-medium">No projects yet.</p>
+        <p className="mx-auto mb-5 mt-0 max-w-[46ch] font-serif text-[15px] leading-[1.6] text-muted">
+          Ask your assistant to run the setup_project tool with your website domain — for example
+          “set up example.com” — and it will show up here.
+        </p>
+        <Link
+          href="/app/connection"
+          className="border-b border-accent pb-0.5 font-mono text-[12px] transition-colors duration-150"
+        >
+          Set up your MCP URL first <span aria-hidden="true">→</span>
+        </Link>
+      </div>
     );
   }
   return (
-    <ul className="flex flex-col gap-4">
+    <ul className="m-0 flex list-none flex-col gap-7 p-0">
       {cards.map((card) => (
         <ProjectCardView key={card.projectId} card={card} />
       ))}

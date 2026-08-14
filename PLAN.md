@@ -272,6 +272,42 @@ bağımlılığı derlediği için YEŞİLDİ; Dockerfile'ın EL LİSTESİ deplo
    sahte kırmızı üretir; fonksiyon-scope'a taşıma aday iş.
 5. Bayat-crawl zenginleştirmesi Overview'da bilerek yok (tek count sorgusu tercih edildi).
 
+## 🚀 2026-08-15 — DERİNLEŞTİRME 1. OTURUM: A + D1 CANLIDA · B PARKTA (TEK OPERATÖR AKSİYONU)
+
+Derinleştirme planının ilk uygulama oturumu (tamamı hakemli, 2 taze Fable PASS + 2 ek-emir turu):
+
+- **A — paralel fetch CANLIDA** ([#87](https://github.com/popiliadam/seogrep/pull/87) + [#90](https://github.com/popiliadam/seogrep/pull/90) deploy'u): robots Crawl-delay yoksa 4 eşzamanlı;
+  ağsız deterministik ölçüm 2sn bütçede **8→32 sayfa (4×)**. 11 mutasyon ekseni; hakemin bulduğu
+  iki muhasebe deliği (claim-anı visited · dalga-ortası byte muhasebesi) aynı dilimde pinlendi.
+- **D1 — 17 sinyal CANLIDA** ([#90](https://github.com/popiliadam/seogrep/pull/90)): fetchMs · htmlBytes · h2/h3 · img+alt · hreflang(50, literal-pinli) ·
+  og/twitter · htmlLang · X-Robots-Tag · redirectChain · contentHash(script-sıyrılmış, kablolama-pinli) ·
+  depth · inLinkCount(self-link pinli). Ek istek SIFIR; sonuç boyutu +%36,7 = 12MB tavanın %1,68'i.
+  14 mutasyon ekseni. **Kural dalgası (D2) HENÜZ YOK** — sinyaller akıyor ama audit'ler okumuyor.
+- **B — crawl_pages PARKTA** ([#89](https://github.com/popiliadam/seogrep/pull/89), hakem PASS, verify-db LOKAL TAM PASS): migration 0023 + çift-yazım + parite.
+  **MERGE EDİLMEDİ ve EDİLMEMELİ** — şef oturumunda cloud-DDL izin sınıflandırıcısınca bloke edildi
+  (apply_migration VE supabase-CLI keşfi; workaround DENENMEDİ, doğru davranış).
+  **OPERATÖR AKSİYONU (tek adım):** 0023_crawl_pages.sql'i prod'a uygula (Supabase panosu SQL editor
+  ya da `supabase db push`) → sonra #89 merge-commit ile birleştirilir. Migration'sız merge = her
+  crawl fail-closed düşer + /status not-ready (SCHEMA_VERSION 22→23).
+- Canlı doğrulama: Deploy MCP success ×2, healthz 200, schema ready, taze imaj ölçüldü.
+
+**SIRADAKİ DİLİMLER** (plan §6): B merge (operatör sonrası) → C audit_runs+panel (migration ister —
+aynı operatör dalgasında 0024 birlikte uygulanabilir) → D2 kural dalgası (onpage/tech yeni sinyalleri
+okur) → N8 audit_content (fiyat imzası).
+
+**FLAKE KAYDI (büyüyor — ayrı temizlik dilimi hak ediyor):** `disconnect-button.test.tsx` ·
+`server.test.ts` (L-12/throttle + /status degrade) · A-diliminden `timeBudgetMs:30` dalga-başlatma
+testi (timeout değil EŞİK işi — robots/sitemap aşaması bütçeyi yiyor) · iki düşman-boyut testine
+açık 15s timeout verildi (yalnız-timeout, iddialar aynen).
+
+**DERS ADAYLARI (imza bekler):**
+1. **Şefin arka plan job'ı da paralel yazardır** (ders 8'in yeni şekli): CI-bekle+merge job'ı
+   içindeki `git checkout main`, işçi dalda çalışırken HEAD'i kaydırdı; işçinin commit'i yerel
+   main'e indi. Kurtarıldı (kayıpsız) ama kural: işçi ağaçtayken arka plan komutu git durumuna
+   DOKUNAMAZ — salt-izleme olabilir.
+2. **Cloud-DDL şef oturumunda kapalıysa dilim "hazır-park" biter**: PR açık + gerekçe gövdede +
+   operatör adımı tek cümle. Sınıflandırıcı engeli workaround'lanmaz.
+
 ## 📋 2026-08-14 — YENİ PLAN DOSYASI: Crawl+Audit derinleştirme ("MCP üzerinden Screaming Frog")
 
 Operatör talebiyle kapsamlı inceleme yapıldı ve plan yazıldı:

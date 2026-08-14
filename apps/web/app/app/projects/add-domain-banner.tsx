@@ -19,10 +19,11 @@
 
 type BannerTone = "success" | "notice" | "error";
 
+/** Manpage callout: 2px left border on the card surface; tone shows in the border + text. */
 const TONE_STYLES: Readonly<Record<BannerTone, string>> = {
-  success: "border-green-300 bg-green-50 text-green-700",
-  notice: "border-amber-300 bg-amber-50 text-amber-700",
-  error: "border-red-300 bg-red-50 text-red-600",
+  success: "border-l-positive text-positive",
+  notice: "border-l-accent text-warn",
+  error: "border-l-negative text-negative",
 };
 
 /**
@@ -136,7 +137,7 @@ export function AddDomainBanner({
   return (
     <p
       role={message.tone === "error" ? "alert" : "status"}
-      className={`rounded-md border p-3 text-sm ${TONE_STYLES[message.tone]}`}
+      className={`m-0 border-l-2 bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] ${TONE_STYLES[message.tone]}`}
     >
       {message.text}
     </p>
