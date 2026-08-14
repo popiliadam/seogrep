@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  attachInLinkCounts,
   boundCrawlResult,
   computeIssues,
   crawlSite,
@@ -13,8 +14,10 @@ import {
   parseHtml,
   parseJsonLdTypes,
   type CrawlResult,
+  type PageRecord,
 } from "./crawl.ts";
 import { startHostileSite } from "./fixtures/hostile-server.ts";
+import { ABOUT_HTML, INDEX_HTML } from "./fixtures/pages.ts";
 import { startFixtureSite, type FixtureSite } from "./fixtures/site-server.ts";
 import type { LookupFn } from "./ssrf.ts";
 
@@ -1622,5 +1625,285 @@ describe("crawlSite — parallel wave accounting", () => {
     } finally {
       await site.close();
     }
+  });
+});
+
+/**
+ * The FREE per-page signals (Faz 1): everything a PageRecord now carries that costs no extra
+ * request — the response's own timing, byte count and headers, its redirect chain, the BFS
+ * depth the URL was found at, and the crawl-wide inbound-link count.
+ *
+ * The parser-side signals (headings, images, hreflang, og/twitter, lang, content hash) have
+ * their own pure specs in page-signals.test.ts; what is pinned here is that they REACH the
+ * record, plus everything that only exists once a real fetch has happened.
+ */
+describe("crawlSite — free per-page signals", () => {
+  let site: FixtureSite;
+  let result: CrawlResult;
+  const at = (path: string): string => normalizeUrl(site.origin + path);
+  const pageAt = (path: string) => result.pages.find((p) => p.url === at(path));
+
+  beforeAll(async () => {
+    site = await startFixtureSite();
+    result = await crawlSite(site.origin, { crawlDelayCapMs: 0 });
+  });
+  afterAll(() => site.close());
+
+  it("measures fetchMs over the real request (> 0, and never a bare 0)", () => {
+    // A loopback fetch is fast but not instantaneous; the field rounds UP so a sub-millisecond
+    // measurement reports 1 rather than 0 — 0 would be indistinguishable from "not measured".
+    for (const page of result.pages) {
+      expect(page.fetchMs).toBeGreaterThan(0);
+      expect(Number.isInteger(page.fetchMs)).toBe(true);
+    }
+  });
+
+  it("records htmlBytes as the EXACT decompressed body size", () => {
+    // Pinned against the fixture's own bytes, not a range: the number must be the body, not
+    // a proxy for it (INDEX_HTML carries a non-ASCII em dash, so this also proves the count
+    // is bytes and not characters).
+    expect(pageAt("/")?.htmlBytes).toBe(Buffer.byteLength(INDEX_HTML, "utf8"));
+    expect(pageAt("/about")?.htmlBytes).toBe(Buffer.byteLength(ABOUT_HTML, "utf8"));
+  });
+
+  it("carries the parser signals through to the record", () => {
+    const blog = pageAt("/blog");
+    expect(blog?.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    // Two pages with different copy do not share a fingerprint.
+    expect(blog?.contentHash).not.toBe(pageAt("/about")?.contentHash);
+    // The fixture pages declare no og/twitter/hreflang/lang — absence is null/[] , not undefined.
+    expect(blog?.ogTitle).toBeNull();
+    expect(blog?.twitterCard).toBeNull();
+    expect(blog?.htmlLang).toBeNull();
+    expect(blog?.hreflangs).toEqual([]);
+    expect(blog?.h2Count).toBe(0);
+    expect(blog?.imgCount).toBe(0);
+    expect(blog?.imgMissingAlt).toBe(0);
+  });
+
+  it("reports [] for redirectChain and null for xRobotsTag on a directly served page", () => {
+    expect(pageAt("/")?.redirectChain).toEqual([]);
+    expect(pageAt("/")?.xRobotsTag).toBeNull();
+  });
+
+  it("counts inbound links by SOURCE PAGE, across the crawl", () => {
+    // /about is linked from BOTH "/" and "/blog" -> 2 distinct source pages.
+    expect(pageAt("/about")?.inLinkCount).toBe(2);
+    // "/" is linked back only from /about -> 1. The home page links to /about THREE times
+    // ("/about", "/about/", "/about#team"), and /about still counts as 2, not 4: one page is
+    // one source however many times it links.
+    expect(pageAt("/")?.inLinkCount).toBe(1);
+    // /orphan is reachable only through the sitemap — nothing links to it.
+    expect(pageAt("/orphan")?.inLinkCount).toBe(0);
+  });
+
+  it("gives sitemap seeds depth 0 and a link-discovered page depth 1", () => {
+    // Every sitemap URL is an entry point, so it is depth 0 however deep it sits in the site.
+    for (const path of ["/", "/about", "/blog", "/noindex", "/orphan"]) {
+      expect(pageAt(path)?.depth).toBe(0);
+    }
+    // /weird is in NO sitemap — it is reached only by following a link on the home page.
+    expect(pageAt("/weird")?.depth).toBe(1);
+  });
+});
+
+/**
+ * The transport-level signals need shapes the static fixture cannot serve: a two-hop redirect
+ * chain, an X-Robots-Tag header, and a site with NO sitemap so BFS depth actually increases.
+ * Each spec mocks fetch (as the parallel-wave specs do) so the whole shape is deterministic
+ * and no socket is opened.
+ */
+describe("crawlSite — transport signals and BFS depth", () => {
+  const ORIGIN = "http://signals.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** A 200 text/html response, with optional extra headers. */
+  const html = (body: string, headers: Record<string, string> = {}): Response =>
+    new Response(body, { status: 200, headers: { "content-type": "text/html", ...headers } });
+
+  /** robots.txt allow-all + an OPTIONAL sitemap; anything else is the caller's `route`. */
+  const serve =
+    (route: (path: string) => Response, sitemapPaths: string[] | null) =>
+    async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (path === "/sitemap.xml") {
+        if (sitemapPaths === null) return new Response("nope", { status: 404 });
+        const locs = sitemapPaths.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      return route(path);
+    };
+
+  it("records the hops of a 301 -> 302 -> 200 chain, excluding the final URL", async () => {
+    const impl = serve((path) => {
+      if (path === "/r1") return new Response(null, { status: 301, headers: { location: `${ORIGIN}/r2` } });
+      if (path === "/r2") return new Response(null, { status: 302, headers: { location: `${ORIGIN}/final` } });
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`);
+    }, ["/r1", "/direct"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const final = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/final`));
+      // Both hops, in order, and NOT the URL the record is stored under.
+      expect(final?.redirectChain).toEqual([`${ORIGIN}/r1`, `${ORIGIN}/r2`]);
+      expect(final?.status).toBe(200);
+      // A page served without any redirect carries an empty chain, never undefined.
+      const direct = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/direct`));
+      expect(direct?.redirectChain).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reads X-Robots-Tag off the response header (null when the header is absent)", async () => {
+    const impl = serve((path) => {
+      const body = `<html><head><title>${path}</title></head><body><h1>${path}</h1>w</body></html>`;
+      return path === "/tagged" ? html(body, { "x-robots-tag": "noindex, nofollow" }) : html(body);
+    }, ["/tagged", "/plain"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const tagged = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/tagged`));
+      const plain = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/plain`));
+      expect(tagged?.xRobotsTag).toBe("noindex, nofollow");
+      expect(plain?.xRobotsTag).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("increases BFS depth per hop: seed 0, its link 1, that page's link 2", async () => {
+    // No sitemap, so the ONLY seed is the homepage and every other page is discovered by
+    // following links: "/" -> /a -> /b -> /c. The depth has to travel with the URL through
+    // the claim/commit wave, which is precisely what this pins.
+    const chain: Record<string, string> = { "/": "/a", "/a": "/b", "/b": "/c", "/c": "" };
+    const impl = serve((path) => {
+      const next = chain[path] ?? "";
+      const link = next ? `<a href="${next}">next</a>` : "";
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w${link}</body></html>`);
+    }, null);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const depthOf = (path: string): number | undefined =>
+        result.pages.find((p) => p.url === normalizeUrl(ORIGIN + path))?.depth;
+      expect(depthOf("/")).toBe(0);
+      expect(depthOf("/a")).toBe(1);
+      expect(depthOf("/b")).toBe(2);
+      expect(depthOf("/c")).toBe(3);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the CLAIMED URL's depth when a page is reached through a redirect", async () => {
+    // "/" (depth 0) links to /gate, which 302s to /landing. /landing is stored at the depth
+    // of the URL that was claimed (1) — a redirect hop is not a level of the site.
+    const impl = serve((path) => {
+      if (path === "/gate") {
+        return new Response(null, { status: 302, headers: { location: `${ORIGIN}/landing` } });
+      }
+      const link = path === "/" ? '<a href="/gate">gate</a>' : "";
+      return html(`<html><head><title>${path}</title></head><body><h1>${path}</h1>w${link}</body></html>`);
+    }, null);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      const landing = result.pages.find((p) => p.url === normalizeUrl(`${ORIGIN}/landing`));
+      expect(landing?.depth).toBe(1);
+      expect(landing?.redirectChain).toEqual([`${ORIGIN}/gate`]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * inLinkCount as a pure function over finished pages. The crawl-level spec above proves it is
+ * WIRED; these prove what it COUNTS, on shapes a fixture site cannot produce (parseHtml
+ * already dedupes a page's links, so a record carrying the same target twice has to be built
+ * by hand — and that is exactly the shape that separates counting SOURCES from counting LINKS).
+ */
+describe("attachInLinkCounts", () => {
+  const page = (url: string, links: string[]): PageRecord => ({
+    url,
+    status: 200,
+    title: null,
+    metaDescription: null,
+    h1s: [],
+    canonical: null,
+    robotsMeta: null,
+    links,
+    wordCount: 0,
+    jsonLdTypes: [],
+    issues: [],
+    fetchMs: 1,
+    htmlBytes: 0,
+    h2Count: 0,
+    h3Count: 0,
+    imgCount: 0,
+    imgMissingAlt: 0,
+    hreflangs: [],
+    ogTitle: null,
+    ogDescription: null,
+    ogImage: null,
+    twitterCard: null,
+    htmlLang: null,
+    xRobotsTag: null,
+    redirectChain: [],
+    contentHash: "",
+    depth: 0,
+    inLinkCount: 0,
+  });
+  const countOf = (pages: PageRecord[], url: string): number | undefined =>
+    attachInLinkCounts(pages).find((p) => p.url === url)?.inLinkCount;
+
+  it("counts two different pages linking the same target as 2", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target"]),
+      page("https://s.test/b", ["https://s.test/target"]),
+      page("https://s.test/target", []),
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(2);
+  });
+
+  it("counts ONE page linking the same target twice as 1 (sources, not links)", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target", "https://s.test/target"]),
+      page("https://s.test/target", []),
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(1);
+  });
+
+  it("normalizes trailing slashes on BOTH sides before matching", () => {
+    const pages = [
+      page("https://s.test/a", ["https://s.test/target/"]), // link written with a slash
+      page("https://s.test/target", []), //                    page stored without one
+    ];
+    expect(countOf(pages, "https://s.test/target")).toBe(1);
+  });
+
+  it("gives an unlinked page 0 and leaves every other field untouched", () => {
+    const orphan = page("https://s.test/orphan", []);
+    const [out] = attachInLinkCounts([orphan]);
+    expect(out?.inLinkCount).toBe(0);
+    expect(out).toEqual({ ...orphan, inLinkCount: 0 });
+    // Pure: the input record is not mutated.
+    expect(orphan.inLinkCount).toBe(0);
+  });
+
+  it("ignores links to pages this crawl never stored (it counts what was crawled)", () => {
+    const pages = [page("https://s.test/a", ["https://s.test/never-crawled"])];
+    const out = attachInLinkCounts(pages);
+    expect(out[0]?.inLinkCount).toBe(0);
   });
 });
