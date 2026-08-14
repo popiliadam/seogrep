@@ -83,18 +83,19 @@ export default async function BillingPage() {
   const portalAvailable = Boolean(process.env.PADDLE_API_KEY) && subscribed;
 
   return (
-    <section className="flex flex-col gap-8">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Billing</h1>
-        <p className="text-sm text-neutral-600">
+    <section className="flex flex-col gap-10">
+      <header className="animate-[rise_0.5s_ease-out_both]">
+        <p className="m-0 mb-2.5 font-mono text-[11px] tracking-[0.14em] text-accent">DASHBOARD</p>
+        <h1 className="m-0 mb-2 font-serif text-[34px] font-medium tracking-[-0.01em]">Billing</h1>
+        <p className="m-0 font-serif text-[15px] text-muted">
           Plans and top-ups.{" "}
           {isSandbox ? "Sandbox mode — test cards only, nothing is really charged." : null}
         </p>
         {portalAvailable ? (
-          <form action={openCustomerPortal} className="mt-2">
+          <form action={openCustomerPortal} className="mt-3">
             <button
               type="submit"
-              className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:text-neutral-900"
+              className="border border-hairline-mid px-4 py-2 font-mono text-[12px] font-semibold text-body transition-colors duration-150 hover:border-accent hover:text-accent"
             >
               Manage subscription
             </button>
@@ -102,12 +103,12 @@ export default async function BillingPage() {
         ) : null}
       </header>
 
-      <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Plans</h2>
+      <div className="flex flex-col gap-4 animate-[rise_0.5s_ease-out_0.06s_both]">
+        <h2 className="m-0 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-faint">Plans</h2>
         {subscribed ? (
           <p
             role="status"
-            className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+            className="m-0 border-l-2 border-l-accent bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-warn"
           >
             You already have an active subscription. Buying a plan below starts an{" "}
             <strong className="font-semibold">additional subscription</strong> — it does not
@@ -115,51 +116,64 @@ export default async function BillingPage() {
             {portalAvailable ? " Use Manage subscription above to change or cancel it." : null}
           </p>
         ) : null}
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {PLANS.map((plan) => (
-            <li
-              key={plan.key}
-              className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5"
-            >
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold">{plan.name}</h3>
-                  {activePlans.has(plan.key) ? <CurrentPlanBadge /> : null}
-                  {isSandbox ? <SandboxBadge /> : null}
+        <ul className="m-0 grid list-none grid-cols-1 border border-hairline bg-card p-0 sm:grid-cols-2 lg:grid-cols-4">
+          {PLANS.map((plan, index) => {
+            const current = activePlans.has(plan.key);
+            return (
+              <li
+                key={plan.key}
+                className={`relative flex flex-col gap-3 px-7 py-8 ${current ? "bg-paper" : ""} ${
+                  index < PLANS.length - 1
+                    ? "border-b border-hairline sm:border-b lg:border-b-0 lg:border-r"
+                    : ""
+                }`}
+              >
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="m-0 font-mono text-[12px] font-normal uppercase tracking-[0.14em] text-faint">
+                      {plan.name}
+                    </h3>
+                    <span className="flex gap-1.5">
+                      {current ? <CurrentPlanBadge /> : null}
+                      {isSandbox ? <SandboxBadge /> : null}
+                    </span>
+                  </div>
+                  <p className="m-0 flex items-baseline gap-2">
+                    <span className="font-serif text-[34px] font-medium tracking-[-0.02em]">{plan.price}</span>
+                    <span className="font-mono text-[11px] text-faint">{plan.period}</span>
+                  </p>
+                  <p className="m-0 font-mono text-[13px] font-semibold text-accent">{creditsLabel(plan.key)}</p>
                 </div>
-                <p className="flex items-baseline gap-1.5">
-                  <span className="text-2xl font-bold">{plan.price}</span>
-                  <span className="text-xs text-neutral-500">{plan.period}</span>
-                </p>
-                <p className="text-sm font-medium text-neutral-700">{creditsLabel(plan.key)}</p>
-              </div>
-              <p className="flex-1 text-sm text-neutral-600">{plan.blurb}</p>
-              {/* A subscriber's click adds a subscription; the label says so. Top-ups keep "Buy"
-                  — they are one-off credit purchases and were always additive. */}
-              <CheckoutButton
-                priceId={priceIdFor(plan.key)}
-                userId={user.id}
-                label={subscribed ? "Add another plan" : "Buy"}
-              />
-            </li>
-          ))}
+                <p className="m-0 flex-1 font-serif text-[14px] leading-[1.55] text-muted">{plan.blurb}</p>
+                {/* A subscriber's click adds a subscription; the label says so. Top-ups keep "Buy"
+                    — they are one-off credit purchases and were always additive. */}
+                <CheckoutButton
+                  priceId={priceIdFor(plan.key)}
+                  userId={user.id}
+                  label={subscribed ? "Add another plan" : "Buy"}
+                />
+              </li>
+            );
+          })}
         </ul>
       </div>
 
-      <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Top-ups</h2>
-        <p className="text-sm text-neutral-600">
+      <div className="flex flex-col gap-4 animate-[rise_0.5s_ease-out_0.12s_both]">
+        <h2 className="m-0 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-faint">Top-ups</h2>
+        <p className="m-0 font-serif text-[15px] text-muted">
           Out of credits mid-month? Add more without changing plans.
         </p>
-        <ul className="grid gap-4 sm:grid-cols-3">
-          {TOP_UPS.map((topUp) => (
+        <ul className="m-0 grid list-none grid-cols-1 border border-hairline bg-card p-0 sm:grid-cols-3">
+          {TOP_UPS.map((topUp, index) => (
             <li
               key={topUp.key}
-              className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5"
+              className={`flex flex-col gap-3 px-6 py-[22px] ${
+                index < TOP_UPS.length - 1 ? "border-b border-hairline sm:border-b-0 sm:border-r" : ""
+              }`}
             >
               <div className="flex items-baseline justify-between gap-2">
-                <span className="text-xl font-bold">{topUp.price}</span>
-                <span className="text-sm font-medium text-neutral-700">
+                <span className="font-serif text-[26px] font-medium">{topUp.price}</span>
+                <span className="font-mono text-[12px] font-semibold text-accent">
                   {creditsLabel(topUp.key)}
                 </span>
               </div>
@@ -168,13 +182,25 @@ export default async function BillingPage() {
           ))}
         </ul>
       </div>
+
+      {!subscribed ? (
+        <div className="border border-hairline bg-card px-7 py-6 animate-[rise_0.5s_ease-out_0.18s_both]">
+          <h2 className="m-0 mb-2 font-mono text-[11px] font-normal uppercase tracking-[0.12em] text-faint">
+            Subscription
+          </h2>
+          <p className="m-0 font-serif text-[15px] text-body">No active subscription.</p>
+          <p className="m-0 mt-1 font-mono text-[11px] text-faint">
+            The billing portal appears here while a subscription is active.
+          </p>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function CurrentPlanBadge() {
   return (
-    <span className="rounded bg-neutral-900 px-1.5 py-0.5 text-xs font-medium text-white">
+    <span className="bg-ink px-2 py-[3px] font-mono text-[10px] font-semibold tracking-[0.12em] text-paper">
       Current plan
     </span>
   );
@@ -182,7 +208,7 @@ function CurrentPlanBadge() {
 
 function SandboxBadge() {
   return (
-    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+    <span className="bg-accent-badge-bg px-2 py-[3px] font-mono text-[10px] font-semibold tracking-[0.12em] text-warn">
       Sandbox
     </span>
   );

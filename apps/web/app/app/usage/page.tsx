@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { listLedgerEntries } from "@pseo/db/ledger-read";
 import { createClient } from "../../../lib/supabase/server";
-import { LedgerTable } from "../ui";
+import { LedgerTable, SpendChart } from "../ui";
 
 /** One ledger page per screen. */
 const PAGE_SIZE = 25;
@@ -41,56 +41,61 @@ export default async function UsagePage({
     );
   }
 
-  const {
-    entries,
-    total,
-    page: currentPage,
-    pageSize,
-  } = await listLedgerEntries(supabase, user.id, { page, pageSize: PAGE_SIZE });
+  const [{ entries, total, page: currentPage, pageSize }, chartWindow] = await Promise.all([
+    listLedgerEntries(supabase, user.id, { page, pageSize: PAGE_SIZE }),
+    // A wider, page-independent window purely for the 14-day spend chart, so the bars sum to
+    // the ledger's committed spend whatever page of the table is being read.
+    listLedgerEntries(supabase, user.id, { page: 1, pageSize: 200 }),
+  ]);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const hasPrev = currentPage > 1;
   const hasNext = currentPage < pageCount;
 
   return (
-    <section className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Usage</h1>
-        <p className="text-sm text-neutral-600">Every credit movement on your account, newest first.</p>
+    <section>
+      <header className="mb-10 animate-[rise_0.5s_ease-out_both]">
+        <p className="m-0 mb-2.5 font-mono text-[11px] tracking-[0.14em] text-accent">DASHBOARD</p>
+        <h1 className="m-0 mb-2 font-serif text-[34px] font-medium tracking-[-0.01em]">Usage</h1>
+        <p className="m-0 font-serif text-[15px] text-muted">
+          Every credit movement on your account, newest first.
+        </p>
       </header>
 
-      <LedgerTable entries={entries} />
+      <SpendChart entries={chartWindow.entries} />
+
+      <div className="animate-[rise_0.5s_ease-out_0.06s_both]">
+        <LedgerTable entries={entries} />
+      </div>
 
       {total > 0 ? (
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-neutral-500">
+        <div className="mt-6 flex items-center justify-between font-mono text-[12px] animate-[rise_0.5s_ease-out_0.12s_both]">
+          {hasPrev ? (
+            <Link
+              href={`/app/usage?page=${currentPage - 1}`}
+              className="text-muted transition-colors duration-150 hover:text-accent"
+            >
+              <span aria-hidden="true">←</span> Previous
+            </Link>
+          ) : (
+            <span aria-disabled="true" className="text-hairline-mid">
+              <span aria-hidden="true">←</span> Previous
+            </span>
+          )}
+          <span className="text-faint">
             {`${total} ${total === 1 ? "entry" : "entries"} · Page ${currentPage} of ${pageCount}`}
           </span>
-          <span className="flex items-center gap-4">
-            {hasPrev ? (
-              <Link
-                href={`/app/usage?page=${currentPage - 1}`}
-                className="text-neutral-700 hover:text-neutral-900"
-              >
-                Previous
-              </Link>
-            ) : (
-              <span aria-disabled="true" className="text-neutral-300">
-                Previous
-              </span>
-            )}
-            {hasNext ? (
-              <Link
-                href={`/app/usage?page=${currentPage + 1}`}
-                className="text-neutral-700 hover:text-neutral-900"
-              >
-                Next
-              </Link>
-            ) : (
-              <span aria-disabled="true" className="text-neutral-300">
-                Next
-              </span>
-            )}
-          </span>
+          {hasNext ? (
+            <Link
+              href={`/app/usage?page=${currentPage + 1}`}
+              className="text-muted transition-colors duration-150 hover:text-accent"
+            >
+              Next <span aria-hidden="true">→</span>
+            </Link>
+          ) : (
+            <span aria-disabled="true" className="text-hairline-mid">
+              Next <span aria-hidden="true">→</span>
+            </span>
+          )}
         </div>
       ) : null}
     </section>

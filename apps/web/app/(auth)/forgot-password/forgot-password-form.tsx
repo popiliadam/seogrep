@@ -75,7 +75,7 @@ export function ForgotPasswordForm() {
 
   if (status === "unreachable") {
     return (
-      <p role="alert" className="text-sm text-red-600">
+      <p role="alert" className="m-0 font-mono text-[12px] leading-[1.6] text-negative">
         We couldn&apos;t reach the server. Check your connection and try again.
       </p>
     );
@@ -83,7 +83,7 @@ export function ForgotPasswordForm() {
 
   if (status === "sent") {
     return (
-      <p role="status" className="text-sm text-neutral-600">
+      <p role="status" className="m-0 font-serif text-[15px] leading-[1.55] text-muted">
         If an account exists for that address, we&apos;ve sent a password reset link. Check your
         inbox — the link expires after one hour.
       </p>
@@ -91,9 +91,9 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-sm font-medium">
+    <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-[22px]">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="email" className="font-mono text-[11px] uppercase tracking-[0.12em] text-faint">
           Email
         </label>
         <input
@@ -104,14 +104,14 @@ export function ForgotPasswordForm() {
           required
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-500"
+          className="w-full border border-hairline-mid bg-paper px-3.5 py-3 font-mono text-[14px] text-ink outline-none placeholder:text-faintest focus:border-accent"
         />
       </div>
       <TurnstileWidget onToken={onToken} resetKey={captchaRound} />
       <button
         type="submit"
         disabled={status === "submitting" || (turnstileEnabled() && !captchaToken)}
-        className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="mt-1 w-full bg-ink py-3.5 text-center font-mono text-[14px] font-semibold text-paper transition-colors duration-150 hover:bg-accent hover:text-paper disabled:opacity-60 disabled:hover:bg-ink"
       >
         Send reset link
       </button>

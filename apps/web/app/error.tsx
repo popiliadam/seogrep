@@ -26,28 +26,29 @@ export default function AppError({
   }, [error]);
 
   return (
-    <main className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center gap-6 px-6 text-center">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-semibold text-neutral-900">Something went wrong</h1>
-        <p className="text-sm text-neutral-600">
+    <main className="mx-auto flex min-h-[60vh] w-full max-w-[560px] flex-col items-start justify-center px-5 py-16 sm:px-8">
+      <div className="animate-[rise_0.6s_ease-out_both]">
+        <p className="m-0 mb-6 font-mono text-[12px] text-faint">ERROR(500)</p>
+        <h1 className="m-0 mb-3 font-serif text-[34px] font-medium tracking-[-0.015em]">Something went wrong</h1>
+        <p className="m-0 mb-7 font-serif text-[16px] leading-[1.65] text-muted">
           An unexpected error interrupted this page. Your data is safe — please try again in a
           moment.
         </p>
-      </div>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={reset}
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
-        >
-          Try again
-        </button>
-        <Link
-          href="/"
-          className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700"
-        >
-          Back to home
-        </Link>
+        <div className="flex flex-wrap items-center gap-5">
+          <button
+            type="button"
+            onClick={reset}
+            className="whitespace-nowrap bg-ink px-[22px] py-3 font-mono text-[13px] font-semibold text-paper transition-colors duration-150 hover:bg-accent hover:text-paper"
+          >
+            Try again
+          </button>
+          <Link
+            href="/"
+            className="whitespace-nowrap border-b border-accent pb-0.5 font-mono text-[13px] transition-colors duration-150"
+          >
+            Back to home <span aria-hidden="true">→</span>
+          </Link>
+        </div>
       </div>
     </main>
   );

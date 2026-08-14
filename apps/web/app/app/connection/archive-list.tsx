@@ -63,31 +63,31 @@ export function ArchiveList({ rows, restoreProject }: ArchiveListProps) {
 
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium text-neutral-700">Archive</h3>
+      <h3 className="text-sm font-medium text-body">Archive</h3>
       {rows.length === 0 ? (
-        <p className="text-sm text-neutral-600">
+        <p className="text-sm text-muted">
           Nothing is archived. Removing a site puts it here, with its history and its Search
           Console property kept, so bringing it back costs one click.
         </p>
       ) : shown.length === 0 ? (
         // Only reachable while filtering. Saying "Nothing is archived" because a query matched
         // nothing would answer "where did my site go?" with a plain falsehood.
-        <p className="text-sm text-neutral-600">Nothing in the archive matches that search.</p>
+        <p className="text-sm text-muted">Nothing in the archive matches that search.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {shown.map((row) => (
             <li
               key={row.projectId}
-              className="flex flex-col gap-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+              className="flex flex-col gap-1 border border-hairline px-3 py-2 text-sm"
             >
               <span className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-neutral-800">{row.domain}</span>
+                <span className="text-ink">{row.domain}</span>
                 <button
                   type="button"
                   disabled={isPending}
                   onClick={() => restore(row.projectId)}
                   aria-label={`Restore ${row.domain}`}
-                  className="font-medium text-neutral-700 hover:text-neutral-900 disabled:opacity-60"
+                  className="font-medium text-body hover:text-ink disabled:opacity-60"
                 >
                   Restore
                 </button>
@@ -95,10 +95,10 @@ export function ArchiveList({ rows, restoreProject }: ArchiveListProps) {
               {/* Named in THIS row, not in a note above the list: what comes back with the site
                   is the only thing that distinguishes one archived row from another. */}
               {row.property ? (
-                <span className="text-xs text-neutral-500">Keeps {row.property}</span>
+                <span className="text-xs text-faint">Keeps {row.property}</span>
               ) : null}
               {errors[row.projectId] ? (
-                <span role="alert" className="text-xs text-red-600">
+                <span role="alert" className="text-xs text-negative">
                   {errors[row.projectId]}
                 </span>
               ) : null}

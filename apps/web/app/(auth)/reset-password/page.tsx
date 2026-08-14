@@ -26,10 +26,10 @@ export default async function ResetPasswordPage() {
   if (!user) redirect("/login?error=auth");
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Set a new password</h1>
-        <p className="text-sm text-neutral-600">
+    <div className="flex flex-col gap-[22px] border border-hairline bg-card px-9 py-10">
+      <div>
+        <h1 className="m-0 mb-2 font-serif text-[28px] font-medium tracking-[-0.01em]">Set a new password</h1>
+        <p className="m-0 font-serif text-[15px] leading-[1.55] text-muted">
           Choose a new password for your SeoGrep account.
         </p>
       </div>
