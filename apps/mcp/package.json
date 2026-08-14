@@ -16,6 +16,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@pseo/core": "workspace:*",
+    "@pseo/db": "workspace:*",
     "@supabase/supabase-js": "^2.110.5",
     "express": "^4.22.2",
     "pg-boss": "^12.26.1",

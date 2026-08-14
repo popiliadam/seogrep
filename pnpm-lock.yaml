@@ -35,6 +35,9 @@ importers:
       '@pseo/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@pseo/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@supabase/supabase-js':
         specifier: ^2.110.5
         version: 2.110.7
@@ -176,6 +179,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@pseo/core':
+        specifier: workspace:*
+        version: link:../core
       '@supabase/supabase-js':
         specifier: ^2.110.5
         version: 2.110.7
