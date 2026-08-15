@@ -1,5 +1,11 @@
 import type { OnpageReport } from "./rules/onpage.ts";
 import type { TechReport } from "./rules/tech.ts";
+import {
+  DEEP_PAGE_DEPTH,
+  HEAVY_PAGE_BYTES,
+  REDIRECT_CHAIN_MIN,
+  SLOW_PAGE_MS,
+} from "./rules/tech.ts";
 import type { SchemaReport } from "./rules/schema.ts";
 
 /**
@@ -44,6 +50,14 @@ export const ONPAGE_LABELS: Record<string, string> = {
   missing_canonical: "missing canonical",
   canonical_elsewhere: "canonical points elsewhere",
   thin_content: "thin content",
+  // Faz 1 signal rules. APPENDED, never interleaved: ONPAGE_ORDER is this map's key order and
+  // is the summary line's order, so inserting a key higher up would reorder a line that has
+  // already shipped — for a rule the older half of the corpus cannot even fire.
+  img_missing_alt: "images missing alt text",
+  title_equals_h1: "title duplicates the h1",
+  og_missing: "no OpenGraph title/description",
+  lang_missing: "missing html lang",
+  heading_gap: "heading hierarchy gap",
 };
 /** The canonical finding-type order (semantic, not by count) — stable tie-break for summaries. */
 export const ONPAGE_ORDER = Object.keys(ONPAGE_LABELS);
@@ -67,6 +81,22 @@ export function formatOnpageReport(report: OnpageReport, fetchedAt: string | nul
     }
     if (report.pages.length > MAX_LISTED) {
       lines.push(`  … and ${report.pages.length - MAX_LISTED} more page(s) with findings`);
+    }
+  }
+
+  // Duplicate content — APPENDED, and ONLY when there is a group to show.
+  //
+  // The silence is the honest rendering, not a saved line: `duplicateGroups` is empty both for a
+  // site with no duplicates and for a crawl taken before the fingerprint existed, so a
+  // "0 groups" header would state a measurement that, on half the stored corpus, never happened.
+  if (report.duplicateGroups.length > 0) {
+    lines.push("", `Duplicate content (pages sharing one text fingerprint): ${report.duplicateGroups.length} group(s)`);
+    for (const group of report.duplicateGroups.slice(0, MAX_LISTED)) {
+      lines.push(`- ${group.urls.length} pages share fingerprint ${group.hash.slice(0, 12)}…`);
+      lines.push(bulletList(group.urls, "    "));
+    }
+    if (report.duplicateGroups.length > MAX_LISTED) {
+      lines.push(`  … and ${report.duplicateGroups.length - MAX_LISTED} more group(s)`);
     }
   }
   return lines.join("\n");
@@ -99,6 +129,40 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
   lines.push("", `Robots conflicts (noindex but internally linked): ${report.robotsConflicts.length}`);
   if (report.robotsConflicts.length > 0) {
     lines.push(bulletList(report.robotsConflicts.map((c) => `${c.url} (linked from ${c.linkedFrom} page(s))`)));
+  }
+
+  // Signal sections — APPENDED, each printed ONLY when non-empty, for the reason the on-page
+  // duplicate section states: on a crawl predating these signals every list is empty, and a
+  // header reading "Slow pages: 0" would report a measurement that never took place. Each
+  // header names the THRESHOLD it used, from the constant, so the number in the prose and the
+  // number in the rule cannot drift apart.
+  if (report.slowPages.length > 0) {
+    lines.push("", `Slow pages (fetch over ${SLOW_PAGE_MS} ms): ${report.slowPages.length}`);
+    lines.push(bulletList(report.slowPages.map((p) => `${p.url} (${p.fetchMs} ms)`)));
+  }
+  if (report.heavyPages.length > 0) {
+    lines.push("", `Heavy pages (HTML over ${HEAVY_PAGE_BYTES} bytes): ${report.heavyPages.length}`);
+    lines.push(bulletList(report.heavyPages.map((p) => `${p.url} (${p.htmlBytes} bytes)`)));
+  }
+  if (report.redirectChains.length > 0) {
+    lines.push("", `Redirect chains (${REDIRECT_CHAIN_MIN}+ hops): ${report.redirectChains.length}`);
+    lines.push(bulletList(report.redirectChains.map((c) => [...c.chain, c.url].join(" → "))));
+  }
+  if (report.xRobotsConflicts.length > 0) {
+    lines.push(
+      "",
+      `X-Robots-Tag conflicts (header says noindex, meta does not): ${report.xRobotsConflicts.length}`,
+    );
+    lines.push(bulletList(report.xRobotsConflicts.map((c) => `${c.url} (X-Robots-Tag: ${c.xRobotsTag})`)));
+  }
+  if (report.deepPages.length > 0) {
+    lines.push("", `Deep pages (${DEEP_PAGE_DEPTH}+ clicks from a crawl seed): ${report.deepPages.length}`);
+    lines.push(bulletList(report.deepPages.map((p) => `${p.url} (depth ${p.depth})`)));
+  }
+  if (report.orphanSignals.length > 0) {
+    lines.push("", `No internal links found (orphan signal): ${report.orphanSignals.length}`);
+    lines.push(bulletList(report.orphanSignals.map((p) => `${p.url} (depth ${p.depth})`)));
+    lines.push("  Note: the crawl is bounded, so a page whose only linking page was not fetched appears here too.");
   }
   return lines.join("\n");
 }
