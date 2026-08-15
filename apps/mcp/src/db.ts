@@ -364,6 +364,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per audit_content run, migration 0026 — the third sibling of audit_runs (0024)
+      // and gsc_discovery_runs (0025), written by tools/audit-content-runs.ts.
+      //
+      // It is the only one of the three carrying BOTH job columns, and that is why it is its own
+      // table: audit_content joins a stored PULL against a stored CRAWL, so a row in either
+      // sibling would be missing half of its own provenance.
+      //
+      // No `tool` column: this table serves ONE tool and is named after it, so a column repeating
+      // the same literal on every row would state nothing (the migration says the same).
+      //
+      // `report` is the engine's STRUCTURAL result as jsonb, never the rendered text. Update is
+      // `never`, matching the migration's grants (SELECT + INSERT only): a run is what was
+      // measured at that moment, so a corrected rule produces a NEW run rather than rewriting an
+      // old one. Rows leave only with either input job, the project or the account (CASCADE).
+      audit_content_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          pull_job_id: string;
+          crawl_job_id: string;
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          pull_job_id: string;
+          crawl_job_id: string;
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.

@@ -66,6 +66,58 @@ export type Database = {
         }
         Relationships: []
       }
+      audit_content_runs: {
+        Row: {
+          crawl_job_id: string
+          created_at: string
+          id: string
+          project_id: string
+          pull_job_id: string
+          report: Json
+          user_id: string
+        }
+        Insert: {
+          crawl_job_id: string
+          created_at?: string
+          id?: string
+          project_id: string
+          pull_job_id: string
+          report: Json
+          user_id: string
+        }
+        Update: {
+          crawl_job_id?: string
+          created_at?: string
+          id?: string
+          project_id?: string
+          pull_job_id?: string
+          report?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_content_runs_user_id_crawl_job_id_fkey"
+            columns: ["user_id", "crawl_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["user_id", "id"]
+          },
+          {
+            foreignKeyName: "audit_content_runs_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+          {
+            foreignKeyName: "audit_content_runs_user_id_pull_job_id_fkey"
+            columns: ["user_id", "pull_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
+      }
       audit_runs: {
         Row: {
           crawl_job_id: string
