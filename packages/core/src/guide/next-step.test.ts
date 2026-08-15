@@ -81,21 +81,31 @@ describe("the dead-connection rung", () => {
   });
 
   /**
-   * THE POSITION AXIS (and the reason the rung sits above the pull rungs rather than below
-   * them). A dead account holding a FRESH pull passes every freshness check on the way down and
-   * lands on the all-set rung — "you're all set" for a project that can never refresh again.
-   * Move the rung below the pull-fresh check and this is the case that goes wrong.
+   * THE POSITION AXIS. The rung has to clear four boundaries on its way up the ladder, and each
+   * one is a DIFFERENT state of the same dead account — so each is asserted separately rather
+   * than trusting one case to stand for all four. Measured, not assumed: moving the rung one
+   * step down reddens only the boundary it crossed.
+   *
+   *   above "connected, nothing pulled"  -> the no-pull case, at the top of this describe;
+   *   above "stale pull"                 -> a dead account cannot refresh, so a refresh is not the step;
+   *   above "stale crawl"                -> reconnect outranks a re-crawl (both are true, one blocks);
+   *   above "all set"                    -> a project that can never refresh again is not all set.
    */
-  it("a dead account on a FRESH pull is still reconnect-first, and never 'all set'", () => {
+  it("a dead account on a STALE pull is reconnect-first, not a refresh that cannot run", () => {
+    const step = decideProjectNextStep(signals({ pullFresh: false, gscTokenInvalid: true }));
+    expect(step.primary).toBe("connect_gsc");
+  });
+
+  it("a dead account with a STALE crawl is reconnect-first, not a re-crawl", () => {
+    const step = decideProjectNextStep(signals({ crawlFresh: false, gscTokenInvalid: true }));
+    expect(step.primary).toBe("connect_gsc");
+  });
+
+  it("a dead account on a FRESH pull is never 'all set' — it can never refresh again", () => {
     const step = decideProjectNextStep(signals({ gscTokenInvalid: true }));
     expect(step.primary).toBe("connect_gsc");
     expect(step.allSet).toBe(false);
     expect(mentionsAnyPullStep(step)).toEqual([]);
-  });
-
-  it("a dead account on a STALE pull is reconnect-first, not a refresh that cannot run", () => {
-    const step = decideProjectNextStep(signals({ pullFresh: false, gscTokenInvalid: true }));
-    expect(step.primary).toBe("connect_gsc");
   });
 
   /**
