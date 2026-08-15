@@ -94,6 +94,30 @@ export function isGscConnected(connection: ConnectionRow | null): boolean {
  */
 export type GscTokenStatus = "active" | "invalid";
 
+/**
+ * The stored health of the account THIS project reads through, picked out of the page's
+ * account-health map by the project's own `account_id`.
+ *
+ * IT LIVES HERE, not in the page, because the join is a DECISION and the page is a Server
+ * Component vitest cannot execute (signed lesson 12). Inline, nothing drove it: replacing
+ * `health.get(accountId)` with "the first account in the map" left all 1136 specs green, and on a
+ * multi-account user — the very axis migration 0021 exists to support — that hands every project
+ * the health of whichever account happened to be first. One dead account would then paint an
+ * expiry warning across projects reading through a healthy one, and hide the real death on the
+ * project that has it.
+ *
+ * Never `undefined`: a caller holding a health map has MEASURED. `null` is the measured answer for
+ * "there is no account health to have" — an unmapped project, or an `account_id` naming no row
+ * this caller can read, which is nothing known to be wrong rather than evidence of death.
+ */
+export function tokenStatusFor(
+  connection: ConnectionRow | null,
+  health: ReadonlyMap<string, GscTokenStatus>,
+): GscTokenStatus | null {
+  const accountId = connection?.account_id ?? null;
+  return accountId === null ? null : (health.get(accountId) ?? null);
+}
+
 /** The rows one project's signals are derived from. */
 export interface SignalInput {
   /** Newest SUCCEEDED `crawl_site` job, or null when there is none. */

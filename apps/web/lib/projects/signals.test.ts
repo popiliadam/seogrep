@@ -1,6 +1,12 @@
 import { FRESHNESS_WINDOW_DAYS } from "@pseo/core";
 import { describe, expect, it } from "vitest";
-import { deriveProjectSignals, isFresh, isGscConnected } from "./signals";
+import {
+  deriveProjectSignals,
+  isFresh,
+  isGscConnected,
+  tokenStatusFor,
+  type GscTokenStatus,
+} from "./signals";
 
 /**
  * The signal derivation, pinned directly. These specs exist because the panel and the MCP
@@ -60,6 +66,83 @@ describe("isGscConnected — connected is account_id, NOT the row", () => {
 
   it("reports NOT connected when the project has no row at all", () => {
     expect(isGscConnected(null)).toBe(false);
+  });
+});
+
+/**
+ * THE JOIN, driven rather than described.
+ *
+ * Every case here uses a map with MORE THAN ONE account and asks about a project linked to a
+ * specific one. A single-account fixture would be green under any lookup at all — including "take
+ * the first value in the map", which is exactly the mutation that survived the whole first round
+ * of specs: the page's account-health map was built correctly, the ladder read the signal
+ * correctly, and the one line that picked WHICH account a project reads through was executed by
+ * nothing. Multi-account is not an edge case here; it is the axis migration 0021 introduced, and
+ * the health map has one entry per Google account the user connected.
+ */
+describe("tokenStatusFor — which account's health this project reads", () => {
+  const HEALTH: ReadonlyMap<string, GscTokenStatus> = new Map([
+    ["acct-dead", "invalid"],
+    ["acct-live", "active"],
+  ]);
+
+  function connection(accountId: string | null) {
+    return { account_id: accountId, gsc_property: "sc-domain:example.com" };
+  }
+
+  it("reads the health of the account THIS project is linked to", () => {
+    expect(tokenStatusFor(connection("acct-dead"), HEALTH)).toBe("invalid");
+    expect(tokenStatusFor(connection("acct-live"), HEALTH)).toBe("active");
+  });
+
+  /**
+   * The pair above in the other order, so a lookup that returns the map's FIRST entry cannot pass
+   * by luck of insertion order: whichever account is first, one of these two assertions is wrong.
+   */
+  it("does not hand every project the same account's health", () => {
+    const reversed: ReadonlyMap<string, GscTokenStatus> = new Map([
+      ["acct-live", "active"],
+      ["acct-dead", "invalid"],
+    ]);
+    expect(tokenStatusFor(connection("acct-dead"), reversed)).toBe("invalid");
+    expect(tokenStatusFor(connection("acct-live"), reversed)).toBe("active");
+  });
+
+  it("reads nothing for a project with no account link, however many accounts exist", () => {
+    expect(tokenStatusFor(connection(null), HEALTH)).toBeNull();
+    expect(tokenStatusFor(null, HEALTH)).toBeNull();
+  });
+
+  /**
+   * An `account_id` naming no readable row is NOT a death. It is what a row this caller cannot see
+   * looks like; calling it invalid would send the user to reconnect an account that is fine.
+   */
+  it("reads nothing for an account_id that names no row in the map", () => {
+    expect(tokenStatusFor(connection("acct-unknown"), HEALTH)).toBeNull();
+  });
+});
+
+/**
+ * …and the same join carried all the way to the ladder, on the surface's own two steps: the wrong
+ * account's status must not be able to reach `gscTokenInvalid` either.
+ */
+describe("tokenStatusFor feeds deriveProjectSignals per project", () => {
+  const HEALTH: ReadonlyMap<string, GscTokenStatus> = new Map([
+    ["acct-dead", "invalid"],
+    ["acct-live", "active"],
+  ]);
+
+  function signalsFor(accountId: string) {
+    const connection = { account_id: accountId, gsc_property: "sc-domain:example.com" };
+    return deriveProjectSignals(
+      { crawl: null, pull: null, connection, tokenStatus: tokenStatusFor(connection, HEALTH) },
+      NOW,
+    );
+  }
+
+  it("marks only the project on the dead account as invalid", () => {
+    expect(signalsFor("acct-dead").gscTokenInvalid).toBe(true);
+    expect(signalsFor("acct-live").gscTokenInvalid).toBe(false);
   });
 });
 

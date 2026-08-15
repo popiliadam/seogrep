@@ -2,11 +2,12 @@ import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import { DISCOVERY_TOOLS, type DiscoveryRunRow } from "../../../lib/projects/insights";
-import type {
-  ConnectionRow,
-  GscTokenStatus,
-  JobRow,
-  PullRow,
+import {
+  tokenStatusFor,
+  type ConnectionRow,
+  type GscTokenStatus,
+  type JobRow,
+  type PullRow,
 } from "../../../lib/projects/signals";
 import { createClient } from "../../../lib/supabase/server";
 import { AddDomainBanner } from "./add-domain-banner";
@@ -113,22 +114,6 @@ async function readAccountHealth(
   return new Map(
     rows.flatMap((row) => (row.token_status === null ? [] : [[row.id, row.token_status] as const])),
   );
-}
-
-/**
- * The stored health of the account THIS project reads through, for the signal layer.
- *
- * Never `undefined`: this page measures health for every project, so each one gets a boolean
- * `gscTokenInvalid` (see `signals.ts`). `null` is the measured answer for "there is no account
- * health to have" — an unmapped project, or an `account_id` naming no row this caller can read,
- * which is nothing known to be wrong rather than evidence of death.
- */
-function tokenStatusFor(
-  connection: ConnectionRow | null,
-  health: Map<string, GscTokenStatus>,
-): GscTokenStatus | null {
-  const accountId = connection?.account_id ?? null;
-  return accountId === null ? null : (health.get(accountId) ?? null);
 }
 
 /**

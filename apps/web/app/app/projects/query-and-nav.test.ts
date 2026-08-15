@@ -165,6 +165,21 @@ describe("the panel reads connection health without reaching for the credential"
     expect(PAGE).toMatch(/readAccountHealth\(supabase,\s*user\.id\)/);
     expect(PAGE).not.toMatch(/readAccountHealth\([^)]*project/);
   });
+
+  /**
+   * …and the project -> account JOIN is the SHARED one, which `signals.test.ts` drives with a
+   * two-account map. The behaviour pin is the real guard; this keeps the page attached to it,
+   * because a page that re-derived the lookup inline would be back to the state where replacing it
+   * with "the first account in the map" reddens nothing.
+   */
+  it("picks each project's account through the shared, tested join", () => {
+    expect(PAGE).toMatch(
+      /import\s*\{[^}]*\btokenStatusFor\b[^}]*\}\s*from\s*["'][^"']*projects\/signals["']/,
+    );
+    expect(PAGE).toMatch(/tokenStatus:\s*tokenStatusFor\(/);
+    // No second, inline lookup beside it: the map is read only through that function.
+    expect(PAGE).not.toMatch(/health\.get\(/);
+  });
 });
 
 describe("the panel is reachable", () => {
