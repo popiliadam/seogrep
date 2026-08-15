@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import type { AuditLine } from "../../../lib/projects/audits";
 import type { ProjectCard } from "../../../lib/projects/card";
+import type { InsightLine } from "../../../lib/projects/insights";
 import { formatStamp, type CrawlHistoryEntry } from "../../../lib/projects/history";
 import { formatDate } from "../../../lib/format";
 
@@ -162,6 +163,79 @@ function AuditLines({ lines }: { lines: readonly AuditLine[] }) {
   );
 }
 
+/**
+ * The three Search Console analyses, each with the date of its last run and that run's numbers —
+ * or, when it has never run, the tool to ask for. The twin of `AuditLines`, and deliberately the
+ * same shape: they are the same kind of fact about a project (a paid analysis that either ran or
+ * did not), and giving them two different layouts would suggest a difference that is not there.
+ */
+function InsightLines({ lines }: { lines: readonly InsightLine[] }) {
+  return (
+    <div className="border-t border-hairline px-7 py-4">
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">
+        Search Console insights
+      </span>
+      <ol className="m-0 mt-2.5 flex list-none flex-col gap-2 p-0">
+        {lines.map((line) => (
+          <li key={line.tool} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span className="font-mono text-[12.5px] text-body">{line.tool}</span>
+            {line.run === null ? (
+              <span className="font-serif text-[13.5px] text-muted">
+                Not run yet — ask your assistant to run {line.tool}
+              </span>
+            ) : (
+              <>
+                <time className="font-mono text-[11px] text-faint" dateTime={line.run.createdAt}>
+                  {formatDate(line.run.createdAt)}
+                </time>
+                {/* No numbers when the stored report could not be read: the date still says the
+                    analysis ran, and inventing a 0 would say it found nothing. */}
+                {line.run.summary === null ? null : (
+                  <span className="font-mono text-[11px] text-faint">{line.run.summary}</span>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
+ * The last Search Console pull: when it ran, what window it covered, and whether that window was
+ * truncated.
+ *
+ * The date alone used to be the whole line, and it is the weaker half — the same pull date can sit
+ * over a 7-day or a 90-day window, and every number the discovery tools print off it means
+ * something different. The cap warning is separate and louder because it is a statement about
+ * COMPLETENESS: an analysis run over a truncated pull reports ghost decay and computes
+ * cannibalization shares against a short denominator, which is exactly what the MCP tools warn
+ * about in their own footer.
+ */
+function PullLine({ card }: { card: ProjectCard }) {
+  if (card.pullAt === null) {
+    return <Fact label="Last Search Console pull">No pull yet</Fact>;
+  }
+  return (
+    <Fact label="Last Search Console pull">
+      <time dateTime={card.pullAt}>{formatDate(card.pullAt)}</time>
+      {card.pullWindow === null ? null : (
+        <>
+          <span className="mt-1 block font-mono text-[11px] leading-[1.6] text-faint">
+            {card.pullWindow.range}
+          </span>
+          {card.pullWindow.capped ? (
+            <span className="mt-1 block font-mono text-[11px] leading-[1.6] text-negative">
+              Hit the row cap — this data may be partial.
+            </span>
+          ) : null}
+        </>
+      )}
+    </Fact>
+  );
+}
+
 /** One project: what it is, what has been read for it, and the one thing to do next. */
 export function ProjectCardView({ card }: { card: ProjectCard }) {
   return (
@@ -176,16 +250,12 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 sm:divide-x sm:divide-hairline">
         <CrawlLine card={card} />
         <GscLine card={card} />
-        <Fact label="Last Search Console pull">
-          {card.pullAt === null ? (
-            "No pull yet"
-          ) : (
-            <time dateTime={card.pullAt}>{formatDate(card.pullAt)}</time>
-          )}
-        </Fact>
+        <PullLine card={card} />
       </div>
 
       <AuditLines lines={card.audits} />
+
+      <InsightLines lines={card.insights} />
 
       <CrawlHistory entries={card.recentCrawls} />
 
