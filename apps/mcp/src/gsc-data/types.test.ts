@@ -61,9 +61,52 @@ describe("parsePullResult defensiveness", () => {
 
   it("treats a window with no rows array as empty (not a parse failure)", () => {
     const parsed = parsePullResult(
-      pullResultToJson(pullData([gscRow({ query: "q", page: "https://x.test/p" })], [])),
+      pullResultToJson(pullData([gscRow({ query: "q", page: "https://x.test/p", position: 8 })], [])),
     );
     expect(parsed?.previous.rows).toEqual([]);
     expect(parsed?.current.rows).toHaveLength(1);
+  });
+
+  /**
+   * B3, the stored-blob half. `parsePullResult` and `parseSearchAnalyticsRows` are the only two
+   * doors into a `GscRow`, so a fail-safe on one of them is not a fail-safe — a pull stored
+   * before the rule existed comes back through THIS door, and a 0-default here would put a
+   * rankless row in front of the same `looksLikeSitelinks` test rows.ts now protects.
+   */
+  it("drops a stored row whose position is missing, non-finite, or not positive", () => {
+    const blob = {
+      days: 90,
+      current: {
+        start_date: "2026-04-19",
+        end_date: "2026-07-17",
+        rows: [
+          { query: "kept", page: "https://x.test/kept", clicks: 3, impressions: 9, ctr: 0.3, position: 4 },
+          { query: "no position", page: "https://x.test/a", impressions: 40 },
+          { query: "zero", page: "https://x.test/b", position: 0 },
+          { query: "negative", page: "https://x.test/c", position: -1 },
+          { query: "stringy", page: "https://x.test/d", position: "7" },
+        ],
+      },
+      previous: { start_date: "2026-01-19", end_date: "2026-04-18", rows: [] },
+    };
+    expect(parsePullResult(blob)?.current.rows.map((row) => row.query)).toEqual(["kept"]);
+  });
+
+  it("reads back every OLD stored row that carries a real position (backwards compatibility)", () => {
+    const blob = {
+      days: 30,
+      // No `capped` and no `property` — the shape a pull stored before those fields existed has.
+      current: {
+        start_date: "2026-06-18",
+        end_date: "2026-07-17",
+        rows: [
+          { query: "a", page: "https://x.test/a", clicks: 1, impressions: 10, ctr: 0.1, position: 1 },
+          { query: "b", page: "https://x.test/b", clicks: 0, impressions: 5, ctr: 0, position: 0.8 },
+          { query: "c", page: "https://x.test/c", clicks: 9, impressions: 90, ctr: 0.1, position: 71.5 },
+        ],
+      },
+      previous: { start_date: "2026-05-19", end_date: "2026-06-17", rows: [] },
+    };
+    expect(parsePullResult(blob)?.current.rows).toHaveLength(3);
   });
 });

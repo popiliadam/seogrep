@@ -28,6 +28,13 @@ Console data with `pull_gsc_data`, runs the discovery tools (`find_quick_wins`,
 `detect_cannibalization`, `analyze_content_decay`), and rolls the findings up with
 `generate_report`.
 
+If the project isn't connected to a Search Console property yet, the prompt points you at
+[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) to see what your connected
+Google accounts can already reach, then
+[`track_gsc_property`](/docs/tools-reference/track-gsc-property) to link the right one — both
+free, and neither needs a new Google sign-in. Only if you have no Google account connected at
+all does it send you to [`connect_gsc`](/docs/tools-reference/connect-gsc) first.
+
 | Argument | Required | Description |
 | --- | --- | --- |
 | `project_id` | yes | The project to run the routine for (from `list_projects`). |
@@ -41,6 +48,25 @@ lowest-effort fixes.
 | Argument | Required | Description |
 | --- | --- | --- |
 | `project_id` | yes | The project to run the sprint for (from `list_projects`). |
+
+### `gsc-health-check`
+
+A checkup on your Google Search Console connections. A connection can stop working quietly — an
+access grant gets revoked in the Google account, a property is removed, or a permission level is
+downgraded — and nothing announces it. The first symptom is usually a pull that comes back with
+nothing, which reads like a site with no traffic.
+
+The prompt runs [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) to see what
+each connected account can reach, names the accounts that did **not** answer (as unknown, never
+as empty — an account SeoGrep couldn't reach hasn't told you it has no properties), points you at
+a reconnect for those, and flags properties whose permission level can't answer performance
+queries. If you give it a **project_id**, it finishes by confirming the fix with a 7-day
+[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) — the cheapest call that proves a
+credential can actually fetch data rather than merely list it.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `project_id` | no | A project to confirm with a small data pull once the accounts look healthy. |
 
 ## Not sure which to run?
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient, type Json } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { whatsNextTool } from "./whats-next.ts";
+import { makeWhatsNextTool, whatsNextTool } from "./whats-next.ts";
 
 /**
  * DB-integration proof for whats_next (0 credits, tenant-scoped state reads) against a LOCAL
@@ -15,6 +15,7 @@ import { whatsNextTool } from "./whats-next.ts";
  *   (e) no project_id + a single project -> auto-selects that project;
  *   (f) CROSS-TENANT: user A asking about user B's project id is indistinguishable from a missing
  *       one ("No project found") — the tenant guard on the RLS-bypassing service client (NEVER #4);
+ *   (i) a connection whose ACCOUNT is dead (token_status='invalid') -> reconnect, never a pull;
  *   and throughout, that a 0-credit router touches the ledger ZERO times (NEVER #2).
  */
 
@@ -92,11 +93,27 @@ async function seedSucceededJob(
 }
 
 /**
- * Seed a gsc_connections row with a (non-null) account_id — whats_next only checks presence
- * (migration 0021 moved the token itself onto gsc_accounts; a minimal real account row is
- * seeded here so the foreign key is satisfied, not because whats_next reads its token).
+ * Seed a gsc_connections row with a (non-null) account_id and a HEALTHY account behind it
+ * (migration 0021 moved the token itself onto gsc_accounts). whats_next never reads the
+ * credential, but it does read that account's token_status, so the health is stated rather than
+ * left to the column default — the axis (i) below varies.
  */
 async function seedConnection(userId: string, projectId: string): Promise<void> {
+  // Delegates so the health axis has ONE seeder. 'active' is what the column defaults to
+  // (migration 0021), so every existing caller seeds byte-identically to before.
+  await seedConnectionWithHealth(userId, projectId, "active");
+}
+
+/**
+ * The same seed, with the account's stored health stated OUT LOUD. `invalid` is what the paths
+ * that actually call Google write when a refresh comes back `invalid_grant` — the state that
+ * makes pull_gsc_data unable to succeed while gsc_connections still says "connected".
+ */
+async function seedConnectionWithHealth(
+  userId: string,
+  projectId: string,
+  tokenStatus: "active" | "invalid",
+): Promise<void> {
   const account = await service
     .from("gsc_accounts")
     .insert({
@@ -104,6 +121,7 @@ async function seedConnection(userId: string, projectId: string): Promise<void> 
       google_account_sub: `sub-${randomUUID()}`,
       google_account_email: `whats-next-${randomUUID()}@example.test`,
       encrypted_refresh_token: "\\xdeadbeef",
+      token_status: tokenStatus,
     })
     .select("id")
     .single();
@@ -251,5 +269,77 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     expect(text).toMatch(/no projects/i);
     expect(text).toContain("setup_project");
     expect(text).not.toContain("retired-shop.example.com");
+  });
+
+  /**
+   * (i) THE DEAD ACCOUNT, end to end. `gsc_connections.account_id` stays non-null forever, so
+   * the connected/not-connected boolean alone cannot tell a live link from a revoked one — and
+   * on the strength of it the router sent this exact project to pull_gsc_data, a call that is
+   * refused before it starts.
+   *
+   * This is the ONE proof that whats_next actually READS gsc_accounts.token_status: the pure
+   * ladder is pinned in packages/core and the renderer in the fast lane, but neither can tell
+   * whether the signal is wired to the database. Drop the loadGscTokenStatus call from
+   * readProjectSignals and only this test goes red.
+   *
+   * Seeded with a FRESH crawl and a FRESH pull on purpose — the state that used to answer
+   * "you're all set" for a project that can never refresh again.
+   */
+  it("(i) a connected project whose Google account is dead -> reconnect, never pull_gsc_data", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "dead-token.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnectionWithHealth(user.userId, projectId, "invalid");
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+
+    const text = await runFor(user, projectId);
+    expect(text).toContain("connect_gsc");
+    expect(text).toMatch(/expired/i);
+    expect(text).not.toContain("pull_gsc_data");
+    expect(text).not.toContain("find_quick_wins");
+    expect(text).not.toMatch(/all set/i);
+    // What the user CAN still do is untouched — the crawl needs no Google account.
+    expect(text).toContain("audit_onpage");
+    expect(await ledgerCount(user.userId)).toBe(0); // still a 0-credit router
+  });
+
+  /**
+   * (j) THE FAILURE POLICY, pinned. The health read THROWS where the discovery tools swallow the
+   * identical read — a deliberate split, and one that lived only in a comment: swallowing here
+   * would answer "active" for an account whose health is unknown, which is the wrong
+   * recommendation this whole rung exists to remove.
+   *
+   * Everything else in this run is REAL — the project, the crawl, the pull, the connection — so
+   * a router that quietly degraded would sail past with a confident, wrong answer instead of
+   * failing. Only the health port is injected, and only to make it fail.
+   *
+   * Costs the user nothing to hit: whats_next is 0 credits and re-runnable, which is what makes
+   * failing loudly the cheap option here and the expensive one in gsc-discovery-shared.ts.
+   */
+  it("(j) a FAILING health read fails the tool — it never degrades to 'connection is fine'", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "health-read-down.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnectionWithHealth(user.userId, projectId, "active");
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+
+    const brokenHealth = makeWhatsNextTool({
+      loadTokenStatus: async () => {
+        throw new Error("gsc account health lookup failed: simulated outage");
+      },
+    });
+    // It REJECTS — it does not resolve to the "you're all set" this very fixture produces when
+    // the health read works ((i-control)'s state exactly). That rejection is the whole pin: a
+    // swallowed read would resolve here, confidently and wrongly.
+    //
+    // Asserted as a rejection rather than an isError result because that is where the boundary
+    // actually is: `run` propagates, and registerAll's tools/call handler is what converts an
+    // escaped error into the generic "failed unexpectedly + reference" sentence (pinned in
+    // registry.test.ts). Asserting the sentence here would be asserting the transport's
+    // behaviour through a layer this test does not go through.
+    await expect(brokenHealth.run(user, { project_id: projectId })).rejects.toThrow(
+      /health lookup failed/i,
+    );
+    expect(await ledgerCount(user.userId)).toBe(0);
   });
 });

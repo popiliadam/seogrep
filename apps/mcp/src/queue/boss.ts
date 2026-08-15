@@ -257,35 +257,41 @@ export async function getLatestSucceededPull(
  * `result`. pull_gsc_data is a SYNC (surface-charged) tool, so this row is purely a data
  * carrier: the credit reserve/commit lives on the ledger (keyed to a traceability uuid),
  * and reserve_id is deliberately LEFT NULL here — there is no worker reserve on this path.
- * Insert-then-complete mirrors the audit db-test seed shape (jobs.Insert has no result
- * column, so the result lands via the succeeded update).
+ *
+ * ONE STATEMENT, and that is the point. This used to insert a `queued` row and then update it
+ * to `succeeded`, because the hand-written jobs.Insert type in db.ts listed no `result` column
+ * — a TypeScript restriction that read like a schema fact. The SQL has allowed both columns on
+ * insert since migration 0009 added them nullable.
+ *
+ * The two-step version had a window with nothing behind it. Every OTHER `queued` row in this
+ * table is queued because a pg-boss message exists to pick it up; this path enqueues nothing,
+ * so a crash, a dropped connection or a PostgREST error between the insert and the update left
+ * a row that is `queued` forever — no worker will ever claim it, no reaper looks for it, and
+ * `get_job_status` reports it as pending work to a user whose pull actually finished. The row
+ * is written in its terminal state instead, so the intermediate state never exists.
+ *
+ * The contract is otherwise unchanged: same returned `{ jobId }`, same stored row shape.
  */
 export async function recordSucceededPull(
   client: ServiceClient,
   params: { userId: string; projectId: string; result: Json },
 ): Promise<{ jobId: string }> {
-  const inserted = await client
+  const { data, error } = await client
     .from("jobs")
     .insert({
       user_id: params.userId,
       project_id: params.projectId,
       tool: "pull_gsc_data",
-      status: "queued",
+      status: "succeeded",
+      finished_at: new Date().toISOString(),
+      result: params.result,
     })
     .select("id")
     .single();
-  if (inserted.error || !inserted.data) {
-    throw new Error(`recordSucceededPull: jobs insert failed: ${inserted.error?.message ?? "no row"}`);
+  if (error || !data) {
+    throw new Error(`recordSucceededPull: jobs insert failed: ${error?.message ?? "no row"}`);
   }
-  const jobId = inserted.data.id;
-  const { error } = await client
-    .from("jobs")
-    .update({ status: "succeeded", finished_at: new Date().toISOString(), result: params.result })
-    .eq("id", jobId);
-  if (error) {
-    throw new Error(`recordSucceededPull: jobs completion failed: ${error.message}`);
-  }
-  return { jobId };
+  return { jobId: data.id };
 }
 
 async function updateJob(

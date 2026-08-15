@@ -84,6 +84,56 @@ interface PropertyMatch {
 }
 
 /**
+ * Byte-order string comparison, used everywhere this tool has to put accounts or properties in
+ * an order. Explicit rather than a bare `.sort()` so the ordering is a stated decision, and NOT
+ * `localeCompare`, whose answer depends on the runtime's locale — which would make a refusal
+ * message differ between a developer's machine and the server.
+ */
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** What one candidate account answered: its sites, or null when the read failed. */
+interface AccountAnswer {
+  readonly account: GscAccountSummary;
+  readonly sites: readonly GscSite[] | null;
+}
+
+/**
+ * Ask every candidate account for its property list AT ONCE, and never let one account's failure
+ * become another's answer.
+ *
+ * PARALLEL because these are independent reads of different credentials, and the serial version
+ * made a user with three accounts wait for three round trips to Google to be told something
+ * about the first one. Each read is caught INSIDE its own task, so this settles rather than
+ * rejects: a bare `Promise.all` over uncaught rejections would abandon the successful reads the
+ * moment any one account failed, turning one dead credential into "nothing could be read" — the
+ * exact confusion between "absent" and "unobserved" this tool exists to prevent.
+ *
+ * ORDER IS NOT INHERITED FROM THE DATABASE. `Promise.all` preserves input order, but the input is
+ * whatever order `loadGscAccounts` happened to return, which no query here pins. Every list this
+ * function produces is therefore sorted by email, so the ambiguous / undecidable / unreadable
+ * refusals name the same accounts in the same order on every run.
+ */
+async function askEachAccount(
+  candidates: readonly GscAccountSummary[],
+  listAccountSites: ListAccountSitesFn,
+  userId: string,
+): Promise<readonly AccountAnswer[]> {
+  const answers = await Promise.all(
+    candidates.map(async (account): Promise<AccountAnswer> => {
+      try {
+        return { account, sites: await listAccountSites(account.id, userId) };
+      } catch (error) {
+        console.error(`track_gsc_property: sites.list failed for account ${account.id}:`, error);
+        return { account, sites: null };
+      }
+    }),
+  );
+  return [...answers].sort((a, b) => compareStrings(a.account.email, b.account.email));
+}
+
+/**
  * Nothing connected. The route is spelled out from the caller's ACTUAL starting point, which may
  * be zero projects: `connect_gsc` takes a `project_id` and refuses without one, so pointing a
  * brand-new account straight at it names a step they cannot take and does not name the one they
@@ -95,11 +145,44 @@ const NO_ACCOUNT =
   "to start from. Then run connect_gsc for that project, and list_gsc_properties to see what it " +
   "can reach.";
 
-function notListedMessage(property: string): string {
+/**
+ * A property string reduced to the differences that CANNOT change which site it names: letter
+ * case, and a trailing slash on a URL-prefix property. Nothing else.
+ *
+ * Deliberately not a similarity measure. `sc-domain:example.com` and `https://example.com/` are
+ * two DIFFERENT Search Console properties for the same site with different data and different
+ * permissions, so they must not collapse together here — and neither must a sibling host or a
+ * near-miss spelling.
+ */
+function cosmeticKey(property: string): string {
+  return property.trim().toLowerCase().replace(/\/+$/, "");
+}
+
+/**
+ * The listed property the caller almost certainly meant, or null.
+ *
+ * ONLY a cosmetic difference qualifies — a case mismatch, or a trailing slash they typed or left
+ * off. Anything cleverer is worse than nothing here: this suggestion is one copy-paste away from
+ * becoming the property a project BINDS to, and a plausible-looking wrong suggestion is a worse
+ * outcome than no suggestion, because a wrong binding is only discovered when the data stops
+ * making sense. So there is no edit distance, no prefix match, no "did you mean the other host".
+ *
+ * Ties are broken by sort order rather than by which account answered first, so the sentence a
+ * user sees does not depend on the order the accounts came back in.
+ */
+function cosmeticSuggestion(property: string, listed: readonly string[]): string | null {
+  const wanted = cosmeticKey(property);
+  const near = listed.filter((candidate) => candidate !== property && cosmeticKey(candidate) === wanted);
+  return [...near].sort(compareStrings)[0] ?? null;
+}
+
+function notListedMessage(property: string, listed: readonly string[] = []): string {
+  const suggestion = cosmeticSuggestion(property, listed);
   return (
     `"${property}" is not listed on any Google account you have connected, so it cannot be ` +
     "tracked. Run list_gsc_properties to see what your accounts can actually reach, and pass a " +
-    "property exactly as it is printed there."
+    "property exactly as it is printed there." +
+    (suggestion === null ? "" : ` Did you mean "${suggestion}"?`)
   );
 }
 
@@ -227,21 +310,22 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       const candidates =
         accountId === undefined ? accounts : accounts.filter((a) => a.id === accountId);
 
-      // STEP 1 — is it actually listed? Ask each candidate account live; nothing is cached,
-      // because a property can be removed (or an account demoted) at any time.
+      // STEP 1 — is it actually listed? Ask every candidate account live and in parallel;
+      // nothing is cached, because a property can be removed (or an account demoted) at any
+      // time. The answers come back sorted by email, so every refusal below is deterministic.
+      const answers = await askEachAccount(candidates, listAccountSites, ctx.userId);
       const matches: PropertyMatch[] = [];
       const unreadable: string[] = [];
-      for (const account of candidates) {
-        let sites: readonly GscSite[];
-        try {
-          sites = await listAccountSites(account.id, ctx.userId);
-        } catch (error) {
-          console.error(
-            `track_gsc_property: sites.list failed for account ${account.id}:`,
-            error,
-          );
+      // Every property any account DID list, for the near-miss suggestion below. Read only from
+      // accounts that answered — a property we never saw cannot be offered as a correction.
+      const listedProperties: string[] = [];
+      for (const { account, sites } of answers) {
+        if (sites === null) {
           unreadable.push(account.email);
           continue;
+        }
+        for (const site of sites) {
+          listedProperties.push(site.siteUrl);
         }
         const site = sites.find((candidate) => candidate.siteUrl === property);
         if (site) {
@@ -252,7 +336,9 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       if (match === undefined) {
         // A listing we never got back cannot be reported as "not listed" — say which it was.
         return errorResult(
-          unreadable.length > 0 ? unreadableMessage(unreadable) : notListedMessage(property),
+          unreadable.length > 0
+            ? unreadableMessage(unreadable)
+            : notListedMessage(property, listedProperties),
         );
       }
       if (alsoListedElsewhere !== undefined) {

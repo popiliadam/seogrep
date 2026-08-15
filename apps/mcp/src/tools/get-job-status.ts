@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { summarizeCrawlResult } from "@pseo/core";
+import { summarizeCrawlResult, summarizePullResult } from "@pseo/core";
 import { getServiceClient, type JobRow } from "../db.ts";
 import { getJobForUser } from "../queue/boss.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
@@ -23,6 +23,25 @@ import { defineTool, errorResult, textResult } from "./registry.ts";
  * urlOf, pathOf, skippedHomepageNote) went with it.
  */
 export { summarizeCrawlResult };
+
+/**
+ * Summarize a finished job's stored result, whatever tool produced it, or null when nothing
+ * here can read it.
+ *
+ * DISPATCHED ON SHAPE, NOT ON `job.tool`. A crawl result is `{ pages[], skipped[] }` and a pull
+ * result is `{ current: {rows[]}, previous: {rows[]} }`; neither satisfies the other's guard, so
+ * the two summarizers are mutually exclusive and the order below is arbitrary rather than
+ * load-bearing. Reading the tool NAME would look equivalent and is not: it would make the status
+ * line depend on a string, so a job recorded under a renamed or unexpected tool would lose its
+ * summary even though its result is perfectly readable — and it would need a new branch here
+ * every time a tool is added, which is the maintenance shape that leaves the third one out.
+ *
+ * A result no summarizer recognises returns null and the caller prints the status line with no
+ * detail — the behaviour every non-crawl job had before this.
+ */
+export function summarizeJobResult(result: JobRow["result"]): string | null {
+  return summarizeCrawlResult(result) ?? summarizePullResult(result);
+}
 
 /** Join the non-null lifecycle stamps into a compact ` · `-separated trail. */
 function stampsOf(job: JobRow): string {
@@ -48,7 +67,7 @@ export function formatJobStatus(job: JobRow): string {
     case "running":
       return `${head} is running. ${stamps}.`;
     case "succeeded": {
-      const summary = summarizeCrawlResult(job.result);
+      const summary = summarizeJobResult(job.result);
       return `${head} succeeded. ${stamps}.${summary ? ` ${summary}.` : ""}`;
     }
     case "failed":

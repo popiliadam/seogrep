@@ -164,8 +164,8 @@ describe("mcp gateway app", () => {
 describe("mcp gateway prompts", () => {
   // Prompts are STATIC (no tenant/DB), so they are advertised even when no tools are injected —
   // the same DB-free app the other gateway specs use. This is the inspector-equivalent proof that
-  // prompts/list returns the three orchestration prompts and prompts/get renders one.
-  it("POST prompts/list returns the three orchestration prompts in order", async () => {
+  // prompts/list returns every orchestration prompt and prompts/get renders one.
+  it("POST prompts/list returns the orchestration prompts in order", async () => {
     const app = await listen(appWith());
     try {
       const res = await postRpc(app.baseUrl, VALID_KEY, {
@@ -180,6 +180,7 @@ describe("mcp gateway prompts", () => {
         "new-site-audit",
         "monthly-routine",
         "quick-wins-sprint",
+        "gsc-health-check",
       ]);
     } finally {
       await app.close();
