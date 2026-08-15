@@ -28,6 +28,38 @@ export interface JobRow {
   readonly result: Json | null;
 }
 
+/**
+ * The newest succeeded `pull_gsc_data` job as the page reads it — the WHEN, plus the narrow
+ * sub-fields the card's Search Console line prints.
+ *
+ * A SEPARATE type from `JobRow` because the two reads want opposite things. The crawl read fetches
+ * `result` whole (core summarizes it); this one must NOT — `pull_gsc_data`'s stored result is two
+ * windows of Search Console rows, tens of thousands of them at the row cap, and the card printed
+ * exactly one date out of it. So the page selects `result->…` sub-fields instead, each O(1) in the
+ * pull's size, and every one of them is `unknown` here: they come out of a schemaless jsonb column
+ * whose older rows predate fields, so they are type-guarded rather than trusted.
+ *
+ * `result` is declared and NEVER read. It is here so a row that still carries the payload — a
+ * fixture, a caller predating this split — satisfies the type; it is not permission for the page
+ * to select it, and the thing that actually enforces that is the source pin on the query
+ * (`pull-query.test.ts`), because a type cannot see what a projection asks PostgREST for.
+ */
+export interface PullRow {
+  readonly created_at: string;
+  /** `result->days` — the window length in days. */
+  readonly window_days?: unknown;
+  /** `result->current->>start_date` — first day of the analyzed window (YYYY-MM-DD, UTC). */
+  readonly window_start?: unknown;
+  /** `result->current->>end_date` — last day of it. */
+  readonly window_end?: unknown;
+  /** `result->current->capped` — true when the CURRENT window hit the pull's row cap. */
+  readonly window_capped?: unknown;
+  /** `result->previous->capped` — the same flag for the baseline window. */
+  readonly previous_capped?: unknown;
+  /** Never read; see the note above. */
+  readonly result?: Json | null;
+}
+
 /** The project's `gsc_connections` row, or null when it has none at all. */
 export interface ConnectionRow {
   readonly account_id: string | null;
@@ -59,7 +91,7 @@ export interface SignalInput {
   /** Newest SUCCEEDED `crawl_site` job, or null when there is none. */
   readonly crawl: JobRow | null;
   /** Newest SUCCEEDED `pull_gsc_data` job, or null when there is none. */
-  readonly pull: JobRow | null;
+  readonly pull: PullRow | null;
   /** The project's `gsc_connections` row, or null. */
   readonly connection: ConnectionRow | null;
 }

@@ -329,6 +329,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per DISCOVERY analysis that ran, migration 0025 — the twin of audit_runs for the
+      // GSC read path, written by the three sync discovery tools (gsc-data/runs.ts) and read by
+      // the projects panel.
+      //
+      // `pull_job_id`, not `crawl_job_id`: these three analyses read a stored pull_gsc_data run,
+      // which is why they get their own table instead of a fourth `tool` value on audit_runs.
+      //
+      // `report` is the engine's STRUCTURAL result as jsonb, never the rendered text. Update is
+      // `never`, matching the migration's grants (SELECT + INSERT only): a run is the record of
+      // what was measured at that moment, so a corrected threshold produces a NEW run rather than
+      // rewriting an old one. Rows leave only with their pull job, project or account (CASCADE).
+      gsc_discovery_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          pull_job_id: string;
+          tool: string;
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          pull_job_id: string;
+          tool: string;
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.

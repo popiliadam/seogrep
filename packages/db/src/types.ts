@@ -363,6 +363,51 @@ export type Database = {
           },
         ]
       }
+      gsc_discovery_runs: {
+        Row: {
+          created_at: string
+          id: string
+          project_id: string
+          pull_job_id: string
+          report: Json
+          tool: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          project_id: string
+          pull_job_id: string
+          report: Json
+          tool: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          project_id?: string
+          pull_job_id?: string
+          report?: Json
+          tool?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gsc_discovery_runs_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+          {
+            foreignKeyName: "gsc_discovery_runs_user_id_pull_job_id_fkey"
+            columns: ["user_id", "pull_job_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
+      }
       jobs: {
         Row: {
           created_at: string

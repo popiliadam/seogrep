@@ -5,11 +5,13 @@ import {
   type CrawlHistoryEntry,
   type JobHistoryRow,
 } from "./history";
+import { buildInsightLines, type DiscoveryRunRow, type InsightLine } from "./insights";
 import {
   deriveProjectSignals,
   isGscConnected,
   type ConnectionRow,
   type JobRow,
+  type PullRow,
 } from "./signals";
 
 /**
@@ -40,8 +42,8 @@ export interface ProjectCardInput {
   readonly project: ProjectRow;
   /** Newest SUCCEEDED `crawl_site` job, or null. */
   readonly crawl: JobRow | null;
-  /** Newest SUCCEEDED `pull_gsc_data` job, or null. */
-  readonly pull: JobRow | null;
+  /** Newest SUCCEEDED `pull_gsc_data` job, or null. Carries no `result` payload (see signals.ts). */
+  readonly pull: PullRow | null;
   /** The project's `gsc_connections` row, or null when it has none. */
   readonly connection: ConnectionRow | null;
   /**
@@ -59,6 +61,57 @@ export interface ProjectCardInput {
    * (see `audits.ts`).
    */
   readonly auditRuns?: readonly AuditRunRow[];
+  /**
+   * The project's recent `gsc_discovery_runs` rows (migration 0025). Optional for the same reason
+   * `auditRuns` is: a strictly additive read, and a caller that does not ask for it gets a card
+   * whose three insight lines all read "never run" — which is what a project with no analyses has.
+   * These rows carry only the report SUB-FIELDS the lines need (see `insights.ts`).
+   */
+  readonly discoveryRuns?: readonly DiscoveryRunRow[];
+}
+
+/**
+ * What the last Search Console pull COVERED, beside the date it ran.
+ *
+ * The date alone was the whole of it, and it is the weaker half: two pulls a day apart can cover a
+ * 7-day and a 90-day window, and every number a discovery analysis prints off them means something
+ * different — the engines apply ABSOLUTE thresholds. The MCP tools have said this in their footer
+ * since the window line landed (`renderAnalyzedWindow`); the panel said nothing.
+ */
+export interface PullWindow {
+  /** `2026-04-19..2026-07-17 (90 days)` — the same two facts the tools' window line prints. */
+  readonly range: string;
+  /**
+   * True when EITHER stored window hit the pull's row cap, so the data behind every analysis of
+   * this pull may be partial. An OR, matching `renderRowCapCaveat`: the previous window is the
+   * baseline decay is measured against, so truncating IT inflates every loss the tools report.
+   */
+  readonly capped: boolean;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * The pull's window line, or null when the stored sub-fields are not readable — a pull stored
+ * before `pullResultToJson` carried these fields, or a corrupt result. The card then shows the
+ * date alone, which is exactly what it showed before this line existed; inventing a range would be
+ * worse than saying nothing, because a reader cannot check it.
+ */
+export function summarizePullWindow(pull: PullRow): PullWindow | null {
+  const days = asFiniteNumber(pull.window_days);
+  const start = asText(pull.window_start);
+  const end = asText(pull.window_end);
+  if (days === null || start === null || end === null) return null;
+  return {
+    range: `${start}..${end} (${days} ${days === 1 ? "day" : "days"})`,
+    capped: pull.window_capped === true || pull.previous_capped === true,
+  };
 }
 
 /** Everything one card renders. */
@@ -82,8 +135,21 @@ export interface ProjectCard {
    * audits; it never starts one — a line with no run names the tool to ask the assistant for.
    */
   readonly audits: readonly AuditLine[];
+  /**
+   * One line per Search Console analysis, always all three, each carrying its newest run or null.
+   * The panel SHOWS analyses; it never starts one — a line with no run names the tool to ask the
+   * assistant for.
+   */
+  readonly insights: readonly InsightLine[];
   /** When the last SUCCEEDED `pull_gsc_data` ran, or null when none has. */
   readonly pullAt: string | null;
+  /**
+   * What that pull covered — the window and whether it was truncated. Null when there is no pull,
+   * or when the stored sub-fields could not be read (`summarizePullWindow`). Kept beside `pullAt`
+   * rather than folded into it because the date is the fact that has always been there and every
+   * caller reads it; this is the detail underneath.
+   */
+  readonly pullWindow: PullWindow | null;
   readonly gsc: GscStatus;
   /** The ladder's answer for this project — core's, so it matches whats_next word for word. */
   readonly nextStep: NextStep;
@@ -91,7 +157,7 @@ export interface ProjectCard {
 
 /** Build one project's card. `now` is injected so freshness is deterministic in tests. */
 export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCard {
-  const { project, crawl, pull, connection, crawlHistory, auditRuns } = input;
+  const { project, crawl, pull, connection, crawlHistory, auditRuns, discoveryRuns } = input;
   return {
     projectId: project.id,
     domain: project.domain,
@@ -102,7 +168,9 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
         : { createdAt: crawl.created_at, summary: summarizeCrawlResult(crawl.result) },
     recentCrawls: buildCrawlHistory(crawlHistory ?? []),
     audits: buildAuditLines(auditRuns ?? []),
+    insights: buildInsightLines(discoveryRuns ?? []),
     pullAt: pull?.created_at ?? null,
+    pullWindow: pull === null ? null : summarizePullWindow(pull),
     gsc: isGscConnected(connection)
       ? { kind: "connected", property: connection?.gsc_property ?? null }
       : { kind: "not_connected" },

@@ -1,7 +1,8 @@
 import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
-import type { ConnectionRow, JobRow } from "../../../lib/projects/signals";
+import { DISCOVERY_TOOLS, type DiscoveryRunRow } from "../../../lib/projects/insights";
+import type { ConnectionRow, JobRow, PullRow } from "../../../lib/projects/signals";
 import { createClient } from "../../../lib/supabase/server";
 import { AddDomainBanner } from "./add-domain-banner";
 import { AddDomainForm } from "./add-domain-form";
@@ -77,9 +78,13 @@ async function readConnections(
  * is the crawl's whole stored jsonb: a bulk `select id, tool, result, created_at` would download
  * EVERY historical crawl payload for the tenant just to keep the newest of each pair, which for a
  * project crawled weekly for a year is megabytes thrown away per page view. `.limit(1)` fetches
- * exactly the two payloads a card can show. The cost is 2N small indexed queries (3N with the
- * payload-free crawl trail below), and N is the number of sites one person tracks — the
- * operator's own busiest account has nine.
+ * exactly the one payload a card can show. The cost is one small indexed query per project, and N
+ * is the number of sites one person tracks — the operator's own busiest account has nine.
+ *
+ * CRAWLS ONLY, since the pull read split off below. The crawl genuinely needs its whole `result`
+ * — `summarizeCrawlResult` (in @pseo/core) reads across it — and it is bounded by the crawler's
+ * 100-page cap. The pull's is not: two windows of Search Console rows, up to the 15,000-row cap
+ * each, downloaded to print one date.
  */
 async function latestSucceeded(
   supabase: Supabase,
@@ -101,6 +106,51 @@ async function latestSucceeded(
     throw new Error(`jobs lookup (${tool}) failed: ${error.message}`);
   }
   return (data as unknown as JobRow | null) ?? null;
+}
+
+/**
+ * The newest SUCCEEDED `pull_gsc_data` job — WITHOUT its payload.
+ *
+ * A DIFFERENT READ from `latestSucceeded`, not a call of it, and the reason is a measured waste:
+ * the card printed one date out of this row, and the projection that fetched it asked for `result`
+ * — which for a pull is two windows of Search Console rows, up to 15,000 each. Megabytes over the
+ * wire, per project, per render, for a date and now a range.
+ *
+ * SUB-FIELDS, NOT `result`. `days` and the current window's two dates are scalars; the two
+ * `capped` flags are booleans. All five are O(1) in the pull's size, so this row stays the same
+ * size whether the pull carried ten rows or the cap. `PullRow` has no field the whole payload
+ * could land in, and `pull-query.test.ts` pins the projection itself — a type cannot see what a
+ * query asks PostgREST for.
+ *
+ * `->>` for the dates (text out of jsonb) and `->` for `days` and the flags, so a number arrives
+ * as a number and a boolean as a boolean rather than as the strings `"90"` and `"true"`, which the
+ * `unknown` guards in card.ts would then reject and silently drop the line.
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS `jobs_select_own` (NEVER #4).
+ */
+async function latestPullSummary(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<PullRow | null> {
+  const { data, error } = await supabase
+    .from("jobs")
+    .select(
+      "created_at, window_days:result->days, window_start:result->current->>start_date, " +
+        "window_end:result->current->>end_date, window_capped:result->current->capped, " +
+        "previous_capped:result->previous->capped",
+    )
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", "pull_gsc_data")
+    .eq("status", "succeeded")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`jobs lookup (pull_gsc_data) failed: ${error.message}`);
+  }
+  return (data as unknown as PullRow | null) ?? null;
 }
 
 /**
@@ -193,6 +243,54 @@ async function latestAuditRuns(
   return runs.filter((run): run is AuditRunRow => run !== null);
 }
 
+/**
+ * The project's LAST run of one Search Console analysis (migration 0025) — the row behind one
+ * insight line. The twin of `latestAuditRun`, one table over, and the same reasoning applies whole:
+ * "the newest run of each tool" has no single-query form in PostgREST, and fetching a project's
+ * whole analysis history to keep the newest of each in memory grows without bound. 0025's
+ * (user_id, project_id, created_at desc) index is this shape, with `tool` as a residual filter.
+ *
+ * SUB-FIELDS, NOT `report`. The report carries the engine's whole finding list — every quick win,
+ * every cannibalized group with its competing pages — and the two fields the lines print sit at
+ * its top level precisely so this read is O(1) in the size of the pull. `DiscoveryRunRow` has no
+ * `report` field to put one in.
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS
+ * `gsc_discovery_runs_select_own` (constitution NEVER #4).
+ */
+async function latestDiscoveryRun(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+  tool: string,
+): Promise<DiscoveryRunRow | null> {
+  const { data, error } = await supabase
+    .from("gsc_discovery_runs")
+    .select("tool, created_at, total:report->total, top:report->top")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", tool)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`gsc_discovery_runs lookup (${tool}) failed: ${error.message}`);
+  }
+  return (data as unknown as DiscoveryRunRow | null) ?? null;
+}
+
+/** The newest run of each analysis for one project — one line's worth of data per tool. */
+async function latestDiscoveryRuns(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<DiscoveryRunRow[]> {
+  const runs = await Promise.all(
+    DISCOVERY_TOOLS.map((tool) => latestDiscoveryRun(supabase, userId, projectId, tool)),
+  );
+  return runs.filter((run): run is DiscoveryRunRow => run !== null);
+}
+
 /** Gather every row one card is built from. */
 async function cardInputFor(
   supabase: Supabase,
@@ -200,11 +298,12 @@ async function cardInputFor(
   project: ProjectRow,
   connections: Map<string, ConnectionRow>,
 ): Promise<ProjectCardInput> {
-  const [crawl, pull, crawlHistory, auditRuns] = await Promise.all([
+  const [crawl, pull, crawlHistory, auditRuns, discoveryRuns] = await Promise.all([
     latestSucceeded(supabase, userId, project.id, "crawl_site"),
-    latestSucceeded(supabase, userId, project.id, "pull_gsc_data"),
+    latestPullSummary(supabase, userId, project.id),
     recentCrawlRuns(supabase, userId, project.id),
     latestAuditRuns(supabase, userId, project.id),
+    latestDiscoveryRuns(supabase, userId, project.id),
   ]);
   return {
     project,
@@ -212,6 +311,7 @@ async function cardInputFor(
     pull,
     crawlHistory,
     auditRuns,
+    discoveryRuns,
     connection: connections.get(project.id) ?? null,
   };
 }

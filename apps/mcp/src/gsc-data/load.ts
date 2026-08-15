@@ -11,7 +11,23 @@ import { parsePullResult, type PullData } from "./types.ts";
  */
 
 export type PullLoad =
-  | { readonly ok: true; readonly pull: PullData; readonly pulledAt: string }
+  | {
+      readonly ok: true;
+      readonly pull: PullData;
+      readonly pulledAt: string;
+      /**
+       * The `jobs` row the pull was read from — what `gsc_discovery_runs.pull_job_id` records, so
+       * an analysis can be traced back to the exact pull it read (migration 0025).
+       *
+       * OPTIONAL on the type, ALWAYS present from this loader — the same split `CrawlLoad.jobId`
+       * makes: it is optional so the DB-less fakes injected as `loadPull` in the fast lane keep
+       * compiling, and that leniency is paid for at the call site rather than here.
+       * `makeDiscoveryTool` THROWS when a tool that produces a structural report is handed a load
+       * with no job id, so a missing id fails closed (no charge) instead of silently skipping the
+       * write.
+       */
+      readonly jobId?: string;
+    }
   | { readonly ok: false; readonly error: string };
 
 /** The action-suggesting message a discovery tool gives when there is no pull to analyze. */
@@ -36,7 +52,7 @@ export async function loadLatestPull(userId: string, projectId: string): Promise
   // The timestamp was already fetched (getLatestSucceededResult selects created_at) and then
   // dropped here. The three discovery tools sell an ANALYSIS of this pull; an undated analysis
   // cannot be told from a fresh one.
-  return { ok: true, pull, pulledAt: latest.createdAt };
+  return { ok: true, pull, pulledAt: latest.createdAt, jobId: latest.jobId };
 }
 
 /**
