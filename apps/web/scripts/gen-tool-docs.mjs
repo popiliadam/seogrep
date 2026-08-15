@@ -354,8 +354,9 @@ export const DOC_PROSE = {
           "ever falls further behind than that, unfinalized days re-enter the window and a run of " +
           "zeros can still look like a drop. The trade-off: the newest 3 days are not analyzed, so " +
           "a genuine drop surfaces here up to 3 days after it begins.\n" +
-          "- A single page of up to 5,000 `(query, page)` rows is fetched per window; a very large " +
-          "property is truncated to the top rows Google returns.",
+          "- A single page of up to 15,000 `(query, page)` rows is fetched per window; a very large " +
+          "property is truncated to the top rows Google returns, and the pull says so when it " +
+          "happens.",
       },
     ],
   },

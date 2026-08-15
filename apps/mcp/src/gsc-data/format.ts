@@ -1,5 +1,6 @@
 import type { CannibalGroup } from "./cannibalization.ts";
 import type { PageDecay } from "./content-decay.ts";
+import { MAX_ROW_LIMIT } from "./pull.ts";
 import type { QuickWin } from "./quick-wins.ts";
 import type { PullData } from "./types.ts";
 
@@ -18,10 +19,23 @@ function pos(position: number): string {
   return position.toFixed(1);
 }
 
-/** One-line summary of a completed pull (row counts + the two window ranges). */
+/** Thousands-separate an integer for prose (15000 → "15,000") without depending on ICU. */
+function grouped(value: number): string {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * One-line summary of a completed pull (row counts + the two window ranges).
+ *
+ * The cap sentence DERIVES its number from MAX_ROW_LIMIT rather than spelling one out. The
+ * literal it replaces (`5,000`) is what the ceiling used to be, and prose is exactly where a
+ * changed constant goes unnoticed — nothing compiles against a sentence. A wrong number here is
+ * worse than none: it tells the user how much data they are missing, and they have no way to
+ * check it.
+ */
 export function formatPullSummary(pull: PullData): string {
   const capWarning = pull.current.capped || pull.previous.capped
-    ? "Note: this window hit the 5,000-row cap — results cover the top rows only; comparisons may be partial.\n"
+    ? `Note: this window hit the ${grouped(MAX_ROW_LIMIT)}-row cap — results cover the top rows only; comparisons may be partial.\n`
     : "";
   return (
     `Pulled ${pull.days} days of Search Console data.\n` +

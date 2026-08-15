@@ -48,6 +48,24 @@ export function rawGoogleResponse(rows: GscRow[]): { rows: Record<string, unknow
 }
 
 /**
+ * A raw response of EXACTLY `count` rows in Google's shape, of which the last one is malformed
+ * (its `keys` array carries only the query, no page dimension) so the rows parser drops it.
+ *
+ * This models the state the row-cap flag has to survive: a window that genuinely filled the
+ * single-page cap AND happened to carry one unparseable row. The parsed length is `count - 1`
+ * there, so anything that decides "capped" from the PARSED rows reads a full page as a partial
+ * one and turns the truncation warning off exactly when it is true.
+ */
+export function rawGoogleResponseWithOneBadRow(count: number): { rows: Record<string, unknown>[] } {
+  const good = Array.from({ length: count - 1 }, (_unused, i) =>
+    gscRow({ query: `q-${i}`, page: `https://shop.test/p-${i}`, clicks: i, impressions: i * 10 }),
+  );
+  return {
+    rows: [...rawGoogleResponse(good).rows, { keys: ["query-with-no-page"], clicks: 1 }],
+  };
+}
+
+/**
  * A realistic current-window dataset that seeds one of EACH finding:
  *   - a clear quick win ("running shoes", position 11, 800 impressions);
  *   - a cannibalized query ("trail shoes", two pages each with a meaningful share);
