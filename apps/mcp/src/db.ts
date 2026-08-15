@@ -153,11 +153,30 @@ export type Database = {
       };
       jobs: {
         Row: JobRow;
+        /**
+         * `finished_at` and `result` are insertable, and were not always: this slice is
+         * HAND-WRITTEN, and it modelled only the columns enqueueJob happened to need. The
+         * SQL has allowed both since migration 0009 added them nullable, so the restriction
+         * was a TypeScript artefact that read like a schema fact — and it cost something
+         * real. `recordSucceededPull` records an ALREADY-FINISHED run, and had to insert a
+         * `queued` row and then update it to `succeeded`, because the type would not let it
+         * say so in one statement. A crash between those two writes leaves a row stuck
+         * `queued` with no queue message behind it — a job that can never finish and that
+         * nothing reaps. One statement, no window.
+         *
+         * Still NOT insertable, on purpose: `started_at`, `error`, `reserve_id` and
+         * `status: "running"` belong to the worker lifecycle, which writes them through
+         * markJobRunning / setJobReserve / failJob so the compare-and-set claim (B-I1) and
+         * the reserve trace stay the only way a run moves. This widening is for terminal
+         * rows a sync tool creates already complete, not a general-purpose escape hatch.
+         */
         Insert: {
           user_id: string;
           project_id?: string | null;
           tool: string;
           status?: JobStatus;
+          finished_at?: string | null;
+          result?: Json | null;
         };
         Update: {
           status?: JobStatus;
