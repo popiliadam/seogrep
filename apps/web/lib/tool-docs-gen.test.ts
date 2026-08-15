@@ -6,15 +6,18 @@ import { describe, expect, it } from "vitest";
 import {
   FRONTMATTER_DESCRIPTION_MAX,
   checkToolsMetaSync,
+  dayPhrase,
   deriveSlug,
   findConfirmFields,
   frontmatterDescription,
+  groupThousands,
   mdxEscapeInline,
   renderCostLine,
   renderFieldType,
   renderInputTable,
   renderToolPage,
   stripCostSentences,
+  substituteProseTokens,
   truncateAtWord,
 } from "../scripts/gen-tool-docs.mjs";
 
@@ -302,5 +305,122 @@ describe("findConfirmFields", () => {
       { name: "bad", inputJsonSchema: { properties: { confirm: { type: "boolean" } } } },
     ];
     expect(findConfirmFields(tools)).toEqual(["bad"]);
+  });
+});
+
+describe("groupThousands", () => {
+  it("thousands-separates the way the tool output's caveat does", () => {
+    expect(groupThousands(15000)).toBe("15,000");
+    expect(groupThousands(999)).toBe("999");
+    expect(groupThousands(1234567)).toBe("1,234,567");
+  });
+});
+
+describe("substituteProseTokens", () => {
+  it("renders {{MAX_GSC_ROWS}} from the constant, not from a hand-typed number", () => {
+    // The point of the token: change the constant and the sentence follows. A docs page that keeps
+    // saying 15,000 after MAX_ROW_LIMIT moved tells the reader how much data they are missing, and
+    // they have no way to check it.
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 15000, lagDays: 3 })).toBe(
+      "at most 15,000 rows",
+    );
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 25000, lagDays: 3 })).toBe(
+      "at most 25,000 rows",
+    );
+  });
+
+  it("substitutes every occurrence", () => {
+    expect(substituteProseTokens("{{MAX_GSC_ROWS}} and {{MAX_GSC_ROWS}}", { maxRowLimit: 15000, lagDays: 3 })).toBe(
+      "15,000 and 15,000",
+    );
+  });
+
+  it("leaves token-free prose untouched", () => {
+    expect(substituteProseTokens("nothing to substitute here.", {})).toBe("nothing to substitute here.");
+  });
+
+  it("throws instead of rendering a page that states a missing or bogus limit", () => {
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", {})).toThrow(/MAX_GSC_ROWS/);
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: undefined })).toThrow();
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: 0 })).toThrow();
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: "15000" })).toThrow();
+  });
+
+  it("throws on a token nobody substitutes, rather than shipping it to the reader", () => {
+    expect(() => substituteProseTokens("cap is {{MAX_CRAWL_PAGES}}", { maxRowLimit: 15000, lagDays: 3 })).toThrow(
+      /MAX_CRAWL_PAGES/,
+    );
+  });
+});
+
+describe("dayPhrase", () => {
+  it("renders a phrase, so a lag of 1 never prints as '1 days'", () => {
+    expect(dayPhrase(3)).toBe("3 days");
+    expect(dayPhrase(1)).toBe("1 day");
+    expect(dayPhrase(7)).toBe("7 days");
+  });
+});
+
+describe("substituteProseTokens — {{GSC_LAG_DAYS}}", () => {
+  it("renders the freshness offset from the constant, not from a hand-typed number", () => {
+    // Same reason as the row cap: the offset is what the reader is told they cannot see yet, and
+    // GSC_FRESHNESS_LAG_DAYS moving without the sentence moving is a silently wrong doc.
+    expect(substituteProseTokens("windows end {{GSC_LAG_DAYS}} before today", { lagDays: 3 })).toBe(
+      "windows end 3 days before today",
+    );
+    expect(substituteProseTokens("windows end {{GSC_LAG_DAYS}} before today", { lagDays: 7 })).toBe(
+      "windows end 7 days before today",
+    );
+  });
+
+  it("substitutes every occurrence (the pull page states the offset three times)", () => {
+    expect(
+      substituteProseTokens("{{GSC_LAG_DAYS}} / {{GSC_LAG_DAYS}} / {{GSC_LAG_DAYS}}", { lagDays: 3 }),
+    ).toBe("3 days / 3 days / 3 days");
+  });
+
+  it("substitutes both tokens in one pass", () => {
+    expect(
+      substituteProseTokens("{{MAX_GSC_ROWS}} rows, ending {{GSC_LAG_DAYS}} back", {
+        maxRowLimit: 15000,
+        lagDays: 3,
+      }),
+    ).toBe("15,000 rows, ending 3 days back");
+  });
+
+  it("throws instead of rendering a page that states a missing or bogus offset", () => {
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", {})).toThrow(/GSC_LAG_DAYS/);
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: 0 })).toThrow();
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: 2.5 })).toThrow();
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: "3" })).toThrow();
+  });
+});
+
+describe("substituteProseTokens — the leftover-token guard", () => {
+  const constants = { maxRowLimit: 15000, lagDays: 3 };
+
+  // A typo does not respect the SCREAMING_CASE convention — that is what makes it a typo. The
+  // guard's earlier `[A-Z0-9_]+` shape let each of these render onto a published page verbatim,
+  // i.e. it was green in exactly the cases it exists to catch. One case per near-miss axis:
+  // lowercase, inner padding, mixed case, and a hyphen instead of an underscore.
+  it.each([
+    ["lowercase", "cap is {{max_rows}}"],
+    ["padded with spaces", "cap is {{ MAX_GSC_ROWS }}"],
+    ["mixed case", "cap is {{Max_Rows}}"],
+    ["hyphenated", "cap is {{MAX-ROWS}}"],
+  ])("throws on a %s near-miss instead of printing it to the reader", (_label, text) => {
+    expect(() => substituteProseTokens(text, constants)).toThrow(/Unknown prose token/);
+  });
+
+  it("names the offending token in the error, so the fix is obvious", () => {
+    expect(() => substituteProseTokens("cap is {{ MAX_GSC_ROWS }}", constants)).toThrow(
+      /\{\{ MAX_GSC_ROWS \}\}/,
+    );
+  });
+
+  it("still lets a fully substituted page through", () => {
+    expect(substituteProseTokens("{{MAX_GSC_ROWS}} rows, {{GSC_LAG_DAYS}} back", constants)).toBe(
+      "15,000 rows, 3 days back",
+    );
   });
 });

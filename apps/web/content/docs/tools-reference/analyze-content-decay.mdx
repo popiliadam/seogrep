@@ -26,3 +26,9 @@ Ask your MCP client in plain language:
 ### Returns
 
 A list of decaying pages — each with its previous and current clicks, the clicks lost, and the drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still charged for the delivered analysis).
+
+### Inherited limits
+
+This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought back. A pull fetches at most **15,000** `(query, page)` rows per window, and a page that fell out of a truncated window's top rows is read as having lost those clicks, so a large property can show a decay that never happened — the analysis prints a caveat when either window hit the cap.
+
+Both windows also end **3 days before today** rather than running up to it, so the newest days are not analyzed yet. See [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.
