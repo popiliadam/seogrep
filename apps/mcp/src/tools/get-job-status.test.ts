@@ -112,6 +112,79 @@ describe("formatJobStatus", () => {
     const line = formatJobStatus(job({ status: "succeeded", result: { ok: true } }));
     expect(line).toMatch(/succeeded/);
     expect(line).not.toMatch(/Crawled/);
+    expect(line).not.toMatch(/Pulled/);
+  });
+
+  /**
+   * B13 — a succeeded pull_gsc_data job used to render as a bare "succeeded" with no detail at
+   * all, because the only summarizer wired here read crawls. The row counts were sitting in
+   * jobs.result the whole time; finding out whether a pull returned 4 rows or 40,000 meant
+   * spending a discovery tool on it.
+   *
+   * The dispatch is by SHAPE, not by `job.tool` — note the tool name below is the real one but
+   * nothing reads it, and the "renamed tool" case proves that rather than asserting it.
+   */
+  it("summarizes a succeeded pull: row counts, window dates, property", () => {
+    const line = formatJobStatus(
+      job({
+        tool: "pull_gsc_data",
+        status: "succeeded",
+        result: {
+          days: 90,
+          property: "sc-domain:shop.test",
+          current: { start_date: "2026-04-19", end_date: "2026-07-17", rows: [{ query: "a" }, { query: "b" }] },
+          previous: { start_date: "2026-01-19", end_date: "2026-04-18", rows: [{ query: "c" }] },
+        },
+        finished_at: "2026-07-19T00:02:00.000Z",
+      }),
+    );
+    expect(line).toContain("2 row(s)");
+    expect(line).toContain("1 in the previous window");
+    expect(line).toContain("sc-domain:shop.test");
+    // The stamps and status wording are untouched by the new branch.
+    expect(line).toMatch(/succeeded/);
+    expect(line).toContain("finished 2026-07-19T00:02:00.000Z");
+  });
+
+  it("warns on the status line when the pull hit the row cap", () => {
+    const line = formatJobStatus(
+      job({
+        tool: "pull_gsc_data",
+        status: "succeeded",
+        result: {
+          days: 90,
+          current: { start_date: "2026-04-19", end_date: "2026-07-17", rows: [], capped: true },
+          previous: { start_date: "2026-01-19", end_date: "2026-04-18", rows: [] },
+        },
+      }),
+    );
+    expect(line).toMatch(/partial/i);
+  });
+
+  it("summarizes a pull result recorded under an unexpected tool name (shape decides)", () => {
+    const line = formatJobStatus(
+      job({
+        tool: "some_future_tool",
+        status: "succeeded",
+        result: {
+          days: 7,
+          current: { start_date: "2026-07-11", end_date: "2026-07-17", rows: [{ query: "a" }] },
+          previous: { start_date: "2026-07-04", end_date: "2026-07-10", rows: [] },
+        },
+      }),
+    );
+    expect(line).toContain("1 row(s)");
+  });
+
+  it("still summarizes a crawl as a crawl — the two branches do not shadow each other", () => {
+    const line = formatJobStatus(
+      job({
+        status: "succeeded",
+        result: { pages: [{ url: "https://x.test/", issues: ["missing title"] }], skipped: [] },
+      }),
+    );
+    expect(line).toContain("Crawled 1 page(s)");
+    expect(line).not.toMatch(/Pulled/);
   });
 
   it("renders a failed job with its error", () => {
