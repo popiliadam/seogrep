@@ -12,6 +12,7 @@ import { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 import { auditOnpageTool } from "./audit-onpage.ts";
 import { auditTechTool } from "./audit-tech.ts";
 import { auditSchemaTool } from "./audit-schema.ts";
+import { auditContentTool } from "./audit-content.ts";
 import { researchKeywordsTool } from "./research-keywords.ts";
 import { rankedKeywordsTool } from "./ranked-keywords.ts";
 import { analyzeBacklinksTool } from "./analyze-backlinks.ts";
@@ -36,6 +37,12 @@ export { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 export { auditOnpageTool } from "./audit-onpage.ts";
 export { auditTechTool } from "./audit-tech.ts";
 export { auditSchemaTool } from "./audit-schema.ts";
+export {
+  auditContentTool,
+  makeAuditContentTool,
+  makeContentAuditTool,
+  renderContentAudit,
+} from "./audit-content.ts";
 export { researchKeywordsTool } from "./research-keywords.ts";
 export { rankedKeywordsTool, makeRankedKeywordsTool } from "./ranked-keywords.ts";
 export { analyzeBacklinksTool, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
@@ -65,6 +72,7 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   auditOnpageTool,
   auditTechTool,
   auditSchemaTool,
+  auditContentTool,
   researchKeywordsTool,
   rankedKeywordsTool,
   analyzeBacklinksTool,

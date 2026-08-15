@@ -25,6 +25,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       audit_onpage: 30,
       audit_tech: 15,
       audit_schema: 5,
+      audit_content: 12,
       generate_report: 15,
       whats_next: 0,
       list_gsc_properties: 0,
@@ -36,8 +37,13 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // 19 -> 22 on 2026-08-13: the operator approved THREE new 0-credit tools (the Search Console
   // property-management surface). This pin protects the human-approved table, and the table's
   // SCOPE grew — no existing number changed, so this is a re-signature, not a weakened assertion.
-  it("has exactly 22 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(22);
+  //
+  // 22 -> 23 on 2026-08-15: audit_content (plan §4-N8) at a PROPOSED 12 credits. Same shape as
+  // the previous growth — no existing number moved — but with one difference that must not be
+  // read past: 12 is UNSIGNED. This pin is what makes the proposal visible and immovable until a
+  // human approves it; the PR carrying it is parked for exactly that signature (NEVER #6).
+  it("has exactly 23 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(23);
   });
 
   it("exposes only non-negative integer costs", () => {

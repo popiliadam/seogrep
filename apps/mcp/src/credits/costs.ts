@@ -28,6 +28,12 @@ export const TOOL_COSTS = {
   audit_onpage: 30,
   audit_tech: 15,
   audit_schema: 5,
+  // audit_content (plan 2026-08-14 §4-N8 / §5): the GSC × crawl join — queries the site earns
+  // impressions for whose words are missing from the page's own title and h1s. It reads TWO
+  // stored measurements and calls no paid API, so the price is the analysis, not a vendor cost.
+  // PROPOSED AT 12 AND NOT YET SIGNED — NEVER #6: this number is invalid until a human approves
+  // it across code + docs + pricing, and the PR carrying it is parked for that signature.
+  audit_content: 12,
   generate_report: 15,
   whats_next: 0,
   // The Search Console property-management surface (2026-08-13, operator-approved scope
