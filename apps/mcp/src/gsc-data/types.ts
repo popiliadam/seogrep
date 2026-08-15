@@ -68,20 +68,39 @@ function asFiniteNumber(value: Json | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Read one stored row defensively; a row with no usable query+page is dropped (null). */
+/**
+ * A usable average position from a STORED row, or null when there is none. The twin of
+ * rows.ts's `asPosition`, and it has to be a twin: the two are the only doors into `GscRow`,
+ * so a fail-safe on one of them is not a fail-safe.
+ *
+ * Same reason, stated once here and in full there: 0 is the smallest value for clicks and
+ * impressions but the BEST value for a rank, so defaulting an absent position to 0 does not
+ * make a row uninformative — it makes it claim the top of the SERP. `looksLikeSitelinks`
+ * (position <= 1.5) is the measured case; the quick-wins band is the mirror image.
+ */
+function asPosition(value: Json | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * Read one stored row defensively; a row with no usable query+page — or no positive position —
+ * is dropped (null). Backwards compatible: a stored row carrying a real position is unchanged.
+ */
 function parseRow(raw: Json | undefined): GscRow | null {
   const obj = asObject(raw);
   if (!obj) return null;
   const query = asString(obj.query);
   const page = asString(obj.page);
   if (query === null || page === null) return null;
+  const position = asPosition(obj.position);
+  if (position === null) return null;
   return {
     query,
     page,
     clicks: asFiniteNumber(obj.clicks),
     impressions: asFiniteNumber(obj.impressions),
     ctr: asFiniteNumber(obj.ctr),
-    position: asFiniteNumber(obj.position),
+    position,
   };
 }
 

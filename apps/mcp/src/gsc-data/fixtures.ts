@@ -8,7 +8,16 @@ import type { GscRow, PullData } from "./types.ts";
  * No network, no secrets — every value is an obvious fixture.
  */
 
-/** A normalized row with zeroed metrics by default; override what a case needs. */
+/**
+ * A normalized row with zeroed metrics by default; override what a case needs.
+ *
+ * CAVEAT, worth knowing before reaching for the default position: since B3, neither parser
+ * (rows.ts / types.ts) will EVER emit `position: 0` — a row with no positive position is
+ * dropped, because 0 is the best rank there is and reads as "pinned at the top". So the
+ * defaulted 0 here is a shape the engines cannot receive in production; it is fine as a
+ * "this case does not read position" marker, and misleading as a modelled value. Any fixture
+ * that goes through a PARSER must carry a real position or it will not survive.
+ */
 export function gscRow(over: Partial<GscRow> & { query: string; page: string }): GscRow {
   return { clicks: 0, impressions: 0, ctr: 0, position: 0, ...over };
 }
@@ -57,8 +66,16 @@ export function rawGoogleResponse(rows: GscRow[]): { rows: Record<string, unknow
  * one and turns the truncation warning off exactly when it is true.
  */
 export function rawGoogleResponseWithOneBadRow(count: number): { rows: Record<string, unknown>[] } {
+  // Real positions on the good rows — they must SURVIVE the parser for the count/parsed-length
+  // gap this fixture exists to model to be about the malformed row and nothing else (B3).
   const good = Array.from({ length: count - 1 }, (_unused, i) =>
-    gscRow({ query: `q-${i}`, page: `https://shop.test/p-${i}`, clicks: i, impressions: i * 10 }),
+    gscRow({
+      query: `q-${i}`,
+      page: `https://shop.test/p-${i}`,
+      clicks: i,
+      impressions: i * 10,
+      position: i + 5,
+    }),
   );
   return {
     rows: [...rawGoogleResponse(good).rows, { keys: ["query-with-no-page"], clicks: 1 }],

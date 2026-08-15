@@ -34,3 +34,7 @@ export * from "./gsc/property.js";
 // tenant-scoped reads and the tool definitions stay in apps/mcp, which re-exports what moved.
 export * from "./guide/next-step.js";
 export * from "./guide/crawl-summary.js";
+// The pull half of the same story. Separate module, same discipline: a stored jobs.result is
+// jsonb of unknown shape, and the two summarizers are told apart by SHAPE rather than tool name,
+// so they can be tried in either order and at most one of them answers.
+export * from "./guide/pull-summary.js";

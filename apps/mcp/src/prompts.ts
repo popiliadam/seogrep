@@ -7,16 +7,24 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 /**
- * MCP prompts — where the skill orchestration moved (spec §2.1). Three English, step-by-step
- * templates that string the tools into the common workflows so a non-expert can run them by name:
+ * MCP prompts — where the skill orchestration moved (spec §2.1). English, step-by-step templates
+ * that string the tools into the common workflows so a non-expert can run them by name:
  *
  *   new-site-audit   — setup_project -> crawl_site -> audit trio -> generate_report (the GSC-less
  *                      first-audit flow; connecting Search Console stays optional).
  *   monthly-routine  — pull_gsc_data -> discovery trio -> generate_report.
  *   quick-wins-sprint — pull_gsc_data -> find_quick_wins -> prioritization.
+ *   gsc-health-check — list_gsc_properties -> name the accounts that stopped answering ->
+ *                      reconnect -> confirm with a small (days=7) pull.
+ *
+ * The health check is the newest and answers a failure these templates otherwise leave silent: a
+ * Search Console connection dies quietly (a revoked grant, a removed property, a downgraded
+ * permission level) and the first symptom is a pull that returns nothing, which reads like a site
+ * with no traffic. It is also the one flow that must distinguish an account that answered "no
+ * properties" from an account that did not answer — the same rule track_gsc_property enforces.
  *
  * These are STATIC (no tenant/DB), so the surface is pure and stateless — the same shape as the
- * gateway's stateless tools path. prompts/list advertises the three; prompts/get renders one with
+ * gateway's stateless tools path. prompts/list advertises them all; prompts/get renders one with
  * its argument interpolated. Registered on the low-level Server via registerPrompts (server.ts).
  */
 
@@ -86,12 +94,22 @@ export const PROMPTS: readonly PromptDefinition[] = [
       return (
         `Run my monthly SeoGrep routine for project ${projectId}. Go step by step, one tool at a ` +
         "time, and summarize what changed since last month:\n\n" +
-        "1. pull_gsc_data — pull the latest 90 days of Google Search Console data (this needs " +
-        "connect_gsc to have been done once for the project).\n" +
+        "1. pull_gsc_data — pull the latest 90 days of Google Search Console data (this needs the " +
+        "project to be mapped to a Search Console property once; see the note below if it is " +
+        "not).\n" +
         "2. find_quick_wins, then detect_cannibalization, then analyze_content_decay — run all three " +
         "discovery tools over the fresh data.\n" +
         "3. generate_report — roll the findings up into a shareable report.\n\n" +
-        "If the project has no Search Console connection yet, tell me to run connect_gsc first."
+        // The fallback used to name connect_gsc and nothing else, which was the only route when
+        // this template was written. It still is the right answer for someone with no Google
+        // account linked at all — but for the far commoner case, an account that IS linked and a
+        // project that simply is not mapped to a property yet, it sends the user through an OAuth
+        // round trip to fix something two zero-credit calls already fix.
+        "If step 1 says the project has no Search Console connection: run list_gsc_properties to " +
+        "see which properties your connected Google accounts can already reach, then " +
+        "track_gsc_property for the one that matches this project — both cost 0 credits and " +
+        "neither needs a new Google sign-in. Only if no Google account is connected at all, run " +
+        "connect_gsc for this project first."
       );
     },
   },
@@ -118,6 +136,44 @@ export const PROMPTS: readonly PromptDefinition[] = [
         "suggest one concrete on-page improvement. If a crawl exists, use audit_onpage on the " +
         "affected pages for specifics.\n\n" +
         "Focus on the highest-impact, lowest-effort wins first."
+      );
+    },
+  },
+  {
+    name: "gsc-health-check",
+    description:
+      "Check that your Google Search Console connections still work: list what each connected " +
+      "account can reach, spot the accounts that have stopped answering, and reconnect them.",
+    arguments: [
+      {
+        name: "project_id",
+        description:
+          "Optional: a project to confirm with a small data pull once the accounts look healthy.",
+        required: false,
+      },
+    ],
+    render: (args) => {
+      const projectId = argOr(args, "project_id", "<a project id from list_projects>");
+      return (
+        "Check the health of my Google Search Console connections in SeoGrep. A connection can " +
+        "stop working quietly — an access grant gets revoked in the Google account, a property " +
+        "is removed, or a permission level is downgraded — and nothing announces it. The tools " +
+        "below cost 0 credits, so this is safe to run any time.\n\n" +
+        "1. list_gsc_properties — list every connected Google account and the Search Console " +
+        "properties it can reach.\n" +
+        "2. Read the output for accounts that could NOT be read, or that came back with no " +
+        "properties at all. Tell me which accounts those are, by email, and treat them as " +
+        "unknown rather than empty: an account SeoGrep could not reach has not told us it has " +
+        "no properties.\n" +
+        "3. For each account in that state, tell me to reconnect it on the Connection page in " +
+        "SeoGrep (or run connect_gsc again). Do not guess at the cause — say what was observed.\n" +
+        "4. Also flag any property listed at a permission level that cannot answer performance " +
+        `queries, and any project that is tracked but mapped to no property.\n\n` +
+        `5. Once the accounts look healthy, confirm it end to end: run pull_gsc_data for project ` +
+        `${projectId} with days set to 7. A small window is the point — it is the cheapest call ` +
+        "that proves the credential really can fetch data, rather than merely listing it. If I " +
+        "did not give you a project id, ask me which project to verify with.\n\n" +
+        "Report what is healthy and what is not, and give me the shortest fix for each problem."
       );
     },
   },

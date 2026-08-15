@@ -2,7 +2,8 @@
  * The whats_next decision ladder — PURE: no I/O, no DB, no runtime dependency.
  *
  * WHY IN CORE — the ladder answers "where does this project stand, and what is the one next
- * step?" from four observable signals, and BOTH runtimes need that answer with the SAME words:
+ * step?" from a handful of observable signals, and BOTH runtimes need that answer with the SAME
+ * words:
  * the MCP `whats_next` tool renders it as text, and apps/web wants to show it in the panel. The
  * decision itself carries no transport, so it lives here and each surface renders it its own way.
  *
@@ -28,6 +29,18 @@ export interface ProjectSignals {
   readonly gscConnected: boolean;
   readonly hasPull: boolean;
   readonly pullFresh: boolean;
+  /**
+   * The stored health of the Google account behind the connection — `true` only when it is KNOWN
+   * dead (`gsc_accounts.token_status = 'invalid'`, written by the paths that actually saw Google
+   * answer `invalid_grant`).
+   *
+   * OPTIONAL, and read with `=== true` at the one rung that uses it. `undefined` means "this
+   * surface does not measure connection health", NOT "healthy": a caller that omits it decides
+   * byte-identically to the ladder that existed before this signal did — which is what lets the
+   * MCP router adopt it ahead of the web panel without the two surfaces disagreeing about
+   * projects whose connection is alive.
+   */
+  readonly gscTokenInvalid?: boolean;
 }
 
 /** A single next-step recommendation: the primary action, why, and what follows. */
@@ -83,7 +96,33 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       allSet: false,
     };
   }
-  // Rung 3 — Search Console connected but nothing pulled yet: pull to unlock the discovery tools.
+  // Rung 3 — the connection EXISTS but the credential behind it is dead. Every rung below this
+  // one recommends pull_gsc_data, which cannot succeed until the user re-approves: the router
+  // would be handing out a guaranteed failure and calling it the next step. Reconnect first.
+  //
+  // POSITION IS THE POINT. It sits above BOTH pull rungs — the "nothing pulled yet" one and the
+  // "your data is stale" one — because a dead account is equally unpullable in either state, and
+  // above the all-set rung because a project resting on a fresh pull it can no longer refresh is
+  // not all set. It sits BELOW the no-crawl rung on purpose: a crawl needs no Google account at
+  // all (design D15), so a project with a dead connection and no crawl is still told to crawl.
+  //
+  // `=== true`, never a truthy test: `undefined` is "not measured" and must decide exactly as it
+  // did before this rung existed (see ProjectSignals.gscTokenInvalid).
+  if (s.gscConnected && s.gscTokenInvalid === true) {
+    return {
+      primary: "connect_gsc",
+      reason:
+        "Your Google connection has expired — run connect_gsc to reconnect, then refresh your " +
+        "Search Console data. Until it is reconnected, Search Console pulls cannot succeed, but " +
+        "your crawl is still ready to analyze.",
+      // No pull_gsc_data and none of the three discovery tools: they all read a pull this project
+      // cannot take, so listing them would put the guaranteed failure back one line lower. The
+      // audits are what the user CAN still do, and they need no Google account.
+      upcoming: [...AUDIT_TRIO, "generate_report"],
+      allSet: false,
+    };
+  }
+  // Rung 4 — Search Console connected but nothing pulled yet: pull to unlock the discovery tools.
   if (s.gscConnected && !s.hasPull) {
     return {
       primary: "pull_gsc_data",

@@ -394,3 +394,124 @@ describe("RLS: an audit run is readable by its owner and by nobody else (force, 
     expect((sweep.data ?? []).some((row) => row.user_id === owner.id)).toBe(false);
   });
 });
+
+/**
+ * APPEND-ONLY ADDITION (Faz 1 rule wave). The engines grew new report fields — `duplicateGroups`
+ * on-page, six signal lists on technical — and a structural report only helps a second surface if
+ * the NEW half survives the round trip through `jsonb` as well as the old half does.
+ *
+ * The fixture above is deliberately not reused: it is an OLD-SHAPED crawl, and every new rule is
+ * silent on one by design, so it could only ever prove the fields arrive EMPTY. That is worth
+ * pinning too (an empty array must not become `null` or vanish), but a report where the numbers
+ * are all zero cannot tell a stored report from a stored blank — so the second spec seeds a crawl
+ * carrying the signals and reads the VALUES back out of the row.
+ */
+const SIGNAL_CRAWL_RESULT: Json = {
+  pages: [
+    {
+      url: "https://signals.seed/",
+      status: 200,
+      title: "A perfectly reasonable home page title",
+      metaDescription: "A meta description that is long enough to clear the fifty character floor.",
+      h1s: ["A heading that differs from the title"],
+      canonical: "https://signals.seed/",
+      robotsMeta: null,
+      links: [],
+      wordCount: 400,
+      jsonLdTypes: [],
+      issues: [],
+      fetchMs: 4500,
+      htmlBytes: 2_000_000,
+      imgCount: 6,
+      imgMissingAlt: 2,
+      htmlLang: "en",
+      ogTitle: "OG",
+      ogDescription: "OGD",
+      xRobotsTag: "noindex",
+      redirectChain: ["https://signals.seed/old", "https://signals.seed/older"],
+      contentHash: "sharedhash0000000000",
+      depth: 0,
+      inLinkCount: 1,
+    },
+    {
+      url: "https://signals.seed/copy",
+      status: 200,
+      title: "A different title on a page with identical text",
+      metaDescription: "Another meta description long enough to clear the fifty character floor.",
+      h1s: ["Another heading"],
+      canonical: "https://signals.seed/copy",
+      robotsMeta: null,
+      links: [],
+      wordCount: 400,
+      jsonLdTypes: [],
+      issues: [],
+      fetchMs: 100,
+      htmlBytes: 1000,
+      imgCount: 0,
+      imgMissingAlt: 0,
+      htmlLang: "en",
+      ogTitle: "OG",
+      ogDescription: "OGD",
+      xRobotsTag: null,
+      redirectChain: [],
+      contentHash: "sharedhash0000000000",
+      depth: 5,
+      inLinkCount: 0,
+    },
+  ],
+  skipped: [],
+  fetchedAt: "2026-08-14T00:00:00.000Z",
+};
+
+describe("the new report fields reach the row (Faz 1 rule wave)", () => {
+  it("an old-shaped crawl stores the new fields as EMPTY arrays, never null or absent", async () => {
+    const ctx: AuthContext = { userId: (await makeUser()).id, keyId: `key-${randomUUID()}` };
+    await seedGrant(ctx.userId, 200);
+    const projectId = await makeProject(ctx.userId, `legacyshape-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(ctx.userId, projectId, CRAWL_RESULT);
+
+    expect((await auditOnpageTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+    expect((await auditTechTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+
+    const byTool = new Map(await runRows(ctx.userId).then((rows) => rows.map((r) => [r.tool, r])));
+    expect(reportOf(byTool.get("audit_onpage")!).duplicateGroups).toEqual([]);
+    const tech = reportOf(byTool.get("audit_tech")!);
+    for (const field of ["slowPages", "heavyPages", "redirectChains", "xRobotsConflicts", "deepPages", "orphanSignals"]) {
+      expect(tech[field]).toEqual([]);
+    }
+  });
+
+  it("a crawl carrying the signals stores the findings themselves", async () => {
+    const ctx: AuthContext = { userId: (await makeUser()).id, keyId: `key-${randomUUID()}` };
+    await seedGrant(ctx.userId, 200);
+    const projectId = await makeProject(ctx.userId, `signals-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(ctx.userId, projectId, SIGNAL_CRAWL_RESULT);
+
+    expect((await auditOnpageTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+    expect((await auditTechTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+
+    const byTool = new Map(await runRows(ctx.userId).then((rows) => rows.map((r) => [r.tool, r])));
+
+    // On-page: the duplicate GROUP survived the jsonb round trip, member URLs included.
+    const onpage = reportOf(byTool.get("audit_onpage")!);
+    expect(onpage.duplicateGroups).toEqual([
+      { hash: "sharedhash0000000000", urls: ["https://signals.seed/", "https://signals.seed/copy"] },
+    ]);
+    // …and the per-page signal rule landed in `counts`, which is the field the panel sums.
+    expect((onpage.counts as Record<string, number>).img_missing_alt).toBe(1);
+
+    // Technical: each signal list carries its row, with the measurement, not just a URL.
+    const tech = reportOf(byTool.get("audit_tech")!);
+    expect(tech.slowPages).toEqual([{ url: "https://signals.seed/", fetchMs: 4500 }]);
+    expect(tech.heavyPages).toEqual([{ url: "https://signals.seed/", htmlBytes: 2_000_000 }]);
+    expect(tech.redirectChains).toEqual([
+      {
+        url: "https://signals.seed/",
+        chain: ["https://signals.seed/old", "https://signals.seed/older"],
+      },
+    ]);
+    expect(tech.xRobotsConflicts).toEqual([{ url: "https://signals.seed/", xRobotsTag: "noindex" }]);
+    expect(tech.deepPages).toEqual([{ url: "https://signals.seed/copy", depth: 5 }]);
+    expect(tech.orphanSignals).toEqual([{ url: "https://signals.seed/copy", depth: 5 }]);
+  });
+});
