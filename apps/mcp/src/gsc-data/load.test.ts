@@ -19,7 +19,7 @@ vi.mock("../db.ts", () => ({
   getServiceClient: () => ({}),
 }));
 
-const { loadLatestPull, renderPullProvenance, renderReauthWarning, NO_PULL_MESSAGE } = await import("./load.ts");
+const { loadLatestPull, renderPullProvenance, renderReauthWarning, NO_PULL_MESSAGE, STALE_PULL_DAYS } = await import("./load.ts");
 const { SAMPLE_PULL } = await import("./fixtures.ts");
 const { pullResultToJson } = await import("./types.ts");
 
@@ -66,6 +66,46 @@ describe("renderPullProvenance", () => {
     expect(renderPullProvenance("2026-08-06T09:00:00.000Z", NOW)).toBe(
       "Search Console data pulled 2026-08-06 (4 days ago).",
     );
+  });
+});
+
+/**
+ * The AGE axis. An analysis of a two-month-old pull was worded exactly like one of this
+ * morning's, and the only difference on offer was a date at the very bottom of a wall of
+ * findings — which nobody reads as "these numbers describe a period that has ended". Past
+ * STALE_PULL_DAYS the line says so and names the action.
+ *
+ * Independent of the reauth warning: that one is about the CONNECTION, and a live connection can
+ * sit on ancient data.
+ */
+describe("renderPullProvenance staleness sentence", () => {
+  const NOW = new Date("2026-08-10T12:00:00.000Z");
+  /** `days` before NOW, at the same clock time, so the floor divides exactly. */
+  const daysBefore = (days: number): string =>
+    new Date(NOW.getTime() - days * 86_400_000).toISOString();
+
+  it("says nothing for a pull one day inside the threshold", () => {
+    const text = renderPullProvenance(daysBefore(STALE_PULL_DAYS - 1), NOW);
+    expect(text).toContain("29 days ago");
+    expect(text).not.toMatch(/stale/i);
+  });
+
+  it("calls the data stale AT the threshold and names the tool that fixes it", () => {
+    const text = renderPullProvenance(daysBefore(STALE_PULL_DAYS), NOW);
+    expect(text).toContain("(30 days ago).");
+    expect(text).toContain("This data is stale — run pull_gsc_data again for current numbers.");
+  });
+
+  it("keeps saying it well past the threshold", () => {
+    expect(renderPullProvenance(daysBefore(120), NOW)).toMatch(/stale/i);
+  });
+
+  /**
+   * The cases above are built FROM the constant, so they slide with it and prove only that SOME
+   * threshold exists. This pins the one a user actually gets — the MAX_HREFLANGS pattern.
+   */
+  it("draws the line at 30 days", () => {
+    expect(STALE_PULL_DAYS).toBe(30);
   });
 });
 

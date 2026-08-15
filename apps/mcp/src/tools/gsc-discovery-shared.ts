@@ -3,8 +3,10 @@ import type { ToolName } from "../credits/costs.ts";
 import {
   loadGscTokenStatus,
   loadLatestPull,
+  renderAnalyzedWindow,
   renderPullProvenance,
   renderReauthWarning,
+  renderRowCapCaveat,
   type LoadPullFn,
   type LoadTokenStatusFn,
   type PullData,
@@ -140,14 +142,31 @@ export function makeDiscoveryTool(
         // reaches the user, that uniformity is what keeps project existence unobservable.
         throw new PreconditionNotMetError(load.error);
       }
-      // ONE call site for all three tools, so the provenance line can't drift into three
-      // slightly different sentences (gsc-data/load.ts renderPullProvenance). The staleness
-      // warning follows it for the same reason and in that order: the date is the claim, the
-      // warning is what turns "pull again for fresher numbers" — which is what a bare date
-      // invites — into the action that would actually work.
-      const body = `${render(load.pull)}\n\n${renderPullProvenance(load.pulledAt)}`;
-      const warning = await reauthWarning(ctx.userId, project_id, loadTokenStatus);
-      return textResult(warning ? `${body}\n${warning}` : body);
+      // THE FOOTER — ONE call site for all three tools, so these lines can't drift into three
+      // slightly different sentences. Every line here is a statement about the DATA rather than
+      // a finding, and each answers a question the findings alone leave open:
+      //
+      //   1. the window (renderAnalyzedWindow) — all three engines apply ABSOLUTE thresholds, so
+      //      "20 impressions" means something ~13x stricter over 7 days than over 90, and the
+      //      previous window a decay number is measured against was invisible entirely;
+      //   2. the row cap (renderRowCapCaveat), only when a window was truncated — pull_gsc_data
+      //      warns at pull time, which is a different conversation days or weeks earlier, and a
+      //      truncated window makes decay report ghost collapses and cannibalization compute
+      //      shares against a short denominator;
+      //   3. the date, and past a month the staleness sentence (renderPullProvenance);
+      //   4. the reauth warning last, because it is the only line that is about the CONNECTION
+      //      rather than the data: it turns "pull again for fresher numbers" — which is what a
+      //      bare date invites — into the action that would actually work.
+      //
+      // Order is fixed and the optional lines are OMITTED, never blanked, so a tool's output has
+      // no empty gaps where a caveat did not apply.
+      const footer = [
+        renderAnalyzedWindow(load.pull),
+        renderRowCapCaveat(load.pull),
+        renderPullProvenance(load.pulledAt),
+        await reauthWarning(ctx.userId, project_id, loadTokenStatus),
+      ].filter((line): line is string => line !== null);
+      return textResult(`${render(load.pull)}\n\n${footer.join("\n")}`);
     },
   });
 }

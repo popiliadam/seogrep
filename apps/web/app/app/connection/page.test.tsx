@@ -13,7 +13,14 @@ let connectionRows: {
   account_id: string | null;
   gsc_property: string | null;
 }[] = [];
-let accountRows: { id: string; google_account_email: string; user_id?: string }[] = [];
+let accountRows: {
+  id: string;
+  google_account_email: string;
+  user_id?: string;
+  /** The stored credential health the page now reads (migration 0021). */
+  token_status?: "active" | "invalid" | null;
+  token_checked_at?: string | null;
+}[] = [];
 /** What `sites.list` answers for one account — or the failure it answers with instead. */
 let sitesByAccount: Record<string, { siteUrl: string; permissionLevel: string }[] | Error> = {};
 
@@ -223,6 +230,9 @@ function mapping(
 function account(id = ACCOUNT_ID, email = "owner@example.com") {
   return { id, google_account_email: email };
 }
+
+/** What the panel receives for an account whose health was never recorded. */
+const NO_HEALTH = { tokenStatus: null, lastVerified: null };
 
 function site(siteUrl: string, permissionLevel = "siteOwner") {
   return { siteUrl, permissionLevel };
@@ -754,9 +764,11 @@ describe("ConnectionPage — the account panel", () => {
     await renderPage();
 
     const panel = screen.getByTestId("account-panel");
+    // The FULL shape, not a subset: this is also what pins that nothing else off the
+    // gsc_accounts row (the sealed refresh token above all) ever reaches a client component.
     expect(JSON.parse(panel.getAttribute("data-accounts") ?? "[]")).toEqual([
-      { id: ACCOUNT_ID, email: "owner@example.com" },
-      { id: SECOND_ACCOUNT_ID, email: "second@example.com" },
+      { id: ACCOUNT_ID, email: "owner@example.com", ...NO_HEALTH },
+      { id: SECOND_ACCOUNT_ID, email: "second@example.com", ...NO_HEALTH },
     ]);
     // describeDisconnect does no ownership check of its own, so the ONLY ids it may ever be
     // called with are these — read back under the session user's filter.
@@ -786,7 +798,7 @@ describe("ConnectionPage — the account panel", () => {
 
     expect(
       JSON.parse(screen.getByTestId("account-panel").getAttribute("data-accounts") ?? "[]"),
-    ).toEqual([{ id: ACCOUNT_ID, email: "owner@example.com" }]);
+    ).toEqual([{ id: ACCOUNT_ID, email: "owner@example.com", ...NO_HEALTH }]);
     expect(document.body.textContent).not.toContain("stranger@example.com");
   });
 
@@ -796,5 +808,41 @@ describe("ConnectionPage — the account panel", () => {
     await renderPage();
 
     expect(screen.getByTestId("account-panel").getAttribute("data-accounts")).toBe("[]");
+  });
+
+  /**
+   * CREDENTIAL HEALTH REACHES THE ROW. The page used to read `gsc_accounts` for id + email only,
+   * so a grant Google had revoked rendered identically to a working one and the user found out
+   * when a paid tool failed. `token_status` and `token_checked_at` are inside migration 0021's
+   * column-level SELECT grant for `authenticated` (only the ciphertext is withheld), so this
+   * needs no new GRANT and no service-role read.
+   *
+   * MUTATION TARGET: drop either column from the page's `.select(...)` and these go red — the
+   * fake projects exactly what was asked for, so a forgotten column arrives as `undefined`
+   * here precisely as it would from PostgREST.
+   */
+  it("hands the panel each account's stored credential health", async () => {
+    listKeys.mockResolvedValue([]);
+    accountRows = [
+      { ...account(), token_status: "invalid", token_checked_at: "2026-08-01T00:00:00.000Z" },
+      {
+        ...account(SECOND_ACCOUNT_ID, "second@example.com"),
+        token_status: "active",
+        token_checked_at: null,
+      },
+    ];
+    await renderPage();
+
+    const handed = JSON.parse(
+      screen.getByTestId("account-panel").getAttribute("data-accounts") ?? "[]",
+    ) as { id: string; tokenStatus: string | null; lastVerified: string | null }[];
+    expect(handed.map((row) => [row.id, row.tokenStatus])).toEqual([
+      [ACCOUNT_ID, "invalid"],
+      [SECOND_ACCOUNT_ID, "active"],
+    ]);
+    // The AGE is formatted on the server (no clock inside the client island); an account never
+    // checked carries no age at all rather than a fabricated one.
+    expect(handed[0]?.lastVerified).toMatch(/\bago\b|^today$/);
+    expect(handed[1]?.lastVerified).toBeNull();
   });
 });

@@ -83,9 +83,17 @@ interface PropertyMatch {
   readonly site: GscSite;
 }
 
+/**
+ * Nothing connected. The route is spelled out from the caller's ACTUAL starting point, which may
+ * be zero projects: `connect_gsc` takes a `project_id` and refuses without one, so pointing a
+ * brand-new account straight at it names a step they cannot take and does not name the one they
+ * can. `setup_project` comes first, and says so here rather than being left to be discovered.
+ */
 const NO_ACCOUNT =
-  "No Google account is connected yet, so there is no Search Console property to track. Run " +
-  "connect_gsc for one of your projects to connect one, then run list_gsc_properties.";
+  "No Google account is connected yet, so there is no Search Console property to track. If you " +
+  "have no projects yet, run setup_project for your domain first — connect_gsc needs a project " +
+  "to start from. Then run connect_gsc for that project, and list_gsc_properties to see what it " +
+  "can reach.";
 
 function notListedMessage(property: string): string {
   return (

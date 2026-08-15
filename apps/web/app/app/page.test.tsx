@@ -42,9 +42,22 @@ afterEach(() => {
 
 type Params = Record<string, string | string[] | undefined>;
 
-async function renderPage(params: Params = {}, activeProjects: number | null = 0) {
+/**
+ * The counts the page reads, PER TABLE. It was one number for every table until Overview began
+ * counting expired Google accounts too; a single shared answer would have made the reconnection
+ * line appear on the strength of the PROJECT count, which is not a thing the page does.
+ */
+async function renderPage(
+  params: Params = {},
+  activeProjects: number | null = 0,
+  expiredAccounts: number | null = 0,
+) {
   getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
-  projectCount.mockReturnValue({ count: activeProjects, error: null });
+  projectCount.mockImplementation((table: string) =>
+    table === "gsc_accounts"
+      ? { count: expiredAccounts, error: null }
+      : { count: activeProjects, error: null },
+  );
   render(await OverviewPage({ searchParams: Promise.resolve(params) }));
 }
 
@@ -109,6 +122,80 @@ describe("OverviewPage", () => {
 
       expect(screen.getByText(/You are tracking 4 projects\./)).toBeTruthy();
       expect(screen.getByText("View projects").getAttribute("href")).toBe("/app/projects");
+    });
+  });
+
+  /**
+   * THE RECONNECTION LINE. A revoked Google grant used to be invisible everywhere the user
+   * actually looks: it lived in `gsc_accounts.token_status`, was read by three MCP tools, and
+   * surfaced on the dashboard only as a paid tool failing. Overview is where a user lands, so it
+   * is where the fact belongs — but ONLY as a fact, never as a permanent slot.
+   */
+  describe("Google accounts that need reconnecting", () => {
+    function emptyLedger() {
+      getBalance.mockResolvedValue(0);
+      listLedgerEntries.mockResolvedValue({ entries: [], total: 0, page: 1, pageSize: 5 });
+    }
+
+    it("renders NOTHING when no account is expired", async () => {
+      emptyLedger();
+      await renderPage({}, 2, 0);
+
+      // Not "0 accounts need reconnection" — a row that is always there is a row the eye learns
+      // to skip on the day it matters.
+      expect(screen.queryByText(/reconnect/i)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("names one expired account and leads to the page that fixes it", async () => {
+      emptyLedger();
+      await renderPage({}, 2, 1);
+
+      const alert = screen.getByRole("alert");
+      expect(alert.textContent).toMatch(/1 google account needs reconnection/i);
+      // The trailing clause agrees with the count as well.
+      expect(alert.textContent).toMatch(/until it is reconnected/i);
+      expect(screen.getByText("Open Connection").getAttribute("href")).toBe("/app/connection");
+    });
+
+    it("counts several, and says so in the plural THROUGHOUT", async () => {
+      emptyLedger();
+      await renderPage({}, 2, 3);
+
+      const alert = screen.getByRole("alert").textContent ?? "";
+      expect(alert).toMatch(/3 google accounts need reconnection/i);
+      // "…until it is reconnected" after "3 Google accounts" reads as though one of the three
+      // is the problem, which is the opposite of what the count just said.
+      expect(alert).toMatch(/until they are reconnected/i);
+      expect(alert).not.toMatch(/until it is reconnected/i);
+    });
+
+    it("reads the count off gsc_accounts, not off the projects count", async () => {
+      // The two numbers differ on purpose: a shared answer would have made this line appear
+      // because the user has projects, which is not a thing the page claims.
+      emptyLedger();
+      await renderPage({}, 7, 0);
+
+      expect(projectCount).toHaveBeenCalledWith("gsc_accounts");
+      expect(screen.queryByText(/reconnection/i)).toBeNull();
+    });
+
+    it("a failed health count says nothing rather than inventing an outage", async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      emptyLedger();
+      getUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+      projectCount.mockImplementation((table: string) =>
+        table === "gsc_accounts"
+          ? { count: null, error: { message: "boom" } }
+          : { count: 1, error: null },
+      );
+      render(await OverviewPage({ searchParams: Promise.resolve({}) }));
+
+      expect(screen.queryByText(/reconnection/i)).toBeNull();
+      // The rest of the page is untouched — the balance is what Overview is FOR.
+      expect(screen.getByText(/You are tracking 1 project\./)).toBeTruthy();
+      expect(error).toHaveBeenCalled();
+      error.mockRestore();
     });
   });
 

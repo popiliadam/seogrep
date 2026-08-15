@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { MAX_ROW_LIMIT, runPull, type GscApi } from "./pull.ts";
-import { CURRENT_ROWS, FIXTURE_WINDOWS, PREVIOUS_ROWS, rawGoogleResponse } from "./fixtures.ts";
+import {
+  CURRENT_ROWS,
+  FIXTURE_WINDOWS,
+  PREVIOUS_ROWS,
+  rawGoogleResponse,
+  rawGoogleResponseWithOneBadRow,
+} from "./fixtures.ts";
 
 /**
  * runPull orchestrates the two-window fetch. The Google surface is an injected PORT, so this
@@ -85,5 +91,162 @@ describe("runPull", () => {
     const pull = await runPull({ refreshToken: "r", property: "sc-domain:x", days: 30, reference: REFERENCE, api });
     expect(pull.current.rows).toEqual([]);
     expect(pull.previous.rows).toEqual([]);
+  });
+});
+
+/** Run `runPull` over an api, with the fixture property/days/reference every case shares. */
+function pullWith(api: GscApi, rowLimit?: number): Promise<Awaited<ReturnType<typeof runPull>>> {
+  return runPull({
+    refreshToken: "1//r",
+    property: "sc-domain:shop.test",
+    days: 90,
+    reference: REFERENCE,
+    api,
+    ...(rowLimit === undefined ? {} : { rowLimit }),
+  });
+}
+
+/** Drain the microtask queue so every already-started promise chain has run to its next await. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) await Promise.resolve();
+}
+
+/**
+ * THE ROW CEILING. It is a storage budget, not a Google one — two windows land in a single
+ * jobs.result jsonb blob — so it is pinned as a LITERAL here, the MAX_HREFLANGS pattern: every
+ * other assertion in this file builds its expectation FROM the constant and therefore slides
+ * with it, which would let the persisted worst case grow by orders of magnitude with the whole
+ * suite green. See pull.ts for the measured bytes-per-row this value is derived from.
+ */
+describe("MAX_ROW_LIMIT — the ceiling VALUE, not just 'some ceiling'", () => {
+  it("is 15,000 rows per window", () => {
+    expect(MAX_ROW_LIMIT).toBe(15000);
+  });
+
+  it("stays below Google's 25,000-per-request maximum (one request, no pagination)", () => {
+    expect(MAX_ROW_LIMIT).toBeLessThanOrEqual(25000);
+  });
+});
+
+/**
+ * THE CAP FLAG IS MEASURED ON GOOGLE'S ANSWER. `capped` used to be computed from the PARSED
+ * row count, which is the count AFTER parseSearchAnalyticsRows drops malformed rows — so a
+ * window that genuinely filled the cap while carrying one bad row counted rowLimit - 1 and
+ * reported itself complete. The warning that tells a user they are seeing only their top rows
+ * switched itself off in the one case it exists for, and nothing anywhere said so.
+ */
+describe("runPull — the row cap is read from the RAW response, before parsing", () => {
+  it("flags capped when Google filled the page, even though a row was dropped", async () => {
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponseWithOneBadRow(3),
+    };
+
+    const pull = await pullWith(api, 3);
+
+    // Google sent 3 rows (a full page at this cap); one was unparseable, so 2 survive.
+    expect(pull.current.rows).toHaveLength(2);
+    expect(pull.previous.rows).toHaveLength(2);
+    // The page was FULL all the same — both windows must say so.
+    expect(pull.current.capped).toBe(true);
+    expect(pull.previous.capped).toBe(true);
+  });
+
+  it("does not flag capped when Google returned fewer rows than the cap", async () => {
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponseWithOneBadRow(3),
+    };
+
+    const pull = await pullWith(api, 10); // 3 raw rows against a cap of 10
+
+    expect(pull.current.capped).toBe(false);
+    expect(pull.previous.capped).toBe(false);
+  });
+
+  it("stays capped when Google returned MORE rows than the cap (>=, not ==)", async () => {
+    // The spec above sends EXACTLY rowLimit rows, so an equality check passes it — the `>=`
+    // is unpinned by everything else in this file. Google should never overshoot a rowLimit
+    // it was given, which is the point: a cap check must not be an equality that one
+    // unexpected row steps straight over into "not capped", reporting a truncated window as
+    // complete. Overshoot is exactly when the warning matters most.
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => rawGoogleResponse(CURRENT_ROWS), // 5 well-formed rows
+    };
+
+    const pull = await pullWith(api, 3); // 5 raw rows against a cap of 3
+
+    expect(pull.current.rows).toHaveLength(CURRENT_ROWS.length); // nothing was dropped
+    expect(pull.current.capped).toBe(true);
+    expect(pull.previous.capped).toBe(true);
+  });
+});
+
+/**
+ * THE TWO WINDOWS GO OUT TOGETHER, and both halves of that are pinned: that they actually
+ * overlap, and that overlapping did not make the FAILURE nondeterministic. The second is the
+ * one with teeth — Promise.all would reject with whichever window failed first, and the tool
+ * above turns that error into three different sentences for the user (dead grant / refused
+ * property / generic crash), so a race there is a race over what the user is told.
+ */
+describe("runPull — both windows are fetched concurrently", () => {
+  it("starts the previous-window query before the current one has resolved", async () => {
+    const release: (() => void)[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>((resolve) => release.push(resolve));
+        inFlight -= 1;
+        return rawGoogleResponse(CURRENT_ROWS);
+      },
+    };
+
+    const pending = pullWith(api).catch(() => undefined); // never leave a rejection dangling
+    await flush();
+
+    // Both calls are in the air with neither answered: sequential code cannot reach 2 here.
+    expect(release).toHaveLength(2);
+    expect(maxInFlight).toBe(2);
+
+    while (release.length > 0) release.shift()!();
+    await pending;
+  });
+
+  it("surfaces the CURRENT window's error when BOTH windows fail — even though previous failed first", async () => {
+    const previousError = new Error("previous window exploded");
+    const currentError = new Error("invalid_grant: token has been expired or revoked");
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async (_token, _property, body) => {
+        // The PREVIOUS window rejects immediately; the current one only several ticks later.
+        // Under Promise.all that ordering decides the outcome, and this test would read the
+        // previous window's error. Under a fixed current-then-previous read it cannot.
+        if (body.startDate === FIXTURE_WINDOWS.previous.start_date) throw previousError;
+        await flush();
+        throw currentError;
+      },
+    };
+
+    await expect(pullWith(api)).rejects.toBe(currentError);
+  });
+
+  it("re-throws the ORIGINAL error object, so the tool's invalid_grant / 403 classification still sees it", async () => {
+    const onlyPreviousFails = new Error("Google searchAnalytics.query failed (403): nope");
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async (_token, _property, body) =>
+        body.startDate === FIXTURE_WINDOWS.previous.start_date
+          ? Promise.reject(onlyPreviousFails)
+          : rawGoogleResponse(CURRENT_ROWS),
+    };
+
+    // Only the previous window failed, so ITS error is the one that must surface — identity,
+    // not a wrapper: the caller keys on the message prefix and on instanceof.
+    await expect(pullWith(api)).rejects.toBe(onlyPreviousFails);
   });
 });

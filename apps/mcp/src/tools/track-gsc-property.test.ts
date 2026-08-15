@@ -287,11 +287,14 @@ describe("track_gsc_property", () => {
     expect(run.recorder.mapped[0]?.accountId).toBe(SECOND_ACCOUNT_ID);
   });
 
-  it("tells a user with no connected Google account how to connect one", async () => {
+  it("tells a user with no connected Google account how to connect one — from ZERO projects", async () => {
     const run = await callTool({ property: TRACKED.siteUrl }, { asUser: "user-with-nothing" });
 
     expect(run.isError).toBe(true);
     expect(run.text).toMatch(/connect_gsc/);
+    // connect_gsc REQUIRES a project_id and refuses without one, so a brand-new account was
+    // being pointed at a step it could not take, with the step it COULD take left unnamed.
+    expect(run.text).toMatch(/setup_project/);
     expect(run.recorder.opened).toEqual([]);
   });
 

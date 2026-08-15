@@ -63,6 +63,57 @@ describe("analyzeContentDecay", () => {
     ]);
   });
 
+  /**
+   * The bigcattr shape (measured 2026-08-09, www.bigcattr.com), applied to the DECAY axis rather
+   * than the cannibalization one: Google emits one row per SERP appearance and it draws jump-links
+   * into an article's sections, so one article arrives as a bare row plus `#anchor` rows — and
+   * WHICH anchors it draws is Google's decision, per window.
+   *
+   * So the click mass of a perfectly stable article can sit on the bare URL in the previous window
+   * and on an anchor in the current one. Keyed by the raw page string that reads as a page which
+   * lost every one of its 40 clicks, and the user is told to rewrite an article whose traffic did
+   * not move. Keyed by the document, the totals are 40 and 40.
+   */
+  it("does NOT flag a stable article whose clicks moved between its bare URL and an #anchor", () => {
+    const article = "https://www.bigcattr.com/blog/icerik/british-shorthair-kedi-cinsi";
+    const pull = pullData(
+      [
+        gscRow({ query: "british kedi cinsleri", page: article, clicks: 0 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#renkler`, clicks: 40 }),
+      ],
+      [
+        gscRow({ query: "british kedi cinsleri", page: article, clicks: 40 }),
+        gscRow({ query: "british kedi cinsleri", page: `${article}#renkler`, clicks: 0 }),
+      ],
+    );
+    expect(analyzeContentDecay(pull)).toEqual([]);
+  });
+
+  /**
+   * THE COUNTERWEIGHT, so the fold above cannot be mistaken for "anchors are ignored": an article
+   * that genuinely lost its clicks is still flagged, and it is reported under the DOCUMENT — the
+   * URL the user can act on — even when every row Google returned carried a fragment.
+   */
+  it("still flags a real collapse, and names the document rather than an anchor", () => {
+    const article = "https://x.test/guide";
+    const pull = pullData(
+      [gscRow({ query: "q", page: `${article}#intro`, clicks: 2 })],
+      [
+        gscRow({ query: "q", page: `${article}#intro`, clicks: 30 }),
+        gscRow({ query: "q", page: `${article}#steps`, clicks: 10 }),
+      ],
+    );
+    expect(analyzeContentDecay(pull)).toEqual([
+      {
+        page: article,
+        previous_clicks: 40,
+        current_clicks: 2,
+        clicks_lost: 38,
+        drop_ratio: 0.95,
+      },
+    ]);
+  });
+
   it("orders decays by clicks lost, biggest bleed first", () => {
     const pull = pullData(
       [

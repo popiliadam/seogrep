@@ -1,4 +1,4 @@
-import { findQuickWins, formatQuickWins } from "../gsc-data/index.ts";
+import { findQuickWinsResult, formatQuickWins } from "../gsc-data/index.ts";
 import { makeDiscoveryTool, type DiscoveryToolDeps } from "./gsc-discovery-shared.ts";
 import type { RegisteredTool } from "./registry.ts";
 
@@ -16,7 +16,12 @@ export function makeFindQuickWinsTool(deps: DiscoveryToolDeps = {}): RegisteredT
   return makeDiscoveryTool(
     "find_quick_wins",
     DESCRIPTION,
-    (pull) => formatQuickWins(findQuickWins(pull)),
+    (pull) => {
+      // The PRE-CAP total travels with the shortlist, so a site with more opportunities than the
+      // cap is told how many were left out instead of reading the top 50 as the whole answer.
+      const { wins, total } = findQuickWinsResult(pull);
+      return formatQuickWins(wins, total);
+    },
     deps,
   );
 }

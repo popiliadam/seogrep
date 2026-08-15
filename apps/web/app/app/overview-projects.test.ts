@@ -64,6 +64,43 @@ describe("Overview counts the projects the projects page lists", () => {
   });
 });
 
+/**
+ * The SECOND count Overview reads, under the same rule as the first: vitest has no RSC boundary,
+ * so a dropped filter here reddens nothing that executes. The stakes are not symmetrical, though
+ * — the projects count leaking across tenants shows a wrong NUMBER, while this one would tell a
+ * stranger their Google connection is dead and send them through an OAuth round for it.
+ */
+describe("Overview counts the Google accounts that need reconnecting", () => {
+  it("asks for a head-only exact count", () => {
+    const query = queryOn("gsc_accounts");
+    expect(query).toMatch(/count:\s*["']exact["']/i);
+    expect(query).toMatch(/head:\s*true/i);
+  });
+
+  it("filters on the caller's own user id", () => {
+    // An EXPRESSION, never a literal — `.eq("user_id", "")` would satisfy a laxer pin while
+    // filtering on nothing (constitution NEVER #4).
+    expect(queryOn("gsc_accounts")).toMatch(
+      /\.eq\(\s*["']user_id["']\s*,\s*[A-Za-z_$][\w$.]*\s*\)/,
+    );
+  });
+
+  /**
+   * Counts the DEAD ones only. Without this filter every connected account is counted and the
+   * line fires for a healthy user — which is worse than not having the line: it teaches people
+   * that the reconnection warning means nothing.
+   */
+  it("counts only accounts marked invalid", () => {
+    expect(queryOn("gsc_accounts")).toMatch(
+      /\.eq\(\s*["']token_status["']\s*,\s*["']invalid["']\s*\)/,
+    );
+  });
+
+  it("the warning leads to the page that fixes it", () => {
+    expect(PAGE).toMatch(/href=\{?\s*["']\/app\/connection["']/);
+  });
+});
+
 describe("the count leads somewhere", () => {
   it("renders the shared copy rather than a second wording", () => {
     expect(PAGE).toMatch(/\bprojectCountLine\s*\(/);

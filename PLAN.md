@@ -5,6 +5,44 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🌙 2026-08-15 — GSC AİLESİ DERİNLEŞTİRME, 1. GECE (paralel oturum; 4 PR merge, 3 kod dilimi CANLIDA)
+
+- **Plan:** `docs/plans/2026-08-15-gsc-derinlestirme.md` ([#92](https://github.com/popiliadam/seogrep/pull/92)) —
+  6 ajan raporundan 21 bulgu (B1-B21) + 8 fiyatsız dilim (G1a→G7) + §7 imza kuyruğu. Plan dosyasının
+  KENDİSİ hakemden geçti: ilk tur FAIL (B7 genel cümlesi yanlıştı — discovery üçlüsü token_status'u
+  zaten okuyordu) → düzeltme → PASS.
+- **G3 CANLIDA** ([#93](https://github.com/popiliadam/seogrep/pull/93)): pull satır tavanı 5.000 → **15.000**
+  (25k değil — kötümser satır boyu ~360B × 2 pencere = 10,83 MB, crawl'ın 12 MB bandı içinde; matematik
+  hakem tarafından bağımsız yeniden üretildi). `capped` artık HAM satır sayısından (false-negative kapandı);
+  pencere sorguları `Promise.allSettled` ile paralel, çift-arızada deterministik current-önceliği pinli.
+  Fiyat 5 SABİT (fiyat-değeri değişimi sayılmama gerekçesi plan §3-G3'te). 7 mutasyon ekseni.
+- **G1a CANLIDA** ([#94](https://github.com/popiliadam/seogrep/pull/94)): ölü Google bağlantısı üç yüzeyde
+  adıyla söyleniyor — `list_gsc_properties` İLK gözlemde bile "expired — reconnect" der (hakem B-1'i:
+  işçinin öngörüp iş emrinin yasakladığı düzeltme; ders 13 vakası) ve kendi gözlemlediği invalid_grant'i
+  yazar; /app/connection hesap satırında sağlık rozeti; Overview'da yeniden-bağlan satırı. 0021 kolon-grant'i
+  hakem tarafından migration dosyasından doğrulandı. 9 mutasyon ekseni.
+- **G5 CANLIDA** ([#95](https://github.com/popiliadam/seogrep/pull/95)): discovery çıktıları pencerelerini,
+  15k tavanını ve bayatlığı (≥30 gün) söylüyor; **fragment katlama artık üç motorda** (`gsc-data/document.ts`
+  paylaşımlı; cannibalization bayt-özdeş — hakem mekanik karşılaştırdı; decay hayalet-çürüme ve quick-wins
+  #fragment-URL vakaları fixture-pinli). 11 mutasyon ekseni.
+- **Süreç:** 3 Opus işçi (izole worktree'ler — paylaşılan ağaçta C dilimi işçisi çalışırken tek-yazar
+  kuralı korundu) + 4 taze Fable hakem: plan FAIL→PASS · G3 PASS+2 pin aynı dilimde kapandı · G1a
+  FAIL→fix→delta-PASS · G5 PASS blocking-0. Her merge sonrası Deploy MCP success + canlı `/status: ready`
+  ölçüldü (bir boot'ta schema öz-denetimi ~2,5 dk gecikti — geçici, kendiliğinden ready).
+- **Gece-yarısı penceresi vakası bir kez daha yaşandı ve playbook çalıştı:** #93'ün update-branch
+  koşusu 00:00-00:30 UTC'ye denk geldi — `verify-db` (reaper spend_day) + `lighthouse` (skor varyansı)
+  kırmızı; loglar OKUNDU, suç dala atılmadı, 00:31 rerun'ıyla ikisi de yeşil. Ayrıca branch protection
+  "up to date" istediği için merge'ler SERİ (update-branch → tam CI turu) — paralel PR açarken bilinecek.
+- **SIRADAKİ (hazır iş emirleri plan §3'te):** G2 `gsc_discovery_runs` (migration **0025**, 0024 zırh
+  deseninin ikizi) + panel Insights — **ÖN KOŞUL: C dilimi (audit_runs/0024) main'de** (gece boyunca
+  C henüz PR'a çıkmadı) · G1b kart pull-özeti + payload düzeltmesi (aynı ön koşul, dosya çakışması) ·
+  G4 merdiven token-bilinci · G6 küçük borçlar · G7 docs (generator yoluyla).
+- **İMZA KUYRUĞU (plan §7 — dokunulmadı):** `compare_pulls` · `analyze_ctr_gaps` · `inspect_url`
+  fiyatları · pull v2 boyut-paramları maliyet profili · `submit_sitemap` RET önerisi · rapora discovery
+  bulguları · B19 marka-override kolonu · CTR-gap'in yerleşimi.
+- **Operatör adımı bu sabah:** yalnız C'nin 0024'ü (öteki oturumun talimatıyla). G2'nin 0025'i henüz
+  yazılmadı — C merge olduktan sonra dispatch edilecek, SQL'i o zaman hazırlanacak.
+
 ### 🗄️ 2026-08-13 — GSC PROPERTY TAKİBİ CANLIDA (4 PR, `main` @ `731c98f`)
 
 - **Operatör şikâyeti kapandı:** "connection sekmesinde GSC alanı darma duman." Ölçülmüştü: 27 property,

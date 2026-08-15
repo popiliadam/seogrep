@@ -34,6 +34,37 @@ async function countActiveProjects(supabase: Supabase, userId: string): Promise<
   return count;
 }
 
+/**
+ * How many of the caller's Google accounts the database says are DEAD (`token_status =
+ * 'invalid'`, migration 0021 — written only after Google itself answered `invalid_grant`).
+ *
+ * Overview is where a user lands and where they land BACK after an OAuth round, so it is the one
+ * page that can tell them a connection died without them having to go looking. Until now nothing
+ * outside the MCP tools read this column at all: a revoked grant was invisible until the next
+ * pull failed and charged for the privilege.
+ *
+ * A head-only exact count, like the projects one beside it: the page names a number and links
+ * onward, so fetching rows would be work with no use. Through the caller's AUTHENTICATED client
+ * — `token_status` is inside migration 0021's column-level SELECT grant, only the ciphertext is
+ * withheld — with an explicit user_id filter beside RLS (constitution NEVER #4).
+ *
+ * A failed count degrades to ZERO, deliberately, rather than to a warning. Everything else here
+ * degrades toward saying less; inventing "your connection is dead" out of a query error would
+ * send a user through an OAuth round for a database blip.
+ */
+async function countExpiredGscAccounts(supabase: Supabase, userId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("gsc_accounts")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("token_status", "invalid");
+  if (error) {
+    console.error("overview: gsc_accounts health count failed:", error.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
 /** A repeated query param (?gsc=a&gsc=b) arrives as an array; only the first value counts. */
 function firstValue(raw: string | string[] | undefined): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
@@ -69,12 +100,13 @@ export default async function OverviewPage({
     );
   }
 
-  const [balance, recent, sparkWindow, projectCount] = await Promise.all([
+  const [balance, recent, sparkWindow, projectCount, expiredAccounts] = await Promise.all([
     getBalance(supabase, user.id),
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 5 }),
     // A wider window purely for the spend sparkline — the table stays the exact latest five.
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 60 }),
     countActiveProjects(supabase, user.id),
+    countExpiredGscAccounts(supabase, user.id),
   ]);
 
   // New-account surface: the design's GETTING STARTED card shows until the ledger records any
@@ -90,6 +122,25 @@ export default async function OverviewPage({
       />
 
       <GscBanner status={firstValue(params.gsc)} property={firstValue(params.property)} />
+
+      {/* ONLY when there is something to say. A permanent "0 accounts need reconnection" row
+          would train the eye to skip exactly the line that matters on the day it is not zero —
+          so with no dead account this renders nothing at all, not an empty state. */}
+      {expiredAccounts > 0 ? (
+        <p
+          role="alert"
+          className="m-0 mt-6 border-l-2 border-l-negative bg-card px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-negative"
+        >
+          {/* The trailing clause agrees with the count too — "until it is reconnected" after
+              "3 Google accounts" reads as though one of them is the problem. */}
+          {expiredAccounts === 1
+            ? "1 Google account needs reconnection — Search Console tools cannot read its data until it is reconnected. "
+            : `${expiredAccounts} Google accounts need reconnection — Search Console tools cannot read their data until they are reconnected. `}
+          <Link href="/app/connection" className="underline">
+            Open Connection
+          </Link>
+        </p>
+      ) : null}
 
       {isNewUser ? (
         <div className="mb-12 mt-6 border border-hairline bg-card animate-[rise_0.5s_ease-out_0.04s_both]">
