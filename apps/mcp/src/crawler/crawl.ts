@@ -598,6 +598,19 @@ export const MAX_SITEMAP_URLS_STORED = 500;
  * few KB) while leaving the adversarial case bounded. skipped[] is bounded separately and
  * independently (MAX_SKIPPED x the field ceilings, ~2 MB worst case), so a whole persisted
  * result stays under ~14 MB.
+ *
+ * WHAT THE JSON-LD BODIES ADDED (measured, 100 synthetic pages of realistic shape — 40 links,
+ * the full signal block — encoded exactly as this budget encodes them):
+ *
+ *   no bodies (the pre-Faz-3 shape)          194.5 KB
+ *   one typical @graph block per page        243.7 KB   (+49.2 KB, +25%)
+ *   5 blocks at the 4000-char ceiling, x100  2148.9 KB  (11.1x, and the absolute worst case)
+ *
+ * The adversarial case is ~2.1 MB against a 12 MB budget, so the bodies cannot overflow it: at
+ * worst they mean fewer pages fit, and the crawl reports that with RESULT_BUDGET_REASON like any
+ * other page it could not include. The accumulation check counts them, because it measures the
+ * WHOLE record. sitemapUrls does NOT go through this budget (it is not a page record) and is
+ * bounded on its own at ~1 MB — see MAX_SITEMAP_URLS_STORED.
  */
 const MAX_RESULT_BYTES = 12_000_000;
 
