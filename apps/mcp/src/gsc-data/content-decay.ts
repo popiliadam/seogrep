@@ -1,3 +1,4 @@
+import { documentOf } from "./document.ts";
 import type { GscRow, PullData } from "./types.ts";
 
 /**
@@ -11,6 +12,10 @@ import type { GscRow, PullData } from "./types.ts";
  *   - absolute drop >= 5 clicks (the loss is real, not a one-or-two-click wobble), AND
  *   - relative drop >= 30% of its previous clicks (a proportional slide, not normal churn).
  * A page with zero previous clicks cannot "decay" (there is no baseline), so it is skipped.
+ *
+ * "A page" means a DOCUMENT, in BOTH windows: rows differing only by #fragment are one page
+ * (document.ts), because Google decides per window which section anchors of an article it shows
+ * and an unfolded fragment row moves a stable article's clicks onto a different key.
  *
  * Results are ordered by clicks lost desc — the biggest bleed first.
  */
@@ -30,11 +35,23 @@ export interface PageDecay {
   readonly drop_ratio: number;
 }
 
-/** Sum clicks per page across a window's rows (a page appears once per query it ranks for). */
+/**
+ * Sum clicks per DOCUMENT across a window's rows — a page appears once per query it ranks for,
+ * and once more per #fragment Google drew a jump-link to (document.ts documentOf).
+ *
+ * The fragment fold is not cosmetic here, it is the difference between a real finding and a
+ * manufactured one. Google decides per window which of an article's section anchors it shows, so
+ * a stable article's click mass can sit on the bare URL in one window and on `…#renkler` in the
+ * next. Keyed by the raw page string those are two different pages, one of which "lost all its
+ * clicks": the decay list then tells the user to rewrite an article whose traffic never moved,
+ * which is the same phantom-decay failure the freshness-lag work removed from the other end
+ * (M-20, pinned below). Keyed by the document, the mass never leaves the page it belongs to.
+ */
 function clicksByPage(rows: readonly GscRow[]): Map<string, number> {
   const byPage = new Map<string, number>();
   for (const row of rows) {
-    byPage.set(row.page, (byPage.get(row.page) ?? 0) + row.clicks);
+    const page = documentOf(row.page);
+    byPage.set(page, (byPage.get(page) ?? 0) + row.clicks);
   }
   return byPage;
 }
