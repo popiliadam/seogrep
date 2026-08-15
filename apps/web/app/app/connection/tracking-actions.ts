@@ -6,6 +6,7 @@ import { createServiceClient } from "@pseo/db/server";
 import { canQuerySearchAnalytics } from "../../../lib/gsc/oauth";
 import {
   CONNECTION_PATH,
+  notListedMessage,
   readAccountSites,
   readOwnProject,
   requireUserId,
@@ -52,6 +53,12 @@ import {
  *      apps/web could not import it, and copying its reserved-TLD list here would have been a
  *      SECOND copy of a security list. `normalizeDomain` now lives in @pseo/core and BOTH
  *      surfaces call it — one list, one verdict.
+ *   8. THE NEAR-MISS SUGGESTION IS THE SAME RULE TOO, for the same reason. `track_gsc_property`
+ *      answered a cosmetically-wrong property with `Did you mean "X"?` from 2026-08-14 and this
+ *      surface answered a flat refusal, so one typo had a way out in the client and a dead end
+ *      in the browser. `cosmeticPropertyMatch` (@pseo/core) is now the single rule; `notListedMessage`
+ *      (./action-support) is the web sentence, and it is the ONLY place this surface spells the
+ *      refusal (it was three literals until 2026-08-15).
  *
  * Refusals are RETURNED, not thrown, because every one of them is something the user can act
  * on and the caller shows the sentence as-is. Only a missing session throws (there is no user
@@ -66,7 +73,6 @@ type OpenedProject =
 /** The same opaque sentence for a malformed id, a missing project and another tenant's. */
 const PROJECT_NOT_FOUND = "That project was not found.";
 const ACCOUNT_NOT_FOUND = "That Google account was not found.";
-const NOT_LISTED = "That property is not listed on this Google account.";
 const COULD_NOT_TRACK = "Could not start tracking that property. Please try again.";
 
 /**
@@ -206,9 +212,9 @@ export async function trackProperty(
     return { ok: false, error: ACCOUNT_NOT_FOUND };
   }
   // An empty choice can never be listed — refuse it before spending a Google round trip on a
-  // foregone answer.
+  // foregone answer. No listing has been read yet, so there is nothing to suggest from.
   if (property.length === 0) {
-    return { ok: false, error: NOT_LISTED };
+    return { ok: false, error: notListedMessage(property) };
   }
 
   const service = createServiceClient();
@@ -220,7 +226,15 @@ export async function trackProperty(
   }
   const hit = listing.sites.find((site) => site.siteUrl === property);
   if (!hit) {
-    return { ok: false, error: NOT_LISTED };
+    // Only what THIS account actually listed may be offered as a correction — a property we
+    // never saw cannot be suggested, and no other account is consulted on this surface.
+    return {
+      ok: false,
+      error: notListedMessage(
+        property,
+        listing.sites.map((site) => site.siteUrl),
+      ),
+    };
   }
 
   // STEP 2 — queryable? Refuse BEFORE opening a project.
