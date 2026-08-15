@@ -96,6 +96,35 @@ export interface OrphanSignal {
   readonly depth: number;
 }
 
+/**
+ * The sitemap↔crawl comparison (Faz 2). Present ONLY when the crawl actually read a sitemap —
+ * see `sitemapDiff` on the report for why `null` and "no differences" must not look alike.
+ */
+export interface SitemapDiff {
+  /** How many URLs the crawl read out of the sitemap (the denominator both lists are read against). */
+  readonly sitemapUrls: number;
+  /**
+   * Advertised in the sitemap and NOT ACCOUNTED FOR by the crawl — neither crawled nor skipped.
+   *
+   * The skipped list is part of the comparison on purpose: a URL the crawler deliberately did not
+   * fetch (robots-disallowed, out of budget, non-HTML) was SEEN, and reporting it here as an
+   * unknown gap would turn the crawler's own bounds into findings about the site. audit_tech
+   * already reports skips, by category, in their own section.
+   */
+  readonly missingFromCrawl: string[];
+  /** Crawled and NOT advertised in the sitemap (discovered by link-following). */
+  readonly missingFromSitemap: string[];
+}
+
+/** An internal link whose TARGET was crawled and answered 4xx/5xx. */
+export interface BrokenInternalLink {
+  /** The page carrying the link. */
+  readonly from: string;
+  /** The link target, as the crawl stored that page's URL. */
+  readonly to: string;
+  readonly status: number;
+}
+
 export interface TechReport {
   readonly pageCount: number;
   readonly skippedCount: number;
@@ -125,6 +154,29 @@ export interface TechReport {
    * this list exists so the signal is not silently dropped in the meantime.
    */
   readonly orphanSignals: OrphanSignal[];
+
+  // --- Faz 2 graph sections --------------------------------------------------------
+
+  /**
+   * The sitemap↔crawl diff, or `null` when this crawl read no sitemap.
+   *
+   * `null` RATHER THAN AN EMPTY DIFF, and the distinction is the whole rule: an empty diff says
+   * "the sitemap and the crawl agree", which is a strong claim — and it is exactly the claim a
+   * crawl with no sitemap at all (or one stored before the URLs were kept) cannot support. The
+   * renderer prints the section only when this is non-null, so silence never reads as agreement.
+   */
+  readonly sitemapDiff: SitemapDiff | null;
+  /**
+   * Internal links pointing at a page the SAME crawl fetched and got a 4xx/5xx from.
+   *
+   * SCOPE, stated so the number is never over-read: a target this crawl never fetched is NOT
+   * counted, however plausible a 404 would be — the crawl is bounded, and a page outside its
+   * budget has no status to report. What is listed here is a link whose destination was measured
+   * and was broken. Always an array: the two fields it reads (`links`, `status`) exist on every
+   * crawl this engine has ever parsed, so an empty list means "no broken internal links found",
+   * not "unmeasured".
+   */
+  readonly brokenInternalLinks: BrokenInternalLink[];
 }
 
 /** Bucket a crawler skip `reason` into a stable category for grouping. */
@@ -233,6 +285,92 @@ function signalSections(pages: AuditPage[]): {
   return { slowPages, heavyPages, redirectChains, xRobotsConflicts, deepPages, orphanSignals };
 }
 
+/**
+ * The comparison key for two URLs that mean the same page: fragment dropped, one trailing slash
+ * dropped (except on the root). `/about/` in a sitemap and `/about` in the crawl are one page,
+ * and a diff that called them two would report every site's whole sitemap as missing.
+ *
+ * Written here rather than imported from the crawler: these rule engines take a parsed AuditCrawl
+ * and nothing else — a dependency on crawl.ts would drag undici and the fetch stack into a pure
+ * module. An unparseable string falls back to a trimmed form of itself so it can still match
+ * ITSELF (two identical unparseable strings are still the same URL).
+ */
+function urlKey(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.hash = "";
+    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
+    }
+    return url.toString();
+  } catch {
+    return raw.replace(/#.*$/, "").replace(/\/$/, "");
+  }
+}
+
+/**
+ * sitemap ∖ crawl and crawl ∖ sitemap, or null when there is no sitemap to compare against.
+ *
+ * The null case covers BOTH "the stored crawl predates sitemapUrls" (undefined) and "the crawl
+ * looked and found no usable sitemap" ([]). They are different facts about the crawl, but they
+ * license the same statement about the SITE — none — and a section that fired on the second would
+ * announce "0 URLs in your sitemap are uncrawled" to sites that have no sitemap at all.
+ */
+function sitemapDiff(crawl: AuditCrawl): SitemapDiff | null {
+  const sitemapUrls = crawl.sitemapUrls;
+  if (sitemapUrls === undefined || sitemapUrls.length === 0) return null;
+
+  const sitemapKeys = new Set(sitemapUrls.map(urlKey));
+  // ACCOUNTED FOR = crawled OR skipped. A robots-disallowed sitemap URL is not a gap in the
+  // crawl's knowledge; it is a decision the crawler recorded, and audit_tech lists it already.
+  const seen = new Set<string>();
+  for (const page of crawl.pages) seen.add(urlKey(page.url));
+  for (const skip of crawl.skipped) seen.add(urlKey(skip.url));
+
+  const missingFromCrawl: string[] = [];
+  const listed = new Set<string>();
+  for (const url of sitemapUrls) {
+    const key = urlKey(url);
+    // Dedupe: a sitemap may advertise `/a` and `/a/`, which are one page and must be one row.
+    if (seen.has(key) || listed.has(key)) continue;
+    listed.add(key);
+    missingFromCrawl.push(url);
+  }
+
+  const missingFromSitemap = crawl.pages
+    .filter((page) => !sitemapKeys.has(urlKey(page.url)))
+    .map((page) => page.url);
+
+  return { sitemapUrls: sitemapUrls.length, missingFromCrawl, missingFromSitemap };
+}
+
+/** Internal links whose target this crawl fetched and found broken (4xx/5xx). */
+function brokenInternalLinks(pages: AuditPage[]): BrokenInternalLink[] {
+  /** key -> the broken page, as the crawl stored it. Only pages with a measured failure. */
+  const broken = new Map<string, AuditPage>();
+  for (const page of pages) {
+    if (page.status >= 400) broken.set(urlKey(page.url), page);
+  }
+  if (broken.size === 0) return [];
+
+  const found: BrokenInternalLink[] = [];
+  for (const page of pages) {
+    // Per SOURCE page, so two spellings of one broken target on the same page are one row.
+    const reported = new Set<string>();
+    for (const link of page.links) {
+      const key = urlKey(link);
+      const target = broken.get(key);
+      // A target this crawl never fetched has NO status, and inventing one is the failure this
+      // guard exists to prevent: `undefined` here would otherwise be reported as a broken link
+      // for every off-site link and every page beyond the crawl budget.
+      if (target === undefined || reported.has(key)) continue;
+      reported.add(key);
+      found.push({ from: page.url, to: target.url, status: target.status });
+    }
+  }
+  return found;
+}
+
 /** Run the technical rules over a crawl. */
 export function auditTech(crawl: AuditCrawl): TechReport {
   const { status, clientErrorUrls, serverErrorUrls } = classifyStatus(crawl.pages);
@@ -253,5 +391,7 @@ export function auditTech(crawl: AuditCrawl): TechReport {
     skippedByCategory,
     robotsConflicts: robotsConflicts(crawl.pages),
     ...signalSections(crawl.pages),
+    sitemapDiff: sitemapDiff(crawl),
+    brokenInternalLinks: brokenInternalLinks(crawl.pages),
   };
 }
