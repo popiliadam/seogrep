@@ -2,7 +2,8 @@
  * The whats_next decision ladder — PURE: no I/O, no DB, no runtime dependency.
  *
  * WHY IN CORE — the ladder answers "where does this project stand, and what is the one next
- * step?" from four observable signals, and BOTH runtimes need that answer with the SAME words:
+ * step?" from a handful of observable signals, and BOTH runtimes need that answer with the SAME
+ * words:
  * the MCP `whats_next` tool renders it as text, and apps/web wants to show it in the panel. The
  * decision itself carries no transport, so it lives here and each surface renders it its own way.
  *
