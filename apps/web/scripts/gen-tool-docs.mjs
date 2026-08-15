@@ -203,7 +203,13 @@ export function substituteProseTokens(text, constants) {
     .replace(/\{\{GSC_LAG_DAYS\}\}/g, () =>
       dayPhrase(positiveInteger(lagDays, "{{GSC_LAG_DAYS}}", "lagDays")),
     );
-  const leftover = out.match(/\{\{[A-Z0-9_]+\}\}/);
+  // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
+  // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
+  // convention. The narrow `[A-Z0-9_]+` version this replaces let four near-misses — `{{max_rows}}`,
+  // `{{ MAX_GSC_ROWS }}`, `{{Max_Rows}}`, `{{MAX-ROWS}}` — render straight onto the page, i.e. the
+  // guard was green precisely when it was needed. Nothing legitimate can trip it: a rendered page
+  // is MDX, where a bare `{` already opens a JSX expression.
+  const leftover = out.match(/\{\{[^}]*\}\}/);
   if (leftover) throw new Error(`Unknown prose token ${leftover[0]} — add a substitution for it.`);
   return out;
 }
@@ -253,6 +259,16 @@ export function findConfirmFields(tools) {
 // MAX_ROW_LIMIT and GSC_FRESHNESS_LAG_DAYS in the built MCP code, so `--check` turns red on this
 // page the moment either constant moves (mutation-proved, both directions).
 // Each tool appends its OWN consequence to the intro, because truncation distorts each differently.
+//
+// Three limits are KNOWN and ACCEPTED here (reviewed, deliberately not fixed):
+//   1. The tokens carry the number, not the grammar around it. `dayPhrase` keeps "1 day" correct,
+//      but the pull page's "the newest {{GSC_LAG_DAYS}} ARE not analyzed" would still read wrong at
+//      a lag of 1 — a constant that is not going to 1, and a sentence rewrite is the fix if it does.
+//   2. "BOTH windows also end …" is exact for analyze_content_decay and slightly over-broad for the
+//      other two, which only read the current window; the offset is the same for both windows, so
+//      the reader is not misled, and one shared fragment beats three near-identical ones.
+//   3. Nothing stops a future author typing a raw number instead of a token. The gate catches a
+//      constant that MOVES away from the prose, not prose that was born detached from a constant.
 const INHERITED_LIMITS_INTRO =
   "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
   "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";

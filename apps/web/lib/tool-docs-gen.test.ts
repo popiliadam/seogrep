@@ -395,3 +395,32 @@ describe("substituteProseTokens — {{GSC_LAG_DAYS}}", () => {
     expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: "3" })).toThrow();
   });
 });
+
+describe("substituteProseTokens — the leftover-token guard", () => {
+  const constants = { maxRowLimit: 15000, lagDays: 3 };
+
+  // A typo does not respect the SCREAMING_CASE convention — that is what makes it a typo. The
+  // guard's earlier `[A-Z0-9_]+` shape let each of these render onto a published page verbatim,
+  // i.e. it was green in exactly the cases it exists to catch. One case per near-miss axis:
+  // lowercase, inner padding, mixed case, and a hyphen instead of an underscore.
+  it.each([
+    ["lowercase", "cap is {{max_rows}}"],
+    ["padded with spaces", "cap is {{ MAX_GSC_ROWS }}"],
+    ["mixed case", "cap is {{Max_Rows}}"],
+    ["hyphenated", "cap is {{MAX-ROWS}}"],
+  ])("throws on a %s near-miss instead of printing it to the reader", (_label, text) => {
+    expect(() => substituteProseTokens(text, constants)).toThrow(/Unknown prose token/);
+  });
+
+  it("names the offending token in the error, so the fix is obvious", () => {
+    expect(() => substituteProseTokens("cap is {{ MAX_GSC_ROWS }}", constants)).toThrow(
+      /\{\{ MAX_GSC_ROWS \}\}/,
+    );
+  });
+
+  it("still lets a fully substituted page through", () => {
+    expect(substituteProseTokens("{{MAX_GSC_ROWS}} rows, {{GSC_LAG_DAYS}} back", constants)).toBe(
+      "15,000 rows, 3 days back",
+    );
+  });
+});
