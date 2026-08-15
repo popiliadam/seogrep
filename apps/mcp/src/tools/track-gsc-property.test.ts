@@ -487,6 +487,41 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
     expect(forward).not.toMatch(/not listed/i);
   });
 
+  /**
+   * WHICH order, not merely A CONSISTENT one.
+   *
+   * Every other fixture in this file uses lowercase ASCII emails, where byte order and locale
+   * order agree — so all of them pass just as happily with `localeCompare` as with the byte
+   * comparator, and none of them measures the choice. The choice matters: `localeCompare` reads
+   * the RUNTIME's locale (and ICU version), so the same two accounts can be named in one order
+   * on a developer's Mac and the other order on the server, which is precisely the drift the
+   * sort was added to eliminate.
+   *
+   * A capitalised email separates them. Google account emails are stored as the user typed
+   * them, so mixed case is ordinary rather than exotic:
+   *   byte order    -> "Zeta@…", "alpha@…"   ('Z' is 0x5A, 'a' is 0x61)
+   *   localeCompare -> "alpha@…", "Zeta@…"   (en collation folds case)
+   * The assertion names the byte order explicitly, so swapping the comparator turns it red.
+   */
+  it("orders accounts by BYTE value, not by locale collation", async () => {
+    const mixedCase: GscAccountSummary[] = [
+      { id: "acc-upper-zeta", email: "Zeta@mail.invalid" },
+      { id: "acc-lower-alpha", email: "alpha@mail.invalid" },
+    ];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const allFail = (): Promise<readonly GscSite[]> =>
+      Promise.reject(new Error("fixture: sites.list refused"));
+    const forward = await textOf(mixedCase, allFail);
+    const reversed = await textOf([...mixedCase].reverse(), allFail);
+    errorSpy.mockRestore();
+
+    // Still order-independent...
+    expect(forward).toBe(reversed);
+    // ...and the order it settles on is the byte one. Under localeCompare this reads
+    // "alpha@mail.invalid, Zeta@mail.invalid" and this assertion fails.
+    expect(forward).toContain("Zeta@mail.invalid, alpha@mail.invalid");
+  });
+
   it("keeps the ambiguous refusal deterministic when several accounts list it", async () => {
     const everyoneListsIt = (): Promise<readonly GscSite[]> => Promise.resolve([TRACKED]);
     const forward = await textOf(ACCOUNTS, everyoneListsIt);
