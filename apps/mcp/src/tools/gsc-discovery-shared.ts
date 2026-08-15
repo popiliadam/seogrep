@@ -7,6 +7,9 @@ import {
   renderPullProvenance,
   renderReauthWarning,
   renderRowCapCaveat,
+  writeDiscoveryRun,
+  type DiscoveryReport,
+  type DiscoveryRunWriter,
   type LoadPullFn,
   type LoadTokenStatusFn,
   type PullData,
@@ -34,12 +37,38 @@ import {
  * and DOES commit.
  */
 
-/** Turn a loaded pull into the tool's text output (engine + formatter). */
-export type RenderDiscovery = (pull: PullData) => string;
+/**
+ * What one analysis produced: the engine's STRUCTURAL result, and the text the tool returns.
+ *
+ * Both halves come out of ONE engine call so the row and the reply can never describe different
+ * runs — a builder that re-ran the engine to get something to store would be storing a second
+ * measurement that merely resembles the one the caller was shown (AuditRendering, verbatim).
+ */
+export interface DiscoveryRendering {
+  readonly report: DiscoveryReport;
+  readonly text: string;
+}
+
+/**
+ * Turn a loaded pull into the tool's output (engine + formatter).
+ *
+ * The three priced tools return a `DiscoveryRendering`, and returning one is what puts a row in
+ * `gsc_discovery_runs`. A bare string stays legal — the fast-lane specs build tools through this
+ * factory with no engine behind them, and such a tool writes no row, which is exactly what "there
+ * is nothing structural here to store" should mean. The three that DO produce a report are pinned
+ * individually (gsc-discovery-runs.db.test.ts), because a check inside a shared function proves
+ * nothing about which callers reach it.
+ */
+export type RenderDiscovery = (pull: PullData) => string | DiscoveryRendering;
 
 export interface DiscoveryToolDeps {
   /** The pull loader (default: the real tenant-scoped loadLatestPull). Injected in tests. */
   readonly loadPull?: LoadPullFn;
+  /**
+   * The discovery-run recorder (default: the real `writeDiscoveryRun`). A PORT for the same reason
+   * loadPull is one — and so a spec can make the write fail without breaking a database.
+   */
+  readonly writeRun?: DiscoveryRunWriter;
   /** The connection-health reader (default: the real tenant-scoped loadGscTokenStatus). */
   readonly loadTokenStatus?: LoadTokenStatusFn;
   /**
@@ -99,6 +128,7 @@ export function makeDiscoveryTool(
   const loadPull = deps.loadPull ?? loadLatestPull;
   const loadTokenStatus = deps.loadTokenStatus ?? loadGscTokenStatus;
   const loadProject = deps.loadProject ?? loadOwnProject;
+  const writeRun = deps.writeRun ?? writeDiscoveryRun;
   return defineTool({
     name,
     description,
@@ -142,6 +172,34 @@ export function makeDiscoveryTool(
         // reaches the user, that uniformity is what keeps project existence unobservable.
         throw new PreconditionNotMetError(load.error);
       }
+
+      // THE RUN IS RECORDED BEFORE THE REPLY IS BUILT, and the write is not guarded. withCredits
+      // commits a handler that RETURNS and releases one that THROWS, so an error that escapes here
+      // costs the tenant nothing (gsc-data/runs.ts states the same contract from the other side).
+      // Caught and logged instead, the shape would be the house's worst: a charged caller, a
+      // delivered analysis, and a panel that says the tool never ran.
+      //
+      // The findings text is taken from the SAME rendering that is stored, so the row and the
+      // reply cannot describe different runs; the footer below is appended to it unchanged, which
+      // is what keeps every existing pin on this output byte-identical.
+      const rendered = render(load.pull);
+      const findings = typeof rendered === "string" ? rendered : rendered.text;
+      if (typeof rendered !== "string") {
+        // The job id is required rather than optional-and-skipped: `PullLoad.jobId` is optional
+        // only so DB-less fakes keep compiling, and a report with nowhere to point would otherwise
+        // become a SILENTLY unrecorded run — the one failure mode this whole write exists to
+        // remove. Fail closed, before the reply is built (makeAuditTool's rule, verbatim).
+        if (load.jobId === undefined) {
+          throw new Error(
+            `${name}: pull load carried no job id — the discovery run cannot be recorded`,
+          );
+        }
+        await writeRun(
+          { userId: ctx.userId, projectId: project_id, pullJobId: load.jobId, tool: name },
+          rendered.report,
+        );
+      }
+
       // THE FOOTER — ONE call site for all three tools, so these lines can't drift into three
       // slightly different sentences. Every line here is a statement about the DATA rather than
       // a finding, and each answers a question the findings alone leave open:
@@ -166,7 +224,7 @@ export function makeDiscoveryTool(
         renderPullProvenance(load.pulledAt),
         await reauthWarning(ctx.userId, project_id, loadTokenStatus),
       ].filter((line): line is string => line !== null);
-      return textResult(`${render(load.pull)}\n\n${footer.join("\n")}`);
+      return textResult(`${findings}\n\n${footer.join("\n")}`);
     },
   });
 }

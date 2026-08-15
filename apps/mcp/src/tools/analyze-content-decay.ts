@@ -1,4 +1,8 @@
-import { analyzeContentDecay, formatContentDecay } from "../gsc-data/index.ts";
+import {
+  analyzeContentDecay,
+  contentDecayReport,
+  formatContentDecay,
+} from "../gsc-data/index.ts";
 import { makeDiscoveryTool, type DiscoveryToolDeps } from "./gsc-discovery-shared.ts";
 import type { RegisteredTool } from "./registry.ts";
 
@@ -16,7 +20,12 @@ export function makeAnalyzeContentDecayTool(deps: DiscoveryToolDeps = {}): Regis
   return makeDiscoveryTool(
     "analyze_content_decay",
     DESCRIPTION,
-    (pull) => formatContentDecay(analyzeContentDecay(pull)),
+    // ONE engine call feeds both halves (migration 0025): the row stores the same decay list the
+    // caller reads, ordered biggest-loss-first, so `top` is simply its first entry.
+    (pull) => {
+      const decays = analyzeContentDecay(pull);
+      return { report: contentDecayReport(pull, decays), text: formatContentDecay(decays) };
+    },
     deps,
   );
 }

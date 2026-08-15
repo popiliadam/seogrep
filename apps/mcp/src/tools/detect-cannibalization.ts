@@ -1,4 +1,8 @@
-import { detectCannibalization, formatCannibalization } from "../gsc-data/index.ts";
+import {
+  cannibalizationReport,
+  detectCannibalization,
+  formatCannibalization,
+} from "../gsc-data/index.ts";
 import { makeDiscoveryTool, type DiscoveryToolDeps } from "./gsc-discovery-shared.ts";
 import type { RegisteredTool } from "./registry.ts";
 
@@ -16,7 +20,13 @@ export function makeDetectCannibalizationTool(deps: DiscoveryToolDeps = {}): Reg
   return makeDiscoveryTool(
     "detect_cannibalization",
     DESCRIPTION,
-    (pull) => formatCannibalization(detectCannibalization(pull)),
+    // ONE engine call feeds both halves (migration 0025), so the recorded run and the sentence the
+    // caller reads are the same measurement — including the branded/actionable split, which the
+    // report carries as two numbers rather than re-deriving.
+    (pull) => {
+      const groups = detectCannibalization(pull);
+      return { report: cannibalizationReport(pull, groups), text: formatCannibalization(groups) };
+    },
     deps,
   );
 }
