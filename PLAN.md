@@ -38,6 +38,35 @@ katalog-enumerasyonlu spec (check-rls deseninin test karşılığı) ayrı dilim
 **FLAKE KAYDI güncel:** önceki 4 kaleme ek — crawl time-budget testi (yük altında dalga
 başlatamıyor, 2 oturumda 3×) · lighthouse job'ının 47 sn'lik runner-çökmesi deseni (1×).
 
+### ✅ 2026-08-15 — GSC AİLESİ DERİNLEŞTİRME KAPANDI: 10 PR, 8 KOD DİLİMİ CANLIDA (fiyatsız kapsamın %100'ü)
+
+- **Plan dosyasındaki (docs/plans/2026-08-15-gsc-derinlestirme.md) fiyat-imzası GEREKTİRMEYEN her dilim
+  bitti ve canlıda:** G1a token sağlığı (#94) · G3 pull 15k tavanı (#93) · G5 discovery dürüstlüğü (#95) ·
+  G7 docs türetmesi (#98) · G6 beş küçük borç (#99) · G4 merdiven basamağı (#100) · **G2+G1b discovery
+  kalıcılığı: migration 0025 + panel Insights + kart pull-özeti (#102, 0025 prod'a operatör eliyle
+  uygulandı ve merge ÖNCESİ tabloyla doğrulandı)** · G4 web paritesi (#104). + plan (#92) ve gece
+  handoff'u (#96). Prod tablo seti artık `audit_runs` + `gsc_discovery_runs` (ikisi de boş doğdu,
+  append-only, RLS force).
+- **Süreç sayıları:** 6 keşif/inceleme ajanı → 21 bulgu (B1-B21) → 8 işçi dilimi + 8+ taze hakem turu
+  (5'i Fable). Hakem FAIL oranı yüksek ve İŞLEVLİYDİ: plan dosyası, G1a, G4 ve web-paritesi ilk turda
+  FAIL aldı — dördü de gerçek delikti (yanlış genel cümle · ilk-ölüm penceresi · gölgelenen test vakası ·
+  ölçümsüz Map join'i) ve dördü de aynı dilimde mutasyon-kanıtıyla kapandı. Toplam **~90 mutasyon ekseni**
+  kırmızı-ölçümlü; hakemlerin YEŞİL KALAN mutasyonları iki ürün-geneli borcu ortaya çıkardı (aşağıda).
+- **Paralel-oturum koordinasyonu İLK KEZ yazılı protokolle yürüdü** (crawl+audit oturumuyla kanal
+  üzerinden): bölge bildirimleri, salt-import şartları, verify-db/reset anonsları, seri merge treni
+  (branch protection "up to date" → her merge ötekine update-branch turu yaptırır), PLAN.md yazım sırası.
+  İki kaza playbook'la çözüldü: paylaşılan lokal Supabase stack'ine anonssuz reset (iki kez; migration-up
+  ile onarıldı, reset atılmadı) ve Actions-billing bloğu (repo private'a dönmüştü; operatör public yaptı).
+- **AÇIK — imza kuyruğu (plan §7, koduna dokunulmadı):** `compare_pulls` · `analyze_ctr_gaps` ·
+  `inspect_url` fiyatları · pull v2 boyut-paramları maliyet profili · `submit_sitemap` **RET önerisi** ·
+  rapora discovery bulguları (NEVER#6 ruhu) · B19 marka-override kolonu · CTR-gap yerleşimi. N8
+  `audit_content` komşu oturumun yeni turunda fiyat-parklı ilerliyor (iki planın ortak kalemi).
+- **AÇIK — ürün-geneli test borçları (hakem ölçümleri, ayrı iş chip'leri düşüldü):** FORCE RLS'i hiçbir
+  spec pinlemiyor (0024+0025 dahil — katalog-enumerasyonlu spec önerildi) · web tracking-actions'ta
+  did-you-mean paritesi yok · prompts.mdx'i hiçbir kapı ölçmüyor (generator'a prompts dalı = kalıcı fix).
+- **Ortak backlog (iki oturum da kaydetti):** paylaşılan lokal stack'e kalıcı çözüm (worktree-başına
+  stack ya da stack-kilidi).
+
 ### 🌙 2026-08-15 — GSC AİLESİ DERİNLEŞTİRME, 1. GECE (paralel oturum; 4 PR merge, 3 kod dilimi CANLIDA)
 
 - **Plan:** `docs/plans/2026-08-15-gsc-derinlestirme.md` ([#92](https://github.com/popiliadam/seogrep/pull/92)) —

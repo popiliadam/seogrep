@@ -15,6 +15,7 @@ import { FRESHNESS_WINDOW_DAYS, type Json, type ProjectSignals } from "@pseo/cor
  *   hasCrawl / hasPull  = a SUCCEEDED job of that tool exists
  *   crawlFresh / pullFresh = that job's created_at is within FRESHNESS_WINDOW_DAYS of now
  *   gscConnected        = the gsc_connections row carries a non-null account_id
+ *   gscTokenInvalid     = that account's stored gsc_accounts.token_status is 'invalid'
  *
  * `FRESHNESS_WINDOW_DAYS` is IMPORTED, never re-typed. A literal 30 here would be a second place
  * for the window to live, and the day core changed it the panel would quietly keep the old one.
@@ -86,6 +87,37 @@ export function isGscConnected(connection: ConnectionRow | null): boolean {
   return connection?.account_id != null;
 }
 
+/**
+ * The stored health of one Google account, as `gsc_accounts.token_status` carries it (migration
+ * 0021). `"invalid"` is written ONLY by the paths that saw Google itself answer `invalid_grant`;
+ * a 5xx or a timeout never writes it, so this is an observed death rather than a suspicion.
+ */
+export type GscTokenStatus = "active" | "invalid";
+
+/**
+ * The stored health of the account THIS project reads through, picked out of the page's
+ * account-health map by the project's own `account_id`.
+ *
+ * IT LIVES HERE, not in the page, because the join is a DECISION and the page is a Server
+ * Component vitest cannot execute (signed lesson 12). Inline, nothing drove it: replacing
+ * `health.get(accountId)` with "the first account in the map" left all 1136 specs green, and on a
+ * multi-account user — the very axis migration 0021 exists to support — that hands every project
+ * the health of whichever account happened to be first. One dead account would then paint an
+ * expiry warning across projects reading through a healthy one, and hide the real death on the
+ * project that has it.
+ *
+ * Never `undefined`: a caller holding a health map has MEASURED. `null` is the measured answer for
+ * "there is no account health to have" — an unmapped project, or an `account_id` naming no row
+ * this caller can read, which is nothing known to be wrong rather than evidence of death.
+ */
+export function tokenStatusFor(
+  connection: ConnectionRow | null,
+  health: ReadonlyMap<string, GscTokenStatus>,
+): GscTokenStatus | null {
+  const accountId = connection?.account_id ?? null;
+  return accountId === null ? null : (health.get(accountId) ?? null);
+}
+
 /** The rows one project's signals are derived from. */
 export interface SignalInput {
   /** Newest SUCCEEDED `crawl_site` job, or null when there is none. */
@@ -94,16 +126,49 @@ export interface SignalInput {
   readonly pull: PullRow | null;
   /** The project's `gsc_connections` row, or null. */
   readonly connection: ConnectionRow | null;
+  /**
+   * The stored health of the account this project's connection points at — THREE states, and the
+   * difference between the last two is the whole reason this field is not a boolean:
+   *
+   *   `"active"` / `"invalid"` — the account row was read and this is what it says.
+   *   `null`                   — MEASURED, and there is no account health to have: the project has
+   *                              no connection, or its `account_id` names no row this caller can
+   *                              read. Nothing is known to be wrong, which is not the same as
+   *                              knowing it is dead.
+   *   absent (`undefined`)     — this caller does not measure connection health at all.
+   *
+   * Only the third produces an absent `gscTokenInvalid`; see {@link deriveProjectSignals}.
+   */
+  readonly tokenStatus?: GscTokenStatus | null;
 }
 
-/** Derive the ladder's four signals for one project — the whats_next definitions, verbatim. */
+/**
+ * Derive the ladder's signals for one project — the whats_next definitions, verbatim.
+ *
+ * `gscTokenInvalid` IS OMITTED when the caller passed no `tokenStatus`, and that is the core
+ * contract rather than a convenience: `ProjectSignals.gscTokenInvalid` is optional, `undefined`
+ * means "this surface does not measure connection health", and the reconnect rung reads it with
+ * `=== true` so an omitted signal decides byte-identically to the ladder that existed before the
+ * signal did. Passing `false` there would be a CLAIM — "measured, and the account is alive" — from
+ * a caller that measured nothing, and it would read the same as a genuinely healthy account.
+ *
+ * A caller that DID measure always yields a boolean, including for `null`: the panel reads every
+ * account's health in one query, so "no account row" is a measurement whose answer is "nothing is
+ * known to be dead here" (false), not an abstention. That is also exactly what whats_next does —
+ * `gscTokenInvalid: tokenStatus === "invalid"` over a reader that returns null for an unconnected
+ * project — so the two surfaces route such a project the same way.
+ */
 export function deriveProjectSignals(input: SignalInput, now: Date): ProjectSignals {
-  const { crawl, pull, connection } = input;
-  return {
+  const { crawl, pull, connection, tokenStatus } = input;
+  const signals: ProjectSignals = {
     hasCrawl: crawl !== null,
     crawlFresh: crawl !== null && isFresh(crawl.created_at, now),
     gscConnected: isGscConnected(connection),
     hasPull: pull !== null,
     pullFresh: pull !== null && isFresh(pull.created_at, now),
   };
+  if (tokenStatus === undefined) {
+    return signals;
+  }
+  return { ...signals, gscTokenInvalid: tokenStatus === "invalid" };
 }

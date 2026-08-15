@@ -2,7 +2,13 @@ import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import { DISCOVERY_TOOLS, type DiscoveryRunRow } from "../../../lib/projects/insights";
-import type { ConnectionRow, JobRow, PullRow } from "../../../lib/projects/signals";
+import {
+  tokenStatusFor,
+  type ConnectionRow,
+  type GscTokenStatus,
+  type JobRow,
+  type PullRow,
+} from "../../../lib/projects/signals";
 import { createClient } from "../../../lib/supabase/server";
 import { AddDomainBanner } from "./add-domain-banner";
 import { AddDomainForm } from "./add-domain-form";
@@ -67,6 +73,46 @@ async function readConnections(
       row.project_id,
       { account_id: row.account_id, gsc_property: row.gsc_property },
     ]),
+  );
+}
+
+/**
+ * Every Google account the caller has connected, keyed by id, carrying ONLY its stored health.
+ *
+ * ONE query for the whole page, like `readConnections` above: a user has a handful of Google
+ * accounts however many sites they track, so a per-project read would be N round trips for a table
+ * with single-digit rows. The projects then look their own account up in this map — the join is
+ * `gsc_connections.account_id -> gsc_accounts.id`, the same two hops whats_next makes per project.
+ *
+ * `id, token_status` AND NOTHING ELSE. `authenticated` holds a column-level SELECT grant on this
+ * table that EXCLUDES `encrypted_refresh_token` (migration 0021), so a wider projection would not
+ * leak the ciphertext — it would FAIL, and the panel would lose its health line to an error. The
+ * narrow list is what keeps every credential column out of a Server Component's payload by
+ * construction rather than by grant alone, and `query-and-nav.test.ts` pins it: a type cannot see
+ * what a projection asks PostgREST for.
+ *
+ * A failure THROWS, like every other read here, rather than degrading to "all healthy". Overview's
+ * count degrades to zero because inventing "your connection is dead" out of a query error would
+ * send a user through an OAuth round for a database blip; here the opposite error is the one on
+ * offer — swallowing it would route a project to `pull_gsc_data`, which is exactly the guaranteed
+ * failure the reconnect rung exists to remove (whats-next.ts makes the same call).
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS (constitution NEVER #4).
+ */
+async function readAccountHealth(
+  supabase: Supabase,
+  userId: string,
+): Promise<Map<string, GscTokenStatus>> {
+  const { data, error } = await supabase
+    .from("gsc_accounts")
+    .select("id, token_status")
+    .eq("user_id", userId);
+  if (error) {
+    throw new Error(`gsc_accounts lookup failed: ${error.message}`);
+  }
+  const rows = (data ?? []) as unknown as { id: string; token_status: GscTokenStatus | null }[];
+  return new Map(
+    rows.flatMap((row) => (row.token_status === null ? [] : [[row.id, row.token_status] as const])),
   );
 }
 
@@ -297,6 +343,7 @@ async function cardInputFor(
   userId: string,
   project: ProjectRow,
   connections: Map<string, ConnectionRow>,
+  health: Map<string, GscTokenStatus>,
 ): Promise<ProjectCardInput> {
   const [crawl, pull, crawlHistory, auditRuns, discoveryRuns] = await Promise.all([
     latestSucceeded(supabase, userId, project.id, "crawl_site"),
@@ -305,6 +352,7 @@ async function cardInputFor(
     latestAuditRuns(supabase, userId, project.id),
     latestDiscoveryRuns(supabase, userId, project.id),
   ]);
+  const connection = connections.get(project.id) ?? null;
   return {
     project,
     crawl,
@@ -312,7 +360,8 @@ async function cardInputFor(
     crawlHistory,
     auditRuns,
     discoveryRuns,
-    connection: connections.get(project.id) ?? null,
+    connection,
+    tokenStatus: tokenStatusFor(connection, health),
   };
 }
 
@@ -355,12 +404,13 @@ export default async function ProjectsPage({
     );
   }
 
-  const [projects, connections] = await Promise.all([
+  const [projects, connections, health] = await Promise.all([
     listActiveProjects(supabase, user.id),
     readConnections(supabase, user.id),
+    readAccountHealth(supabase, user.id),
   ]);
   const inputs = await Promise.all(
-    projects.map((project) => cardInputFor(supabase, user.id, project, connections)),
+    projects.map((project) => cardInputFor(supabase, user.id, project, connections, health)),
   );
   const cards = buildProjectCards(inputs, new Date());
 

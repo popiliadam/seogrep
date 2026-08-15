@@ -1,6 +1,12 @@
 import { FRESHNESS_WINDOW_DAYS } from "@pseo/core";
 import { describe, expect, it } from "vitest";
-import { deriveProjectSignals, isFresh, isGscConnected } from "./signals";
+import {
+  deriveProjectSignals,
+  isFresh,
+  isGscConnected,
+  tokenStatusFor,
+  type GscTokenStatus,
+} from "./signals";
 
 /**
  * The signal derivation, pinned directly. These specs exist because the panel and the MCP
@@ -63,6 +69,83 @@ describe("isGscConnected — connected is account_id, NOT the row", () => {
   });
 });
 
+/**
+ * THE JOIN, driven rather than described.
+ *
+ * Every case here uses a map with MORE THAN ONE account and asks about a project linked to a
+ * specific one. A single-account fixture would be green under any lookup at all — including "take
+ * the first value in the map", which is exactly the mutation that survived the whole first round
+ * of specs: the page's account-health map was built correctly, the ladder read the signal
+ * correctly, and the one line that picked WHICH account a project reads through was executed by
+ * nothing. Multi-account is not an edge case here; it is the axis migration 0021 introduced, and
+ * the health map has one entry per Google account the user connected.
+ */
+describe("tokenStatusFor — which account's health this project reads", () => {
+  const HEALTH: ReadonlyMap<string, GscTokenStatus> = new Map([
+    ["acct-dead", "invalid"],
+    ["acct-live", "active"],
+  ]);
+
+  function connection(accountId: string | null) {
+    return { account_id: accountId, gsc_property: "sc-domain:example.com" };
+  }
+
+  it("reads the health of the account THIS project is linked to", () => {
+    expect(tokenStatusFor(connection("acct-dead"), HEALTH)).toBe("invalid");
+    expect(tokenStatusFor(connection("acct-live"), HEALTH)).toBe("active");
+  });
+
+  /**
+   * The pair above in the other order, so a lookup that returns the map's FIRST entry cannot pass
+   * by luck of insertion order: whichever account is first, one of these two assertions is wrong.
+   */
+  it("does not hand every project the same account's health", () => {
+    const reversed: ReadonlyMap<string, GscTokenStatus> = new Map([
+      ["acct-live", "active"],
+      ["acct-dead", "invalid"],
+    ]);
+    expect(tokenStatusFor(connection("acct-dead"), reversed)).toBe("invalid");
+    expect(tokenStatusFor(connection("acct-live"), reversed)).toBe("active");
+  });
+
+  it("reads nothing for a project with no account link, however many accounts exist", () => {
+    expect(tokenStatusFor(connection(null), HEALTH)).toBeNull();
+    expect(tokenStatusFor(null, HEALTH)).toBeNull();
+  });
+
+  /**
+   * An `account_id` naming no readable row is NOT a death. It is what a row this caller cannot see
+   * looks like; calling it invalid would send the user to reconnect an account that is fine.
+   */
+  it("reads nothing for an account_id that names no row in the map", () => {
+    expect(tokenStatusFor(connection("acct-unknown"), HEALTH)).toBeNull();
+  });
+});
+
+/**
+ * …and the same join carried all the way to the ladder, on the surface's own two steps: the wrong
+ * account's status must not be able to reach `gscTokenInvalid` either.
+ */
+describe("tokenStatusFor feeds deriveProjectSignals per project", () => {
+  const HEALTH: ReadonlyMap<string, GscTokenStatus> = new Map([
+    ["acct-dead", "invalid"],
+    ["acct-live", "active"],
+  ]);
+
+  function signalsFor(accountId: string) {
+    const connection = { account_id: accountId, gsc_property: "sc-domain:example.com" };
+    return deriveProjectSignals(
+      { crawl: null, pull: null, connection, tokenStatus: tokenStatusFor(connection, HEALTH) },
+      NOW,
+    );
+  }
+
+  it("marks only the project on the dead account as invalid", () => {
+    expect(signalsFor("acct-dead").gscTokenInvalid).toBe(true);
+    expect(signalsFor("acct-live").gscTokenInvalid).toBe(false);
+  });
+});
+
 describe("deriveProjectSignals", () => {
   it("reports nothing present for a project with no crawl, no pull and no connection", () => {
     expect(deriveProjectSignals({ crawl: null, pull: null, connection: null }, NOW)).toEqual({
@@ -103,6 +186,61 @@ describe("deriveProjectSignals", () => {
     );
     expect(signals.crawlFresh).toBe(true);
     expect(signals.pullFresh).toBe(true);
+  });
+
+  /**
+   * The health signal's THREE input states, each asserted separately, because two of them produce
+   * `false` for opposite reasons and the third produces nothing at all:
+   *
+   *   absent  -> the key is MISSING, not false. The ladder reads it with `=== true`, so a missing
+   *              signal decides exactly as it did before the reconnect rung existed — while a
+   *              `false` would be this layer claiming a measurement its caller never made.
+   *   null    -> measured, no account health to have. False: nothing is known to be wrong.
+   *   active  -> false.  invalid -> true.
+   */
+  it("omits gscTokenInvalid entirely when the caller measures no health", () => {
+    const signals = deriveProjectSignals({ crawl: null, pull: null, connection: null }, NOW);
+    expect("gscTokenInvalid" in signals).toBe(false);
+    expect(signals.gscTokenInvalid).toBeUndefined();
+  });
+
+  it("reports a measured-but-absent health as not-invalid rather than unmeasured", () => {
+    const signals = deriveProjectSignals(
+      { crawl: null, pull: null, connection: null, tokenStatus: null },
+      NOW,
+    );
+    expect("gscTokenInvalid" in signals).toBe(true);
+    expect(signals.gscTokenInvalid).toBe(false);
+  });
+
+  it("reports a live account as not invalid", () => {
+    const signals = deriveProjectSignals(
+      {
+        crawl: null,
+        pull: null,
+        connection: { account_id: "acct-1", gsc_property: "sc-domain:example.com" },
+        tokenStatus: "active",
+      },
+      NOW,
+    );
+    expect(signals.gscTokenInvalid).toBe(false);
+  });
+
+  it("reports a stored 'invalid' account as invalid", () => {
+    const signals = deriveProjectSignals(
+      {
+        crawl: null,
+        pull: null,
+        connection: { account_id: "acct-1", gsc_property: "sc-domain:example.com" },
+        tokenStatus: "invalid",
+      },
+      NOW,
+    );
+    expect(signals.gscTokenInvalid).toBe(true);
+    // …and the connection is still a CONNECTION. Collapsing the two would make an expired project
+    // look like one that never connected, which routes it to the optional-GSC rung instead of to
+    // reconnect (whats-next.ts's own note on readGscConnected).
+    expect(signals.gscConnected).toBe(true);
   });
 
   // The same defect-#52 axis, at the level the ladder actually consumes: a project whose row
