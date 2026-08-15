@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient, type Json } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { whatsNextTool } from "./whats-next.ts";
+import { makeWhatsNextTool, whatsNextTool } from "./whats-next.ts";
 
 /**
  * DB-integration proof for whats_next (0 credits, tenant-scoped state reads) against a LOCAL
@@ -301,5 +301,45 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     // What the user CAN still do is untouched — the crawl needs no Google account.
     expect(text).toContain("audit_onpage");
     expect(await ledgerCount(user.userId)).toBe(0); // still a 0-credit router
+  });
+
+  /**
+   * (j) THE FAILURE POLICY, pinned. The health read THROWS where the discovery tools swallow the
+   * identical read — a deliberate split, and one that lived only in a comment: swallowing here
+   * would answer "active" for an account whose health is unknown, which is the wrong
+   * recommendation this whole rung exists to remove.
+   *
+   * Everything else in this run is REAL — the project, the crawl, the pull, the connection — so
+   * a router that quietly degraded would sail past with a confident, wrong answer instead of
+   * failing. Only the health port is injected, and only to make it fail.
+   *
+   * Costs the user nothing to hit: whats_next is 0 credits and re-runnable, which is what makes
+   * failing loudly the cheap option here and the expensive one in gsc-discovery-shared.ts.
+   */
+  it("(j) a FAILING health read fails the tool — it never degrades to 'connection is fine'", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "health-read-down.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnectionWithHealth(user.userId, projectId, "active");
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+
+    const brokenHealth = makeWhatsNextTool({
+      loadTokenStatus: async () => {
+        throw new Error("gsc account health lookup failed: simulated outage");
+      },
+    });
+    // It REJECTS — it does not resolve to the "you're all set" this very fixture produces when
+    // the health read works ((i-control)'s state exactly). That rejection is the whole pin: a
+    // swallowed read would resolve here, confidently and wrongly.
+    //
+    // Asserted as a rejection rather than an isError result because that is where the boundary
+    // actually is: `run` propagates, and registerAll's tools/call handler is what converts an
+    // escaped error into the generic "failed unexpectedly + reference" sentence (pinned in
+    // registry.test.ts). Asserting the sentence here would be asserting the transport's
+    // behaviour through a layer this test does not go through.
+    await expect(brokenHealth.run(user, { project_id: projectId })).rejects.toThrow(
+      /health lookup failed/i,
+    );
+    expect(await ledgerCount(user.userId)).toBe(0);
   });
 });

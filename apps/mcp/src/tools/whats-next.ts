@@ -7,7 +7,7 @@ import {
 } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
 import { forUser, getServiceClient, type ServiceClient } from "../db.ts";
-import { loadGscTokenStatus } from "../gsc-data/index.ts";
+import { loadGscTokenStatus, type LoadTokenStatusFn } from "../gsc-data/index.ts";
 import { getLatestSucceededResult } from "../queue/boss.ts";
 import {
   ARCHIVED_PROJECT_MESSAGE,
@@ -168,12 +168,13 @@ async function readProjectSignals(
   userId: string,
   projectId: string,
   now: Date,
+  loadTokenStatus: LoadTokenStatusFn,
 ): Promise<ProjectSignals> {
   const [crawl, pull, gscConnected, tokenStatus] = await Promise.all([
     getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" }),
     getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" }),
     readGscConnected(client, userId, projectId),
-    loadGscTokenStatus(userId, projectId),
+    loadTokenStatus(userId, projectId),
   ]);
   return {
     hasCrawl: crawl !== null,
@@ -198,6 +199,7 @@ async function loadWhatsNextState(
   input: { projectId?: string },
   now: Date,
   loadProject: LoadProjectFn,
+  loadTokenStatus: LoadTokenStatusFn,
 ): Promise<WhatsNextState> {
   if (input.projectId) {
     // The SHARED resolver, not a project read of its own — a per-tool read is a per-tool place
@@ -208,7 +210,13 @@ async function loadWhatsNextState(
     // indistinguishable from one that does not exist (see project-target.ts). Returning here
     // also means no signal read runs for a project that is not being tracked.
     if (project.archivedAt !== null) return { kind: "project_archived" };
-    const signals = await readProjectSignals(getServiceClient(), userId, input.projectId, now);
+    const signals = await readProjectSignals(
+      getServiceClient(),
+      userId,
+      input.projectId,
+      now,
+      loadTokenStatus,
+    );
     return { kind: "project", domain: project.domain, signals };
   }
 
@@ -229,7 +237,7 @@ async function loadWhatsNextState(
   const ordered = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const only = ordered[0];
   if (ordered.length === 1 && only) {
-    const signals = await readProjectSignals(client, userId, only.id, now);
+    const signals = await readProjectSignals(client, userId, only.id, now, loadTokenStatus);
     return { kind: "project", domain: only.domain, signals };
   }
   return { kind: "choose_project", projects: ordered.map((r) => ({ id: r.id, domain: r.domain })) };
@@ -247,6 +255,13 @@ export interface WhatsNextDeps {
    * `loadState` is injected, which replaces the whole loader.
    */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * Connection-health reader (default: the real tenant-scoped loadGscTokenStatus). A PORT for
+   * the same reason `loadProject` is one, plus a sharper one: this reader's FAILURE mode is a
+   * deliberate decision — it throws where gsc-discovery-shared.ts swallows — and a decision with
+   * no seam has no test. Ignored when `loadState` is injected, which replaces the whole loader.
+   */
+  readonly loadTokenStatus?: LoadTokenStatusFn;
 }
 
 const inputSchema = z.object({
@@ -264,8 +279,10 @@ type WhatsNextInput = z.infer<typeof inputSchema>;
 export function makeWhatsNextTool(deps: WhatsNextDeps = {}): RegisteredTool {
   const now = deps.now ?? (() => new Date());
   const loadProject = deps.loadProject ?? loadOwnProject;
+  const loadTokenStatus = deps.loadTokenStatus ?? loadGscTokenStatus;
   const loadState =
-    deps.loadState ?? ((userId, input) => loadWhatsNextState(userId, input, now(), loadProject));
+    deps.loadState ??
+    ((userId, input) => loadWhatsNextState(userId, input, now(), loadProject, loadTokenStatus));
   return defineTool<WhatsNextInput>({
     name: "whats_next",
     description:
