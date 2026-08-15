@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   FRONTMATTER_DESCRIPTION_MAX,
   checkToolsMetaSync,
+  dayPhrase,
   deriveSlug,
   findConfirmFields,
   frontmatterDescription,
@@ -320,16 +321,16 @@ describe("substituteProseTokens", () => {
     // The point of the token: change the constant and the sentence follows. A docs page that keeps
     // saying 15,000 after MAX_ROW_LIMIT moved tells the reader how much data they are missing, and
     // they have no way to check it.
-    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 15000 })).toBe(
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 15000, lagDays: 3 })).toBe(
       "at most 15,000 rows",
     );
-    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 25000 })).toBe(
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 25000, lagDays: 3 })).toBe(
       "at most 25,000 rows",
     );
   });
 
   it("substitutes every occurrence", () => {
-    expect(substituteProseTokens("{{MAX_GSC_ROWS}} and {{MAX_GSC_ROWS}}", { maxRowLimit: 15000 })).toBe(
+    expect(substituteProseTokens("{{MAX_GSC_ROWS}} and {{MAX_GSC_ROWS}}", { maxRowLimit: 15000, lagDays: 3 })).toBe(
       "15,000 and 15,000",
     );
   });
@@ -346,8 +347,51 @@ describe("substituteProseTokens", () => {
   });
 
   it("throws on a token nobody substitutes, rather than shipping it to the reader", () => {
-    expect(() => substituteProseTokens("cap is {{MAX_CRAWL_PAGES}}", { maxRowLimit: 15000 })).toThrow(
+    expect(() => substituteProseTokens("cap is {{MAX_CRAWL_PAGES}}", { maxRowLimit: 15000, lagDays: 3 })).toThrow(
       /MAX_CRAWL_PAGES/,
     );
+  });
+});
+
+describe("dayPhrase", () => {
+  it("renders a phrase, so a lag of 1 never prints as '1 days'", () => {
+    expect(dayPhrase(3)).toBe("3 days");
+    expect(dayPhrase(1)).toBe("1 day");
+    expect(dayPhrase(7)).toBe("7 days");
+  });
+});
+
+describe("substituteProseTokens — {{GSC_LAG_DAYS}}", () => {
+  it("renders the freshness offset from the constant, not from a hand-typed number", () => {
+    // Same reason as the row cap: the offset is what the reader is told they cannot see yet, and
+    // GSC_FRESHNESS_LAG_DAYS moving without the sentence moving is a silently wrong doc.
+    expect(substituteProseTokens("windows end {{GSC_LAG_DAYS}} before today", { lagDays: 3 })).toBe(
+      "windows end 3 days before today",
+    );
+    expect(substituteProseTokens("windows end {{GSC_LAG_DAYS}} before today", { lagDays: 7 })).toBe(
+      "windows end 7 days before today",
+    );
+  });
+
+  it("substitutes every occurrence (the pull page states the offset three times)", () => {
+    expect(
+      substituteProseTokens("{{GSC_LAG_DAYS}} / {{GSC_LAG_DAYS}} / {{GSC_LAG_DAYS}}", { lagDays: 3 }),
+    ).toBe("3 days / 3 days / 3 days");
+  });
+
+  it("substitutes both tokens in one pass", () => {
+    expect(
+      substituteProseTokens("{{MAX_GSC_ROWS}} rows, ending {{GSC_LAG_DAYS}} back", {
+        maxRowLimit: 15000,
+        lagDays: 3,
+      }),
+    ).toBe("15,000 rows, ending 3 days back");
+  });
+
+  it("throws instead of rendering a page that states a missing or bogus offset", () => {
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", {})).toThrow(/GSC_LAG_DAYS/);
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: 0 })).toThrow();
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: 2.5 })).toThrow();
+    expect(() => substituteProseTokens("{{GSC_LAG_DAYS}}", { lagDays: "3" })).toThrow();
   });
 });

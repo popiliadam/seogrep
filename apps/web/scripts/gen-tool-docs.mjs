@@ -167,24 +167,42 @@ export function groupThousands(value) {
   return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/** Require a positive integer for a token's constant, or throw naming the token that needs it. */
+function positiveInteger(value, token, key) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${token} needs a positive integer ${key}, got ${value}.`);
+  }
+  return value;
+}
+
+/** "3 days" / "1 day" — a phrase, not a bare number, so a lag of 1 can't render as "1 days". */
+export function dayPhrase(days) {
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
 /**
  * Substitute the `{{TOKEN}}` placeholders a DOC_PROSE block may carry with values DERIVED from the
- * built MCP code, so a limit quoted in prose can never disagree with the constant that enforces it.
- * Today the only token is `{{MAX_GSC_ROWS}}` = MAX_ROW_LIMIT (apps/mcp/src/gsc-data/pull.ts), the
- * same derivation format.ts makes for the tool-output caveat: prose is exactly where a changed
- * constant goes unnoticed, because nothing compiles against a sentence.
+ * built MCP code, so a limit quoted in prose can never disagree with the constant that enforces it:
  *
- * Fail-closed: a non-integer constant or a token with no value throws instead of rendering a page
- * that states a wrong (or literally "undefined") limit to the reader.
+ *   • `{{MAX_GSC_ROWS}}` = MAX_ROW_LIMIT       (apps/mcp/src/gsc-data/pull.ts)
+ *   • `{{GSC_LAG_DAYS}}` = GSC_FRESHNESS_LAG_DAYS, rendered as a phrase (apps/mcp/.../windows.ts)
+ *
+ * The same derivation format.ts makes for the tool-output caveat: prose is exactly where a changed
+ * constant goes unnoticed, because nothing compiles against a sentence — and a wrong number here
+ * tells the reader how much data they are missing with no way to check it.
+ *
+ * Fail-closed: a non-integer constant, or a token nobody substitutes, throws instead of rendering a
+ * page that states a wrong (or literally "undefined") limit.
  */
 export function substituteProseTokens(text, constants) {
-  const maxRowLimit = constants && constants.maxRowLimit;
-  const out = String(text).replace(/\{\{MAX_GSC_ROWS\}\}/g, () => {
-    if (!Number.isInteger(maxRowLimit) || maxRowLimit <= 0) {
-      throw new Error(`{{MAX_GSC_ROWS}} needs a positive integer maxRowLimit, got ${maxRowLimit}.`);
-    }
-    return groupThousands(maxRowLimit);
-  });
+  const { maxRowLimit, lagDays } = constants || {};
+  const out = String(text)
+    .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
+      groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
+    )
+    .replace(/\{\{GSC_LAG_DAYS\}\}/g, () =>
+      dayPhrase(positiveInteger(lagDays, "{{GSC_LAG_DAYS}}", "lagDays")),
+    );
   const leftover = out.match(/\{\{[A-Z0-9_]+\}\}/);
   if (leftover) throw new Error(`Unknown prose token ${leftover[0]} — add a substitution for it.`);
   return out;
@@ -230,17 +248,18 @@ export function findConfirmFields(tools) {
 
 // The three discovery tools read a stored `pull_gsc_data` result, so the pull's two limits are
 // theirs as well — and a reader who lands on a discovery page never sees the pull page's
-// "Limitations (v0)". These two fragments carry the inherited half of that: the row cap (its number
-// DERIVED from MAX_ROW_LIMIT via the {{MAX_GSC_ROWS}} token, never typed here) and the freshness
-// offset (GSC_FRESHNESS_LAG_DAYS in apps/mcp/src/gsc-data/windows.ts — keep the wording in step).
+// "Limitations (v0)". These two fragments carry the inherited half of that: the row cap and the
+// freshness offset. NEITHER number is typed here — both come from the {{…}} tokens above, i.e. from
+// MAX_ROW_LIMIT and GSC_FRESHNESS_LAG_DAYS in the built MCP code, so `--check` turns red on this
+// page the moment either constant moves (mutation-proved, both directions).
 // Each tool appends its OWN consequence to the intro, because truncation distorts each differently.
 const INHERITED_LIMITS_INTRO =
   "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
   "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";
 
 const INHERITED_LIMITS_FRESHNESS =
-  "Both windows also end **3 days before today** rather than running up to it, so the newest days " +
-  "are not analyzed yet. See " +
+  "Both windows also end **{{GSC_LAG_DAYS}} before today** rather than running up to it, so the " +
+  "newest days are not analyzed yet. See " +
   "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.";
 
 export const DOC_PROSE = {
@@ -386,20 +405,25 @@ export const DOC_PROSE = {
     postReturnsSections: [
       {
         heading: "Limitations (v0)",
-        // The 3-day offset below is GSC_FRESHNESS_LAG_DAYS in apps/mcp/src/gsc-data/windows.ts,
-        // which is the single source of truth for the behavior. Keep this wording in step with it.
+        // Every number below that the CODE decides is a token, DERIVED at render time from the
+        // built MCP constants — the offset from GSC_FRESHNESS_LAG_DAYS (gsc-data/windows.ts) and
+        // the cap from MAX_ROW_LIMIT (gsc-data/pull.ts). The two figures left as literals are NOT
+        // ours to derive: the "~2–3 day" delay is what Google documents, and the "5 days" is the
+        // worst lag the guard was measured against (content-decay.test.ts) — neither moves when a
+        // constant does.
         body:
           "- Search Console finalizes a day's data with a ~2–3 day delay, and reports a day it has " +
-          "not finalized as **zero** rather than as missing. Both windows therefore end **3 days " +
-          "before today** instead of running up to it, which clears the delay Google documents " +
-          "with margin to spare: measured against lags of up to 5 days, no unfinalized day is read " +
-          "as a traffic collapse. It is a bounded guard, not an absolute one — if Search Console " +
-          "ever falls further behind than that, unfinalized days re-enter the window and a run of " +
-          "zeros can still look like a drop. The trade-off: the newest 3 days are not analyzed, so " +
-          "a genuine drop surfaces here up to 3 days after it begins.\n" +
-          "- A single page of up to 15,000 `(query, page)` rows is fetched per window; a very large " +
-          "property is truncated to the top rows Google returns, and the pull says so when it " +
-          "happens.",
+          "not finalized as **zero** rather than as missing. Both windows therefore end " +
+          "**{{GSC_LAG_DAYS}} before today** instead of running up to it, which clears the delay " +
+          "Google documents with margin to spare: measured against lags of up to 5 days, no " +
+          "unfinalized day is read as a traffic collapse. It is a bounded guard, not an absolute " +
+          "one — if Search Console ever falls further behind than that, unfinalized days re-enter " +
+          "the window and a run of zeros can still look like a drop. The trade-off: the newest " +
+          "{{GSC_LAG_DAYS}} are not analyzed, so a genuine drop surfaces here up to " +
+          "{{GSC_LAG_DAYS}} after it begins.\n" +
+          "- A single page of up to {{MAX_GSC_ROWS}} `(query, page)` rows is fetched per window; a " +
+          "very large property is truncated to the top rows Google returns, and the pull says so " +
+          "when it happens.",
       },
     ],
   },
@@ -978,14 +1002,16 @@ async function loadRegistry() {
   const toolsUrl = new URL("../../mcp/dist/tools/index.js", import.meta.url);
   const costsUrl = new URL("../../mcp/dist/credits/costs.js", import.meta.url);
   const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
+  const windowsUrl = new URL("../../mcp/dist/gsc-data/windows.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
     const pull = await import(pullUrl);
+    const windows = await import(windowsUrl);
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
       TOOL_COSTS: costs.TOOL_COSTS,
-      constants: { maxRowLimit: pull.MAX_ROW_LIMIT },
+      constants: { maxRowLimit: pull.MAX_ROW_LIMIT, lagDays: windows.GSC_FRESHNESS_LAG_DAYS },
     };
   } catch (error) {
     throw new Error(
