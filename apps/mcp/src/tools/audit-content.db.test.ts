@@ -209,6 +209,20 @@ interface ReadyProject {
   readonly crawlJobId: string;
 }
 
+/**
+ * Another tenant's jobs, seeded WITHOUT a grant or a tool run — everything the cross-tenant
+ * probes need and nothing more. `seedReadyProject` is six round trips; using it for the foreign
+ * side of a two-tenant test doubled that for values the test never reads.
+ */
+async function seedForeignJobs(): Promise<{ pullJobId: string; crawlJobId: string }> {
+  const user = await makeUser();
+  const projectId = await makeProject(user.id, `foreign-${randomUUID()}.example.com`);
+  return {
+    pullJobId: await seedSucceededPull(user.id, projectId),
+    crawlJobId: await seedSucceededCrawl(user.id, projectId),
+  };
+}
+
 async function seedReadyProject(grant = 100): Promise<ReadyProject> {
   const user = await makeUser();
   const ctx: AuthContext = { userId: user.id, keyId: `key-${randomUUID()}` };
@@ -347,7 +361,7 @@ describe("0026 armor: what the schema itself refuses", () => {
     "refuses another tenant's job as %s",
     async (column) => {
       const mine = await seedReadyProject();
-      const theirs = await seedReadyProject();
+      const theirs = await seedForeignJobs();
 
       const { error } = await service.from("audit_content_runs").insert({
         user_id: mine.ctx.userId,
@@ -364,10 +378,11 @@ describe("0026 armor: what the schema itself refuses", () => {
 
   it("refuses another tenant's project", async () => {
     const mine = await seedReadyProject();
-    const theirs = await seedReadyProject();
+    const foreignOwner = await makeUser();
+    const foreignProject = await makeProject(foreignOwner.id, `foreign-${randomUUID()}.example.com`);
     const { error } = await service.from("audit_content_runs").insert({
       user_id: mine.ctx.userId,
-      project_id: theirs.projectId,
+      project_id: foreignProject,
       pull_job_id: mine.pullJobId,
       crawl_job_id: mine.crawlJobId,
       report: { total: 0 } as unknown as Json,
@@ -427,21 +442,47 @@ describe("0026 armor: what the schema itself refuses", () => {
   });
 
   /**
-   * CASCADE from either parent. A run whose pull or whose crawl is gone is a row nobody can
-   * interpret — and unlike the two sibling tables there are TWO ways for that to happen, so both
-   * are measured.
+   * CASCADE, through the ONLY parent deletion any app role can actually perform.
+   *
+   * The per-FK version of this test — delete the pull job, delete the crawl job — cannot be
+   * written from here, and finding that out is worth recording: `service_role` holds no DELETE on
+   * `jobs` or on `projects` (measured on the local stack: INSERT, REFERENCES, SELECT, TRIGGER,
+   * UPDATE and nothing else). A spec that deleted a job through PostgREST does not measure the
+   * cascade at all — it measures the grant, fails with `42501`, and would only turn green if
+   * somebody WEAKENED the jobs grants to satisfy it. That is a test that argues for a
+   * vulnerability, so it is not written.
+   *
+   * Account deletion is the reachable one (the Auth admin API, not PostgREST) and it is also the
+   * riskiest interaction this table has: `auth.users` cascades into BOTH `projects` and `jobs`,
+   * and 0026's three FKs all want to fire on the way. If those orders conflict, deleting an
+   * account breaks — so it is measured rather than assumed (cross-tenant-fk.db.test.ts's rule).
+   *
+   * KNOWN LIMIT, stated rather than implied: this proves the row is never orphaned, not which of
+   * the three FKs carried it away.
+   *
+   * THE ROW IS INSERTED DIRECTLY rather than earned by running the tool, and that detail is not a
+   * shortcut — it is forced. Running the tool needs a credit grant, and `credit_ledger_user_id_fkey`
+   * is ON DELETE RESTRICT (confdeltype `r`, measured), because the ledger is append-only and must
+   * outlive the row it points at (NEVER #2). So ANY user who has ever held credits cannot be
+   * deleted at all, and a cascade test that granted credits first would fail on the LEDGER's
+   * constraint while appearing to say something about this table's.
    */
-  it.each(["pull", "crawl"] as const)("takes the run with the deleted %s job", async (which) => {
-    const { ctx, projectId, pullJobId, crawlJobId } = await seedReadyProject();
-    expect((await auditContentTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
-    expect(await runRows(ctx.userId)).toHaveLength(1);
+  it("leaves with the account, cascading through both job FKs at once", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.id, `cascade-${randomUUID()}.example.com`);
+    const inserted = await service.from("audit_content_runs").insert({
+      user_id: user.id,
+      project_id: projectId,
+      pull_job_id: await seedSucceededPull(user.id, projectId),
+      crawl_job_id: await seedSucceededCrawl(user.id, projectId),
+      report: { total: 0 } as unknown as Json,
+    });
+    expect(inserted.error).toBeNull();
+    expect(await runRows(user.id)).toHaveLength(1);
 
-    const { error } = await service
-      .from("jobs")
-      .delete()
-      .eq("id", which === "pull" ? pullJobId : crawlJobId);
+    const { error } = await service.auth.admin.deleteUser(user.id);
     expect(error).toBeNull();
-    expect(await runRows(ctx.userId)).toEqual([]);
+    expect(await runRows(user.id)).toEqual([]);
   });
 });
 
