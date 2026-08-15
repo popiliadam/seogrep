@@ -15,6 +15,7 @@ import { whatsNextTool } from "./whats-next.ts";
  *   (e) no project_id + a single project -> auto-selects that project;
  *   (f) CROSS-TENANT: user A asking about user B's project id is indistinguishable from a missing
  *       one ("No project found") — the tenant guard on the RLS-bypassing service client (NEVER #4);
+ *   (i) a connection whose ACCOUNT is dead (token_status='invalid') -> reconnect, never a pull;
  *   and throughout, that a 0-credit router touches the ledger ZERO times (NEVER #2).
  */
 
@@ -92,11 +93,27 @@ async function seedSucceededJob(
 }
 
 /**
- * Seed a gsc_connections row with a (non-null) account_id — whats_next only checks presence
- * (migration 0021 moved the token itself onto gsc_accounts; a minimal real account row is
- * seeded here so the foreign key is satisfied, not because whats_next reads its token).
+ * Seed a gsc_connections row with a (non-null) account_id and a HEALTHY account behind it
+ * (migration 0021 moved the token itself onto gsc_accounts). whats_next never reads the
+ * credential, but it does read that account's token_status, so the health is stated rather than
+ * left to the column default — the axis (i) below varies.
  */
 async function seedConnection(userId: string, projectId: string): Promise<void> {
+  // Delegates so the health axis has ONE seeder. 'active' is what the column defaults to
+  // (migration 0021), so every existing caller seeds byte-identically to before.
+  await seedConnectionWithHealth(userId, projectId, "active");
+}
+
+/**
+ * The same seed, with the account's stored health stated OUT LOUD. `invalid` is what the paths
+ * that actually call Google write when a refresh comes back `invalid_grant` — the state that
+ * makes pull_gsc_data unable to succeed while gsc_connections still says "connected".
+ */
+async function seedConnectionWithHealth(
+  userId: string,
+  projectId: string,
+  tokenStatus: "active" | "invalid",
+): Promise<void> {
   const account = await service
     .from("gsc_accounts")
     .insert({
@@ -104,6 +121,7 @@ async function seedConnection(userId: string, projectId: string): Promise<void> 
       google_account_sub: `sub-${randomUUID()}`,
       google_account_email: `whats-next-${randomUUID()}@example.test`,
       encrypted_refresh_token: "\\xdeadbeef",
+      token_status: tokenStatus,
     })
     .select("id")
     .single();
@@ -251,5 +269,37 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     expect(text).toMatch(/no projects/i);
     expect(text).toContain("setup_project");
     expect(text).not.toContain("retired-shop.example.com");
+  });
+
+  /**
+   * (i) THE DEAD ACCOUNT, end to end. `gsc_connections.account_id` stays non-null forever, so
+   * the connected/not-connected boolean alone cannot tell a live link from a revoked one — and
+   * on the strength of it the router sent this exact project to pull_gsc_data, a call that is
+   * refused before it starts.
+   *
+   * This is the ONE proof that whats_next actually READS gsc_accounts.token_status: the pure
+   * ladder is pinned in packages/core and the renderer in the fast lane, but neither can tell
+   * whether the signal is wired to the database. Drop the loadGscTokenStatus call from
+   * readProjectSignals and only this test goes red.
+   *
+   * Seeded with a FRESH crawl and a FRESH pull on purpose — the state that used to answer
+   * "you're all set" for a project that can never refresh again.
+   */
+  it("(i) a connected project whose Google account is dead -> reconnect, never pull_gsc_data", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "dead-token.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnectionWithHealth(user.userId, projectId, "invalid");
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+
+    const text = await runFor(user, projectId);
+    expect(text).toContain("connect_gsc");
+    expect(text).toMatch(/expired/i);
+    expect(text).not.toContain("pull_gsc_data");
+    expect(text).not.toContain("find_quick_wins");
+    expect(text).not.toMatch(/all set/i);
+    // What the user CAN still do is untouched — the crawl needs no Google account.
+    expect(text).toContain("audit_onpage");
+    expect(await ledgerCount(user.userId)).toBe(0); // still a 0-credit router
   });
 });

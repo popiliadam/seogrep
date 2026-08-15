@@ -7,6 +7,7 @@ import {
 } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
 import { forUser, getServiceClient, type ServiceClient } from "../db.ts";
+import { loadGscTokenStatus } from "../gsc-data/index.ts";
 import { getLatestSucceededResult } from "../queue/boss.ts";
 import {
   ARCHIVED_PROJECT_MESSAGE,
@@ -18,7 +19,8 @@ import { defineTool, textResult, type RegisteredTool, type ToolResult } from "./
 /**
  * whats_next — the "guide for non-experts" router (spec §2.1). It reads where a project stands
  * through the SAME tenant-scoped ports the real tools use (getLatestSucceededResult for crawl /
- * pull, the gsc_connections row for the Search Console link) and returns ONE clear next step, a
+ * pull, the gsc_connections row for the Search Console link, loadGscTokenStatus for whether the
+ * account behind that link is still alive) and returns ONE clear next step, a
  * short reason, and the two or three steps that follow. It runs NO engine and spends NO credits
  * (0 in TOOL_COSTS, so withCredits short-circuits — the ledger is never touched).
  *
@@ -121,8 +123,13 @@ function isFresh(createdAt: string, now: Date): boolean {
  * filter type-checks (forUser's selectOwn narrows filters to the columns common to ALL tenant
  * tables, which excludes project_id). Same reader shape as pull_gsc_data's loadConnection. A
  * missing / another tenant's connection / a null account_id all read as not-connected — this
- * router only needs the boolean, never the token itself, so it stops at gsc_connections and
- * never touches gsc_accounts.
+ * read needs only the boolean, never the token itself, so it stops at gsc_connections.
+ *
+ * "Connected" is deliberately NOT "usable": the account behind this row can be dead. That is a
+ * SEPARATE signal, read by loadGscTokenStatus in readProjectSignals below — kept separate because
+ * a dead connection is still a connection, and collapsing the two would make a project whose
+ * credential expired look like one that never connected (which would route it to
+ * "connect_gsc (optional)" beside the audits, hiding that its Search Console data is frozen).
  */
 async function readGscConnected(
   client: ServiceClient,
@@ -141,17 +148,32 @@ async function readGscConnected(
   return data?.account_id != null;
 }
 
-/** Read the four observable signals for a project (all tenant-scoped, in parallel). */
+/**
+ * Read the observable signals for a project (all tenant-scoped, in parallel).
+ *
+ * `loadGscTokenStatus` is the SAME reader the discovery tools use for their reauth warning —
+ * gsc_connections.account_id -> gsc_accounts.token_status, both filtered by user_id. It is
+ * imported, not re-implemented: a second copy of a two-hop tenant-scoped read is a second place
+ * for the user_id filter to be forgotten. It costs one extra round trip over `readGscConnected`
+ * (both read gsc_connections), which is the price of not owning a duplicate of the boundary.
+ *
+ * NOT best-effort — a failing health read THROWS, unlike in gsc-discovery-shared.ts where it is
+ * swallowed. The two situations invert: there the warning decorates an analysis the user has
+ * ALREADY been charged for and losing it beats crashing a delivered result; here the health IS
+ * the answer. Swallowing it would answer "active", which is exactly the wrong recommendation
+ * this rung exists to remove — and a whats_next that fails costs 0 credits and can be re-run.
+ */
 async function readProjectSignals(
   client: ServiceClient,
   userId: string,
   projectId: string,
   now: Date,
 ): Promise<ProjectSignals> {
-  const [crawl, pull, gscConnected] = await Promise.all([
+  const [crawl, pull, gscConnected, tokenStatus] = await Promise.all([
     getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" }),
     getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" }),
     readGscConnected(client, userId, projectId),
+    loadGscTokenStatus(userId, projectId),
   ]);
   return {
     hasCrawl: crawl !== null,
@@ -159,6 +181,9 @@ async function readProjectSignals(
     gscConnected,
     hasPull: pull !== null,
     pullFresh: pull !== null && isFresh(pull.createdAt, now),
+    // Only a stored 'invalid' is a death. A null status (no connection, no linked account) is
+    // "nothing known to be wrong", which the ladder must treat as the pre-signal case.
+    gscTokenInvalid: tokenStatus === "invalid",
   };
 }
 

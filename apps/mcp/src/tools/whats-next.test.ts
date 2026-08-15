@@ -135,6 +135,28 @@ describe("renderWhatsNext — every top-level state", () => {
     expect(text).toMatch(/setup_project/);
   });
 
+  /**
+   * The dead-connection rung, through the RENDERER — the ladder itself is pinned in
+   * packages/core (guide/next-step.test.ts). What this adds is the sentence a user actually
+   * reads: whats_next's text must not name pull_gsc_data anywhere, because on this rung every
+   * mention of it is an instruction that cannot succeed.
+   */
+  it("a project whose Google account is dead renders reconnect-first, naming no pull", () => {
+    const state: WhatsNextState = {
+      kind: "project",
+      domain: "expired-token.example",
+      signals: signals({ gscTokenInvalid: true }),
+    };
+    const text = renderWhatsNext(state);
+    expect(text).toContain("connect_gsc");
+    expect(text).toMatch(/expired/i);
+    expect(text).not.toContain("pull_gsc_data");
+    expect(text).not.toContain("find_quick_wins");
+    expect(text).not.toMatch(/all set/i);
+    // The audits stay: they read the crawl, which needs no Google account at all.
+    expect(text).toContain("audit_onpage");
+  });
+
   it("project renders the decided next step with the domain and a Then: list", () => {
     const state: WhatsNextState = {
       kind: "project",
