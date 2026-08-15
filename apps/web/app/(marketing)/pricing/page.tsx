@@ -18,6 +18,11 @@ const CREDIT_COSTS = [
   { action: "Site crawl (up to 100 URLs)", cost: "20" },
   { action: "Quick-win, cannibalization, or decay scan", cost: "10" },
   { action: "Full on-page + technical + schema audit", cost: "50" },
+  // audit_content (2026-08-15): its own row, not a member of the audit bundle above. It reads a
+  // Search Console pull as well as a crawl, so a caller who has only crawled cannot run it — and
+  // folding it into a row labelled "on-page + technical + schema" would advertise a bundle price
+  // for something a crawl alone does not buy.
+  { action: "Content audit (queries vs page titles)", cost: "12" },
   { action: "Keyword research (100 keywords)", cost: "25" },
   { action: "Ranked keywords (per domain)", cost: "65" },
   { action: "Backlink profile (per domain)", cost: "70" },

@@ -600,6 +600,69 @@ export const DOC_PROSE = {
       "structured data.",
   },
 
+  audit_content: {
+    lead:
+      "`audit_content` is the bridge between your Search Console data and your crawl. It takes " +
+      "the queries your site already earns impressions for, finds the page Google shows for " +
+      "each one, and reports the queries whose words appear **nowhere in that page's title or " +
+      "h1**. It is **synchronous** and returns its findings immediately. Run both " +
+      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) and " +
+      "[`crawl_site`](/docs/tools-reference/crawl-site) first — with either one missing the " +
+      "tool says which to run and charges nothing.",
+    whatItDoes:
+      "It joins two things you have already paid for and calls no outside service. From your " +
+      "latest pull it takes each `(query, page)` row; from your latest crawl it takes each " +
+      "page's title and h1s. A query counts as **said** when every one of its meaningful words " +
+      "appears somewhere in the title *or* an h1 of that page, matched case- and " +
+      "accent-insensitively, and anywhere inside a word (so \"shoe\" is found in \"shoes\").\n\n" +
+      "A short bilingual list of filler words (`the`, `and`, `for`, `ve`, `ile`, `bir`, and a " +
+      "few more) is ignored — their presence in a title says nothing about whether the page " +
+      "covers the query. Everything else has to be there.\n\n" +
+      "Both the title **and** the h1s are read, deliberately. A title trimmed to fit the search " +
+      "result routinely drops a qualifier the heading keeps, and reading the title alone would " +
+      "report every such page as a problem — a list of findings you cannot act on is worse than " +
+      "no list. Results are ordered by impressions, biggest missed opportunity first.",
+    preExampleSections: [
+      {
+        heading: "How much it could check",
+        body:
+          "The answer always states how many of your query/page pairs it was able to check and " +
+          "across how many crawled pages, because this tool joins two measurements with " +
+          "different reach. A crawl that covered 30 pages of a 300-page site produces a clean " +
+          "report that means very little — and \"no mismatches found\" would read exactly like " +
+          "a site whose titles are all correct. When queries point at pages your crawl never " +
+          "reached, the reply says how many and points you back at " +
+          "[`crawl_site`](/docs/tools-reference/crawl-site).",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which pages on example.com rank for things " +
+      "their titles don't mention?\n\nThen hand a finding straight back to your assistant:\n\n" +
+      "> Rewrite that page's title so it covers the missing words.",
+    returns:
+      "One line per mismatching query — the query, the page ranking for it, its impressions and " +
+      "clicks, the words that are missing, how many of the query's words the page does carry, " +
+      "and the page's current title — biggest opportunity first. Then the coverage line, the " +
+      "window the Search Console figures cover, when that data was pulled, and when the crawl " +
+      "was taken. If nothing mismatches, it says so (and you are still charged for the " +
+      "delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body:
+          "This audit sees only what its two inputs brought back. A pull fetches at most " +
+          "**{{MAX_GSC_ROWS}}** `(query, page)` rows per window, so on a large property a " +
+          "mismatch outside the top rows Google returned is not visible here — the analysis " +
+          "prints a caveat when the pull hit that cap. The window also ends " +
+          "**{{GSC_LAG_DAYS}} before today** rather than running up to it. On the crawl side, " +
+          "only pages your last crawl actually reached can be checked, which is what the " +
+          "coverage line above is for.\n\nA mismatch is a statement about the page **as " +
+          "crawled**: a title you fixed after that crawl still shows up until you crawl again, " +
+          "which is why the crawl's own date is printed with the findings.",
+      },
+    ],
+  },
+
   research_keywords: {
     lead:
       "`research_keywords` looks up Google Ads **search volume**, **CPC**, and **competition** for up " +

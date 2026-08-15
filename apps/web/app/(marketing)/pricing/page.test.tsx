@@ -27,6 +27,7 @@ describe("pricing page", () => {
       ["Site crawl (up to 100 URLs)", "20"],
       ["Quick-win, cannibalization, or decay scan", "10"],
       ["Full on-page + technical + schema audit", "50"],
+      ["Content audit (queries vs page titles)", "12"],
       ["Keyword research (100 keywords)", "25"],
       ["Ranked keywords (per domain)", "65"],
       ["Backlink profile (per domain)", "70"],
@@ -61,6 +62,10 @@ describe("pricing page", () => {
     audit_onpage: AUDIT_ROW,
     audit_tech: AUDIT_ROW,
     audit_schema: AUDIT_ROW,
+    // Its OWN row, deliberately not a member of AUDIT_ROW: audit_content needs a Search Console
+    // pull as well as a crawl, so the bundle's price would be advertising something a crawl alone
+    // cannot run. NOTE for the reviewer — this number is UNSIGNED (NEVER #6); the PR is parked.
+    audit_content: "Content audit (queries vs page titles)",
     research_keywords: "Keyword research (100 keywords)",
     ranked_keywords: "Ranked keywords (per domain)",
     analyze_backlinks: "Backlink profile (per domain)",
