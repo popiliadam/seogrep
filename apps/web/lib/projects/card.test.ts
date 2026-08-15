@@ -104,6 +104,54 @@ describe("buildProjectCard — the Search Console status", () => {
   });
 });
 
+describe("buildProjectCard — the expired-connection marker", () => {
+  const LINKED = { account_id: "acct-1", gsc_property: "sc-domain:example.com" };
+
+  it("is false when the caller measured no health at all", () => {
+    const card = buildProjectCard({ project: PROJECT, crawl: null, pull: null, connection: LINKED }, NOW);
+    expect(card.gscExpired).toBe(false);
+  });
+
+  it("is false for a live account", () => {
+    const card = buildProjectCard(
+      { project: PROJECT, crawl: null, pull: null, connection: LINKED, tokenStatus: "active" },
+      NOW,
+    );
+    expect(card.gscExpired).toBe(false);
+  });
+
+  it("is true for a connected project whose account is stored invalid", () => {
+    const card = buildProjectCard(
+      { project: PROJECT, crawl: null, pull: null, connection: LINKED, tokenStatus: "invalid" },
+      NOW,
+    );
+    expect(card.gscExpired).toBe(true);
+    // The mapping is untouched: the account is dead, the property is still what it was.
+    expect(card.gsc).toEqual({ kind: "connected", property: "sc-domain:example.com" });
+  });
+
+  /**
+   * NOT expired when there is nothing connected. A dead account can be unmapped from a project
+   * (`unmapProject` clears `account_id` and keeps the row) while the account row keeps its
+   * `invalid` status — a card that read the status alone would then put a reconnect warning under
+   * a line reading "Not connected", about an account this project no longer uses.
+   */
+  it("is false for an unconnected project even when a dead status is passed", () => {
+    const card = buildProjectCard(
+      {
+        project: PROJECT,
+        crawl: null,
+        pull: null,
+        connection: { account_id: null, gsc_property: "https://example.com/" },
+        tokenStatus: "invalid",
+      },
+      NOW,
+    );
+    expect(card.gsc).toEqual({ kind: "not_connected" });
+    expect(card.gscExpired).toBe(false);
+  });
+});
+
 describe("buildProjectCards", () => {
   it("preserves the caller's order (oldest first, as list_projects sorts)", () => {
     const cards = buildProjectCards(
