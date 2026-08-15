@@ -5,6 +5,39 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🏁 2026-08-15 — CRAWL+AUDIT DERİNLEŞTİRME, 2. OTURUM: B+C+D2 CANLIDA — plan §6'nın 1-4'ü TAMAM
+
+Dünkü 1. oturumun (A+D1) devamı; üç dilim daha canlıda, hepsi taze Fable hakemli (3/3 PASS):
+
+- **B — crawl_pages** ([#89](https://github.com/popiliadam/seogrep/pull/89)): 0023 operatör SQL-Editor dalgasıyla prod'a girdi (şef list_tables ile
+  doğruladı — sinyale değil tabloya güven), çift-yazım canlıda. Cloud-DDL sınıflandırıcı engeli
+  "hazır-park + operatöre tek-adım SQL" deseniyle çözüldü — DESEN TUTTU, 0024'te tekrarlandı.
+- **C — audit_runs + panel Audits** ([#97](https://github.com/popiliadam/seogrep/pull/97)): 0024 aynı desenle; koşulan her audit artık yapısal
+  raporuyla satırda; panel kartında AUDITS bölümü GERÇEK TARAYICIDA ölçüldü ("Not run yet" ×3).
+  Kredi-iade zinciri gerçek FK reddiyle defter üzerinde kanıtlı.
+- **D2 — kural dalgası** ([#101](https://github.com/popiliadam/seogrep/pull/101)): 12 yeni kural (onpage 6 + tech 6) 17 sinyalin üstünde;
+  eşik değerleri literal-pinli; eski crawl'da bayt-özdeşlik SHA ile ölçülü; tek meşru sapma
+  (title_equals_h1 sinyal-kapısız — hakem bağımsız fixture'la tam-iki-satır sınırını doğruladı).
+  Deploy sonrası canlı: taze imaj, schema:ready (86 sn'de — boot geçicisi kayıtlı).
+- **Paralel-oturum koordinasyonu İLK KEZ tam ritimde:** dosya-sınır haritası + PR tren sırası +
+  reset-anons protokolü kanal üzerinden yürüdü; tek çakışma (D2 işçisinin verify-db reset'i
+  peer'in 0025'ini sildi) protokol doğurdu, zarar vermedi.
+
+**KALAN (plan §6, 5-8):** N8 audit_content (FİYAT İMZASI BEKLER — imzasız dispatch yok) ·
+Faz 2 graf + compare_crawls · Faz 3 schema gövdesi · kademeler/render (imza).
+
+**AÇIK OPERATÖR KALEMİ — Lighthouse eşik regresyonu:** [#88](https://github.com/popiliadam/seogrep/pull/88) (manpage redesign) sonrası
+performance 0.88-0.89 bandında; ≥0.90 kapısı yazı-turaya döndü (bu iki oturumda 5+ rerun yedi).
+Kapı GEVŞETİLMEYECEK — ya redesign'ın perf'i düzeltilir ya eşik kararı bilinçli verilir.
+
+**ORTAK BACKLOG ADAYI (iki oturum +1):** paylaşılan lokal Supabase stack'i çakışıyor
+(reset yarışı + fixture kirliliği seedPurchase vakası) — worktree-başına stack ya da stack-kilidi.
+Ek (G2 hakem ölçümü, çift kayıt): **FORCE RLS pini hiçbir spec'te yok** (0024+0025 ikisinde de) —
+katalog-enumerasyonlu spec (check-rls deseninin test karşılığı) ayrı dilim adayı.
+
+**FLAKE KAYDI güncel:** önceki 4 kaleme ek — crawl time-budget testi (yük altında dalga
+başlatamıyor, 2 oturumda 3×) · lighthouse job'ının 47 sn'lik runner-çökmesi deseni (1×).
+
 ### 🌙 2026-08-15 — GSC AİLESİ DERİNLEŞTİRME, 1. GECE (paralel oturum; 4 PR merge, 3 kod dilimi CANLIDA)
 
 - **Plan:** `docs/plans/2026-08-15-gsc-derinlestirme.md` ([#92](https://github.com/popiliadam/seogrep/pull/92)) —
