@@ -7,8 +7,9 @@ import {
   refreshAccessToken,
   type GscSite,
 } from "@pseo/core";
-import { forUser, getServiceClient } from "../db.ts";
+import { forUser, getServiceClient, markGscAccountTokenInvalid } from "../db.ts";
 import { requireTokenEncryptionKey } from "../env.ts";
+import { isInvalidGrant } from "../gsc-data/reauth-error.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
@@ -37,6 +38,15 @@ import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 export interface GscAccountSummary {
   readonly id: string;
   readonly email: string;
+  /**
+   * The STORED health of this account's refresh token (migration 0021), or null on a reader
+   * that does not carry it. `"invalid"` is only ever written after Google itself answered
+   * `invalid_grant`, so it means "re-approving is the fix", never "the network was slow".
+   *
+   * Optional rather than required so `track_gsc_property` — which shares `loadGscAccounts`
+   * and has no use for the column — keeps compiling against the same summary type.
+   */
+  readonly tokenStatus?: "active" | "invalid" | null;
 }
 
 /** A project and the mapping it holds: which account it reads through, and which property. */
@@ -55,25 +65,44 @@ export type LoadProjectMappingsFn = (userId: string) => Promise<ProjectPropertyM
 /** `sites.list` for ONE account of ONE tenant. Throws when the account cannot be read. */
 export type ListAccountSitesFn = (accountId: string, userId: string) => Promise<GscSite[]>;
 
+/** Stamp one account's credential as dead, tenant-scoped. Best-effort at every call site. */
+export type MarkTokenInvalidFn = (accountId: string, userId: string) => Promise<void>;
+
 export interface ListGscPropertiesDeps {
   readonly loadAccounts?: LoadGscAccountsFn;
   readonly loadMappings?: LoadProjectMappingsFn;
   readonly listAccountSites?: ListAccountSitesFn;
+  readonly markTokenInvalid?: MarkTokenInvalidFn;
 }
 
-/** Accounts, ordered by email so the output does not depend on scan order. */
+/**
+ * Accounts, ordered by email so the output does not depend on scan order.
+ *
+ * `token_status` rides along because this tool is the one place a user asks "what is wrong with
+ * my account?" and the answer for a DEAD grant is different in kind from the answer for a slow
+ * one. The read stays tenant-scoped through forUser (NEVER #4): another tenant's account is
+ * indistinguishable from no account, status column included.
+ */
 export const loadGscAccounts: LoadGscAccountsFn = async (userId) => {
   const { data, error } = await forUser(getServiceClient(), userId).selectOwn(
     "gsc_accounts",
-    "id, google_account_email",
+    "id, google_account_email, token_status",
   );
   if (error) {
     throw new Error(`gsc_accounts lookup failed: ${error.message}`);
   }
-  const rows = (data ?? []) as unknown as { id: string; google_account_email: string }[];
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    google_account_email: string;
+    token_status: "active" | "invalid" | null;
+  }[];
   return [...rows]
     .sort((a, b) => a.google_account_email.localeCompare(b.google_account_email))
-    .map((row) => ({ id: row.id, email: row.google_account_email }));
+    .map((row) => ({
+      id: row.id,
+      email: row.google_account_email,
+      tokenStatus: row.token_status ?? null,
+    }));
 };
 
 /**
@@ -167,29 +196,78 @@ function renderSite(
   return `  - ${site.siteUrl} (${site.permissionLevel}) — ${usage}${note}`;
 }
 
-/** One account block. `sites === null` means the listing FAILED, not that it is empty. */
+/**
+ * What a DEAD grant needs to hear, and the sentence "try again shortly" cannot be.
+ *
+ * A stored `token_status = 'invalid'` was only ever written after Google itself answered
+ * `invalid_grant` (migration 0021, pull_gsc_data's own catch). Waiting cannot clear that state —
+ * only re-approving can — so telling the user to retry is not merely unhelpful, it is the wrong
+ * instruction, and the one 12 measured cells were given on 2026-08-09.
+ */
+const RECONNECT_LINE =
+  "  This account's Google connection has expired — reconnect it on the Connection page in " +
+  "SeoGrep.";
+
+/**
+ * One account block. `sites === null` means the listing FAILED, not that it is empty.
+ *
+ * "EXPIRED" IS THE STORED STATUS **OR** A DEATH SEEN DURING THIS REQUEST, and the second half is
+ * not belt-and-braces — without it the feature is blind exactly where credentials actually die.
+ * `account.tokenStatus` was read at the top of the handler, BEFORE `sites.list` ran; on the very
+ * first death there is nothing recorded yet, so a stored-status-only test prints "Try again
+ * shortly" in the one request that just watched Google refuse the token, and the right sentence
+ * arrives only on a SECOND call the user has no reason to make. `sawInvalidGrant` is that same
+ * observation, derived from the failure we just saw — the identical ruling pull_gsc_data's own
+ * catch makes ("derived from the failure we JUST saw, never from the token_status we read
+ * earlier"), and the state all 12 measured invalid_grant failures were in.
+ *
+ * THE STORED STATUS IS STILL REPORTED INDEPENDENTLY OF THE LISTING. A dead grant whose
+ * `sites.list` happened to succeed (a status written by pull_gsc_data moments ago, a listing
+ * served from a still-valid access token) still says so — hiding it because THIS call worked
+ * would let the account look healthy right up until the next paid pull fails. And a dead grant
+ * whose listing failed gets the reconnect sentence INSTEAD of the transient one, never both: two
+ * remedies for one fault is how a user ends up doing neither.
+ *
+ * A listing that failed for ANY OTHER reason keeps the transient sentence verbatim. A 5xx, a
+ * timeout, a mis-sealed ciphertext — the cause is genuinely unknown, and "reconnect your Google
+ * account" is a costly instruction to hand out on a guess. That is why the flag is set from
+ * `isInvalidGrant` and never from "the call threw".
+ */
 function renderAccount(
   account: GscAccountSummary,
   sites: readonly GscSite[] | null,
   mappings: readonly ProjectPropertyMapping[],
+  sawInvalidGrant = false,
 ): string {
   const header = `${account.email} (account_id: ${account.id})`;
+  const expired = account.tokenStatus === "invalid" || sawInvalidGrant;
   if (sites === null) {
-    return (
-      `${header}\n  This account's Search Console properties could not be read just now, so ` +
-      "what it can reach is unknown. Try again shortly, or reconnect the account on the " +
-      "Connection page."
-    );
+    return expired
+      ? `${header}\n${RECONNECT_LINE}`
+      : `${header}\n  This account's Search Console properties could not be read just now, so ` +
+          "what it can reach is unknown. Try again shortly, or reconnect the account on the " +
+          "Connection page.";
   }
-  if (sites.length === 0) {
-    return `${header}\n  No Search Console properties on this account.`;
-  }
-  return `${header}\n${sites.map((site) => renderSite(site, mappings, account.id)).join("\n")}`;
+  const listing =
+    sites.length === 0
+      ? "  No Search Console properties on this account."
+      : sites.map((site) => renderSite(site, mappings, account.id)).join("\n");
+  return expired ? `${header}\n${RECONNECT_LINE}\n${listing}` : `${header}\n${listing}`;
 }
 
+/**
+ * Nothing connected. TWO routes, because the caller may be at either of two distances from a
+ * property list, and naming only the nearer one strands the other.
+ *
+ * `connect_gsc` takes a `project_id`, so a brand-new account with ZERO projects cannot run it at
+ * all: the old sentence sent them to a tool that would refuse them, with no hint that a project
+ * comes first. `setup_project` is that first step, and it is named here rather than left to be
+ * discovered.
+ */
 const EMPTY =
   "No Google account is connected yet, so there are no Search Console properties to list. " +
-  "Run connect_gsc for one of your projects to connect one.";
+  "If you have no projects yet, run setup_project for your domain first — connect_gsc needs a " +
+  "project to start from. Then run connect_gsc for that project to connect a Google account.";
 
 /** The remedy, printed ONCE and only when at least one property actually needs it. */
 const UNQUERYABLE_FOOTER =
@@ -205,6 +283,9 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
   const loadAccounts = deps.loadAccounts ?? loadGscAccounts;
   const loadMappings = deps.loadMappings ?? defaultLoadMappings;
   const listAccountSites = deps.listAccountSites ?? listAccountSitesFor;
+  const markTokenInvalid =
+    deps.markTokenInvalid ??
+    ((accountId, userId) => markGscAccountTokenInvalid(getServiceClient(), accountId, userId));
   return defineTool({
     name: "list_gsc_properties",
     description:
@@ -224,6 +305,10 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
           // ONE unreadable account never costs the user the other accounts' inventories — and
           // it is reported as unreadable rather than as empty (rule 1 in the header).
           let sites: GscSite[] | null = null;
+          // A death seen in THIS request, which the row loaded at the top of the handler cannot
+          // know about yet. It is what renderAccount reports on, so the first observation is
+          // already the one that tells the user to reconnect.
+          let sawInvalidGrant = false;
           try {
             sites = [...(await listAccountSites(account.id, ctx.userId))];
           } catch (error) {
@@ -231,8 +316,32 @@ export function makeListGscPropertiesTool(deps: ListGscPropertiesDeps = {}): Reg
               `list_gsc_properties: sites.list failed for account ${account.id}:`,
               error,
             );
+            // A DEATH OBSERVED HERE IS RECORDED HERE. This tool costs 0 credits and is the
+            // first thing a confused user runs, so it is often where a revoked grant is seen
+            // before any paid pull touches it — and until the column is written, every OTHER
+            // surface (the discovery tools' warning, the Connection badge, Overview) is blind.
+            // Best-effort, exactly as pull_gsc_data's own catch is: if the status write fails,
+            // the log carries it and the user still gets the listing. Narrowed to invalid_grant
+            // for the reason the classifier exists — a 5xx must never mark a live account dead.
+            if (isInvalidGrant(error)) {
+              // Set BEFORE the write, and never inside its try: the sentence the user reads must
+              // not depend on whether the database accepted the status. A DB blip that silently
+              // downgraded "reconnect" back to "try again later" would leave them retrying a
+              // credential that can never work — the exact failure the write itself is
+              // best-effort to avoid.
+              sawInvalidGrant = true;
+              try {
+                await markTokenInvalid(account.id, ctx.userId);
+              } catch (statusError) {
+                console.error(
+                  `list_gsc_properties: failed to mark account ${account.id} invalid after ` +
+                    "invalid_grant",
+                  statusError,
+                );
+              }
+            }
           }
-          return { sites, text: renderAccount(account, sites, mappings) };
+          return { sites, text: renderAccount(account, sites, mappings, sawInvalidGrant) };
         }),
       );
       const needsFooter = blocks.some((block) =>

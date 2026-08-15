@@ -324,4 +324,102 @@ describe("AccountDisconnectPanel", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
   });
+
+  /**
+   * THE HEALTH BADGE. Before this, a user whose grant Google had revoked saw a row identical to
+   * a working one, and found out only when a paid tool failed. The row now carries the one thing
+   * that can be known without asking Google again: what the last observation said.
+   *
+   * The badge is driven by the STORED `token_status`, never by whether this render's
+   * `sites.list` worked — the page keeps those separate on purpose, because a failed listing has
+   * a dozen causes and this column has exactly one.
+   */
+  describe("token health on the account row", () => {
+    it("tells a dead account to reconnect, and never dresses it as a verification", () => {
+      render(
+        <AccountDisconnectPanel
+          {...panelProps({
+            accounts: [
+              {
+                id: ACCOUNT_ID,
+                email: "owner@example.com",
+                tokenStatus: "invalid",
+                // Set on purpose: "expired" must WIN over an age, not sit beside it. A row
+                // saying both "Reconnect needed" and "Last verified 4 days ago" reads as a
+                // healthy account with a stale note.
+                lastVerified: "4 days ago",
+              },
+            ],
+          })}
+        />,
+      );
+
+      expect(screen.getByText("Reconnect needed")).toBeTruthy();
+      expect(screen.queryByText(/last verified/i)).toBeNull();
+      // Not an alert: the page-level warning owns that role, and this page's specs read
+      // `getByRole("alert")` as a single thing.
+      expect(screen.queryByRole("alert")).toBeNull();
+      // The way out is still on the row.
+      expect(screen.getByRole("button", { name: /disconnect owner@example\.com/i })).toBeTruthy();
+    });
+
+    it("shows how long ago a healthy account was last verified", () => {
+      render(
+        <AccountDisconnectPanel
+          {...panelProps({
+            accounts: [
+              {
+                id: ACCOUNT_ID,
+                email: "owner@example.com",
+                tokenStatus: "active",
+                lastVerified: "3 days ago",
+              },
+            ],
+          })}
+        />,
+      );
+
+      expect(screen.getByText(/last verified 3 days ago/i)).toBeTruthy();
+      expect(screen.queryByText("Reconnect needed")).toBeNull();
+    });
+
+    it("says NOTHING about a row that has never been checked", () => {
+      // Every row migration 0021 created starts here. A green tick would be a claim nobody
+      // measured, and "Last verified —" is not a fact.
+      render(
+        <AccountDisconnectPanel
+          {...panelProps({
+            accounts: [
+              { id: ACCOUNT_ID, email: "owner@example.com", tokenStatus: null, lastVerified: null },
+            ],
+          })}
+        />,
+      );
+
+      expect(screen.queryByText("Reconnect needed")).toBeNull();
+      expect(screen.queryByText(/last verified/i)).toBeNull();
+      expect(screen.getByText("owner@example.com")).toBeTruthy();
+    });
+
+    it("badges each account on its own, not the whole list", () => {
+      render(
+        <AccountDisconnectPanel
+          {...panelProps({
+            accounts: [
+              { id: ACCOUNT_ID, email: "owner@example.com", tokenStatus: "invalid" },
+              {
+                id: SECOND_ID,
+                email: "second@example.com",
+                tokenStatus: "active",
+                lastVerified: "today",
+              },
+            ],
+          })}
+        />,
+      );
+
+      expect(screen.getAllByText("Reconnect needed")).toHaveLength(1);
+      expect(screen.getByText(/last verified today/i)).toBeTruthy();
+    });
+  });
 });
