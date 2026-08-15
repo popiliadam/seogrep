@@ -162,6 +162,58 @@ export function renderToolPage(toolMeta, cost, prose) {
   return `${blocks.join("\n\n")}\n`;
 }
 
+/** Thousands-separate an integer for prose (15000 → "15,000") — mirrors `grouped` in format.ts. */
+export function groupThousands(value) {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** Require a positive integer for a token's constant, or throw naming the token that needs it. */
+function positiveInteger(value, token, key) {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${token} needs a positive integer ${key}, got ${value}.`);
+  }
+  return value;
+}
+
+/** "3 days" / "1 day" — a phrase, not a bare number, so a lag of 1 can't render as "1 days". */
+export function dayPhrase(days) {
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}
+
+/**
+ * Substitute the `{{TOKEN}}` placeholders a DOC_PROSE block may carry with values DERIVED from the
+ * built MCP code, so a limit quoted in prose can never disagree with the constant that enforces it:
+ *
+ *   • `{{MAX_GSC_ROWS}}` = MAX_ROW_LIMIT       (apps/mcp/src/gsc-data/pull.ts)
+ *   • `{{GSC_LAG_DAYS}}` = GSC_FRESHNESS_LAG_DAYS, rendered as a phrase (apps/mcp/.../windows.ts)
+ *
+ * The same derivation format.ts makes for the tool-output caveat: prose is exactly where a changed
+ * constant goes unnoticed, because nothing compiles against a sentence — and a wrong number here
+ * tells the reader how much data they are missing with no way to check it.
+ *
+ * Fail-closed: a non-integer constant, or a token nobody substitutes, throws instead of rendering a
+ * page that states a wrong (or literally "undefined") limit.
+ */
+export function substituteProseTokens(text, constants) {
+  const { maxRowLimit, lagDays } = constants || {};
+  const out = String(text)
+    .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
+      groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
+    )
+    .replace(/\{\{GSC_LAG_DAYS\}\}/g, () =>
+      dayPhrase(positiveInteger(lagDays, "{{GSC_LAG_DAYS}}", "lagDays")),
+    );
+  // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
+  // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
+  // convention. The narrow `[A-Z0-9_]+` version this replaces let four near-misses — `{{max_rows}}`,
+  // `{{ MAX_GSC_ROWS }}`, `{{Max_Rows}}`, `{{MAX-ROWS}}` — render straight onto the page, i.e. the
+  // guard was green precisely when it was needed. Nothing legitimate can trip it: a rendered page
+  // is MDX, where a bare `{` already opens a JSX expression.
+  const leftover = out.match(/\{\{[^}]*\}\}/);
+  if (leftover) throw new Error(`Unknown prose token ${leftover[0]} — add a substitution for it.`);
+  return out;
+}
+
 /** Pages allowed in tools-reference/meta.json that are not tools (none today; kept for future). */
 export const NON_TOOL_ALLOWLIST = [];
 
@@ -199,6 +251,32 @@ export function findConfirmFields(tools) {
 // ---------------------------------------------------------------------------
 // Per-tool editorial prose (the schema-underivable behavior docs). Authored credit-number-free.
 // ---------------------------------------------------------------------------
+
+// The three discovery tools read a stored `pull_gsc_data` result, so the pull's two limits are
+// theirs as well — and a reader who lands on a discovery page never sees the pull page's
+// "Limitations (v0)". These two fragments carry the inherited half of that: the row cap and the
+// freshness offset. NEITHER number is typed here — both come from the {{…}} tokens above, i.e. from
+// MAX_ROW_LIMIT and GSC_FRESHNESS_LAG_DAYS in the built MCP code, so `--check` turns red on this
+// page the moment either constant moves (mutation-proved, both directions).
+// Each tool appends its OWN consequence to the intro, because truncation distorts each differently.
+//
+// Three limits are KNOWN and ACCEPTED here (reviewed, deliberately not fixed):
+//   1. The tokens carry the number, not the grammar around it. `dayPhrase` keeps "1 day" correct,
+//      but the pull page's "the newest {{GSC_LAG_DAYS}} ARE not analyzed" would still read wrong at
+//      a lag of 1 — a constant that is not going to 1, and a sentence rewrite is the fix if it does.
+//   2. "BOTH windows also end …" is exact for analyze_content_decay and slightly over-broad for the
+//      other two, which only read the current window; the offset is the same for both windows, so
+//      the reader is not misled, and one shared fragment beats three near-identical ones.
+//   3. Nothing stops a future author typing a raw number instead of a token. The gate catches a
+//      constant that MOVES away from the prose, not prose that was born detached from a constant.
+const INHERITED_LIMITS_INTRO =
+  "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
+  "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";
+
+const INHERITED_LIMITS_FRESHNESS =
+  "Both windows also end **{{GSC_LAG_DAYS}} before today** rather than running up to it, so the " +
+  "newest days are not analyzed yet. See " +
+  "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.";
 
 export const DOC_PROSE = {
   setup_project: {
@@ -343,20 +421,25 @@ export const DOC_PROSE = {
     postReturnsSections: [
       {
         heading: "Limitations (v0)",
-        // The 3-day offset below is GSC_FRESHNESS_LAG_DAYS in apps/mcp/src/gsc-data/windows.ts,
-        // which is the single source of truth for the behavior. Keep this wording in step with it.
+        // Every number below that the CODE decides is a token, DERIVED at render time from the
+        // built MCP constants — the offset from GSC_FRESHNESS_LAG_DAYS (gsc-data/windows.ts) and
+        // the cap from MAX_ROW_LIMIT (gsc-data/pull.ts). The two figures left as literals are NOT
+        // ours to derive: the "~2–3 day" delay is what Google documents, and the "5 days" is the
+        // worst lag the guard was measured against (content-decay.test.ts) — neither moves when a
+        // constant does.
         body:
           "- Search Console finalizes a day's data with a ~2–3 day delay, and reports a day it has " +
-          "not finalized as **zero** rather than as missing. Both windows therefore end **3 days " +
-          "before today** instead of running up to it, which clears the delay Google documents " +
-          "with margin to spare: measured against lags of up to 5 days, no unfinalized day is read " +
-          "as a traffic collapse. It is a bounded guard, not an absolute one — if Search Console " +
-          "ever falls further behind than that, unfinalized days re-enter the window and a run of " +
-          "zeros can still look like a drop. The trade-off: the newest 3 days are not analyzed, so " +
-          "a genuine drop surfaces here up to 3 days after it begins.\n" +
-          "- A single page of up to 15,000 `(query, page)` rows is fetched per window; a very large " +
-          "property is truncated to the top rows Google returns, and the pull says so when it " +
-          "happens.",
+          "not finalized as **zero** rather than as missing. Both windows therefore end " +
+          "**{{GSC_LAG_DAYS}} before today** instead of running up to it, which clears the delay " +
+          "Google documents with margin to spare: measured against lags of up to 5 days, no " +
+          "unfinalized day is read as a traffic collapse. It is a bounded guard, not an absolute " +
+          "one — if Search Console ever falls further behind than that, unfinalized days re-enter " +
+          "the window and a run of zeros can still look like a drop. The trade-off: the newest " +
+          "{{GSC_LAG_DAYS}} are not analyzed, so a genuine drop surfaces here up to " +
+          "{{GSC_LAG_DAYS}} after it begins.\n" +
+          "- A single page of up to {{MAX_GSC_ROWS}} `(query, page)` rows is fetched per window; a " +
+          "very large property is truncated to the top rows Google returns, and the pull says so " +
+          "when it happens.",
       },
     ],
   },
@@ -378,6 +461,15 @@ export const DOC_PROSE = {
       "A prioritized list of quick-win opportunities — each with its query, page, average position, " +
       "impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so " +
       "(and you are still charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "so on a large property a quick win outside the top rows Google returned is not visible " +
+          "here — the analysis prints a caveat when the pull hit that cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   detect_cannibalization: {
@@ -398,6 +490,16 @@ export const DOC_PROSE = {
       "A list of cannibalized queries, each with its competing pages and their impressions, clicks, and " +
       "average position (main contender first). If no query is contested, it says so (and you are still " +
       "charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "and a truncated pull also truncates the denominator each impression **share** is measured " +
+          "against, so on a large property a page's share can read higher than it is — the analysis " +
+          "prints a caveat when the pull hit that cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   analyze_content_decay: {
@@ -418,6 +520,16 @@ export const DOC_PROSE = {
       "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
       "drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still " +
       "charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "and a page that fell out of a truncated window's top rows is read as having lost those " +
+          "clicks, so a large property can show a decay that never happened — the analysis prints a " +
+          "caveat when either window hit the cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   audit_onpage: {
@@ -898,14 +1010,25 @@ export const DOC_PROSE = {
 const TOOLS_DIR = new URL("../content/docs/tools-reference/", import.meta.url);
 const PARENT_META = new URL("../content/docs/meta.json", import.meta.url);
 
-/** Import ALL_TOOLS + TOOL_COSTS from the BUILT MCP registry (apps/mcp/dist). */
+/**
+ * Import ALL_TOOLS + TOOL_COSTS + the prose constants from the BUILT MCP registry (apps/mcp/dist).
+ * `constants` carries the values DOC_PROSE quotes through tokens, so the docs follow the code.
+ */
 async function loadRegistry() {
   const toolsUrl = new URL("../../mcp/dist/tools/index.js", import.meta.url);
   const costsUrl = new URL("../../mcp/dist/credits/costs.js", import.meta.url);
+  const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
+  const windowsUrl = new URL("../../mcp/dist/gsc-data/windows.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
-    return { ALL_TOOLS: tools.ALL_TOOLS, TOOL_COSTS: costs.TOOL_COSTS };
+    const pull = await import(pullUrl);
+    const windows = await import(windowsUrl);
+    return {
+      ALL_TOOLS: tools.ALL_TOOLS,
+      TOOL_COSTS: costs.TOOL_COSTS,
+      constants: { maxRowLimit: pull.MAX_ROW_LIMIT, lagDays: windows.GSC_FRESHNESS_LAG_DAYS },
+    };
   } catch (error) {
     throw new Error(
       "Could not import the built MCP registry from apps/mcp/dist — build it first with " +
@@ -915,10 +1038,10 @@ async function loadRegistry() {
 }
 
 /** The frozen page for one tool (throws if its prose block is missing). */
-function pageFor(tool, cost) {
+function pageFor(tool, cost, constants) {
   const prose = DOC_PROSE[tool.name];
   if (!prose) throw new Error(`No DOC_PROSE entry for tool "${tool.name}" — add one before generating.`);
-  return renderToolPage(tool, cost, prose);
+  return substituteProseTokens(renderToolPage(tool, cost, prose), constants);
 }
 
 /** The tools-reference meta.json content, derived from ALL_TOOLS order. */
@@ -939,9 +1062,9 @@ function ensureParentNav() {
 }
 
 /** Write all tool pages + tools-reference meta.json + parent nav. */
-function writeAll({ ALL_TOOLS, TOOL_COSTS }) {
+function writeAll({ ALL_TOOLS, TOOL_COSTS, constants }) {
   for (const tool of ALL_TOOLS) {
-    writeFileSync(new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR), pageFor(tool, TOOL_COSTS[tool.name]));
+    writeFileSync(new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR), pageFor(tool, TOOL_COSTS[tool.name], constants));
   }
   writeFileSync(new URL("meta.json", TOOLS_DIR), toolsMetaJson(ALL_TOOLS));
   const navChanged = ensureParentNav();
@@ -952,7 +1075,7 @@ function writeAll({ ALL_TOOLS, TOOL_COSTS }) {
 }
 
 /** Run the three --check gates. Returns a list of human-readable failures (empty = in sync). */
-function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
+function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, constants }) {
   const errors = [];
   const expectedSlugs = ALL_TOOLS.map((t) => deriveSlug(t.name));
 
@@ -966,7 +1089,7 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
       errors.push(`(i) missing page ${slug}.mdx — run \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
       continue;
     }
-    if (actual !== pageFor(tool, TOOL_COSTS[tool.name])) {
+    if (actual !== pageFor(tool, TOOL_COSTS[tool.name], constants)) {
       errors.push(`(i) ${slug}.mdx is out of sync — regenerate with \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
     }
   }
@@ -1004,7 +1127,7 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
   // long tool description can't silently regress a page's <meta name="description">. Measured on the
   // ACTUAL rendered page, so a regression that bypasses truncation is caught here.
   for (const tool of ALL_TOOLS) {
-    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name])).length;
+    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name], constants)).length;
     if (length > FRONTMATTER_DESCRIPTION_MAX) {
       errors.push(
         `(iv) ${deriveSlug(tool.name)}.mdx frontmatter description is ${length} chars ` +
