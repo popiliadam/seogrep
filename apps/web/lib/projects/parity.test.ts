@@ -137,6 +137,73 @@ describe("the panel names the same next step as whats_next", () => {
     });
   }
 
+  /**
+   * THE DEAD-ACCOUNT RUNG, on the panel's own signals.
+   *
+   * This is the case the panel could not see at all until it read connection health: the ladder
+   * has recommended `connect_gsc` for a project whose stored `token_status` is `invalid` since the
+   * rung landed in core, and `whats_next` has filled the signal since the same day — so a panel
+   * that derived only the other five said `pull_gsc_data` (or, on a fresh pull, "all set") for the
+   * very project the assistant was telling the user to reconnect. Same project, same day, two
+   * answers.
+   *
+   * Both halves again, and here the SECOND one carries almost nothing: with the signal missing,
+   * `decideProjectNextStep` agrees with the card perfectly — they are wrong together. The literal
+   * is what fails.
+   */
+  it("routes a connected project whose Google account is dead to connect_gsc", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: { created_at: FRESH, result: null },
+      connection: LINKED,
+      tokenStatus: "invalid",
+    };
+    const card = buildProjectCard(input, NOW);
+    expect(card.nextStep.primary).toBe("connect_gsc");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+    // Everything else about this project is fresh, so without the health signal the ladder would
+    // have called it all set — the rung sits ABOVE that one precisely for this state.
+    expect(card.nextStep.allSet).toBe(false);
+  });
+
+  /**
+   * The other side of the same axis (signed lesson 14 — vary the VALUE, not only the presence): an
+   * ACTIVE account on identical rows must still get the all-set answer. Without this, a derivation
+   * that reported every measured account as dead would pass the case above and reroute every
+   * healthy project on the panel to connect_gsc.
+   */
+  it("leaves a connected project with a live account on the ordinary ladder", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: { created_at: FRESH, result: null },
+      connection: LINKED,
+      tokenStatus: "active",
+    };
+    const card = buildProjectCard(input, NOW);
+    expect(card.nextStep.primary).toBe("generate_report");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+  });
+
+  /**
+   * A dead account that is no longer mapped to this project is not this project's problem: the
+   * rung is `gscConnected && gscTokenInvalid`, and an unconnected project keeps the optional-GSC
+   * route it had before (rung 2, audit the crawl).
+   */
+  it("keeps an unconnected project on the optional-GSC route even with a dead status", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: null,
+      connection: { account_id: null, gsc_property: "https://example.com/" },
+      tokenStatus: "invalid",
+    };
+    const card = buildProjectCard(input, NOW);
+    expect(card.nextStep.primary).toBe("audit_onpage");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+  });
+
   // Defect #52 reaches the LADDER too, not only the status line: a project whose row lost its
   // account must be routed to audit_onpage (rung 2), never to pull_gsc_data (rung 3).
   it("routes a row-but-no-account project as NOT connected", () => {
@@ -193,5 +260,21 @@ describe("the ladder is core's, on both surfaces", () => {
     expect(source).toMatch(/<=\s*FRESHNESS_WINDOW_DAYS/);
     // gscConnected: the account_id, NOT the row (defect #52).
     expect(source).toMatch(/account_id\s*!=\s*null/i);
+  });
+
+  /**
+   * The HEALTH signal, on both surfaces, from the same stored word.
+   *
+   * `token_status` has three readable states and only one of them is a death: a `null` (no
+   * connection, no linked account) and an `"active"` both mean "nothing known to be wrong". If
+   * either surface widened that to a truthiness test — `tokenStatus != null`, say — every
+   * connected project on it would be routed to connect_gsc while the other kept recommending the
+   * pull. So each is pinned to the equality against the stored word rather than to a boolean.
+   */
+  it("both surfaces call an account dead only on a stored 'invalid'", () => {
+    expect(read(WHATS_NEXT_PATH)).toMatch(/gscTokenInvalid:[^,\n]*===\s*["']invalid["']/i);
+    expect(codeOf(read(resolve(HERE, "signals.ts")))).toMatch(
+      /gscTokenInvalid:[^,\n]*===\s*["']invalid["']/i,
+    );
   });
 });
