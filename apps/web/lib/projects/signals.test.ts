@@ -105,6 +105,61 @@ describe("deriveProjectSignals", () => {
     expect(signals.pullFresh).toBe(true);
   });
 
+  /**
+   * The health signal's THREE input states, each asserted separately, because two of them produce
+   * `false` for opposite reasons and the third produces nothing at all:
+   *
+   *   absent  -> the key is MISSING, not false. The ladder reads it with `=== true`, so a missing
+   *              signal decides exactly as it did before the reconnect rung existed — while a
+   *              `false` would be this layer claiming a measurement its caller never made.
+   *   null    -> measured, no account health to have. False: nothing is known to be wrong.
+   *   active  -> false.  invalid -> true.
+   */
+  it("omits gscTokenInvalid entirely when the caller measures no health", () => {
+    const signals = deriveProjectSignals({ crawl: null, pull: null, connection: null }, NOW);
+    expect("gscTokenInvalid" in signals).toBe(false);
+    expect(signals.gscTokenInvalid).toBeUndefined();
+  });
+
+  it("reports a measured-but-absent health as not-invalid rather than unmeasured", () => {
+    const signals = deriveProjectSignals(
+      { crawl: null, pull: null, connection: null, tokenStatus: null },
+      NOW,
+    );
+    expect("gscTokenInvalid" in signals).toBe(true);
+    expect(signals.gscTokenInvalid).toBe(false);
+  });
+
+  it("reports a live account as not invalid", () => {
+    const signals = deriveProjectSignals(
+      {
+        crawl: null,
+        pull: null,
+        connection: { account_id: "acct-1", gsc_property: "sc-domain:example.com" },
+        tokenStatus: "active",
+      },
+      NOW,
+    );
+    expect(signals.gscTokenInvalid).toBe(false);
+  });
+
+  it("reports a stored 'invalid' account as invalid", () => {
+    const signals = deriveProjectSignals(
+      {
+        crawl: null,
+        pull: null,
+        connection: { account_id: "acct-1", gsc_property: "sc-domain:example.com" },
+        tokenStatus: "invalid",
+      },
+      NOW,
+    );
+    expect(signals.gscTokenInvalid).toBe(true);
+    // …and the connection is still a CONNECTION. Collapsing the two would make an expired project
+    // look like one that never connected, which routes it to the optional-GSC rung instead of to
+    // reconnect (whats-next.ts's own note on readGscConnected).
+    expect(signals.gscConnected).toBe(true);
+  });
+
   // The same defect-#52 axis, at the level the ladder actually consumes: a project whose row
   // lost its account must not be routed as if Search Console were live.
   it("carries the account_id definition of gscConnected into the signals", () => {
