@@ -101,6 +101,33 @@ describe("non-empty results carry the key facts", () => {
 });
 
 /**
+ * The shortlist cap, said out loud. find_quick_wins returns at most MAX_QUICK_WINS rows; without
+ * this line a site with 400 qualifying queries reads "50 quick wins, best first" and has no way
+ * to know it is holding 12% of the answer. Same failure as a silent row cap, one layer up.
+ */
+describe("formatQuickWins reports what the shortlist cap left out", () => {
+  const wins = findQuickWins(SAMPLE_PULL); // two rows
+
+  it("names the remaining count when more cleared the bands than were listed", () => {
+    expect(formatQuickWins(wins, 402)).toContain("…and 400 more cleared the bands.");
+  });
+
+  it("thousands-separates the remainder rather than printing a bare digit run", () => {
+    expect(formatQuickWins(wins, 4002)).toContain("…and 4,000 more");
+  });
+
+  it("says nothing when the list IS the whole answer", () => {
+    expect(formatQuickWins(wins, wins.length)).not.toMatch(/cleared the bands/i);
+    expect(formatQuickWins(wins)).not.toMatch(/cleared the bands/i);
+  });
+
+  /** A total SMALLER than the list is a caller bug, not a negative remainder to print. */
+  it("prints no remainder when the total is below the list length", () => {
+    expect(formatQuickWins(wins, 1)).not.toMatch(/cleared the bands/i);
+  });
+});
+
+/**
  * The brand note. Suppressing a branded query is right; suppressing it SILENTLY is not — the
  * user would watch their biggest query disappear with no explanation. Measured live on
  * 2026-08-07, the branded query was the ONLY result the tool produced, so with no note the

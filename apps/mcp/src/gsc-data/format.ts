@@ -48,8 +48,18 @@ export function formatPullSummary(pull: PullData): string {
   );
 }
 
-/** Render the quick-win shortlist (or a friendly empty message). */
-export function formatQuickWins(wins: readonly QuickWin[]): string {
+/**
+ * Render the quick-win shortlist (or a friendly empty message).
+ *
+ * `total` is how many opportunities cleared the bands BEFORE the shortlist cap
+ * (quick-wins.ts findQuickWinsResult). It defaults to the shortlist's own length so a caller
+ * that has no total cannot accidentally claim rows were dropped; when it is larger, the count
+ * of what was cut is PRINTED. Without that line a site with 400 qualifying queries reads "50
+ * quick wins" and the user has no way to know the list is 12% of the answer — the shortlist cap
+ * is a presentation choice, and presenting it as the finding is the same silent-truncation
+ * failure the row cap has.
+ */
+export function formatQuickWins(wins: readonly QuickWin[], total = wins.length): string {
   if (wins.length === 0) {
     return "No quick wins found: no query is ranking in positions 8–20 with enough impressions yet.";
   }
@@ -58,7 +68,9 @@ export function formatQuickWins(wins: readonly QuickWin[]): string {
       `• "${w.query}" → ${w.page} — position ${pos(w.position)}, ` +
       `${w.impressions} impressions, ${w.clicks} clicks, CTR ${pct(w.ctr)}`,
   );
-  return `${wins.length} quick win${wins.length === 1 ? "" : "s"} (position 8–20 with demand), best first:\n${lines.join("\n")}`;
+  const remainder =
+    total > wins.length ? `\n…and ${grouped(total - wins.length)} more cleared the bands.` : "";
+  return `${wins.length} quick win${wins.length === 1 ? "" : "s"} (position 8–20 with demand), best first:\n${lines.join("\n")}${remainder}`;
 }
 
 /** Render the cannibalization groups (or a friendly empty message). */
