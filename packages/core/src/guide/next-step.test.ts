@@ -88,8 +88,13 @@ describe("the dead-connection rung", () => {
    *
    *   above "connected, nothing pulled"  -> the no-pull case, at the top of this describe;
    *   above "stale pull"                 -> a dead account cannot refresh, so a refresh is not the step;
-   *   above "stale crawl"                -> reconnect outranks a re-crawl (both are true, one blocks);
-   *   above "all set"                    -> a project that can never refresh again is not all set.
+   *   above "stale crawl"                -> reconnect outranks a re-crawl (both are true, one blocks).
+   *
+   * The fully-fresh case below is NOT a fourth position. Nothing under the rung can answer a
+   * dead account whose crawl and pull are both fresh — the only rung left is all-set — so that
+   * case goes red when the rung is REMOVED and stays green wherever it is moved. It is an
+   * existence pin, and it was worth measuring rather than assuming: the first draft of this
+   * comment called it positional and the mutation disproved it.
    */
   it("a dead account on a STALE pull is reconnect-first, not a refresh that cannot run", () => {
     const step = decideProjectNextStep(signals({ pullFresh: false, gscTokenInvalid: true }));
@@ -119,8 +124,38 @@ describe("the dead-connection rung", () => {
     expect(step.primary).toBe("crawl_site");
   });
 
-  /** A dead account is only reachable through a connection: no connection, nothing to reconnect. */
-  it("never fires without a connection, whatever the health field says", () => {
+  /**
+   * THE GUARD — `s.gscConnected &&` in the rung's condition. A dead account is only reachable
+   * through a connection: with no connection there is nothing to reconnect, and the ladder must
+   * fall through to whatever the project's real state is.
+   *
+   * The case below it looks like it proves that and DOES NOT: with no connection and no pull,
+   * rung 2 answers first, so the rung is never reached and deleting the guard changes nothing.
+   * Measured, not argued — with `s.gscConnected &&` removed, core, the MCP fast lane and the DB
+   * lane ALL stayed green. A shadowed case is a test of the rung above it.
+   *
+   * Reaching the rung with `gscConnected: false` needs `hasPull: true`, which is what steps past
+   * rung 2 (`!gscConnected && !hasPull`). Both such states are pinned — a project that pulled and
+   * then disconnected is a real one, and the health column outlives the connection row.
+   */
+  it("does not fire without a connection when a FRESH pull carries the state past rung 2", () => {
+    const step = decideProjectNextStep(signals({ gscConnected: false, gscTokenInvalid: true }));
+    expect(step.primary).toBe("generate_report");
+    expect(step.allSet).toBe(true);
+  });
+
+  it("does not fire without a connection when a STALE pull carries the state past rung 2", () => {
+    const step = decideProjectNextStep(
+      signals({ gscConnected: false, pullFresh: false, gscTokenInvalid: true }),
+    );
+    expect(step.primary).toBe("pull_gsc_data");
+  });
+
+  /**
+   * Kept, but for what it actually measures: rung 2 wins over everything below it. It is the
+   * SHADOWED case described above, and it is not a guard proof.
+   */
+  it("a project with no connection and no pull is still rung 2's audit_onpage", () => {
     const step = decideProjectNextStep(
       signals({ gscConnected: false, hasPull: false, pullFresh: false, gscTokenInvalid: true }),
     );
