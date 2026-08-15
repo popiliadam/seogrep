@@ -27,21 +27,54 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /**
+ * The reconnect marker, under whichever connected state the line is showing.
+ *
+ * It is a statement about whether the connection WORKS, which the mapping above cannot say: a
+ * project can carry a perfectly good property on an account whose refresh token Google has since
+ * revoked, and the line would read "sc-domain:example.com" while every pull failed. Rendered only
+ * when the database says so (`token_status = 'invalid'`, written after Google itself answered
+ * `invalid_grant`) — never inferred from a missing property or a stale pull.
+ *
+ * SAME LANGUAGE as the two surfaces that already say this — Overview's "needs reconnection" line
+ * and /app/connection's "has expired — reconnecting it is the fix, not waiting" — and it links to
+ * the page that carries the fix, because this panel starts nothing itself.
+ */
+function GscExpiredMark() {
+  return (
+    <span className="mt-1 block font-mono text-[11px] leading-[1.6] text-negative">
+      Connection expired — Search Console pulls cannot run until this Google account is
+      reconnected on{" "}
+      <Link href="/app/connection" className="border-b border-current">
+        the connection page
+      </Link>
+      .
+    </span>
+  );
+}
+
+/**
  * The Search Console line. Three states, and the middle one exists because the row and the
  * mapping are separate things since migration 0021: an account can be linked while no property
  * has been matched to the project yet, and saying "Not connected" there would send the user to
  * re-do an OAuth flow that already succeeded.
+ *
+ * The expiry marker hangs off BOTH connected states and neither unconnected one: a project with no
+ * account link has no connection to have expired, and `card.gscExpired` is already false there —
+ * the two agree, and the condition is stated here as well so the marker cannot drift onto a line
+ * that reads "Not connected".
  */
 function GscLine({ card }: { card: ProjectCard }) {
   if (card.gsc.kind === "not_connected") {
     return <Fact label="Search Console">Not connected</Fact>;
   }
-  if (card.gsc.property === null) {
-    return <Fact label="Search Console">Connected — no property matched yet</Fact>;
-  }
   return (
     <Fact label="Search Console">
-      <span className="break-all font-mono text-[13px]">{card.gsc.property}</span>
+      {card.gsc.property === null ? (
+        "Connected — no property matched yet"
+      ) : (
+        <span className="break-all font-mono text-[13px]">{card.gsc.property}</span>
+      )}
+      {card.gscExpired ? <GscExpiredMark /> : null}
     </Fact>
   );
 }
