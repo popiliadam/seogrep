@@ -311,6 +311,65 @@ describe("track_gsc_property", () => {
     expect(run.recorder.mapped).toEqual([]);
   });
 
+  /**
+   * B20b — the near-miss suggestion. `list_gsc_properties` prints properties exactly as Google
+   * spells them and this tool matches them exactly, so a lowercase letter or a trailing slash
+   * the user dropped produces a flat "not listed" for a property that is right there.
+   *
+   * The suggestion is deliberately DUMB. It is one copy-paste from becoming the property a
+   * project binds to, and a wrong binding only surfaces when the data stops making sense — so a
+   * plausible-looking wrong suggestion is worse than none. Only differences that cannot change
+   * which site is named qualify: letter case, and a trailing slash on a URL-prefix property.
+   */
+  it("suggests the listed property when only a trailing slash differs", async () => {
+    const listed: GscSite = { siteUrl: "https://katrenur.com/", permissionLevel: "siteOwner" };
+    const run = await callTool({ property: "https://katrenur.com" }, { sites: [listed] });
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toContain('Did you mean "https://katrenur.com/"?');
+    expect(run.recorder.opened).toEqual([]); // a suggestion is not a binding
+  });
+
+  it("suggests the listed property when only letter case differs", async () => {
+    const run = await callTool({ property: "SC-DOMAIN:Katrenur.COM" }, { sites: [TRACKED] });
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toContain('Did you mean "sc-domain:katrenur.com"?');
+  });
+
+  it("suggests NOTHING for an unrelated property, however many are listed", async () => {
+    const run = await callTool(
+      { property: "sc-domain:zephyrbrook.com" },
+      { sites: [TRACKED, UNQUERYABLE] },
+    );
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toMatch(/not listed/i);
+    expect(run.text).not.toMatch(/did you mean/i);
+  });
+
+  /**
+   * `sc-domain:katrenur.com` and `https://katrenur.com/` are two DIFFERENT Search Console
+   * properties for one site, with different data and different permissions. They look like a
+   * cosmetic pair and are not, which is exactly why the rule is a canonical-form comparison
+   * rather than a similarity score.
+   */
+  it("does not suggest a URL-prefix property for a domain property (or the reverse)", async () => {
+    const run = await callTool({ property: "https://katrenur.com/" }, { sites: [TRACKED] });
+
+    expect(run.isError).toBe(true);
+    expect(run.text).not.toMatch(/did you mean/i);
+  });
+
+  it("suggests nothing when an account could not be read — that path says so instead", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const run = await callTool({ property: "sc-domain:KATRENUR.com" }, { sitesListFails: true });
+    errorSpy.mockRestore();
+
+    expect(run.text).toMatch(/could not be read/i);
+    expect(run.text).not.toMatch(/did you mean/i);
+  });
+
   it("is a 0-credit tool that takes a property and an optional account_id", () => {
     const tool = toolFor({}, { opened: [], mapped: [] });
     expect(tool.name).toBe("track_gsc_property");
@@ -321,5 +380,144 @@ describe("track_gsc_property", () => {
     };
     expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["account_id", "property"]);
     expect(schema.required).toEqual(["property"]);
+  });
+});
+
+/**
+ * B20a — STEP 1 asks every candidate account AT ONCE, and the refusals it produces do not
+ * depend on the order the accounts came back in.
+ *
+ * These need more than the two accounts the World fixture models, and they drive the reads
+ * directly rather than through it, so the specs above stay exactly as they were — that they
+ * pass unchanged is itself the evidence that going parallel altered no behaviour.
+ */
+describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
+  /** Three accounts, deliberately NOT in email order — the order a query might hand back. */
+  const ACCOUNTS: GscAccountSummary[] = [
+    { id: "acc-zeta", email: "zeta@mail.invalid" },
+    { id: "acc-alpha", email: "alpha@mail.invalid" },
+    { id: "acc-mid", email: "mid@mail.invalid" },
+  ];
+
+  /** Build the tool over an explicit account list and a per-account sites answer. */
+  function toolOver(
+    accounts: readonly GscAccountSummary[],
+    sitesFor: (accountId: string) => Promise<readonly GscSite[]>,
+  ) {
+    return makeTrackGscPropertyTool({
+      loadAccounts: () => Promise.resolve([...accounts]),
+      listAccountSites: (accountId) => sitesFor(accountId),
+      openProject: () =>
+        Promise.resolve({
+          ok: true,
+          project: { id: "3d4e5f6a-7b8c-4d9e-8f01-2a3b4c5d6e7f", domain: "katrenur.com", outcome: "created" },
+        } satisfies ProjectResolution),
+      mapProperty: () => Promise.resolve(),
+    });
+  }
+
+  async function textOf(
+    accounts: readonly GscAccountSummary[],
+    sitesFor: (accountId: string) => Promise<readonly GscSite[]>,
+  ): Promise<string> {
+    const result = await toolOver(accounts, sitesFor).run(CTX, { property: TRACKED.siteUrl });
+    return result.content.map((part) => part.text).join("\n");
+  }
+
+  /** Every account fails except `listedOn`, which lists the tracked property. */
+  function onlyOneAnswers(listedOn: string) {
+    return (accountId: string): Promise<readonly GscSite[]> =>
+      accountId === listedOn
+        ? Promise.resolve([TRACKED])
+        : Promise.reject(new Error("fixture: sites.list refused"));
+  }
+
+  /**
+   * THE OVERLAP ITSELF. Each account's read parks on a barrier that is only released once ALL
+   * THREE have started, so this test can only finish if the three reads are in flight together.
+   * A serial `for await` never starts the second one and the test times out.
+   *
+   * The timeout is short on purpose: a regression here should cost a second, not the default.
+   */
+  it("starts every account's read before any of them finishes", { timeout: 1500 }, async () => {
+    let started = 0;
+    let release = (): void => undefined;
+    const allStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const text = await textOf(ACCOUNTS, async (accountId) => {
+      started += 1;
+      if (started === ACCOUNTS.length) release();
+      await allStarted;
+      return accountId === "acc-alpha" ? [TRACKED] : [];
+    });
+    expect(started).toBe(3);
+    expect(text).toMatch(/katrenur\.com/); // and it still bound the project, on the one match
+  });
+
+  /**
+   * DETERMINISM. `Promise.all` preserves INPUT order, and the input is whatever order the
+   * accounts query happened to return — which nothing pins. Two accounts unreadable and one
+   * holding the property must therefore produce a byte-identical refusal either way round.
+   */
+  it("names the unreadable accounts in the same order whatever order they arrive in", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const forward = await textOf(ACCOUNTS, onlyOneAnswers("acc-alpha"));
+    const reversed = await textOf([...ACCOUNTS].reverse(), onlyOneAnswers("acc-alpha"));
+    errorSpy.mockRestore();
+
+    expect(forward).toBe(reversed);
+    // Fail-closed, unchanged: one account answered and holds it, two are silent -> refuse.
+    expect(forward).toMatch(/could not be read/i);
+    expect(forward).toContain("alpha@mail.invalid"); // where it WAS found
+    // ...and the silent ones, alphabetically, not in arrival order.
+    expect(forward).toContain("mid@mail.invalid, zeta@mail.invalid");
+  });
+
+  it("keeps the all-unreadable refusal deterministic too", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const allFail = (): Promise<readonly GscSite[]> =>
+      Promise.reject(new Error("fixture: sites.list refused"));
+    const forward = await textOf(ACCOUNTS, allFail);
+    const reversed = await textOf([...ACCOUNTS].reverse(), allFail);
+    errorSpy.mockRestore();
+
+    expect(forward).toBe(reversed);
+    expect(forward).toContain("alpha@mail.invalid, mid@mail.invalid, zeta@mail.invalid");
+    expect(forward).not.toMatch(/not listed/i);
+  });
+
+  it("keeps the ambiguous refusal deterministic when several accounts list it", async () => {
+    const everyoneListsIt = (): Promise<readonly GscSite[]> => Promise.resolve([TRACKED]);
+    const forward = await textOf(ACCOUNTS, everyoneListsIt);
+    const reversed = await textOf([...ACCOUNTS].reverse(), everyoneListsIt);
+
+    expect(forward).toBe(reversed);
+    expect(forward).toMatch(/more than one/i);
+    // Named in email order, so the sentence does not shuffle between runs.
+    expect(forward.indexOf("alpha@mail.invalid")).toBeLessThan(forward.indexOf("mid@mail.invalid"));
+    expect(forward.indexOf("mid@mail.invalid")).toBeLessThan(forward.indexOf("zeta@mail.invalid"));
+  });
+
+  /**
+   * ONE DEAD CREDENTIAL IS NOT AN OUTAGE. A single account's failure must never swallow the
+   * accounts that answered perfectly well — that is the difference between "your property is
+   * not on this account" and "nothing could be read", and this tool's whole discipline rests
+   * on keeping the two apart.
+   */
+  it("still reads the healthy accounts when one account's credential is dead", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const text = await textOf(ACCOUNTS, (accountId) =>
+      accountId === "acc-zeta"
+        ? Promise.reject(new Error("fixture: sites.list refused"))
+        : Promise.resolve(accountId === "acc-alpha" ? [TRACKED] : []),
+    );
+    errorSpy.mockRestore();
+
+    // alpha's listing was READ (it is named as where the property was found), and only zeta is
+    // reported as unreadable — mid answered "no properties" and is not confused with it.
+    expect(text).toContain("alpha@mail.invalid");
+    expect(text).toContain("zeta@mail.invalid");
+    expect(text).not.toContain("mid@mail.invalid");
   });
 });
