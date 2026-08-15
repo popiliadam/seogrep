@@ -1,3 +1,4 @@
+import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import type { ConnectionRow, JobRow } from "../../../lib/projects/signals";
@@ -138,6 +139,60 @@ async function recentCrawlRuns(
   return (data ?? []) as unknown as JobHistoryRow[];
 }
 
+/**
+ * The project's LAST run of one audit (migration 0024) — the row behind one audit line.
+ *
+ * PER PROJECT AND PER TOOL with `.limit(1)`, for the reason `latestSucceeded` gives above and one
+ * more of its own: "the newest run of each tool" has no single-query form in PostgREST, and the
+ * alternative — fetching a project's whole audit history and keeping the newest of each in memory
+ * — grows without bound for a tenant who audits weekly. Three indexed limit-1 reads answer
+ * exactly what the card shows. Migration 0024's (user_id, project_id, created_at desc) index is
+ * this shape, with `tool` as a cheap residual filter.
+ *
+ * SUB-FIELDS, NOT `report`. The report is the rule engine's whole structure and two of its fields
+ * grow with the crawl (the per-page finding list, the URLs with no structured data), so the
+ * projection names the individual numbers the lines print — each O(1) in crawl size — and the
+ * whole jsonb is never downloaded. `AuditRunRow` has no `report` field to put one in.
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS `audit_runs_select_own`
+ * (constitution NEVER #4).
+ */
+async function latestAuditRun(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+  tool: string,
+): Promise<AuditRunRow | null> {
+  const { data, error } = await supabase
+    .from("audit_runs")
+    .select(
+      "tool, created_at, page_count:report->pageCount, finding_counts:report->counts, " +
+        "status:report->status, pages_with_schema:report->pagesWithSchema",
+    )
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", tool)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`audit_runs lookup (${tool}) failed: ${error.message}`);
+  }
+  return (data as unknown as AuditRunRow | null) ?? null;
+}
+
+/** The newest run of each audit for one project — one line's worth of data per tool. */
+async function latestAuditRuns(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<AuditRunRow[]> {
+  const runs = await Promise.all(
+    AUDIT_TOOLS.map((tool) => latestAuditRun(supabase, userId, projectId, tool)),
+  );
+  return runs.filter((run): run is AuditRunRow => run !== null);
+}
+
 /** Gather every row one card is built from. */
 async function cardInputFor(
   supabase: Supabase,
@@ -145,16 +200,18 @@ async function cardInputFor(
   project: ProjectRow,
   connections: Map<string, ConnectionRow>,
 ): Promise<ProjectCardInput> {
-  const [crawl, pull, crawlHistory] = await Promise.all([
+  const [crawl, pull, crawlHistory, auditRuns] = await Promise.all([
     latestSucceeded(supabase, userId, project.id, "crawl_site"),
     latestSucceeded(supabase, userId, project.id, "pull_gsc_data"),
     recentCrawlRuns(supabase, userId, project.id),
+    latestAuditRuns(supabase, userId, project.id),
   ]);
   return {
     project,
     crawl,
     pull,
     crawlHistory,
+    auditRuns,
     connection: connections.get(project.id) ?? null,
   };
 }

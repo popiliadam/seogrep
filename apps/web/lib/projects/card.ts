@@ -1,4 +1,5 @@
 import { decideProjectNextStep, summarizeCrawlResult, type NextStep } from "@pseo/core";
+import { buildAuditLines, type AuditLine, type AuditRunRow } from "./audits";
 import {
   buildCrawlHistory,
   type CrawlHistoryEntry,
@@ -50,6 +51,14 @@ export interface ProjectCardInput {
    * crawls yet gets. These rows carry no `result` (see `history.ts`).
    */
   readonly crawlHistory?: readonly JobHistoryRow[];
+  /**
+   * The project's recent `audit_runs` rows (migration 0024). Optional for the same reason
+   * `crawlHistory` is: a strictly additive read, and a caller that does not ask for it gets a card
+   * whose three audit lines all read "never run" — which is what a project with no audits has.
+   * These rows carry only the report SUB-FIELDS the lines need, never the whole report
+   * (see `audits.ts`).
+   */
+  readonly auditRuns?: readonly AuditRunRow[];
 }
 
 /** Everything one card renders. */
@@ -68,6 +77,11 @@ export interface ProjectCard {
    * above. Empty when the project has never been crawled, and the card then shows no trail.
    */
   readonly recentCrawls: readonly CrawlHistoryEntry[];
+  /**
+   * One line per audit, always all three, each carrying its newest run or null. The panel SHOWS
+   * audits; it never starts one — a line with no run names the tool to ask the assistant for.
+   */
+  readonly audits: readonly AuditLine[];
   /** When the last SUCCEEDED `pull_gsc_data` ran, or null when none has. */
   readonly pullAt: string | null;
   readonly gsc: GscStatus;
@@ -77,7 +91,7 @@ export interface ProjectCard {
 
 /** Build one project's card. `now` is injected so freshness is deterministic in tests. */
 export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCard {
-  const { project, crawl, pull, connection, crawlHistory } = input;
+  const { project, crawl, pull, connection, crawlHistory, auditRuns } = input;
   return {
     projectId: project.id,
     domain: project.domain,
@@ -87,6 +101,7 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
         ? null
         : { createdAt: crawl.created_at, summary: summarizeCrawlResult(crawl.result) },
     recentCrawls: buildCrawlHistory(crawlHistory ?? []),
+    audits: buildAuditLines(auditRuns ?? []),
     pullAt: pull?.created_at ?? null,
     gsc: isGscConnected(connection)
       ? { kind: "connected", property: connection?.gsc_property ?? null }

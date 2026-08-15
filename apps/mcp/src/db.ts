@@ -297,6 +297,38 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per audit that ran, migration 0024 — written by the three sync audit tools
+      // (audit/runs.ts) and read by the projects panel.
+      //
+      // `report` is the rule engine's STRUCTURAL report as jsonb, never the rendered text.
+      // Update is `never`, matching the migration's grants (SELECT + INSERT only): an audit run
+      // is the record of what was measured at that moment, so a corrected rule produces a NEW
+      // run rather than rewriting an old one. Rows leave only with their crawl job, project or
+      // account (ON DELETE CASCADE).
+      audit_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          crawl_job_id: string;
+          tool: string;
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          crawl_job_id: string;
+          tool: string;
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.
