@@ -116,15 +116,30 @@ describe("broken_internal_links", () => {
     ]);
   });
 
+  /**
+   * The crawl is bounded. A link to a page outside its budget, or off-site, is not evidence of
+   * anything — counting it would report a 404 the crawler never saw.
+   *
+   * THE FIXTURE CARRIES A REAL BROKEN PAGE ON PURPOSE, and it was not always so: the first draft
+   * of this spec fed a crawl with no 4xx page at all, and a mutation that counted every
+   * uncrawled target as a 404 left it GREEN — the rule short-circuits when nothing is broken, so
+   * the assertion was defended by that early exit rather than by the guard it claims to pin.
+   */
   it("NEGATIVE: a target this crawl never fetched has NO status and is not counted", () => {
-    // The crawl is bounded. A link to a page outside its budget, or off-site, is not evidence of
-    // anything — counting it would report a 404 the crawler never saw.
     const report = auditTech(
       crawl([
-        page({ url: "https://e/", links: ["https://e/never-fetched", "https://other.test/x"] }),
+        page({
+          url: "https://e/",
+          links: ["https://e/never-fetched", "https://other.test/x", "https://e/gone"],
+        }),
+        page({ url: "https://e/gone", status: 404 }),
       ]),
     );
-    expect(report.brokenInternalLinks).toEqual([]);
+    // ONLY the measured one. The uncrawled and the off-site target contribute nothing, on a crawl
+    // where the rule is demonstrably firing.
+    expect(report.brokenInternalLinks).toEqual([
+      { from: "https://e/", to: "https://e/gone", status: 404 },
+    ]);
   });
 
   it("NEGATIVE: a healthy site produces nothing, and a redirect (3xx) is not broken", () => {
