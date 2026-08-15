@@ -15,7 +15,7 @@ describe("pullResultToJson / parsePullResult round-trip", () => {
   });
 
   it("carries the window row-cap flag through serialize + parse (G-I4)", () => {
-    // A pull whose current window hit the 5,000-row cap; the previous window did not.
+    // A pull whose current window hit the row cap (MAX_ROW_LIMIT); the previous window did not.
     const capped: PullData = { ...SAMPLE_PULL, current: { ...SAMPLE_PULL.current, capped: true } };
 
     // Serialize emits capped:true only for the capped window; the un-capped one omits the field.
