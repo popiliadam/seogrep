@@ -1,3 +1,4 @@
+import { collapseFragments, groupByQuery } from "./document.ts";
 import type { GscRow, PullData } from "./types.ts";
 
 /**
@@ -14,7 +15,8 @@ import type { GscRow, PullData } from "./types.ts";
  *
  * "A page" means a DOCUMENT: rows that differ only by #fragment are merged before any of the
  * above is applied, because a jump-link into a section of an article is that article showing,
- * not a rival (see collapseFragments).
+ * not a rival (document.ts collapseFragments — the shape was measured here, and now that all
+ * three discovery engines fold the same way it lives in one module rather than this one).
  *
  * Groups are returned biggest-query-first (total impressions desc); pages within a group
  * are ordered by impressions desc (the main contender first).
@@ -45,86 +47,6 @@ export interface CannibalGroup {
    * is the brand alone.
    */
   readonly branded: boolean;
-}
-
-/** Group the current window's rows by query (each row is one page for that query). */
-function groupByQuery(rows: readonly GscRow[]): Map<string, GscRow[]> {
-  const byQuery = new Map<string, GscRow[]>();
-  for (const row of rows) {
-    const existing = byQuery.get(row.query);
-    if (existing) existing.push(row);
-    else byQuery.set(row.query, [row]);
-  }
-  return byQuery;
-}
-
-/**
- * The document a page value addresses: everything before the first "#". RFC 3986 makes the rest
- * the fragment, so this needs no URL parse and a page value that does not parse as a URL still
- * collapses correctly. NOTHING else is normalised — a query string or a trailing slash can be a
- * genuinely different document, and guessing there would merge real rivals into one.
- *
- * The crawler's normalizeUrl (crawl.ts) also clears the hash, but that is a different data path
- * over URLs the crawler itself discovered; these two happen to agree rather than share a rule.
- */
-function documentOf(page: string): string {
-  const hash = page.indexOf("#");
-  return hash === -1 ? page : page.slice(0, hash);
-}
-
-/**
- * Merge a query's rows that address the SAME document but differ by #fragment.
- *
- * Google emits one row per SERP appearance, and it shows jump-links into the sections of a single
- * article. Measured 2026-08-09 on www.bigcattr.com, query "british kedi cinsleri": 8 "competing
- * pages", three of which were one article — /blog/icerik/british-shorthair-… bare at position 2.2
- * plus #nasil-bir-kedi and #renkler both at 9.8. Uncollapsed those inflate the page count and can
- * carry a healthy query over the ">= 2 pages" bar, i.e. tell the user to fix a conflict that does
- * not exist.
- *
- * How the merged row's numbers are derived, chosen deliberately over the alternatives:
- *   - impressions and clicks are SUMMED. They count separate events, so the sum is how often the
- *     document was shown/clicked for this query; summing also leaves the group's totals — and
- *     therefore every share denominator and both floors — exactly where they were.
- *   - position is the IMPRESSION-WEIGHTED mean. Google's own position is already an
- *     impression-weighted average over appearances, so this carries that same average one level
- *     up instead of inventing a different kind of number. Taking the best-positioned row (the
- *     other defensible answer) would report the bigcattr article at 2.2 when most of its
- *     impressions were at 9.8 — flattering, and unlike every other position this tool prints.
- *   - ctr is recomputed from the summed clicks/impressions, because carrying either row's rate
- *     forward would contradict the two numbers printed beside it.
- *
- * The zero-impression fallback keeps the value finite; it is not a result anyone reads, since a
- * document with no impressions never clears CANNIBAL_MIN_PAGE_IMPRESSIONS and so never reaches
- * `pages`. A document with one row keeps that row untouched — merging is the only reason to
- * rewrite numbers.
- */
-function collapseFragments(rows: readonly GscRow[]): GscRow[] {
-  const byDocument = new Map<string, GscRow[]>();
-  for (const row of rows) {
-    const document = documentOf(row.page);
-    const existing = byDocument.get(document);
-    if (existing) existing.push(row);
-    else byDocument.set(document, [row]);
-  }
-  return [...byDocument].map(([page, group]) => {
-    const first = group[0]!;
-    if (group.length === 1) return first.page === page ? first : { ...first, page };
-    const impressions = group.reduce((sum, row) => sum + row.impressions, 0);
-    const clicks = group.reduce((sum, row) => sum + row.clicks, 0);
-    const position =
-      impressions > 0
-        ? group.reduce((sum, row) => sum + row.position * row.impressions, 0) / impressions
-        : group.reduce((sum, row) => sum + row.position, 0) / group.length;
-    return {
-      query: first.query,
-      page,
-      clicks,
-      impressions,
-      ctr: impressions > 0 ? clicks / impressions : 0,
-      position,
-    };
-  });
 }
 
 /**
