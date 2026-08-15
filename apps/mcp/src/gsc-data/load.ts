@@ -101,14 +101,39 @@ export async function loadGscTokenStatus(
 }
 
 /**
+ * How old a pull has to be before the provenance line stops merely DATING the data and starts
+ * calling it stale. A month is the point past which Search Console numbers describe a different
+ * period than the one the reader is asking about — seasonality, a redesign, an algorithm update
+ * — rather than a slightly older version of the same one.
+ *
+ * A named export rather than a literal buried in the sentence, so a test can pin the number a
+ * user actually gets (the MAX_HREFLANGS pattern), and so this file states the threshold once.
+ */
+export const STALE_PULL_DAYS = 30;
+
+/**
  * The provenance line every discovery tool appends. ONE renderer, because three tools
  * printing the same fact three ways is how they drift apart.
+ *
+ * A bare date is the whole claim only while the data is recent. Past STALE_PULL_DAYS it needs a
+ * SENTENCE: an analysis of a two-month-old pull is presented in exactly the same words as one of
+ * this morning's, and the only difference a reader has to notice is a date at the very bottom of
+ * a wall of findings — which is precisely the kind of difference nobody notices. Naming the
+ * action too (re-run pull_gsc_data) is what turns the observation into something the user can do.
+ *
+ * This is the AGE axis and is independent of the reauth warning below, which is the CONNECTION
+ * axis: a live connection can sit on ancient data, and a dead one can sit on data pulled an hour
+ * before it died. Both lines can print, and when they do they say different things.
  */
 export function renderPullProvenance(pulledAt: string, now: Date = new Date()): string {
   const days = Math.floor((now.getTime() - Date.parse(pulledAt)) / 86_400_000);
   const day = pulledAt.slice(0, 10);
   const age = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
-  return `Search Console data pulled ${day} (${age}).`;
+  const staleness =
+    days >= STALE_PULL_DAYS
+      ? " This data is stale — run pull_gsc_data again for current numbers."
+      : "";
+  return `Search Console data pulled ${day} (${age}).${staleness}`;
 }
 
 /**

@@ -49,6 +49,50 @@ export function formatPullSummary(pull: PullData): string {
 }
 
 /**
+ * The window line every discovery tool prints under its findings.
+ *
+ * The three engines apply ABSOLUTE thresholds — >= 20 impressions for a quick win, >= 10 for a
+ * cannibalization competitor, >= 5 lost clicks for decay — and an absolute threshold means a
+ * different thing over 7 days than over 90. Over the shortest window the tool accepts, a 20-
+ * impression floor is roughly 13x the bar it is over the longest one. Nothing in the analysis
+ * output said which of those the reader was holding: the pull's date was there, its LENGTH was
+ * not, and the previous window a decay number is measured against was invisible entirely.
+ *
+ * ONE renderer for all three tools, the same reason renderPullProvenance is one (load.ts).
+ */
+export function renderAnalyzedWindow(pull: PullData): string {
+  return (
+    `Analyzed window: ${pull.current.start_date}..${pull.current.end_date} ` +
+    `(${pull.days} days) vs previous ${pull.previous.start_date}..${pull.previous.end_date}.`
+  );
+}
+
+/**
+ * The row-cap caveat, or null when neither window was truncated.
+ *
+ * pull_gsc_data already warns at PULL time (formatPullSummary), and that was the whole of it:
+ * the discovery tools read the stored pull days or weeks later, in a different conversation,
+ * and ran over the truncated rows without a word. The consequences are not cosmetic — decay
+ * reads a page that fell out of the current window's top rows as current=0 and reports a
+ * GHOST collapse, and every cannibalization share is computed against a truncated denominator.
+ *
+ * The number DERIVES from MAX_ROW_LIMIT, like formatPullSummary's: prose is exactly where a
+ * changed constant goes unnoticed, and a wrong figure here tells the user how much data they
+ * are missing with no way to check it.
+ *
+ * An OR over the two windows, deliberately: the previous window is the baseline every decay
+ * number is measured against, so truncating IT inflates every "lost clicks" figure the tool
+ * prints.
+ */
+export function renderRowCapCaveat(pull: PullData): string | null {
+  if (!pull.current.capped && !pull.previous.capped) return null;
+  return (
+    `Note: this analysis covers at most ${grouped(MAX_ROW_LIMIT)} rows per window — ` +
+    "the pull hit that cap, so these results may be partial."
+  );
+}
+
+/**
  * Render the quick-win shortlist (or a friendly empty message).
  *
  * `total` is how many opportunities cleared the bands BEFORE the shortlist cap

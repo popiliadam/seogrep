@@ -61,15 +61,19 @@ describe("find_quick_wins provenance", () => {
     expect(text).toContain("Search Console data pulled 2026-08-06");
   });
 
-  it("puts the provenance line at the end, separated from the findings by a blank line", async () => {
+  it("puts the provenance line last in the footer, separated from the findings by a blank line", async () => {
     const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z");
 
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
 
     const text = result.content[0]?.text ?? "";
     const lines = text.trimEnd().split("\n");
+    // The footer grew a window line above the date (gsc-discovery-shared.ts); the date is still
+    // the LAST thing a healthy connection prints, and a blank line still separates the whole
+    // footer from the findings.
     expect(lines.at(-1)).toMatch(/^Search Console data pulled 2026-08-06 \(.+\)\.$/);
-    expect(lines.at(-2)).toBe("");
+    expect(lines.at(-2)).toMatch(/^Analyzed window: /);
+    expect(lines.at(-3)).toBe("");
   });
 });
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatCannibalization, formatContentDecay, formatPullSummary, formatQuickWins } from "./format.ts";
+import {
+  formatCannibalization,
+  formatContentDecay,
+  formatPullSummary,
+  formatQuickWins,
+  renderAnalyzedWindow,
+  renderRowCapCaveat,
+} from "./format.ts";
 import { detectCannibalization } from "./cannibalization.ts";
 import type { CannibalGroup } from "./cannibalization.ts";
 import { analyzeContentDecay } from "./content-decay.ts";
@@ -63,6 +70,65 @@ describe("formatPullSummary surfaces the 15,000-row cap", () => {
       previous: { ...SAMPLE_PULL.previous, capped: false },
     };
     expect(formatPullSummary(uncapped)).not.toContain(CAP_WARNING);
+  });
+});
+
+/**
+ * The two lines the DISCOVERY tools print about the data itself. Their presence in each tool's
+ * output is pinned per tool in tools/gsc-discovery-shared.test.ts — a check inside a shared
+ * function does not prove every caller reaches it. These pin what the lines SAY.
+ */
+describe("renderAnalyzedWindow", () => {
+  it("names both windows and the length that gives the thresholds their meaning", () => {
+    expect(renderAnalyzedWindow(SAMPLE_PULL)).toBe(
+      "Analyzed window: 2026-04-19..2026-07-17 (90 days) vs previous 2026-01-19..2026-04-18.",
+    );
+  });
+
+  it("carries the pull's OWN length, not a default", () => {
+    const week: PullData = { ...SAMPLE_PULL, days: 7 };
+    expect(renderAnalyzedWindow(week)).toContain("(7 days)");
+  });
+});
+
+/**
+ * The row-cap caveat, on the ANALYSIS side. pull_gsc_data already warns at pull time
+ * (formatPullSummary above), and that warning is days or weeks and one conversation away from
+ * the analysis that reads the truncated rows.
+ *
+ * Its NUMBER is asserted as a literal for the same reason formatPullSummary's is: the renderer
+ * derives it from MAX_ROW_LIMIT, so an expectation built from that constant would follow the
+ * ceiling wherever it went and prove only that the sentence contains a number.
+ */
+describe("renderRowCapCaveat", () => {
+  const capped = (which: "current" | "previous"): PullData => ({
+    ...SAMPLE_PULL,
+    current: { ...SAMPLE_PULL.current, capped: which === "current" },
+    previous: { ...SAMPLE_PULL.previous, capped: which === "previous" },
+  });
+
+  it("warns, with the 15,000 figure, when the CURRENT window hit the cap", () => {
+    expect(renderRowCapCaveat(capped("current"))).toBe(
+      "Note: this analysis covers at most 15,000 rows per window — " +
+        "the pull hit that cap, so these results may be partial.",
+    );
+  });
+
+  it("warns when only the PREVIOUS window hit the cap — it is the decay baseline", () => {
+    // Narrowing the condition to `pull.current.capped` alone keeps the case above green while
+    // every "lost clicks" number measured against a truncated baseline goes out unflagged.
+    expect(renderRowCapCaveat(capped("previous"))).toMatch(/15,000 rows per window/);
+  });
+
+  it("returns null when neither window hit the cap", () => {
+    const uncapped: PullData = {
+      ...SAMPLE_PULL,
+      current: { ...SAMPLE_PULL.current, capped: false },
+      previous: { ...SAMPLE_PULL.previous, capped: false },
+    };
+    expect(renderRowCapCaveat(uncapped)).toBeNull();
+    // …and for a stored pull from before the flag existed, where `capped` is simply absent.
+    expect(renderRowCapCaveat(SAMPLE_PULL)).toBeNull();
   });
 });
 
