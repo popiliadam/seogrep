@@ -1,3 +1,4 @@
+import { collapseFragmentsAcrossQueries } from "./document.ts";
 import type { GscRow, PullData } from "./types.ts";
 
 /**
@@ -11,8 +12,18 @@ import type { GscRow, PullData } from "./types.ts";
  *   - impressions >= 20 over the window: enough real demand that moving up materially adds
  *     clicks (filters out long-tail noise that would rank easily but never converts).
  *
+ * A "page" here is a DOCUMENT, and the fold happens BEFORE the bands are read (document.ts
+ * collapseFragmentsAcrossQueries). Google emits one row per SERP appearance, so an article whose
+ * section anchors it draws jump-links for arrives as several rows for one query; each of those
+ * rows carries a slice of the article's real demand. Reading the bands off the un-folded rows
+ * therefore does BOTH wrong things at once — it can miss a genuine win (two 12-impression rows
+ * are one 24-impression opportunity, and neither clears the 20-impression floor alone) and it
+ * prints a `#anchor` URL as the page to work on, which is not a page anyone can edit.
+ *
  * Priority = impressions desc (biggest opportunity first), tie-broken by position asc
- * (closer to page one first). Capped so the response stays a focused shortlist, not a dump.
+ * (closer to page one first). Capped so the response stays a focused shortlist, not a dump —
+ * and the count of what the cap left out is carried out with the list (findQuickWinsResult), so
+ * a truncated shortlist is never presented as the whole answer.
  */
 
 /** Lowest (best) average position still considered a quick win — already-winning rows are excluded. */
@@ -35,14 +46,30 @@ function isQuickWin(row: GscRow): boolean {
   );
 }
 
+/** The shortlist plus how many opportunities cleared the bands in total (see MAX_QUICK_WINS). */
+export interface QuickWinsResult {
+  /** The prioritized shortlist actually returned, at most MAX_QUICK_WINS long. */
+  readonly wins: QuickWin[];
+  /** How many rows cleared the bands BEFORE the cap — `wins.length` when nothing was cut. */
+  readonly total: number;
+}
+
 /**
  * Return the current window's quick wins, highest-opportunity first (impressions desc, then
- * position asc), capped at MAX_QUICK_WINS. Empty when nothing clears the bands.
+ * position asc), capped at MAX_QUICK_WINS — WITH the pre-cap total, so the formatter can say
+ * how many it left out instead of presenting the top 50 as the whole list.
+ *
+ * The total is the count of qualifying rows and not of raw rows: the fragment fold runs first,
+ * so two anchor rows of one article that clear the bands together are one opportunity here too.
  */
-export function findQuickWins(pull: PullData): QuickWin[] {
-  return pull.current.rows
+export function findQuickWinsResult(pull: PullData): QuickWinsResult {
+  const qualifying = collapseFragmentsAcrossQueries(pull.current.rows)
     .filter(isQuickWin)
-    .slice()
-    .sort((a, b) => b.impressions - a.impressions || a.position - b.position)
-    .slice(0, MAX_QUICK_WINS);
+    .sort((a, b) => b.impressions - a.impressions || a.position - b.position);
+  return { wins: qualifying.slice(0, MAX_QUICK_WINS), total: qualifying.length };
+}
+
+/** The shortlist alone, for callers that do not report the remainder. */
+export function findQuickWins(pull: PullData): QuickWin[] {
+  return findQuickWinsResult(pull).wins;
 }

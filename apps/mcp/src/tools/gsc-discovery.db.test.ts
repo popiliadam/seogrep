@@ -201,6 +201,57 @@ describe("discovery tools sync charge against the local stack", () => {
 });
 
 /**
+ * THE FOOTER, over the REAL paid tools and the REAL stored pull. The fast lane
+ * (gsc-discovery-shared.test.ts) drives the same two lines through makeDiscoveryTool under a
+ * 0-credit name; this half proves the tools users actually pay for reach them, with the pull
+ * round-tripped through jobs.result rather than handed over in memory — which is where the
+ * `capped` flag has to survive (types.ts pullResultToJson).
+ */
+describe("discovery tools state the window and the row cap of the pull they analyzed", () => {
+  it.each(CASES)("$name names both windows over a stored pull", async ({ make, expect: needle }) => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const projectId = await makeProject(ctx.userId, `window-${randomUUID()}.example.com`);
+    await recordSucceededPull(service, {
+      userId: ctx.userId,
+      projectId,
+      result: pullResultToJson(SAMPLE_PULL),
+    });
+
+    const text = (await make().run(ctx, { project_id: projectId })).content[0]?.text ?? "";
+
+    expect(text).toContain(
+      "Analyzed window: 2026-04-19..2026-07-17 (90 days) vs previous 2026-01-19..2026-04-18.",
+    );
+    expect(text).toMatch(needle); // the findings are delivered, not replaced
+    // …and an UNCAPPED pull is not branded partial.
+    expect(text).not.toMatch(/may be partial/i);
+  });
+
+  it.each(CASES)("$name warns when the stored pull hit the row cap", async ({ make, expect: needle }) => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const projectId = await makeProject(ctx.userId, `capped-${randomUUID()}.example.com`);
+    await recordSucceededPull(service, {
+      userId: ctx.userId,
+      projectId,
+      // The PREVIOUS window, deliberately: it is the baseline every decay number is measured
+      // against, and it is the leg a `pull.current.capped` shortcut would silently drop.
+      result: pullResultToJson({
+        ...SAMPLE_PULL,
+        previous: { ...SAMPLE_PULL.previous, capped: true },
+      }),
+    });
+
+    const text = (await make().run(ctx, { project_id: projectId })).content[0]?.text ?? "";
+
+    expect(text).toContain("at most 15,000 rows per window");
+    expect(text).toMatch(/may be partial/i);
+    expect(text).toMatch(needle);
+  });
+});
+
+/**
  * The refusal AS THE CLIENT RECEIVES IT — through registerAll's catch rather than tool.run.
  * The block above proves the throw and the release; it cannot see what the user reads, and for
  * 8 live calls on 2026-08-09 what the user read was the generic "failed unexpectedly … quote
