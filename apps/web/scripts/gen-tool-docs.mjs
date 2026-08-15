@@ -162,6 +162,34 @@ export function renderToolPage(toolMeta, cost, prose) {
   return `${blocks.join("\n\n")}\n`;
 }
 
+/** Thousands-separate an integer for prose (15000 → "15,000") — mirrors `grouped` in format.ts. */
+export function groupThousands(value) {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/**
+ * Substitute the `{{TOKEN}}` placeholders a DOC_PROSE block may carry with values DERIVED from the
+ * built MCP code, so a limit quoted in prose can never disagree with the constant that enforces it.
+ * Today the only token is `{{MAX_GSC_ROWS}}` = MAX_ROW_LIMIT (apps/mcp/src/gsc-data/pull.ts), the
+ * same derivation format.ts makes for the tool-output caveat: prose is exactly where a changed
+ * constant goes unnoticed, because nothing compiles against a sentence.
+ *
+ * Fail-closed: a non-integer constant or a token with no value throws instead of rendering a page
+ * that states a wrong (or literally "undefined") limit to the reader.
+ */
+export function substituteProseTokens(text, constants) {
+  const maxRowLimit = constants && constants.maxRowLimit;
+  const out = String(text).replace(/\{\{MAX_GSC_ROWS\}\}/g, () => {
+    if (!Number.isInteger(maxRowLimit) || maxRowLimit <= 0) {
+      throw new Error(`{{MAX_GSC_ROWS}} needs a positive integer maxRowLimit, got ${maxRowLimit}.`);
+    }
+    return groupThousands(maxRowLimit);
+  });
+  const leftover = out.match(/\{\{[A-Z0-9_]+\}\}/);
+  if (leftover) throw new Error(`Unknown prose token ${leftover[0]} — add a substitution for it.`);
+  return out;
+}
+
 /** Pages allowed in tools-reference/meta.json that are not tools (none today; kept for future). */
 export const NON_TOOL_ALLOWLIST = [];
 
@@ -199,6 +227,21 @@ export function findConfirmFields(tools) {
 // ---------------------------------------------------------------------------
 // Per-tool editorial prose (the schema-underivable behavior docs). Authored credit-number-free.
 // ---------------------------------------------------------------------------
+
+// The three discovery tools read a stored `pull_gsc_data` result, so the pull's two limits are
+// theirs as well — and a reader who lands on a discovery page never sees the pull page's
+// "Limitations (v0)". These two fragments carry the inherited half of that: the row cap (its number
+// DERIVED from MAX_ROW_LIMIT via the {{MAX_GSC_ROWS}} token, never typed here) and the freshness
+// offset (GSC_FRESHNESS_LAG_DAYS in apps/mcp/src/gsc-data/windows.ts — keep the wording in step).
+// Each tool appends its OWN consequence to the intro, because truncation distorts each differently.
+const INHERITED_LIMITS_INTRO =
+  "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
+  "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";
+
+const INHERITED_LIMITS_FRESHNESS =
+  "Both windows also end **3 days before today** rather than running up to it, so the newest days " +
+  "are not analyzed yet. See " +
+  "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.";
 
 export const DOC_PROSE = {
   setup_project: {
@@ -378,6 +421,15 @@ export const DOC_PROSE = {
       "A prioritized list of quick-win opportunities — each with its query, page, average position, " +
       "impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so " +
       "(and you are still charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "so on a large property a quick win outside the top rows Google returned is not visible " +
+          "here — the analysis prints a caveat when the pull hit that cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   detect_cannibalization: {
@@ -398,6 +450,16 @@ export const DOC_PROSE = {
       "A list of cannibalized queries, each with its competing pages and their impressions, clicks, and " +
       "average position (main contender first). If no query is contested, it says so (and you are still " +
       "charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "and a truncated pull also truncates the denominator each impression **share** is measured " +
+          "against, so on a large property a page's share can read higher than it is — the analysis " +
+          "prints a caveat when the pull hit that cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   analyze_content_decay: {
@@ -418,6 +480,16 @@ export const DOC_PROSE = {
       "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
       "drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still " +
       "charged for the delivered analysis).",
+    postReturnsSections: [
+      {
+        heading: "Inherited limits",
+        body: INHERITED_LIMITS_INTRO +
+          "and a page that fell out of a truncated window's top rows is read as having lost those " +
+          "clicks, so a large property can show a decay that never happened — the analysis prints a " +
+          "caveat when either window hit the cap.\n\n" +
+          INHERITED_LIMITS_FRESHNESS,
+      },
+    ],
   },
 
   audit_onpage: {
@@ -898,14 +970,23 @@ export const DOC_PROSE = {
 const TOOLS_DIR = new URL("../content/docs/tools-reference/", import.meta.url);
 const PARENT_META = new URL("../content/docs/meta.json", import.meta.url);
 
-/** Import ALL_TOOLS + TOOL_COSTS from the BUILT MCP registry (apps/mcp/dist). */
+/**
+ * Import ALL_TOOLS + TOOL_COSTS + the prose constants from the BUILT MCP registry (apps/mcp/dist).
+ * `constants` carries the values DOC_PROSE quotes through tokens, so the docs follow the code.
+ */
 async function loadRegistry() {
   const toolsUrl = new URL("../../mcp/dist/tools/index.js", import.meta.url);
   const costsUrl = new URL("../../mcp/dist/credits/costs.js", import.meta.url);
+  const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
-    return { ALL_TOOLS: tools.ALL_TOOLS, TOOL_COSTS: costs.TOOL_COSTS };
+    const pull = await import(pullUrl);
+    return {
+      ALL_TOOLS: tools.ALL_TOOLS,
+      TOOL_COSTS: costs.TOOL_COSTS,
+      constants: { maxRowLimit: pull.MAX_ROW_LIMIT },
+    };
   } catch (error) {
     throw new Error(
       "Could not import the built MCP registry from apps/mcp/dist — build it first with " +
@@ -915,10 +996,10 @@ async function loadRegistry() {
 }
 
 /** The frozen page for one tool (throws if its prose block is missing). */
-function pageFor(tool, cost) {
+function pageFor(tool, cost, constants) {
   const prose = DOC_PROSE[tool.name];
   if (!prose) throw new Error(`No DOC_PROSE entry for tool "${tool.name}" — add one before generating.`);
-  return renderToolPage(tool, cost, prose);
+  return substituteProseTokens(renderToolPage(tool, cost, prose), constants);
 }
 
 /** The tools-reference meta.json content, derived from ALL_TOOLS order. */
@@ -939,9 +1020,9 @@ function ensureParentNav() {
 }
 
 /** Write all tool pages + tools-reference meta.json + parent nav. */
-function writeAll({ ALL_TOOLS, TOOL_COSTS }) {
+function writeAll({ ALL_TOOLS, TOOL_COSTS, constants }) {
   for (const tool of ALL_TOOLS) {
-    writeFileSync(new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR), pageFor(tool, TOOL_COSTS[tool.name]));
+    writeFileSync(new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR), pageFor(tool, TOOL_COSTS[tool.name], constants));
   }
   writeFileSync(new URL("meta.json", TOOLS_DIR), toolsMetaJson(ALL_TOOLS));
   const navChanged = ensureParentNav();
@@ -952,7 +1033,7 @@ function writeAll({ ALL_TOOLS, TOOL_COSTS }) {
 }
 
 /** Run the three --check gates. Returns a list of human-readable failures (empty = in sync). */
-function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
+function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, constants }) {
   const errors = [];
   const expectedSlugs = ALL_TOOLS.map((t) => deriveSlug(t.name));
 
@@ -966,7 +1047,7 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
       errors.push(`(i) missing page ${slug}.mdx — run \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
       continue;
     }
-    if (actual !== pageFor(tool, TOOL_COSTS[tool.name])) {
+    if (actual !== pageFor(tool, TOOL_COSTS[tool.name], constants)) {
       errors.push(`(i) ${slug}.mdx is out of sync — regenerate with \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
     }
   }
@@ -1004,7 +1085,7 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS }) {
   // long tool description can't silently regress a page's <meta name="description">. Measured on the
   // ACTUAL rendered page, so a regression that bypasses truncation is caught here.
   for (const tool of ALL_TOOLS) {
-    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name])).length;
+    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name], constants)).length;
     if (length > FRONTMATTER_DESCRIPTION_MAX) {
       errors.push(
         `(iv) ${deriveSlug(tool.name)}.mdx frontmatter description is ${length} chars ` +

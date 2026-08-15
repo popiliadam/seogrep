@@ -9,12 +9,14 @@ import {
   deriveSlug,
   findConfirmFields,
   frontmatterDescription,
+  groupThousands,
   mdxEscapeInline,
   renderCostLine,
   renderFieldType,
   renderInputTable,
   renderToolPage,
   stripCostSentences,
+  substituteProseTokens,
   truncateAtWord,
 } from "../scripts/gen-tool-docs.mjs";
 
@@ -302,5 +304,50 @@ describe("findConfirmFields", () => {
       { name: "bad", inputJsonSchema: { properties: { confirm: { type: "boolean" } } } },
     ];
     expect(findConfirmFields(tools)).toEqual(["bad"]);
+  });
+});
+
+describe("groupThousands", () => {
+  it("thousands-separates the way the tool output's caveat does", () => {
+    expect(groupThousands(15000)).toBe("15,000");
+    expect(groupThousands(999)).toBe("999");
+    expect(groupThousands(1234567)).toBe("1,234,567");
+  });
+});
+
+describe("substituteProseTokens", () => {
+  it("renders {{MAX_GSC_ROWS}} from the constant, not from a hand-typed number", () => {
+    // The point of the token: change the constant and the sentence follows. A docs page that keeps
+    // saying 15,000 after MAX_ROW_LIMIT moved tells the reader how much data they are missing, and
+    // they have no way to check it.
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 15000 })).toBe(
+      "at most 15,000 rows",
+    );
+    expect(substituteProseTokens("at most {{MAX_GSC_ROWS}} rows", { maxRowLimit: 25000 })).toBe(
+      "at most 25,000 rows",
+    );
+  });
+
+  it("substitutes every occurrence", () => {
+    expect(substituteProseTokens("{{MAX_GSC_ROWS}} and {{MAX_GSC_ROWS}}", { maxRowLimit: 15000 })).toBe(
+      "15,000 and 15,000",
+    );
+  });
+
+  it("leaves token-free prose untouched", () => {
+    expect(substituteProseTokens("nothing to substitute here.", {})).toBe("nothing to substitute here.");
+  });
+
+  it("throws instead of rendering a page that states a missing or bogus limit", () => {
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", {})).toThrow(/MAX_GSC_ROWS/);
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: undefined })).toThrow();
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: 0 })).toThrow();
+    expect(() => substituteProseTokens("{{MAX_GSC_ROWS}}", { maxRowLimit: "15000" })).toThrow();
+  });
+
+  it("throws on a token nobody substitutes, rather than shipping it to the reader", () => {
+    expect(() => substituteProseTokens("cap is {{MAX_CRAWL_PAGES}}", { maxRowLimit: 15000 })).toThrow(
+      /MAX_CRAWL_PAGES/,
+    );
   });
 });
