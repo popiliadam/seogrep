@@ -214,6 +214,15 @@ describe("renderReportHtml", () => {
     });
     expect(clean).toContain("No on-page issues found across 18 page");
     expect(clean).not.toContain("No basic on-page issues detected");
+    // The findings/clean split prints even here, matching formatOnpageReport, which pushes that
+    // line unconditionally. pagesWithFindings is measured on every crawl, so there is nothing
+    // for the absence rule to protect.
+    expect(clean).toMatch(/0 page\(s\) with findings;\s*18 clean\./);
+  });
+
+  it("prints the findings/clean split whenever there ARE findings too", () => {
+    // FULL_MODEL: 40 of 42 pages carry a finding.
+    expect(renderReportHtml(FULL_MODEL)).toMatch(/40 page\(s\) with findings;\s*2 clean\./);
   });
 
   it("shows a call-to-action when a section's data is absent", () => {
@@ -526,6 +535,60 @@ describe("every dynamic value is escaped (R1-d)", () => {
         ...FULL_MODEL.opportunities!,
         quickWins: {
           items: [{ query: XSS, page: XSS, clicks: 1, impressions: 50, ctr: 0.02, position: 12 }],
+          total: 1,
+        },
+      },
+    });
+    expectNeutralised(html);
+  });
+
+  /**
+   * The two sinks a fresh referee's own mutation caught: dropping escapeHtml from the
+   * cannibalization query, or urlText from the decay page, left the ENTIRE suite (1320 tests)
+   * green. The Opportunities spec above varies only the QUICK-WINS row builder — one of three —
+   * and the other two were never exercised with hostile data. Ders 14, on the row-builder axis:
+   * "no holes left" is a claim about the axis you varied, and I had varied only one.
+   */
+  it("neutralises a hostile CANNIBALIZATION query", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      opportunities: {
+        ...FULL_MODEL.opportunities!,
+        cannibalization: {
+          items: [
+            {
+              query: XSS,
+              total_impressions: 900,
+              total_clicks: 40,
+              pages: [
+                { query: XSS, page: "https://example.com/c1", clicks: 30, impressions: 600, ctr: 0.05, position: 4 },
+                { query: XSS, page: "https://example.com/c2", clicks: 10, impressions: 300, ctr: 0.03, position: 9 },
+              ],
+              branded: false,
+            },
+          ],
+          total: 1,
+        },
+      },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile DECAY page URL", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      opportunities: {
+        ...FULL_MODEL.opportunities!,
+        decay: {
+          items: [
+            {
+              page: XSS,
+              previous_clicks: 120,
+              current_clicks: 40,
+              clicks_lost: 80,
+              drop_ratio: 0.667,
+            },
+          ],
           total: 1,
         },
       },

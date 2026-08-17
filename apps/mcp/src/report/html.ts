@@ -216,12 +216,13 @@ function onpageSection(onpage: OnpageSummary): string {
       : `<ul class="issues">${onpage.findings
           .map((f) => `<li><strong>${fmtNum(f.count)}</strong> — ${escapeHtml(f.label)}</li>`)
           .join("")}</ul>`;
+  // ALWAYS printed, exactly as formatOnpageReport prints it. `pagesWithFindings` is measured on
+  // every crawl there has ever been — it is `report.pages.length`, not a signal a legacy crawl
+  // could be missing — so the absence-is-not-a-finding rule does not reach it, and suppressing it
+  // in the clean case was a plain divergence from the tool rather than a discipline.
   const clean = onpage.pageCount - onpage.pagesWithFindings;
-  const split =
-    onpage.findings.length === 0
-      ? ""
-      : `<p class="muted">${fmtNum(onpage.pagesWithFindings)} page(s) with findings;
-      ${fmtNum(clean)} clean.</p>`;
+  const split = `<p class="muted">${fmtNum(onpage.pagesWithFindings)} page(s) with findings;
+    ${fmtNum(clean)} clean.</p>`;
   return `<section class="rpt">
     <h2>On-page issues</h2>
     ${body}
