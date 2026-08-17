@@ -11,6 +11,7 @@ import { revokeGoogleToken } from "../../../lib/gsc/revoke";
 import {
   ARCHIVED_PROJECT,
   CONNECTION_PATH,
+  notListedMessage,
   readAccountSites,
   readOwnProject,
   requireUserId,
@@ -495,9 +496,10 @@ export async function saveProjectProperty(
     return { ok: false, error: "That project or Google account was not found." };
   }
   // An empty choice is the picker's "nothing selected" and can never be listed — refuse it
-  // before spending a Google round trip on a foregone answer.
+  // before spending a Google round trip on a foregone answer. Nothing has been read from
+  // Google yet, so there is no listing to offer a correction from.
   if (property.length === 0) {
-    return { ok: false, error: "That property is not listed on this Google account." };
+    return { ok: false, error: notListedMessage(property) };
   }
 
   const service = createServiceClient();
@@ -518,7 +520,16 @@ export async function saveProjectProperty(
 
   const hit = listing.sites.find((site) => site.siteUrl === property);
   if (!hit) {
-    return { ok: false, error: "That property is not listed on this Google account." };
+    // The picker's list is minutes old at best, so a stale choice lands here — and when the
+    // property it names differs from a listed one only cosmetically, the sentence says which.
+    // Only what this account ACTUALLY listed may be offered.
+    return {
+      ok: false,
+      error: notListedMessage(
+        property,
+        listing.sites.map((site) => site.siteUrl),
+      ),
+    };
   }
   if (!canQuerySearchAnalytics(hit.permissionLevel)) {
     return {

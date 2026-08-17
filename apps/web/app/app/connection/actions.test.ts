@@ -1036,6 +1036,72 @@ describe("saveProjectProperty", () => {
   });
 
   /**
+   * THE SAME NEAR-MISS SUGGESTION `track_gsc_property` and `trackProperty` give, from the same
+   * rule (`cosmeticPropertyMatch`, @pseo/core). The picker's own list is minutes old at best,
+   * so a stale or hand-edited choice lands here; when it differs from a listed property only in
+   * letter case or a trailing slash, the sentence says which one was meant.
+   *
+   * A suggestion is NOT a mapping: nothing is written.
+   */
+  it("suggests the listed property when only a cosmetic difference separates them", async () => {
+    const slash = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://a.com",
+      listing({ siteUrl: "https://a.com/", permissionLevel: "siteOwner" }),
+    );
+    expect(slash).toEqual({
+      ok: false,
+      error: expect.stringContaining('Did you mean "https://a.com/"?'),
+    });
+
+    const upper = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "SC-DOMAIN:Alpha.Example",
+      listing({ siteUrl: "sc-domain:alpha.example", permissionLevel: "siteOwner" }),
+    );
+    expect(upper).toEqual({
+      ok: false,
+      error: expect.stringContaining('Did you mean "sc-domain:alpha.example"?'),
+    });
+    expect(db.rows.gsc_connections).toEqual([]);
+  });
+
+  /**
+   * NEGATIVE — THE CROSS IS NEVER OFFERED. `sc-domain:alpha.example` and
+   * `https://alpha.example/` are two DIFFERENT properties for one site, with different data and
+   * different permissions. Offering one for the other would be a plausible-looking WRONG
+   * suggestion, and this one is a click away from `saveProjectProperty` binding the project to
+   * it — worse than no suggestion at all, because the mistake only surfaces when the data does
+   * not make sense.
+   */
+  it("never suggests a domain property for a URL-prefix one, nor an unrelated property", async () => {
+    const cross = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "https://alpha.example/",
+      listing({ siteUrl: "sc-domain:alpha.example", permissionLevel: "siteOwner" }),
+    );
+    expect(cross).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(cross).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
+
+    const unrelated = await saveProjectProperty(
+      PROJECT,
+      ACCOUNT,
+      "sc-domain:beta.example",
+      listing(
+        { siteUrl: "sc-domain:alpha.example", permissionLevel: "siteOwner" },
+        { siteUrl: "https://alpha.example/", permissionLevel: "siteOwner" },
+        { siteUrl: "sc-domain:beta.example.org", permissionLevel: "siteOwner" },
+      ),
+    );
+    expect(unrelated).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(unrelated).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
+    expect(db.rows.gsc_connections).toEqual([]);
+  });
+
+  /**
    * AN ARCHIVED PROJECT IS NOT A TARGET. The picker renders only for tracked projects, so this
    * arrives through a STALE TAB — and a mapping written onto a project the tenant put away is
    * state nothing will ever read, while the archive row goes on advertising a different stored
@@ -1235,9 +1301,17 @@ describe("saveProjectProperty", () => {
     expect(db.tables).toEqual([]);
   });
 
-  it("refuses an empty property without contacting Google", async () => {
+  /**
+   * The empty choice refuses BEFORE Google is asked, so there is no listing to correct from and
+   * the sentence must carry NO suggestion. That was true only STRUCTURALLY until this pin — the
+   * `listed` default is what makes it true, and nothing measured the default. MUTATION RUN:
+   * `notListedMessage`'s default changed from `[]` to `["/"]` and this went red (`"/"` reduces
+   * to the same empty cosmetic key, so the user was offered `Did you mean "/"?`).
+   */
+  it("refuses an empty property without contacting Google, and suggests nothing", async () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(out).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
     expect(db.tables).toEqual([]);
   });
 

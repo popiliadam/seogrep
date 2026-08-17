@@ -162,6 +162,82 @@ describe("track / untrack / restore", () => {
     });
 
     /**
+     * THE NEAR-MISS SUGGESTION, on the surface that had none. `track_gsc_property` has answered
+     * a cosmetically-wrong property with `Did you mean "X"?` since 2026-08-14; this action
+     * refused flat, so the same typo had a way out in the client and a dead end in the browser.
+     * The two surfaces now share ONE rule (`cosmeticPropertyMatch`, @pseo/core).
+     *
+     * A suggestion is NOT a binding: nothing is opened and nothing is mapped.
+     */
+    it("suggests the listed property when only a trailing slash differs", async () => {
+      const listed = `https://${DOMAIN}/`;
+      const out = await trackProperty(
+        ACCOUNT,
+        `https://${DOMAIN}`,
+        listing({ siteUrl: listed, permissionLevel: "siteOwner" }),
+      );
+
+      expect(out).toEqual({
+        ok: false,
+        error: expect.stringContaining(`Did you mean "${listed}"?`),
+      });
+      expect(db.rows.projects).toEqual([]);
+      expect(db.rows.gsc_connections).toEqual([]);
+    });
+
+    it("suggests the listed property when only letter case differs", async () => {
+      const out = await trackProperty(ACCOUNT, "SC-DOMAIN:Zephyrbrook.COM", OWNED);
+
+      expect(out).toEqual({
+        ok: false,
+        error: expect.stringContaining(`Did you mean "${PROPERTY}"?`),
+      });
+      expect(db.rows.projects).toEqual([]);
+    });
+
+    /**
+     * NEGATIVE 1 — THE CROSS IS NEVER OFFERED. `sc-domain:zephyrbrook.com` and
+     * `https://zephyrbrook.com/` are two DIFFERENT Search Console properties for one site, with
+     * different data and different permissions. They look like a cosmetic pair and are not,
+     * which is why the rule is a canonical-form comparison and not a similarity score: the
+     * suggestion is one copy-paste from becoming the property a project BINDS to, and a wrong
+     * binding is only discovered when the data stops making sense.
+     */
+    it("does not suggest a URL-prefix property for a domain property (or the reverse)", async () => {
+      const asUrl = await trackProperty(ACCOUNT, `https://${DOMAIN}/`, OWNED);
+      expect(asUrl).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+      expect(asUrl).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
+
+      const asDomain = await trackProperty(
+        ACCOUNT,
+        PROPERTY,
+        listing({ siteUrl: `https://${DOMAIN}/`, permissionLevel: "siteOwner" }),
+      );
+      expect(asDomain).toEqual({
+        ok: false,
+        error: expect.not.stringMatching(/did you mean/i),
+      });
+      expect(db.rows.projects).toEqual([]);
+    });
+
+    /** NEGATIVE 2 — no edit distance, no prefix match, however many properties are listed. */
+    it("suggests NOTHING for an unrelated property, however many are listed", async () => {
+      const out = await trackProperty(
+        ACCOUNT,
+        "sc-domain:katrenur.com",
+        listing(
+          { siteUrl: PROPERTY, permissionLevel: "siteOwner" },
+          { siteUrl: `https://${DOMAIN}/`, permissionLevel: "siteOwner" },
+          { siteUrl: "sc-domain:katrenur.com.tr", permissionLevel: "siteOwner" },
+        ),
+      );
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+      expect(out).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
+      expect(db.rows.projects).toEqual([]);
+    });
+
+    /**
      * VALIDATION ORDER, step 2. A project SeoGrep cannot answer for is worse than no project:
      * it reads as tracked and returns nothing (measured live 2026-08-09). So the refusal has to
      * land BEFORE the row exists, which is why this spec asserts the `projects` table was never
@@ -423,11 +499,18 @@ describe("track / untrack / restore", () => {
       expect(db.tables).toEqual([]);
     });
 
-    it("refuses an empty property without contacting Google", async () => {
-      expect(await trackProperty(ACCOUNT, "", OWNED)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not listed"),
-      });
+    /**
+     * The empty choice refuses BEFORE Google is asked, so there is no listing to correct from
+     * and the sentence must carry NO suggestion. That was true only STRUCTURALLY until this
+     * pin — `notListedMessage`'s `listed` default is what makes it true, and nothing measured
+     * the default. MUTATION RUN: the default changed from `[]` to `["/"]` and this went red
+     * (`"/"` reduces to the same empty cosmetic key, so `Did you mean "/"?` was offered).
+     */
+    it("refuses an empty property without contacting Google, and suggests nothing", async () => {
+      const out = await trackProperty(ACCOUNT, "", OWNED);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+      expect(out).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
       expect(db.tables).toEqual([]);
       expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
     });

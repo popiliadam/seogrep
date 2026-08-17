@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { canQuerySearchAnalytics, propertyToDomain, type GscSite } from "@pseo/core";
+import {
+  canQuerySearchAnalytics,
+  cosmeticPropertyMatch,
+  propertyToDomain,
+  type GscSite,
+} from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import {
   listAccountSitesFor,
@@ -146,38 +151,13 @@ const NO_ACCOUNT =
   "can reach.";
 
 /**
- * A property string reduced to the differences that CANNOT change which site it names: letter
- * case, and a trailing slash on a URL-prefix property. Nothing else.
- *
- * Deliberately not a similarity measure. `sc-domain:example.com` and `https://example.com/` are
- * two DIFFERENT Search Console properties for the same site with different data and different
- * permissions, so they must not collapse together here — and neither must a sibling host or a
- * near-miss spelling.
+ * The near-miss suggestion. The RULE — which two property strings differ only cosmetically —
+ * lives in @pseo/core (`cosmeticPropertyMatch`), because /app/connection refuses the same
+ * request and may not disagree about it; see the note there for why the rule is deliberately
+ * dumb and why `sc-domain:` never suggests `https://`. This function is only the sentence.
  */
-function cosmeticKey(property: string): string {
-  return property.trim().toLowerCase().replace(/\/+$/, "");
-}
-
-/**
- * The listed property the caller almost certainly meant, or null.
- *
- * ONLY a cosmetic difference qualifies — a case mismatch, or a trailing slash they typed or left
- * off. Anything cleverer is worse than nothing here: this suggestion is one copy-paste away from
- * becoming the property a project BINDS to, and a plausible-looking wrong suggestion is a worse
- * outcome than no suggestion, because a wrong binding is only discovered when the data stops
- * making sense. So there is no edit distance, no prefix match, no "did you mean the other host".
- *
- * Ties are broken by sort order rather than by which account answered first, so the sentence a
- * user sees does not depend on the order the accounts came back in.
- */
-function cosmeticSuggestion(property: string, listed: readonly string[]): string | null {
-  const wanted = cosmeticKey(property);
-  const near = listed.filter((candidate) => candidate !== property && cosmeticKey(candidate) === wanted);
-  return [...near].sort(compareStrings)[0] ?? null;
-}
-
 function notListedMessage(property: string, listed: readonly string[] = []): string {
-  const suggestion = cosmeticSuggestion(property, listed);
+  const suggestion = cosmeticPropertyMatch(property, listed);
   return (
     `"${property}" is not listed on any Google account you have connected, so it cannot be ` +
     "tracked. Run list_gsc_properties to see what your accounts can actually reach, and pass a " +
