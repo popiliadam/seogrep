@@ -1,24 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ESTIMATED_SEARCH_VOLUME_CALL_USD,
+  DFS_KEYWORD_OVERVIEW_ENDPOINT,
+  KEYWORD_OVERVIEW_PER_KEYWORD_USD,
+  KEYWORD_OVERVIEW_REQUEST_USD,
   createLiveClient,
   createMockResearchPort,
   disabledPort,
+  estimateKeywordOverviewCostUsd,
   extractResponseCostUsd,
-  parseSearchVolumeResponse,
+  parseKeywordOverviewResponse,
   resolveDefaultPort,
   type DfsTransport,
 } from "./client.ts";
 // Additive M-14 import, on its own line so every existing line above stays byte-identical.
 import { DFS_REQUEST_TIMEOUT_MS, defaultDfsTransport } from "./client.ts";
 import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
-import fixtureResponse from "./fixtures/search-volume.json";
+import fixtureResponse from "./fixtures/keyword-overview.json";
 
 /**
  * Unit proofs for the DataForSEO client. NO real HTTP call is ever made (constitution
  * NEVER #5): the live path is exercised only with an injected fake transport, and the
- * env-resolution path is exercised with pinned env sources. The fixture is the REAL
- * google_ads/search_volume/live response shape.
+ * env-resolution path is exercised with pinned env sources. The fixture mirrors the REAL
+ * dataforseo_labs/google/keyword_overview/live response shape, including the item DFS
+ * returns for a keyword it holds NO data on ("backlink checker", measured 2026-08-17:
+ * `keyword_info` is present but carries no metrics at all).
  */
 
 // The budget counter is a port (migration 0014 in production), so the priced path is driven
@@ -28,45 +33,141 @@ beforeEach(() => {
   ledger = createMemorySpendLedger();
 });
 
-describe("parseSearchVolumeResponse", () => {
-  it("maps the DFS result rows to {keyword, search_volume, cpc, competition}", () => {
-    const rows = parseSearchVolumeResponse(fixtureResponse);
-    expect(rows).toEqual([
-      { keyword: "seo software", search_volume: 22200, cpc: 9.87, competition: "HIGH" },
-      { keyword: "keyword research tool", search_volume: 12100, cpc: 6.42, competition: "MEDIUM" },
-      { keyword: "rank tracker", search_volume: 8100, cpc: 4.1, competition: "LOW" },
+describe("parseKeywordOverviewResponse", () => {
+  it("projects search volume, CPC and the competition BAND for every keyword with data", () => {
+    const rows = parseKeywordOverviewResponse(fixtureResponse);
+    expect(rows.map((row) => [row.keyword, row.search_volume, row.cpc, row.competition_level])).toEqual([
+      ["seo software", 22200, 27.66, "HIGH"],
+      ["keyword research tool", 12100, 6.42, "MEDIUM"],
+      ["rank tracker", 8100, 4.1, "LOW"],
+      ["backlink checker", null, null, null],
     ]);
+  });
+
+  /**
+   * The competition SCALE changed with the endpoint: the retired Google Ads endpoint sent the
+   * band as `competition` (a string) plus a 0–100 `competition_index`; Labs sends a 0–1 float
+   * as `competition` plus the band as `competition_level`. Both are carried, and the row field
+   * the OUTPUT renders is the band — so the meaning a reader sees is unchanged even though the
+   * vendor field that supplies it is not.
+   */
+  it("keeps Labs' 0–1 competition float and its band in SEPARATE fields", () => {
+    const rows = parseKeywordOverviewResponse(fixtureResponse);
+    expect(rows.map((row) => [row.competition, row.competition_level])).toEqual([
+      [0.88, "HIGH"],
+      [0.55, "MEDIUM"],
+      [0.22, "LOW"],
+      [null, null],
+    ]);
+    // Guard the scale itself: a 0–100 index leaking into this field would read as "88% of 1".
+    for (const row of rows) {
+      if (row.competition !== null) expect(row.competition).toBeLessThanOrEqual(1);
+    }
+  });
+
+  /**
+   * The distinction the retired projection could not make. DFS answers a keyword it knows
+   * nothing about with an item whose `keyword_info` holds no metrics — folding that into
+   * `search_volume ?? 0` told the reader the keyword is searched zero times.
+   */
+  it("marks a keyword the vendor has NO data for, distinct from a zero-volume keyword", () => {
+    const rows = parseKeywordOverviewResponse(fixtureResponse);
+    const missing = rows.find((row) => row.keyword === "backlink checker");
+    expect(missing?.has_data).toBe(false);
+    expect(missing?.search_volume).toBeNull();
+    expect(missing?.search_volume).not.toBe(0);
+    // Every keyword the vendor DID answer for is marked as having data.
+    expect(rows.filter((row) => row.has_data).map((row) => row.keyword)).toEqual([
+      "seo software",
+      "keyword research tool",
+      "rank tracker",
+    ]);
+  });
+
+  it("treats an explicit ZERO search volume as real data, not as a missing keyword", () => {
+    const rows = parseKeywordOverviewResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              items: [
+                { keyword: "nobody searches this", keyword_info: { search_volume: 0, cpc: 0 } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(rows[0]?.search_volume).toBe(0);
+    expect(rows[0]?.has_data).toBe(true);
+  });
+
+  it("projects keyword difficulty, search intent and the volume trend", () => {
+    const rows = parseKeywordOverviewResponse(fixtureResponse);
+    expect(rows.map((row) => row.keyword_difficulty)).toEqual([61, 44, 30, null]);
+    expect(rows.map((row) => row.main_intent)).toEqual([
+      "commercial",
+      "commercial",
+      "navigational",
+      null,
+    ]);
+    expect(rows.map((row) => [...row.foreign_intent])).toEqual([
+      ["informational"],
+      [],
+      ["commercial", "transactional"],
+      [],
+    ]);
+    expect(rows[0]?.search_volume_trend).toEqual({ monthly: 12, quarterly: -3, yearly: 45 });
+    // A trend leg the vendor omits stays null rather than becoming a fabricated 0.
+    expect(rows[2]?.search_volume_trend).toEqual({ monthly: 0, quarterly: null, yearly: 5 });
+    expect(rows[3]?.search_volume_trend).toBeNull();
+  });
+
+  it("carries the vendor's CPC refresh timestamp through to the row", () => {
+    const rows = parseKeywordOverviewResponse(fixtureResponse);
+    expect(rows[0]?.last_updated_time).toBe("2026-06-14 08:12:33 +00:00");
   });
 
   // Same class as the live analyze_backlinks crash (2026-08-07, ref 5ded2b4e): DFS sends null
   // where the fixture only ever showed a string. A keyword-less row names nothing, so it is
   // dropped — but it must not take the surrounding lookup down with it.
   it("drops a null-keyword row instead of failing the whole lookup", () => {
+    const rows = parseKeywordOverviewResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              items: [
+                { keyword: "seo software", keyword_info: { search_volume: 10, cpc: 1.5 } },
+                { keyword: null, keyword_info: { search_volume: 5 } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(rows.map((row) => row.keyword)).toEqual(["seo software"]);
+  });
+
+  it("returns zero rows for a successful task with an empty result", () => {
     expect(
-      parseSearchVolumeResponse({
-        status_code: 20000,
-        tasks: [
-          {
-            status_code: 20000,
-            result: [
-              { keyword: "seo software", search_volume: 10, cpc: 1.5, competition: "LOW" },
-              { keyword: null, search_volume: 5, cpc: null, competition: null },
-            ],
-          },
-        ],
-      }),
-    ).toEqual([{ keyword: "seo software", search_volume: 10, cpc: 1.5, competition: "LOW" }]);
+      parseKeywordOverviewResponse({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] }),
+    ).toEqual([]);
   });
 
   it("throws a clear error when the top-level DFS status is not 20000", () => {
     expect(() =>
-      parseSearchVolumeResponse({ status_code: 40200, status_message: "Payment Required.", tasks: [] }),
+      parseKeywordOverviewResponse({ status_code: 40200, status_message: "Payment Required.", tasks: [] }),
     ).toThrow(/DataForSEO/);
   });
 
   it("throws when the task status is an error", () => {
     expect(() =>
-      parseSearchVolumeResponse({
+      parseKeywordOverviewResponse({
         status_code: 20000,
         tasks: [{ status_code: 40400, status_message: "Not Found.", result: null }],
       }),
@@ -76,7 +177,7 @@ describe("parseSearchVolumeResponse", () => {
 
 describe("extractResponseCostUsd", () => {
   it("reads the top-level cost from a DFS response", () => {
-    expect(extractResponseCostUsd(fixtureResponse)).toBe(0.075);
+    expect(extractResponseCostUsd(fixtureResponse)).toBe(0.0124);
   });
 
   it("returns null when no cost field is present", () => {
@@ -88,7 +189,7 @@ describe("createMockResearchPort", () => {
   it("is enabled and returns the fixture rows deterministically", async () => {
     const port = createMockResearchPort(fixtureResponse);
     expect(port.enabled).toBe(true);
-    const rows = await port.fetchSearchVolume({
+    const rows = await port.fetchKeywordOverview({
       keywords: ["seo software"],
       language_code: "en",
       location_code: 2840,
@@ -97,6 +198,7 @@ describe("createMockResearchPort", () => {
       "seo software",
       "keyword research tool",
       "rank tracker",
+      "backlink checker",
     ]);
   });
 });
@@ -106,7 +208,7 @@ describe("disabledPort", () => {
     const port = disabledPort();
     expect(port.enabled).toBe(false);
     await expect(
-      port.fetchSearchVolume({ keywords: ["x"], language_code: "en", location_code: 2840 }),
+      port.fetchKeywordOverview({ keywords: ["x"], language_code: "en", location_code: 2840 }),
     ).rejects.toThrow();
   });
 });
@@ -134,8 +236,38 @@ describe("resolveDefaultPort", () => {
   });
 });
 
+/**
+ * The vendor price this endpoint actually charges: $0.012 per request + $0.00012 per keyword
+ * (100 keywords = $0.024), against the retired google_ads/search_volume endpoint's flat
+ * $0.0900 per call. The estimate carries a deliberate safety margin ON TOP, because the gate
+ * must err toward refusing rather than toward silent overspend against the $3/day cap.
+ */
+describe("estimateKeywordOverviewCostUsd", () => {
+  it("is derived from the published per-request + per-keyword formula", () => {
+    expect(KEYWORD_OVERVIEW_REQUEST_USD).toBe(0.012);
+    expect(KEYWORD_OVERVIEW_PER_KEYWORD_USD).toBe(0.00012);
+    const listedFor100 = KEYWORD_OVERVIEW_REQUEST_USD + 100 * KEYWORD_OVERVIEW_PER_KEYWORD_USD;
+    expect(listedFor100).toBeCloseTo(0.024, 6);
+  });
+
+  it("SCALES with the batch instead of charging one flat number for 1 and 100 keywords", () => {
+    expect(estimateKeywordOverviewCostUsd(100)).toBeGreaterThan(estimateKeywordOverviewCostUsd(1));
+  });
+
+  it("never estimates BELOW the vendor's published price (the gate errs toward refusing)", () => {
+    for (const count of [1, 10, 100]) {
+      const listed = KEYWORD_OVERVIEW_REQUEST_USD + count * KEYWORD_OVERVIEW_PER_KEYWORD_USD;
+      expect(estimateKeywordOverviewCostUsd(count)).toBeGreaterThanOrEqual(listed);
+    }
+  });
+
+  it("stays far under the retired endpoint's $0.0900 per call even at the 100-keyword max", () => {
+    expect(estimateKeywordOverviewCostUsd(100)).toBeLessThan(0.09);
+  });
+});
+
 describe("createLiveClient (fake transport — never real HTTP)", () => {
-  it("posts to DFS, parses rows, and settles the reservation at the response cost", async () => {
+  it("posts to the Labs keyword_overview endpoint, parses rows, and settles at the response cost", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
@@ -143,33 +275,58 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
     }));
     const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
 
-    const rows = await client.fetchSearchVolume({
-      keywords: ["seo software", "keyword research tool", "rank tracker"],
+    const rows = await client.fetchKeywordOverview({
+      keywords: ["seo software", "keyword research tool", "rank tracker", "backlink checker"],
       language_code: "en",
       location_code: 2840,
     });
 
-    expect(rows).toHaveLength(3);
-    // Basic auth header + JSON body of the right shape.
+    expect(rows).toHaveLength(4);
+    // The vendor endpoint itself — the whole point of the switch. Pinned by PATH, not by the
+    // constant, so swapping the constant's value back cannot pass this spec.
     const [url, init] = transport.mock.calls[0] ?? [];
-    expect(url).toContain("/keywords_data/google_ads/search_volume/live");
+    expect(url).toContain("/dataforseo_labs/google/keyword_overview/live");
+    expect(url).not.toContain("/keywords_data/google_ads/search_volume/");
+    expect(url).toBe(DFS_KEYWORD_OVERVIEW_ENDPOINT);
     expect(init?.headers.Authorization).toMatch(/^Basic /);
     expect(JSON.parse(init?.body ?? "[]")).toEqual([
       {
-        keywords: ["seo software", "keyword research tool", "rank tracker"],
+        keywords: ["seo software", "keyword research tool", "rank tracker", "backlink checker"],
         language_code: "en",
         location_code: 2840,
       },
     ]);
-    // The REAL cost (0.075 from the response) settled the reservation, not the estimate.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.075, 5);
+    // The REAL cost (0.0124 from the response) settled the reservation, not the estimate.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(0.0124, 6);
     expect(ledger.rows()).toHaveLength(1);
-    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.075, 5);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.0124, 6);
+    expect(ledger.rows()[0]?.endpoint).toBe(DFS_KEYWORD_OVERVIEW_ENDPOINT);
+  });
+
+  it("reserves the BATCH-SIZED estimate, so a 100-keyword call books more than a 1-keyword one", async () => {
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      // No `cost` anywhere: the reservation then settles at its own estimate, which is what
+      // makes the reserved amount observable through the ledger.
+      json: async () => ({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] }),
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+
+    await client.fetchKeywordOverview({ keywords: ["one"], language_code: "en", location_code: 2840 });
+    const small = ledger.rows()[0]?.estimatedUsd ?? 0;
+    expect(small).toBeCloseTo(estimateKeywordOverviewCostUsd(1), 8);
+
+    const hundred = Array.from({ length: 100 }, (_, i) => `kw-${i}`);
+    await client.fetchKeywordOverview({ keywords: hundred, language_code: "en", location_code: 2840 });
+    const big = ledger.rows()[1]?.estimatedUsd ?? 0;
+    expect(big).toBeCloseTo(estimateKeywordOverviewCostUsd(100), 8);
+    expect(big).toBeGreaterThan(small);
   });
 
   it("refuses the call BEFORE any HTTP when today's budget is already at the cap", async () => {
-    // Pre-seed today's spend at $2.95; the pre-call estimate would pass $3.00.
-    ledger.seed(2.95);
+    // Pre-seed today's spend at $2.999; even this endpoint's small estimate would pass $3.00.
+    ledger.seed(2.999);
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: true,
       status: 200,
@@ -180,7 +337,7 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
 
     try {
       await expect(
-        client.fetchSearchVolume({ keywords: ["x"], language_code: "en", location_code: 2840 }),
+        client.fetchKeywordOverview({ keywords: ["x"], language_code: "en", location_code: 2840 }),
       ).rejects.toThrow(/budget exceeded/i);
       // The gate is PRE-call: the transport must never have been invoked.
       expect(transport).not.toHaveBeenCalled();
@@ -188,16 +345,11 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
       errorSpy.mockRestore();
     }
   });
-
-  it("exposes a small conservative per-call estimate for the pre-call gate", () => {
-    expect(ESTIMATED_SEARCH_VOLUME_CALL_USD).toBeGreaterThan(0);
-    expect(ESTIMATED_SEARCH_VOLUME_CALL_USD).toBeLessThanOrEqual(0.5);
-  });
 });
 
 /**
  * M-14 — the DEFAULT transport's application deadline. Every live DataForSEO port
- * (search volume, ranked keywords, backlinks, competitors) reaches the network through
+ * (keyword overview, ranked keywords, backlinks, competitors) reaches the network through
  * this ONE transport, and bare `fetch` has no default timeout: a provider holding the
  * socket open would keep a credit-RESERVED tool call waiting indefinitely, so the reserve
  * stays open and the request slot stays held. These specs drive the real transport with a
