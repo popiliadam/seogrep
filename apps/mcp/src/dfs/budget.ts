@@ -1,4 +1,5 @@
 import { getServiceClient, type ServiceClient } from "../db.ts";
+import { DfsBudgetExhaustedError } from "./budget-error.ts";
 
 /**
  * DataForSEO daily vendor-budget guard (the app side of guardrails/dfs-budget.sh).
@@ -132,7 +133,11 @@ export async function reserveSpend(
           `$${DAILY_BUDGET_USD.toFixed(2)} cap. Live call refused ` +
           `(contract wake class: money / outside world). Ledger said: ${detail}`,
       );
-      throw new Error(detail);
+      // TYPED, so the refusal survives the trip to the registry as a refusal. The message keeps
+      // the ledger's own words (budget.test.ts pins them, and the operator log wants them); what
+      // changed is that the registry can now tell this apart from a crash instead of answering a
+      // working guard with "failed unexpectedly — quote reference 3f9c1a20". See budget-error.ts.
+      throw new DfsBudgetExhaustedError(endpoint, detail);
     }
     console.error(
       `WAKE THE HUMAN — DataForSEO budget ledger is unreachable, so today's spend cannot be ` +
