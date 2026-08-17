@@ -28,6 +28,7 @@ describe("pricing page", () => {
       ["Quick-win, cannibalization, or decay scan", "10"],
       ["Full on-page + technical + schema audit", "50"],
       ["Content audit (queries vs page titles)", "12"],
+      ["Page speed audit (up to 5 URLs)", "15"],
       ["Keyword research (100 keywords)", "25"],
       ["Ranked keywords (per domain)", "65"],
       ["Backlink profile (per domain)", "70"],
@@ -66,6 +67,10 @@ describe("pricing page", () => {
     // pull as well as a crawl, so the bundle's price would be advertising something a crawl alone
     // cannot run. NOTE for the reviewer — this number is UNSIGNED (NEVER #6); the PR is parked.
     audit_content: "Content audit (queries vs page titles)",
+    // Its OWN row too, and for a stronger reason than audit_content's: audit_speed buys a
+    // Lighthouse run per page from DataForSEO and needs no crawl at all, so the crawl-reading
+    // bundle's price would advertise something audit_speed is not.
+    audit_speed: "Page speed audit (up to 5 URLs)",
     research_keywords: "Keyword research (100 keywords)",
     ranked_keywords: "Ranked keywords (per domain)",
     analyze_backlinks: "Backlink profile (per domain)",

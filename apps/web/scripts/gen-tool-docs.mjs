@@ -600,6 +600,79 @@ export const DOC_PROSE = {
       "structured data.",
   },
 
+  audit_speed: {
+    lead:
+      "`audit_speed` measures how fast your pages actually load, using **Google Lighthouse** run " +
+      "by DataForSEO. Unlike the other audits it does **not** read a crawl — you name the page " +
+      "URLs and each one gets its own measurement — so no `crawl_site` run is needed first. It is " +
+      "**synchronous**: the table comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Pass between one and five page URLs. Each is measured on its own, and each page block " +
+      "reports:\n\n" +
+      "- **Performance score** — Lighthouse's own 0–100 score for the page.\n" +
+      "- **Lab Core Web Vitals and friends** — First Contentful Paint, Largest Contentful Paint, " +
+      "Speed Index, Total Blocking Time, Cumulative Layout Shift, and Time to Interactive, each " +
+      "printed with Lighthouse's own formatting.\n" +
+      "- **The biggest opportunities** — the improvements Lighthouse estimates the largest " +
+      "load-time saving for, largest first, with the estimated milliseconds saved.\n\n" +
+      "**These are lab measurements.** Lighthouse loads the page once, on the vendor's machine, " +
+      "under simulated throttling. That is a repeatable diagnostic, not a record of what your " +
+      "visitors experienced — the field metrics Google reports from real Chrome users (including " +
+      "Interaction to Next Paint) are a different measurement, and this tool does not claim " +
+      "them.\n\n" +
+      "A metric Lighthouse did not produce for a page gets **no line at all**, and a page it could " +
+      "not score says so in words. Nothing is filled in with a zero: on a speed report a " +
+      "fabricated zero would read as the best possible news.\n\n" +
+      "URLs are canonicalized before anything is charged. A bare domain is read as its https home " +
+      "page, the same page named twice is measured once, and an address that is not a public " +
+      "http(s) page — `localhost`, an internal hostname, a `file:` or `javascript:` URL — is " +
+      "refused for free.",
+    preExampleSections: [
+      {
+        heading: "Who can run it",
+        body:
+          "`audit_speed` needs a **paid credit balance**. Despite sitting in the audit family it " +
+          "reads live data from a paid third-party provider — one real browser run per page — so " +
+          "it is not available on trial credits. Buy any credit pack and it unlocks straight " +
+          "away; your existing credits keep working for crawls, the other audits, reports and " +
+          "Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"page speed measurements are not yet enabled on this deployment\"_ message and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as a real measurement.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> How fast is example.com's home page and " +
+      "pricing page?\n\nThen hand a finding straight back to your assistant:\n\n> What would it " +
+      "take to fix the biggest opportunity on the pricing page?",
+    returns:
+      "A heading naming how many pages were measured and that the figures are lab measurements; " +
+      "then one block per page — the URL, when it was measured and by which Lighthouse version " +
+      "(and where it redirected to, if it did), the performance score, the metric lines, and the " +
+      "opportunity list.\n\nAn empty list, more than five URLs, and any address that is not a " +
+      "public web page are all rejected before anything is charged; while live data is off you " +
+      "get the \"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**, whether you measure one page or " +
+          "five. Behind it, each page is its own Lighthouse run; if any of them fails, the whole " +
+          "call fails and **you are not charged** — a partial table is never billed.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its measurement to the conversation and " +
+          "nothing else keeps it, so there is no speed history in the dashboard yet and no " +
+          "\"compared with last week\" — run it again to get a fresh measurement.\n\n" +
+          "The five-URL cap per call is deliberate: a Lighthouse run is a real browser loading a " +
+          "real page, which is why this is measured per page rather than across a whole site.",
+      },
+    ],
+  },
+
   audit_content: {
     lead:
       "`audit_content` is the bridge between your Search Console data and your crawl. It takes " +
