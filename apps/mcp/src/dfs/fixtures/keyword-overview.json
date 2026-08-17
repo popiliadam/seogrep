@@ -1,0 +1,176 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2871 sec.",
+  "cost": 0.0124,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08171200-0000-0000-0000-fixture0001",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.2743 sec.",
+      "cost": 0.0124,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_overview", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_overview",
+        "se_type": "google",
+        "language_code": "en",
+        "location_code": 2840
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 4,
+          "items_count": 4,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "seo software",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-06-14 08:12:33 +00:00",
+                "competition": 0.88,
+                "competition_level": "HIGH",
+                "cpc": 27.66,
+                "search_volume": 22200,
+                "low_top_of_page_bid": 3.15,
+                "high_top_of_page_bid": 12.4,
+                "categories": [10019, 13418],
+                "monthly_searches": [
+                  { "year": 2026, "month": 6, "search_volume": 22200 },
+                  { "year": 2026, "month": 5, "search_volume": 18100 }
+                ],
+                "search_volume_trend": { "monthly": 12, "quarterly": -3, "yearly": 45 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "core_keyword": null,
+                "synonym_clustering_algorithm": "keyword_metrics",
+                "keyword_difficulty": 61,
+                "detected_language": "en",
+                "is_another_language": false
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "commercial",
+                "foreign_intent": ["informational"],
+                "last_updated_time": "2026-05-02 11:04:19 +00:00"
+              },
+              "avg_backlinks_info": {
+                "se_type": "google",
+                "backlinks": 120.5,
+                "dofollow": 98.2,
+                "referring_pages": 110.1,
+                "referring_domains": 45.3,
+                "referring_main_domains": 44,
+                "rank": 210.4,
+                "main_domain_rank": 388.9,
+                "last_updated_time": "2026-06-11 03:31:02 +00:00"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "keyword research tool",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-06-14 08:12:33 +00:00",
+                "competition": 0.55,
+                "competition_level": "MEDIUM",
+                "cpc": 6.42,
+                "search_volume": 12100,
+                "low_top_of_page_bid": 2.4,
+                "high_top_of_page_bid": 8.9,
+                "categories": [10019],
+                "monthly_searches": [
+                  { "year": 2026, "month": 6, "search_volume": 12100 },
+                  { "year": 2026, "month": 5, "search_volume": 9900 }
+                ],
+                "search_volume_trend": { "monthly": -8, "quarterly": 0, "yearly": -15 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "core_keyword": null,
+                "keyword_difficulty": 44,
+                "detected_language": "en",
+                "is_another_language": false
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "commercial",
+                "foreign_intent": null,
+                "last_updated_time": "2026-05-02 11:04:19 +00:00"
+              },
+              "avg_backlinks_info": null
+            },
+            {
+              "se_type": "google",
+              "keyword": "rank tracker",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-06-14 08:12:33 +00:00",
+                "competition": 0.22,
+                "competition_level": "LOW",
+                "cpc": 4.1,
+                "search_volume": 8100,
+                "low_top_of_page_bid": 1.1,
+                "high_top_of_page_bid": 4.75,
+                "categories": [10019],
+                "monthly_searches": [
+                  { "year": 2026, "month": 6, "search_volume": 8100 },
+                  { "year": 2026, "month": 5, "search_volume": 6600 }
+                ],
+                "search_volume_trend": { "monthly": 0, "quarterly": null, "yearly": 5 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "core_keyword": null,
+                "keyword_difficulty": 30,
+                "detected_language": "en",
+                "is_another_language": false
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "navigational",
+                "foreign_intent": ["commercial", "transactional"],
+                "last_updated_time": "2026-05-02 11:04:19 +00:00"
+              },
+              "avg_backlinks_info": null
+            },
+            {
+              "se_type": "google",
+              "keyword": "backlink checker",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-06-14 08:12:33 +00:00",
+                "categories": null
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "core_keyword": null,
+                "detected_language": "en",
+                "is_another_language": false
+              },
+              "search_intent_info": null,
+              "avg_backlinks_info": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
