@@ -830,23 +830,35 @@ export const DOC_PROSE = {
       "not competitors in any sense you can act on. The reply says which of the two happened, and " +
       "every row is labelled with where it came from — `target`, `found by DataForSEO`, or " +
       "`supplied by you` — so a discovered rival is never mistaken for one you chose.\n\n" +
-      "Every domain in the table gets the same four lines, all read from DataForSEO's domain rank " +
-      "overview:\n\n" +
+      "Every domain in the table gets the same lines, under the heading **Across the whole " +
+      "domain** — every keyword that domain ranks for:\n\n" +
       "- **Organic SERPs containing the domain** — how many organic result pages the domain appears " +
       "in. It counts result pages, not keywords.\n" +
-      "- **Organic SERPs by position (top 20)** — how those appearances distribute across the " +
-      "top-20 bands: #1, #2-3, #4-10 and #11-20. Positions beyond #20 are counted in the total " +
-      "above but are not banded here, so the bands do not add up to it — they show how much of a " +
-      "domain's presence is near the top.\n" +
+      "- **Organic SERPs by position** — how those appearances distribute across all twelve bands " +
+      "DataForSEO reports, printed on two lines: #1 through #11-20, then #21-30 through #91-100. " +
+      "That is the complete range, so you see a domain's whole ranked presence and not just the " +
+      "part of it near the top.\n" +
       "- **Estimated monthly organic traffic (ETV)** — DataForSEO's estimate of monthly visits, " +
       "calculated from click-through rate and search volume. It is an estimate, not measured " +
       "traffic.\n" +
       "- **Estimated monthly cost of the same traffic as paid ads** — what buying that organic " +
-      "traffic through ads would be estimated to cost per month.\n\n" +
-      "A rival **found by DataForSEO** also carries its overlap with your target: how many " +
-      "**intersecting keywords** the two share, and the average position it holds *on those shared " +
-      "keywords* — not across its whole keyword set. A competitor you supplied carries no overlap " +
-      "figures, because no discovery request is made for it.\n\n" +
+      "traffic through ads would be estimated to cost per month.\n" +
+      "- **Since DataForSEO's previous check** — how many rankings are newly ranking, moved up, " +
+      "moved down, or were no longer found. This is the line that says whether a rival is gaining " +
+      "or losing ground, rather than only how big it is today.\n\n" +
+      "A rival **found by DataForSEO** carries two more things. First, its overlap with your " +
+      "target: how many **intersecting keywords** the two share, and the average position it holds " +
+      "*on those shared keywords* — not across its whole keyword set. Second, the same metric lines " +
+      "again under **Across the keywords it shares with the target only**.\n\n" +
+      "Those two blocks are **different numbers for the same rival**, which is why each one is " +
+      "printed under its own heading. The whole-domain block is how big the rival is everywhere; " +
+      "the shared block is how it does on the ground you actually compete on. A large rival can " +
+      "appear in tens of thousands of result pages while sharing only a few thousand of them with " +
+      "you. The side-by-side comparison is made on the whole-domain figures, because those are " +
+      "measured the same way for every row — the shared figures cover a different keyword set for " +
+      "each rival.\n\n" +
+      "A competitor **you supplied** carries neither, because no discovery request is made for " +
+      "it.\n\n" +
       "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO has " +
       "no value for is shown as `n/a` rather than as a zero, and a domain it holds no organic data " +
       "for says so plainly.",
@@ -880,11 +892,14 @@ export const DOC_PROSE = {
       {
         heading: "Billing",
         body:
-          "One comparison reads DataForSEO more than once: a competitor-discovery request (skipped " +
-          "when you name the competitors yourself) plus one rank overview per compared domain. It " +
-          "is a **flat price** either way, charged **once**, as a single tool call. If any of " +
-          "those requests fails, the whole call fails and **you are not charged** — a partial " +
-          "comparison is never billed.",
+          "How many times one comparison reads DataForSEO depends on which mode you used. Letting " +
+          "DataForSEO **discover** the rivals normally takes a **single** request — that one " +
+          "response already carries every listed domain's own metrics — while **naming** the " +
+          "competitors yourself takes one rank-overview request per compared domain, because a " +
+          "rival you chose is not part of any discovery result.\n\n" +
+          "You pay the same either way: it is a **flat price**, charged **once**, as a single tool " +
+          "call. If any of those requests fails, the whole call fails and **you are not charged** " +
+          "— a partial comparison is never billed.",
       },
     ],
   },
