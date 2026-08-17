@@ -164,6 +164,33 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
     lines.push(bulletList(report.orphanSignals.map((p) => `${p.url} (depth ${p.depth})`)));
     lines.push("  Note: the crawl is bounded, so a page whose only linking page was not fetched appears here too.");
   }
+
+  // Faz 2 graph sections, appended under the same rule as the signal sections above.
+  //
+  // The sitemap diff prints on a NON-NULL diff even when both lists are empty — unlike every
+  // section above it, which prints only when it has rows. That is the point of the null: a diff
+  // that exists means the sitemap WAS read, so "0 and 0" is a measured agreement worth stating,
+  // where an empty signal list would be an unmeasured axis.
+  const diff = report.sitemapDiff;
+  if (diff !== null) {
+    lines.push("", `Sitemap vs crawl (${diff.sitemapUrls} URL(s) read from the sitemap):`);
+    lines.push(
+      `  in the sitemap but not crawled: ${diff.missingFromCrawl.length}; ` +
+        `crawled but not in the sitemap: ${diff.missingFromSitemap.length}`,
+    );
+    if (diff.missingFromCrawl.length > 0) {
+      lines.push("  In the sitemap, never crawled or skipped:");
+      lines.push(bulletList(diff.missingFromCrawl, "    "));
+    }
+    if (diff.missingFromSitemap.length > 0) {
+      lines.push("  Crawled but absent from the sitemap:");
+      lines.push(bulletList(diff.missingFromSitemap, "    "));
+    }
+  }
+  if (report.brokenInternalLinks.length > 0) {
+    lines.push("", `Broken internal links (target crawled, answered 4xx/5xx): ${report.brokenInternalLinks.length}`);
+    lines.push(bulletList(report.brokenInternalLinks.map((l) => `${l.from} → ${l.to} (${l.status})`)));
+  }
   return lines.join("\n");
 }
 
@@ -189,10 +216,35 @@ export function formatSchemaReport(report: SchemaReport, fetchedAt: string | nul
     lines.push(bulletList(report.pagesWithout));
   }
 
+  // Faz 3: what the BODIES say. Every block below prints only when it has rows, so a crawl that
+  // stored no bodies renders exactly what it always rendered.
+  if (report.missingFields.length > 0) {
+    lines.push("", `Required fields missing: ${report.missingFields.length}`);
+    lines.push(
+      bulletList(report.missingFields.map((f) => `${f.url} — ${f.type} is missing ${f.missing.join(", ")}`)),
+    );
+  }
+  if (report.invalidJson.length > 0) {
+    lines.push("", `Pages with unparseable JSON-LD: ${report.invalidJson.length}`);
+    lines.push(bulletList(report.invalidJson.map((p) => `${p.url} (${p.blocks} block(s) failed to parse)`)));
+  }
+  if (report.truncatedPages.length > 0) {
+    lines.push("", `Pages whose JSON-LD was only partly stored: ${report.truncatedPages.length}`);
+    lines.push(bulletList(report.truncatedPages.map((p) => `${p.url} (${p.dropped} block(s) not stored)`)));
+    lines.push("  Note: required fields were checked on the stored blocks only.");
+  }
+
+  // THE CLOSING NOTE STATES WHAT WAS ACTUALLY DONE, and that differs by crawl. The first wording
+  // is the one every crawl before the bodies existed earns, and it stays byte-identical for them;
+  // the second is what a crawl carrying bodies earns, because telling that reader "only @type
+  // names are analyzed" would describe a run that did not happen.
   lines.push(
     "",
-    "Note: detection is JSON-LD only (microdata/RDFa are not read); only @type names are " +
-      "analyzed, never the JSON-LD body.",
+    report.pagesValidated > 0
+      ? "Note: detection is JSON-LD only (microdata/RDFa are not read); required fields were " +
+          `checked against the stored JSON-LD bodies on ${report.pagesValidated} page(s).`
+      : "Note: detection is JSON-LD only (microdata/RDFa are not read); only @type names are " +
+          "analyzed, never the JSON-LD body.",
   );
   return lines.join("\n");
 }

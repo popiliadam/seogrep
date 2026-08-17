@@ -96,7 +96,15 @@ async function makeGscAccount(
       user_id: ownerId,
       google_account_sub: overrides.sub ?? `sub-${randomUUID()}`,
       google_account_email: overrides.email ?? `${randomUUID()}@example.test`,
-      encrypted_refresh_token: Buffer.from("fixture-ciphertext"),
+      // `bytea`, and the generated type calls it `string` because that is what the PRODUCTION
+      // write path sends: `toByteaHex(...)` in apps/web/lib/gsc/accounts.ts. This fixture
+      // predates the type gate and sends a Buffer, which supabase-js JSON-encodes and Postgres
+      // then accepts as ESCAPE-format bytea input — so the row lands, and this spec only ever
+      // asserts GRANTS on this column, never its value. Cast rather than rewritten: the change
+      // to `toByteaHex(...)` alters bytes this branch cannot re-measure (the DB lane needs the
+      // shared stack), and a quietly different fixture is worse than a loud one. Flagged for
+      // a follow-up that runs verify-db.
+      encrypted_refresh_token: Buffer.from("fixture-ciphertext") as unknown as string,
     })
     .select("id")
     .single();

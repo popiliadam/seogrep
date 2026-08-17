@@ -52,6 +52,20 @@ export interface PageRecord {
   readonly wordCount: number;
   /** Schema.org @type names declared in the page's JSON-LD blocks ([] when none). */
   readonly jsonLdTypes: string[];
+  /**
+   * The RAW JSON-LD block bodies, capped at MAX_JSONLD_BLOCKS_PER_PAGE blocks of
+   * MAX_JSONLD_BLOCK_CHARS characters each ([] when the page declares none). The bodies are what
+   * lets audit_schema check REQUIRED FIELDS — a `@type` name alone can say a Product exists, never
+   * that it declares an offer.
+   */
+  readonly jsonLdBlocks: string[];
+  /**
+   * How many of the page's JSON-LD blocks were NOT stored — dropped by the block cap or for
+   * exceeding the per-block character ceiling. A validator that reports "no missing fields"
+   * over a partial set is claiming a measurement it did not make, so the number travels with
+   * the bodies and the schema report prints it.
+   */
+  readonly jsonLdTruncated: number;
   readonly issues: string[];
 
   // --- Free signals (no extra request) -------------------------------------------
@@ -117,6 +131,22 @@ export interface CrawlResult {
   readonly skipped: SkippedUrl[];
   /** ISO-8601 timestamp of when the crawl started. */
   readonly fetchedAt: string;
+  /**
+   * The same-origin, in-scope URLs the crawl READ OUT OF /sitemap.xml, capped at
+   * MAX_SITEMAP_URLS_STORED. `[]` means the crawl found no usable sitemap (absent, non-200,
+   * empty, or every loc filtered out) — it never means "the sitemap was not looked at", because
+   * a crawl that got as far as seeding always looked.
+   *
+   * It costs NO extra request: these are the seeds loadSitemapSeeds already parsed, kept instead
+   * of discarded. audit_tech's sitemap↔crawl diff is the consumer — without the list, "in the
+   * sitemap but never crawled" is unanswerable from a stored result.
+   *
+   * OPTIONAL on the type, ALWAYS set by crawlSite — the same discipline AuditPage's newer signals
+   * follow. A result that predates this field (a stored legacy crawl, an injected test double)
+   * leaves it out, and ABSENT is a third answer distinct from `[]`: nobody looked. boundCrawlResult
+   * preserves that distinction rather than defaulting it away.
+   */
+  readonly sitemapUrls?: string[];
 }
 
 export interface CrawlOptions {
@@ -170,6 +200,10 @@ export interface ParsedHtml extends HtmlSignals {
   readonly linksTruncated: boolean;
   /** Schema.org @type names from JSON-LD blocks ([] when none/malformed). */
   readonly jsonLdTypes: string[];
+  /** The raw JSON-LD bodies, bounded (see PageRecord.jsonLdBlocks). */
+  readonly jsonLdBlocks: string[];
+  /** How many JSON-LD blocks the page had that were NOT stored (see PageRecord). */
+  readonly jsonLdTruncated: number;
   /** SHA-256 (hex) of the page's normalized text (see page-signals.contentHash). */
   readonly contentHash: string;
 }
@@ -185,6 +219,25 @@ export interface ParsedHtml extends HtmlSignals {
 const MAX_LINKS_PER_PAGE = 1_000;
 const MAX_H1S_PER_PAGE = 100;
 const MAX_JSONLD_TYPES = 100;
+
+/**
+ * The two ceilings on the JSON-LD BODIES a page may contribute (Faz 3). Type names are ~20
+ * bytes each; a body is the whole entity, and a product-listing template can inline dozens of
+ * them — so storing bodies is the one field of this record that could plausibly multiply into
+ * the 12 MB result budget, and it gets the tightest bounds in the file.
+ *
+ * 5 BLOCKS: a real page declares one graph, or a small handful (Organization + WebSite +
+ * BreadcrumbList + the page's own entity). Past five the extra blocks are near-always repeated
+ * boilerplate, and the schema report says how many were dropped rather than pretending it saw
+ * them.
+ *
+ * 4000 CHARACTERS: about 10x a normal entity block and ~2x MAX_FIELD_CHARS. A block OVER the
+ * ceiling is DROPPED WHOLE, never truncated: a JSON document cut at 4000 characters does not
+ * parse, so truncating would manufacture an `invalid_json` finding out of a page whose markup
+ * is fine — the audit would report a defect the crawler itself created.
+ */
+export const MAX_JSONLD_BLOCKS_PER_PAGE = 5;
+export const MAX_JSONLD_BLOCK_CHARS = 4_000;
 // MAX_FIELD_CHARS and clampField live in page-signals.ts — the parsers there clamp against the
 // same ceiling, and one spelling of a ceiling is the only way it stays one ceiling.
 
@@ -223,6 +276,49 @@ function firstGroup(re: RegExp, html: string): string | null {
  *    never reject the crawl (the T6 Critical lesson: one bad page is skipped, not fatal);
  *  - only the TYPE names are kept; the raw JSON-LD body is never stored.
  */
+/**
+ * The TRIMMED, non-blank bodies of every `<script type="application/ld+json">` in `html`, in
+ * document order. Runs on the RAW html, BEFORE parseHtml strips scripts.
+ *
+ * One extractor, two consumers (the @type names and the stored bodies): the regex that decides
+ * what counts as a JSON-LD block is the kind of thing that drifts when it is written twice, and
+ * a body the type reader saw but the block reader did not would make the two disagree about the
+ * same page.
+ */
+function jsonLdScriptBodies(html: string): string[] {
+  const bodies: string[] = [];
+  const blocks = html.matchAll(
+    /<script\b[^>]*\btype\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  );
+  for (const match of blocks) {
+    const body = match[1]?.trim();
+    if (body) bodies.push(body);
+  }
+  return bodies;
+}
+
+/**
+ * The page's JSON-LD bodies as stored: at most MAX_JSONLD_BLOCKS_PER_PAGE of them, each at most
+ * MAX_JSONLD_BLOCK_CHARS characters, with a count of everything that did not fit.
+ *
+ * Bodies are kept RAW (trimmed only) and are NOT parsed here: validity is the audit's finding to
+ * report (`invalid_json`), and a parser that silently dropped an unparseable block would hide
+ * exactly the page a structured-data audit exists to find. An over-long block is dropped whole
+ * rather than clamped — see MAX_JSONLD_BLOCK_CHARS for why clamping would invent findings.
+ */
+export function parseJsonLdBlocks(html: string): { blocks: string[]; truncated: number } {
+  const blocks: string[] = [];
+  let truncated = 0;
+  for (const body of jsonLdScriptBodies(html)) {
+    if (blocks.length >= MAX_JSONLD_BLOCKS_PER_PAGE || body.length > MAX_JSONLD_BLOCK_CHARS) {
+      truncated++;
+      continue;
+    }
+    blocks.push(body);
+  }
+  return { blocks, truncated };
+}
+
 export function parseJsonLdTypes(html: string): string[] {
   const types: string[] = [];
   const seen = new Set<string>();
@@ -251,16 +347,13 @@ export function parseJsonLdTypes(html: string): string[] {
       if (value && typeof value === "object") walk(value);
     }
   };
-  const blocks = html.matchAll(
-    /<script\b[^>]*\btype\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
-  );
-  for (const match of blocks) {
-    const body = match[1];
-    if (!body || !body.trim()) continue;
+  for (const body of jsonLdScriptBodies(html)) {
     try {
       walk(JSON.parse(body));
     } catch {
-      // Malformed JSON-LD block — skip silently; the crawl must not die on it.
+      // Malformed JSON-LD block — skip silently; the crawl must not die on it. (The BODIES are
+      // stored separately and the audit reports the same block as `invalid_json`, so nothing is
+      // lost by this reader staying quiet.)
     }
   }
   return types;
@@ -332,9 +425,10 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
   const words = textOf(content);
   const wordCount = words ? words.split(/\s+/).filter(Boolean).length : 0;
 
-  // Read JSON-LD from the RAW html (parseJsonLdTypes scopes its own script blocks),
-  // not the script-stripped `content` above.
+  // Read JSON-LD from the RAW html (both readers scope their own script blocks), not the
+  // script-stripped `content` above.
   const jsonLdTypes = parseJsonLdTypes(html);
+  const jsonLd = parseJsonLdBlocks(html);
 
   // Free signals (headings, images, hreflang, og/twitter, html lang) off the SAME cleaned
   // view everything else above is parsed from, plus the duplicate-content fingerprint. The
@@ -352,6 +446,8 @@ export function parseHtml(html: string, baseUrl: string): ParsedHtml {
     wordCount,
     linksTruncated,
     jsonLdTypes,
+    jsonLdBlocks: jsonLd.blocks,
+    jsonLdTruncated: jsonLd.truncated,
     contentHash: contentHash(content),
     ...signals,
   };
@@ -474,6 +570,20 @@ const MAX_SKIPPED_LISTED = MAX_SKIPPED - MAX_CEILING_NOTES;
 const MAX_PAGES_PERSISTED = 100;
 
 /**
+ * How many sitemap URLs a stored result may carry (CrawlResult.sitemapUrls).
+ *
+ * 500 is 5x the 100-page crawl cap, which is what the field is FOR: the sitemap↔crawl diff only
+ * says something a page list cannot when the sitemap is bigger than the crawl. Past 5x, the diff
+ * stops being a list a human acts on and becomes a site-size statistic — and the bound has to
+ * exist because a sitemap is tenant-controlled input that legitimately runs to 150k <loc>s.
+ *
+ * Worst case, against MAX_RESULT_BYTES: 500 x MAX_FIELD_CHARS (2000) ~= 1 MB of URLs, which sits
+ * OUTSIDE the 12 MB page budget (that budget measures page records) exactly as the ~2 MB skip
+ * list already does. A persisted result therefore stays under ~15 MB, up from ~14 MB.
+ */
+export const MAX_SITEMAP_URLS_STORED = 500;
+
+/**
  * TOTAL byte ceiling on the pages one crawl accumulates (T8) — the ONE bound here that does
  * not multiply.
  *
@@ -488,6 +598,19 @@ const MAX_PAGES_PERSISTED = 100;
  * few KB) while leaving the adversarial case bounded. skipped[] is bounded separately and
  * independently (MAX_SKIPPED x the field ceilings, ~2 MB worst case), so a whole persisted
  * result stays under ~14 MB.
+ *
+ * WHAT THE JSON-LD BODIES ADDED (measured, 100 synthetic pages of realistic shape — 40 links,
+ * the full signal block — encoded exactly as this budget encodes them):
+ *
+ *   no bodies (the pre-Faz-3 shape)          194.5 KB
+ *   one typical @graph block per page        243.7 KB   (+49.2 KB, +25%)
+ *   5 blocks at the 4000-char ceiling, x100  2148.9 KB  (11.1x, and the absolute worst case)
+ *
+ * The adversarial case is ~2.1 MB against a 12 MB budget, so the bodies cannot overflow it: at
+ * worst they mean fewer pages fit, and the crawl reports that with RESULT_BUDGET_REASON like any
+ * other page it could not include. The accumulation check counts them, because it measures the
+ * WHOLE record. sitemapUrls does NOT go through this budget (it is not a page record) and is
+ * bounded on its own at ~1 MB — see MAX_SITEMAP_URLS_STORED.
  */
 const MAX_RESULT_BYTES = 12_000_000;
 
@@ -509,6 +632,16 @@ const resultBudgetDropReason = (dropped: number): string =>
   `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); ${dropped} crawled ` +
   "page(s) were dropped from the stored result — narrow the crawl with include_paths " +
   "or a lower max_urls to cover them";
+
+/**
+ * Bound the stored sitemap list: at most MAX_SITEMAP_URLS_STORED entries, each clamped to the
+ * shared field ceiling. Pure, and applied in BOTH places a result is produced (the crawl itself
+ * and boundCrawlResult), for the reason boundCrawlResult exists at all — the queue handler must
+ * not have to trust an injectable crawl function with the size of a DB row.
+ */
+function boundSitemapUrls(urls: readonly string[]): string[] {
+  return urls.slice(0, MAX_SITEMAP_URLS_STORED).map(clampField);
+}
 
 /**
  * UTF-8 byte size of a value's JSON encoding — the exact unit the persisted jobs.result row
@@ -1119,6 +1252,9 @@ function blockedOrigin(origin: URL, reason: string, fetchedAt: string): CrawlRes
     pages: [],
     skipped: [{ url: normalizeUrl(origin.toString()), reason: `origin blocked (SSRF guard): ${reason}` }],
     fetchedAt,
+    // Nothing was fetched, so no sitemap was read. The diff consumer treats an empty list as
+    // "no usable sitemap", which is the honest reading of a crawl that never left the gate.
+    sitemapUrls: [],
   };
 }
 
@@ -1179,12 +1315,30 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         },
       ],
       fetchedAt,
+      // RFC 9309 complete disallow: the sitemap was never requested either.
+      sitemapUrls: [],
     };
   }
   const robots = robotsLoad.rules;
   const crawlDelayMs = Math.min(robots.crawlDelayMs, crawlDelayCapMs);
 
-  const seeds = await loadSitemapSeeds(originUrl, pageTimeoutMs, maxUrls, lookup, prefixes);
+  // ONE sitemap read, TWO uses. The limit is raised to MAX_SITEMAP_URLS_STORED so the stored
+  // list can outgrow the crawl (a diff between a 100-page crawl and a 100-URL sitemap prefix
+  // would be structurally empty and would say nothing) — but the SEEDS are still the first
+  // maxUrls of it, so what gets queued, in which order, is unchanged.
+  //
+  // It costs no extra request: loadSitemapSeeds fetches the root and every child regardless of
+  // the limit (it cannot interleave children it has not seen), so a higher limit only keeps more
+  // of what was already parsed. Memory is bounded by MAX_SITEMAP_URLS_STORED.
+  const sitemapSeen = await loadSitemapSeeds(
+    originUrl,
+    pageTimeoutMs,
+    Math.max(maxUrls, MAX_SITEMAP_URLS_STORED),
+    lookup,
+    prefixes,
+  );
+  const seeds = sitemapSeen.slice(0, maxUrls);
+  const sitemapUrls = boundSitemapUrls(sitemapSeen);
   // Fallback seed (no usable sitemap) is the homepage — but honor the scope filter: if the
   // homepage itself is out of scope, there is no in-scope entry point (an empty queue -> 0
   // pages). With no prefixes, matchesIncludePaths is always true, so this is byte-identical
@@ -1391,6 +1545,8 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         links: parsed.links,
         wordCount: parsed.wordCount,
         jsonLdTypes: parsed.jsonLdTypes,
+        jsonLdBlocks: parsed.jsonLdBlocks,
+        jsonLdTruncated: parsed.jsonLdTruncated,
         issues: computeIssues(parsed),
         fetchMs: outcome.fetchMs,
         htmlBytes: outcome.htmlBytes,
@@ -1459,7 +1615,12 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
         "not queued — narrow the crawl with include_paths to cover them",
     });
   }
-  return { pages: attachInLinkCounts(pages), skipped: [...skipped, ...notes], fetchedAt };
+  return {
+    pages: attachInLinkCounts(pages),
+    skipped: [...skipped, ...notes],
+    fetchedAt,
+    sitemapUrls,
+  };
 }
 
 /**
@@ -1539,7 +1700,18 @@ export function boundCrawlResult(result: CrawlResult): CrawlResult {
   if (budgetDropped > 0) {
     notes.push({ url: capped[0]?.url ?? "", reason: resultBudgetDropReason(budgetDropped) });
   }
-  return { pages, skipped: [...skipped, ...notes], fetchedAt: result.fetchedAt };
+  const bounded: CrawlResult = {
+    pages,
+    skipped: [...skipped, ...notes],
+    fetchedAt: result.fetchedAt,
+  };
+  // Bounded when present, ABSENT when the producing crawl never recorded one. Defaulting to []
+  // here would manufacture a measurement — "the sitemap was read and held nothing usable" — out
+  // of a crawl function that never looked, which is the one thing the diff consumer must not be
+  // told (it prints its section only when a sitemap was actually read).
+  return result.sitemapUrls === undefined
+    ? bounded
+    : { ...bounded, sitemapUrls: boundSitemapUrls(result.sitemapUrls) };
 }
 
 // --- Free pre-discovery (site-size estimate) ------------------------------------

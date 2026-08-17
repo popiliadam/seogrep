@@ -156,6 +156,16 @@ describe("every priced audit records the run it just performed", () => {
  * these three strings were captured from the tools as they answer today, and they are frozen here
  * rather than recomputed from the formatter — recomputing compares the code against itself and
  * passes through any change the engine and the formatter make together.
+ *
+ * WHEN A RULE WAVE DELIBERATELY MOVES THEM, the literal is re-frozen and the reason is written
+ * here — never quietly. One such move so far:
+ *
+ *  - Faz 2 (broken internal links): `audit_tech` grew two lines. THIS FIXTURE EARNS THEM — the
+ *    home page links to `/gone`, and `/gone` is a page THIS crawl fetched and got a 404 from,
+ *    which is exactly what the rule reports. The proof that nothing regressed for data the rule
+ *    cannot judge is elsewhere and is a stronger measurement than this one: format-graph.test.ts
+ *    pins the sha256 of all three renderers over an OLD-SHAPED crawl against the digests measured
+ *    on `main`. The other two literals below are untouched.
  */
 const SNAPSHOTS: Record<string, string> = {
   audit_onpage: [
@@ -186,6 +196,9 @@ const SNAPSHOTS: Record<string, string> = {
     "    · https://snap.example/private (blocked by robots.txt)",
     "",
     "Robots conflicts (noindex but internally linked): 0",
+    "",
+    "Broken internal links (target crawled, answered 4xx/5xx): 1",
+    "  · https://snap.example/ → https://snap.example/gone (404)",
   ].join("\n"),
   audit_schema: [
     "Structured-data audit — 2 page(s) (crawl from 2026-08-14T00:00:00.000Z).",

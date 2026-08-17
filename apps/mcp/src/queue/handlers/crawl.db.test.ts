@@ -4,6 +4,7 @@ import { getServiceClient, type JobRow } from "../../db.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "../../tools/project-target.ts";
 import { clearToolHandlers, executeJob, registerToolHandler } from "../worker.ts";
 import { createCrawlHandler, resolveProjectOrigin } from "./crawl.ts";
+import type { CrawlResult, PageRecord } from "../../crawler/crawl.ts";
 import { startFixtureSite } from "../../crawler/fixtures/site-server.ts";
 
 /**
@@ -28,6 +29,36 @@ requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 requireEnv("SUPABASE_DB_URL");
 
 const service = getServiceClient();
+
+/**
+ * The page fields the stubs in this file actually drive. Typed exactly — misspell one and the
+ * type gate still says so — over a `Pick`, not over the whole record.
+ *
+ * PageRecord carries seventeen further REQUIRED fields since the crawl-signal expansion
+ * (fetchMs, htmlBytes, contentHash, depth, …). Nothing this file measures reads them: these
+ * specs assert job status, origin resolution, opts bridging and the ledger chain, and the
+ * handler passes the result through to `jobs.result`. Filling seventeen invented values into
+ * every stub would change what lands in the database for no assertion's benefit, so the stub
+ * objects stay byte-identical and `stubCrawl` is the one place the gap is declared.
+ */
+type StubPage = Pick<
+  PageRecord,
+  | "url"
+  | "status"
+  | "title"
+  | "metaDescription"
+  | "h1s"
+  | "canonical"
+  | "robotsMeta"
+  | "links"
+  | "wordCount"
+  | "jsonLdTypes"
+  | "issues"
+>;
+
+function stubCrawl(pages: StubPage[]): CrawlResult {
+  return { pages, skipped: [], fetchedAt: new Date().toISOString() } as unknown as CrawlResult;
+}
 
 async function makeUser(): Promise<string> {
   const { data, error } = await service.auth.admin.createUser({
@@ -177,14 +208,10 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
       createCrawlHandler({
         crawl: async (origin) => {
           seenOrigin = origin;
-          return {
-            pages: [{
-              url: origin, status: 200, title: null, metaDescription: null, h1s: [],
-              canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-            }],
-            skipped: [],
-            fetchedAt: new Date().toISOString(),
-          };
+          return stubCrawl([{
+            url: origin, status: 200, title: null, metaDescription: null, h1s: [],
+            canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+          }]);
         },
       }),
     );
@@ -207,14 +234,10 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
         resolveOrigin: async () => "https://scoped.example.com",
         crawl: async (_origin, opts) => {
           seenOpts = opts;
-          return {
-            pages: [{
-              url: "https://scoped.example.com/blog", status: 200, title: null, metaDescription: null,
-              h1s: [], canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-            }],
-            skipped: [],
-            fetchedAt: new Date().toISOString(),
-          };
+          return stubCrawl([{
+            url: "https://scoped.example.com/blog", status: 200, title: null, metaDescription: null,
+            h1s: [], canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+          }]);
         },
       }),
     );
@@ -342,14 +365,10 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
         // would prove nothing (measured — the 0-page version of this stub left it dead).
         crawl: async (origin) => {
           crawlRan = true;
-          return {
-            pages: [{
-              url: origin, status: 200, title: null, metaDescription: null, h1s: [],
-              canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-            }],
-            skipped: [],
-            fetchedAt: new Date().toISOString(),
-          };
+          return stubCrawl([{
+            url: origin, status: 200, title: null, metaDescription: null, h1s: [],
+            canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+          }]);
         },
       }),
     );
