@@ -189,6 +189,11 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
     );
     expect(spendingToolModules.sort()).toEqual([
       "tools/analyze-backlinks.ts",
+      // audit_speed (2026-08-17): the first vendor-spending tool whose name puts it in the audit
+      // family. It reaches reserveSpend through dfs/lighthouse.ts, so the scanner finds it here
+      // exactly as it would a fifth `dfs_*`-shaped tool — which is the point of deriving the rule
+      // from the import graph instead of from what a name looks like.
+      "tools/audit-speed.ts",
       "tools/compare-competitors.ts",
       "tools/ranked-keywords.ts",
       "tools/research-keywords.ts",

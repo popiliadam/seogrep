@@ -25,6 +25,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       audit_onpage: 30,
       audit_tech: 15,
       audit_schema: 5,
+      audit_speed: 15,
       audit_content: 12,
       generate_report: 15,
       whats_next: 0,
@@ -42,8 +43,12 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // the previous growth — no existing number moved — but with one difference that must not be
   // read past: 12 is UNSIGNED. This pin is what makes the proposal visible and immovable until a
   // human approves it; the PR carrying it is parked for exactly that signature (NEVER #6).
-  it("has exactly 23 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(23);
+  //
+  // 23 -> 24 on 2026-08-17: audit_speed (plan §B6) at a SIGNED 15 credits — the operator approved
+  // the number and the `urls <= 5` cap together on the same day. Same growth shape as the two
+  // before it (no existing number moved), and unlike audit_content this one arrives signed.
+  it("has exactly 24 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(24);
   });
 
   it("exposes only non-negative integer costs", () => {

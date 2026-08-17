@@ -15,18 +15,24 @@ import { TOOL_COSTS } from "./costs.ts";
  */
 
 describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
-  // Operator decision 2026-08-06: gate the four DataForSEO tools and NOTHING else. Adding or
-  // dropping a name here changes who can spend real vendor money, so it must be deliberate.
-  it("is exactly the four DataForSEO tools", () => {
+  // Operator decision 2026-08-06: gate the DataForSEO tools and NOTHING else. Adding or dropping
+  // a name here changes who can spend real vendor money, so it must be deliberate.
+  //
+  // audit_speed joined on 2026-08-17. It is the first member whose NAME does not announce it — it
+  // sits in the audit family, whose other four members read stored measurements and cost us only
+  // CPU — which is exactly why the structural rule (paid-balance.graph.test.ts) exists beside this
+  // hand-written pin.
+  it("is exactly the DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
+      "audit_speed",
       "compare_competitors",
       "ranked_keywords",
       "research_keywords",
     ]);
   });
 
-  it("leaves every crawl / audit / report / GSC tool ungated", () => {
+  it("leaves every crawl / stored-data audit / report / GSC tool ungated", () => {
     const ungated = (Object.keys(TOOL_COSTS) as (keyof typeof TOOL_COSTS)[]).filter(
       (tool) => !PAID_BALANCE_TOOLS.has(tool),
     );

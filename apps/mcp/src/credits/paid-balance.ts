@@ -13,8 +13,11 @@ import { getServiceClient } from "../db.ts";
  * the attacker. Rather than shrink the trial (a farm answers by minting more accounts; only the
  * honest user is punished), the surface that CARRIES the risk is cut off from trial credits.
  *
- * The gate is deliberately narrow. Only the four DataForSEO tools are listed; crawl, audit,
- * report and Search Console tools are untouched, because their marginal cost is our own CPU.
+ * The gate is deliberately narrow: it lists exactly the tools that spend VENDOR money. The crawl,
+ * report and Search Console tools are untouched, because their marginal cost is our own CPU — and
+ * so are audit_onpage / audit_tech / audit_schema / audit_content, which read stored measurements.
+ * `audit_speed` is the one audit that is NOT in that company: despite the family name it buys a
+ * Lighthouse run per page from DataForSEO, so it belongs on the paid side of the line.
  *
  * WHERE IT RUNS: credits/guard.ts, BEFORE the reserve. A refused call therefore burns zero
  * credits and writes no ledger row at all — refusing after a reserve would need a refund path,
@@ -24,16 +27,19 @@ import { getServiceClient } from "../db.ts";
 /**
  * Tools that require a paid balance — the vendor-cost surface, keyed by TOOL NAME.
  *
- * Keyed by name, NOT by a flag the caller passes: withCredits is reached from six places (the
- * four handlers below, the registry's "surface" path, and the async worker), and a flag is a
- * thing a future tool can forget to set. A name in this table is consulted no matter which path
- * the call arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership.
+ * Keyed by name, NOT by a flag the caller passes: withCredits is reached from several places (the
+ * handlers below, the registry's "surface" path, and the async worker), and a flag is a thing a
+ * future tool can forget to set. A name in this table is consulted no matter which path the call
+ * arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership, and
+ * paid-balance.graph.test.ts derives the requirement from the IMPORT GRAPH so a new vendor-spending
+ * tool cannot be left out of this set silently.
  */
 export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   "research_keywords",
   "ranked_keywords",
   "analyze_backlinks",
   "compare_competitors",
+  "audit_speed",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

@@ -28,6 +28,13 @@ export const TOOL_COSTS = {
   audit_onpage: 30,
   audit_tech: 15,
   audit_schema: 5,
+  // audit_speed (plan 2026-08-17 §B6): Google Lighthouse through DataForSEO's OnPage API, up to
+  // five page URLs per call. SIGNED BY THE OPERATOR 2026-08-17 at 15 — the same anchor as
+  // audit_tech, and the `urls <= 5` cap is part of the signed price, not a soft limit. Measured
+  // vendor cost: $0.005 per page, so five pages list at $0.025 against $0.186 of revenue (15
+  // credits x $0.0124) — a 7.4x margin, inside the band. NEVER #6: this number does not move
+  // without a fresh human signature across code + docs + pricing.
+  audit_speed: 15,
   // audit_content (plan 2026-08-14 §4-N8 / §5): the GSC × crawl join — queries the site earns
   // impressions for whose words are missing from the page's own title and h1s. It reads TWO
   // stored measurements and calls no paid API, so the price is the analysis, not a vendor cost.
