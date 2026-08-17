@@ -112,6 +112,12 @@ export function parseDfsTimestamp(raw: string): number | null {
  *
  * The OLDEST timestamp in the batch is the one reported — a table is only as fresh as its
  * stalest row, and quoting the freshest would flatter the batch.
+ *
+ * Rows the vendor has NO metrics for still count toward that oldest timestamp, deliberately.
+ * DFS stamps them anyway (measured: "backlink checker" came back with a `last_updated_time`
+ * and nothing else), and that stamp says when the vendor last looked — which is exactly the
+ * claim this line makes. Excluding them could only ever make the batch look FRESHER than the
+ * vendor's own oldest look at it, which is the wrong direction for an honesty line.
  */
 export function renderVendorFreshness(
   rows: readonly KeywordOverviewRow[],
@@ -172,8 +178,12 @@ export function formatKeywordOverview(
   if (rows.length === 0) {
     return `No search-volume data was returned for the ${input.keywords.length} keyword(s) requested.`;
   }
-  // Only keywords the vendor HAS data for feed the total; a keyword it knows nothing about
-  // contributes nothing rather than a silent zero, and is counted out loud instead.
+  // A no-data keyword adds NOTHING to the total — but note exactly HOW, because the two
+  // readings differ: nothing is filtered out here. Such a row's `search_volume` is null and
+  // `?? 0` adds a zero. The arithmetic is identical either way, and saying which one is
+  // actually written matters: a reader who believes there is a filter would go looking for one
+  // that does not exist, and would not notice if a future no-data row arrived carrying a
+  // non-null volume. What makes a no-data keyword VISIBLE is the header count below, not the sum.
   const totalVolume = rows.reduce((sum, row) => sum + (row.search_volume ?? 0), 0);
   const missing = rows.filter((row) => !row.has_data).length;
   const missingNote =

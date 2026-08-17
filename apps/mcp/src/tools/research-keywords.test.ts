@@ -72,6 +72,47 @@ describe("formatKeywordOverview — the OUTPUT CONTRACT the endpoint switch had 
     const text = formatKeywordOverview([], INPUT, NOW);
     expect(text).toMatch(/no search-volume data/i);
   });
+
+  it("says '1 keyword', not '1 keywords', for a single-keyword lookup", () => {
+    // The one-row header is its own branch and reads as broken English if it is missed. The
+    // plural side is pinned by the byte-for-byte spec above, so both sides are measured.
+    const text = formatKeywordOverview(
+      [classicRow({ keyword: "seo software", search_volume: 100 })],
+      { ...INPUT, keywords: ["seo software"] },
+      NOW,
+    );
+    expect(text.startsWith("Search volume for 1 keyword (language en, location 2840), ")).toBe(true);
+    expect(text).not.toContain("for 1 keywords");
+  });
+});
+
+/**
+ * What happens when the SAME keyword comes back twice.
+ *
+ * We do not know whether DataForSEO's keyword_overview endpoint ever does this — the operator
+ * A/B (2026-08-17) sent five distinct keywords and got five distinct rows, so the case has
+ * never been observed. That is precisely why the CURRENT behaviour is pinned rather than
+ * "fixed": inventing a silent de-duplication would delete a row the vendor actually sent, on a
+ * hunch about an endpoint nobody has seen misbehave, in a tool the user pays 25 credits to
+ * read. If a duplicate is ever observed live, THIS spec is where the decision gets revisited —
+ * with evidence instead of a guess.
+ */
+describe("formatKeywordOverview — a repeated keyword is passed through, not silently deduped", () => {
+  const duplicated = [
+    classicRow({ keyword: "seo software", search_volume: 22200, cpc: 9.87, competition_level: "HIGH" }),
+    classicRow({ keyword: "seo software", search_volume: 22200, cpc: 9.87, competition_level: "HIGH" }),
+  ];
+
+  it("renders BOTH rows rather than collapsing them", () => {
+    const lines = formatKeywordOverview(duplicated, INPUT, NOW).split("\n");
+    expect(lines.filter((line) => line.startsWith("• seo software —"))).toHaveLength(2);
+  });
+
+  it("counts the repeat in the header and in the total, exactly as the vendor sent it", () => {
+    expect(formatKeywordOverview(duplicated, INPUT, NOW)).toContain(
+      "Search volume for 2 keywords (language en, location 2840), 44,400 total monthly searches:",
+    );
+  });
 });
 
 describe("formatKeywordOverview — no data is NOT zero volume", () => {
@@ -210,6 +251,43 @@ describe("renderVendorFreshness — the CPC honesty line", () => {
     );
     expect(text).toContain("9 days ago");
     expect(text).not.toContain("1 day ago");
+  });
+
+  /**
+   * The age phrase has three branches — "today", "1 day ago", "N days ago" — and only the
+   * third was measured. The singular one is the branch that turns into "1 days ago" the moment
+   * anyone simplifies the expression, and nothing else in the suite would notice.
+   */
+  it("says 'today' when the vendor refreshed within the day", () => {
+    const text = renderVendorFreshness([classicRow({ keyword: "k", last_updated_time: daysBefore(0) })], NOW);
+    expect(text).toContain("(today).");
+    expect(text).not.toContain("0 days ago");
+  });
+
+  it("says '1 day ago', not '1 days ago', at exactly one day", () => {
+    const text = renderVendorFreshness([classicRow({ keyword: "k", last_updated_time: daysBefore(1) })], NOW);
+    expect(text).toContain("(1 day ago).");
+    expect(text).not.toContain("1 days ago");
+  });
+
+  /**
+   * Rows the vendor holds NO metrics for still feed the "oldest stamp" calculation — DFS
+   * stamps them anyway, and that stamp is exactly the claim this line makes: when the vendor
+   * last looked. Skipping them could only make the batch read FRESHER than the vendor's own
+   * oldest look, which is the wrong direction for an honesty line. Measured here rather than
+   * merely asserted in a comment.
+   */
+  it("counts a NO-DATA row's timestamp toward the oldest, never flattering the batch by skipping it", () => {
+    const text = renderVendorFreshness(
+      [
+        classicRow({ keyword: "answered", search_volume: 100, last_updated_time: daysBefore(2) }),
+        classicRow({ keyword: "backlink checker", has_data: false, last_updated_time: daysBefore(120) }),
+      ],
+      NOW,
+    );
+    expect(text).toContain("120 days ago");
+    expect(text).toMatch(/stale/);
+    expect(text).not.toContain("2 days ago");
   });
 
   it("calls the data stale in a SENTENCE at the imported threshold, not a day before", () => {
