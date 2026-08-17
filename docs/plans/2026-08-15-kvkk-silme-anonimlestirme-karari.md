@@ -94,7 +94,9 @@ OPERASYONEL hâle gelir:
    açar — ban + fingerprint fiilen kapatır; uygulama diliminin db-spec'i bunu pinler.
 3. **Runbook** (`docs/runbooks/kvkk-erasure.md`): talep → kimlik doğrulama → 30 gün bekleme
    (skill deseni; cayma penceresi) → erase akışı → tamamlama kaydı (events'e İNSERT — append-only
-   uyumlu denetim izi) → başvurana yanıt. Beta'da operatör koşar; self-servis buton ayrı karar.
+   uyumlu denetim izi; *bu INSERT, events tablosunun İLK üretim yazarı olur ve madde 8'in
+   "yeni yazar kararı yeniden açar" şerhini BİLİNÇLİ tetikler — imzacı iki maddeyi birlikte
+   görür*) → başvurana yanıt. Beta'da operatör koşar; self-servis buton ayrı karar.
 4. **paddle_events dayanak beyanı** (kod yok): privacy + retention doc'a ikinci istisna cümlesi
    ("payment-processing webhook records are retained for reconciliation and dispute defense for
    N years") + deletion-copy pinlerinin YENİ metne göre güncellenmesi. N önerisi: **10 yıl**
