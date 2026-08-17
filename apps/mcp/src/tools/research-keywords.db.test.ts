@@ -5,7 +5,7 @@ import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import { createMockResearchPort, disabledPort } from "../dfs/client.ts";
 import { makeResearchKeywordsTool } from "./research-keywords.ts";
-import fixtureResponse from "../dfs/fixtures/search-volume.json";
+import fixtureResponse from "../dfs/fixtures/keyword-overview.json";
 
 /**
  * DB-integration proof for research_keywords (25, SYNC self-settled surface charge) against
