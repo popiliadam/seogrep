@@ -4,6 +4,7 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   COMPETITORS_DISCOVERY_MAX_LIMIT,
+  DEFAULT_COMPETITORS_DISCOVERY_LIMIT,
   MAX_COMPETITORS,
   resolveDefaultCompetitorsPort,
   type ComparedDomainSource,
@@ -11,6 +12,7 @@ import {
   type CompetitorComparison,
   type CompetitorsPort,
   type DomainOrganicMetrics,
+  type PositionBandKey,
 } from "../dfs/competitors.ts";
 import { normalizeDomain } from "./setup-project.ts";
 import {
@@ -44,10 +46,12 @@ import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResu
  * On the serving path it settles via withCredits WITHOUT a jobId — the exact SURFACE ledger shape
  * (reserve -> commit, a traceability uuid, no jobs row).
  *
- * One comparison is up to five paid DataForSEO requests (see dfs/competitors.ts), and fewer when
- * the caller names the competitors. The port throws unless ALL of them succeed, so a partial table
- * is never billed: withCredits releases the reserve and the caller's balance ends where it started,
- * whichever request failed.
+ * One comparison is ONE paid DataForSEO request on the discovery path (see dfs/competitors.ts —
+ * the discovery response already carries every compared domain's whole-domain metrics), and up to
+ * MAX_COMPARED_DOMAINS when the caller names the competitors, because a named rival is not a
+ * discovery result and needs its own rank overview. The port throws unless ALL of them succeed, so
+ * a partial table is never billed: withCredits releases the reserve and the caller's balance ends
+ * where it started, whichever request failed.
  */
 
 /** United States — the DataForSEO default location_code (same default as ranked_keywords). */
@@ -78,11 +82,13 @@ const inputSchema = z.object({
     .int()
     .min(1)
     .max(COMPETITORS_DISCOVERY_MAX_LIMIT)
-    .default(COMPETITORS_DISCOVERY_MAX_LIMIT)
+    .default(DEFAULT_COMPETITORS_DISCOVERY_LIMIT)
     .describe(
       `How many rows the competitor-discovery request may return ` +
-        `(1–${COMPETITORS_DISCOVERY_MAX_LIMIT}, default ${COMPETITORS_DISCOVERY_MAX_LIMIT}). ` +
-        "Unused when you pass \"competitors\": that skips the discovery request entirely.",
+        `(1–${COMPETITORS_DISCOVERY_MAX_LIMIT}, default ${DEFAULT_COMPETITORS_DISCOVERY_LIMIT}). ` +
+        `Only the top ${MAX_COMPETITORS} rivals are compared, so raising this widens the pool the ` +
+        "ranking is drawn from without adding rows to the table. Unused when you pass " +
+        '"competitors": that skips the discovery request entirely.',
     ),
   language_code: z.string().min(2).default("en").describe("Language code (default 'en')."),
   location_code: z
@@ -96,8 +102,9 @@ const inputSchema = z.object({
 type CompareCompetitorsInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
-  "Compare a domain with its competitors on Google organic search — organic SERP counts, " +
-  "position bands, estimated monthly organic traffic, and the paid-equivalent traffic cost, side " +
+  "Compare a domain with its competitors on Google organic search — organic SERP counts, all " +
+  "twelve position bands (#1 to #100), estimated monthly organic traffic, the paid-equivalent " +
+  "traffic cost, and whether each domain is gaining or losing rankings, side " +
   `by side. NAME the competitors you care about (up to ${MAX_COMPETITORS}) for a useful ` +
   "comparison; automatic discovery only works well for domains with a broad keyword footprint. " +
   "Pass a target domain (any public domain) or a project_id to compare one of your own sites. " +
@@ -161,28 +168,87 @@ function renderOverlap(row: ComparisonRow): string {
 }
 
 /**
- * One domain's metric lines. Every label restates DataForSEO's own definition and nothing
+ * The twelve bands DataForSEO reports, with the label each one is printed under. They are split
+ * across two lines only so neither line runs past readable width; together they cover positions
+ * #1-#100, which is the complete range the vendor bands.
+ */
+const TOP_20_BANDS: readonly (readonly [PositionBandKey, string])[] = [
+  ["pos_1", "#1"],
+  ["pos_2_3", "#2-3"],
+  ["pos_4_10", "#4-10"],
+  ["pos_11_20", "#11-20"],
+];
+const DEEPER_BANDS: readonly (readonly [PositionBandKey, string])[] = [
+  ["pos_21_30", "#21-30"],
+  ["pos_31_40", "#31-40"],
+  ["pos_41_50", "#41-50"],
+  ["pos_51_60", "#51-60"],
+  ["pos_61_70", "#61-70"],
+  ["pos_71_80", "#71-80"],
+  ["pos_81_90", "#81-90"],
+  ["pos_91_100", "#91-100"],
+];
+
+/** "#1: 11 · #2-3: 28 · …" for one group of bands. */
+function renderBands(
+  metrics: DomainOrganicMetrics,
+  bands: readonly (readonly [PositionBandKey, string])[],
+): string {
+  return bands.map(([key, label]) => `${label}: ${metric(metrics[key])}`).join(" · ");
+}
+
+/** True when DataForSEO returned nothing at all for this scope. */
+function isEmpty(metrics: DomainOrganicMetrics): boolean {
+  return Object.values(metrics).every((value) => value === null);
+}
+
+/**
+ * One scope's metric lines. Every label restates DataForSEO's own definition and nothing
  * stronger: `count` is the "total count of organic SERPs that contain the domain" (SERPs, not
  * keywords); each `pos_*` band is the "number of organic SERPs where the domain ranks #N"; `etv`
  * is "estimated organic monthly traffic ... calculated as the product of CTR and search volume
  * values" (an estimate, so it is labelled as one); `estimated_paid_traffic_cost` is the "estimated
- * cost of converting organic search traffic into paid ... estimated monthly cost USD".
- *
- * The band line is labelled "(top 20)" because it is NOT a partition of `count`: DataForSEO bands
- * positions all the way to #91-100, and only the first four bands are rendered, so the four
- * numbers do not add up to the total above them.
+ * cost of converting organic search traffic into paid ... estimated monthly cost USD"; and the
+ * movement line quotes `is_new` / `is_up` / `is_down` / `is_lost` — "how many new ranked elements
+ * were found", "went up", "went down", and "were previously presented in SERPs, but weren't found
+ * during the last check". Nothing here says WHICH scope the numbers belong to; the caller prints
+ * that heading, because the whole-domain and shared-keyword figures are different numbers and an
+ * unlabelled block would let one pass for the other.
  */
-function renderMetrics(metrics: DomainOrganicMetrics): string {
-  if (Object.values(metrics).every((value) => value === null)) {
-    return "  - No organic ranking data on record.";
-  }
+function renderMetricLines(metrics: DomainOrganicMetrics): readonly string[] {
   return [
     `  - Organic SERPs containing the domain: ${metric(metrics.count)}`,
-    `  - Organic SERPs by position (top 20) — #1: ${metric(metrics.pos_1)}` +
-      ` · #2-3: ${metric(metrics.pos_2_3)}` +
-      ` · #4-10: ${metric(metrics.pos_4_10)} · #11-20: ${metric(metrics.pos_11_20)}`,
+    `  - Organic SERPs by position, #1-20 — ${renderBands(metrics, TOP_20_BANDS)}`,
+    `  - Organic SERPs by position, #21-100 — ${renderBands(metrics, DEEPER_BANDS)}`,
     `  - Estimated monthly organic traffic (ETV): ${metric(metrics.etv)}`,
     `  - Estimated monthly cost of the same traffic as paid ads: ${money(metrics.estimated_paid_traffic_cost)}`,
+    `  - Since DataForSEO's previous check — newly ranking: ${metric(metrics.is_new)}` +
+      ` · moved up: ${metric(metrics.is_up)} · moved down: ${metric(metrics.is_down)}` +
+      ` · no longer found: ${metric(metrics.is_lost)}`,
+  ];
+}
+
+/**
+ * A row's metric body: the whole-domain scope every row is compared on, plus — for a rival
+ * DataForSEO discovered — the SAME rival restricted to the keywords it shares with the target.
+ *
+ * The two scope headings are not decoration. DataForSEO documents `full_domain_metrics` as
+ * covering "all keywords that the provided domain is ranking for" and `metrics` as covering only
+ * "the keywords that the provided domain shares with the target domain", and the two differ by
+ * an order of magnitude on a large rival. Printing either one unlabelled would state a number the
+ * reader would reasonably take for the other.
+ */
+function renderMetrics(row: ComparisonRow): string {
+  const whole = isEmpty(row.metrics)
+    ? ["  - No organic ranking data on record."]
+    : ["  Across the whole domain — every keyword it ranks for:", ...renderMetricLines(row.metrics)];
+  if (!row.shared || isEmpty(row.shared)) {
+    return whole.join("\n");
+  }
+  return [
+    ...whole,
+    "  Across the keywords it shares with the target only:",
+    ...renderMetricLines(row.shared),
   ].join("\n");
 }
 
@@ -228,8 +294,7 @@ export function formatCompetitorComparison(
   input: CompetitorComparisonRenderInput,
 ): string {
   const blocks = comparison.rows.map(
-    (row) =>
-      `• ${row.domain} (${SOURCE_LABEL[row.source]})${renderOverlap(row)}\n${renderMetrics(row.metrics)}`,
+    (row) => `• ${row.domain} (${SOURCE_LABEL[row.source]})${renderOverlap(row)}\n${renderMetrics(row)}`,
   );
   return [renderHeading(comparison, input), ...blocks].join("\n\n");
 }
