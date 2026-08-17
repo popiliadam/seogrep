@@ -275,6 +275,14 @@ describe("generate_report sync charge against the local stack", () => {
     expect(reports[0]?.html ?? "").toContain("powered by");
     expect(text).toContain(reports[0]?.public_slug ?? "MISSING");
 
+    // The pull's OWN timestamp reached the report (R1-c). Same wiring-vs-renderer gap the (a3)
+    // spec below documents: `ReportInput.pulledAt` is OPTIONAL, so dropping it in the tool is
+    // invisible to tsc AND to the renderer's own specs, which feed the model directly. Measured:
+    // hardcoding `pulledAt = null` in the tool turned nothing else in the suite red.
+    // The DATE is not asserted — the seeded job is created now, and pinning today's date would
+    // make this spec fail at a midnight boundary for reasons that say nothing about the wiring.
+    expect(reports[0]?.html ?? "").toMatch(/Pulled \d{4}-\d{2}-\d{2}/);
+
     // Sync surface: only the two seeded jobs exist — generate_report created no jobs row.
     expect(await jobCount(user.userId)).toBe(2);
   });
