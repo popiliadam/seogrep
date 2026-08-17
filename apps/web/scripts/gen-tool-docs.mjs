@@ -758,13 +758,26 @@ export const DOC_PROSE = {
       "- **CPC** and **competition** — the advertiser bid and the HIGH/MEDIUM/LOW band. They come " +
       "with this lookup, so you do not need a separate `research_keywords` call to get them for a " +
       "keyword you already rank for.\n" +
+      "- **Difficulty** and **intent** — how hard the keyword is to rank for (0–100) and what " +
+      "searchers want from it. The same two figures `research_keywords` reports, in the same " +
+      "words, without a second call.\n" +
       "- **Estimated traffic** — DataForSEO's estimate of the monthly visits *this ranking* " +
       "earns. Usually a sharper priority signal than position and volume read separately.\n" +
       "- **URL** and **title** — the page that holds the ranking, and the title it shows in the " +
       "SERP.\n\n" +
-      "Each of those per-row fields is **omitted when DataForSEO did not send it**, rather than " +
-      "padded with `n/a`. A dated line under the table says when the vendor last refreshed the " +
-      "CPC and competition figures, and says so in a sentence once that is over a month old.\n\n" +
+      "When there is more to say about the result page, a second indented line follows the row:\n\n" +
+      "- **Movement** — whether the ranking is new, moved up or moved down since DataForSEO's " +
+      "previous check, and where it was. This is what makes the tool a change report rather than " +
+      "a snapshot: run it on a schedule and the movement lines are the story.\n" +
+      "- **What else is on that SERP** — the other element types Google showed, `ai_overview` " +
+      "included. It is the direct explanation of the organic/on-page position gap above, naming " +
+      "what sits between your result and the top of the page.\n" +
+      "- **A verify link** — Google, at the exact locale DataForSEO measured. You cannot rebuild " +
+      "it from the keyword alone, and the locale is usually what a surprising result turns on.\n\n" +
+      "Each of those fields is **omitted when DataForSEO did not send it**, rather than padded " +
+      "with `n/a`; a row with nothing extra to say stays a single line. A dated line under the " +
+      "table says when the vendor last refreshed the CPC and competition figures, and says so in " +
+      "a sentence once that is over a month old.\n\n" +
       "Only **organic** results are counted — paid placements are excluded. The header line says " +
       "how many rows you got, which ordering you got them in, and — when the domain ranks for " +
       "more than the `limit` you asked for — how many it ranks for in total, so a truncated list " +
@@ -796,8 +809,10 @@ export const DOC_PROSE = {
       "traffic cost, and how many rankings are new, up, down or gone since DataForSEO's previous " +
       "check — followed by one row per ranked keyword: keyword, organic position (and the " +
       "on-page position when a SERP feature outranks it), search volume, CPC, competition, " +
-      "estimated traffic, the ranking URL and its SERP title. Fields DataForSEO did not send are " +
-      "left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
+      "difficulty, intent, estimated traffic, the ranking URL and its SERP title, plus a second " +
+      "line carrying how the ranking moved, which other element types share that SERP " +
+      "(`ai_overview` among them) and a link to check Google yourself. Fields DataForSEO did not " +
+      "send are left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
       "keywords are shown, in which ordering, and out of how many in total; when you looked the " +
       "site up by `project_id`, it names that project. A dated line under the table says when the " +
       "vendor last refreshed the CPC and competition figures. A domain with no organic rankings " +
