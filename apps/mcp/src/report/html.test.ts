@@ -363,6 +363,146 @@ describe("enriched audit sections (R1-a)", () => {
 });
 
 /**
+ * R1-d. escapeHtml is applied at every sink in this file and always has been — but only four of
+ * those sinks were pinned by a spec, so deleting it from any of the others turned nothing red.
+ * A protection that is correct and unmeasured is one careless edit from being neither.
+ *
+ * EVERY assertion here is TWO-SIDED, and that is the whole point: "the raw tag is absent" passes
+ * trivially when a section is not rendered at all, so each case also demands the ESCAPED form be
+ * present. Only the pair proves the value reached the page and was neutralised on the way.
+ */
+const XSS = '"><img src=x onerror=alert(1)>';
+/** What XSS must look like once escaped — asserted so absence alone is never the whole claim. */
+const XSS_ESCAPED = "&lt;img src=x onerror=alert(1)&gt;";
+
+function expectNeutralised(html: string): void {
+  // No live tag, and no attribute break-out. "onerror=" is deliberately NOT asserted absent: it
+  // survives inside the ESCAPED text, harmlessly, and forbidding it would only mean the payload
+  // could never be checked for at all.
+  expect(html).not.toMatch(/<img\b/i);
+  expect(html).not.toContain('"><img');
+  expect(html).toContain(XSS_ESCAPED);
+}
+
+describe("every dynamic value is escaped (R1-d)", () => {
+  it("neutralises a hostile DOMAIN (header text AND the head meta description)", () => {
+    // The domain reaches TWO sinks: the header line and reportDescription inside <meta content>.
+    const html = renderReportHtml({ ...FULL_MODEL, domain: XSS });
+    expectNeutralised(html);
+    // The meta value is delimited by double quotes, so an unescaped payload would TERMINATE the
+    // attribute and the rest would leak as live markup. Read the attribute back and check the
+    // quote never survived: the capture below can only span the whole value if it did not.
+    const meta = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? "";
+    expect(meta).toContain("&lt;img");
+    expect(meta).not.toContain("<");
+  });
+
+  it("neutralises a hostile generatedAt (it is echoed raw when it will not parse)", () => {
+    // isoDate returns its input unchanged when Date cannot read it, so this string reaches the
+    // header and the meta description verbatim — escaping is the only thing standing there.
+    const html = renderReportHtml({ ...FULL_MODEL, generatedAt: XSS });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile crawl fetchedAt", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      crawl: { ...FULL_MODEL.crawl!, fetchedAt: XSS },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises hostile GSC window dates", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      gsc: { ...FULL_MODEL.gsc!, windowStart: XSS, windowEnd: XSS },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile pulledAt", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      gsc: { ...FULL_MODEL.gsc!, pulledAt: XSS },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile report title", () => {
+    // The title reaches <title> AND the <h1>.
+    const html = renderReportHtml({ ...FULL_MODEL, title: XSS });
+    expectNeutralised(html);
+  });
+
+  it("neutralises hostile crawled URLs in the enriched technical lists (R1-a)", () => {
+    const html = renderReportHtml({
+      ...ENRICHED,
+      tech: { ...ENRICHED.tech!, slowPages: { items: [{ url: XSS, fetchMs: 9000 }], total: 1 } },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile X-Robots-Tag header value", () => {
+    // A response HEADER is attacker-controlled on any site that reflects one.
+    const html = renderReportHtml({
+      ...ENRICHED,
+      tech: {
+        ...ENRICHED.tech!,
+        xRobotsConflicts: { items: [{ url: "https://example.com/x", xRobotsTag: XSS }], total: 1 },
+      },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile JSON-LD @type and missing-field name", () => {
+    const html = renderReportHtml({
+      ...ENRICHED,
+      schema: {
+        ...ENRICHED.schema!,
+        missingFields: {
+          items: [{ url: "https://example.com/p", type: XSS, missing: [XSS] }],
+          total: 1,
+        },
+      },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile skip-category label", () => {
+    const html = renderReportHtml({
+      ...ENRICHED,
+      tech: { ...ENRICHED.tech!, skippedByCategory: [{ label: XSS, count: 1 }] },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises hostile GSC queries and pages in the Opportunities section (R1-b)", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      opportunities: {
+        ...FULL_MODEL.opportunities!,
+        quickWins: {
+          items: [{ query: XSS, page: XSS, clicks: 1, impressions: 50, ctr: 0.02, position: 12 }],
+          total: 1,
+        },
+      },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile duplicate-content URL", () => {
+    const html = renderReportHtml({
+      ...ENRICHED,
+      onpage: {
+        ...ENRICHED.onpage!,
+        duplicateGroups: { items: [{ hash: "abc", urls: [XSS] }], total: 1 },
+      },
+    });
+    expectNeutralised(html);
+  });
+});
+
+/**
  * R1-c. A report generated today from a three-month-old measurement carried TODAY'S date at the
  * top and said nothing about the age of the data underneath it.
  */
