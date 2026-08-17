@@ -174,7 +174,7 @@ describe("the migration-0014 vendor-budget counter", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       await expect(
-        client.fetchSearchVolume({ keywords: ["x"], language_code: "en", location_code: 2840 }),
+        client.fetchKeywordOverview({ keywords: ["x"], language_code: "en", location_code: 2840 }),
       ).rejects.toThrow(/budget ledger unavailable/i);
       expect(transport).not.toHaveBeenCalled(); // not one paid request went out
       const logged = errorSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
