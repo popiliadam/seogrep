@@ -1,5 +1,12 @@
+import {
+  DEEP_PAGE_DEPTH,
+  HEAVY_PAGE_BYTES,
+  REDIRECT_CHAIN_MIN,
+  SLOW_PAGE_MS,
+} from "../audit/index.ts";
 import type {
   AggRow,
+  CappedList,
   CrawlSummary,
   GscSummary,
   OnpageSummary,
@@ -16,12 +23,13 @@ import { isoDate } from "./model.ts";
  * acquisition surface. This is what generate_report stores in reports.html and the public
  * /r/[slug] page serves.
  *
- * SECURITY: every dynamic value (title, domain, GSC query strings and page URLs, and crawled
- * JSON-LD @type names) is HTML-escaped through escapeHtml before it enters the markup — all of
- * it is untrusted site data and must never be able to inject markup. The audit sections (G1)
- * emit only counts (numbers) plus static finding labels and those @type names, every one as
- * escaped TEXT; no crawled page URL is ever emitted as href/src, so the document still issues
- * no request when opened. The static chrome is the only literal HTML.
+ * SECURITY: every dynamic value (title, domain, GSC query strings, crawled page URLs, JSON-LD
+ * @type names, and X-Robots-Tag header values) is HTML-escaped through escapeHtml before it
+ * enters the markup — all of it is untrusted site data and must never be able to inject markup.
+ * R1-a widened WHAT is emitted (the audit sections now list the URLs behind their counts, because
+ * a number alone tells nobody which page to fix) but not HOW: a crawled URL renders as escaped
+ * TEXT and is never emitted as href/src, so the document still issues no request when opened.
+ * The static chrome is the only literal HTML.
  */
 
 /** Escape the five HTML-significant characters so untrusted data cannot break out of text. */
@@ -75,6 +83,9 @@ const STYLE = `
   code { font-family: "Courier New", Courier, monospace; font-size: 13px; background: #f5f2ea; padding: 1px 6px; }
   ul.issues { margin: 0; padding-left: 18px; color: #524f48; }
   ul.issues li { margin: 3px 0; }
+  /* Crawled URLs render as TEXT, never links — long paths must wrap rather than widen the page. */
+  .u { font-family: "Courier New", Courier, monospace; font-size: 13px; word-break: break-word; }
+  li.more { list-style: none; margin-left: -18px; }
   h3.toplabel { margin: 18px 0 6px; font-family: "Courier New", Courier, monospace; font-size: 11px;
     color: #b45309; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
   .hint { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 12px; margin: 12px 0 0; }
@@ -95,6 +106,31 @@ function statBlock(n: number, label: string): string {
  */
 export function auditHint(tool: string): string {
   return `<p class="hint">Run <code>${escapeHtml(tool)}</code> for the full per-page breakdown.</p>`;
+}
+
+/**
+ * A capped list as a labelled block: the caption with the PRE-CAP total, the rows, and a
+ * "… and N more" tail when the cap cut some.
+ *
+ * RETURNS "" WHEN THERE IS NOTHING, and that empty string is the absence-is-not-a-finding rule
+ * living at the renderer (audit/format.ts does exactly this): every one of these lists is empty
+ * both for a clean site AND for a crawl taken before the signal existed, so a "Slow pages: 0"
+ * header would report a measurement that never happened. Silence is the honest rendering.
+ *
+ * `row` returns already-escaped HTML — each caller escapes its own untrusted fields, because only
+ * the caller knows which parts are data and which are the static labels around them.
+ */
+function listBlock<T>(caption: string, list: CappedList<T>, row: (item: T) => string): string {
+  if (list.total === 0) return "";
+  const hidden = list.total - list.items.length;
+  const tail = hidden > 0 ? `<li class="more">… and ${fmtNum(hidden)} more</li>` : "";
+  return `<h3 class="toplabel">${escapeHtml(caption)} (${fmtNum(list.total)})</h3>
+    <ul class="issues">${list.items.map((item) => `<li>${row(item)}</li>`).join("")}${tail}</ul>`;
+}
+
+/** A crawled URL as escaped, non-linking text — the shape every URL in an audit section takes. */
+function urlText(url: string): string {
+  return `<span class="u">${escapeHtml(url)}</span>`;
 }
 
 function crawlSection(crawl: CrawlSummary): string {
@@ -123,14 +159,50 @@ function onpageSection(onpage: OnpageSummary): string {
       : `<ul class="issues">${onpage.findings
           .map((f) => `<li><strong>${fmtNum(f.count)}</strong> — ${escapeHtml(f.label)}</li>`)
           .join("")}</ul>`;
+  const clean = onpage.pageCount - onpage.pagesWithFindings;
+  const split =
+    onpage.findings.length === 0
+      ? ""
+      : `<p class="muted">${fmtNum(onpage.pagesWithFindings)} page(s) with findings;
+      ${fmtNum(clean)} clean.</p>`;
   return `<section class="rpt">
     <h2>On-page issues</h2>
     ${body}
+    ${split}
+    ${listBlock(
+      "Duplicate content (pages sharing one text fingerprint)",
+      onpage.duplicateGroups,
+      (g) =>
+        `<strong>${fmtNum(g.urls.length)}</strong> pages share one fingerprint: ` +
+        g.urls.map(urlText).join(", "),
+    )}
     ${auditHint("audit_onpage")}
   </section>`;
 }
 
-/** Technical health from the REAL engine (G1): the HTTP status split + robots-conflict count. */
+/**
+ * The sitemap↔crawl block. Unlike every list around it this prints even at 0 and 0: a NON-null
+ * diff means the sitemap was actually read, so "0 missing either way" is a measured agreement
+ * worth stating, where an empty signal list would be an unmeasured axis (audit/format.ts).
+ */
+function sitemapBlock(tech: TechSummary): string {
+  const diff = tech.sitemapDiff;
+  if (diff === null) return "";
+  return `<h3 class="toplabel">Sitemap vs crawl</h3>
+    <p class="muted">${fmtNum(diff.sitemapUrls)} URL(s) read from the sitemap ·
+    ${fmtNum(diff.missingFromCrawl.total)} in the sitemap but not crawled ·
+    ${fmtNum(diff.missingFromSitemap.total)} crawled but not in the sitemap.</p>
+    ${listBlock("In the sitemap, never crawled or skipped", diff.missingFromCrawl, urlText)}
+    ${listBlock("Crawled but absent from the sitemap", diff.missingFromSitemap, urlText)}`;
+}
+
+/**
+ * Technical health from the REAL engine. G1 printed the four status counts and a robots-conflict
+ * number; the engine had already computed nine more sections and the report threw them away.
+ *
+ * Every threshold in the copy is INTERPOLATED FROM THE RULE'S OWN CONSTANT, never retyped, so the
+ * number a reader is given and the number the rule used cannot drift apart (audit/format.ts).
+ */
 function techSection(tech: TechSummary): string {
   return `<section class="rpt">
     <h2>Technical health</h2>
@@ -141,6 +213,58 @@ function techSection(tech: TechSummary): string {
       ${statBlock(tech.serverError5xx, "Server errors (5xx)")}
     </div>
     <p class="muted">Robots conflicts (noindex but internally linked): <strong>${fmtNum(tech.robotsConflicts)}</strong></p>
+    ${listBlock("Client error pages (4xx)", tech.clientErrorUrls, urlText)}
+    ${listBlock("Server error pages (5xx)", tech.serverErrorUrls, urlText)}
+    ${listBlock(
+      "Broken internal links",
+      tech.brokenInternalLinks,
+      (l) => `${urlText(l.from)} → ${urlText(l.to)} (${fmtNum(l.status)})`,
+    )}
+    ${listBlock(
+      `Slow pages (over ${fmtNum(SLOW_PAGE_MS)} ms)`,
+      tech.slowPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.fetchMs)} ms`,
+    )}
+    ${listBlock(
+      `Heavy pages (HTML over ${fmtNum(HEAVY_PAGE_BYTES)} bytes)`,
+      tech.heavyPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.htmlBytes)} bytes`,
+    )}
+    ${listBlock(
+      `Redirect chains (${fmtNum(REDIRECT_CHAIN_MIN)}+ hops)`,
+      tech.redirectChains,
+      (c) => [...c.chain, c.url].map(urlText).join(" → "),
+    )}
+    ${listBlock(
+      "X-Robots-Tag conflicts (header says noindex, meta does not)",
+      tech.xRobotsConflicts,
+      (c) => `${urlText(c.url)} — <code>${escapeHtml(c.xRobotsTag)}</code>`,
+    )}
+    ${listBlock(
+      `Deep pages (${fmtNum(DEEP_PAGE_DEPTH)}+ clicks from a crawl seed)`,
+      tech.deepPages,
+      (p) => `${urlText(p.url)} — depth ${fmtNum(p.depth)}`,
+    )}
+    ${listBlock(
+      "No internal links found (orphan signal)",
+      tech.orphanSignals,
+      (p) => `${urlText(p.url)} — depth ${fmtNum(p.depth)}`,
+    )}
+    ${
+      tech.orphanSignals.total > 0
+        ? `<p class="hint">The crawl is bounded, so a page whose only linking page was not
+      fetched appears here too.</p>`
+        : ""
+    }
+    ${
+      tech.skippedByCategory.length > 0
+        ? `<h3 class="toplabel">Not crawled (${fmtNum(tech.skippedCount)})</h3>
+    <ul class="issues">${tech.skippedByCategory
+      .map((s) => `<li><strong>${fmtNum(s.count)}</strong> — ${escapeHtml(s.label)}</li>`)
+      .join("")}</ul>`
+        : ""
+    }
+    ${sitemapBlock(tech)}
     ${auditHint("audit_tech")}
   </section>`;
 }
@@ -156,13 +280,39 @@ function schemaSection(schema: SchemaSummary): string {
       : `<ul class="issues">${schema.topTypes
           .map((t) => `<li><strong>${fmtNum(t.pages)}</strong> — ${escapeHtml(t.type)}</li>`)
           .join("")}</ul>`;
+  // The closing note states WHAT WAS ACTUALLY DONE, and that differs by crawl (audit/format.ts).
+  // pagesValidated is 0 on every crawl stored before the JSON-LD bodies shipped, and claiming the
+  // fields were checked there would be the strongest possible claim about the least-measured axis.
+  const note =
+    schema.pagesValidated > 0
+      ? `Detection is JSON-LD only (microdata/RDFa are not read); required fields were checked
+        against the stored JSON-LD bodies on ${fmtNum(schema.pagesValidated)} page(s).`
+      : `Detection is JSON-LD only (microdata/RDFa are not read); only @type names are analyzed,
+        never the JSON-LD body.`;
   return `<section class="rpt">
     <h2>Structured data</h2>
     <div class="stats">
       ${statBlock(schema.pagesWithSchema, "Pages with schema")}
+      ${statBlock(schema.pagesWithout, "Pages without")}
       ${statBlock(schema.pageCount, "Pages crawled")}
     </div>
     ${types}
+    ${listBlock(
+      "Required fields missing",
+      schema.missingFields,
+      (f) => `${urlText(f.url)} — ${escapeHtml(f.type)} is missing ${escapeHtml(f.missing.join(", "))}`,
+    )}
+    ${listBlock(
+      "Pages with unparseable JSON-LD",
+      schema.invalidJson,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.blocks)} block(s) failed to parse`,
+    )}
+    ${listBlock(
+      "Pages whose JSON-LD was only partly stored",
+      schema.truncatedPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.dropped)} block(s) not stored`,
+    )}
+    <p class="hint">${note}</p>
     ${auditHint("audit_schema")}
   </section>`;
 }
