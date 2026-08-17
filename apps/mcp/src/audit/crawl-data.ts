@@ -72,6 +72,15 @@ export interface AuditPage {
   readonly depth?: number;
   /** How many DISTINCT pages in this same crawl link to this URL. */
   readonly inLinkCount?: number;
+  /**
+   * The RAW JSON-LD bodies the crawler stored (bounded: 5 blocks x 4000 chars). `undefined` is
+   * the load-bearing state here: a crawl from before the bodies existed carries ONLY type names,
+   * and a validator that read that as "no blocks" would report every Product on it as clean —
+   * the strongest possible claim about the axis it least measured.
+   */
+  readonly jsonLdBlocks?: string[];
+  /** How many of the page's JSON-LD blocks were NOT stored (over the block / size ceiling). */
+  readonly jsonLdTruncated?: number;
 }
 
 export interface AuditSkipped {
@@ -83,6 +92,13 @@ export interface AuditCrawl {
   readonly pages: AuditPage[];
   readonly skipped: AuditSkipped[];
   readonly fetchedAt: string | null;
+  /**
+   * The URLs the crawl read out of /sitemap.xml, bounded by the crawler (500). OPTIONAL, and the
+   * three states are three different answers: `undefined` = the stored crawl predates the field,
+   * so nobody looked; `[]` = the crawl looked and found no usable sitemap; a non-empty list = the
+   * sitemap↔crawl diff has something to compare. The diff rule fires only in the third case.
+   */
+  readonly sitemapUrls?: string[];
 }
 
 function asObject(value: Json | undefined): Record<string, Json | undefined> | null {
@@ -179,6 +195,8 @@ function parsePage(raw: Json | undefined): AuditPage | null {
     contentHash: asOptionalString(obj.contentHash),
     depth: asOptionalNumber(obj.depth),
     inLinkCount: asOptionalNumber(obj.inLinkCount),
+    jsonLdBlocks: asOptionalStringArray(obj.jsonLdBlocks),
+    jsonLdTruncated: asOptionalNumber(obj.jsonLdTruncated),
   };
 }
 
@@ -201,5 +219,12 @@ export function parseCrawlResult(result: Json | null): AuditCrawl | null {
   const skipped = obj.skipped
     .map(parseSkipped)
     .filter((skip): skip is AuditSkipped => skip !== null);
-  return { pages, skipped, fetchedAt: asString(obj.fetchedAt) };
+  return {
+    pages,
+    skipped,
+    fetchedAt: asString(obj.fetchedAt),
+    // Absent-preserving, like the page-level optionals: a stored result with no sitemapUrls key
+    // is a crawl that never recorded one, and the diff must stay silent on it.
+    sitemapUrls: asOptionalStringArray(obj.sitemapUrls),
+  };
 }
