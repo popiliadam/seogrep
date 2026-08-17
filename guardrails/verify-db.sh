@@ -38,9 +38,11 @@ pnpm turbo run build --filter='./packages/*'
 # Until this step existed, *.db.test.ts had NO type checker anywhere. apps/mcp and
 # packages/db exclude `src/**/*.test.ts` from their tsconfig, so `pnpm typecheck` never read
 # one; vitest's transform strips types without checking them, so the lane was green while
-# type errors piled up unseen (16 of them, across three files' worth of drifted fixtures and
-# a schema slice the specs had outgrown). One `tsconfig.dbtest.json` per package re-adds
-# exactly those files.
+# type errors piled up unseen — drifted fixtures and a schema slice the specs had outgrown,
+# all cleared in the commit that follows this gate's. No count is quoted here on purpose: the
+# total depends on the order the fixes are staged in (one `.mjs` import changes ITS OWN error
+# code once `allowJs` lands), so a number in a comment would be wrong for the next reader.
+# One `tsconfig.dbtest.json` per package re-adds exactly those files.
 #
 # BEFORE `supabase start` / `db reset` on purpose. The check is STATIC — no stack, no Docker,
 # seconds — and resetting a shared stack to then discover a type error is minutes spent for
