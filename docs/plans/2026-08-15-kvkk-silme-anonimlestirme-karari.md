@@ -61,18 +61,37 @@
 Vaat değişmez ("ledger + hesap kaydı kalır, gerisi gider") — bugün yalnız SÖZ olan şey
 OPERASYONEL hâle gelir:
 
-1. **`erase_tenant(user_id)` RPC** (SECURITY DEFINER, owner-yolu; 0018 `apply_subscription_event`
-   emsali): sırayla — gsc_accounts'ları oku → (web katmanında) her biri için Google revoke →
-   projects DELETE (cascade: jobs.project_id SET NULL değil— jobs user-FK'siyle zaten user'a bağlı;
-   crawl_pages/audit_runs/gsc_discovery_runs proje-cascade'iyle gider) → jobs/reports/api_keys/
-   subscriptions/gsc_accounts/gsc_connections/users_profile DELETE. Grant'ler değişmez —
-   fonksiyon owner yetkisiyle koşar; `credit_ledger`/`events`/`paddle_events`'e DOKUNMAZ
-   (trigger'lar zaten fiziksel sigorta). Migration 0027 adayı; 0016/0024 zırh üslubuyla,
-   append-only kapısına yeni istisna AÇMADAN.
+1. **`erase_tenant(user_id)` RPC** (SECURITY DEFINER, owner-yolu; emsal **`claim_trial`** —
+   0009:98 + 0020:113 `security definer`; *hakem düzeltmesi 2026-08-17: ilk taslağın andığı 0018
+   `apply_subscription_event` YANLIŞ emsaldi — o SECURITY INVOKER'dır (0018:69). claim_trial daha
+   güçlü emsal: FORCE-RLS'li, yazma-policy'siz `users_profile` + `credit_ledger`'a owner yoluyla
+   FİİLEN yazıyor, canlıda + db-testte kanıtlı — yani A'nın "grant'ler değişmez, owner koşar"
+   mekaniği ölçülmüş durumda*): sırayla — gsc_accounts'ları oku → (web katmanında) her biri için
+   Google revoke → projects DELETE (0017 gereği jobs.project_id SET NULL olur; crawl_pages/
+   audit_runs/gsc_discovery_runs proje-cascade'iyle gider) → jobs/reports/api_keys/subscriptions/
+   gsc_accounts/gsc_connections/users_profile DELETE → **trial_claims.user_id → NULL UPDATE**
+   (SET NULL'un elle gerçekleştirilmesi — auth satırı silinmediği için FK tetiklenmez;
+   service_role'un UPDATE grant'i 0020'de zaten var; `email_fingerprint` KALIR, ki 0020'nin kendi
+   gerekçesiyle "daha mahrem hal" ve re-trial kapısının parçası). Grant'ler değişmez;
+   `credit_ledger`/`events`/`paddle_events`'e DOKUNMAZ (trigger'lar fiziksel sigorta —
+   `events.user_id` de append-only trigger'ı yüzünden NULL'lanamaz, aşağıda kalıntı listesinde).
+   Migration numarası: sıradaki boş numara (komşu dalın 0026 `audit_content_runs` rezervasyonuna
+   çarpmadan — dispatch anında ölçülür). 0016/0024 zırh üslubuyla, append-only kapısına yeni
+   istisna AÇMADAN.
 2. **`auth.users` satırı SİLİNMEZ, KİMLİKSİZLEŞTİRİLİR** (RESTRICT'e dokunulmaz): admin API ile
-   e-posta → `erased-<uuid>@anon.invalid`, parola/oturum/factor temizliği + ban. Kalan: çıplak
-   uuid ↔ ledger toplamları. KVKK yeterliliği: uuid tek başına kimliklendirmez; e-posta/token/
-   domain/sorgu verisi gitmiştir; dayanak §1 ile yazılı beyan edilir.
+   e-posta → `erased-<uuid>@anon.invalid`, parola/oturum/factor temizliği + ban. **Doğrulama
+   varsayımı (uygulama dilimi kanıtlamak zorunda):** `auth.identities` + `user_metadata`'nın da
+   temizlendiği/temizlenebildiği ve ban süresinin admin API'de kalıcı kurulabildiği — imza değil
+   ölçüm kalemi. **KALINTI ENVANTERİ (hakem düzeltmesi — SET NULL'lar auth-DELETE'siz ATEŞLENMEZ,
+   dürüst liste):** (i) çıplak auth-uuid ↔ ledger toplamları; (ii) `trial_claims` satırı —
+   `user_id` adım 1'de elle NULL'lanır, `email_fingerprint` (hash — KVKK'da hâlâ kişisel veri
+   sayılır) + `email_domain` KALIR (dayanak: re-trial kötüye-kullanım önleme, meşru menfaat —
+   imza maddesi 7); (iii) `events` satırları — `user_id` bağıyla KALIR (append-only trigger
+   UPDATE'i de blokluyor; ölçüldü: bugün events'e yazan ÜRETİM KODU YOK, tablo fiilen boş — yazar
+   eklenirse bu karar yeniden açılır, imza maddesi 8); (iv) `paddle_events` ham gövdesi (madde 2).
+   KVKK yeterliliği bu DÜZELTİLMİŞ envanter üzerinden savunulur; dayanaklar §1 ile yazılı beyan
+   edilir. Not: auth satırı canlıyken `users_profile` silmek 0015'in re-trial kapısını teorik
+   açar — ban + fingerprint fiilen kapatır; uygulama diliminin db-spec'i bunu pinler.
 3. **Runbook** (`docs/runbooks/kvkk-erasure.md`): talep → kimlik doğrulama → 30 gün bekleme
    (skill deseni; cayma penceresi) → erase akışı → tamamlama kaydı (events'e İNSERT — append-only
    uyumlu denetim izi) → başvurana yanıt. Beta'da operatör koşar; self-servis buton ayrı karar.
@@ -127,6 +146,11 @@ dalgası (0023/0024/0025 emsali).
 5. A2 payload minimizasyonu — evet/hayır (evet ise ayrı dilim olarak kuyruğa).
 6. Self-servis silme butonu bu fazda VAR MI (öneri: HAYIR — beta'da e-posta+runbook; buton,
    D17-onay-tasarımı sınıfı ayrı iş).
+7. `trial_claims` kalıntısı: `user_id` NULL'lanır, `email_fingerprint`+`email_domain` re-trial
+   önleme dayanağıyla KALIR (öneri: EVET — 0020'nin kendi tasarım gerekçesi) — evet/hayır.
+8. `events` kalıntısının kabulü: bugün yazarı yok/boş; append-only zırhı gereği user_id bağı
+   temizlenemez; tabloya üretim yazarı eklenecek her gelecek dilim bu kararı YENİDEN AÇAR
+   (öneri: kabul + bu şerh) — evet/hayır.
 
 ## §5 Bu dosyanın yazmadıkları (bilinçli)
 
