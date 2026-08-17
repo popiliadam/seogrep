@@ -38,3 +38,8 @@ export * from "./guide/crawl-summary.js";
 // jsonb of unknown shape, and the two summarizers are told apart by SHAPE rather than tool name,
 // so they can be tried in either order and at most one of them answers.
 export * from "./guide/pull-summary.js";
+
+// audit_content's engine: the pure join of Search Console demand against crawled titles/h1s.
+// It reads two arrays and touches nothing else — no clock, no network, no database — so it
+// belongs here rather than in apps/mcp, and the tool that sells it stays a thin wrapper.
+export * from "./content/title-query-match.js";
