@@ -7,10 +7,11 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { AuthContext } from "../auth.ts";
-import { withCredits } from "../credits/guard.ts";
+import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
+import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 
 /**
@@ -87,6 +88,14 @@ export interface RegisteredTool {
   readonly name: ToolName;
   readonly description: string;
   readonly inputJsonSchema: Record<string, unknown>;
+  /**
+   * The RESOLVED charge mode (spec.charge ?? "surface"), carried here because the registry's
+   * failure path has to answer a money question the caller always asks first — "was I charged?" —
+   * and the answer depends ENTIRELY on this. On "surface" and "handler" the reserve is opened and
+   * released inside this request; on "worker" it belongs to a background job this catch cannot
+   * see. See refundAssurance below.
+   */
+  readonly charge: ChargeMode;
   run(ctx: AuthContext, rawInput: unknown): Promise<ToolResult>;
 }
 
@@ -121,6 +130,55 @@ const FAILURE_REFERENCE_BYTES = 4;
 /** A fresh correlation handle linking one caller-visible failure to one server log line. */
 function newFailureReference(): string {
   return randomBytes(FAILURE_REFERENCE_BYTES).toString("hex");
+}
+
+/**
+ * What this request can HONESTLY promise about the caller's credits after a failure — or null
+ * when it can promise nothing.
+ *
+ * WHY IT EXISTS. A 90-credit tool answering "failed unexpectedly … quote reference 3f9c1a20"
+ * leaves the user's first question unanswered: did that cost me 90 credits? The refund really
+ * does happen (withCredits releases on a throw), but nothing said so, so the honest reader has
+ * to assume the worst. Every OTHER refusal branch in this file already ends in "You were not
+ * charged"; the generic branch was the one that did not.
+ *
+ * WHY IT IS NOT A BLANKET SENTENCE. The claim is only true where this request owns the reserve
+ * and knows it came back. Three paths are carved out, and each is a real state, not caution:
+ *
+ *   charge "worker" — the handler ENQUEUED a background job. A throw here means the enqueue
+ *     path failed, but a jobs row may already exist, and the WORKER opens and settles that
+ *     reserve later (queue/worker.ts). This request cannot see the outcome, so it says nothing
+ *     and leaves get_job_status as the honest answer. Writing "you were not charged" here would
+ *     be a money claim about a charge that has not been decided yet.
+ *   ReserveCommitFailedError, disposition "unknown" — the tool RAN, its commit would not
+ *     confirm, AND the classifying read failed too (credits/guard.ts). The one state where the
+ *     ledger itself cannot say. Promise nothing; point at the path that can resolve it.
+ *   ReserveCommitFailedError, disposition "open" / "refunded" — a refund IS coming or already
+ *     came, but "you were not charged" is not yet true for "open". Each gets its own sentence,
+ *     the same split (and for the same reason) as COMMIT_FAILED_BY_DISPOSITION in
+ *     queue/worker.ts: one blanket promise was a promise the code could not keep for every shape.
+ *
+ * Everything else on "surface" / "handler" is the plain case: the guard released the reserve
+ * before rethrowing, which is exactly the guarantee the precondition and reauth branches already
+ * state in the same words.
+ */
+export function refundAssurance(charge: ChargeMode, error: unknown): string | null {
+  // The worker owns this reserve, and it has not run yet. Nothing here can be promised.
+  if (charge === "worker") return null;
+  if (isReserveCommitFailed(error)) {
+    if (error.disposition === "refunded") {
+      return "The credit reserve for this call was already refunded, so you were not charged.";
+    }
+    if (error.disposition === "open") {
+      return (
+        "The credit reserve for this call is still open; reconciliation refunds it automatically, " +
+        "so you will not be charged for it."
+      );
+    }
+    // "unknown": the ledger read failed too. No promise — just the one path that can settle it.
+    return "The final state of this call's credit reserve could not be confirmed — contact support if your balance looks short.";
+  }
+  return "You were not charged.";
 }
 
 /**
@@ -235,6 +293,7 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     name: spec.name,
     description: spec.description,
     inputJsonSchema,
+    charge,
     async run(ctx, rawInput) {
       const parsed = spec.inputSchema.safeParse(rawInput ?? {});
       if (!parsed.success) {
@@ -344,6 +403,35 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
             "You were not charged.",
         );
       }
+      // The FOURTH deliberate refusal with no exit but a throw, and the only one whose cause is
+      // entirely on OUR side: SeoGrep's own daily allowance for live DataForSEO data is used up,
+      // so the vendor guard refused the call before it went out (dfs/budget.ts, NEVER #5).
+      //
+      // Same mechanics as the three above — typed, never text-matched — and the same reason it
+      // has to be here rather than at the throw site: the money rule forces a throw, which is
+      // also what makes the refusal free. Without this branch the 2026-08-09 lesson stayed open
+      // on the BUDGET axis: a working guard answered a paying customer with "failed unexpectedly
+      // … quote reference 3f9c1a20", which is both a lie and, at 65–90 credits a call, a support
+      // ticket about a balance the user has no way to check.
+      //
+      // The sentence is BUILT here and shares NO text with the error: the ledger's own words
+      // carry OUR vendor spend in dollars, and this reply goes to whoever holds an API key
+      // (budget-error.ts). What the user needs is the three facts below — whose limit it is,
+      // when it lifts, and what it cost them.
+      //
+      // It DOES get a log line, unlike the three above: an exhausted vendor budget is exactly
+      // the kind of thing an operator must be able to correlate with a user complaint, and
+      // reserveSpend's own WAKE THE HUMAN line names the endpoint but no tool and no user.
+      if (isDfsBudgetExhausted(error)) {
+        console.error(`Tool "${tool.name}" refused — DataForSEO budget: ${error.message}`);
+        const assurance = refundAssurance(tool.charge, error);
+        return errorResult(
+          `"${tool.name}" could not run: SeoGrep's own daily allowance for live third-party SEO ` +
+            `data is used up for today. This is a limit on our side, not on your account, and it ` +
+            `resets at 00:00 UTC — please try again after that.` +
+            (assurance ? ` ${assurance}` : ""),
+        );
+      }
       // The guard has already released any reserve it opened before rethrowing.
       //
       // The raw message is NOT echoed to the caller. Anything that escapes a handler is an
@@ -357,11 +445,19 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // operator greps it and reads the full error. Deliberate, honest tool errors are
       // untouched: a tool that RETURNS errorResult(...) — the "live path is disabled"
       // refusal, a worker's fail-mark — never reaches this catch.
+      //
+      // What the caller is told about their CREDITS is appended, not baked into the sentence:
+      // the refund is real on every path this catch owns (the guard releases before rethrowing),
+      // and leaving it unsaid meant a 90-credit tool's failure read as a 90-credit loss. It is
+      // omitted — deliberately, not by oversight — on the paths where this request genuinely
+      // cannot know: see refundAssurance.
       const reference = newFailureReference();
       console.error(`Tool "${tool.name}" failed [ref ${reference}]: ${errorMessage(error)}`);
+      const assurance = refundAssurance(tool.charge, error);
       return errorResult(
         `Tool "${tool.name}" failed unexpectedly. The server logged the details under ` +
-          `reference ${reference} — quote it if you report this.`,
+          `reference ${reference} — quote it if you report this.` +
+          (assurance ? ` ${assurance}` : ""),
       );
     }
   });
