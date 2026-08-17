@@ -318,7 +318,7 @@ describe("findTargetRow", () => {
   });
 
   it("returns undefined when DataForSEO left the target out (the fallback's trigger)", () => {
-    expect(findTargetRow("absent.example", rows)).toBeUndefined();
+    expect(findTargetRow("absent-target.com", rows)).toBeUndefined();
   });
 });
 
@@ -450,12 +450,12 @@ describe("createMockCompetitorsPort", () => {
   it("falls back to a rank overview only when the target is NOT in the discovery rows", async () => {
     const comparison = await createMockCompetitorsPort(FIXTURES).fetchCompetitorComparison({
       ...QUERY,
-      target: "absent.example",
+      target: "absent-target.com",
     });
     // 1788 is the rank-overview fixture's count: the fallback fired because the discovery list
-    // holds no `absent.example` row.
+    // holds no `absent-target.com` row.
     expect(comparison.rows[0]?.metrics.count).toBe(1788);
-    expect(comparison.rows[0]?.domain).toBe("absent.example");
+    expect(comparison.rows[0]?.domain).toBe("absent-target.com");
   });
 
   it("serves per-domain fixtures when they are given, falling back to `default`", async () => {
@@ -622,21 +622,21 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     const transport = fixtureTransport();
     const comparison = await liveClient(transport, ledger).fetchCompetitorComparison({
       ...QUERY,
-      target: "absent.example",
+      target: "absent-target.com",
     });
 
     expect(transport).toHaveBeenCalledTimes(2);
     expect(transport.mock.calls[0]?.[0]).toContain("/competitors_domain/live");
     expect(transport.mock.calls[1]?.[0]).toContain("/domain_rank_overview/live");
     expect(JSON.parse(transport.mock.calls[1]?.[1]?.body ?? "[]")[0]).toEqual({
-      target: "absent.example",
+      target: "absent-target.com",
       language_code: "en",
       location_code: 2840,
     });
     // Three rivals were still compared, and NOT ONE of them cost a request of its own: with the
     // target absent from the list, the first three discovery rows all become rivals.
     expect(comparison.rows.map((row) => row.domain)).toEqual([
-      "absent.example",
+      "absent-target.com",
       "example.com",
       "rival-one.example",
       "rival-two.example",
@@ -702,7 +702,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
       return { ok: false, status: 500, json: async () => ({}) };
     });
     await expect(
-      liveClient(transport, ledger).fetchCompetitorComparison({ ...QUERY, target: "absent.example" }),
+      liveClient(transport, ledger).fetchCompetitorComparison({ ...QUERY, target: "absent-target.com" }),
     ).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // discovery + the fallback that died
     // The reservation is never settled, so the day keeps the full flow estimate: MORE than the

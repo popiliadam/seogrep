@@ -266,7 +266,16 @@ describe("compare_competitors credit path against the local stack", () => {
 
   // (e)-(g): the failure cases of both flows. Whichever request dies, the customer pays nothing.
   // `target` picks the flow shape: "example.com" IS in the discovery fixture (so the discovery
-  // flow is a single request), "absent.example" is NOT (so the target fallback fires).
+  // flow is a single request), "absent-target.com" is NOT (so the target fallback fires).
+  //
+  // EVERY domain in this table must survive normalizeDomain (packages/core/src/net/hostname.ts).
+  // These specs go through tool.run, whose FREE pre-reserve gate normalizes the target before any
+  // port is touched, and `.example` is a reserved pseudo-TLD there — a `*.example` target is
+  // rejected up front, so the call never reaches the transport, never throws, and the spec dies
+  // with "promise resolved ... instead of rejecting" while LOOKING like a fan-out bug. That is
+  // exactly how this table shipped red once (2026-08-17): the port-level specs in
+  // dfs/competitors.test.ts call the port DIRECTLY and never normalize anything, so the same
+  // domain was green there and red here. Pick a public-shaped name absent from the fixture.
   const FAILURES: readonly {
     readonly label: string;
     readonly failFrom: number;
@@ -285,7 +294,7 @@ describe("compare_competitors credit path against the local stack", () => {
     {
       label: "f",
       failFrom: 2,
-      target: "absent.example",
+      target: "absent-target.com",
       what: "the TARGET FALLBACK (after a paid discovery)",
       expectedRequests: 2,
     },
