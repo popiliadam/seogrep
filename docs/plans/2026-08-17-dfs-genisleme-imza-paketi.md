@@ -1,8 +1,10 @@
-# DFS genişleme — İMZA PAKETİ (v2, ÖLÇÜLMÜŞ · 2026-08-17)
+# DFS genişleme — İMZA PAKETİ (v2 · **İMZALANDI 2026-08-17**)
 
+> ✅ **İMZALANDI** — operatör 2026-08-17: *"onaylıyorum, dispatch et."* Madde 1'in 11 satırı,
+> Madde 2'nin 90/hedef-başına-90'ı, ve Madde 3–9'un tamamı geçerlidir. NEVER#6 karşılandı.
+>
 > **v1 tahminlerle kurulmuştu; bu sürüm vendor'ın kendi fiyat listesiyle yeniden kuruldu.**
-> Operatör onayıyla ölçüm yapıldı (2026-08-17). Bu paket imzalanana kadar **hiçbir yeni ücretli
-> tool dispatch edilmez** (NEVER#6).
+> Operatör onayıyla ölçüm yapıldı (2026-08-17).
 >
 > Kaynaklar: [Labs](https://dataforseo.com/pricing/dataforseo-labs/dataforseo-google-api) ·
 > [SERP](https://dataforseo.com/pricing/serp/google-organic-serp-api) ·
@@ -144,12 +146,24 @@ Onayın: *"aynı 25 kredide genişlet, yeni tool yazma."* Ölçüm bunu beklenen
 **Fiyat değişmiyor (25), marj 3,8× iyileşiyor, üç metrik ekleniyor.** `score_keywords` gereksiz
 hâle geliyor.
 
-**TEK ŞART — dispatch öncesi doğrulanacak:** `keyword_overview`'ın `search_volume`'u Google Ads
-rakamıyla aynı mı? DFS `keyword_info`'yu Google Ads'ten türettiğini söylüyor ama **biz ölçmedik**.
-Canlı bir A/B (aynı 10 kelime, iki uç) yapılmadan bu uç değiştirilmez — yanlış hacim, sessizce
-yanlış SEO kararı üretir.
+### A/B ÖLÇÜLDÜ (2026-08-17, 5 kelime, iki uç yan yana)
 
-**İmza:** ☐ (c) + A/B şartı · ☐ mevcut uçta kal, yalnız alan ekle
+| eksen | sonuç |
+|---|---|
+| **`search_volume`** | **BİREBİR AYNI** — 3.600 / 5.400 / 1.000 / 12.100 dördü de eşleşti ✅ |
+| veri olmayan kelime (`backlink checker`) | iki uçta da yok ✅ |
+| `competition_level` etiketi | LOW/LOW/LOW/MEDIUM — eşleşti ✅ |
+| **CPC** | **FARKLI, %53'e kadar** — "seo software": Ads $18,11 · Labs $27,66 ⚠️ |
+| `competition` sayısal | küçük fark (Ads index 5 · Labs 0,08→8) ⚠️ |
+| **aylık seri** | **Labs bir ay geride** (Ads 2026-07, Labs 2026-06) ⚠️ |
+| Labs'ın fazladan verdiği | `keyword_difficulty` · `search_intent` · `search_volume_trend` · `avg_backlinks_info` ✅ |
+
+**KARAR: geçilir, ama CPC tarihiyle basılır.** Labs `keyword_info.last_updated_time` veriyor;
+tarihli bir tahmin tarihsiz bir tahminden dürüsttür ve bu ürünün zaten yerleşik disiplini
+(`STALE_PULL_DAYS`, "This data is stale") budur. Alternatif — iki ucu birden çağırmak — 25
+kredide **2,7× marj** verir, bandın altında, o yüzden elenmiştir.
+
+**İmza:** ✅ (c) onaylandı; A/B koşuldu ve hacim ekseni temiz çıktı.
 
 ---
 
