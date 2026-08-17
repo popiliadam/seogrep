@@ -68,10 +68,14 @@ async function subscriptionRow(subId: string): Promise<{
     .select("plan, status, current_period_end, occurred_at")
     .eq("paddle_subscription_id", subId);
   if (error) throw new Error(`subscriptionRow query failed: ${error.message}`);
-  if (data?.length !== 1) {
+  // Narrow on the ROW, not only on the count: under `noUncheckedIndexedAccess` `data[0]` is
+  // `T | undefined`, and the length check alone does not tell the compiler otherwise. Same
+  // throw, same message, same runtime — a length of exactly 1 always yields a defined row.
+  const [row] = data ?? [];
+  if (data?.length !== 1 || !row) {
     throw new Error(`expected exactly one subscriptions row for ${subId}, got ${data?.length ?? 0}`);
   }
-  return data[0];
+  return row;
 }
 
 /** Compare a timestamptz column as an INSTANT, not as the DB's text formatting. */

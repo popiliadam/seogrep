@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { creditBalance, getServiceClient } from "../db.ts";
 import { getJob } from "./boss.ts";
@@ -445,13 +446,22 @@ describe("stuck queued job sweep (M-01)", () => {
  * "a FRESH process sees the day's total" with a difference of precisely 0.30.
  */
 describe("reaper — stale DataForSEO reservations", () => {
+  /**
+   * The SAME client, seen without the app's schema slice. That slice declares
+   * `dfs_spend.Insert` as `never` deliberately — nothing in production may write the vendor
+   * ledger directly; it goes through the 0014 RPCs — and seeding an abandoned reservation is
+   * a fixture job, not an app path. Going around the type here rather than relaxing the slice
+   * keeps that production constraint exactly where it is.
+   */
+  const fixtureWriter: SupabaseClient = service;
+
   const insertDfsRow = async (
     endpoint: string,
     status: "open" | "settled",
     estimatedUsd: number,
     createdAt: Date,
   ): Promise<void> => {
-    const { error } = await service.from("dfs_spend").insert({
+    const { error } = await fixtureWriter.from("dfs_spend").insert({
       spend_day: createdAt.toISOString().slice(0, 10),
       endpoint,
       estimated_usd: estimatedUsd,
