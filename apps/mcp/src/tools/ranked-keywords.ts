@@ -3,11 +3,22 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  POSITION_BAND_KEYS,
+  type DomainOrganicMetrics,
+  type PositionBandKey,
+} from "../dfs/competitors.ts";
+import {
+  DEFAULT_RANKED_KEYWORDS_LIMIT,
+  DEFAULT_RANKED_KEYWORDS_SORT,
   RANKED_KEYWORDS_MAX_LIMIT,
+  RANKED_KEYWORDS_SORTS,
   resolveDefaultRankedKeywordsPort,
+  type RankedKeywordRow,
   type RankedKeywordsPort,
   type RankedKeywordsResult,
+  type RankedKeywordsSort,
 } from "../dfs/ranked-keywords.ts";
+import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
   projectIdField,
@@ -45,6 +56,19 @@ const DEFAULT_LOCATION_CODE = 2840;
 /** English — the default language_code. Paired with the location above by localeHint. */
 const DEFAULT_LANGUAGE_CODE = "en";
 
+/**
+ * The sort keys the schema offers, derived from the port's own map so the surface can never
+ * advertise an ordering the client cannot send (or quietly stop offering one it can).
+ */
+const SORT_KEYS = Object.keys(RANKED_KEYWORDS_SORTS) as [RankedKeywordsSort, ...RankedKeywordsSort[]];
+
+/** What each ordering means in the header, so "top N" states which "top" the caller got. */
+const SORT_LABEL: Record<RankedKeywordsSort, string> = {
+  volume: "highest search volume first",
+  traffic: "highest estimated traffic first",
+  position: "best ranking first",
+};
+
 const NOT_ENABLED_MESSAGE =
   "Ranked-keyword lookups are not yet enabled on this deployment. Live DataForSEO data is " +
   "turned off, and SeoGrep never returns sample or placeholder figures as if they were real. " +
@@ -59,8 +83,20 @@ const inputSchema = z.object({
     .int()
     .min(1)
     .max(RANKED_KEYWORDS_MAX_LIMIT)
-    .default(RANKED_KEYWORDS_MAX_LIMIT)
-    .describe(`How many ranked keywords to return (1–${RANKED_KEYWORDS_MAX_LIMIT}, default ${RANKED_KEYWORDS_MAX_LIMIT}).`),
+    .default(DEFAULT_RANKED_KEYWORDS_LIMIT)
+    .describe(
+      `How many ranked keywords to return (1–${RANKED_KEYWORDS_MAX_LIMIT}, default ` +
+        `${DEFAULT_RANKED_KEYWORDS_LIMIT}). The header always names the domain's FULL ranked ` +
+        "keyword count, so raise this deliberately when the total says there is more worth reading.",
+    ),
+  sort: z
+    .enum(SORT_KEYS)
+    .default(DEFAULT_RANKED_KEYWORDS_SORT)
+    .describe(
+      "How DataForSEO orders the domain's keywords before returning the first `limit` of them: " +
+        "'volume' = highest monthly search volume first (default), 'traffic' = highest " +
+        "estimated monthly traffic first, 'position' = best ranking first.",
+    ),
   language_code: z
     .string()
     .min(2)
@@ -77,9 +113,11 @@ const inputSchema = z.object({
 type RankedKeywordsInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
-  "List the Google organic keywords a domain already ranks for — keyword, position, monthly " +
-  "search volume, and the ranking URL. Pass a target domain (any public domain, including a " +
-  "competitor's) or a project_id to look up one of your own sites. " +
+  "List the Google organic keywords a domain already ranks for — organic and on-page position, " +
+  "monthly search volume, CPC, competition, estimated traffic, the ranking URL and its SERP " +
+  "title — under a summary of the whole domain's organic ranking distribution and estimated " +
+  "traffic. Pass a target domain (any public domain, including a competitor's) or a project_id " +
+  "to look up one of your own sites. " +
   `Synchronous — returns a table immediately. Costs ${TOOL_COSTS.ranked_keywords} credits. Needs ` +
   "a paid credit balance: it is not available on trial credits. If live DataForSEO access is " +
   "unavailable on this deployment, the tool says so and charges nothing.";
@@ -105,6 +143,141 @@ function thousands(value: number): string {
  */
 const THIN_RESULT_ROWS = 5;
 
+/** A USD figure with cents — the row-level CPC the vendor quotes to two decimals. */
+function money(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+/**
+ * The label a position band is printed under, DERIVED from the vendor key rather than looked up
+ * in a second hand-written table: `pos_2_3` -> `#2-3`, `pos_91_100` -> `#91-100`. compare_competitors
+ * prints the same twelve bands under the same labels from its own literal table; deriving them
+ * here means the two tools cannot drift into calling one vendor field two different things.
+ */
+function bandLabel(key: PositionBandKey): string {
+  return `#${key.slice("pos_".length).replace(/_/g, "-")}`;
+}
+
+/** "#1: 4 · #2-3: 11 · …" for one slice of the twelve bands. */
+function renderBands(metrics: DomainOrganicMetrics, bands: readonly PositionBandKey[]): string {
+  return bands
+    .map((key) => `${bandLabel(key)}: ${metrics[key] === null ? "n/a" : thousands(metrics[key])}`)
+    .join(" · ");
+}
+
+/** True when DataForSEO returned no domain-level metrics at all. */
+function hasNoMetrics(metrics: DomainOrganicMetrics): boolean {
+  return Object.values(metrics).every((value) => value === null);
+}
+
+/**
+ * The domain's organic health card — the `metrics.organic` block that arrives in the SAME paid
+ * response as the rows and was previously parsed past and discarded.
+ *
+ * It goes ABOVE the table on purpose: "this domain holds 4 number-one rankings, 5,312 organic
+ * SERPs and an estimated 15,235 visits a month" is the answer to the question most callers are
+ * actually asking, and burying it under a thousand bullet lines means the reading model spends
+ * its context on the rows before it ever reaches the summary.
+ *
+ * Every label restates DataForSEO's own definition and is worded identically to
+ * compare_competitors' block, because the two tools print the SAME nineteen vendor fields and a
+ * reader comparing the two outputs must not have to work out that "Organic SERPs containing the
+ * domain" and some other phrasing are the same number. In particular `count` and the `pos_*`
+ * bands count SERPs, NOT keywords, and `etv` / `estimated_paid_traffic_cost` are vendor
+ * ESTIMATES, so they are labelled as such.
+ */
+function renderHealthCard(metrics: DomainOrganicMetrics): string | null {
+  if (hasNoMetrics(metrics)) return null;
+  const top = POSITION_BAND_KEYS.slice(0, 4);
+  const deeper = POSITION_BAND_KEYS.slice(4);
+  return [
+    "Across the whole domain — every keyword it ranks for:",
+    `- Organic SERPs containing the domain: ${metric(metrics.count)}`,
+    `- Organic SERPs by position, #1-20 — ${renderBands(metrics, top)}`,
+    `- Organic SERPs by position, #21-100 — ${renderBands(metrics, deeper)}`,
+    `- Estimated monthly organic traffic (ETV): ${metric(metrics.etv)}`,
+    `- Estimated monthly cost of the same traffic as paid ads: ${metrics.estimated_paid_traffic_cost === null ? "n/a" : `$${thousands(metrics.estimated_paid_traffic_cost)}`}`,
+    `- Since DataForSEO's previous check — newly ranking: ${metric(metrics.is_new)}` +
+      ` · moved up: ${metric(metrics.is_up)} · moved down: ${metric(metrics.is_down)}` +
+      ` · no longer found: ${metric(metrics.is_lost)}`,
+  ].join("\n");
+}
+
+/** A domain-level metric: a grouped number, or an honest "n/a" when DataForSEO had none. */
+function metric(value: number | null): string {
+  return value === null ? "n/a" : thousands(value);
+}
+
+/**
+ * How a row's rank is stated.
+ *
+ * `rank_group` is the organic rank and stays the headline number — it is what the product has
+ * always printed and what "we rank #3" means. `rank_absolute` is appended only when the vendor
+ * sent it AND it disagrees, because that disagreement is the whole point: it says a SERP feature
+ * sits above this result, so the reader is not scrolling to #3. When they agree, repeating the
+ * number would be noise on every single row.
+ */
+function renderPosition(row: RankedKeywordRow): string {
+  const organic = row.position === null ? "n/a" : `#${row.position}`;
+  if (row.absolute_position === null || row.absolute_position === row.position) {
+    return `position ${organic}`;
+  }
+  return `position ${organic} organic (#${row.absolute_position} on the page)`;
+}
+
+/**
+ * One keyword line.
+ *
+ * `position`, `volume` and the URL keep their long-standing places (including their "n/a"), so a
+ * reader's eye lands where it always did. Everything ADDED is omitted outright when the vendor
+ * did not send it — research_keywords' rule — because a thousand rows of "CPC n/a, competition
+ * n/a" is a thousand rows of nothing, and the fields being new is not a reason to pad them.
+ */
+function renderRow(row: RankedKeywordRow): string {
+  const parts = [
+    renderPosition(row),
+    `volume ${row.search_volume === null ? "n/a" : thousands(row.search_volume)}`,
+  ];
+  if (row.cpc !== null) parts.push(`CPC ${money(row.cpc)}`);
+  if (row.competition_level !== null) parts.push(`competition ${row.competition_level}`);
+  if (row.etv !== null) parts.push(`est. traffic ${thousands(row.etv)}/mo`);
+  // The request pins item_types to organic, so a non-organic type means the vendor returned
+  // something else and the row is NOT the organic ranking the rest of the line describes.
+  if (row.type !== null && row.type !== "organic") parts.push(`SERP element type ${row.type}`);
+  parts.push(row.url ?? "n/a");
+  const title = row.title === null ? "" : ` — "${row.title}"`;
+  return `• ${row.keyword} — ${parts.join(", ")}${title}`;
+}
+
+/**
+ * The vendor freshness line, reusing research_keywords' renderer rather than re-deriving it.
+ *
+ * ONE product, ONE answer to "how old is too old": that renderer already owns the timestamp
+ * parsing, the oldest-row rule and the STALE_PULL_DAYS threshold it imports from gsc-data. The
+ * shim below exists only because its parameter is typed to research_keywords' richer row and
+ * that file is pinned — the fields this tool has no equivalent for are filled with the same
+ * "absent" values the renderer would see for a keyword the vendor knows nothing extra about.
+ * A second copy of the sentence would be free to drift from it; this cannot.
+ */
+function renderFreshness(rows: readonly RankedKeywordRow[], now: Date | undefined): string | null {
+  return renderVendorFreshness(
+    rows.map((row) => ({
+      keyword: row.keyword,
+      search_volume: row.search_volume,
+      cpc: row.cpc,
+      competition: null,
+      competition_level: row.competition_level,
+      keyword_difficulty: null,
+      main_intent: null,
+      foreign_intent: [],
+      search_volume_trend: null,
+      last_updated_time: row.last_updated_time,
+      has_data: true,
+    })),
+    now,
+  );
+}
+
 /**
  * How the output names what was looked up. `project` is present only when the caller passed a
  * project_id, so a bare-target call renders exactly as it always did.
@@ -112,6 +285,7 @@ const THIN_RESULT_ROWS = 5;
 export interface RankedKeywordsRenderInput {
   readonly language_code: string;
   readonly location_code: number;
+  readonly sort?: RankedKeywordsSort;
   readonly project?: ProjectRef | null;
 }
 
@@ -119,23 +293,20 @@ export interface RankedKeywordsRenderInput {
 export function formatRankedKeywords(
   result: RankedKeywordsResult,
   input: RankedKeywordsRenderInput,
+  now?: Date,
 ): string {
   const where = `(language ${input.language_code}, location ${input.location_code})`;
   const subject = subjectLabel(result.target, input.project);
+  const card = renderHealthCard(result.metrics);
   if (result.rows.length === 0) {
     // Zero is the thinnest result there is, so it gets the caveat too — it used to be the ONE
-    // path that skipped it, and it is precisely the case this hint exists for.
-    return (
-      `No Google organic rankings on record for ${subject} ${where}.` +
-      localeHint(result.target, 0, input)
-    );
+    // path that skipped it, and it is precisely the case this hint exists for. The health card
+    // still prints when the vendor sent one: "no rows came back" and "this domain ranks for
+    // nothing" are different claims, and the card is the evidence that separates them.
+    const none = `No Google organic rankings on record for ${subject} ${where}.`;
+    return (card === null ? none : `${none}\n\n${card}`) + localeHint(result.target, 0, input);
   }
-  const lines = result.rows.map((row) => {
-    const position = row.position === null ? "n/a" : `#${row.position}`;
-    const volume = row.search_volume === null ? "n/a" : thousands(row.search_volume);
-    const url = row.url ?? "n/a";
-    return `• ${row.keyword} — position ${position}, volume ${volume}, ${url}`;
-  });
+  const lines = result.rows.map(renderRow);
   const shown = `${result.rows.length} ranked keyword${result.rows.length === 1 ? "" : "s"}`;
   // total_count is the domain's FULL ranked-keyword count, so the header is honest about the
   // request having been truncated by `limit` rather than implying these are all of them.
@@ -143,24 +314,67 @@ export function formatRankedKeywords(
     result.total_count === null || result.total_count <= result.rows.length
       ? shown
       : `${shown} of ${thousands(result.total_count)}`;
-  const table = `Ranked keywords for ${subject} ${where} — ${scope}:\n${lines.join("\n")}`;
+  // items_count is what the VENDOR put in this result; rows.length is what survived projection.
+  // A gap means keyword-less items were dropped, and saying so is the difference between a short
+  // table and a short table the reader believes is complete.
+  const dropped = result.items_count === null ? 0 : Math.max(0, result.items_count - result.rows.length);
+  const droppedNote =
+    dropped === 0 ? "" : ` (${dropped} returned row${dropped === 1 ? "" : "s"} carried no keyword and were dropped)`;
+  const ordering = input.sort === undefined ? "" : `, ${SORT_LABEL[input.sort]}`;
+  const heading = `Ranked keywords for ${subject} ${where} — ${scope}${ordering}${droppedNote}:`;
+  const freshness = renderFreshness(result.rows, now);
+  const body = lines.join("\n") + (freshness === null ? "" : `\n${freshness}`);
+  // The heading sits DIRECTLY on the table when there is no card — a blank line the reader has
+  // never seen is still a change to the output, even when nothing was added to it.
+  const table = card === null ? `${heading}\n${body}` : `${heading}\n\n${card}\n\n${body}`;
   // total_count, NOT rows.length: a 2-row page of a 5,312-keyword domain is TRUNCATED, not thin,
   // and its locale is obviously fine. Only the domain's real ranking count can say otherwise.
   return table + localeHint(result.target, result.total_count ?? result.rows.length, input);
 }
 
 /**
- * The domain's TLD when it is two letters, otherwise null.
+ * Two-letter TLDs that IANA delegated to a country but whose registries sell them worldwide with
+ * no local-presence requirement, and whose registrants are overwhelmingly not in that country.
  *
- * Two letters is the whole test, and it is the whole claim the hint makes: IANA delegates
- * country-code TLDs as two-letter labels. What this deliberately does NOT do is map that label
- * to a DataForSEO location_code. Exactly two codes have been measured here (US 2840, TR 2792) —
- * that is a pair of data points, not a table — and a guessed code does not fail loudly: it
- * returns another country's rankings, which read as perfectly ordinary data.
+ * They break the two-letter test in the direction that MATTERS. Telling the owner of a `.io` SaaS
+ * that their domain is "a two-letter country-code TLD" and that they should pass the location
+ * code for "that country" is advice about the British Indian Ocean Territory — a wrong claim
+ * stated in the confident voice the rest of the hint earns, and stated exactly when the result
+ * was thin and the reader is most inclined to act on it.
+ *
+ * The list is short and deliberately errs toward EXCLUDING: a genuinely Colombian `.co` site
+ * loses the TLD sentence but still gets the generic locale hint below, which is the whole
+ * actionable half. Dropping a true clue costs a sentence; keeping a false one costs the reader
+ * a 65-credit lookup pointed at the wrong country.
+ */
+const GENERIC_TWO_LETTER_TLDS: ReadonlySet<string> = new Set([
+  "io",
+  "ai",
+  "co",
+  "me",
+  "tv",
+  "cc",
+  "fm",
+  "gg",
+  "ly",
+  "sh",
+  "to",
+]);
+
+/**
+ * The domain's TLD when it is two letters AND is not one of the generically-marketed ones above,
+ * otherwise null.
+ *
+ * Two letters is otherwise the whole test, and it is the whole claim the hint makes: IANA
+ * delegates country-code TLDs as two-letter labels. What this deliberately does NOT do is map
+ * that label to a DataForSEO location_code. Exactly two codes have been measured here (US 2840,
+ * TR 2792) — that is a pair of data points, not a table — and a guessed code does not fail
+ * loudly: it returns another country's rankings, which read as perfectly ordinary data.
  */
 function twoLetterTld(domain: string): string | null {
   const tld = domain.slice(domain.lastIndexOf(".") + 1).toLowerCase();
-  return /^[a-z]{2}$/.test(tld) ? tld : null;
+  if (!/^[a-z]{2}$/.test(tld)) return null;
+  return GENERIC_TWO_LETTER_TLDS.has(tld) ? null : tld;
 }
 
 /**
@@ -194,6 +408,35 @@ function localeHint(
     `site targets ${which}, pass location_code and language_code for it — rankings measured ` +
     "under the wrong locale can badly misrepresent how the site really performs in search."
   );
+}
+
+/**
+ * The paid body of one lookup: build the vendor query, fetch it, render it.
+ *
+ * Exported and DATABASE-FREE on purpose. The handler wraps this in withCredits, whose reserve
+ * needs Supabase, so the fast lane can never observe what the handler hands the port. That gap
+ * was MEASURED, not assumed: a mutation that hard-coded the port's `sort` — throwing away the
+ * caller's ordering on every live call — left all 64 fast-lane specs green. This seam is what a
+ * spec can hold on to.
+ */
+export async function fetchAndRenderRankedKeywords(
+  port: RankedKeywordsPort,
+  subject: { readonly domain: string; readonly project: ProjectRef | null },
+  input: RankedKeywordsInput,
+): Promise<string> {
+  const result = await port.fetchRankedKeywords({
+    target: subject.domain,
+    limit: input.limit,
+    sort: input.sort,
+    language_code: input.language_code,
+    location_code: input.location_code,
+  });
+  return formatRankedKeywords(result, {
+    language_code: input.language_code,
+    location_code: input.location_code,
+    sort: input.sort,
+    project: subject.project,
+  });
 }
 
 /** Dependencies — the ranked-keywords port is injectable so tests run offline (mock/disabled). */
@@ -234,21 +477,9 @@ export function makeRankedKeywordsTool(deps: RankedKeywordsDeps = {}): Registere
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge).
-      return withCredits({ userId: ctx.userId }, { tool: "ranked_keywords" }, async () => {
-        const result = await port.fetchRankedKeywords({
-          target: subject.domain,
-          limit: input.limit,
-          language_code: input.language_code,
-          location_code: input.location_code,
-        });
-        return textResult(
-          formatRankedKeywords(result, {
-            language_code: input.language_code,
-            location_code: input.location_code,
-            project: subject.project,
-          }),
-        );
-      });
+      return withCredits({ userId: ctx.userId }, { tool: "ranked_keywords" }, async () =>
+        textResult(await fetchAndRenderRankedKeywords(port, subject, input)),
+      );
     },
   });
 }

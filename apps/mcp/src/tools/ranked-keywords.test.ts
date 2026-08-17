@@ -1,12 +1,57 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import {
+  DEFAULT_RANKED_KEYWORDS_LIMIT,
   createMockRankedKeywordsPort,
   disabledRankedKeywordsPort,
+  type RankedKeywordRow,
+  type RankedKeywordsPort,
+  type RankedKeywordsQuery,
+  type RankedKeywordsResult,
 } from "../dfs/ranked-keywords.ts";
+import { EMPTY_ORGANIC_METRICS, type DomainOrganicMetrics } from "../dfs/competitors.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
-import { formatRankedKeywords, makeRankedKeywordsTool } from "./ranked-keywords.ts";
+import {
+  fetchAndRenderRankedKeywords,
+  formatRankedKeywords,
+  makeRankedKeywordsTool,
+} from "./ranked-keywords.ts";
 import fixtureResponse from "../dfs/fixtures/ranked-keywords.json";
+
+/** A row with nothing but a keyword — every expectation below adds only the field it is about. */
+function row(overrides: Partial<RankedKeywordRow> = {}): RankedKeywordRow {
+  return {
+    keyword: "kw",
+    position: null,
+    absolute_position: null,
+    search_volume: null,
+    cpc: null,
+    competition_level: null,
+    last_updated_time: null,
+    etv: null,
+    title: null,
+    type: null,
+    url: null,
+    ...overrides,
+  };
+}
+
+/** A result with no domain health card — the pre-existing specs are all about the TABLE. */
+function result(overrides: Partial<RankedKeywordsResult> = {}): RankedKeywordsResult {
+  return {
+    target: "example.com",
+    total_count: null,
+    items_count: null,
+    metrics: EMPTY_ORGANIC_METRICS,
+    rows: [],
+    ...overrides,
+  };
+}
+
+/** A populated health card, one field at a time overridable. */
+function metrics(overrides: Partial<DomainOrganicMetrics> = {}): DomainOrganicMetrics {
+  return { ...EMPTY_ORGANIC_METRICS, ...overrides };
+}
 
 /**
  * Fast-lane (DB-less) proofs for ranked_keywords. The credit LEDGER behaviour (mock ->
@@ -31,26 +76,27 @@ const loadProject: LoadProjectFn = async (userId, projectId) =>
 describe("formatRankedKeywords", () => {
   it("renders a ranked-keyword table headed by the shown/total count", () => {
     const text = formatRankedKeywords(
-      {
-        target: "example.com",
+      result({
         total_count: 5312,
         rows: [
-          {
+          row({
             keyword: "seo software",
             position: 3,
             search_volume: 22200,
             url: "https://example.com/seo-software",
-          },
-          {
+          }),
+          row({
             keyword: "rank tracker",
             position: 18,
             search_volume: 8100,
             url: "https://example.com/rank-tracker",
-          },
+          }),
         ],
-      },
+      }),
       RENDER_INPUT,
     );
+    // Unchanged, deliberately: everything this slice added is ABSENT from these rows, and an
+    // added field must not rearrange the line a reader already knows.
     expect(text).toBe(
       'Ranked keywords for "example.com" (language en, location 2840) — 2 ranked keywords of 5,312:\n' +
         "• seo software — position #3, volume 22,200, https://example.com/seo-software\n" +
@@ -67,11 +113,11 @@ describe("formatRankedKeywords", () => {
    */
   it("hints at the locale when the US default returns a thin result", () => {
     const text = formatRankedKeywords(
-      {
+      result({
         target: "adstark.com.tr",
         total_count: 3,
-        rows: [{ keyword: "seo uzmani", position: 23, search_volume: 30, url: null }],
-      },
+        rows: [row({ keyword: "seo uzmani", position: 23, search_volume: 30 })],
+      }),
       RENDER_INPUT,
     );
     expect(text).toMatch(/location_code/);
@@ -89,7 +135,7 @@ describe("formatRankedKeywords", () => {
    */
   it("hints at the locale when the default locale found NOTHING at all", () => {
     const text = formatRankedKeywords(
-      { target: "adstark.com.tr", total_count: 0, rows: [] },
+      result({ target: "adstark.com.tr", total_count: 0 }),
       RENDER_INPUT,
     );
     expect(text).toMatch(/no google organic rankings on record/i);
@@ -109,11 +155,11 @@ describe("formatRankedKeywords", () => {
    */
   it("names the country-code TLD of the resolved domain, without guessing its location code", () => {
     const text = formatRankedKeywords(
-      {
+      result({
         target: "adstark.com.tr",
         total_count: 3,
-        rows: [{ keyword: "seo uzmani", position: 23, search_volume: 30, url: null }],
-      },
+        rows: [row({ keyword: "seo uzmani", position: 23, search_volume: 30 })],
+      }),
       RENDER_INPUT,
     );
     expect(text).toContain("but adstark.com.tr is a .tr domain — a two-letter country-code TLD.");
@@ -127,11 +173,10 @@ describe("formatRankedKeywords", () => {
 
   it("does NOT claim a country-code TLD for a generic one", () => {
     const text = formatRankedKeywords(
-      {
-        target: "example.com",
+      result({
         total_count: 1,
-        rows: [{ keyword: "thing", position: 40, search_volume: 10, url: null }],
-      },
+        rows: [row({ keyword: "thing", position: 40, search_volume: 10 })],
+      }),
       RENDER_INPUT,
     );
     expect(text).toContain("This looked up the United States in English (the default).");
@@ -141,11 +186,11 @@ describe("formatRankedKeywords", () => {
 
   it("names the resolved PROJECT in the heading when the target came from one", () => {
     const text = formatRankedKeywords(
-      {
+      result({
         target: "adstark.com.tr",
         total_count: 1,
-        rows: [{ keyword: "seo uzmani", position: 3, search_volume: 3600, url: null }],
-      },
+        rows: [row({ keyword: "seo uzmani", position: 3, search_volume: 3600 })],
+      }),
       { ...RENDER_INPUT, project: PROJECT },
     );
     expect(text).toContain('Ranked keywords for your project "adstark.com.tr"');
@@ -153,7 +198,7 @@ describe("formatRankedKeywords", () => {
 
   it("names the resolved PROJECT even when it ranks for nothing", () => {
     const text = formatRankedKeywords(
-      { target: "adstark.com.tr", total_count: 0, rows: [] },
+      result({ target: "adstark.com.tr", total_count: 0 }),
       { ...RENDER_INPUT, project: PROJECT },
     );
     expect(text).toContain(
@@ -163,7 +208,7 @@ describe("formatRankedKeywords", () => {
 
   it("does NOT invent a project for a bare-target lookup", () => {
     const text = formatRankedKeywords(
-      { target: "competitor.example", total_count: 0, rows: [] },
+      result({ target: "competitor.example", total_count: 0 }),
       RENDER_INPUT,
     );
     expect(text).toContain('for "competitor.example"');
@@ -172,7 +217,7 @@ describe("formatRankedKeywords", () => {
 
   it("does NOT hint on an empty result when the locale was set explicitly", () => {
     const text = formatRankedKeywords(
-      { target: "adstark.com.tr", total_count: 0, rows: [] },
+      result({ target: "adstark.com.tr", total_count: 0 }),
       { language_code: "tr", location_code: 2792 },
     );
     expect(text).not.toMatch(/location_code/);
@@ -180,34 +225,27 @@ describe("formatRankedKeywords", () => {
 
   it("does NOT add the locale hint when the locale was set explicitly", () => {
     const text = formatRankedKeywords(
-      {
+      result({
         target: "adstark.com.tr",
         total_count: 3,
-        rows: [{ keyword: "seo uzmani", position: 23, search_volume: 30, url: null }],
-      },
+        rows: [row({ keyword: "seo uzmani", position: 23, search_volume: 30 })],
+      }),
       { language_code: "tr", location_code: 2792 },
     );
     expect(text).not.toMatch(/location_code/);
   });
 
   it("does NOT add the locale hint when the default locale returned plenty", () => {
-    const rows = Array.from({ length: 12 }, (_, i) => ({
-      keyword: `kw-${i}`,
-      position: i + 1,
-      search_volume: 100,
-      url: null,
-    }));
-    const text = formatRankedKeywords({ target: "example.com", total_count: 12, rows }, RENDER_INPUT);
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      row({ keyword: `kw-${i}`, position: i + 1, search_volume: 100 }),
+    );
+    const text = formatRankedKeywords(result({ total_count: 12, rows }), RENDER_INPUT);
     expect(text).not.toMatch(/location_code/);
   });
 
   it("renders n/a for a missing position, volume, or URL", () => {
     const text = formatRankedKeywords(
-      {
-        target: "example.com",
-        total_count: 1,
-        rows: [{ keyword: "obscure term", position: null, search_volume: null, url: null }],
-      },
+      result({ total_count: 1, rows: [row({ keyword: "obscure term" })] }),
       RENDER_INPUT,
     );
     expect(text).toContain("• obscure term — position n/a, volume n/a, n/a");
@@ -215,11 +253,10 @@ describe("formatRankedKeywords", () => {
 
   it("omits the 'of N' clause when nothing was truncated", () => {
     const text = formatRankedKeywords(
-      {
-        target: "example.com",
+      result({
         total_count: 1,
-        rows: [{ keyword: "only one", position: 5, search_volume: 10, url: "https://example.com/" }],
-      },
+        rows: [row({ keyword: "only one", position: 5, search_volume: 10, url: "https://example.com/" })],
+      }),
       RENDER_INPUT,
     );
     expect(text).toContain("— 1 ranked keyword:");
@@ -228,10 +265,436 @@ describe("formatRankedKeywords", () => {
 
   it("says so plainly when the domain ranks for nothing", () => {
     const text = formatRankedKeywords(
-      { target: "nowhere.example", total_count: 0, rows: [] },
+      result({ target: "nowhere.example", total_count: 0 }),
       RENDER_INPUT,
     );
     expect(text).toMatch(/no google organic rankings on record/i);
+  });
+});
+
+/**
+ * X1-a — `result.metrics.organic`. It arrives in the SAME paid response as the rows and was
+ * parsed past and discarded: the domain's whole ranking distribution, its estimated traffic and
+ * its movement since the vendor's last check, in one block.
+ */
+describe("formatRankedKeywords — the domain health card", () => {
+  const FULL = metrics({
+    pos_1: 4,
+    pos_2_3: 11,
+    pos_4_10: 92,
+    pos_11_20: 240,
+    pos_21_30: 410,
+    pos_31_40: 520,
+    pos_41_50: 630,
+    pos_51_60: 700,
+    pos_61_70: 740,
+    pos_71_80: 760,
+    pos_81_90: 780,
+    pos_91_100: 425,
+    etv: 15234.5,
+    count: 5312,
+    estimated_paid_traffic_cost: 48210.75,
+    is_new: 128,
+    is_up: 402,
+    is_down: 517,
+    is_lost: 96,
+  });
+
+  it("prints the card ABOVE the first keyword row, not after the table", () => {
+    const text = formatRankedKeywords(
+      result({ total_count: 5312, metrics: FULL, rows: [row({ keyword: "seo software" })] }),
+      RENDER_INPUT,
+    );
+    expect(text.indexOf("Across the whole domain")).toBeGreaterThan(-1);
+    expect(text.indexOf("Across the whole domain")).toBeLessThan(text.indexOf("• seo software"));
+  });
+
+  it("prints all TWELVE position bands, under compare_competitors' own labels", () => {
+    const text = formatRankedKeywords(
+      result({ metrics: FULL, rows: [row()] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(
+      "- Organic SERPs by position, #1-20 — #1: 4 · #2-3: 11 · #4-10: 92 · #11-20: 240",
+    );
+    expect(text).toContain(
+      "- Organic SERPs by position, #21-100 — #21-30: 410 · #31-40: 520 · #41-50: 630 · " +
+        "#51-60: 700 · #61-70: 740 · #71-80: 760 · #81-90: 780 · #91-100: 425",
+    );
+  });
+
+  it("labels the counted thing as SERPs and the modelled ones as estimates", () => {
+    const text = formatRankedKeywords(result({ metrics: FULL, rows: [row()] }), RENDER_INPUT);
+    expect(text).toContain("- Organic SERPs containing the domain: 5,312");
+    expect(text).toContain("- Estimated monthly organic traffic (ETV): 15,235");
+    expect(text).toContain("- Estimated monthly cost of the same traffic as paid ads: $48,211");
+    expect(text).toContain(
+      "- Since DataForSEO's previous check — newly ranking: 128 · moved up: 402 · " +
+        "moved down: 517 · no longer found: 96",
+    );
+  });
+
+  it("omits the card entirely when DataForSEO returned no metrics block", () => {
+    const text = formatRankedKeywords(
+      result({ total_count: 1, rows: [row({ keyword: "x", position: 4 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("Across the whole domain");
+    expect(text).not.toContain("n/a ·");
+  });
+
+  it("prints n/a per missing field rather than dropping a card that has SOME data", () => {
+    const text = formatRankedKeywords(
+      result({ metrics: metrics({ count: 7 }), rows: [row()] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("- Organic SERPs containing the domain: 7");
+    expect(text).toContain("#1: n/a");
+    expect(text).toContain("- Estimated monthly organic traffic (ETV): n/a");
+  });
+
+  /**
+   * "The vendor returned no rows" and "this domain ranks for nothing" are different claims. The
+   * card is the evidence that tells them apart, so a zero-row result keeps it.
+   */
+  it("still prints the card when zero rows came back", () => {
+    const text = formatRankedKeywords(
+      result({ target: "example.com", total_count: 0, metrics: FULL }),
+      RENDER_INPUT,
+    );
+    expect(text).toMatch(/no google organic rankings on record/i);
+    expect(text).toContain("- Organic SERPs containing the domain: 5,312");
+  });
+});
+
+/** X1-b — the per-row fields the response already carried and the projection threw away. */
+describe("formatRankedKeywords — the per-row fields that were already paid for", () => {
+  it.each([
+    ["cpc", { cpc: 9.87 }, "CPC $9.87"],
+    ["competition_level", { competition_level: "HIGH" }, "competition HIGH"],
+    ["etv", { etv: 1180.4 }, "est. traffic 1,180/mo"],
+  ] as const)("prints %s when the vendor sent it", (_name, override, expected) => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", ...override })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(expected);
+  });
+
+  it.each(["CPC", "competition", "est. traffic"])(
+    "OMITS %s rather than padding a thousand rows with n/a",
+    (label) => {
+      const text = formatRankedKeywords(
+        result({ rows: [row({ keyword: "bare", position: 4, search_volume: 10 })] }),
+        RENDER_INPUT,
+      );
+      expect(text).not.toContain(label);
+      // ...while the fields that ALWAYS printed still print their n/a. Omission is the new
+      // fields' rule, not a licence to drop the spine of the line.
+      expect(text).toContain("• bare — position #4, volume 10, n/a");
+    },
+  );
+
+  it("quotes the SERP title after the URL, and prints nothing when there is none", () => {
+    const withTitle = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "seo software", url: "https://example.com/a", title: "SEO Software — Example" }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(withTitle).toContain('https://example.com/a — "SEO Software — Example"');
+    const without = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", url: "https://example.com/a" })] }),
+      RENDER_INPUT,
+    );
+    const line = without.split("\n").find((l) => l.startsWith("• ")) ?? "";
+    expect(line).toBe("• seo software — position n/a, volume n/a, https://example.com/a");
+    expect(line).not.toContain('"');
+  });
+
+  it("orders the added fields after volume and before the URL", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({
+            keyword: "seo software",
+            position: 3,
+            search_volume: 22200,
+            cpc: 9.87,
+            competition_level: "HIGH",
+            etv: 1180.4,
+            url: "https://example.com/a",
+          }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(
+      "• seo software — position #3, volume 22,200, CPC $9.87, competition HIGH, " +
+        "est. traffic 1,180/mo, https://example.com/a",
+    );
+  });
+});
+
+/**
+ * X1-b, the rank decision. `rank_group` (organic rank) stays the headline; `rank_absolute` (rank
+ * among ALL SERP elements) is printed only when it disagrees, because the disagreement is the
+ * information — it says a SERP feature sits above this result.
+ */
+describe("formatRankedKeywords — rank_group vs rank_absolute", () => {
+  it("names both when they disagree, and says which is which", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", position: 3, absolute_position: 4 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("position #3 organic (#4 on the page)");
+  });
+
+  it("prints ONE number when they agree — the same figure twice is noise on every row", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", position: 3, absolute_position: 3 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("position #3,");
+    expect(text).not.toContain("on the page");
+  });
+
+  it("prints the organic rank alone when the vendor sent no absolute rank", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", position: 3 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("position #3,");
+    expect(text).not.toContain("on the page");
+  });
+
+  it("still reports the absolute rank when the organic one is missing", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", absolute_position: 4 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("position n/a organic (#4 on the page)");
+  });
+});
+
+/** The dead schema fields — `serp_item.type` and `result.items_count` — put to work. */
+describe("formatRankedKeywords — the previously-unused vendor fields", () => {
+  it("says nothing about the element type on an organic row (the request pins organic)", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", type: "organic" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("SERP element type");
+  });
+
+  it("calls out a row the vendor returned as something OTHER than organic", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "seo software", type: "featured_snippet" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("SERP element type featured_snippet");
+  });
+
+  it("says how many returned rows were dropped for carrying no keyword", () => {
+    const text = formatRankedKeywords(
+      result({ total_count: 90, items_count: 3, rows: [row({ keyword: "a" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("(2 returned rows carried no keyword and were dropped)");
+  });
+
+  it("says nothing when every returned row survived", () => {
+    const text = formatRankedKeywords(
+      result({ total_count: 90, items_count: 1, rows: [row({ keyword: "a" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("dropped");
+  });
+});
+
+/**
+ * X1-c — vendor freshness. The renderer is research_keywords' own (imported, not copied), so the
+ * threshold and the sentence cannot drift between the two tools.
+ */
+describe("formatRankedKeywords — CPC/competition freshness", () => {
+  const STAMP = "2026-07-15 09:00:00 +00:00";
+
+  it("dates the CPC and competition figures it just printed", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", cpc: 9.87, last_updated_time: STAMP })] }),
+      RENDER_INPUT,
+      new Date("2026-07-20T00:00:00Z"),
+    );
+    expect(text).toContain("CPC and competition were last refreshed by DataForSEO on 2026-07-15");
+    expect(text).toContain("(4 days ago)");
+    expect(text).not.toContain("stale");
+  });
+
+  it("calls month-old vendor data stale, in a sentence", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", cpc: 9.87, last_updated_time: STAMP })] }),
+      RENDER_INPUT,
+      new Date("2026-09-01T00:00:00Z"),
+    );
+    expect(text).toContain("This vendor data is stale");
+  });
+
+  it("reports the OLDEST row's stamp — a table is as fresh as its stalest row", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "fresh", last_updated_time: "2026-08-14 09:00:00 +00:00" }),
+          row({ keyword: "stale", last_updated_time: STAMP }),
+        ],
+      }),
+      RENDER_INPUT,
+      new Date("2026-08-15T00:00:00Z"),
+    );
+    expect(text).toContain("on 2026-07-15");
+    expect(text).not.toContain("on 2026-08-14");
+  });
+
+  it("drops the line entirely when no row carries a stamp", () => {
+    const text = formatRankedKeywords(result({ rows: [row({ keyword: "a" })] }), RENDER_INPUT);
+    expect(text).not.toContain("last refreshed");
+  });
+
+  it("drops the line rather than printing NaN for an unparseable vendor date", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", last_updated_time: "whenever" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("last refreshed");
+    expect(text).not.toContain("NaN");
+  });
+});
+
+/** X1-d — the header has to say WHICH "top N" the caller got. */
+describe("formatRankedKeywords — the ordering the caller got", () => {
+  it.each([
+    ["volume", "highest search volume first"],
+    ["traffic", "highest estimated traffic first"],
+    ["position", "best ranking first"],
+  ] as const)("names the '%s' ordering in the header", (sort, label) => {
+    const text = formatRankedKeywords(
+      result({ total_count: 5312, rows: [row({ keyword: "a" })] }),
+      { ...RENDER_INPUT, sort },
+    );
+    expect(text).toContain(`1 ranked keyword of 5,312, ${label}:`);
+  });
+
+  it("says nothing about ordering when the caller's sort is unknown to the renderer", () => {
+    const text = formatRankedKeywords(
+      result({ total_count: 5312, rows: [row({ keyword: "a" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("1 ranked keyword of 5,312:");
+  });
+});
+
+/**
+ * X1-e — the two-letter test's false positives. `.io`, `.ai`, `.co` and friends are delegated
+ * country-code TLDs that their registries sell worldwide; telling a `.io` SaaS to pass the
+ * location code for "that country" is advice about the British Indian Ocean Territory.
+ */
+describe("formatRankedKeywords — generically-marketed two-letter TLDs", () => {
+  const thin = (target: string): string =>
+    formatRankedKeywords(
+      result({ target, total_count: 2, rows: [row({ keyword: "a", position: 8 })] }),
+      RENDER_INPUT,
+    );
+
+  it.each(["example.io", "example.ai", "example.co", "example.me", "example.tv"])(
+    "does NOT call %s a country-code TLD",
+    (target) => {
+      const text = thin(target);
+      expect(text).not.toContain("country-code TLD");
+      expect(text).not.toContain(`is a .${target.split(".").pop()} domain`);
+      // The actionable half of the hint survives — only the wrong claim is dropped.
+      expect(text).toContain("This looked up the United States in English (the default).");
+      expect(text).toContain("If the site targets another country");
+    },
+  );
+
+  it.each(["adstark.com.tr", "beispiel.de", "exemple.fr"])(
+    "still names %s's country-code TLD",
+    (target) => {
+      const tld = target.split(".").pop();
+      expect(thin(target)).toContain(`but ${target} is a .${tld} domain — a two-letter country-code TLD.`);
+    },
+  );
+});
+
+/**
+ * The pass-through the credit guard hides. `fetchAndRenderRankedKeywords` exists because the
+ * handler's own path reserves credits (and therefore needs a database) BEFORE it touches the
+ * port, so no fast-lane spec could see what it hands over. Measured blind spot, 34th mutation:
+ * hard-coding the port's `sort` — discarding the caller's ordering on every live call — left all
+ * 64 specs above green.
+ */
+describe("fetchAndRenderRankedKeywords — what the handler actually hands the port", () => {
+  function recorder(): { port: RankedKeywordsPort; seen: RankedKeywordsQuery[] } {
+    const seen: RankedKeywordsQuery[] = [];
+    return {
+      seen,
+      port: {
+        enabled: true,
+        fetchRankedKeywords: async (query) => {
+          seen.push(query);
+          return result({ total_count: 5312, rows: [row({ keyword: "a" })] });
+        },
+      },
+    };
+  }
+
+  it("forwards EVERY caller parameter, none of them defaulted or dropped", async () => {
+    const { port, seen } = recorder();
+    await fetchAndRenderRankedKeywords(
+      port,
+      { domain: "example.com", project: null },
+      { target: "example.com", limit: 7, sort: "traffic", language_code: "tr", location_code: 2792 },
+    );
+    expect(seen).toEqual([
+      {
+        target: "example.com",
+        limit: 7,
+        sort: "traffic",
+        language_code: "tr",
+        location_code: 2792,
+      },
+    ]);
+  });
+
+  it("looks up the RESOLVED domain, not the raw target the caller typed", async () => {
+    const { port, seen } = recorder();
+    await fetchAndRenderRankedKeywords(
+      port,
+      { domain: "adstark.com.tr", project: PROJECT },
+      { project_id: PROJECT_ID, limit: 5, sort: "volume", language_code: "en", location_code: 2840 },
+    );
+    expect(seen[0]?.target).toBe("adstark.com.tr");
+  });
+
+  it("gives the renderer the same sort it gave the port", async () => {
+    const { port } = recorder();
+    const text = await fetchAndRenderRankedKeywords(
+      port,
+      { domain: "example.com", project: null },
+      { target: "example.com", limit: 5, sort: "position", language_code: "en", location_code: 2840 },
+    );
+    expect(text).toContain("best ranking first");
+  });
+
+  it("names the project in the output when the target came from one", async () => {
+    const { port } = recorder();
+    const text = await fetchAndRenderRankedKeywords(
+      port,
+      { domain: "adstark.com.tr", project: PROJECT },
+      { project_id: PROJECT_ID, limit: 5, sort: "volume", language_code: "en", location_code: 2840 },
+    );
+    expect(text).toContain('your project "adstark.com.tr"');
   });
 });
 
@@ -255,12 +718,37 @@ describe("ranked_keywords metadata", () => {
       "limit",
       "location_code",
       "project_id",
+      "sort",
       "target",
     ]);
     expect(schema.properties.project_id?.format).toBe("uuid");
     // limit is bounded by what DataForSEO will return for one request.
     expect(schema.properties.limit?.minimum).toBe(1);
     expect(schema.properties.limit?.maximum).toBe(1000);
+  });
+
+  /**
+   * The default is part of the PRICE of a call: DFS Labs bills per row, and the old default was
+   * the vendor MAXIMUM, so every unqualified lookup bought 1000 rows nobody asked for.
+   */
+  it("defaults `limit` to a readable page rather than the vendor maximum", () => {
+    const schema = tool.inputJsonSchema as {
+      properties: Record<string, { default?: unknown; enum?: string[] }>;
+    };
+    expect(schema.properties.limit?.default).toBe(DEFAULT_RANKED_KEYWORDS_LIMIT);
+    expect(schema.properties.limit?.default).not.toBe(1000);
+  });
+
+  /**
+   * `sort` is what makes `limit` mean "the top N". Without it the request carried no ordering and
+   * the docs' own example — "show me the top 50 keywords" — returned an arbitrary 50.
+   */
+  it("offers the orderings the port can actually send, defaulting to search volume", () => {
+    const schema = tool.inputJsonSchema as {
+      properties: Record<string, { default?: unknown; enum?: string[] }>;
+    };
+    expect(schema.properties.sort?.enum?.slice().sort()).toEqual(["position", "traffic", "volume"]);
+    expect(schema.properties.sort?.default).toBe("volume");
   });
 
   it("rejects invalid input before any handler work", async () => {
