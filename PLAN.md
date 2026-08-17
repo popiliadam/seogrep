@@ -5,6 +5,59 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### ✍️ 2026-08-17 — İMZA ALINDI, DİSPATCH BAŞLADI: iki DFS tool'u yeniden fiyatlanmadan CANLIDA
+
+Operatör imza paketini **v2 hâliyle onayladı** (*"onaylıyorum, dispatch et"*) — ama önce
+**ölçüm istedi ve v1'in üç hatasını ortaya çıkardı.** Vendor fiyatları artık tahmin değil:
+Labs **$0,012/istek + $0,00012/satır** · Backlinks $0,024 + $0,000036/satır · SERP Live
+$0,002/SERP · Lighthouse $0,005/sayfa · LLM Mentions **$0,10 + $0,001/satır**. Labs formülü
+**prod verimizin dört noktasıyla** çakıştı (`ranked_keywords` min/ortalama/max + rank-overview).
+
+**v1'in üç hatası — ikisi zarar yazacaktı:**
+1. **AI ailesi 50 kredide ZARAR ederdi** — 1000 satırlık tek çağrı $1,10 vendor, gelir $0,62 →
+   **0,56×**. v2: 90 kredi + **zorunlu satır kapağı**. Kapaksız yazılmamalı.
+2. **`score_keywords` başa baştı** (üç ayrı Labs isteği $0,288 vs $0,372 → 1,29×) — gerek yokmuş,
+   `keyword_overview` hepsini tek istekte veriyor → **tool listeden düştü**, 13 → 11.
+3. **`audit_speed` aşırı fiyatlıydı** (35 kredi = 17,4×) → **15**, `audit_tech` çıpası.
+
+**İlk dalga CANLIDA, ikisi de FİYATA DOKUNMADAN:**
+
+- **`research_keywords` Labs `keyword_overview` ucuna geçti** ([#122](https://github.com/popiliadam/seogrep/pull/122)): vendor **$0,0900 → $0,0240**,
+  marj **3,5× → 12,9×** (bu bizim EN KÖTÜ marjımızdı), artı **keyword difficulty + search intent +
+  12 aylık trend**. Canlı A/B ile doğrulandı: `search_volume` **birebir aynı**, ama CPC %53'e kadar
+  farklı ve seri bir ay geride → **CPC artık tarihiyle basılıyor**. "Veri yok" / "gerçek sıfır" /
+  "hacim n/a" üç ayrı cümleye ayrıldı (eski `?? 0` ikisini birleştiriyordu). 52 mutasyon ekseni.
+- **`compare_competitors` keşif akışı 5 istek → 1** ([#121](https://github.com/popiliadam/seogrep/pull/121)): vendor **$0,172 → $0,013**, $3 tavanındaki
+  günlük kapasite **16 → 227**. `full_domain_metrics`'in `domain_rank_overview`'ın verdiği her şeyi
+  + 8 pozisyon bandı + hareket sayaçlarını taşıdığı **canlı ölçümle** doğrulandı. Çıktıya 12 bandın
+  tamamı ve `is_new/is_up/is_down/is_lost` girdi; kesişim-vs-tam-domain kapsamı iki ayrı başlıkla.
+  **Supplied akışı kasten değişmedi** (4 istek) — orada rank overview zorunlu. 26 mutasyon ekseni.
+
+**FIXTURE DERSİ — bu turun deseni, üç ayrı dosyada aynı şekil:**
+1. `competitors-domain.json` üç metrik bloğunu ayırmıyordu → fixture gerçeğe uydurulunca **1359 test
+   yeşil kaldı**, yani o eksenlerin hiçbiri hiç ölçülmüyormuş (hakem bu reprodüksiyonu **kendisi
+   tekrarladı**).
+2. `search-volume.json` "veri yok"u "hacim sıfır"dan ayırmıyordu.
+3. `compare-competitors.db.test.ts` `absent.example` kullanıyordu — `packages/core`'un
+   `NON_PUBLIC_TLDS` listesinde **`example` var**, yani çağrı ücretsiz ön-kapıda ölüyor ve test
+   vendor arızasından gelen bir red bekliyordu. **Bunu `verify.sh` DEĞİL, CI'ın `verify-db` şeridi
+   yakaladı** — `verify.sh` 16/16 yeşildi ve hakem 8 bağımsız mutasyon koşmuştu; ikisi de DB
+   şeridini koşmadığı için göremezdi (imzalı ders 15'in canlı kanıtı).
+
+**Süreç:** 2 işçi + **4 taze Fable hakem turu**. Hakemler iki dilimde de kendi bağımsız
+mutasyonlarını koştu; W2'de **4 yeşil mutasyon** buldu (pinsiz eksenler) ve aynı dilimde kapatıldı.
+Hakem ayrıca NEVER#8'i **git history'den** yargıladı: silinen testin gerçekten ortadan mı kalktığı
+yoksa zayıflatıldığı mı, ancak eski hâli okunarak ayırt edilir.
+
+**Sırada (imzalı, dispatch edilmedi):** `ranked_keywords` projeksiyonu (`etv`/`kd`/`intent` zaten
+satın alınıyor, atılıyor) · `audit_speed` 15 · `link_gap`/`keyword_gap` 45 · `discover_keywords` 40 ·
+rank tracker ailesi (**0027 migration + operatör SQL adımı**) · AI ailesi (**satır kapağı zorunlu**).
+
+**Yeni flake:** GitHub'ın kendi action indirme katmanı **429 Too Many Requests** verip üç job'ı
+`Set up job` aşamasında öldürdü — ayırt edici işareti: kırmızı `Run bash guardrails/...` satırına
+hiç gelmeden çıkıyor. Kod aranmamalı. `disconnect-button.test.tsx:302` rerender yarışı ikinci kez
+görüldü.
+
 ### 💵 2026-08-17 — DFS AİLESİ + `generate_report` DERİNLEŞTİRME: 3 PR CANLIDA · İMZA PAKETİ OPERATÖRDE
 
 Operatör talimatı: kalan **5 kırmızı tool** (`research_keywords` · `ranked_keywords` ·
