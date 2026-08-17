@@ -22,6 +22,15 @@ export const TOOL_COSTS = {
   ranked_keywords: 65,
   analyze_backlinks: 70,
   compare_competitors: 90,
+  // The two GAP tools (operator-SIGNED 2026-08-17). Same question on two axes — what a rival
+  // has that you do not — and one paid DataForSEO request each, on two different tariffs:
+  // keyword_gap runs Labs domain_intersection ($0.012/request + $0.00012/row) and link_gap runs
+  // Backlinks domain_intersection ($0.024/request + $0.000036/row). Both are priced at 45 because
+  // a customer cannot be asked to know which vendor API sits behind which question; the worst
+  // case (either tool at the vendor's 1,000-row cap) still clears the margin band the DFS #10
+  // decision file set. No existing number moved.
+  keyword_gap: 45,
+  link_gap: 45,
   find_quick_wins: 10,
   detect_cannibalization: 10,
   analyze_content_decay: 10,

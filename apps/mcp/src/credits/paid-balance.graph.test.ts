@@ -190,6 +190,8 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
     expect(spendingToolModules.sort()).toEqual([
       "tools/analyze-backlinks.ts",
       "tools/compare-competitors.ts",
+      "tools/keyword-gap.ts",
+      "tools/link-gap.ts",
       "tools/ranked-keywords.ts",
       "tools/research-keywords.ts",
     ]);
