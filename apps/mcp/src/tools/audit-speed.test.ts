@@ -224,6 +224,47 @@ describe("formatSpeedAudit", () => {
     expect(text).not.toContain("0 / 100");
   });
 
+  /**
+   * The OTHER direction of the same axis, and the one a referee found unprotected: a page that
+   * really scored 0 is a MEASURED catastrophe, and reporting it as "we have no score" hides the
+   * worst finding this tool can produce.
+   *
+   * Measured, not assumed: with only the null-side spec above, changing `performance_score === null`
+   * to `!page.performance_score` left ALL 1487 tests green. `=== null` is load-bearing precisely
+   * because 0 is falsy AND meaningful, which is this tool's whole thesis — and a rule stated in
+   * only one direction is a rule tested in only one direction.
+   */
+  it("prints a REAL zero score as a zero — 0 is a measurement, not a missing value", () => {
+    const text = formatSpeedAudit([page({ performance_score: 0 })]);
+    expect(text).toContain("Performance score: 0 / 100");
+    expect(text).not.toMatch(/returned no score for this page/i);
+  });
+
+  /**
+   * Same axis, metric side. A Total Blocking Time of 0 ms and a Cumulative Layout Shift of 0 are
+   * the BEST results those metrics can have, so a `!metric.numeric` guard would silently drop the
+   * lines belonging to the pages that are performing perfectly.
+   */
+  it("prints a REAL zero metric — the best possible result is still a result", () => {
+    const text = formatSpeedAudit([
+      page({
+        metrics: [
+          { id: "total-blocking-time", label: "Total Blocking Time", display: null, numeric: 0, unit: "ms" },
+          {
+            id: "cumulative-layout-shift",
+            label: "Cumulative Layout Shift",
+            display: null,
+            numeric: 0,
+            unit: "",
+          },
+        ],
+        opportunities: [],
+      }),
+    ]);
+    expect(text).toContain("Total Blocking Time: 0 ms");
+    expect(text).toContain("Cumulative Layout Shift: 0");
+  });
+
   it("prints no opportunities heading when there is nothing to suggest", () => {
     expect(formatSpeedAudit([page({ opportunities: [] })])).not.toMatch(/opportunit/i);
   });

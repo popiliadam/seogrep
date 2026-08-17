@@ -104,6 +104,38 @@ describe("parseLighthouseResponse", () => {
     expect(page.metrics).toEqual([]);
   });
 
+  /**
+   * The same axis at the PARSER end, in its KEEP direction: an audit whose only value is 0 must
+   * survive. `!display && !numeric` would satisfy the type checker and drop a Total Blocking Time
+   * of 0 ms — the best result that metric can have — so the guard is written against null.
+   */
+  it("KEEPS a metric whose only value is a real zero", () => {
+    const page = parseLighthouseResponse(
+      {
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                audits: {
+                  "total-blocking-time": {
+                    id: "total-blocking-time",
+                    title: "Total Blocking Time",
+                    numericValue: 0,
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      URL_UNDER_TEST,
+    );
+    expect(page.metrics).toHaveLength(1);
+    expect(page.metrics[0]?.numeric).toBe(0);
+  });
+
   it("keeps a raw numeric value when the vendor sent no formatted string", () => {
     const page = parseLighthouseResponse(fixtureResponse, URL_UNDER_TEST);
     const tti = page.metrics.find((metric) => metric.id === "interactive");
@@ -214,6 +246,18 @@ describe("extractLighthouseCostUsd", () => {
     expect(extractLighthouseCostUsd({ status_code: 20000, tasks: [{ status_code: 20000, cost: 0.007 }] })).toBe(0.007);
     expect(extractLighthouseCostUsd("not a response")).toBeNull();
   });
+
+  /**
+   * The null-vs-0 axis on the MONEY side. A vendor cost of 0 is a real answer (a cached or
+   * comped task), and `||` in place of either `??` here would silently promote it — first to the
+   * task's cost, then to the per-page list price. The day's budget would then count spend that
+   * did not happen, and refuse a later caller for it.
+   */
+  it("treats a real zero cost as ZERO, not as 'no cost reported'", () => {
+    expect(
+      extractLighthouseCostUsd({ status_code: 20000, cost: 0, tasks: [{ status_code: 20000, cost: 0.9 }] }),
+    ).toBe(0);
+  });
 });
 
 describe("estimateLighthouseUsd", () => {
@@ -310,6 +354,25 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     expect(rows[0]?.actualUsd).toBeCloseTo(0.01, 10);
     expect(rows[0]?.rowCount).toBe(2);
     expect(await todaySpendUsd(ledger)).toBeCloseTo(0.01, 10);
+  });
+
+  /**
+   * …and the same zero, all the way through to the settlement. `extractLighthouseCostUsd(raw) ??
+   * LIGHTHOUSE_PAGE_USD` must keep a reported 0; with `||` the day would be charged the list
+   * price for a call the vendor did not bill, i.e. the budget would refuse a later caller over
+   * money nobody spent.
+   */
+  it("settles a zero-cost response at ZERO, not at the per-page list price", async () => {
+    const freeResponse = { ...fixtureResponse, cost: 0, tasks: [{ ...fixtureResponse.tasks[0], cost: 0 }] };
+    const transport: DfsTimedTransport = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => freeResponse,
+    });
+    const port = createLiveSpeedClient({ login: "u", password: "p", transport, ledger });
+    await port.fetchPageSpeed([URL_UNDER_TEST]);
+    expect(ledger.rows()[0]?.actualUsd).toBe(0);
+    expect(await todaySpendUsd(ledger)).toBe(0);
   });
 
   it("refuses the whole lookup at the daily cap, before any request goes out", async () => {
