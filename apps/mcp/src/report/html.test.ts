@@ -362,6 +362,49 @@ describe("enriched audit sections (R1-a)", () => {
   });
 });
 
+describe("print, sharing, and accessibility (R1-e)", () => {
+  const html = renderReportHtml(FULL_MODEL);
+
+  it("carries a print stylesheet that keeps sections whole and stops burning ink", () => {
+    // An agency report's primary distribution is a PDF, and the screen design fights the page.
+    expect(html).toMatch(/@media print/);
+    expect(html).toMatch(/box-shadow:\s*none/);
+    expect(html).toMatch(/page-break-inside:\s*avoid/);
+  });
+
+  it("tells the RECIPIENT the link is public — the tool's reply never reaches them", () => {
+    // The warning previously lived only in the MCP response, which the person who GENERATED the
+    // report reads and the person who RECEIVES it never does.
+    expect(html).toMatch(/Anyone with this link can open this report/);
+    expect(html).toMatch(/needs no sign-in/);
+  });
+
+  it("promises only what revokeReportLink actually does", () => {
+    // The action nulls public_slug; it deletes NOTHING and cannot recall what was already read.
+    expect(html).toMatch(/can revoke the link/);
+    expect(html).toMatch(/cannot un-share what has already been read/);
+    expect(html).not.toMatch(/delete/i);
+    expect(html).not.toMatch(/expires?\b/i);
+    expect(html).not.toMatch(/password/i);
+  });
+
+  it("exposes a main landmark and scoped table headers", () => {
+    expect(html).toMatch(/<main class="wrap">/);
+    expect(html).toMatch(/<\/main>/);
+    expect(html).not.toMatch(/<div class="wrap">/);
+    // Without scope, a three-column data table reads as an undifferentiated run of numbers.
+    const headers = html.match(/<th\b[^>]*>/g) ?? [];
+    expect(headers.length).toBeGreaterThan(0);
+    expect(headers.every((th) => th.includes('scope="col"'))).toBe(true);
+  });
+
+  it("drops the below-AA text colour everywhere it was used", () => {
+    // #a8a294 on the card measured ~2.3:1 — below AA at ANY size — and it coloured every stat
+    // label, table header, hint and the footer: the small print was the unreadable print.
+    expect(html).not.toContain("#a8a294");
+  });
+});
+
 /**
  * R1-d. escapeHtml is applied at every sink in this file and always has been — but only four of
  * those sinks were pinned by a spec, so deleting it from any of the others turned nothing red.

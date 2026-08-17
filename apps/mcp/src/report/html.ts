@@ -55,6 +55,12 @@ const MARKETING_URL = "https://seogrep.com";
  * Inline stylesheet — the site's "manpage" aesthetic in email-grade, self-contained form:
  * warm paper card on a desk backdrop, system serif body (Georgia) + system mono chrome
  * (Courier New), hairline rules, one amber accent, square corners. No external requests.
+ *
+ * CONTRAST (R1-e): the chrome grey is #6b6862, measured at 5.5:1 on the #fffdf9 card and 5.2:1
+ * on the #faf8f3 page — both clear WCAG AA. It replaced #a8a294, which measured about 2.3:1,
+ * below AA at ANY size, and which coloured every stat label, table header, hint AND the footer.
+ * The small print was the unreadable print. That hex is named HERE and not in a CSS comment
+ * because this stylesheet ships to the reader; the rationale belongs to the source.
  */
 const STYLE = `
   :root { color-scheme: light; }
@@ -72,11 +78,12 @@ const STYLE = `
   .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 12px; }
   .stat { flex: 1 1 120px; border: 1px solid #e2ddd2; padding: 14px 12px; }
   .stat .n { font-family: Georgia, serif; font-size: 26px; font-weight: 500; letter-spacing: -0.01em; }
-  .stat .l { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 11px;
+  /* Label/header/hint/footer grey: 5.5:1 on the card, 5.2:1 on the page — both clear WCAG AA. */
+  .stat .l { color: #6b6862; font-family: "Courier New", Courier, monospace; font-size: 11px;
     text-transform: uppercase; letter-spacing: .08em; margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 8px; border-bottom: 1px solid #e2ddd2; vertical-align: top; }
-  th { color: #a8a294; font-family: "Courier New", Courier, monospace; font-weight: 600;
+  th { color: #6b6862; font-family: "Courier New", Courier, monospace; font-weight: 600;
     font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
   td { color: #524f48; }
   td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -87,15 +94,37 @@ const STYLE = `
   /* Crawled URLs render as TEXT, never links — long paths must wrap rather than widen the page. */
   .u { font-family: "Courier New", Courier, monospace; font-size: 13px; word-break: break-word; }
   li.more { list-style: none; margin-left: -18px; }
+  /* Available to assistive tech, absent from the visual design (table captions). */
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   h3.toplabel { margin: 18px 0 6px; font-family: "Courier New", Courier, monospace; font-size: 11px;
     color: #b45309; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
-  .hint { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 12px; margin: 12px 0 0; }
+  .hint { color: #6b6862; font-family: "Courier New", Courier, monospace; font-size: 12px; margin: 12px 0 0; }
   /* Staleness is a WARNING, not a footnote: it has to survive being skimmed. */
   .stale { border-left: 3px solid #b45309; background: #fdf6ec; color: #7c2d12;
     padding: 10px 12px; margin: 12px 0; font-size: 14px; }
-  footer.rpt { text-align: center; color: #a8a294; font-family: "Courier New", Courier, monospace;
+  footer.rpt { text-align: center; color: #6b6862; font-family: "Courier New", Courier, monospace;
     font-size: 12px; margin-top: 28px; border-top: 1px solid #e2ddd2; padding-top: 18px; }
   footer.rpt a { color: #b45309; text-decoration: none; }
+  .share { max-width: 60ch; margin: 0 auto 12px; text-align: left; line-height: 1.6; }
+  /*
+   * PRINT. An agency report's primary distribution is a PDF, and the screen design fights the
+   * page: a drop shadow and two tinted backdrops render as grey wash across every sheet, and a
+   * section split across a page break separates a finding from its heading. Ink is spent on the
+   * findings, and each section is kept whole.
+   */
+  @media print {
+    body { background: #fff; padding: 0; font-size: 11pt; }
+    .wrap { max-width: none; margin: 0; padding: 0; background: #fff;
+      border: none; box-shadow: none; }
+    section.rpt { background: #fff; break-inside: avoid; page-break-inside: avoid; }
+    h2 { break-after: avoid; page-break-after: avoid; }
+    h3.toplabel { break-after: avoid; page-break-after: avoid; }
+    .stale { background: #fff; border-left-width: 4px; }
+    code { background: none; padding: 0; }
+    /* The URL is the useful half of a link on paper, where the href cannot be followed. */
+    footer.rpt a::after { content: " (" attr(href) ")"; }
+  }
 `;
 
 function statBlock(n: number, label: string): string {
@@ -364,9 +393,13 @@ function topTable(caption: string, keyHeader: string, rows: readonly AggRow[]): 
         `<td class="num">${fmtNum(row.impressions)}</td></tr>`,
     )
     .join("");
+  // scope="col" so a screen reader announces the right header with each cell; without it a
+  // three-column data table is read as an undifferentiated run of numbers.
   return `<h3 class="toplabel">${escapeHtml(caption)}</h3>
-    <table><thead><tr>
-      <th>${escapeHtml(keyHeader)}</th><th class="num">Clicks</th><th class="num">Impressions</th>
+    <table><caption class="visually-hidden">${escapeHtml(caption)}</caption><thead><tr>
+      <th scope="col">${escapeHtml(keyHeader)}</th>
+      <th scope="col" class="num">Clicks</th>
+      <th scope="col" class="num">Impressions</th>
     </tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -483,10 +516,27 @@ export function reportDescription(model: ReportModel): string {
 }
 
 /** Render the full self-contained HTML document for a report model. */
+/**
+ * The sharing notice. It lived ONLY in the MCP tool's reply — which the person who GENERATED the
+ * report reads, and the person who RECEIVES it never does. The recipient of a forwarded link had
+ * no way to know the URL grants access to anyone holding it.
+ *
+ * WORDED TO WHAT THE CODE ACTUALLY DOES, and no further. `revokeReportLink` nulls `public_slug`
+ * so the URL stops resolving from the next request onward, and the Reports page exposes it — so
+ * the revoke claim is real. It stops there: the action deletes nothing, and its own docblock is
+ * explicit that revoking "ends future access, it cannot un-share what was read", so no promise
+ * of deletion or recall is made here.
+ */
+function shareNotice(): string {
+  return `<p class="share">Anyone with this link can open this report — it needs no sign-in.
+    The owner can revoke the link from the Reports page of their SeoGrep dashboard, which stops
+    future access but cannot un-share what has already been read.</p>`;
+}
+
 export function renderReportHtml(model: ReportModel): string {
   const title = escapeHtml(model.title);
   const description = escapeHtml(reportDescription(model));
-  const body = `<div class="wrap">
+  const body = `<main class="wrap">
     <header class="rpt">
       <h1>${title}</h1>
       <p class="muted">${escapeHtml(model.domain)} · ${escapeHtml(isoDate(model.generatedAt))}</p>
@@ -497,8 +547,11 @@ export function renderReportHtml(model: ReportModel): string {
     ${model.schema ? schemaSection(model.schema) : ""}
     ${model.gsc ? gscSection(model.gsc) : gscAbsentSection(model.gscConnected)}
     ${model.opportunities ? opportunitySection(model.opportunities) : ""}
-    <footer class="rpt">powered by <a href="${MARKETING_URL}" rel="noopener">SeoGrep</a></footer>
-  </div>`;
+    <footer class="rpt">
+      ${shareNotice()}
+      powered by <a href="${MARKETING_URL}" rel="noopener">SeoGrep</a>
+    </footer>
+  </main>`;
 
   return `<!doctype html>
 <html lang="en">
