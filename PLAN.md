@@ -5,6 +5,36 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🎯 2026-08-17 — DERİNLEŞTİRME 3. TUR: "%100 KAPAT" — L+F23 CANLIDA · N8 İMZA-PARKINDA
+
+Operatör talimatı "kalan işleri %100 halledelim" ile üç şerit paralel koşuldu (2 izole worktree +
+ana ağaç; peer GSC oturumuyla dosya-sınır anlaşması yazılı; hakemler: 2 Fable + 1 Opus, 3/3 PASS):
+
+- **L — Lighthouse regresyonu KÖKTEN çözüldü** ([#112](https://github.com/popiliadam/seogrep/pull/112)): #88'in getirdiği 145 KB webfont'tu
+  (öncesi sistem-fontu). İtalik statik instance'lara (−40 KB), ölü mono-500 düşürüldü, fumadocs
+  provider'ı /docs'a kapsandı. Görsel kimlik 10/12 BAYT-ÖZDEŞ PNG'yle ölçülü (tek fark /docs'ta
+  16 px, gated değil). **KANIT: merge CI'ında lighthouse İLK denemede geçti** (günlerdir rerun'sız
+  ilki). Eşiğe dokunulmadı. Hakem şerhi kayıtlı: lokal ortam CI arızasını üretemiyor — izlemeye
+  devam; tekrar yazı-turaya dönerse eşik kararı operatöre.
+- **F23 — graf + schema gövdesi CANLIDA** ([#106](https://github.com/popiliadam/seogrep/pull/106)): sitemapUrls (500 tavan) · sitemap↔crawl
+  diff · kırık iç linkler · JSON-LD gövde saklama (5×4000) · tip-başına zorunlu-alan doğrulaması +
+  invalid_json. 12/12 mutasyon; bayt-özdeşlik kapsam şerhiyle (broken-links yalnız veri kırık link
+  içermiyorsa özdeş — bilinçli). Deploy + canlı taze imaj ölçüldü.
+- **N8 — audit_content HAZIR, İMZA-PARKINDA** ([#107](https://github.com/popiliadam/seogrep/pull/107)): 23. tool, GSC sorgu × title/h1
+  uyumsuzluğu; motor packages/core/src/content; 0026 persist; docs+pricing 5/5; 10/10 mutasyon.
+  **İKİ OPERATÖR ADIMI: fiyat imzası (12 kredi — iki planın bandı 10-15) + 0026 cloud-apply.**
+- Kesinti kaydı: L işçisi haftalık API kotasında yarıda öldü (Aug 17 05:00 reset), resume'la
+  kayıpsız tamamlandı. Chip-dalgası oturumunun 4 dilimi (#108-#111) bu tur sırasında merge oldu;
+  **KVKK karar dosyası #108 İMZA BEKLİYOR** (N8'in bulduğu silme-hakkı çakışması orada çerçeveli).
+
+**İMZA KUYRUĞU (operatörde birleşik):** #107 fiyat+0026 · #108 KVKK (8 madde) · GSC planı §7 ·
+DFS10 fiyat dosyası (eski). **Fiyatsız-kapsamda bekleyen iş KALMADI** — crawl+audit planının
+(2026-08-14) imzasız yapılabilir her dilimi canlıda.
+
+**Backlog notları bu turdan:** audit_content kelime-sınırı (≤3 harf substring sahte-eşleşmesi) ·
+duplicate-content panel gösterimi · logo/og/icon.png sıkıştırması (74/69/74 KB, gated-dışı) ·
+truncate-armor 30sn flake'i.
+
 ### 🏁 2026-08-15 — CRAWL+AUDIT DERİNLEŞTİRME, 2. OTURUM: B+C+D2 CANLIDA — plan §6'nın 1-4'ü TAMAM
 
 Dünkü 1. oturumun (A+D1) devamı; üç dilim daha canlıda, hepsi taze Fable hakemli (3/3 PASS):
