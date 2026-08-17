@@ -3,7 +3,7 @@
   "status_code": 20000,
   "status_message": "Ok.",
   "time": "0.6124 sec.",
-  "cost": 0.132,
+  "cost": 0.0126,
   "tasks_count": 1,
   "tasks_error": 0,
   "tasks": [
@@ -12,9 +12,15 @@
       "status_code": 20000,
       "status_message": "Ok.",
       "time": "0.5981 sec.",
-      "cost": 0.132,
+      "cost": 0.0126,
       "result_count": 1,
-      "path": ["v3", "dataforseo_labs", "google", "competitors_domain", "live"],
+      "path": [
+        "v3",
+        "dataforseo_labs",
+        "google",
+        "competitors_domain",
+        "live"
+      ],
       "data": {
         "api": "dataforseo_labs",
         "function": "competitors_domain",
@@ -22,9 +28,13 @@
         "target": "example.com",
         "location_code": 2840,
         "language_code": "en",
-        "limit": 1000,
-        "item_types": ["organic"],
-        "order_by": ["metrics.organic.count,desc"]
+        "limit": 10,
+        "item_types": [
+          "organic"
+        ],
+        "order_by": [
+          "metrics.organic.count,desc"
+        ]
       },
       "result": [
         {
@@ -43,24 +53,71 @@
               "intersections": 5312,
               "full_domain_metrics": {
                 "organic": {
-                  "pos_1": 4,
-                  "pos_2_3": 11,
-                  "pos_4_10": 92,
-                  "pos_11_20": 240,
+                  "pos_1": 85,
+                  "pos_2_3": 154,
+                  "pos_4_10": 414,
+                  "pos_11_20": 691,
+                  "pos_21_30": 653,
+                  "pos_31_40": 611,
+                  "pos_41_50": 579,
+                  "pos_51_60": 537,
+                  "pos_61_70": 499,
+                  "pos_71_80": 446,
+                  "pos_81_90": 377,
+                  "pos_91_100": 266,
                   "etv": 15234.5,
                   "count": 5312,
-                  "estimated_paid_traffic_cost": 48120.75
+                  "estimated_paid_traffic_cost": 48120.75,
+                  "is_new": 425,
+                  "is_up": 584,
+                  "is_down": 398,
+                  "is_lost": 319
                 }
               },
               "metrics": {
                 "organic": {
-                  "pos_1": 4,
-                  "pos_2_3": 11,
-                  "pos_4_10": 92,
-                  "pos_11_20": 240,
+                  "pos_1": 85,
+                  "pos_2_3": 154,
+                  "pos_4_10": 414,
+                  "pos_11_20": 691,
+                  "pos_21_30": 653,
+                  "pos_31_40": 611,
+                  "pos_41_50": 579,
+                  "pos_51_60": 537,
+                  "pos_61_70": 499,
+                  "pos_71_80": 446,
+                  "pos_81_90": 377,
+                  "pos_91_100": 266,
                   "etv": 15234.5,
                   "count": 5312,
-                  "estimated_paid_traffic_cost": 48120.75
+                  "estimated_paid_traffic_cost": 48120.75,
+                  "is_new": 426,
+                  "is_up": 585,
+                  "is_down": 399,
+                  "is_lost": 320
+                }
+              },
+              "competitor_metrics": {
+                "organic": {
+                  "pos_1": 80,
+                  "pos_2_3": 144,
+                  "pos_4_10": 388,
+                  "pos_11_20": 647,
+                  "pos_21_30": 613,
+                  "pos_31_40": 573,
+                  "pos_41_50": 543,
+                  "pos_51_60": 503,
+                  "pos_61_70": 468,
+                  "pos_71_80": 418,
+                  "pos_81_90": 354,
+                  "pos_91_100": 249,
+                  "etv": 14002.3,
+                  "count": 4980,
+                  "estimated_paid_traffic_cost": 44180.2,
+                  "is_new": 400,
+                  "is_up": 550,
+                  "is_down": 376,
+                  "is_lost": 301
                 }
               }
             },
@@ -72,24 +129,71 @@
               "intersections": 1840,
               "full_domain_metrics": {
                 "organic": {
-                  "pos_1": 9,
-                  "pos_2_3": 24,
-                  "pos_4_10": 140,
-                  "pos_11_20": 388,
+                  "pos_1": 144,
+                  "pos_2_3": 262,
+                  "pos_4_10": 704,
+                  "pos_11_20": 1173,
+                  "pos_21_30": 1110,
+                  "pos_31_40": 1038,
+                  "pos_41_50": 984,
+                  "pos_51_60": 911,
+                  "pos_61_70": 848,
+                  "pos_71_80": 758,
+                  "pos_81_90": 641,
+                  "pos_91_100": 451,
                   "etv": 28110.9,
                   "count": 9024,
-                  "estimated_paid_traffic_cost": 91044.2
+                  "estimated_paid_traffic_cost": 91044.2,
+                  "is_new": 722,
+                  "is_up": 993,
+                  "is_down": 677,
+                  "is_lost": 541
                 }
               },
               "metrics": {
                 "organic": {
-                  "pos_1": 3,
-                  "pos_2_3": 8,
-                  "pos_4_10": 61,
-                  "pos_11_20": 155,
+                  "pos_1": 29,
+                  "pos_2_3": 53,
+                  "pos_4_10": 144,
+                  "pos_11_20": 239,
+                  "pos_21_30": 226,
+                  "pos_31_40": 212,
+                  "pos_41_50": 201,
+                  "pos_51_60": 186,
+                  "pos_61_70": 173,
+                  "pos_71_80": 155,
+                  "pos_81_90": 131,
+                  "pos_91_100": 91,
                   "etv": 6120.4,
                   "count": 1840,
-                  "estimated_paid_traffic_cost": 18220.6
+                  "estimated_paid_traffic_cost": 18220.6,
+                  "is_new": 148,
+                  "is_up": 203,
+                  "is_down": 139,
+                  "is_lost": 111
+                }
+              },
+              "competitor_metrics": {
+                "organic": {
+                  "pos_1": 39,
+                  "pos_2_3": 70,
+                  "pos_4_10": 188,
+                  "pos_11_20": 313,
+                  "pos_21_30": 296,
+                  "pos_31_40": 277,
+                  "pos_41_50": 263,
+                  "pos_51_60": 243,
+                  "pos_61_70": 227,
+                  "pos_71_80": 202,
+                  "pos_81_90": 171,
+                  "pos_91_100": 121,
+                  "etv": 9410.2,
+                  "count": 2410,
+                  "estimated_paid_traffic_cost": 24110.8,
+                  "is_new": 195,
+                  "is_up": 267,
+                  "is_down": 183,
+                  "is_lost": 147
                 }
               }
             },
@@ -101,24 +205,71 @@
               "intersections": 1102,
               "full_domain_metrics": {
                 "organic": {
-                  "pos_1": 2,
-                  "pos_2_3": 7,
-                  "pos_4_10": 48,
-                  "pos_11_20": 190,
+                  "pos_1": 59,
+                  "pos_2_3": 108,
+                  "pos_4_10": 289,
+                  "pos_11_20": 482,
+                  "pos_21_30": 456,
+                  "pos_31_40": 427,
+                  "pos_41_50": 404,
+                  "pos_51_60": 375,
+                  "pos_61_70": 349,
+                  "pos_71_80": 312,
+                  "pos_81_90": 263,
+                  "pos_91_100": 187,
                   "etv": 8402.1,
                   "count": 3711,
-                  "estimated_paid_traffic_cost": 26410.0
+                  "estimated_paid_traffic_cost": 26410,
+                  "is_new": 297,
+                  "is_up": 408,
+                  "is_down": 278,
+                  "is_lost": 223
                 }
               },
               "metrics": {
                 "organic": {
-                  "pos_1": 1,
-                  "pos_2_3": 2,
-                  "pos_4_10": 19,
-                  "pos_11_20": 84,
+                  "pos_1": 18,
+                  "pos_2_3": 32,
+                  "pos_4_10": 86,
+                  "pos_11_20": 143,
+                  "pos_21_30": 136,
+                  "pos_31_40": 127,
+                  "pos_41_50": 120,
+                  "pos_51_60": 111,
+                  "pos_61_70": 104,
+                  "pos_71_80": 93,
+                  "pos_81_90": 78,
+                  "pos_91_100": 54,
                   "etv": 2044.8,
                   "count": 1102,
-                  "estimated_paid_traffic_cost": 6210.4
+                  "estimated_paid_traffic_cost": 6210.4,
+                  "is_new": 89,
+                  "is_up": 122,
+                  "is_down": 84,
+                  "is_lost": 67
+                }
+              },
+              "competitor_metrics": {
+                "organic": {
+                  "pos_1": 25,
+                  "pos_2_3": 46,
+                  "pos_4_10": 123,
+                  "pos_11_20": 205,
+                  "pos_21_30": 194,
+                  "pos_31_40": 182,
+                  "pos_41_50": 172,
+                  "pos_51_60": 160,
+                  "pos_61_70": 149,
+                  "pos_71_80": 133,
+                  "pos_81_90": 112,
+                  "pos_91_100": 79,
+                  "etv": 3901.7,
+                  "count": 1580,
+                  "estimated_paid_traffic_cost": 11240.9,
+                  "is_new": 128,
+                  "is_up": 176,
+                  "is_down": 121,
+                  "is_lost": 97
                 }
               }
             },
@@ -130,24 +281,71 @@
               "intersections": 640,
               "full_domain_metrics": {
                 "organic": {
-                  "pos_1": 0,
-                  "pos_2_3": 1,
-                  "pos_4_10": 12,
-                  "pos_11_20": 66,
+                  "pos_1": 22,
+                  "pos_2_3": 41,
+                  "pos_4_10": 109,
+                  "pos_11_20": 182,
+                  "pos_21_30": 172,
+                  "pos_31_40": 161,
+                  "pos_41_50": 153,
+                  "pos_51_60": 142,
+                  "pos_61_70": 132,
+                  "pos_71_80": 118,
+                  "pos_81_90": 100,
+                  "pos_91_100": 70,
                   "etv": 1180.3,
                   "count": 1402,
-                  "estimated_paid_traffic_cost": 3980.1
+                  "estimated_paid_traffic_cost": 3980.1,
+                  "is_new": 112,
+                  "is_up": 154,
+                  "is_down": 105,
+                  "is_lost": 84
                 }
               },
               "metrics": {
                 "organic": {
-                  "pos_1": 0,
-                  "pos_2_3": 1,
-                  "pos_4_10": 7,
-                  "pos_11_20": 40,
+                  "pos_1": 10,
+                  "pos_2_3": 19,
+                  "pos_4_10": 50,
+                  "pos_11_20": 83,
+                  "pos_21_30": 79,
+                  "pos_31_40": 74,
+                  "pos_41_50": 70,
+                  "pos_51_60": 65,
+                  "pos_61_70": 60,
+                  "pos_71_80": 54,
+                  "pos_81_90": 45,
+                  "pos_91_100": 31,
                   "etv": 640.2,
                   "count": 640,
-                  "estimated_paid_traffic_cost": 1802.7
+                  "estimated_paid_traffic_cost": 1802.7,
+                  "is_new": 52,
+                  "is_up": 71,
+                  "is_down": 49,
+                  "is_lost": 39
+                }
+              },
+              "competitor_metrics": {
+                "organic": {
+                  "pos_1": 14,
+                  "pos_2_3": 26,
+                  "pos_4_10": 71,
+                  "pos_11_20": 118,
+                  "pos_21_30": 111,
+                  "pos_31_40": 104,
+                  "pos_41_50": 99,
+                  "pos_51_60": 91,
+                  "pos_61_70": 85,
+                  "pos_71_80": 76,
+                  "pos_81_90": 64,
+                  "pos_91_100": 46,
+                  "etv": 1044.6,
+                  "count": 905,
+                  "estimated_paid_traffic_cost": 2610.4,
+                  "is_new": 74,
+                  "is_up": 102,
+                  "is_down": 70,
+                  "is_lost": 56
                 }
               }
             },
@@ -159,24 +357,71 @@
               "intersections": 210,
               "full_domain_metrics": {
                 "organic": {
-                  "pos_1": 0,
-                  "pos_2_3": 0,
-                  "pos_4_10": 3,
-                  "pos_11_20": 18,
+                  "pos_1": 9,
+                  "pos_2_3": 17,
+                  "pos_4_10": 46,
+                  "pos_11_20": 76,
+                  "pos_21_30": 72,
+                  "pos_31_40": 68,
+                  "pos_41_50": 64,
+                  "pos_51_60": 59,
+                  "pos_61_70": 55,
+                  "pos_71_80": 49,
+                  "pos_81_90": 42,
+                  "pos_91_100": 31,
                   "etv": 204.6,
                   "count": 588,
-                  "estimated_paid_traffic_cost": 610.9
+                  "estimated_paid_traffic_cost": 610.9,
+                  "is_new": 47,
+                  "is_up": 65,
+                  "is_down": 44,
+                  "is_lost": 35
                 }
               },
               "metrics": {
                 "organic": {
-                  "pos_1": 0,
-                  "pos_2_3": 0,
-                  "pos_4_10": 1,
-                  "pos_11_20": 9,
+                  "pos_1": 3,
+                  "pos_2_3": 6,
+                  "pos_4_10": 16,
+                  "pos_11_20": 27,
+                  "pos_21_30": 26,
+                  "pos_31_40": 24,
+                  "pos_41_50": 23,
+                  "pos_51_60": 21,
+                  "pos_61_70": 20,
+                  "pos_71_80": 18,
+                  "pos_81_90": 15,
+                  "pos_91_100": 11,
                   "etv": 88.4,
                   "count": 210,
-                  "estimated_paid_traffic_cost": 240.1
+                  "estimated_paid_traffic_cost": 240.1,
+                  "is_new": 18,
+                  "is_up": 24,
+                  "is_down": 17,
+                  "is_lost": 14
+                }
+              },
+              "competitor_metrics": {
+                "organic": {
+                  "pos_1": 5,
+                  "pos_2_3": 10,
+                  "pos_4_10": 26,
+                  "pos_11_20": 43,
+                  "pos_21_30": 41,
+                  "pos_31_40": 38,
+                  "pos_41_50": 36,
+                  "pos_51_60": 33,
+                  "pos_61_70": 31,
+                  "pos_71_80": 28,
+                  "pos_81_90": 23,
+                  "pos_91_100": 16,
+                  "etv": 140.2,
+                  "count": 330,
+                  "estimated_paid_traffic_cost": 401.5,
+                  "is_new": 28,
+                  "is_up": 38,
+                  "is_down": 27,
+                  "is_lost": 22
                 }
               }
             }

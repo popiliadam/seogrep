@@ -3,6 +3,7 @@ import type { AuthContext } from "../auth.ts";
 import {
   createMockCompetitorsPort,
   disabledCompetitorsPort,
+  EMPTY_ORGANIC_METRICS,
   type CompetitorComparison,
   type DomainOrganicMetrics,
 } from "../dfs/competitors.ts";
@@ -41,35 +42,58 @@ const FIXTURES = {
 
 const WHERE = { language_code: "en", location_code: 2840 };
 
-const TARGET_METRICS: DomainOrganicMetrics = {
-  pos_1: 11,
-  pos_2_3: 28,
-  pos_4_10: 100,
-  pos_11_20: 135,
-  etv: 3055.741419672966,
-  count: 1788,
-  estimated_paid_traffic_cost: 15078.99657046888,
-};
+/** All nineteen documented organic fields, built from twelve bands + the four scalars + movement. */
+function metrics(
+  bands: readonly [number, number, number, number, number, number, number, number, number, number, number, number],
+  scalars: { etv: number; count: number; cost: number },
+  movement: readonly [number, number, number, number],
+): DomainOrganicMetrics {
+  const [pos_1, pos_2_3, pos_4_10, pos_11_20, pos_21_30, pos_31_40, pos_41_50, pos_51_60, pos_61_70, pos_71_80, pos_81_90, pos_91_100] = bands;
+  const [is_new, is_up, is_down, is_lost] = movement;
+  return {
+    pos_1,
+    pos_2_3,
+    pos_4_10,
+    pos_11_20,
+    pos_21_30,
+    pos_31_40,
+    pos_41_50,
+    pos_51_60,
+    pos_61_70,
+    pos_71_80,
+    pos_81_90,
+    pos_91_100,
+    etv: scalars.etv,
+    count: scalars.count,
+    estimated_paid_traffic_cost: scalars.cost,
+    is_new,
+    is_up,
+    is_down,
+    is_lost,
+  };
+}
 
-const RIVAL_METRICS: DomainOrganicMetrics = {
-  pos_1: 9,
-  pos_2_3: 24,
-  pos_4_10: 140,
-  pos_11_20: 388,
-  etv: 28110.9,
-  count: 9024,
-  estimated_paid_traffic_cost: 91044.2,
-};
+const TARGET_METRICS = metrics(
+  [11, 28, 100, 135, 157, 174, 203, 220, 232, 202, 200, 126],
+  { etv: 3055.741419672966, count: 1788, cost: 15078.99657046888 },
+  [661, 757, 418, 547],
+);
 
-const EMPTY_METRICS: DomainOrganicMetrics = {
-  pos_1: null,
-  pos_2_3: null,
-  pos_4_10: null,
-  pos_11_20: null,
-  etv: null,
-  count: null,
-  estimated_paid_traffic_cost: null,
-};
+/** A rival's WHOLE-DOMAIN scope — every keyword it ranks for. */
+const RIVAL_METRICS = metrics(
+  [9, 24, 140, 388, 1110, 1038, 984, 911, 848, 758, 641, 1173],
+  { etv: 28110.9, count: 9024, cost: 91044.2 },
+  [722, 993, 677, 541],
+);
+
+/** The SAME rival, restricted to the keywords it shares with the target — different numbers. */
+const RIVAL_SHARED_METRICS = metrics(
+  [29, 53, 144, 239, 226, 212, 201, 186, 173, 155, 131, 91],
+  { etv: 6120.4, count: 1840, cost: 18220.6 },
+  [148, 203, 139, 111],
+);
+
+const EMPTY_METRICS: DomainOrganicMetrics = EMPTY_ORGANIC_METRICS;
 
 const DISCOVERED: CompetitorComparison = {
   target: "example.com",
@@ -82,6 +106,7 @@ const DISCOVERED: CompetitorComparison = {
       intersections: null,
       avg_position: null,
       metrics: TARGET_METRICS,
+      shared: null,
     },
     {
       domain: "rival-one.example",
@@ -89,6 +114,7 @@ const DISCOVERED: CompetitorComparison = {
       intersections: 1840,
       avg_position: 14.2,
       metrics: RIVAL_METRICS,
+      shared: RIVAL_SHARED_METRICS,
     },
   ],
 };
@@ -100,17 +126,117 @@ describe("formatCompetitorComparison", () => {
         "the top 1 of 47 competitors DataForSEO found, ranked by how many organic SERPs each one " +
         "shares with the target:\n\n" +
         "• example.com (target)\n" +
+        "  Across the whole domain — every keyword it ranks for:\n" +
         "  - Organic SERPs containing the domain: 1,788\n" +
-        "  - Organic SERPs by position (top 20) — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
+        "  - Organic SERPs by position, #1-20 — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
+        "  - Organic SERPs by position, #21-100 — #21-30: 157 · #31-40: 174 · #41-50: 203 · " +
+        "#51-60: 220 · #61-70: 232 · #71-80: 202 · #81-90: 200 · #91-100: 126\n" +
         "  - Estimated monthly organic traffic (ETV): 3,056\n" +
-        "  - Estimated monthly cost of the same traffic as paid ads: $15,079\n\n" +
+        "  - Estimated monthly cost of the same traffic as paid ads: $15,079\n" +
+        "  - Since DataForSEO's previous check — newly ranking: 661 · moved up: 757 · " +
+        "moved down: 418 · no longer found: 547\n\n" +
         "• rival-one.example (found by DataForSEO) — 1,840 intersecting keywords, average " +
         "position 14.2 on them\n" +
+        "  Across the whole domain — every keyword it ranks for:\n" +
         "  - Organic SERPs containing the domain: 9,024\n" +
-        "  - Organic SERPs by position (top 20) — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
+        "  - Organic SERPs by position, #1-20 — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
+        "  - Organic SERPs by position, #21-100 — #21-30: 1,110 · #31-40: 1,038 · #41-50: 984 · " +
+        "#51-60: 911 · #61-70: 848 · #71-80: 758 · #81-90: 641 · #91-100: 1,173\n" +
         "  - Estimated monthly organic traffic (ETV): 28,111\n" +
-        "  - Estimated monthly cost of the same traffic as paid ads: $91,044",
+        "  - Estimated monthly cost of the same traffic as paid ads: $91,044\n" +
+        "  - Since DataForSEO's previous check — newly ranking: 722 · moved up: 993 · " +
+        "moved down: 677 · no longer found: 541\n" +
+        "  Across the keywords it shares with the target only:\n" +
+        "  - Organic SERPs containing the domain: 1,840\n" +
+        "  - Organic SERPs by position, #1-20 — #1: 29 · #2-3: 53 · #4-10: 144 · #11-20: 239\n" +
+        "  - Organic SERPs by position, #21-100 — #21-30: 226 · #31-40: 212 · #41-50: 201 · " +
+        "#51-60: 186 · #61-70: 173 · #71-80: 155 · #81-90: 131 · #91-100: 91\n" +
+        "  - Estimated monthly organic traffic (ETV): 6,120\n" +
+        "  - Estimated monthly cost of the same traffic as paid ads: $18,221\n" +
+        "  - Since DataForSEO's previous check — newly ranking: 148 · moved up: 203 · " +
+        "moved down: 139 · no longer found: 111",
     );
+  });
+
+  /**
+   * The distinction the pre-2026-08-17 fixture made invisible. `full_domain_metrics` and `metrics`
+   * are DIFFERENT numbers for the same rival, and a reader must be able to tell which one they are
+   * looking at. Mutation proof: drop either scope heading, or render `shared` under the whole-domain
+   * heading, and this fails.
+   */
+  it("labels the whole-domain and shared-keyword scopes so neither can pass for the other", () => {
+    const text = formatCompetitorComparison(DISCOVERED, WHERE);
+    expect(text).toContain("  Across the whole domain — every keyword it ranks for:\n");
+    expect(text).toContain("  Across the keywords it shares with the target only:\n");
+    // Both counts appear, each under its own heading, and they are not the same number.
+    const whole = text.indexOf("Across the whole domain — every keyword it ranks for:\n  - Organic SERPs containing the domain: 9,024");
+    const shared = text.indexOf("Across the keywords it shares with the target only:\n  - Organic SERPs containing the domain: 1,840");
+    expect(whole).toBeGreaterThan(-1);
+    expect(shared).toBeGreaterThan(whole);
+  });
+
+  it("prints ALL TWELVE position bands, not the top four", () => {
+    const text = formatCompetitorComparison(DISCOVERED, WHERE);
+    for (const label of [
+      "#1:",
+      "#2-3:",
+      "#4-10:",
+      "#11-20:",
+      "#21-30:",
+      "#31-40:",
+      "#41-50:",
+      "#51-60:",
+      "#61-70:",
+      "#71-80:",
+      "#81-90:",
+      "#91-100:",
+    ]) {
+      expect(text).toContain(label);
+    }
+    // The old "(top 20)" hedge existed because eight bands were thrown away. They no longer are.
+    expect(text).not.toContain("(top 20)");
+  });
+
+  it("reports whether each domain is gaining or losing rankings", () => {
+    const text = formatCompetitorComparison(DISCOVERED, WHERE);
+    expect(text).toContain(
+      "Since DataForSEO's previous check — newly ranking: 722 · moved up: 993 · moved down: 677 · no longer found: 541",
+    );
+  });
+
+  it("gives a SUPPLIED rival no shared-keyword section, because none was ever fetched", () => {
+    const text = formatCompetitorComparison(
+      {
+        ...DISCOVERED,
+        discovered: false,
+        discovered_total_count: null,
+        rows: [
+          DISCOVERED.rows[0]!,
+          {
+            domain: "chosen.example",
+            source: "supplied",
+            intersections: null,
+            avg_position: null,
+            metrics: RIVAL_METRICS,
+            shared: null,
+          },
+        ],
+      },
+      WHERE,
+    );
+    expect(text).toContain("• chosen.example (supplied by you)\n");
+    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    expect(text).not.toContain("shares with the target only");
+  });
+
+  it("omits the shared section when DataForSEO returned nothing for that scope", () => {
+    const text = formatCompetitorComparison(
+      { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[1]!, shared: EMPTY_METRICS }] },
+      WHERE,
+    );
+    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    // An all-null scope is dropped rather than printed as a block of n/a.
+    expect(text).not.toContain("shares with the target only");
   });
 
   it("says plainly that a SUPPLIED rival came from the caller, with no discovery figures", () => {
@@ -127,6 +253,7 @@ describe("formatCompetitorComparison", () => {
             intersections: null,
             avg_position: null,
             metrics: RIVAL_METRICS,
+            shared: null,
           },
         ],
       },
@@ -283,6 +410,19 @@ describe("compare_competitors metadata", () => {
   it("tells the caller that limit only applies to the discovery request", () => {
     const schema = tool.inputJsonSchema as { properties: Record<string, { description?: string }> };
     expect(schema.properties.limit?.description).toMatch(/skips the discovery request/i);
+  });
+
+  /**
+   * W1-d: the default is the number of rows DataForSEO is actually BILLED for on a discovery
+   * request, and only MAX_COMPETITORS of them are ever compared. Asking for the vendor maximum by
+   * default cost ten times as much for an identical table.
+   */
+  it("defaults `limit` to a number the tool can use, not to the vendor maximum", () => {
+    const schema = tool.inputJsonSchema as {
+      properties: Record<string, { default?: number; maximum?: number }>;
+    };
+    expect(schema.properties.limit?.default).toBe(10);
+    expect(schema.properties.limit?.default).toBeLessThan(schema.properties.limit?.maximum ?? 0);
   });
 
   it("rejects invalid input before any handler work", async () => {

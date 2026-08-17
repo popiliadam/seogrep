@@ -26,11 +26,13 @@ import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
  *       gets ZERO rows and the caller is not charged (NEVER #2 + #7);
  *   (d) a DataForSEO FAILURE inside the guarded body reserves and then RELEASES, so the balance
  *       ends where it started — a failed comparison is never billed;
- *   (e)-(g) the fan-out cases specific to this tool: one comparison is up to FIVE paid requests,
- *       so a dead DISCOVERY, a dead FIRST rank overview, and a dead LAST rank overview must each
- *       bill exactly as much as a failure on request one — nothing. A partial table is never sold;
- *   (h) the same refund on the OTHER branch: with competitors supplied there is no discovery
- *       request at all, so the short fan-out gets its own partial-failure proof.
+ *   (e)-(g) the failure cases specific to this tool's two flows. Since 2026-08-17 the DISCOVERY
+ *       flow is ONE paid request (plus a rare target fallback) while the SUPPLIED flow still fans
+ *       out over one rank overview per compared domain — so a dead discovery, a dead target
+ *       fallback, and a dead LAST rank overview of the supplied fan-out must each bill exactly as
+ *       much as a failure on request one: nothing. A partial table is never sold;
+ *   (h) the same refund mid-way through the supplied fan-out, where the first request was already
+ *       paid for before the second died.
  * No real DataForSEO call happens here (NEVER #5): the serving paths use fixture-backed mock
  * ports, the failure paths fake transports, and the disabled path never fetches at all.
  */
@@ -120,27 +122,33 @@ const failingPort: CompetitorsPort = {
 };
 
 /**
- * A LIVE client (fake transport, no real HTTP, spend booked against a throwaway in-memory
- * budget ledger) whose Nth request fails — the realistic partial-fan-out failure. Request 1 is
- * discovery; requests 2..5 are the rank overviews for the target and its three discovered
- * rivals. The ledger is per-call, so the shared vendor-budget counter is never touched.
+ * A LIVE client (fake transport, no real HTTP, spend booked against a throwaway in-memory budget
+ * ledger) whose Nth request fails. The ledger is per-call, so the shared vendor-budget counter is
+ * never touched. `seen` records the endpoints so a spec can prove WHICH requests really went out
+ * rather than inferring it from a count.
  */
-function portFailingAtRequest(failFrom: 1 | 2 | 5): CompetitorsPort {
-  let sent = 0;
+function portFailingAtRequest(failFrom: number): {
+  readonly port: CompetitorsPort;
+  readonly seen: readonly string[];
+} {
+  const seen: string[] = [];
   const transport: DfsTransport = async (url) => {
-    sent += 1;
-    if (sent >= failFrom) {
+    seen.push(url);
+    if (seen.length >= failFrom) {
       return { ok: false, status: 500, json: async () => ({}) };
     }
     const body = url.includes("/competitors_domain/live") ? competitorsFixture : rankOverviewFixture;
     return { ok: true, status: 200, json: async () => body };
   };
-  return createLiveCompetitorsClient({
-    login: "user@x.test",
-    password: "pw",
-    transport,
-    ledger: createMemorySpendLedger(),
-  });
+  return {
+    port: createLiveCompetitorsClient({
+      login: "user@x.test",
+      password: "pw",
+      transport,
+      ledger: createMemorySpendLedger(),
+    }),
+    seen,
+  };
 }
 
 /**
@@ -256,25 +264,69 @@ describe("compare_competitors credit path against the local stack", () => {
     expect(await jobCount(ctx.userId)).toBe(0);
   });
 
-  // (e)-(g): the fan-out cases. One comparison is up to five paid DataForSEO requests; whichever
-  // one dies — the discovery, the first rank overview, or the last — the customer pays nothing.
-  const FAN_OUT: readonly { readonly label: string; readonly failFrom: 1 | 2 | 5; readonly what: string }[] = [
-    { label: "e", failFrom: 1, what: "the discovery request" },
-    { label: "f", failFrom: 2, what: "the FIRST rank overview (after a paid discovery)" },
-    { label: "g", failFrom: 5, what: "the LAST rank overview (after four paid requests)" },
+  // (e)-(g): the failure cases of both flows. Whichever request dies, the customer pays nothing.
+  // `target` picks the flow shape: "example.com" IS in the discovery fixture (so the discovery
+  // flow is a single request), "absent-target.com" is NOT (so the target fallback fires).
+  //
+  // EVERY domain in this table must survive normalizeDomain (packages/core/src/net/hostname.ts).
+  // These specs go through tool.run, whose FREE pre-reserve gate normalizes the target before any
+  // port is touched, and `.example` is a reserved pseudo-TLD there — a `*.example` target is
+  // rejected up front, so the call never reaches the transport, never throws, and the spec dies
+  // with "promise resolved ... instead of rejecting" while LOOKING like a fan-out bug. That is
+  // exactly how this table shipped red once (2026-08-17): the port-level specs in
+  // dfs/competitors.test.ts call the port DIRECTLY and never normalize anything, so the same
+  // domain was green there and red here. Pick a public-shaped name absent from the fixture.
+  const FAILURES: readonly {
+    readonly label: string;
+    readonly failFrom: number;
+    readonly target: string;
+    readonly competitors?: readonly string[];
+    readonly what: string;
+    readonly expectedRequests: number;
+  }[] = [
+    {
+      label: "e",
+      failFrom: 1,
+      target: "example.com",
+      what: "the DISCOVERY request — the only request the discovery flow normally makes",
+      expectedRequests: 1,
+    },
+    {
+      label: "f",
+      failFrom: 2,
+      target: "absent-target.com",
+      what: "the TARGET FALLBACK (after a paid discovery)",
+      expectedRequests: 2,
+    },
+    {
+      label: "g",
+      failFrom: 4,
+      target: "example.com",
+      competitors: ["rival.com", "second.net", "third.org"],
+      what: "the LAST rank overview of the SUPPLIED fan-out (after three paid requests)",
+      expectedRequests: 4,
+    },
   ];
-  for (const { label, failFrom, what } of FAN_OUT) {
+  for (const { label, failFrom, target, competitors, what, expectedRequests } of FAILURES) {
     it(`(${label}) ${what} failing still bills ZERO (no partial comparison is sold)`, async () => {
       const ctx = await makeCtx();
       await seedPurchase(ctx.userId, 300);
-      const tool = makeCompareCompetitorsTool({ port: portFailingAtRequest(failFrom) });
+      const { port, seen } = portFailingAtRequest(failFrom);
+      const tool = makeCompareCompetitorsTool({ port });
 
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
-        await expect(tool.run(ctx, { target: "example.com" })).rejects.toThrow(/HTTP 500/);
+        await expect(tool.run(ctx, { target, ...(competitors ? { competitors } : {}) })).rejects.toThrow(
+          /HTTP 500/,
+        );
       } finally {
         errorSpy.mockRestore();
       }
+
+      // The flow really had the shape the case describes — proven from the endpoints seen, not
+      // assumed. A discovery flow that quietly went back to five requests would fail here.
+      expect(seen).toHaveLength(expectedRequests);
+      expect(seen.some((url) => url.includes("/competitors_domain/live"))).toBe(!competitors);
 
       const rows = await ledgerRows(ctx.userId);
       expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
@@ -282,6 +334,38 @@ describe("compare_competitors credit path against the local stack", () => {
       expect(await jobCount(ctx.userId)).toBe(0);
     });
   }
+
+  it("(i) a SUCCESSFUL discovery comparison charges the same 90 off ONE DataForSEO request", async () => {
+    // The flat price is a product rule (NEVER #6) and did not move when the vendor cost did: this
+    // is the same -90 chain as (a), measured on the LIVE client so the request count is visible.
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 300);
+    const seen: string[] = [];
+    const transport: DfsTransport = async (url) => {
+      seen.push(url);
+      return { ok: true, status: 200, json: async () => competitorsFixture };
+    };
+    const tool = makeCompareCompetitorsTool({
+      port: createLiveCompetitorsClient({
+        login: "user@x.test",
+        password: "pw",
+        transport,
+        ledger: createMemorySpendLedger(),
+      }),
+    });
+
+    const result = await tool.run(ctx, { target: "example.com" });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain("rival-one.example (found by DataForSEO)");
+    // ONE vendor request built the whole table...
+    expect(seen).toEqual([expect.stringContaining("/competitors_domain/live")]);
+    // ...and the customer still pays the flat 90.
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
+    expect(rows[1]?.delta).toBe(-TOOL_COSTS.compare_competitors);
+    expect(balanceOf(rows)).toBe(300 - TOOL_COSTS.compare_competitors);
+    expect(await jobCount(ctx.userId)).toBe(0);
+  });
 
   it("(h) the SHORT flow (competitors supplied, no discovery) also bills ZERO when a request dies", async () => {
     // The fan-out cases above all run the DISCOVERY branch. This is the other branch: naming the
