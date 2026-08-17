@@ -18,6 +18,7 @@ import {
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { createCrawlHandler } from "./handlers/crawl.ts";
 import { reconcileStuckJobs, type ReconcileOutcome } from "./reaper.ts";
+import { DAILY_BUDGET_USD } from "../dfs/budget.ts";
 import { metrics } from "../metrics.ts";
 
 /**
@@ -262,6 +263,12 @@ async function runReaperTick(reconcile: () => Promise<ReconcileOutcome>): Promis
     );
     const staleDfs = formatStaleDfsWarning(outcome);
     if (staleDfs !== null) console.warn(staleDfs);
+    // ESCALATION, not a second copy of the line above. Below the threshold an abandoned
+    // reservation is bookkeeping; above it the day's remaining allowance is small enough that
+    // PAYING customers start being refused for spend that never happened — a human decision,
+    // and therefore the error channel rather than the warn one.
+    const wake = formatStaleDfsWake(outcome);
+    if (wake !== null) console.error(wake);
   } catch (error) {
     console.error("reaper run failed:", error);
   }
@@ -287,6 +294,51 @@ export function formatStaleDfsWarning(outcome: {
     `stale dfs reserves: count=${outcome.staleDfsReserves}` +
     ` holdingUsd=${outcome.staleDfsEstimatedUsd.toFixed(4)}` +
     " — abandoned DataForSEO reservations are charging today's budget their estimate"
+  );
+}
+
+/**
+ * The share of the sanctioned daily cap that abandoned reservations may hold before a human is
+ * woken. Half, deliberately: at that point roughly half the day's live DataForSEO capacity has
+ * been consumed by spend that did not happen, and every further refusal hits a customer who
+ * PAID for those tools. Lower and the line cries wolf over one crashed fan-out; higher and the
+ * warning arrives after the denial-of-service it exists to predict.
+ */
+export const STALE_DFS_WAKE_FRACTION = 0.5;
+
+/**
+ * The WAKE-THE-HUMAN escalation of the line above, or null when the residue is still ordinary.
+ *
+ * WHY THIS AND NOT AN AUTOMATIC CLEANUP. The obvious "fix" for an abandoned reservation is to
+ * settle it at $0 on the error path, and that is WRONG here: a run that dies mid-fan-out has
+ * really spent part of its estimate, and the team already decided — and pinned with tests — that
+ * such a row must never settle for LESS than what actually happened (dfs/backlinks.ts,
+ * queue/reaper.ts countStaleDfsReserves). Settling at zero would also rest on an unmeasured
+ * assumption, that a failed DataForSEO task is never billed. Nothing here moves money; the DFS
+ * lane stays OBSERVATION ONLY, and what changes is that its most dangerous state now reaches a
+ * human instead of scrolling past on the warn channel with every routine sweep.
+ *
+ * Measured 2026-08-07/08: two abandoned rows held $0.30 EACH of a $3.00 day against roughly
+ * $0.08 of real spend. Fifteen such rows are the whole day, and every DataForSEO call after them
+ * is refused for a budget nobody actually spent.
+ *
+ * The cap is taken from DAILY_BUDGET_USD — the app-side copy that budget.db.test.ts pins to
+ * dfs_daily_budget_usd() — so the threshold moves with the sanctioned figure instead of being a
+ * second, drifting literal. Neither the cap nor the threshold is PRINTED, for the reason the
+ * warning line already gives: a number copied into a log line goes stale the day it changes.
+ */
+export function formatStaleDfsWake(
+  outcome: { staleDfsReserves: number; staleDfsEstimatedUsd: number },
+  capUsd: number = DAILY_BUDGET_USD,
+): string | null {
+  if (outcome.staleDfsReserves <= 0) return null;
+  if (outcome.staleDfsEstimatedUsd < capUsd * STALE_DFS_WAKE_FRACTION) return null;
+  return (
+    `WAKE THE HUMAN — abandoned DataForSEO reservations are holding ` +
+    `$${outcome.staleDfsEstimatedUsd.toFixed(4)} of today's budget across ` +
+    `${outcome.staleDfsReserves} open row(s) — more than half the sanctioned daily cap, for ` +
+    `spend that never happened. Live DataForSEO tools will start refusing PAYING customers ` +
+    `before the UTC day rolls over (contract wake class: money / outside world).`
   );
 }
 
