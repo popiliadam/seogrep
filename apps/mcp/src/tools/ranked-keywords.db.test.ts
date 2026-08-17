@@ -8,6 +8,7 @@ import {
   disabledRankedKeywordsPort,
   type RankedKeywordsPort,
 } from "../dfs/ranked-keywords.ts";
+import { EMPTY_ORGANIC_METRICS } from "../dfs/competitors.ts";
 import { makeRankedKeywordsTool } from "./ranked-keywords.ts";
 import fixtureResponse from "../dfs/fixtures/ranked-keywords.json";
 
@@ -132,6 +133,60 @@ describe("ranked_keywords credit path against the local stack", () => {
     // Surface shape: no jobs row, and the reserve carries a fresh traceability uuid.
     expect(rows[1]?.job_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(await jobCount(ctx.userId)).toBe(0);
+  });
+
+  /**
+   * (a2) The last unmeasured inch of the handler.
+   *
+   * fetchAndRenderRankedKeywords pins everything the tool hands the port — but only from OUTSIDE
+   * withCredits. The single line INSIDE the credit guard that calls it is unreachable from the
+   * fast lane, because the reserve needs this database; a mutation that rewrote the caller's
+   * `sort` on that one line left all 83 fast-lane files green (referee finding, 2026-08-17).
+   *
+   * This lane HAS the database, so it is the only place the whole chain can be observed end to
+   * end: a real tool.run() with real credit settlement, and a recording port reporting what
+   * actually arrived. It spends 65 credits like any other serving call, which is precisely why it
+   * belongs here instead of being simulated somewhere cheaper.
+   */
+  it("(a2) carries the caller's sort, limit and locale through the credit guard to the port", async () => {
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 200);
+    const seen: unknown[] = [];
+    const recording: RankedKeywordsPort = {
+      enabled: true,
+      fetchRankedKeywords: async (query) => {
+        seen.push(query);
+        return {
+          target: query.target,
+          total_count: 5312,
+          items_count: 0,
+          metrics: EMPTY_ORGANIC_METRICS,
+          rows: [],
+        };
+      },
+    };
+
+    const result = await makeRankedKeywordsTool({ port: recording }).run(ctx, {
+      target: "example.com",
+      limit: 7,
+      sort: "traffic",
+      language_code: "tr",
+      location_code: 2792,
+    });
+    expect(result.isError).toBeUndefined();
+
+    expect(seen).toEqual([
+      {
+        target: "example.com",
+        limit: 7,
+        sort: "traffic",
+        language_code: "tr",
+        location_code: 2792,
+      },
+    ]);
+    // ...and it really did take the PRICED path, so none of the above is a dry run.
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
   });
 
   it("(b) live-disabled returns 'not enabled' with ZERO ledger rows and no charge", async () => {

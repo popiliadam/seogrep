@@ -32,6 +32,12 @@ function row(overrides: Partial<RankedKeywordRow> = {}): RankedKeywordRow {
     title: null,
     type: null,
     url: null,
+    keyword_difficulty: null,
+    main_intent: null,
+    foreign_intent: [],
+    rank_change: null,
+    serp_item_types: [],
+    check_url: null,
     ...overrides,
   };
 }
@@ -235,6 +241,32 @@ describe("formatRankedKeywords", () => {
     expect(text).not.toMatch(/location_code/);
   });
 
+  /**
+   * The thinness test reads `total_count`, and falls back to `rows.length` when the vendor sent
+   * none. Referee finding 2026-08-17: that fallback was UNMEASURED in BOTH directions — mutating
+   * it to `?? 0` and to `?? 9999` each left all 83 test files green, so a vendor that omitted
+   * total_count could have made a healthy 12-row result print a wrong-country warning, or
+   * silenced the warning on a genuinely thin one, with nothing to catch it. Both directions are
+   * pinned below. (The line predates this slice; the gap did too.)
+   */
+  it("uses the ROW COUNT for thinness when the vendor omitted total_count — a full page is not thin", () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      row({ keyword: `kw-${i}`, position: i + 1, search_volume: 100 }),
+    );
+    const text = formatRankedKeywords(result({ total_count: null, rows }), RENDER_INPUT);
+    expect(text).not.toMatch(/location_code/);
+    expect(text).not.toMatch(/Few results/);
+  });
+
+  it("still warns on a thin result when the vendor omitted total_count", () => {
+    const text = formatRankedKeywords(
+      result({ target: "adstark.com.tr", total_count: null, rows: [row({ keyword: "a", position: 23 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toMatch(/Few results\./);
+    expect(text).toMatch(/location_code/);
+  });
+
   it("does NOT add the locale hint when the default locale returned plenty", () => {
     const rows = Array.from({ length: 12 }, (_, i) =>
       row({ keyword: `kw-${i}`, position: i + 1, search_volume: 100 }),
@@ -435,6 +467,171 @@ describe("formatRankedKeywords — the per-row fields that were already paid for
       "• seo software — position #3, volume 22,200, CPC $9.87, competition HIGH, " +
         "est. traffic 1,180/mo, https://example.com/a",
     );
+  });
+});
+
+/**
+ * The five fields the operator's LIVE call (2026-08-17, moz.com) proved this endpoint returns and
+ * the projection was discarding: keyword difficulty, search intent, per-keyword rank movement,
+ * the SERP's other element types, and the check URL.
+ */
+describe("formatRankedKeywords — the live-measured fields", () => {
+  it("prints difficulty and intent in research_keywords' own words", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({
+            keyword: "seo software",
+            keyword_difficulty: 26,
+            main_intent: "commercial",
+            foreign_intent: ["informational"],
+          }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("difficulty 26/100");
+    expect(text).toContain("intent commercial (also informational)");
+  });
+
+  it("omits the '(also …)' clause when there is no secondary intent", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", main_intent: "commercial" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("intent commercial,");
+    expect(text).not.toContain("also");
+  });
+
+  it.each(["difficulty", "intent"])("OMITS %s when the vendor sent none", (label) => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", position: 4, search_volume: 10 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(label);
+  });
+
+  /**
+   * Movement is quoted on the ABSOLUTE scale, and says so. `previous_rank_absolute` beside an
+   * organic "#3" without the words "on the page" invites a comparison the two scales do not
+   * support — the very confusion the position line already exists to prevent.
+   */
+  it.each([
+    [{ previous_rank_absolute: 18, is_new: false, is_up: false, is_down: true }, "moved down from #18 on the page"],
+    [{ previous_rank_absolute: 29, is_new: false, is_up: true, is_down: false }, "moved up from #29 on the page"],
+    [{ previous_rank_absolute: null, is_new: true, is_up: false, is_down: false }, "newly ranking"],
+    [{ previous_rank_absolute: null, is_new: false, is_up: false, is_down: true }, "moved down"],
+    [{ previous_rank_absolute: 12, is_new: false, is_up: false, is_down: false }, "previously #12 on the page"],
+  ] as const)("renders movement case %#", (change, expected) => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", rank_change: change })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(expected);
+  });
+
+  it("says nothing about movement when the change object carries no signal at all", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({
+            keyword: "a",
+            rank_change: { previous_rank_absolute: null, is_new: false, is_up: false, is_down: false },
+          }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("moved");
+    expect(text).not.toContain("newly ranking");
+    expect(text).not.toContain("previously");
+  });
+
+  it("lists the SERP's OTHER element types, ai_overview included, and drops 'organic'", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [row({ keyword: "a", serp_item_types: ["organic", "ai_overview", "people_also_ask"] })],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("SERP also shows ai_overview, people_also_ask");
+    // Every row here IS an organic ranking by construction; echoing it back says nothing.
+    expect(text).not.toContain("shows organic");
+  });
+
+  it("says nothing about SERP features when organic is the ONLY element type", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", serp_item_types: ["organic"] })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("SERP also shows");
+  });
+
+  it("offers the vendor's own check URL so the reader can verify the exact locale", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", check_url: "https://www.google.com/search?q=a&gl=US" })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("verify: https://www.google.com/search?q=a&gl=US");
+  });
+
+  /**
+   * The context line is a SECOND line, and it exists only when it has content. A sparse row must
+   * stay exactly one line — that is the whole reason these three fields were not appended to the
+   * metrics spine.
+   */
+  it("adds a second, indented line carrying movement, features and the check link", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({
+            keyword: "seo software",
+            position: 25,
+            absolute_position: 29,
+            search_volume: 550000,
+            rank_change: { previous_rank_absolute: 18, is_new: false, is_up: false, is_down: true },
+            serp_item_types: ["organic", "ai_overview"],
+            check_url: "https://g/?q=a",
+            url: "https://example.com/a",
+          }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    const lines = text.split("\n");
+    const head = lines.findIndex((line) => line.startsWith("• seo software"));
+    expect(lines[head]).toBe(
+      "• seo software — position #25 organic (#29 on the page), volume 550,000, https://example.com/a",
+    );
+    expect(lines[head + 1]).toBe(
+      "  moved down from #18 on the page · SERP also shows ai_overview · verify: https://g/?q=a",
+    );
+  });
+
+  it("stays ONE line when the vendor sent no movement, no features and no check URL", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "bare", position: 4, search_volume: 10 })] }),
+      RENDER_INPUT,
+    );
+    const lines = text.split("\n");
+    const head = lines.findIndex((line) => line.startsWith("• bare"));
+    expect(lines[head]).toBe("• bare — position #4, volume 10, n/a");
+    expect(lines[head + 1] ?? "").not.toMatch(/^ {2}\S/);
+  });
+
+  /**
+   * Two paid fields this slice deliberately does NOT print: `backlinks_info` and
+   * `rank_info.page_rank`. analyze_backlinks is a whole 70-credit tool about exactly that
+   * subject, and page_rank is a proprietary score that would need explaining on every appearance.
+   * Pinned so the omission stays a decision rather than an oversight someone "fixes" silently.
+   */
+  it("does NOT restate analyze_backlinks' subject on every row", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "a", position: 3 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toMatch(/backlink/i);
+    expect(text).not.toMatch(/page.?rank/i);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   RANKED_KEYWORDS_MAX_LIMIT,
   RANKED_KEYWORDS_SORTS,
   resolveDefaultRankedKeywordsPort,
+  type RankChange,
   type RankedKeywordRow,
   type RankedKeywordsPort,
   type RankedKeywordsResult,
@@ -226,12 +227,71 @@ function renderPosition(row: RankedKeywordRow): string {
 }
 
 /**
- * One keyword line.
+ * How this keyword moved since DataForSEO's previous check.
+ *
+ * `previous_rank_absolute` is on the ABSOLUTE scale, so the wording says "on the page" — the same
+ * words this file already uses for `rank_absolute`. Quoting it as a bare "#18" beside an organic
+ * "#3" would invite exactly the comparison the two scales do not support.
+ *
+ * A flag is reported even without a previous rank, because "moved down" is a fact on its own; a
+ * change object with neither flag nor previous rank produces nothing rather than an empty clause.
+ */
+function renderMovement(change: RankChange): string | null {
+  const from =
+    change.previous_rank_absolute === null
+      ? ""
+      : ` from #${change.previous_rank_absolute} on the page`;
+  if (change.is_new) return "newly ranking";
+  if (change.is_down) return `moved down${from}`;
+  if (change.is_up) return `moved up${from}`;
+  if (change.previous_rank_absolute !== null) {
+    return `previously #${change.previous_rank_absolute} on the page`;
+  }
+  return null;
+}
+
+/**
+ * The SERP context line: how the ranking moved, what else is on that results page, and the link
+ * to go and look.
+ *
+ * It is a SECOND line rather than more commas on the first. The metrics spine was already at
+ * eight fields; three more — one of them a Google URL — would make a ~330-character line that no
+ * reader scans and that costs the calling model real context on every one of a hundred rows.
+ * Returns null when the vendor sent none of the three, so a sparse row stays one line.
+ *
+ * `serp_item_types` is printed MINUS "organic": every row here IS an organic ranking by
+ * construction (the request pins `item_types`), so listing it back adds nothing. What remains is
+ * the interesting part — `ai_overview`, `people_also_ask`, a video carousel — and it is the
+ * direct explanation of the organic/on-page rank gap printed on the line above. The vendor's own
+ * identifiers are kept verbatim; inventing friendlier names would be inventing a mapping.
+ */
+function renderSerpContext(row: RankedKeywordRow): string | null {
+  const parts: string[] = [];
+  const movement = row.rank_change === null ? null : renderMovement(row.rank_change);
+  if (movement !== null) parts.push(movement);
+  const features = row.serp_item_types.filter((type) => type !== "organic");
+  if (features.length > 0) parts.push(`SERP also shows ${features.join(", ")}`);
+  if (row.check_url !== null) parts.push(`verify: ${row.check_url}`);
+  return parts.length === 0 ? null : `  ${parts.join(" · ")}`;
+}
+
+/**
+ * One keyword line — plus, when there is something to say, an indented SERP-context line.
  *
  * `position`, `volume` and the URL keep their long-standing places (including their "n/a"), so a
  * reader's eye lands where it always did. Everything ADDED is omitted outright when the vendor
  * did not send it — research_keywords' rule — because a thousand rows of "CPC n/a, competition
  * n/a" is a thousand rows of nothing, and the fields being new is not a reason to pad them.
+ *
+ * `difficulty` and `intent` are worded exactly as research_keywords words them, because they are
+ * the same two vendor fields; a caller who runs both tools must not have to work out that
+ * "difficulty 26/100" and some other phrasing are the same number.
+ *
+ * DELIBERATELY NOT PRINTED: `serp_item.backlinks_info` and `serp_item.rank_info.page_rank`. Both
+ * are paid and both are real, but analyze_backlinks is an entire 70-credit tool whose subject is
+ * the backlink picture, and `page_rank` is a proprietary 0-100 score that would need explaining
+ * every time it appeared. Two more numbers on an already dense line, restating another tool's
+ * subject, with no decision attached to them: not every paid field earns a line.
  */
 function renderRow(row: RankedKeywordRow): string {
   const parts = [
@@ -240,13 +300,20 @@ function renderRow(row: RankedKeywordRow): string {
   ];
   if (row.cpc !== null) parts.push(`CPC ${money(row.cpc)}`);
   if (row.competition_level !== null) parts.push(`competition ${row.competition_level}`);
+  if (row.keyword_difficulty !== null) parts.push(`difficulty ${row.keyword_difficulty}/100`);
+  if (row.main_intent !== null) {
+    const also = row.foreign_intent.length > 0 ? ` (also ${row.foreign_intent.join(", ")})` : "";
+    parts.push(`intent ${row.main_intent}${also}`);
+  }
   if (row.etv !== null) parts.push(`est. traffic ${thousands(row.etv)}/mo`);
   // The request pins item_types to organic, so a non-organic type means the vendor returned
   // something else and the row is NOT the organic ranking the rest of the line describes.
   if (row.type !== null && row.type !== "organic") parts.push(`SERP element type ${row.type}`);
   parts.push(row.url ?? "n/a");
   const title = row.title === null ? "" : ` — "${row.title}"`;
-  return `• ${row.keyword} — ${parts.join(", ")}${title}`;
+  const head = `• ${row.keyword} — ${parts.join(", ")}${title}`;
+  const context = renderSerpContext(row);
+  return context === null ? head : `${head}\n${context}`;
 }
 
 /**
