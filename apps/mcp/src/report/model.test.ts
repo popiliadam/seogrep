@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { AuditCrawl } from "../audit/index.ts";
 import { auditOnpage, auditSchema, auditTech, ONPAGE_LABELS, ONPAGE_ORDER } from "../audit/index.ts";
 import type { PullData } from "../gsc-data/index.ts";
-import { buildReportModel, resolveReportTitle } from "./model.ts";
+import { buildReportModel, REPORT_MAX_LISTED, resolveReportTitle } from "./model.ts";
+
+/** The model's own capping rule, restated here so a test compares against a value, not the code. */
+function capOf<T>(items: readonly T[]): { items: readonly T[]; total: number } {
+  return { items: items.slice(0, REPORT_MAX_LISTED), total: items.length };
+}
 
 /**
  * Pure unit tests for the report model builder — the roll-up generate_report derives from an
@@ -169,23 +174,47 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
     const expectedFindings = ONPAGE_ORDER.filter((type) => (onpage.counts[type] ?? 0) > 0)
       .map((type) => ({ label: ONPAGE_LABELS[type]!, count: onpage.counts[type]! }))
       .sort((a, b) => b.count - a.count);
-    expect(model.onpage).toEqual({ pageCount: onpage.pageCount, findings: expectedFindings });
+    expect(model.onpage).toEqual({
+      pageCount: onpage.pageCount,
+      findings: expectedFindings,
+      pagesWithFindings: onpage.pages.length,
+      duplicateGroups: capOf(onpage.duplicateGroups),
+    });
 
-    // Tech: the key HTTP-health signals mirror the engine exactly.
+    // Tech: the HTTP-health signals AND the nine sections G1 computed and discarded (R1-a).
     expect(model.tech).toEqual({
       pageCount: tech.pageCount,
+      skippedCount: tech.skippedCount,
       ok2xx: tech.status.ok2xx,
       redirect3xx: tech.status.redirect3xx,
       clientError4xx: tech.status.clientError4xx,
       serverError5xx: tech.status.serverError5xx,
       robotsConflicts: tech.robotsConflicts.length,
+      clientErrorUrls: capOf(tech.clientErrorUrls),
+      serverErrorUrls: capOf(tech.serverErrorUrls),
+      slowPages: capOf(tech.slowPages),
+      heavyPages: capOf(tech.heavyPages),
+      redirectChains: capOf(tech.redirectChains),
+      xRobotsConflicts: capOf(tech.xRobotsConflicts),
+      deepPages: capOf(tech.deepPages),
+      orphanSignals: capOf(tech.orphanSignals),
+      brokenInternalLinks: capOf(tech.brokenInternalLinks),
+      skippedByCategory: Object.entries(tech.skippedByCategory)
+        .map(([label, skips]) => ({ label, count: skips.length }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      sitemapDiff: null,
     });
 
-    // Schema: coverage plus the first N types straight off the engine's typeCoverage.
+    // Schema: coverage, the first N types, AND the body-level findings (R1-a).
     expect(model.schema).toEqual({
       pageCount: schema.pageCount,
       pagesWithSchema: schema.pagesWithSchema,
+      pagesWithout: schema.pagesWithout.length,
       topTypes: schema.typeCoverage.slice(0, 5),
+      pagesValidated: schema.pagesValidated,
+      missingFields: capOf(schema.missingFields),
+      invalidJson: capOf(schema.invalidJson),
+      truncatedPages: capOf(schema.truncatedPages),
     });
   });
 
@@ -226,6 +255,174 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
     });
     expect(model.onpage?.pageCount).toBe(1);
     expect(model.onpage?.findings).toEqual([]);
+  });
+});
+
+/**
+ * R1-a. A crawl carrying the NEWER signals, so every axis G1 discarded has something to carry.
+ * Each page trips exactly one extra signal, which keeps a failing assertion pointing at one rule.
+ */
+const SIGNAL_CRAWL: AuditCrawl = {
+  fetchedAt: "2026-08-01T00:00:00.000Z",
+  sitemapUrls: ["https://example.com/", "https://example.com/never-crawled"],
+  // Deliberately NOT in alphabetical order: `skippedByCategory` is built by insertion, so a
+  // fixture whose insertion order already matched the sort would leave the sort unpinned.
+  skipped: [
+    { url: "https://example.com/slow", reason: "timeout" },
+    { url: "https://example.com/blocked", reason: "robots disallow" },
+  ],
+  pages: [
+    page({
+      url: "https://example.com/",
+      depth: 0,
+      inLinkCount: 2,
+      links: ["https://example.com/gone", "https://example.com/dup-a"],
+      fetchMs: 9_000, // slow page
+      htmlBytes: 2_000_000, // heavy page
+      contentHash: "aaaa111122223333",
+      jsonLdTypes: ["Product"],
+      jsonLdBlocks: ['{"@type":"Product","name":"Widget"}'], // missing `offers`
+    }),
+    page({
+      url: "https://example.com/gone",
+      status: 404, // broken internal link target (linked from "/")
+      depth: 1,
+      inLinkCount: 1,
+      contentHash: "bbbb111122223333",
+      jsonLdBlocks: ["{not json at all"], // invalid JSON-LD
+      jsonLdTruncated: 2, // partly stored
+    }),
+    page({
+      url: "https://example.com/deep",
+      depth: 5, // deep page
+      inLinkCount: 0, // orphan signal
+      xRobotsTag: "noindex", // X-Robots conflict (meta is silent)
+      redirectChain: ["https://example.com/old", "https://example.com/older"],
+      contentHash: "cccc111122223333",
+    }),
+    // Two pages sharing one fingerprint -> a duplicate-content GROUP, the site-level finding G1
+    // could not express through per-type counts at all.
+    page({ url: "https://example.com/dup-a", depth: 1, inLinkCount: 1, contentHash: "dddd9999" }),
+    page({ url: "https://example.com/dup-b", depth: 1, inLinkCount: 1, contentHash: "dddd9999" }),
+  ],
+};
+
+describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
+  const model = buildReportModel({
+    domain: "example.com",
+    title: "T",
+    generatedAt: AT_ISO,
+    crawl: SIGNAL_CRAWL,
+    pull: null,
+  });
+
+  it("carries the tech signal sections the engine already computed", () => {
+    const tech = auditTech(SIGNAL_CRAWL);
+    expect(model.tech?.slowPages.items).toEqual(tech.slowPages);
+    expect(model.tech?.slowPages.total).toBe(1);
+    expect(model.tech?.heavyPages.items).toEqual(tech.heavyPages);
+    expect(model.tech?.deepPages.items).toEqual([{ url: "https://example.com/deep", depth: 5 }]);
+    expect(model.tech?.orphanSignals.items).toEqual([{ url: "https://example.com/deep", depth: 5 }]);
+    expect(model.tech?.xRobotsConflicts.items).toEqual([
+      { url: "https://example.com/deep", xRobotsTag: "noindex" },
+    ]);
+    expect(model.tech?.redirectChains.items).toEqual(tech.redirectChains);
+    expect(model.tech?.redirectChains.total).toBe(1);
+  });
+
+  it("carries the 4xx URLs and the broken internal links behind the status counts", () => {
+    expect(model.tech?.clientError4xx).toBe(1);
+    expect(model.tech?.clientErrorUrls.items).toEqual(["https://example.com/gone"]);
+    expect(model.tech?.brokenInternalLinks.items).toEqual([
+      { from: "https://example.com/", to: "https://example.com/gone", status: 404 },
+    ]);
+  });
+
+  it("carries the skip categories and the sitemap diff (non-null: a sitemap WAS read)", () => {
+    expect(model.tech?.skippedCount).toBe(2);
+    expect(model.tech?.skippedByCategory).toEqual([
+      { label: "robots", count: 1 },
+      { label: "timeout", count: 1 },
+    ]);
+    expect(model.tech?.sitemapDiff?.sitemapUrls).toBe(2);
+    expect(model.tech?.sitemapDiff?.missingFromCrawl.items).toEqual([
+      "https://example.com/never-crawled",
+    ]);
+  });
+
+  it("keeps sitemapDiff NULL when the crawl read no sitemap (not an empty diff)", () => {
+    const noSitemap = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: KNOWN_ISSUES,
+      pull: null,
+    });
+    // "No sitemap was read" and "the sitemap agrees with the crawl" are different facts, and
+    // flattening the first into an empty diff would let the report claim the second.
+    expect(noSitemap.tech?.sitemapDiff).toBeNull();
+  });
+
+  it("carries the JSON-LD body findings and the pagesValidated denominator", () => {
+    expect(model.schema?.pagesValidated).toBe(2); // only the two pages with jsonLdBlocks
+    expect(model.schema?.missingFields.items).toEqual([
+      { url: "https://example.com/", type: "Product", missing: ["offers"] },
+    ]);
+    expect(model.schema?.invalidJson.items).toEqual([{ url: "https://example.com/gone", blocks: 1 }]);
+    expect(model.schema?.truncatedPages.items).toEqual([
+      { url: "https://example.com/gone", dropped: 2 },
+    ]);
+    expect(model.schema?.pagesWithout).toBe(4);
+  });
+
+  it("carries the site-level duplicate-content group per-type counts cannot express", () => {
+    expect(model.onpage?.duplicateGroups.total).toBe(1);
+    expect(model.onpage?.duplicateGroups.items[0]?.urls).toEqual([
+      "https://example.com/dup-a",
+      "https://example.com/dup-b",
+    ]);
+  });
+
+  it("leaves every new list EMPTY on a legacy crawl that never measured those axes", () => {
+    // The whole "absence is not a finding" contract, at the model boundary: a crawl predating
+    // these fields must produce no rows, so the renderer has nothing to print and cannot report
+    // an unmeasured axis as a clean one.
+    const legacy = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: KNOWN_ISSUES,
+      pull: null,
+    });
+    expect(legacy.tech?.slowPages.total).toBe(0);
+    expect(legacy.tech?.heavyPages.total).toBe(0);
+    expect(legacy.tech?.deepPages.total).toBe(0);
+    expect(legacy.tech?.orphanSignals.total).toBe(0);
+    expect(legacy.tech?.xRobotsConflicts.total).toBe(0);
+    expect(legacy.tech?.redirectChains.total).toBe(0);
+    expect(legacy.onpage?.duplicateGroups.total).toBe(0);
+    expect(legacy.schema?.pagesValidated).toBe(0);
+    expect(legacy.schema?.missingFields.total).toBe(0);
+  });
+
+  it("caps every list at REPORT_MAX_LISTED while keeping the pre-cap total", () => {
+    const many: AuditCrawl = {
+      fetchedAt: null,
+      skipped: [],
+      pages: Array.from({ length: REPORT_MAX_LISTED + 7 }, (_, i) =>
+        page({ url: `https://example.com/slow-${i}`, fetchMs: 9_000 }),
+      ),
+    };
+    const capped = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: many,
+      pull: null,
+    });
+    // The pre-cap total travels WITH the list so a truncated list is never the whole answer.
+    expect(capped.tech?.slowPages.items).toHaveLength(REPORT_MAX_LISTED);
+    expect(capped.tech?.slowPages.total).toBe(REPORT_MAX_LISTED + 7);
   });
 });
 

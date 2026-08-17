@@ -1,4 +1,17 @@
-import type { AuditCrawl } from "../audit/index.ts";
+import type {
+  AuditCrawl,
+  BrokenInternalLink,
+  DeepPage,
+  DuplicateContentGroup,
+  HeavyPage,
+  InvalidJsonPage,
+  OrphanSignal,
+  PageRedirectChain,
+  SchemaFieldIssue,
+  SlowPage,
+  TruncatedSchemaPage,
+  XRobotsConflict,
+} from "../audit/index.ts";
 import { auditOnpage, auditSchema, auditTech, ONPAGE_LABELS, ONPAGE_ORDER } from "../audit/index.ts";
 import type { GscRow, PullData } from "../gsc-data/index.ts";
 
@@ -16,10 +29,46 @@ import type { GscRow, PullData } from "../gsc-data/index.ts";
  * found 42 missing-canonical pages on the very same crawl). The report wording reuses the audit
  * ONPAGE_LABELS vocabulary so a reader who ran the tool sees consistent terms.
  *
- * STILL light: the DISCOVERY engines (find_quick_wins, cannibalization, decay) are NOT run — those
- * need extra data/cost — and the GSC section stays a group-by-sum over the current window. The
- * rendered report points the reader at those deeper tools for the full per-page breakdown.
+ * R1 widens G1 along the axis G1 left on the floor. G1 ran the three engines and then kept about a
+ * fifth of what they returned: `summarizeTech` took five fields of a TechReport that carries
+ * fifteen, `summarizeSchema` three of eight, and `summarizeOnpage` dropped `duplicateGroups`
+ * entirely. Everything below is the SAME engine over the SAME crawl — still no new DB read, no new
+ * job, no credit change — it is simply no longer thrown away.
+ *
+ * ABSENCE IS NOT A FINDING, inherited verbatim from the engines and from audit/format.ts. Every
+ * list an engine returns is empty BOTH when the site is clean AND when the crawl predates the
+ * signal, so the model carries the lists and the RENDERER prints a section only when it has rows.
+ * A "0 slow pages" line would state a measurement that, on the older half of the stored corpus,
+ * never happened. `sitemapDiff` is the one deliberate exception and keeps the engine's rule: it is
+ * `null` when no sitemap was read, and a NON-null diff prints even at 0/0, because there the
+ * agreement was actually measured.
+ *
+ * The DISCOVERY engines ARE now run — see OpportunitySummary. They are pure functions of the pull
+ * the report has already loaded, so the old "those need extra data/cost" note was simply wrong.
+ * The GSC section stays a group-by-sum over the current window, and every section still points the
+ * reader at the deeper tool for the full per-page breakdown.
  */
+
+/**
+ * How many rows any one enriched list shows before the rest are counted out.
+ *
+ * Lower than the audit tools' MAX_LISTED (50, audit/format.ts) on purpose: that reader ASKED for
+ * the per-page breakdown, while a shared report is read by a client and often on paper. The
+ * pre-cap total travels WITH the list (see CappedList) so a truncated list is never presented as
+ * the whole answer — the silent-truncation rule formatQuickWins states.
+ */
+export const REPORT_MAX_LISTED = 10;
+
+/** A capped list plus its pre-cap total. `total > items.length` means rows were left out. */
+export interface CappedList<T> {
+  readonly items: readonly T[];
+  readonly total: number;
+}
+
+/** Cap a list at REPORT_MAX_LISTED, keeping the pre-cap total. */
+function cap<T>(items: readonly T[]): CappedList<T> {
+  return { items: items.slice(0, REPORT_MAX_LISTED), total: items.length };
+}
 
 /** One aggregated (query|page) row: its key plus summed clicks/impressions over the window. */
 export interface AggRow {
@@ -48,16 +97,49 @@ export interface CrawlSummary {
 export interface OnpageSummary {
   readonly pageCount: number;
   readonly findings: readonly IssueCount[];
+  /** How many pages carry at least one finding — the rest are clean. */
+  readonly pagesWithFindings: number;
+  /**
+   * Pages sharing one text fingerprint. SITE-LEVEL, which is why the engine keeps it out of
+   * `counts` and why G1 dropped it: it is the one on-page finding that is a property of a GROUP,
+   * so a per-type count cannot express it. Empty on a crawl predating `contentHash`.
+   */
+  readonly duplicateGroups: CappedList<DuplicateContentGroup>;
 }
 
-/** Technical engine roll-up (from auditTech): the key HTTP-health signals for a report glance. */
+/** The sitemap↔crawl comparison, capped for the report. Null when the crawl read no sitemap. */
+export interface SitemapDiffSummary {
+  readonly sitemapUrls: number;
+  readonly missingFromCrawl: CappedList<string>;
+  readonly missingFromSitemap: CappedList<string>;
+}
+
+/**
+ * Technical engine roll-up (from auditTech). The status split and the robots-conflict count are
+ * G1's; everything below them is what the engine already computed and G1 discarded. Each list is
+ * the engine's OWN row type, so the report cannot describe a finding differently from audit_tech.
+ */
 export interface TechSummary {
   readonly pageCount: number;
+  readonly skippedCount: number;
   readonly ok2xx: number;
   readonly redirect3xx: number;
   readonly clientError4xx: number;
   readonly serverError5xx: number;
   readonly robotsConflicts: number;
+  /** The URLs behind the 4xx/5xx counts — the number alone tells nobody which page to fix. */
+  readonly clientErrorUrls: CappedList<string>;
+  readonly serverErrorUrls: CappedList<string>;
+  readonly slowPages: CappedList<SlowPage>;
+  readonly heavyPages: CappedList<HeavyPage>;
+  readonly redirectChains: CappedList<PageRedirectChain>;
+  readonly xRobotsConflicts: CappedList<XRobotsConflict>;
+  readonly deepPages: CappedList<DeepPage>;
+  readonly orphanSignals: CappedList<OrphanSignal>;
+  readonly brokenInternalLinks: CappedList<BrokenInternalLink>;
+  /** skip category -> how many pages the crawler did not fetch for it (label = the category). */
+  readonly skippedByCategory: readonly IssueCount[];
+  readonly sitemapDiff: SitemapDiffSummary | null;
 }
 
 /** One structured-data @type and how many pages declare it. */
@@ -66,11 +148,25 @@ export interface SchemaTypeCount {
   readonly pages: number;
 }
 
-/** Structured-data engine roll-up (from auditSchema): coverage plus the top N declared types. */
+/**
+ * Structured-data engine roll-up (from auditSchema): coverage, the top N declared types, and the
+ * body-level findings G1 discarded.
+ *
+ * `pagesValidated` is load-bearing rather than decorative: it is 0 on every crawl stored before
+ * the JSON-LD bodies shipped, and the renderer uses exactly that to decide whether it may say
+ * anything at all about required fields. Reporting "0 missing fields" for a crawl that never read
+ * a body would be the strongest possible claim about the least-measured axis.
+ */
 export interface SchemaSummary {
   readonly pageCount: number;
   readonly pagesWithSchema: number;
+  /** Pages carrying no structured data at all. */
+  readonly pagesWithout: number;
   readonly topTypes: readonly SchemaTypeCount[];
+  readonly pagesValidated: number;
+  readonly missingFields: CappedList<SchemaFieldIssue>;
+  readonly invalidJson: CappedList<InvalidJsonPage>;
+  readonly truncatedPages: CappedList<TruncatedSchemaPage>;
 }
 
 /** The GSC roll-up over the current window: totals plus the top queries/pages by clicks. */
@@ -165,30 +261,69 @@ function summarizeOnpage(crawl: AuditCrawl): OnpageSummary {
   const findings = ONPAGE_ORDER.filter((type) => (report.counts[type] ?? 0) > 0)
     .map((type) => ({ label: ONPAGE_LABELS[type]!, count: report.counts[type]! }))
     .sort((a, b) => b.count - a.count);
-  return { pageCount: report.pageCount, findings };
-}
-
-/** HTTP-health signals from the REAL engine (auditTech): the 2xx/3xx/4xx/5xx split + conflicts. */
-function summarizeTech(crawl: AuditCrawl): TechSummary {
-  const report = auditTech(crawl);
-  const { status } = report;
   return {
     pageCount: report.pageCount,
+    findings,
+    pagesWithFindings: report.pages.length,
+    duplicateGroups: cap(report.duplicateGroups),
+  };
+}
+
+/**
+ * Technical signals from the REAL engine (auditTech): the 2xx/3xx/4xx/5xx split and the conflict
+ * count G1 kept, PLUS the nine sections it computed and dropped. Nothing here re-derives anything
+ * — every field is the engine's, capped for the page.
+ */
+function summarizeTech(crawl: AuditCrawl): TechSummary {
+  const report = auditTech(crawl);
+  const { status, sitemapDiff } = report;
+  return {
+    pageCount: report.pageCount,
+    skippedCount: report.skippedCount,
     ok2xx: status.ok2xx,
     redirect3xx: status.redirect3xx,
     clientError4xx: status.clientError4xx,
     serverError5xx: status.serverError5xx,
     robotsConflicts: report.robotsConflicts.length,
+    clientErrorUrls: cap(report.clientErrorUrls),
+    serverErrorUrls: cap(report.serverErrorUrls),
+    slowPages: cap(report.slowPages),
+    heavyPages: cap(report.heavyPages),
+    redirectChains: cap(report.redirectChains),
+    xRobotsConflicts: cap(report.xRobotsConflicts),
+    deepPages: cap(report.deepPages),
+    orphanSignals: cap(report.orphanSignals),
+    brokenInternalLinks: cap(report.brokenInternalLinks),
+    // Sorted by category name so two reports over the same crawl list the skips identically —
+    // Object.entries order follows insertion, i.e. whichever page the crawler skipped first.
+    skippedByCategory: Object.entries(report.skippedByCategory)
+      .map(([label, skips]) => ({ label, count: skips.length }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    // NULL IS PRESERVED, never flattened to an empty diff: the engine's whole point is that
+    // "no sitemap was read" and "the sitemap agrees with the crawl" are different facts.
+    sitemapDiff:
+      sitemapDiff === null
+        ? null
+        : {
+            sitemapUrls: sitemapDiff.sitemapUrls,
+            missingFromCrawl: cap(sitemapDiff.missingFromCrawl),
+            missingFromSitemap: cap(sitemapDiff.missingFromSitemap),
+          },
   };
 }
 
-/** Coverage + the top declared @types from the REAL engine (auditSchema). */
+/** Coverage, top declared @types, AND the body-level findings from the REAL engine (auditSchema). */
 function summarizeSchema(crawl: AuditCrawl): SchemaSummary {
   const report = auditSchema(crawl);
   return {
     pageCount: report.pageCount,
     pagesWithSchema: report.pagesWithSchema,
+    pagesWithout: report.pagesWithout.length,
     topTypes: report.typeCoverage.slice(0, TOP_TYPES_N),
+    pagesValidated: report.pagesValidated,
+    missingFields: cap(report.missingFields),
+    invalidJson: cap(report.invalidJson),
+    truncatedPages: cap(report.truncatedPages),
   };
 }
 
