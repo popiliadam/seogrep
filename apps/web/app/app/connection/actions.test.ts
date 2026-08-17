@@ -1301,9 +1301,17 @@ describe("saveProjectProperty", () => {
     expect(db.tables).toEqual([]);
   });
 
-  it("refuses an empty property without contacting Google", async () => {
+  /**
+   * The empty choice refuses BEFORE Google is asked, so there is no listing to correct from and
+   * the sentence must carry NO suggestion. That was true only STRUCTURALLY until this pin — the
+   * `listed` default is what makes it true, and nothing measured the default. MUTATION RUN:
+   * `notListedMessage`'s default changed from `[]` to `["/"]` and this went red (`"/"` reduces
+   * to the same empty cosmetic key, so the user was offered `Did you mean "/"?`).
+   */
+  it("refuses an empty property without contacting Google, and suggests nothing", async () => {
     const out = await saveProjectProperty(PROJECT, ACCOUNT, "", listing());
     expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+    expect(out).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
     expect(db.tables).toEqual([]);
   });
 

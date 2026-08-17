@@ -499,11 +499,18 @@ describe("track / untrack / restore", () => {
       expect(db.tables).toEqual([]);
     });
 
-    it("refuses an empty property without contacting Google", async () => {
-      expect(await trackProperty(ACCOUNT, "", OWNED)).toEqual({
-        ok: false,
-        error: expect.stringContaining("not listed"),
-      });
+    /**
+     * The empty choice refuses BEFORE Google is asked, so there is no listing to correct from
+     * and the sentence must carry NO suggestion. That was true only STRUCTURALLY until this
+     * pin — `notListedMessage`'s `listed` default is what makes it true, and nothing measured
+     * the default. MUTATION RUN: the default changed from `[]` to `["/"]` and this went red
+     * (`"/"` reduces to the same empty cosmetic key, so `Did you mean "/"?` was offered).
+     */
+    it("refuses an empty property without contacting Google, and suggests nothing", async () => {
+      const out = await trackProperty(ACCOUNT, "", OWNED);
+
+      expect(out).toEqual({ ok: false, error: expect.stringContaining("not listed") });
+      expect(out).toEqual({ ok: false, error: expect.not.stringMatching(/did you mean/i) });
       expect(db.tables).toEqual([]);
       expect(vi.mocked(refreshAccessToken)).not.toHaveBeenCalled();
     });
