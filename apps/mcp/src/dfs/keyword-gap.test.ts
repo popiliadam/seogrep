@@ -116,6 +116,23 @@ describe("parseKeywordGapResponse", () => {
     expect(parsed.rows.every((row) => row.keyword.length > 0)).toBe(true);
   });
 
+  /**
+   * The parse contract for total_count: null means "DataForSEO sent no figure", NOT zero. Pinned
+   * on BOTH gap adapters, because the hole a referee found in the sibling (link-gap.ts) is the
+   * same shape here — `?? 0` renders identically today, so only a boundary-level pin catches it.
+   */
+  it("keeps a MISSING total_count as null — 'no figure' is not 'zero'", () => {
+    const parsed = parseKeywordGapResponse({
+      status_code: 20000,
+      tasks: [
+        { status_code: 20000, result: [{ items: [{ keyword_data: { keyword: "seo audit" } }] }] },
+      ],
+    });
+    // An item-bearing response, so this is NOT the empty-result path below.
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.total_count).toBeNull();
+  });
+
   it("treats an empty successful result as zero rows (a rival with no gap)", () => {
     const parsed = parseKeywordGapResponse({
       status_code: 20000,

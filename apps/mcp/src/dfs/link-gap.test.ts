@@ -98,10 +98,46 @@ describe("parseLinkGapResponse", () => {
     expect(thin?.first_seen).toBe("2025-06-19 03:15:41 +00:00");
   });
 
-  it("drops an entry with no referring domain instead of failing the whole parse", () => {
+  /**
+   * TWO shapes of "no referring domain", and both must be dropped — the fixture carries one of
+   * each. `target: null` is caught by the `.find` predicate; `target: ""` is NOT (`"" != null` is
+   * true, so the predicate selects it) and is caught only by the guard that follows. That second
+   * case is here because a referee found it: with the fixture carrying only the null shape, the
+   * guard could be deleted and NOTHING went red — the mutant looked equivalent when it was merely
+   * unreachable in the test universe. An empty-domain bullet is a row the caller cannot act on.
+   */
+  it("drops an entry with no referring domain — null AND empty-string alike", () => {
     const parsed = parseLinkGapResponse(linkGapFixture);
-    expect(linkGapFixture.tasks[0].result[0].items).toHaveLength(4);
+    expect(linkGapFixture.tasks[0].result[0].items).toHaveLength(5);
     expect(parsed.rows).toHaveLength(3);
+    expect(parsed.rows.some((row) => row.domain === "")).toBe(false);
+    // ...and the empty-string row is really in the fixture, not a comment about one.
+    const targets = linkGapFixture.tasks[0].result[0].items.map(
+      (item) => item.domain_intersection["1"].target,
+    );
+    expect(targets).toContain(null);
+    expect(targets).toContain("");
+  });
+
+  /**
+   * The parse contract for total_count: null means "DataForSEO sent no figure", NOT zero. The two
+   * render identically TODAY (the header's `total > shown` test fails either way), so nothing
+   * downstream would notice `?? 0` — which is exactly why the contract is pinned HERE, at the
+   * boundary that decides it, rather than left to a renderer that happens to agree.
+   */
+  it("keeps a MISSING total_count as null — 'no figure' is not 'zero'", () => {
+    const parsed = parseLinkGapResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [{ items: [{ domain_intersection: { "1": { target: "a.test", rank: 5 } } }] }],
+        },
+      ],
+    });
+    // An item-bearing response, so this is NOT the empty-result path below.
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.total_count).toBeNull();
   });
 
   it("treats an empty successful result as zero rows (a rival with no link gap)", () => {

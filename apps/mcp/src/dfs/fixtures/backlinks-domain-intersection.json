@@ -42,7 +42,7 @@
             "1": "rival.com"
           },
           "total_count": 612,
-          "items_count": 4,
+          "items_count": 5,
           "items": [
             {
               "type": "backlinks_domain_intersection_item",
@@ -112,6 +112,20 @@
                   "target": null,
                   "rank": 12,
                   "backlinks": 1
+                }
+              },
+              "summary": {
+                "intersections_count": 1
+              }
+            },
+            {
+              "type": "backlinks_domain_intersection_item",
+              "domain_intersection": {
+                "1": {
+                  "type": "backlinks_domain_intersection",
+                  "target": "",
+                  "rank": 8,
+                  "backlinks": 2
                 }
               },
               "summary": {

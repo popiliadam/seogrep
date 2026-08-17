@@ -232,12 +232,16 @@ export function parseLinkGapResponse(raw: unknown): {
   return {
     total_count: parsed.data.total_count ?? null,
     rows: (parsed.data.items ?? []).flatMap((item) => {
-      // Exactly one target was sent, so exactly one entry is expected; the first entry that
-      // actually names a referring domain is taken, and a row without one is DROPPED rather than
-      // rendered as an empty bullet the caller cannot act on.
-      const entry = Object.values(item.domain_intersection ?? {}).find(
-        (candidate) => candidate?.target != null,
-      );
+      // Exactly one target is sent, so the map holds exactly one entry. It is read as the first
+      // VALUE rather than as a fixed "1" property, so a response that numbers its entries
+      // differently still degrades to "no usable entry" instead of throwing on a paid lookup.
+      //
+      // ONE guard does the dropping, deliberately. An earlier version screened inside a `.find`
+      // AS WELL, and a mutation proved that screen unreachable: with a single entry per item the
+      // two conditions can only ever agree, so the extra branch was dead code that no test could
+      // reach — and dead code in a paid parser reads like a checked case. Both empty shapes
+      // (`target: null` and `target: ""`) leave through the line below, which IS pinned red.
+      const [entry] = Object.values(item.domain_intersection ?? {});
       if (!entry?.target) return [];
       return [
         {
