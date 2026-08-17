@@ -26,14 +26,20 @@ import { describe, expect, it } from "vitest";
  * four per-table migrations each pinned the one table under discussion and seven tables were still
  * open when somebody finally measured across the schema. The same reasoning applies here, so the
  * same instrument is used: ask pg_catalog which tables exist and assert the property of EVERY one.
- * A table added by a future migration (0026's audit_content_runs was already picked up by this
- * spec on the day it was written, without the spec naming it) is inside the assertion the moment
- * it exists. There is no exception list, and none was needed: all 17 tables in the running stack
- * satisfy both bits. If a table ever legitimately needs an exception, it belongs here as a named
- * constant with its reason — not as a quietly narrowed query.
+ * A table added by a future migration is inside the assertion the moment it exists — a property
+ * this spec demonstrated on its first run, covering a table created by an uncommitted migration on
+ * a neighbouring branch without naming it or knowing it was coming.
  *
- * RELATION TO THE PER-TABLE SPECS. The armor-matrix specs for crawl_pages (0023), audit_runs
- * (0024) and audit_content_runs (0026) assert tenant isolation BEHAVIOURALLY for their own table.
+ * SNAPSHOT, not an invariant (2026-08-17): every table then present in the local stack satisfied
+ * both bits, and no exception was needed. The count is deliberately not written down here and not
+ * asserted anywhere — it moves with which migrations the stack has been reset to, so a number in
+ * this comment would be stale the first time somebody reset to a different set. If a table ever
+ * legitimately needs an exception, it belongs in EXEMPT_TABLES with its reason — not as a quietly
+ * narrowed query.
+ *
+ * RELATION TO THE PER-TABLE SPECS. The specs for the per-tenant run ledgers (crawl_pages 0023,
+ * audit_runs 0024, and the audit_content_runs table added later) assert isolation BEHAVIOURALLY
+ * for their own table, through a real authenticated JWT.
  * This spec is their catalog-level SUPERSET on one axis only: it says nothing about whether the
  * policies are correct — that is what those specs are for and they stay exactly as they are — and
  * they say nothing about FORCE, which is what this one is for. The difference that matters is
@@ -51,6 +57,51 @@ const DB_WORKDIR = "packages/db";
 
 /** Tables that may legitimately lack RLS/FORCE. Empty — and every addition needs a reason here. */
 const EXEMPT_TABLES: readonly string[] = [];
+
+/**
+ * Tables that may NEVER be exempted, whatever EXEMPT_TABLES says.
+ *
+ * This closes the hole an exception list opens. `EXEMPT_TABLES` is the honest way to record a
+ * table that genuinely cannot carry RLS — but it is equally the one-line way to make this spec
+ * green while a table sits unarmored, and the mutation proving that is cheap: drop FORCE on a
+ * table, add its name here, and the enumeration assertion goes quiet. Every name below is
+ * asserted PRESENT in the enumeration, so exempting one fails this spec on the guard instead,
+ * and the failure is about a missing table rather than a missing bit — which is the sentence
+ * somebody actually needs to read.
+ *
+ * The list is the complete set of tables the COMMITTED migrations create. That is deliberate on
+ * both ends: it is a fixture, and a fixture is exactly right for "these may not be silently
+ * dropped from scope", while the enumeration above stays the thing that catches tables nobody
+ * listed. A migration that legitimately drops a table has to delete its name here, in a diff a
+ * reviewer sees.
+ *
+ * NOT listed: audit_content_runs. It exists in the running stack via 0026, which is not committed
+ * on this branch, and guardrails/verify-db.sh resets to the COMMITTED migrations — listing it
+ * would hand CI a false red that has nothing to do with RLS. It is still fully covered by the
+ * enumeration whenever it exists, which is the whole argument for enumerating.
+ */
+const NON_EXEMPTABLE_TABLES: readonly string[] = [
+  // Money. TRUNCATE armor already treats these three as the ones worth naming out loud.
+  "credit_ledger",
+  "paddle_events",
+  "dfs_spend",
+  "subscriptions",
+  // Identity and the tenancy roots every other table's policies join back to.
+  "users_profile",
+  "projects",
+  "api_keys",
+  "trial_claims",
+  // Per-tenant work, audit trail and the Google connection (tokens live behind gsc_accounts).
+  "jobs",
+  "reports",
+  "events",
+  "gsc_connections",
+  "gsc_accounts",
+  // Per-tenant run ledgers (0023 / 0024 / 0025 — committed, so a reset stack has all three).
+  "crawl_pages",
+  "audit_runs",
+  "gsc_discovery_runs",
+];
 
 /**
  * The supabase CLI to use: the pinned repo devDependency bin (deterministic,
@@ -149,14 +200,13 @@ describe("public-schema RLS + FORCE armor against local Supabase", () => {
     const armor = armorByTable();
     const tables = Object.keys(armor);
 
-    // A catalog query that returned nothing would make the assertion below vacuously green, so
-    // the enumeration is pinned first: non-empty, and containing the tables the tenant boundary
-    // and the money actually live behind. This is the guard that stops "everything is armored"
-    // from meaning "nothing was looked at".
+    // Two failure modes, one guard. A catalog query that returned nothing would make the
+    // assertion below vacuously green ("everything is armored" meaning "nothing was looked at"),
+    // and so would quietly moving a table into EXEMPT_TABLES to silence a real red. Requiring
+    // every non-exemptable table to be PRESENT in the enumeration refuses both, and refuses them
+    // before the bits are ever compared.
     expect(tables.length).toBeGreaterThan(0);
-    expect(tables).toEqual(
-      expect.arrayContaining(["credit_ledger", "projects", "users_profile", "api_keys"]),
-    );
+    expect(tables).toEqual(expect.arrayContaining([...NON_EXEMPTABLE_TABLES]));
 
     const expected = Object.fromEntries(
       tables.map((name) => [name, { enabled: true, forced: true }]),
