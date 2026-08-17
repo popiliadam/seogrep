@@ -4,14 +4,16 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   resolveDefaultPort,
+  type KeywordOverviewRow,
   type KeywordResearchPort,
-  type KeywordVolumeRow,
 } from "../dfs/client.ts";
+import { STALE_PULL_DAYS } from "../gsc-data/load.ts";
 import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResult } from "./registry.ts";
 
 /**
- * research_keywords — look up Google search volume / CPC / competition for up to 100
- * keywords via DataForSEO. Synchronous: it returns a table immediately (no background job).
+ * research_keywords — look up Google keyword metrics for up to 100 keywords via the
+ * DataForSEO Labs keyword_overview endpoint. Synchronous: it returns a table immediately
+ * (no background job).
  *
  * Two hard product rules shape the credit path:
  *   1. Live keyword data is OFF by default (beta). While off, the tool returns a clear
@@ -28,6 +30,10 @@ import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResu
  * the exact SURFACE ledger shape (reserve -> handler -> commit, a traceability uuid, no jobs
  * row). ("worker" mode, by contrast, is for a handler that ENQUEUES and lets the async worker
  * settle against the real jobs.id — crawl_site; using it here would misdescribe this tool.)
+ *
+ * PRICE IS UNCHANGED at 25 credits (NEVER #6 — operator signature 2026-08-17). The vendor
+ * switch made this tool CHEAPER to serve and richer to read; neither is a reason to move a
+ * number a human signed.
  */
 
 /** United States — the DataForSEO default location_code. */
@@ -57,8 +63,9 @@ const inputSchema = z.object({
 type ResearchKeywordsInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
-  "Look up Google search volume, CPC, and competition for up to 100 keywords. Synchronous " +
-  `— returns a table immediately. Costs ${TOOL_COSTS.research_keywords} credits. Needs a paid ` +
+  "Look up Google search volume, CPC, competition, keyword difficulty, search intent and " +
+  "search-volume trend for up to 100 keywords. Synchronous — returns a table immediately. " +
+  `Costs ${TOOL_COSTS.research_keywords} credits. Needs a paid ` +
   "credit balance: it is not available on trial credits. If live keyword data is unavailable " +
   "on this deployment, the tool says so and charges nothing.";
 
@@ -69,25 +76,125 @@ function thousands(value: number): string {
     .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/** A signed percentage, so a reader never has to work out which way a trend points. */
+function signedPercent(value: number): string {
+  return `${value > 0 ? "+" : ""}${value}%`;
+}
+
+/**
+ * DataForSEO timestamps look like `2026-06-14 08:12:33 +00:00`, which is NOT an ISO-8601
+ * string. Anything unrecognized returns null — an unparseable vendor date must drop the
+ * FRESHNESS LINE, never print "NaN days ago". THAT part is pinned by a spec.
+ *
+ * The normalization to ISO is deliberately NOT pinned, and cannot be: V8 accepts the raw DFS
+ * form too, so removing these two `replace` calls changes no observable behaviour on Node
+ * (measured — the mutation stayed green). It is kept as portability insurance against an
+ * engine that follows the spec more strictly, and is recorded here as unproven rather than
+ * left to look like tested code.
+ */
+export function parseDfsTimestamp(raw: string): number | null {
+  const normalized = raw.trim().replace(" ", "T").replace(/\s+/, "");
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * The CPC/competition freshness line.
+ *
+ * The operator A/B (2026-08-17) measured Labs CPC running up to 53% away from the Google Ads
+ * figure for the same keyword, and its monthly series a month behind. A bid figure with no
+ * date attached invites the reader to treat it as today's auction. Labs answers this itself —
+ * every keyword carries `keyword_info.last_updated_time` — so the tool prints it, and past
+ * STALE_PULL_DAYS says so in a SENTENCE.
+ *
+ * STALE_PULL_DAYS is IMPORTED from gsc-data/load.ts rather than re-declared: this product has
+ * one answer to "how old is too old", and two copies of a threshold is how they drift apart.
+ *
+ * The OLDEST timestamp in the batch is the one reported — a table is only as fresh as its
+ * stalest row, and quoting the freshest would flatter the batch.
+ *
+ * Rows the vendor has NO metrics for still count toward that oldest timestamp, deliberately.
+ * DFS stamps them anyway (measured: "backlink checker" came back with a `last_updated_time`
+ * and nothing else), and that stamp says when the vendor last looked — which is exactly the
+ * claim this line makes. Excluding them could only ever make the batch look FRESHER than the
+ * vendor's own oldest look at it, which is the wrong direction for an honesty line.
+ */
+export function renderVendorFreshness(
+  rows: readonly KeywordOverviewRow[],
+  now: Date = new Date(),
+): string | null {
+  const stamps = rows
+    .map((row) => (row.last_updated_time === null ? null : parseDfsTimestamp(row.last_updated_time)))
+    .filter((ms): ms is number => ms !== null);
+  if (stamps.length === 0) return null;
+  const oldest = Math.min(...stamps);
+  const days = Math.floor((now.getTime() - oldest) / 86_400_000);
+  const day = new Date(oldest).toISOString().slice(0, 10);
+  const age = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+  const staleness =
+    days >= STALE_PULL_DAYS
+      ? " This vendor data is stale — treat CPC and competition as indicative, not current."
+      : "";
+  return `CPC and competition were last refreshed by DataForSEO on ${day} (${age}).${staleness}`;
+}
+
+/** The per-keyword line. Optional metrics are OMITTED rather than padded with n/a noise. */
+function renderRow(row: KeywordOverviewRow): string {
+  if (!row.has_data) {
+    // Distinct from "volume 0" on purpose: the vendor holds nothing for this keyword, which is
+    // not the same claim as "nobody searches it" and must not be read as one.
+    return `• ${row.keyword} — no data returned for this keyword`;
+  }
+  const parts = [
+    `volume ${row.search_volume === null ? "n/a" : thousands(row.search_volume)}`,
+    `CPC ${row.cpc === null ? "n/a" : `$${row.cpc.toFixed(2)}`}`,
+    `competition ${row.competition_level ?? "n/a"}`,
+  ];
+  if (row.keyword_difficulty !== null) {
+    parts.push(`difficulty ${row.keyword_difficulty}/100`);
+  }
+  if (row.main_intent !== null) {
+    const also = row.foreign_intent.length > 0 ? ` (also ${row.foreign_intent.join(", ")})` : "";
+    parts.push(`intent ${row.main_intent}${also}`);
+  }
+  const trend = row.search_volume_trend;
+  if (trend) {
+    const legs = [
+      trend.monthly === null ? null : `${signedPercent(trend.monthly)} MoM`,
+      trend.quarterly === null ? null : `${signedPercent(trend.quarterly)} QoQ`,
+      trend.yearly === null ? null : `${signedPercent(trend.yearly)} YoY`,
+    ].filter((leg): leg is string => leg !== null);
+    if (legs.length > 0) parts.push(`trend ${legs.join(", ")}`);
+  }
+  return `• ${row.keyword} — ${parts.join(", ")}`;
+}
+
 /** Render the keyword metrics as the plain-text tool output (pure — unit-tested directly). */
-export function formatSearchVolume(
-  rows: readonly KeywordVolumeRow[],
+export function formatKeywordOverview(
+  rows: readonly KeywordOverviewRow[],
   input: { keywords: readonly string[]; language_code: string; location_code: number },
+  now: Date = new Date(),
 ): string {
   if (rows.length === 0) {
     return `No search-volume data was returned for the ${input.keywords.length} keyword(s) requested.`;
   }
+  // A no-data keyword adds NOTHING to the total — but note exactly HOW, because the two
+  // readings differ: nothing is filtered out here. Such a row's `search_volume` is null and
+  // `?? 0` adds a zero. The arithmetic is identical either way, and saying which one is
+  // actually written matters: a reader who believes there is a filter would go looking for one
+  // that does not exist, and would not notice if a future no-data row arrived carrying a
+  // non-null volume. What makes a no-data keyword VISIBLE is the header count below, not the sum.
   const totalVolume = rows.reduce((sum, row) => sum + (row.search_volume ?? 0), 0);
-  const lines = rows.map((row) => {
-    const volume = row.search_volume === null ? "n/a" : thousands(row.search_volume);
-    const cpc = row.cpc === null ? "n/a" : `$${row.cpc.toFixed(2)}`;
-    const competition = row.competition ?? "n/a";
-    return `• ${row.keyword} — volume ${volume}, CPC ${cpc}, competition ${competition}`;
-  });
+  const missing = rows.filter((row) => !row.has_data).length;
+  const missingNote =
+    missing === 0 ? "" : ` (${missing} keyword${missing === 1 ? "" : "s"} returned no data)`;
+  const lines = rows.map(renderRow);
+  const freshness = renderVendorFreshness(rows, now);
   return (
     `Search volume for ${rows.length} keyword${rows.length === 1 ? "" : "s"} ` +
     `(language ${input.language_code}, location ${input.location_code}), ` +
-    `${thousands(totalVolume)} total monthly searches:\n${lines.join("\n")}`
+    `${thousands(totalVolume)} total monthly searches${missingNote}:\n${lines.join("\n")}` +
+    (freshness === null ? "" : `\n${freshness}`)
   );
 }
 
@@ -117,12 +224,12 @@ export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): Regis
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge).
       return withCredits({ userId: ctx.userId }, { tool: "research_keywords" }, async () => {
-        const rows = await port.fetchSearchVolume({
+        const rows = await port.fetchKeywordOverview({
           keywords: input.keywords,
           language_code: input.language_code,
           location_code: input.location_code,
         });
-        return textResult(formatSearchVolume(rows, input));
+        return textResult(formatKeywordOverview(rows, input));
       });
     },
   });

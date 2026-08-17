@@ -9,7 +9,7 @@ import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from
  * (constitution NEVER #5): there is ZERO real DataForSEO traffic in test or CI. The client
  * is a small PORT — `KeywordResearchPort` — with three concrete shapes:
  *
- *   - createLiveClient — the real HTTP path (POST .../search_volume/live, Basic auth). It
+ *   - createLiveClient — the real HTTP path (POST .../keyword_overview/live, Basic auth). It
  *     is `enabled`, and every call is wrapped by the daily budget guard (budget.ts): the
  *     estimated cost is RESERVED against the fleet-global counter before the request, and
  *     the reservation is settled with the real cost afterwards. The transport is injectable
@@ -23,36 +23,108 @@ import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from
  *
  * resolveDefaultPort is the production resolver: live client when DFS_LIVE=1 AND both
  * credentials are present (a missing credential fails closed, loudly), else disabledPort.
+ *
+ * VENDOR ENDPOINT SWITCH (2026-08-17, operator A/B on five live keywords): this port used to
+ * call `keywords_data/google_ads/search_volume/live`. It now calls the DataForSEO Labs
+ * `keyword_overview` endpoint. What the measurement found:
+ *
+ *   - search_volume is BIT-FOR-BIT the same on both ends (3,600 / 5,400 / 1,000 / 12,100 all
+ *     matched), and a keyword with no data has no data on either end. The number this tool is
+ *     bought for does not move.
+ *   - CPC differs by up to 53% ("seo software": Ads $18.11 vs Labs $27.66) and Labs' monthly
+ *     series runs one month behind Ads'. Labs answers that honestly — `keyword_info
+ *     .last_updated_time` DATES the figure — which is why the tool prints the date next to
+ *     the CPC rather than presenting an undated estimate (the STALE_PULL_DAYS discipline).
+ *   - `competition` changed SCALE: Ads sent a band string plus a 0–100 `competition_index`;
+ *     Labs sends a 0–1 float `competition` plus the band as `competition_level`. Both are
+ *     projected, and the BAND keeps the field the output has always rendered.
+ *   - Labs additionally carries keyword_difficulty, search intent and a volume trend, which
+ *     the Ads endpoint has no equivalent of at all.
+ *   - It costs 3.75x less: $0.024 for 100 keywords against the Ads endpoint's flat $0.0900
+ *     per call (both measured — the Ads figure from 11 settled production calls).
  */
 
-/** The DataForSEO Google Ads search-volume LIVE endpoint. */
-export const DFS_SEARCH_VOLUME_ENDPOINT =
-  "https://api.dataforseo.com/v3/keywords_data/google_ads/search_volume/live";
+/** The DataForSEO Labs Keyword Overview LIVE endpoint. */
+export const DFS_KEYWORD_OVERVIEW_ENDPOINT =
+  "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_overview/live";
 
 /**
- * Conservative per-call cost estimate (USD) used ONLY by the pre-call budget gate — a
- * deliberate over-estimate so the gate errs toward blocking. It is NOT a claim about
- * DataForSEO's price: the REAL cost is read from the response `cost` field and settled
- * after the call (budget.ts settleSpend).
+ * DataForSEO's published price for this endpoint: a flat per-REQUEST charge plus a per-KEYWORD
+ * charge. 100 keywords therefore cost $0.012 + 100 x $0.00012 = $0.024 — against the flat
+ * $0.0900 the retired google_ads/search_volume endpoint billed per call.
  */
-export const ESTIMATED_SEARCH_VOLUME_CALL_USD = 0.1;
+export const KEYWORD_OVERVIEW_REQUEST_USD = 0.012;
+export const KEYWORD_OVERVIEW_PER_KEYWORD_USD = 0.00012;
+
+/**
+ * Safety factor on the pre-call ESTIMATE only. The gate must err toward blocking, so the
+ * reservation is deliberately larger than the published price: a tariff change or a per-task
+ * surcharge must show up as a refused call, never as silent overspend against the $3/day cap.
+ * It is not a price claim — the REAL cost is read from the response `cost` field and settles
+ * the reservation immediately afterwards (budget.ts settleSpend).
+ */
+export const KEYWORD_OVERVIEW_ESTIMATE_MARGIN = 1.5;
+
+/**
+ * Conservative per-call cost estimate (USD) for the pre-call budget gate.
+ *
+ *     (request charge + keywords x per-keyword charge) x safety margin
+ *
+ * It scales with the batch because the vendor's price does: the retired constant charged one
+ * flat $0.10 whether the caller asked for 1 keyword or 100, which over-reserved every small
+ * lookup by ~8x against a shared daily cap.
+ */
+export function estimateKeywordOverviewCostUsd(keywordCount: number): number {
+  const listed = KEYWORD_OVERVIEW_REQUEST_USD + keywordCount * KEYWORD_OVERVIEW_PER_KEYWORD_USD;
+  return listed * KEYWORD_OVERVIEW_ESTIMATE_MARGIN;
+}
 
 /** DFS success status code (both top-level and per-task). */
 const DFS_OK = 20000;
 
 /** A keyword-research request (snake_case — the tool surface passes it straight through). */
-export interface SearchVolumeQuery {
+export interface KeywordOverviewQuery {
   readonly keywords: string[];
   readonly language_code: string;
   readonly location_code: number;
 }
 
-/** One keyword's metrics, projected down to what the tool renders. */
-export interface KeywordVolumeRow {
+/** Labs' period-over-period search-volume trend, in percent. Any leg can be absent. */
+export interface KeywordVolumeTrend {
+  readonly monthly: number | null;
+  readonly quarterly: number | null;
+  readonly yearly: number | null;
+}
+
+/**
+ * One keyword's metrics, projected down to what the tool renders.
+ *
+ * `has_data` is the distinction the retired projection could not express. DataForSEO returns
+ * an item for a keyword it knows NOTHING about — `keyword_info` is present but carries no
+ * metrics — and the old code folded that into `search_volume ?? 0`, so "we have no figure for
+ * this keyword" and "this keyword is searched zero times" reached the reader as the same
+ * sentence. They are different facts and lead to different decisions.
+ */
+export interface KeywordOverviewRow {
   readonly keyword: string;
+  /** Average monthly searches. null when the vendor returned none — NOT the same as 0. */
   readonly search_volume: number | null;
   readonly cpc: number | null;
-  readonly competition: string | null;
+  /** Advertiser competition BAND — the HIGH/MEDIUM/LOW vocabulary the output has always shown. */
+  readonly competition_level: string | null;
+  /** Labs' numeric competition: a 0–1 float (the retired endpoint's index was 0–100). */
+  readonly competition: number | null;
+  /** Labs keyword difficulty, 0–100. No equivalent existed on the Ads endpoint. */
+  readonly keyword_difficulty: number | null;
+  /** Dominant search intent (informational / commercial / navigational / transactional). */
+  readonly main_intent: string | null;
+  /** Secondary intents the keyword also carries; empty when the vendor reported none. */
+  readonly foreign_intent: readonly string[];
+  readonly search_volume_trend: KeywordVolumeTrend | null;
+  /** When DFS last refreshed this keyword's CPC + competition figures (raw vendor timestamp). */
+  readonly last_updated_time: string | null;
+  /** false when the vendor holds no metrics at all for this keyword (see the type comment). */
+  readonly has_data: boolean;
 }
 
 /**
@@ -61,7 +133,7 @@ export interface KeywordVolumeRow {
  */
 export interface KeywordResearchPort {
   readonly enabled: boolean;
-  fetchSearchVolume(query: SearchVolumeQuery): Promise<KeywordVolumeRow[]>;
+  fetchKeywordOverview(query: KeywordOverviewQuery): Promise<KeywordOverviewRow[]>;
 }
 
 /** Minimal HTTP response shape the client needs (structurally satisfied by fetch's Response). */
@@ -79,20 +151,54 @@ export type DfsTransport = (
 
 // --- Response parsing (validated with zod; the fixture is the real response shape) ------
 
-const dfsResultRowSchema = z.object({
+/**
+ * Every metric field is nullish: DataForSEO OMITS them outright for a keyword it has no data
+ * on (measured 2026-08-17 — "backlink checker" came back with a `keyword_info` object holding
+ * only `se_type` and `last_updated_time`). A stricter schema would fail the whole paid lookup
+ * because one keyword in the batch was unknown.
+ */
+const keywordInfoSchema = z.object({
+  search_volume: z.number().nullish(),
+  cpc: z.number().nullish(),
+  competition: z.number().nullish(),
+  competition_level: z.string().nullish(),
+  last_updated_time: z.string().nullish(),
+  search_volume_trend: z
+    .object({
+      monthly: z.number().nullish(),
+      quarterly: z.number().nullish(),
+      yearly: z.number().nullish(),
+    })
+    .nullish(),
+});
+
+const keywordPropertiesSchema = z.object({
+  keyword_difficulty: z.number().nullish(),
+});
+
+const searchIntentSchema = z.object({
+  main_intent: z.string().nullish(),
+  foreign_intent: z.array(z.string()).nullish(),
+});
+
+const overviewItemSchema = z.object({
   // Nullish because DFS sends null where the fixtures only ever showed strings; a row with no
   // keyword identifies nothing, so the projection drops it rather than failing the whole lookup.
   keyword: z.string().nullish(),
-  search_volume: z.number().nullish(),
-  cpc: z.number().nullish(),
-  competition: z.string().nullish(),
+  keyword_info: keywordInfoSchema.nullish(),
+  keyword_properties: keywordPropertiesSchema.nullish(),
+  search_intent_info: searchIntentSchema.nullish(),
+});
+
+const overviewResultSchema = z.object({
+  items: z.array(overviewItemSchema).nullish(),
 });
 
 const dfsTaskSchema = z.object({
   status_code: z.number(),
   status_message: z.string().optional(),
   cost: z.number().nullish(),
-  result: z.array(dfsResultRowSchema).nullish(),
+  result: z.array(overviewResultSchema).nullish(),
 });
 
 const dfsResponseSchema = z.object({
@@ -102,12 +208,19 @@ const dfsResponseSchema = z.object({
   tasks: z.array(dfsTaskSchema).nullish(),
 });
 
+/** True when the vendor returned at least one real metric for this keyword. */
+function hasMetrics(info: z.infer<typeof keywordInfoSchema> | null | undefined): boolean {
+  if (!info) return false;
+  return info.search_volume != null || info.cpc != null || info.competition_level != null;
+}
+
 /**
- * Validate a DataForSEO search-volume response and project its first task's rows down to
- * KeywordVolumeRow[]. Throws a clear error when the top-level status or the task status is
- * not 20000 (so a paid-but-failed call never looks like empty data).
+ * Validate a DataForSEO keyword-overview response and project its first task's first result
+ * down to KeywordOverviewRow[]. Throws a clear error when the top-level status or the task
+ * status is not 20000 (so a paid-but-failed call never looks like empty data). A task that
+ * succeeded with an EMPTY result is legitimate and yields zero rows.
  */
-export function parseSearchVolumeResponse(raw: unknown): KeywordVolumeRow[] {
+export function parseKeywordOverviewResponse(raw: unknown): KeywordOverviewRow[] {
   const parsed = dfsResponseSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(`DataForSEO response was not in the expected shape: ${z.prettifyError(parsed.error)}`);
@@ -127,14 +240,32 @@ export function parseSearchVolumeResponse(raw: unknown): KeywordVolumeRow[] {
       `DataForSEO task failed (status ${task.status_code}): ${task.status_message ?? "unknown"}`,
     );
   }
-  return (task.result ?? [])
-    .filter((row) => row.keyword != null)
-    .map((row) => ({
-      keyword: row.keyword as string,
-      search_volume: row.search_volume ?? null,
-      cpc: row.cpc ?? null,
-      competition: row.competition ?? null,
-    }));
+  const items = task.result?.[0]?.items ?? [];
+  return items
+    .filter((item) => item.keyword != null)
+    .map((item) => {
+      const info = item.keyword_info;
+      const trend = info?.search_volume_trend;
+      return {
+        keyword: item.keyword as string,
+        search_volume: info?.search_volume ?? null,
+        cpc: info?.cpc ?? null,
+        competition_level: info?.competition_level ?? null,
+        competition: info?.competition ?? null,
+        keyword_difficulty: item.keyword_properties?.keyword_difficulty ?? null,
+        main_intent: item.search_intent_info?.main_intent ?? null,
+        foreign_intent: item.search_intent_info?.foreign_intent ?? [],
+        search_volume_trend: trend
+          ? {
+              monthly: trend.monthly ?? null,
+              quarterly: trend.quarterly ?? null,
+              yearly: trend.yearly ?? null,
+            }
+          : null,
+        last_updated_time: info?.last_updated_time ?? null,
+        has_data: hasMetrics(info),
+      };
+    });
 }
 
 /** The USD cost of a DFS response: top-level `cost`, else the first task's `cost`, else null. */
@@ -153,10 +284,10 @@ export function extractResponseCostUsd(raw: unknown): number | null {
  * when live is off.
  */
 export function createMockResearchPort(response: unknown): KeywordResearchPort {
-  const rows = parseSearchVolumeResponse(response);
+  const rows = parseKeywordOverviewResponse(response);
   return {
     enabled: true,
-    fetchSearchVolume: async () => rows,
+    fetchKeywordOverview: async () => rows,
   };
 }
 
@@ -164,7 +295,7 @@ export function createMockResearchPort(response: unknown): KeywordResearchPort {
 export function disabledPort(): KeywordResearchPort {
   return {
     enabled: false,
-    fetchSearchVolume: async () => {
+    fetchKeywordOverview: async () => {
       throw new Error("DataForSEO live path is disabled on this deployment.");
     },
   };
@@ -195,7 +326,7 @@ export interface LiveClientOptions {
 export const DFS_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * The ONE default transport for every DataForSEO port (search volume here, plus ranked
+ * The ONE default transport for every DataForSEO port (keyword overview here, plus ranked
  * keywords, backlinks and competitors, which import it). Shared deliberately: four
  * byte-identical copies meant a deadline — or any future transport concern — had to be
  * remembered in four places. Injected fake transports bypass it entirely, so tests stay
@@ -211,8 +342,8 @@ export const defaultDfsTransport = async (
 };
 
 /**
- * The real (paid) DataForSEO client. Each call: (1) RESERVE the estimate against the
- * fleet-global counter BEFORE spending — the reservation both refuses at the cap and closes
+ * The real (paid) DataForSEO client. Each call: (1) RESERVE the batch-sized estimate against
+ * the fleet-global counter BEFORE spending — the reservation both refuses at the cap and closes
  * the check-then-spend window; (2) POST the batch with Basic auth; (3) parse; (4) settle the
  * reservation with the REAL cost (response `cost`, else the estimate). A request that throws
  * leaves the reservation OPEN at its estimate — the conservative direction.
@@ -223,17 +354,14 @@ export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
   const ledger = opts.ledger ?? createDbSpendLedger();
   return {
     enabled: true,
-    async fetchSearchVolume(query) {
+    async fetchKeywordOverview(query) {
       // (1) Pre-call reservation — throws (and wakes the human) at the cap, and also when the
       // counter cannot be read at all (fail-closed).
-      const reservation = await reserveSpend(
-        ESTIMATED_SEARCH_VOLUME_CALL_USD,
-        DFS_SEARCH_VOLUME_ENDPOINT,
-        ledger,
-      );
+      const estimate = estimateKeywordOverviewCostUsd(query.keywords.length);
+      const reservation = await reserveSpend(estimate, DFS_KEYWORD_OVERVIEW_ENDPOINT, ledger);
 
       // (2) POST the batch.
-      const response = await transport(DFS_SEARCH_VOLUME_ENDPOINT, {
+      const response = await transport(DFS_KEYWORD_OVERVIEW_ENDPOINT, {
         method: "POST",
         headers: { Authorization: authHeader, "Content-Type": "application/json" },
         body: JSON.stringify([
@@ -250,11 +378,11 @@ export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
 
       // (3) Parse.
       const raw: unknown = await response.json();
-      const rows = parseSearchVolumeResponse(raw);
+      const rows = parseKeywordOverviewResponse(raw);
 
       // (4) Settle the reservation at the real cost (falls back to the estimate when the
       // response omits it), so the day's total reflects what was actually billed.
-      const actualCost = extractResponseCostUsd(raw) ?? ESTIMATED_SEARCH_VOLUME_CALL_USD;
+      const actualCost = extractResponseCostUsd(raw) ?? estimate;
       await settleSpend(reservation, actualCost, query.keywords.length, ledger);
       return rows;
     },
