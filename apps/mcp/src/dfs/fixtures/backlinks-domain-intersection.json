@@ -1,0 +1,126 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.1284 sec.",
+  "cost": 0.0241,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08171200-0000-0000-0000-fixture0007",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "1.1013 sec.",
+      "cost": 0.0241,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "backlinks",
+        "domain_intersection",
+        "live"
+      ],
+      "data": {
+        "api": "backlinks",
+        "function": "domain_intersection",
+        "targets": {
+          "1": "rival.com"
+        },
+        "exclude_targets": [
+          "example.com"
+        ],
+        "backlinks_status_type": "live",
+        "rank_scale": "one_thousand",
+        "limit": 100,
+        "order_by": [
+          "1.rank,desc"
+        ]
+      },
+      "result": [
+        {
+          "targets": {
+            "1": "rival.com"
+          },
+          "total_count": 612,
+          "items_count": 4,
+          "items": [
+            {
+              "type": "backlinks_domain_intersection_item",
+              "domain_intersection": {
+                "1": {
+                  "type": "backlinks_domain_intersection",
+                  "target": "searchengineweekly.test",
+                  "rank": 612,
+                  "backlinks": 41,
+                  "first_seen": "2023-04-11 08:22:17 +00:00",
+                  "lost_date": null,
+                  "backlinks_spam_score": 4,
+                  "broken_backlinks": 0,
+                  "broken_pages": 0,
+                  "referring_domains": 1,
+                  "referring_domains_nofollow": 0,
+                  "referring_main_domains": 1,
+                  "referring_pages": 27,
+                  "referring_pages_nofollow": 2,
+                  "referring_ips": 1,
+                  "referring_subnets": 1
+                }
+              },
+              "summary": {
+                "intersections_count": 1
+              }
+            },
+            {
+              "type": "backlinks_domain_intersection_item",
+              "domain_intersection": {
+                "1": {
+                  "type": "backlinks_domain_intersection",
+                  "target": "devtoolsdigest.test",
+                  "rank": 448,
+                  "backlinks": 9,
+                  "first_seen": "2024-11-02 19:40:55 +00:00",
+                  "lost_date": null,
+                  "backlinks_spam_score": 11,
+                  "broken_backlinks": 1,
+                  "referring_domains": 1,
+                  "referring_pages": 6
+                }
+              },
+              "summary": {
+                "intersections_count": 1
+              }
+            },
+            {
+              "type": "backlinks_domain_intersection_item",
+              "domain_intersection": {
+                "1": {
+                  "type": "backlinks_domain_intersection",
+                  "target": "marketingroundup.test",
+                  "first_seen": "2025-06-19 03:15:41 +00:00",
+                  "lost_date": null
+                }
+              },
+              "summary": {
+                "intersections_count": 1
+              }
+            },
+            {
+              "type": "backlinks_domain_intersection_item",
+              "domain_intersection": {
+                "1": {
+                  "type": "backlinks_domain_intersection",
+                  "target": null,
+                  "rank": 12,
+                  "backlinks": 1
+                }
+              },
+              "summary": {
+                "intersections_count": 1
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
