@@ -70,6 +70,29 @@
                   "competition_level": "HIGH",
                   "cpc": 9.87,
                   "search_volume": 22200
+                },
+                "keyword_properties": {
+                  "se_type": "google",
+                  "keyword_difficulty": 26
+                },
+                "search_intent_info": {
+                  "se_type": "google",
+                  "main_intent": "commercial",
+                  "foreign_intent": [
+                    "informational"
+                  ],
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00"
+                },
+                "serp_info": {
+                  "se_type": "google",
+                  "check_url": "https://www.google.com/search?q=seo%20software&num=100&hl=en&gl=US",
+                  "serp_item_types": [
+                    "organic",
+                    "ai_overview",
+                    "people_also_ask"
+                  ],
+                  "se_results_count": 428000000,
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00"
                 }
               },
               "ranked_serp_element": {
@@ -83,7 +106,13 @@
                   "domain": "example.com",
                   "title": "SEO Software for Growing Teams — Example",
                   "url": "https://example.com/seo-software",
-                  "etv": 1180.4
+                  "etv": 1180.4,
+                  "rank_changes": {
+                    "previous_rank_absolute": 18,
+                    "is_new": false,
+                    "is_up": false,
+                    "is_down": true
+                  }
                 }
               }
             },
@@ -101,6 +130,26 @@
                   "competition_level": "MEDIUM",
                   "cpc": 6.42,
                   "search_volume": 12100
+                },
+                "keyword_properties": {
+                  "se_type": "google",
+                  "keyword_difficulty": 76
+                },
+                "search_intent_info": {
+                  "se_type": "google",
+                  "main_intent": "informational",
+                  "foreign_intent": null,
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00"
+                },
+                "serp_info": {
+                  "se_type": "google",
+                  "check_url": "https://www.google.com/search?q=keyword%20research%20tool&num=100&hl=en&gl=US",
+                  "serp_item_types": [
+                    "organic",
+                    "video"
+                  ],
+                  "se_results_count": 91200000,
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00"
                 }
               },
               "ranked_serp_element": {
@@ -114,7 +163,13 @@
                   "domain": "example.com",
                   "title": "Keyword Research Tool — Example",
                   "url": "https://example.com/keyword-research",
-                  "etv": 410.2
+                  "etv": 410.2,
+                  "rank_changes": {
+                    "previous_rank_absolute": null,
+                    "is_new": true,
+                    "is_up": false,
+                    "is_down": false
+                  }
                 }
               }
             },
@@ -132,6 +187,15 @@
                   "competition_level": "LOW",
                   "cpc": 4.1,
                   "search_volume": null
+                },
+                "serp_info": {
+                  "se_type": "google",
+                  "check_url": "https://www.google.com/search?q=rank%20tracker&num=100&hl=en&gl=US",
+                  "serp_item_types": [
+                    "organic"
+                  ],
+                  "se_results_count": 52300000,
+                  "last_updated_time": "2026-07-15 09:00:00 +00:00"
                 }
               },
               "ranked_serp_element": {

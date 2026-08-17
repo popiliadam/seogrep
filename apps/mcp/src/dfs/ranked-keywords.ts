@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
-import { defaultDfsTransport, type DfsTransport } from "./client.ts";
+import {
+  KEYWORD_OVERVIEW_ESTIMATE_MARGIN,
+  defaultDfsTransport,
+  type DfsTransport,
+} from "./client.ts";
 import { EMPTY_ORGANIC_METRICS, type DomainOrganicMetrics } from "./competitors.ts";
 
 /**
@@ -40,13 +44,19 @@ export const RANKED_KEYWORDS_REQUEST_USD = 0.012;
 export const RANKED_KEYWORDS_PER_ROW_USD = 0.00012;
 
 /**
- * Safety factor on the pre-call ESTIMATE only (the keyword_overview port's constant, same
- * reasoning): the gate must err toward blocking, so the reservation is deliberately larger
- * than the published price. A tariff change must surface as a refused call, never as silent
- * overspend against the $3/day cap. It is NOT a price claim — the REAL cost is read from the
- * response `cost` field and settles the reservation immediately afterwards.
+ * Safety factor on the pre-call ESTIMATE only: the gate must err toward blocking, so the
+ * reservation is deliberately larger than the published price. A tariff change must surface as a
+ * refused call, never as silent overspend against the $3/day cap. It is NOT a price claim — the
+ * REAL cost is read from the response `cost` field and settles the reservation immediately
+ * afterwards.
+ *
+ * It is the keyword_overview port's constant, IMPORTED rather than repeated. Two ports, one
+ * concept, one shared daily cap: a second literal 1.5 beside the first is not a second decision,
+ * it is the same decision written twice and free to drift. The local alias exists only so this
+ * module's readers see a name that matches the file they are in; a spec pins the two equal, so
+ * the alias cannot quietly become a fork.
  */
-export const RANKED_KEYWORDS_ESTIMATE_MARGIN = 1.5;
+export const RANKED_KEYWORDS_ESTIMATE_MARGIN = KEYWORD_OVERVIEW_ESTIMATE_MARGIN;
 
 /**
  * Conservative per-call cost estimate (USD) for the pre-call budget gate.
@@ -123,6 +133,20 @@ export interface RankedKeywordsQuery {
 }
 
 /**
+ * How this ranking moved since DataForSEO's previous check, from `serp_item.rank_changes`.
+ *
+ * `previous_rank_absolute` is an ABSOLUTE rank — the same "counting every SERP element" scale as
+ * RankedKeywordRow.absolute_position, NOT the organic one — so the renderer has to say which
+ * scale it is quoting, or a reader will compare it against the organic number beside it.
+ */
+export interface RankChange {
+  readonly previous_rank_absolute: number | null;
+  readonly is_new: boolean;
+  readonly is_up: boolean;
+  readonly is_down: boolean;
+}
+
+/**
  * One ranked keyword, projected down to what the tool renders.
  *
  * Everything below arrives in the SAME single paid response. The projection used to keep four
@@ -167,6 +191,33 @@ export interface RankedKeywordRow {
   readonly type: string | null;
   /** The ranking URL on the target domain; null when absent. */
   readonly url: string | null;
+  /**
+   * `keyword_properties.keyword_difficulty` — Labs' 0-100 difficulty. Measured present on the
+   * ranked_keywords response (operator, live call against moz.com), which means this tool has
+   * been handing back a ranking list while discarding the one number that says how hard the
+   * ranking was to get.
+   */
+  readonly keyword_difficulty: number | null;
+  /** `search_intent_info.main_intent` — informational / commercial / navigational / transactional. */
+  readonly main_intent: string | null;
+  /** `search_intent_info.foreign_intent` — secondary intents; empty when the vendor sent none. */
+  readonly foreign_intent: readonly string[];
+  /** `serp_item.rank_changes` — this keyword's own movement; null when the vendor sent none. */
+  readonly rank_change: RankChange | null;
+  /**
+   * `serp_info.serp_item_types` — EVERY element kind on that SERP, raw and unfiltered, including
+   * `ai_overview`. It is the direct explanation of the organic/absolute rank gap above: what is
+   * sitting between this result and the top of the page. Kept raw here (organic included) —
+   * dropping a value at projection time is the renderer's editorial choice, not the parser's.
+   */
+  readonly serp_item_types: readonly string[];
+  /**
+   * `serp_info.check_url` — Google, at the exact locale DataForSEO measured. It is the one thing
+   * in the response the user can check with their own eyes, and it cannot be reconstructed from
+   * the keyword alone: the locale parameters are precisely what the tool's own locale warning is
+   * about.
+   */
+  readonly check_url: string | null;
 }
 
 /** A ranked-keywords lookup: the projected rows plus how many the domain ranks for in total. */
@@ -184,6 +235,14 @@ export interface RankedKeywordsResult {
    * `result.metrics.organic` — the whole domain's organic ranking distribution and estimated
    * traffic, in one block, in the SAME response as the rows. It answers "how is this domain
    * doing" without reading a single row, and it was being parsed past and thrown away.
+   *
+   * PROVENANCE: this block is DOCUMENTED by DataForSEO and its shape is the one competitors.ts
+   * already parses from two other Labs endpoints — but unlike every other field on this type it
+   * has NOT been confirmed against a live ranked_keywords response. The operator's live call
+   * (2026-08-17) went through an MCP layer that reshapes the payload and drops fields the raw
+   * API returns (it dropped `cost` too), so its absence there is not evidence of absence. The
+   * renderer already handles the block being missing entirely, which is the behaviour if this
+   * turns out not to be returned here.
    */
   readonly metrics: DomainOrganicMetrics;
   readonly rows: readonly RankedKeywordRow[];
@@ -200,6 +259,13 @@ export interface RankedKeywordsPort {
 
 // --- Response parsing (validated with zod; the fixture mirrors the documented shape) -------
 
+const rankChangesSchema = z.object({
+  previous_rank_absolute: z.number().nullish(),
+  is_new: z.boolean().nullish(),
+  is_up: z.boolean().nullish(),
+  is_down: z.boolean().nullish(),
+});
+
 const serpItemSchema = z.object({
   type: z.string().nullish(),
   rank_group: z.number().nullish(),
@@ -207,6 +273,7 @@ const serpItemSchema = z.object({
   title: z.string().nullish(),
   etv: z.number().nullish(),
   url: z.string().nullish(),
+  rank_changes: rankChangesSchema.nullish(),
 });
 
 const rankedItemSchema = z.object({
@@ -221,9 +288,41 @@ const rankedItemSchema = z.object({
         last_updated_time: z.string().nullish(),
       })
       .nullish(),
+    keyword_properties: z.object({ keyword_difficulty: z.number().nullish() }).nullish(),
+    search_intent_info: z
+      .object({
+        main_intent: z.string().nullish(),
+        foreign_intent: z.array(z.string()).nullish(),
+      })
+      .nullish(),
+    serp_info: z
+      .object({
+        check_url: z.string().nullish(),
+        serp_item_types: z.array(z.string()).nullish(),
+      })
+      .nullish(),
   }),
   ranked_serp_element: z.object({ serp_item: serpItemSchema.nullish() }).nullish(),
 });
+
+/**
+ * Project `serp_item.rank_changes`, or null when the vendor sent none.
+ *
+ * The three flags default to FALSE rather than to null: DFS omits the ones that do not apply, and
+ * an absent "is_down" means this ranking did not go down. A tri-state here would push a
+ * distinction the vendor does not make into the output.
+ */
+function projectRankChange(
+  raw: z.infer<typeof rankChangesSchema> | null | undefined,
+): RankChange | null {
+  if (!raw) return null;
+  return {
+    previous_rank_absolute: raw.previous_rank_absolute ?? null,
+    is_new: raw.is_new ?? false,
+    is_up: raw.is_up ?? false,
+    is_down: raw.is_down ?? false,
+  };
+}
 
 /**
  * `result.metrics.organic` — deliberately NOT a field-by-field schema. Every value the block
@@ -332,6 +431,12 @@ export function parseRankedKeywordsResponse(
           title: serp?.title ?? null,
           type: serp?.type ?? null,
           url: serp?.url ?? null,
+          keyword_difficulty: item.keyword_data.keyword_properties?.keyword_difficulty ?? null,
+          main_intent: item.keyword_data.search_intent_info?.main_intent ?? null,
+          foreign_intent: item.keyword_data.search_intent_info?.foreign_intent ?? [],
+          rank_change: projectRankChange(serp?.rank_changes),
+          serp_item_types: item.keyword_data.serp_info?.serp_item_types ?? [],
+          check_url: item.keyword_data.serp_info?.check_url ?? null,
         };
       }),
   };

@@ -3,6 +3,7 @@ import {
   DEFAULT_RANKED_KEYWORDS_LIMIT,
   DEFAULT_RANKED_KEYWORDS_SORT,
   RANKED_KEYWORDS_MAX_LIMIT,
+  RANKED_KEYWORDS_ESTIMATE_MARGIN,
   RANKED_KEYWORDS_PER_ROW_USD,
   RANKED_KEYWORDS_REQUEST_USD,
   RANKED_KEYWORDS_SORTS,
@@ -16,7 +17,7 @@ import {
   type RankedKeywordRow,
 } from "./ranked-keywords.ts";
 import { EMPTY_ORGANIC_METRICS, POSITION_BAND_KEYS } from "./competitors.ts";
-import type { DfsTransport } from "./client.ts";
+import { KEYWORD_OVERVIEW_ESTIMATE_MARGIN, type DfsTransport } from "./client.ts";
 import { createMemorySpendLedger, todaySpendUsd, type MemorySpendLedger } from "./budget.ts";
 import fixtureResponse from "./fixtures/ranked-keywords.json";
 
@@ -33,6 +34,12 @@ const EMPTY_ROW: RankedKeywordRow = {
   title: null,
   type: null,
   url: null,
+  keyword_difficulty: null,
+  main_intent: null,
+  foreign_intent: [],
+  rank_change: null,
+  serp_item_types: [],
+  check_url: null,
 };
 
 /** A minimal successful envelope around one result object. */
@@ -80,6 +87,17 @@ describe("parseRankedKeywordsResponse", () => {
         title: "SEO Software for Growing Teams — Example",
         type: "organic",
         url: "https://example.com/seo-software",
+        keyword_difficulty: 26,
+        main_intent: "commercial",
+        foreign_intent: ["informational"],
+        rank_change: {
+          previous_rank_absolute: 18,
+          is_new: false,
+          is_up: false,
+          is_down: true,
+        },
+        serp_item_types: ["organic", "ai_overview", "people_also_ask"],
+        check_url: "https://www.google.com/search?q=seo%20software&num=100&hl=en&gl=US",
       },
       {
         keyword: "keyword research tool",
@@ -93,8 +111,23 @@ describe("parseRankedKeywordsResponse", () => {
         title: "Keyword Research Tool — Example",
         type: "organic",
         url: "https://example.com/keyword-research",
+        keyword_difficulty: 76,
+        main_intent: "informational",
+        // The vendor sent `foreign_intent: null` here — an ARRAY field, defaulted to [] so the
+        // renderer never has to ask whether "no secondary intents" arrived as null or as [].
+        foreign_intent: [],
+        rank_change: {
+          previous_rank_absolute: null,
+          is_new: true,
+          is_up: false,
+          is_down: false,
+        },
+        serp_item_types: ["organic", "video"],
+        check_url:
+          "https://www.google.com/search?q=keyword%20research%20tool&num=100&hl=en&gl=US",
       },
-      // Missing volume / url degrade to null rather than dropping the row.
+      // The SPARSE row: missing volume / url, and NO keyword_properties, search_intent_info or
+      // rank_changes at all — the absence half of every new axis, in the fixture itself.
       {
         keyword: "rank tracker",
         position: 18,
@@ -107,6 +140,12 @@ describe("parseRankedKeywordsResponse", () => {
         title: "Rank Tracker — Example",
         type: "organic",
         url: null,
+        keyword_difficulty: null,
+        main_intent: null,
+        foreign_intent: [],
+        rank_change: null,
+        serp_item_types: ["organic"],
+        check_url: "https://www.google.com/search?q=rank%20tracker&num=100&hl=en&gl=US",
       },
     ]);
   });
@@ -154,6 +193,106 @@ describe("parseRankedKeywordsResponse", () => {
       }),
     );
     expect(without.rows[0]?.[field]).toBeNull();
+  });
+
+  /**
+   * The fields the operator's LIVE call (2026-08-17, moz.com) proved this endpoint returns and
+   * this tool was discarding. Same one-axis-at-a-time discipline: present, then absent.
+   */
+  it.each([
+    ["keyword_properties", { keyword_properties: { keyword_difficulty: 26 } }, "keyword_difficulty", 26],
+    ["search_intent_info", { search_intent_info: { main_intent: "commercial" } }, "main_intent", "commercial"],
+    ["serp_info.check_url", { serp_info: { check_url: "https://g/?q=x" } }, "check_url", "https://g/?q=x"],
+  ] as const)("reads keyword_data.%s when present, and nulls it when absent", (_name, extra, field, value) => {
+    const present = parseRankedKeywordsResponse(
+      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k", ...extra } }] }),
+    );
+    expect(present.rows[0]?.[field]).toBe(value);
+    const absent = parseRankedKeywordsResponse(
+      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k" } }] }),
+    );
+    expect(absent.rows[0]?.[field]).toBeNull();
+  });
+
+  /**
+   * The two ARRAY fields default to [] rather than null, in BOTH absence shapes the vendor uses
+   * (key omitted, and key present as null). A renderer forced to tell three states apart for "no
+   * secondary intents" would grow a branch nobody can justify.
+   */
+  it.each([
+    ["foreign_intent", "search_intent_info", "foreign_intent", ["informational"]],
+    ["serp_item_types", "serp_info", "serp_item_types", ["organic", "ai_overview"]],
+  ] as const)("reads %s, and empties it when the vendor omits or nulls it", (field, parent, key, value) => {
+    const present = parseRankedKeywordsResponse(
+      envelope({
+        target: "x.example",
+        items: [{ keyword_data: { keyword: "k", [parent]: { [key]: value } } }],
+      }),
+    );
+    expect(present.rows[0]?.[field]).toEqual(value);
+    const nulled = parseRankedKeywordsResponse(
+      envelope({
+        target: "x.example",
+        items: [{ keyword_data: { keyword: "k", [parent]: { [key]: null } } }],
+      }),
+    );
+    expect(nulled.rows[0]?.[field]).toEqual([]);
+    const omitted = parseRankedKeywordsResponse(
+      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k" } }] }),
+    );
+    expect(omitted.rows[0]?.[field]).toEqual([]);
+  });
+
+  /**
+   * `serp_item.rank_changes` — per-keyword movement, the field that turns this tool from a list
+   * into a change report. DFS omits the flags that do not apply, so they default to false; the
+   * OBJECT being absent stays null, because "no movement data at all" is a different claim from
+   * "did not move".
+   */
+  it("projects rank_changes, defaulting the flags the vendor omits to false", () => {
+    const result = parseRankedKeywordsResponse(
+      envelope({
+        target: "x.example",
+        items: [
+          {
+            keyword_data: { keyword: "k" },
+            ranked_serp_element: {
+              serp_item: { rank_changes: { previous_rank_absolute: 18, is_down: true } },
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.rows[0]?.rank_change).toEqual({
+      previous_rank_absolute: 18,
+      is_new: false,
+      is_up: false,
+      is_down: true,
+    });
+  });
+
+  it("leaves rank_change NULL when the vendor sent no rank_changes object", () => {
+    const result = parseRankedKeywordsResponse(
+      envelope({
+        target: "x.example",
+        items: [{ keyword_data: { keyword: "k" }, ranked_serp_element: { serp_item: {} } }],
+      }),
+    );
+    expect(result.rows[0]?.rank_change).toBeNull();
+  });
+
+  it("keeps serp_item_types RAW — dropping organic is the renderer's choice, not the parser's", () => {
+    const result = parseRankedKeywordsResponse(
+      envelope({
+        target: "x.example",
+        items: [
+          {
+            keyword_data: { keyword: "k", serp_info: { serp_item_types: ["organic", "ai_overview"] } },
+          },
+        ],
+      }),
+    );
+    expect(result.rows[0]?.serp_item_types).toEqual(["organic", "ai_overview"]);
   });
 
   it("nulls every optional field when keyword_info and ranked_serp_element are both absent", () => {
@@ -322,6 +461,15 @@ describe("estimateRankedKeywordsCostUsd", () => {
   it("matches the vendor's published per-request + per-row price, before the safety margin", () => {
     const listed = RANKED_KEYWORDS_REQUEST_USD + 1000 * RANKED_KEYWORDS_PER_ROW_USD;
     expect(listed).toBeCloseTo(extractRankedKeywordsCostUsd(fixtureResponse) as number, 6);
+  });
+
+  /**
+   * Referee nit, 2026-08-17: the margin used to be a second literal 1.5 beside client.ts's. One
+   * concept, two ports, ONE shared $3/day cap — so it is imported, and pinned equal here so the
+   * local alias cannot quietly become a fork.
+   */
+  it("uses the SAME safety margin as the keyword_overview port, not a copy of its value", () => {
+    expect(RANKED_KEYWORDS_ESTIMATE_MARGIN).toBe(KEYWORD_OVERVIEW_ESTIMATE_MARGIN);
   });
 
   it("reserves MORE than the vendor's list price, never less (the gate errs toward refusing)", () => {
