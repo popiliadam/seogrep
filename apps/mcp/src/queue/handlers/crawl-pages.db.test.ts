@@ -5,6 +5,7 @@ import { getServiceClient, type Database, type JobRow } from "../../db.ts";
 import { startFixtureSite } from "../../crawler/fixtures/site-server.ts";
 import { clearToolHandlers, executeJob, registerToolHandler } from "../worker.ts";
 import { createCrawlHandler } from "./crawl.ts";
+import type { CrawlResult, PageRecord } from "../../crawler/crawl.ts";
 
 /**
  * The crawl_pages DUAL WRITE (migration 0023) against a LOCAL Supabase stack.
@@ -41,6 +42,36 @@ requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 requireEnv("SUPABASE_DB_URL");
 
 const service = getServiceClient();
+
+/**
+ * The page fields the stubs in this file actually drive — a `Pick`, so a misspelt field is
+ * still a compile error, over the eleven the crawl_pages writer maps to columns.
+ *
+ * PageRecord carries seventeen further REQUIRED fields since the crawl-signal expansion
+ * (fetchMs, htmlBytes, contentHash, depth, …) and `crawlPageRows` maps NONE of them: 0023's
+ * table has the original eleven. The parity spec below compares rows against the jsonb of a
+ * REAL crawl, not against these stubs, so inventing seventeen values here would change the
+ * rows written and prove nothing. The stub objects stay byte-identical; `stubCrawl` is the
+ * single place the gap between the stub and the full record is declared.
+ */
+type StubPage = Pick<
+  PageRecord,
+  | "url"
+  | "status"
+  | "title"
+  | "metaDescription"
+  | "h1s"
+  | "canonical"
+  | "robotsMeta"
+  | "links"
+  | "wordCount"
+  | "jsonLdTypes"
+  | "issues"
+>;
+
+function stubCrawl(pages: StubPage[]): CrawlResult {
+  return { pages, skipped: [], fetchedAt: new Date().toISOString() } as unknown as CrawlResult;
+}
 
 interface TestUser {
   readonly id: string;
@@ -271,14 +302,10 @@ describe("crawl_pages dual write (migration 0023)", () => {
       "crawl_site",
       createCrawlHandler({
         resolveOrigin: async () => "https://insert-fail.example.com",
-        crawl: async (origin) => ({
-          pages: [{
-            url: origin, status: 9_999_999_999, title: null, metaDescription: null, h1s: [],
-            canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-          }],
-          skipped: [],
-          fetchedAt: new Date().toISOString(),
-        }),
+        crawl: async (origin) => stubCrawl([{
+          url: origin, status: 9_999_999_999, title: null, metaDescription: null, h1s: [],
+          canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+        }]),
       }),
     );
     await executeJob({ jobId, userId: user.id, tool: "crawl_site", payload: {} });
@@ -308,14 +335,10 @@ describe("crawl_pages dual write (migration 0023)", () => {
       "crawl_site",
       createCrawlHandler({
         resolveOrigin: async () => "https://writer-throws.example.com",
-        crawl: async (origin) => ({
-          pages: [{
-            url: origin, status: 200, title: null, metaDescription: null, h1s: [],
-            canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-          }],
-          skipped: [],
-          fetchedAt: new Date().toISOString(),
-        }),
+        crawl: async (origin) => stubCrawl([{
+          url: origin, status: 200, title: null, metaDescription: null, h1s: [],
+          canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+        }]),
         writePages: async (target) => {
           wroteFor = target.projectId;
           throw new Error("crawl_site: crawl_pages write failed (simulated transport loss)");
@@ -342,14 +365,10 @@ describe("crawl_pages dual write (migration 0023)", () => {
       "crawl_site",
       createCrawlHandler({
         resolveOrigin: async () => "https://isolation.example.com",
-        crawl: async (origin) => ({
-          pages: [{
-            url: origin, status: 200, title: "Isolation", metaDescription: null, h1s: [],
-            canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
-          }],
-          skipped: [],
-          fetchedAt: new Date().toISOString(),
-        }),
+        crawl: async (origin) => stubCrawl([{
+          url: origin, status: 200, title: "Isolation", metaDescription: null, h1s: [],
+          canonical: null, robotsMeta: null, links: [], wordCount: 1, jsonLdTypes: [], issues: [],
+        }]),
       }),
     );
     await executeJob({ jobId, userId: owner.id, tool: "crawl_site", payload: {} });

@@ -185,6 +185,18 @@ async function projectsByDomain(userId: string, domain: string): Promise<Project
   return (data ?? []) as unknown as ProjectRow[];
 }
 
+/**
+ * The one project a `toHaveLength(1)` above just proved exists. Under
+ * `noUncheckedIndexedAccess` `projects[0]` is `ProjectRow | undefined`; this narrows by
+ * THROWING rather than by `?.`, which would let a missing row slide into a passing
+ * `toBeNull()`. On the path the specs actually take it is the same row as `projects[0]`.
+ */
+function onlyProject(projects: ProjectRow[]): ProjectRow {
+  const [first] = projects;
+  if (!first) throw new Error(`expected exactly one project row, got ${projects.length}`);
+  return first;
+}
+
 async function countProjectsByDomain(userId: string, domain: string): Promise<number> {
   return (await projectsByDomain(userId, domain)).length;
 }
@@ -235,8 +247,9 @@ describe("track_gsc_property over the real database + the real Google client", (
     expect(run.text).toContain(domain);
     const projects = await projectsByDomain(ctx.userId, domain);
     expect(projects).toHaveLength(1);
-    expect(projects[0].archived_at).toBeNull();
-    expect(await readMapping(ctx.userId, projects[0].id)).toMatchObject({
+    const project = onlyProject(projects);
+    expect(project.archived_at).toBeNull();
+    expect(await readMapping(ctx.userId, project.id)).toMatchObject({
       account_id: account.id,
       gsc_property: property,
     });
@@ -317,8 +330,9 @@ describe("track_gsc_property over the real database + the real Google client", (
     expect(projects).toHaveLength(1);
     // The SAME row, restored in place — the crawls, reports and mapping hanging off this id
     // survive, which a second row would have orphaned.
-    expect(projects[0].id).toBe(archivedId);
-    expect(projects[0].archived_at).toBeNull();
+    const project = onlyProject(projects);
+    expect(project.id).toBe(archivedId);
+    expect(project.archived_at).toBeNull();
     expect(await readMapping(ctx.userId, archivedId)).toMatchObject({ gsc_property: property });
   });
 

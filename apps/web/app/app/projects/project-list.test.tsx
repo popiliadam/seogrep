@@ -104,6 +104,56 @@ describe("ProjectList — a connected account with no property matched", () => {
   });
 });
 
+describe("ProjectList — a connection whose Google account has expired", () => {
+  const LINKED = { account_id: "acct-1", gsc_property: "sc-domain:example.com" };
+
+  /**
+   * The marker is the panel's half of the cross-surface agreement: the MCP router already tells
+   * this project to run connect_gsc, and a card that showed only the property would leave the user
+   * looking at a healthy-reading line while the assistant told them their connection was dead.
+   */
+  it("marks the Search Console line when the account is stored invalid", () => {
+    render(
+      <ProjectList cards={[cardFor({ ...BARE, connection: LINKED, tokenStatus: "invalid" })]} />,
+    );
+    expect(screen.getByText(/connection expired/i)).toBeDefined();
+    // The mapping is still shown: the property did not stop existing because the token did.
+    expect(screen.getByText("sc-domain:example.com")).toBeDefined();
+  });
+
+  it("points at the page that fixes it", () => {
+    const { container } = render(
+      <ProjectList cards={[cardFor({ ...BARE, connection: LINKED, tokenStatus: "invalid" })]} />,
+    );
+    expect(container.querySelector('a[href="/app/connection"]')).not.toBeNull();
+  });
+
+  /**
+   * …and NOT otherwise. A warning that fires for every connected project teaches people that the
+   * reconnection warning means nothing, which is worse than not having one — the same reason
+   * Overview counts only the accounts marked invalid. Both healthy states are asserted, because
+   * emptying the condition passes each of them and only a positive-and-negative pair catches it.
+   */
+  it("shows no marker for a live account", () => {
+    render(
+      <ProjectList cards={[cardFor({ ...BARE, connection: LINKED, tokenStatus: "active" })]} />,
+    );
+    expect(screen.queryByText(/connection expired/i)).toBeNull();
+    expect(screen.getByText("sc-domain:example.com")).toBeDefined();
+  });
+
+  it("shows no marker when connection health was never measured", () => {
+    render(<ProjectList cards={[cardFor({ ...BARE, connection: LINKED })]} />);
+    expect(screen.queryByText(/connection expired/i)).toBeNull();
+  });
+
+  it("shows no marker on an unconnected project", () => {
+    render(<ProjectList cards={[cardFor({ ...BARE, tokenStatus: "invalid" })]} />);
+    expect(screen.getByText("Not connected")).toBeDefined();
+    expect(screen.queryByText(/connection expired/i)).toBeNull();
+  });
+});
+
 describe("ProjectList — several projects", () => {
   it("renders one card per project, in the order given", () => {
     render(

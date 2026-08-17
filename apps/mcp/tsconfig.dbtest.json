@@ -1,0 +1,14 @@
+{
+  // Type gate for the DB-integration lane. `tsconfig.json` excludes `src/**/*.test.ts`,
+  // so `pnpm typecheck` has never read a single *.db.test.ts file — the lane ran under
+  // vitest's transform, which strips types without checking them. This config re-adds
+  // exactly those files (`exclude: []` is required: `extends` inherits the parent's
+  // exclude, and an inherited `src/**/*.test.ts` would empty this include again).
+  //
+  // Run by guardrails/verify-db.sh BEFORE `supabase db reset` — a type error is cheaper
+  // to learn about than a stack reset. Its coverage is pinned there by file count, so
+  // emptying this include turns the gate red instead of silently passing everything.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.db.test.ts"],
+  "exclude": []
+}

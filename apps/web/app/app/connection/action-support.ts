@@ -1,4 +1,4 @@
-import { listSites, type GscSite } from "@pseo/core";
+import { cosmeticPropertyMatch, listSites, type GscSite } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
 import { accessTokenFor } from "../../../lib/gsc/accounts";
 import { createClient } from "../../../lib/supabase/server";
@@ -62,6 +62,37 @@ export type SavePropertyResult = { readonly ok: true } | { readonly ok: false; r
  */
 export const ARCHIVED_PROJECT =
   "That project is in the archive, so it is not being tracked right now. Restore it first.";
+
+/**
+ * THE ONE "not listed" SENTENCE — and, when the listing holds a cosmetic twin of what was
+ * asked for, the way out of it.
+ *
+ * It lived as three separate literals (the `NOT_LISTED` constant in ./tracking-actions and two
+ * inline copies in ./actions) until 2026-08-15. Three copies of a refusal are three places to
+ * forget the suggestion in, which is exactly what had happened: `track_gsc_property` had said
+ * `Did you mean "X"?` since 2026-08-14 and this surface said nothing at all, so the same typo
+ * got a dead end in the browser and a way out in the client.
+ *
+ * THE SUGGESTION RULE IS NOT DECIDED HERE. `cosmeticPropertyMatch` (@pseo/core) owns it, the
+ * MCP tool calls the same function, and it is deliberately dumb: only letter case and a
+ * trailing slash qualify, so `sc-domain:x` is never offered for `https://x/` and a near-miss
+ * spelling is never offered at all. A suggestion is one copy-paste from becoming the property a
+ * project BINDS to, and a wrong binding only surfaces when the data stops making sense.
+ *
+ * NOTE WHAT IS ECHOED. This surface's refusals deliberately do not repeat what the browser
+ * sent; the suggestion is not an exception to that rule, because the string in the sentence is
+ * a property GOOGLE just listed for this account, never the caller's input.
+ *
+ * `listed` defaults to empty so the two callers that refuse BEFORE the Google round trip (an
+ * empty property can never be listed) reach the same sentence without inventing a listing.
+ */
+export function notListedMessage(property: string, listed: readonly string[] = []): string {
+  const suggestion = cosmeticPropertyMatch(property, listed);
+  return (
+    "That property is not listed on this Google account." +
+    (suggestion === null ? "" : ` Did you mean "${suggestion}"?`)
+  );
+}
 
 /** A project this tenant owns, and whether it currently sits in the archive. */
 export interface OwnedProject {

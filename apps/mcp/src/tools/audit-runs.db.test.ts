@@ -515,3 +515,109 @@ describe("the new report fields reach the row (Faz 1 rule wave)", () => {
     expect(tech.orphanSignals).toEqual([{ url: "https://signals.seed/copy", depth: 5 }]);
   });
 });
+
+/**
+ * APPEND-ONLY ADDITION (Faz 2 graph + Faz 3 schema bodies). Same argument as the block above, one
+ * axis further: the graph and body rules produce shapes the earlier waves did not — an OBJECT that
+ * may be `null` (`sitemapDiff`), and nested arrays of findings — and `jsonb` is where a shape
+ * quietly changes. `null` in particular has to survive AS null: if it came back missing, the
+ * panel could not tell "this crawl read no sitemap" from "this crawl agreed with its sitemap",
+ * which is the one distinction the whole rule is built on.
+ */
+const GRAPH_CRAWL_RESULT: Json = {
+  pages: [
+    {
+      url: "https://graph.seed/",
+      status: 200,
+      title: "A perfectly reasonable home page title",
+      metaDescription: "A meta description that is long enough to clear the fifty character floor.",
+      h1s: ["A heading that differs from the title"],
+      canonical: "https://graph.seed/",
+      robotsMeta: null,
+      links: ["https://graph.seed/gone"],
+      wordCount: 400,
+      jsonLdTypes: ["Product"],
+      issues: [],
+      // A Product with no offers, one unparseable block, and two blocks the crawler dropped.
+      jsonLdBlocks: ['{"@type":"Product","name":"Thing"}', "{ not json }"],
+      jsonLdTruncated: 2,
+    },
+    {
+      url: "https://graph.seed/gone",
+      status: 404,
+      title: "A second page title that is long enough",
+      metaDescription: "Another meta description long enough to clear the fifty character floor.",
+      h1s: ["Gone"],
+      canonical: "https://graph.seed/gone",
+      robotsMeta: null,
+      links: [],
+      wordCount: 400,
+      jsonLdTypes: [],
+      issues: [],
+      jsonLdBlocks: [],
+      jsonLdTruncated: 0,
+    },
+  ],
+  skipped: [],
+  fetchedAt: "2026-08-14T00:00:00.000Z",
+  // Advertises a third URL the crawl never reached — the diff's positive case.
+  sitemapUrls: ["https://graph.seed/", "https://graph.seed/never-crawled"],
+};
+
+describe("the graph + schema-body report fields reach the row (Faz 2/3)", () => {
+  it("an old-shaped crawl stores sitemapDiff as NULL and the new lists as empty arrays", async () => {
+    const ctx: AuthContext = { userId: (await makeUser()).id, keyId: `key-${randomUUID()}` };
+    await seedGrant(ctx.userId, 200);
+    const projectId = await makeProject(ctx.userId, `graphlegacy-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(ctx.userId, projectId, CRAWL_RESULT);
+
+    expect((await auditTechTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+    expect((await auditSchemaTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+
+    const byTool = new Map(await runRows(ctx.userId).then((rows) => rows.map((r) => [r.tool, r])));
+    const tech = reportOf(byTool.get("audit_tech")!);
+    // NULL, and present: the key must not vanish, or "no sitemap" becomes indistinguishable from
+    // a report written by an older engine.
+    expect(tech.sitemapDiff).toBeNull();
+    expect("sitemapDiff" in tech).toBe(true);
+    expect(tech.brokenInternalLinks).toEqual([]);
+
+    const schema = reportOf(byTool.get("audit_schema")!);
+    expect(schema.pagesValidated).toBe(0);
+    for (const field of ["missingFields", "invalidJson", "truncatedPages"]) {
+      expect(schema[field]).toEqual([]);
+    }
+  });
+
+  it("a crawl carrying a sitemap, a broken link and JSON-LD bodies stores the findings", async () => {
+    const ctx: AuthContext = { userId: (await makeUser()).id, keyId: `key-${randomUUID()}` };
+    await seedGrant(ctx.userId, 200);
+    const projectId = await makeProject(ctx.userId, `graph-${randomUUID()}.example.com`);
+    await seedSucceededCrawl(ctx.userId, projectId, GRAPH_CRAWL_RESULT);
+
+    expect((await auditTechTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+    expect((await auditSchemaTool.run(ctx, { project_id: projectId })).isError).toBeUndefined();
+
+    const byTool = new Map(await runRows(ctx.userId).then((rows) => rows.map((r) => [r.tool, r])));
+
+    const tech = reportOf(byTool.get("audit_tech")!);
+    expect(tech.sitemapDiff).toEqual({
+      sitemapUrls: 2,
+      missingFromCrawl: ["https://graph.seed/never-crawled"],
+      // The 404 page was crawled and is NOT in the sitemap — a real second direction, so the
+      // object cannot pass by being half-empty.
+      missingFromSitemap: ["https://graph.seed/gone"],
+    });
+    expect(tech.brokenInternalLinks).toEqual([
+      { from: "https://graph.seed/", to: "https://graph.seed/gone", status: 404 },
+    ]);
+
+    const schema = reportOf(byTool.get("audit_schema")!);
+    expect(schema.pagesValidated).toBe(2);
+    expect(schema.missingFields).toEqual([
+      { url: "https://graph.seed/", type: "Product", missing: ["offers"] },
+    ]);
+    expect(schema.invalidJson).toEqual([{ url: "https://graph.seed/", blocks: 1 }]);
+    expect(schema.truncatedPages).toEqual([{ url: "https://graph.seed/", dropped: 2 }]);
+  });
+});

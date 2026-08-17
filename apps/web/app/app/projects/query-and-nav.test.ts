@@ -99,6 +99,89 @@ describe("the projects panel reads the rows it says it reads", () => {
   });
 });
 
+/**
+ * WHAT THE HEALTH READ ASKS FOR — the pin `page.tsx`'s types cannot carry, because a TypeScript
+ * shape describes what the code does with a row and says nothing about what PostgREST was asked to
+ * send. `gsc_accounts` is the table holding every Google credential in the product, and the panel
+ * needs exactly one boolean-ish word out of it.
+ *
+ * The ciphertext is held back by migration 0021's column-level grant, so a `select("*")` here
+ * FAILS rather than leaks — which is the good case and also the invisible one: nothing in this
+ * suite executes the query, so the panel would simply lose its health line to a thrown lookup and
+ * every other spec would stay green. The projection is therefore pinned positively, to the exact
+ * two columns the map is built from.
+ *
+ * Comments are stripped before matching (see `codeOf`), and here that is load-bearing: the read's
+ * own doc comment names `encrypted_refresh_token` in prose to explain why the list is narrow, so
+ * the negative pin below would fail on the sentence forbidding the thing.
+ */
+describe("the panel reads connection health without reaching for the credential", () => {
+  const HEALTH = queryOn(PAGE, "gsc_accounts");
+
+  /** The column list of the one `.select(...)` in that statement (literals joined back up). */
+  const columns = (() => {
+    const call = /\.select\(([\s\S]*?)\)/.exec(HEALTH)?.[1];
+    if (call === undefined) {
+      throw new Error("the health read has no `.select(...)` — did it start selecting *?");
+    }
+    return [...call.matchAll(/["']([^"']*)["']/g)]
+      .map((match) => match[1])
+      .join("")
+      .split(",")
+      .map((column) => column.trim())
+      .sort();
+  })();
+
+  /**
+   * EXACTLY the id and the stored word. Stated as an equality rather than as two negative pins,
+   * because the set of columns that must not come back is open-ended — `encrypted_refresh_token`
+   * today, whatever migration adds next tomorrow — and a positive list rules all of them out by
+   * construction. `*` cannot satisfy it either.
+   */
+  it("selects only the account id and its stored token status", () => {
+    expect(columns).toEqual(["id", "token_status"].sort());
+  });
+
+  /** …and the ciphertext column by name, so the failure NAMES the thing when it regresses. */
+  it("never names the sealed refresh token", () => {
+    expect(HEALTH).not.toMatch(/encrypted_refresh_token/i);
+  });
+
+  /**
+   * Constitution NEVER #4 — an EXPRESSION, never a literal: `.eq("user_id", "")` would satisfy a
+   * laxer pin while filtering on nothing, and this read decides whose connection the panel calls
+   * dead.
+   */
+  it("filters on the caller's own user id", () => {
+    expect(HEALTH).toMatch(/\.eq\(\s*["']user_id["']\s*,\s*[A-Za-z_$][\w$.]*\s*\)/);
+  });
+
+  /**
+   * ONE query for the page, not one per project. Nothing else here would notice the read moving
+   * inside `cardInputFor` — the cards would look identical and the panel would issue a round trip
+   * per project against a table with single-digit rows.
+   */
+  it("reads every account once, outside the per-project fan-out", () => {
+    expect(PAGE).toMatch(/readAccountHealth\(supabase,\s*user\.id\)/);
+    expect(PAGE).not.toMatch(/readAccountHealth\([^)]*project/);
+  });
+
+  /**
+   * …and the project -> account JOIN is the SHARED one, which `signals.test.ts` drives with a
+   * two-account map. The behaviour pin is the real guard; this keeps the page attached to it,
+   * because a page that re-derived the lookup inline would be back to the state where replacing it
+   * with "the first account in the map" reddens nothing.
+   */
+  it("picks each project's account through the shared, tested join", () => {
+    expect(PAGE).toMatch(
+      /import\s*\{[^}]*\btokenStatusFor\b[^}]*\}\s*from\s*["'][^"']*projects\/signals["']/,
+    );
+    expect(PAGE).toMatch(/tokenStatus:\s*tokenStatusFor\(/);
+    // No second, inline lookup beside it: the map is read only through that function.
+    expect(PAGE).not.toMatch(/health\.get\(/);
+  });
+});
+
 describe("the panel is reachable", () => {
   /**
    * The entry is matched inside the NAV_ITEMS array and by BOTH of its fields, taken from the
