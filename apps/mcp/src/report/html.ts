@@ -90,6 +90,9 @@ const STYLE = `
   h3.toplabel { margin: 18px 0 6px; font-family: "Courier New", Courier, monospace; font-size: 11px;
     color: #b45309; font-weight: 600; text-transform: uppercase; letter-spacing: .12em; }
   .hint { color: #a8a294; font-family: "Courier New", Courier, monospace; font-size: 12px; margin: 12px 0 0; }
+  /* Staleness is a WARNING, not a footnote: it has to survive being skimmed. */
+  .stale { border-left: 3px solid #b45309; background: #fdf6ec; color: #7c2d12;
+    padding: 10px 12px; margin: 12px 0; font-size: 14px; }
   footer.rpt { text-align: center; color: #a8a294; font-family: "Courier New", Courier, monospace;
     font-size: 12px; margin-top: 28px; border-top: 1px solid #e2ddd2; padding-top: 18px; }
   footer.rpt a { color: #b45309; text-decoration: none; }
@@ -134,13 +137,37 @@ function urlText(url: string): string {
   return `<span class="u">${escapeHtml(url)}</span>`;
 }
 
+/** "today" / "1 day ago" / "N days ago" — the age wording renderPullProvenance uses. */
+function agePhrase(ageDays: number): string {
+  if (ageDays <= 0) return "today";
+  return ageDays === 1 ? "1 day ago" : `${fmtNum(ageDays)} days ago`;
+}
+
+/**
+ * A staleness banner for one dated section, or "" when there is nothing to warn about.
+ *
+ * A bare date is the whole claim only while the data is recent. Past the threshold it needs a
+ * SENTENCE: a report built from a three-month-old measurement is presented in exactly the same
+ * words as one built this morning, and the only difference a reader has to notice is a date in
+ * small grey type — which is precisely the kind of difference nobody notices. Naming the tool to
+ * re-run is what turns the observation into something the reader can act on.
+ */
+function staleBanner(stale: boolean, ageDays: number | null, tool: string): string {
+  if (!stale || ageDays === null) return "";
+  return `<p class="stale">This data is ${fmtNum(ageDays)} days old — the findings below describe
+    the site as it was then. Run <code>${escapeHtml(tool)}</code> again for current numbers.</p>`;
+}
+
 function crawlSection(crawl: CrawlSummary): string {
   const provenance = crawl.fetchedAt
-    ? `Crawl from ${escapeHtml(isoDate(crawl.fetchedAt))}.`
+    ? `Crawl from ${escapeHtml(isoDate(crawl.fetchedAt))}${
+        crawl.ageDays === null ? "" : ` (${agePhrase(crawl.ageDays)})`
+      }.`
     : "Crawl timestamp unavailable.";
   return `<section class="rpt">
     <h2>Site crawl</h2>
     <p class="muted">${provenance}</p>
+    ${staleBanner(crawl.stale, crawl.ageDays, "crawl_site")}
     <div class="stats">
       ${statBlock(crawl.pageCount, "Pages crawled")}
       ${statBlock(crawl.skippedCount, "Pages skipped")}
@@ -348,9 +375,19 @@ function gscSection(gsc: GscSummary): string {
     ? `<p class="muted">Note: a window hit the row cap — top rows only; totals may be partial.</p>`
     : "";
   const window = `${escapeHtml(gsc.windowStart)} to ${escapeHtml(gsc.windowEnd)} (${fmtNum(gsc.days)} days)`;
+  // WHEN it was pulled, distinct from WHICH DAYS were asked about: a 28-day window can be read
+  // from a pull that ran this morning or one that ran in April.
+  const pulled =
+    gsc.pulledAt === null
+      ? ""
+      : `<p class="muted">Pulled ${escapeHtml(isoDate(gsc.pulledAt))}${
+          gsc.ageDays === null ? "" : ` (${agePhrase(gsc.ageDays)})`
+        }.</p>`;
   return `<section class="rpt">
     <h2>Search performance</h2>
     <p class="muted">Google Search Console — ${window}.</p>
+    ${pulled}
+    ${staleBanner(gsc.stale, gsc.ageDays, "pull_gsc_data")}
     ${cap}
     <div class="stats">
       ${statBlock(gsc.totalClicks, "Total clicks")}

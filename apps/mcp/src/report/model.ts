@@ -18,6 +18,7 @@ import {
   analyzeContentDecay,
   detectCannibalization,
   findQuickWinsResult,
+  STALE_PULL_DAYS,
 } from "../gsc-data/index.ts";
 
 /**
@@ -100,11 +101,48 @@ export interface IssueCount {
   readonly count: number;
 }
 
-/** The crawl roll-up: page/skip counts and provenance. On-page findings live in OnpageSummary. */
+/**
+ * How old a CRAWL has to be before the report stops merely dating it and calls it stale.
+ *
+ * The same 30 days as STALE_PULL_DAYS, and deliberately the same number rather than a second
+ * opinion: past a month a crawl describes a site that has since been edited, redeployed or
+ * restructured, which is the same "different period, not an older version of the same one"
+ * argument the pull threshold is built on. Exported so a test can pin the number a user is given.
+ */
+export const STALE_CRAWL_DAYS = 30;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Whole days between an ISO timestamp and the report's OWN generatedAt.
+ *
+ * generatedAt is the clock on purpose — this module is pure, and the report's age must be
+ * measured against the moment the report claims to have been made, not against whenever the
+ * renderer happens to run. Null when either value will not parse, and a null age prints no
+ * staleness claim at all: not knowing how old the data is is not evidence that it is fresh.
+ */
+function ageInDays(iso: string | null, generatedAt: string): number | null {
+  if (iso === null) return null;
+  const at = Date.parse(iso);
+  const now = Date.parse(generatedAt);
+  if (Number.isNaN(at) || Number.isNaN(now)) return null;
+  return Math.floor((now - at) / DAY_MS);
+}
+
+/**
+ * The crawl roll-up: page/skip counts and provenance. On-page findings live in OnpageSummary.
+ *
+ * A report generated today from a three-month-old crawl carried TODAY'S date at the top and
+ * nothing anywhere said the measurements were not. `ageDays` and `stale` are what let the
+ * renderer say so.
+ */
 export interface CrawlSummary {
   readonly fetchedAt: string | null;
   readonly pageCount: number;
   readonly skippedCount: number;
+  /** Whole days between the crawl and this report. Null when the crawl carries no timestamp. */
+  readonly ageDays: number | null;
+  readonly stale: boolean;
 }
 
 /**
@@ -191,6 +229,17 @@ export interface GscSummary {
   readonly days: number;
   readonly windowStart: string;
   readonly windowEnd: string;
+  /**
+   * When the pull that produced these numbers actually ran. loadLatestPull has always returned
+   * this and generate_report has always thrown it away, so a report built from a two-month-old
+   * pull was presented in exactly the same words as one built this morning.
+   *
+   * This is the AGE axis and is independent of the window dates below it: `windowStart`/`End`
+   * say which days Google was asked about, `pulledAt` says when it was asked.
+   */
+  readonly pulledAt: string | null;
+  readonly ageDays: number | null;
+  readonly stale: boolean;
   readonly totalClicks: number;
   readonly totalImpressions: number;
   readonly rowCount: number;
@@ -257,6 +306,12 @@ export interface ReportInput {
   readonly crawl: AuditCrawl | null;
   readonly pull: PullData | null;
   /**
+   * When the pull actually ran (loadLatestPull's `pulledAt`). Optional so the DB-less fakes
+   * injected as `loadPull` keep compiling; absent means the age is simply unknown, and an
+   * unknown age makes no freshness claim either way.
+   */
+  readonly pulledAt?: string | null;
+  /**
    * Whether this project's `gsc_connections` row carries a non-null `account_id` — NOT whether
    * the row exists (migration 0021; see ReportModel.gscConnected and defaultIsGscConnected).
    * The row survives an unmap and an account disconnect with the column nulled.
@@ -291,11 +346,16 @@ export function resolveReportTitle(
 /** How many structured-data @types the schema section lists before the rest are elided. */
 const TOP_TYPES_N = 5;
 
-function summarizeCrawl(crawl: AuditCrawl): CrawlSummary {
+function summarizeCrawl(crawl: AuditCrawl, generatedAt: string): CrawlSummary {
+  const ageDays = ageInDays(crawl.fetchedAt, generatedAt);
   return {
     fetchedAt: crawl.fetchedAt,
     pageCount: crawl.pages.length,
     skippedCount: crawl.skipped.length,
+    ageDays,
+    // An UNKNOWN age is never stale: not knowing how old the data is is not evidence of freshness,
+    // and it is not evidence of decay either. The renderer then makes no claim in either direction.
+    stale: ageDays !== null && ageDays >= STALE_CRAWL_DAYS,
   };
 }
 
@@ -392,14 +452,20 @@ function topBy(rows: readonly GscRow[], keyOf: (row: GscRow) => string): AggRow[
     .slice(0, TOP_N);
 }
 
-function summarizeGsc(pull: PullData): GscSummary {
+function summarizeGsc(pull: PullData, pulledAt: string | null, generatedAt: string): GscSummary {
   const { current } = pull;
   const totalClicks = current.rows.reduce((sum, row) => sum + row.clicks, 0);
   const totalImpressions = current.rows.reduce((sum, row) => sum + row.impressions, 0);
+  const ageDays = ageInDays(pulledAt, generatedAt);
   return {
     days: pull.days,
     windowStart: current.start_date,
     windowEnd: current.end_date,
+    pulledAt,
+    ageDays,
+    // STALE_PULL_DAYS is IMPORTED from gsc-data/load.ts, never re-declared: the discovery tools
+    // and this report must call the same pull stale on the same day.
+    stale: ageDays !== null && ageDays >= STALE_PULL_DAYS,
     totalClicks,
     totalImpressions,
     rowCount: current.rows.length,
@@ -439,11 +505,13 @@ export function buildReportModel(input: ReportInput): ReportModel {
     generatedAt: input.generatedAt,
     // The four crawl-derived sections co-vary: all present when a crawl was loaded, all null when
     // not. onpage/tech/schema are the pure audit engines over that same crawl (G1).
-    crawl: crawl ? summarizeCrawl(crawl) : null,
+    crawl: crawl ? summarizeCrawl(crawl, input.generatedAt) : null,
     onpage: crawl ? summarizeOnpage(crawl) : null,
     tech: crawl ? summarizeTech(crawl) : null,
     schema: crawl ? summarizeSchema(crawl) : null,
-    gsc: input.pull ? summarizeGsc(input.pull) : null,
+    gsc: input.pull
+      ? summarizeGsc(input.pull, input.pulledAt ?? null, input.generatedAt)
+      : null,
     opportunities: input.pull ? summarizeOpportunities(input.pull) : null,
     // A pull implies a connection; otherwise trust the caller's read of gsc_connections.
     gscConnected: input.gscConnected ?? input.pull !== null,

@@ -6,8 +6,19 @@ import {
   analyzeContentDecay,
   detectCannibalization,
   findQuickWinsResult,
+  STALE_PULL_DAYS,
 } from "../gsc-data/index.ts";
-import { buildReportModel, REPORT_MAX_LISTED, resolveReportTitle } from "./model.ts";
+import {
+  buildReportModel,
+  REPORT_MAX_LISTED,
+  resolveReportTitle,
+  STALE_CRAWL_DAYS,
+} from "./model.ts";
+
+/** `iso` shifted forward by whole days — used to sit a report exactly on a staleness threshold. */
+function addDays(iso: string, days: number): string {
+  return new Date(Date.parse(iso) + days * 86_400_000).toISOString();
+}
 
 /** The model's own capping rule, restated here so a test compares against a value, not the code. */
 function capOf<T>(items: readonly T[]): { items: readonly T[]; total: number } {
@@ -463,6 +474,73 @@ const DISCOVERY_PULL: PullData = {
     ],
   },
 };
+
+describe("buildReportModel — staleness (R1-c)", () => {
+  const build = (generatedAt: string, pulledAt: string | null) =>
+    buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt,
+      // fetchedAt is 2026-07-19.
+      crawl: KNOWN_ISSUES,
+      pull: PULL,
+      pulledAt,
+    });
+
+  it("measures age against the report's OWN generatedAt, not a wall clock", () => {
+    // The module is pure: the age must be measured against the moment the report claims to have
+    // been made, not against whenever the renderer happens to run.
+    const model = build("2026-07-24T00:00:00.000Z", "2026-07-22T00:00:00.000Z");
+    expect(model.crawl?.ageDays).toBe(5);
+    expect(model.gsc?.ageDays).toBe(2);
+    expect(model.crawl?.stale).toBe(false);
+    expect(model.gsc?.stale).toBe(false);
+  });
+
+  // Both fixtures are dated AT_ISO, so the report is moved FORWARD to age them. Moving pulledAt
+  // forward alongside generatedAt (the first attempt) held the pull's age at 0 and proved nothing.
+  it("marks the CRAWL stale exactly at STALE_CRAWL_DAYS, not a day before", () => {
+    expect(build(addDays(AT_ISO, STALE_CRAWL_DAYS - 1), AT_ISO).crawl?.stale).toBe(false);
+    expect(build(addDays(AT_ISO, STALE_CRAWL_DAYS), AT_ISO).crawl?.stale).toBe(true);
+  });
+
+  it("marks the PULL stale exactly at the IMPORTED STALE_PULL_DAYS, not a day before", () => {
+    // Imported from gsc-data/load.ts, never re-declared: the discovery tools and this report
+    // must call the same pull stale on the same day.
+    expect(build(addDays(AT_ISO, STALE_PULL_DAYS - 1), AT_ISO).gsc?.stale).toBe(false);
+    expect(build(addDays(AT_ISO, STALE_PULL_DAYS), AT_ISO).gsc?.stale).toBe(true);
+  });
+
+  it("carries pulledAt through instead of discarding it", () => {
+    expect(build(AT_ISO, "2026-07-01T00:00:00.000Z").gsc?.pulledAt).toBe(
+      "2026-07-01T00:00:00.000Z",
+    );
+  });
+
+  it("treats an UNKNOWN PULL age as neither fresh nor stale", () => {
+    const model = build(AT_ISO, null);
+    expect(model.gsc?.pulledAt).toBeNull();
+    expect(model.gsc?.ageDays).toBeNull();
+    expect(model.gsc?.stale).toBe(false);
+  });
+
+  it("treats an UNKNOWN CRAWL age as neither fresh nor stale", () => {
+    // The crawl branch needs its own spec: a crawl with no fetchedAt is the OTHER null path, and
+    // the pull spec above cannot reach it. Measured — flipping the crawl guard to treat a null
+    // age as stale left the whole suite green until this existed.
+    const undated: AuditCrawl = { ...KNOWN_ISSUES, fetchedAt: null };
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: undated,
+      pull: null,
+    });
+    expect(model.crawl?.fetchedAt).toBeNull();
+    expect(model.crawl?.ageDays).toBeNull();
+    expect(model.crawl?.stale).toBe(false);
+  });
+});
 
 describe("buildReportModel — Opportunities (R1-b)", () => {
   const model = buildReportModel({

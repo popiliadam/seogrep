@@ -180,6 +180,10 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
       ]);
       const crawl = crawlLoad.ok ? crawlLoad.crawl : null;
       const pull = pullLoad.ok ? pullLoad.pull : null;
+      // KEPT, not dropped: the loader has always returned when the pull ran, and this tool has
+      // always thrown it away — so a report built from a three-month-old pull carried today's
+      // date at the top and nothing anywhere said the numbers were not today's.
+      const pulledAt = pullLoad.ok ? (pullLoad.pulledAt ?? null) : null;
       if (!crawl && !pull) {
         // Nothing to report on -> THROW so withCredits RELEASES the reserve (no charge). TYPED,
         // because the registry's catch cannot otherwise tell this designed refusal from a crash:
@@ -200,6 +204,7 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
           generatedAt,
           crawl,
           pull,
+          pulledAt,
           gscConnected,
         }),
       );

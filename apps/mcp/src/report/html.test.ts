@@ -31,6 +31,8 @@ const FULL_MODEL: ReportModel = {
     fetchedAt: "2026-07-18T00:00:00.000Z",
     pageCount: 42,
     skippedCount: 3,
+    ageDays: 1,
+    stale: false,
   },
   onpage: {
     pageCount: 42,
@@ -78,6 +80,9 @@ const FULL_MODEL: ReportModel = {
     days: 28,
     windowStart: "2026-06-22",
     windowEnd: "2026-07-19",
+    pulledAt: "2026-07-19T00:00:00.000Z",
+    ageDays: 0,
+    stale: false,
     totalClicks: 1234,
     totalImpressions: 56789,
     rowCount: 120,
@@ -354,6 +359,51 @@ describe("enriched audit sections (R1-a)", () => {
       },
     });
     expect(many).toContain("… and 27 more");
+  });
+});
+
+/**
+ * R1-c. A report generated today from a three-month-old measurement carried TODAY'S date at the
+ * top and said nothing about the age of the data underneath it.
+ */
+describe("staleness honesty (R1-c)", () => {
+  it("dates BOTH sections and warns when either is stale", () => {
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      crawl: { ...FULL_MODEL.crawl!, ageDays: 95, stale: true },
+      gsc: { ...FULL_MODEL.gsc!, ageDays: 62, stale: true },
+    });
+    expect(html).toMatch(/This data is 95 days old/);
+    expect(html).toMatch(/This data is 62 days old/);
+    // The warning names the ACTION, which is what makes it usable rather than merely true.
+    expect(html).toMatch(/Run\s*<code>crawl_site<\/code>\s*again/);
+    expect(html).toMatch(/Run\s*<code>pull_gsc_data<\/code>\s*again/);
+  });
+
+  it("dates the pull separately from the window it covers", () => {
+    // WHEN it was asked vs WHICH DAYS were asked about: a 28-day window can be read from a pull
+    // that ran this morning or one that ran in April.
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/Pulled 2026-07-19 \(today\)/);
+    expect(html).toContain("2026-06-22"); // the window start is still its own fact
+  });
+
+  it("prints the age without a warning while the data is fresh", () => {
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/Crawl from 2026-07-18 \(1 day ago\)/);
+    expect(html).not.toMatch(/This data is .* days old/);
+  });
+
+  it("makes NO freshness claim in either direction when the age is unknown", () => {
+    // An undated crawl is not evidence of freshness, and not evidence of decay either.
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      crawl: { ...FULL_MODEL.crawl!, fetchedAt: null, ageDays: null, stale: false },
+      gsc: { ...FULL_MODEL.gsc!, pulledAt: null, ageDays: null, stale: false },
+    });
+    expect(html).toMatch(/Crawl timestamp unavailable/);
+    expect(html).not.toMatch(/This data is/);
+    expect(html).not.toMatch(/Pulled /);
   });
 });
 
