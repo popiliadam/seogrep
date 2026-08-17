@@ -5,6 +5,68 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 💵 2026-08-17 — DFS AİLESİ + `generate_report` DERİNLEŞTİRME: 3 PR CANLIDA · İMZA PAKETİ OPERATÖRDE
+
+Operatör talimatı: kalan **5 kırmızı tool** (`research_keywords` · `ranked_keywords` ·
+`analyze_backlinks` · `compare_competitors` · `generate_report`) crawl+audit ailesinin **üçlü
+ritüeliyle** + DataForSEO MCP'nin **76-tool kataloğuna karşı gap haritası**.
+
+- **Plan üçlüsü CANLIDA** ([#115](https://github.com/popiliadam/seogrep/pull/115)): derinleştirme planı · katalog gap haritası (**TAM 1 · KISMİ 8 ·
+  YOK 67**, 76 ucun şeması **hiçbiri çağrılmadan** okundu, 16 tool önerisi) · **9 maddelik imza
+  paketi**. Plan dosyalarının KENDİSİ taze Fable hakeminden geçti: **ilk tur FAIL**, üç bloklayıcı
+  olgusal hata — manşet sayım kendi tablosuyla çelişiyordu · bir bulgu **yanlış aileye
+  dosyalanmıştı** (DFS ailesi `${TOOL_COSTS.x}` ile interpole ediyor, borç 13 başka dosyada) ·
+  **"ölçüldü" etiketli bir rakam ölçülmemişti** (kod yorumundan alıntıydı; prod'da fan-out tek
+  settle olduğu için o birim maliyet ölçülebilir bile değil).
+- **R1 `generate_report` zenginleştirme CANLIDA** ([#116](https://github.com/popiliadam/seogrep/pull/116), fiyat **15 SABİT**, sıfır yeni paralı çağrı):
+  koşturduğu motorların attığı çıktı rapora girdi (sitemap diff, kırık iç link, yavaş/ağır sayfa,
+  X-Robots çelişkisi, orphan sinyali, schema zorunlu-alan + `invalid_json`, 4xx/5xx URL'leri) ·
+  **Opportunities** bölümü (üç saf keşif motoru; markalı kanibalizasyon ayrı) · bayatlık uyarısı
+  (`STALE_PULL_DAYS` **import edildi**) · escaping 14 sink'in tamamı pinli · `@media print` ·
+  paylaşım uyarısı · WCAG AA kontrast (2,50:1 → **5,47:1**) · docs **generator kaynağından**
+  düzeltildi. **49 mutasyon ekseni, DÖRT gerçek delik**: fixture URL çakışması (ders 14) ·
+  crawl-yaşı `null` kapısı · `pulledAt` wiring'inin fast lane'de ölçülemezliği · **hakemin kendi
+  bağımsız mutasyonuyla bulduğu dördüncü** (Opportunities'in cannibalization/decay sink'leri
+  escape ediliyordu ama hiçbir test pinlemiyordu). Deploy + canlı docs ölçüldü.
+- **R2 `/app/usage` harcama grafiği CANLIDA** ([#117](https://github.com/popiliadam/seogrep/pull/117)): grafik **yapısal olarak ölüydü** —
+  `ui.tsx` `spend_commit && delta < 0` filtreliyor, migration `0011:38-39` `spend_commit` delta'sını
+  **her zaman 0** yapıyor → boş küme. Prod'da 229 `spend_commit` satırı var, `sum(delta)=0`:
+  **bu grafik üretimde hiç bar çizmedi.** Hiçbir test yakalamamış çünkü hiçbiri "bar çiziliyor"
+  iddiasında bulunmuyordu (fixture doğru, **iddia eksik** — ders 12'nin bir varyantı). Yeni saf
+  modül `apps/web/lib/spend.ts`; model `Σ(−reserve.delta) − Σ(release.delta)` = `credit_balances`
+  view'ının **birebir aynası**, yani grafik yanındaki bakiye rakamıyla çelişemez. İşçi 10/10 +
+  hakem **6 bağımsız mutasyon 6/6** kırmızı.
+- **R3 DFS para dürüstlüğü CANLIDA** ([#118](https://github.com/popiliadam/seogrep/pull/118), fiyat değişmedi, migration yok): **bütçe tavanı reddi artık
+  tasarlanmış bir ret** — `DfsBudgetExhaustedError` + registry'de dördüncü tipli dal; narrowing
+  **tip/marka ile, metin eşleşmesiyle DEĞİL**, ve **ledger-erişilemez fail-closed yol ayrı kaldı**
+  (o bir arızadır). Vendor `$` rakamları yalnız operatör logunda. · **"You were not charged" artık
+  yalnız ispatlanabildiği yerde**: surface/handler = garanti · worker = hiçbir iddia ·
+  `ReserveCommitFailedError` = disposition'a göre üç ayrı cevap (`unknown`'da vaat YOK) — işçi bu
+  üçüncü yolu iş emrinde olmadığı hâlde buldu. · **Vendor kapısı artık import grafiğinden türüyor**:
+  `reserveSpend`'e ulaşan her tool `PAID_BALANCE_TOOLS`'ta olmak zorunda; **iki bağımsız sentetik
+  beşinci tool** (işçi: değer-import · hakem: re-export) ikisi de yakalandı. · **Öksüz rezervasyon:
+  gözlenebilirlik, politika DEĞİL** — (a) seçeneği ulaşılamaz çıktı (dört adaptörde `reserveSpend`
+  ile ilk `transport` arasında throw edebilecek ifade yok; hakem dördünü de okuyup doğruladı),
+  DFS şeridi OBSERVATION-ONLY kaldı, eklenen tek şey tavanın yarısı tutulunca WAKE THE HUMAN.
+  **26 mutasyon ekseni** (işçi 19 + hakem 6 + probe), hepsi kırmızı.
+- **Süreç:** 6 keşif ajanı → 3 işçi dilimi → **5 taze Fable hakem turu** (plan FAIL→fix→PASS ·
+  R1 PASS + hakemin bulduğu bir delik · R2 PASS · R3 PASS). Merge treni seri (branch protection
+  "up to date"; her PR bir güncelleme turu daha yedi).
+  **Flake kaydı +1:** `disconnect-button.test.tsx:302` rerender yarışı — CI'da kırmızı, rerun'da
+  hiçbir kod değişmeden yeşil.
+- **AÇIK — operatörde:** **imza paketinin 9 maddesi** (`docs/plans/2026-08-17-dfs-genisleme-imza-paketi.md`).
+  Şef önerileri üç maddede **fiyat oynatmamak** yönünde: `research_keywords` aynı 25 kredide
+  genişletilsin (yeni tool yazılmasın) · `compare_competitors` düz 90 kalsın, keşif *kalitesi*
+  düzeltilsin · **AI ailesi fiyatı ölçülmeden imzalanmasın**. Ayrıca: **`costs.ts` hâlâ
+  "audit_content NOT YET SIGNED" diyor**, PLAN imzalı diyor — rakam (12) değişmiyor, yorum bayat.
+  Ve **DFS MCP paid çağrısı sınıflandırıcıca reddedildi** → `full_domain_metrics` hipotezi
+  (5 istek → 1) ölçülemedi; fixture'da iki alan birebir aynı olduğu için fixture kanıtlayamaz.
+- **Yeni kalıcı kapı boşlukları (ayrı chip'ler):** `apps/mcp/tsconfig.json` `src/**/*.test.ts`'i
+  hariç tutuyor → **MCP test dosyaları hiç typecheck edilmiyor** · `/status` şema alanı makineden
+  makineye farklı cevap veriyor (1000 ms prob sınırı, şema değil) · `worker.test.ts`'in `outcome()`
+  helper'ı eksik alanlı → **beş reaper-timer spec'i başarı yolunu ölçtüğünü sanarken hata yolundan
+  geçiyor** (R3 işçisinin bulgusu).
+
 ### 🎯 2026-08-17 — DERİNLEŞTİRME 3. TUR: "%100 KAPAT" — L+F23 CANLIDA · N8 İMZA-PARKINDA
 
 Operatör talimatı "kalan işleri %100 halledelim" ile üç şerit paralel koşuldu (2 izole worktree +
