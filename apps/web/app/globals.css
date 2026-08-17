@@ -68,6 +68,11 @@
 
 @theme inline {
   --font-serif: var(--font-newsreader), Georgia, serif;
+  /* Newsreader Italic is a separate next/font call (see app/layout.tsx: one weight buys the
+     24.4KB static instance instead of the 64.5KB variable one), so it is a separate CSS family
+     and italic text has to name it. Same typeface, same 400 weight, same rendering. */
+  --font-serif-italic: var(--font-newsreader-italic), Georgia, serif;
+  --font-serif-italic-strong: var(--font-newsreader-italic-strong), Georgia, serif;
   --font-mono: var(--font-plex-mono), "Courier New", monospace;
 }
 
@@ -88,6 +93,26 @@
   }
   a:hover {
     color: var(--color-accent);
+  }
+
+  /* Newsreader's italic face is its own CSS family now (app/layout.tsx buys the 24.4KB static
+     instance instead of a 64.5KB variable one), so every element that renders italic serif has
+     to name it — otherwise the browser synthesises an oblique by shearing the roman file, which
+     is a different shape. Scoped to the two prose surfaces (MDX `*emphasis*` and blockquotes)
+     rather than a bare `em` selector, so emphasis inside a mono/code context keeps its family.
+     The selector list is not guesswork: `font-style:italic` is set in exactly three places in the
+     compiled stylesheet — `.blog-prose blockquote`, the typography plugin's
+     `.prose :where(blockquote)`, and the `.italic` utility (whose only two users now say
+     `font-serif-italic`) — plus the UA-italic elements enumerated here. */
+  .prose :is(em, i, cite, dfn, var, address, blockquote),
+  .blog-prose :is(em, i, cite, dfn, var, address, blockquote) {
+    font-family: var(--font-serif-italic);
+  }
+  /* ...and bold inside that italic text keeps the 500 face the old variable italic resolved a
+     700 request down to. Only these descendants get it, so plain italic text still matches 400. */
+  .prose :is(em, i, cite, dfn, var, address, blockquote) :is(strong, b),
+  .blog-prose :is(em, i, cite, dfn, var, address, blockquote) :is(strong, b) {
+    font-family: var(--font-serif-italic-strong);
   }
 }
 
@@ -182,6 +207,7 @@
     border-left: 2px solid var(--color-accent);
     background: var(--color-card);
     padding: 16px 22px;
+    font-family: var(--font-serif-italic);
     font-style: italic;
   }
   .blog-prose blockquote p:last-child {

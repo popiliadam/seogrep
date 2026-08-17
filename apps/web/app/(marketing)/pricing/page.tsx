@@ -67,7 +67,7 @@ export default function Page() {
             </p>
             <h2 className="m-0 mb-2 font-serif text-[28px] font-medium">Current credit costs</h2>
             <table className="w-full border-collapse border-t border-ink text-left">
-              <caption className="mb-7 caption-top text-left font-serif text-[15px] italic text-muted">
+              <caption className="mb-7 caption-top text-left font-serif-italic text-[15px] italic text-muted">
                 What each run spends from your balance.
               </caption>
               <thead className="sr-only">
