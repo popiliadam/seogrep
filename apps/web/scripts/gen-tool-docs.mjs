@@ -665,15 +665,23 @@ export const DOC_PROSE = {
 
   research_keywords: {
     lead:
-      "`research_keywords` looks up Google Ads **search volume**, **CPC**, and **competition** for up " +
-      "to 100 keywords at once, powered by DataForSEO. It is **synchronous** — it returns a table " +
-      "immediately, with no background job to poll.",
+      "`research_keywords` looks up Google **search volume**, **CPC**, **competition**, **keyword " +
+      "difficulty**, **search intent** and **search-volume trend** for up to 100 keywords at once, " +
+      "powered by DataForSEO Labs. It is **synchronous** — it returns a table immediately, with no " +
+      "background job to poll.",
     whatItDoes:
       "Given a list of keywords (plus an optional language and location), it returns one row per " +
       "keyword with:\n\n" +
       "- **Search volume** — average monthly Google searches.\n" +
       "- **CPC** — the average cost-per-click advertisers pay.\n" +
-      "- **Competition** — the advertiser competition band (`HIGH` / `MEDIUM` / `LOW`).\n\n" +
+      "- **Competition** — the advertiser competition band (`HIGH` / `MEDIUM` / `LOW`).\n" +
+      "- **Keyword difficulty** — how hard the keyword is to rank for, on a 0–100 scale.\n" +
+      "- **Search intent** — the dominant intent behind the query (informational, commercial, " +
+      "navigational or transactional), plus any secondary intents it also carries.\n" +
+      "- **Search-volume trend** — how the volume moved month-over-month, quarter-over-quarter and " +
+      "year-over-year, as signed percentages.\n\n" +
+      "Every one of these is printed only when the provider actually returns it — a metric it did " +
+      "not send is left out rather than filled in with a placeholder.\n\n" +
       "It also prints a one-line summary with the total monthly search volume across the batch.",
     preExampleSections: [
       {
@@ -688,14 +696,37 @@ export const DOC_PROSE = {
           "nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
           "placeholder figures dressed up as real data.",
       },
+      {
+        heading: "No data is not zero",
+        body:
+          "A keyword the provider holds **nothing** on comes back as _\"no data returned for this " +
+          "keyword\"_, and the header says how many of your keywords that happened to. It is never " +
+          "printed as `volume 0`, and it never contributes a silent zero to the batch total — " +
+          "\"nobody has a figure for this\" and \"nobody searches this\" are different facts that " +
+          "lead to different decisions. A genuine zero, when the provider does report one, is still " +
+          "printed as `volume 0`.",
+      },
+      {
+        heading: "How fresh the CPC is",
+        body:
+          "Under the table you get the date the provider last refreshed its **CPC and competition** " +
+          "figures — the oldest date in your batch, because a table is only as fresh as its stalest " +
+          "row. Past 30 days the line says so in a sentence and tells you to treat those two " +
+          "columns as indicative rather than current.\n\n" +
+          "This matters because CPC is an **estimate of an auction**, not a measurement of your " +
+          "account: the same keyword can be quoted meaningfully differently by different providers " +
+          "and on different days. Search volume is the number this tool is bought for, and it is " +
+          "not affected by that — but a bid figure deserves a date next to it.",
+      },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> What's the search volume for \"seo software\" and " +
       "\"rank tracker\"?",
     returns:
-      "A table with one row per keyword — search volume, CPC, and competition — plus a total-volume " +
-      "summary line. While live data is off, it returns the \"not yet enabled\" message instead and " +
-      "charges nothing.",
+      "A table with one row per keyword — search volume, CPC, competition, and (when the provider " +
+      "returns them) keyword difficulty, search intent and volume trend — plus a total-volume " +
+      "summary line and the date the CPC figures were last refreshed. While live data is off, it " +
+      "returns the \"not yet enabled\" message instead and charges nothing.",
   },
 
   ranked_keywords: {
