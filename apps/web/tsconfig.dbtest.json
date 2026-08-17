@@ -1,0 +1,14 @@
+{
+  // Type gate for the DB-integration lane — see apps/mcp/tsconfig.dbtest.json for the why.
+  //
+  // This app is the one that was ALREADY covered: `tsconfig.json`'s include is `**/*.ts`,
+  // which happens to sweep up *.db.test.ts as well. "Happens to" is the problem — the day
+  // someone adds `**/*.test.ts` to that exclude (which is exactly what apps/mcp and
+  // packages/db do), the coverage vanishes with no gate noticing. This config states the
+  // coverage instead of inheriting it by accident, and verify-db.sh pins its file count.
+  //
+  // `next-env.d.ts` is re-listed because a child `include` REPLACES the parent's; without it
+  // the Next ambient types drop out of the program.
+  "extends": "./tsconfig.json",
+  "include": ["next-env.d.ts", "app/**/*.db.test.ts", "lib/**/*.db.test.ts"]
+}

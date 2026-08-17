@@ -1,0 +1,17 @@
+{
+  // Type gate for the DB-integration lane — see apps/mcp/tsconfig.dbtest.json for the why.
+  //
+  // `allowJs` is here and not in tsconfig.json: postgrest-version-pin.db.test.ts imports
+  // the pin constant from `../scripts/gen-db-types.mjs` (deliberately — the spec measures the
+  // running stack against the SAME constant the generator splices in, so re-declaring it here
+  // would defeat the point). Without allowJs that import is an implicit `any` under `strict`.
+  // checkJs stays off: the generator script is not this gate's subject.
+  //
+  // `rootDir` widens to the package root for the same import — the parent pins it to `src`
+  // for the build's output layout, and this config emits nothing (noEmit is inherited), so
+  // the widening buys the gate a file it must read and costs the build nothing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "allowJs": true, "rootDir": "." },
+  "include": ["src/**/*.db.test.ts"],
+  "exclude": []
+}

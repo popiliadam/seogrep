@@ -159,7 +159,11 @@ describe("mcp auth against local Supabase", () => {
     // .eq("user_id", ...) filter keeps A's view to A's rows and never surfaces B's.
     const scopedToA = await forUser(service, userA).selectOwn("api_keys", "id, user_id");
     expect(scopedToA.error).toBeNull();
-    const rowsA = (scopedToA.data ?? []) as Array<{ id: string; user_id: string }>;
+    // `selectOwn` takes its projection as a RUNTIME string, so supabase-js infers no row type
+    // and hands back `GenericStringError[]`. Declaring the projection at the call site is the
+    // same idiom `selectOwnById` documents in db.ts ("the `as unknown as T` cast supabase-js
+    // forces"); `as unknown` is what makes it legal, and it changes nothing at runtime.
+    const rowsA = (scopedToA.data ?? []) as unknown as Array<{ id: string; user_id: string }>;
     expect(rowsA.map((row) => row.id)).toContain(a.keyId);
     expect(rowsA.map((row) => row.id)).not.toContain(b.keyId);
     expect(rowsA.every((row) => row.user_id === userA)).toBe(true);
