@@ -10,6 +10,7 @@ import type {
   CrawlSummary,
   GscSummary,
   OnpageSummary,
+  OpportunitySummary,
   ReportModel,
   SchemaSummary,
   TechSummary,
@@ -358,8 +359,67 @@ function gscSection(gsc: GscSummary): string {
     </div>
     ${topTable("Top queries", "Query", gsc.topQueries)}
     ${topTable("Top pages", "Page", gsc.topPages)}
-    <p class="hint">Run <code>find_quick_wins</code>, <code>detect_cannibalization</code>, or
-    <code>analyze_content_decay</code> for deeper opportunity analysis.</p>
+  </section>`;
+}
+
+/** One decimal place, for the average positions the discovery engines report. */
+function fmtPos(value: number): string {
+  return value.toFixed(1);
+}
+
+/**
+ * The discovery roll-up (R1-b): quick wins, cannibalization and content decay, from the three
+ * PURE engines run over the pull this report already loaded.
+ *
+ * It is a SUMMARY and says so — the paid discovery tools return the full prioritized breakdown,
+ * and this section points at them rather than standing in for them.
+ */
+function opportunitySection(opp: OpportunitySummary): string {
+  const empty =
+    opp.quickWins.total === 0 && opp.cannibalization.total === 0 && opp.decay.total === 0;
+  // Branded exclusions are reported even when nothing else is: a user whose biggest query
+  // vanished from the list is owed the reason (formatCannibalization's rule).
+  const brandNote =
+    opp.brandedExcluded === 0
+      ? ""
+      : `<p class="hint">Excluded ${fmtNum(opp.brandedExcluded)} branded quer${
+          opp.brandedExcluded === 1 ? "y" : "ies"
+        }: several of your pages ranking for your own brand is normal — Google shows sitelinks —
+        and is not cannibalization.</p>`;
+  return `<section class="rpt">
+    <h2>Opportunities</h2>
+    ${
+      empty
+        ? `<p class="muted">No quick wins, cannibalization, or content decay found in this
+      window.</p>`
+        : ""
+    }
+    ${listBlock(
+      "Quick wins (position 8–20 with demand)",
+      opp.quickWins,
+      (w) =>
+        `${escapeHtml(w.query)} → ${urlText(w.page)} — position ${fmtPos(w.position)}, ` +
+        `${fmtNum(w.impressions)} impressions`,
+    )}
+    ${listBlock(
+      "Cannibalized queries (several of your pages competing)",
+      opp.cannibalization,
+      (g) =>
+        `${escapeHtml(g.query)} — ${fmtNum(g.pages.length)} competing pages, ` +
+        `${fmtNum(g.total_impressions)} impressions`,
+    )}
+    ${brandNote}
+    ${listBlock(
+      "Decaying pages (losing clicks vs the previous window)",
+      opp.decay,
+      (d) =>
+        `${urlText(d.page)} — ${fmtNum(d.clicks_lost)} clicks lost ` +
+        `(${fmtNum(d.previous_clicks)} → ${fmtNum(d.current_clicks)})`,
+    )}
+    <p class="hint">This is a summary. Run <code>find_quick_wins</code>,
+    <code>detect_cannibalization</code>, or <code>analyze_content_decay</code> for the full
+    prioritized breakdown, and <code>audit_content</code> to check whether each page's title
+    matches the queries it already ranks for.</p>
   </section>`;
 }
 
@@ -399,6 +459,7 @@ export function renderReportHtml(model: ReportModel): string {
     ${model.tech ? techSection(model.tech) : ""}
     ${model.schema ? schemaSection(model.schema) : ""}
     ${model.gsc ? gscSection(model.gsc) : gscAbsentSection(model.gscConnected)}
+    ${model.opportunities ? opportunitySection(model.opportunities) : ""}
     <footer class="rpt">powered by <a href="${MARKETING_URL}" rel="noopener">SeoGrep</a></footer>
   </div>`;
 

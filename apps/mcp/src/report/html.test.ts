@@ -85,6 +85,12 @@ const FULL_MODEL: ReportModel = {
     topQueries: [{ key: "seo tools", clicks: 100, impressions: 1000 }],
     topPages: [{ key: "https://example.com/a", clicks: 80, impressions: 900 }],
   },
+  opportunities: {
+    quickWins: EMPTY,
+    cannibalization: EMPTY,
+    brandedExcluded: 0,
+    decay: EMPTY,
+  },
 };
 
 describe("escapeHtml", () => {
@@ -348,6 +354,101 @@ describe("enriched audit sections (R1-a)", () => {
       },
     });
     expect(many).toContain("… and 27 more");
+  });
+});
+
+describe("Opportunities section (R1-b)", () => {
+  const WITH_OPPS = renderReportHtml({
+    ...FULL_MODEL,
+    opportunities: {
+      quickWins: {
+        items: [
+          {
+            query: "seo audit tool",
+            page: "https://example.com/audit",
+            clicks: 3,
+            impressions: 400,
+            ctr: 0.0075,
+            position: 12.4,
+          },
+        ],
+        // 1 shown, 90 qualified — the shortlist is not the answer.
+        total: 90,
+      },
+      cannibalization: {
+        items: [
+          {
+            query: "seo checklist",
+            total_impressions: 900,
+            total_clicks: 40,
+            pages: [
+              { query: "seo checklist", page: "https://example.com/c1", clicks: 30, impressions: 600, ctr: 0.05, position: 4 },
+              { query: "seo checklist", page: "https://example.com/c2", clicks: 10, impressions: 300, ctr: 0.03, position: 9 },
+            ],
+            branded: false,
+          },
+        ],
+        total: 1,
+      },
+      brandedExcluded: 2,
+      decay: {
+        items: [
+          {
+            page: "https://example.com/fading",
+            previous_clicks: 120,
+            current_clicks: 40,
+            clicks_lost: 80,
+            drop_ratio: 0.667,
+          },
+        ],
+        total: 1,
+      },
+    },
+  });
+
+  it("renders all three discovery engines' findings", () => {
+    expect(WITH_OPPS).toMatch(/Quick wins/);
+    expect(WITH_OPPS).toContain("seo audit tool");
+    expect(WITH_OPPS).toContain("https://example.com/audit");
+    expect(WITH_OPPS).toMatch(/Cannibalized queries/);
+    expect(WITH_OPPS).toContain("seo checklist");
+    expect(WITH_OPPS).toMatch(/Decaying pages/);
+    expect(WITH_OPPS).toContain("https://example.com/fading");
+    expect(WITH_OPPS).toContain("80"); // clicks lost
+  });
+
+  it("carries the engine's PRE-CAP total, not the length of the shortlist", () => {
+    // 90 qualified, 1 shown. Presenting the shortlist as the whole answer is the silent
+    // truncation findQuickWinsResult's `total` exists to prevent.
+    expect(WITH_OPPS).toContain("Quick wins (position 8–20 with demand) (90)");
+    expect(WITH_OPPS).toContain("… and 89 more");
+  });
+
+  it("SAYS how many branded queries it excluded rather than dropping them silently", () => {
+    // A user whose biggest query vanished from the list is owed the reason.
+    expect(WITH_OPPS).toMatch(/Excluded 2 branded queries/);
+    expect(WITH_OPPS).toMatch(/sitelinks/);
+  });
+
+  it("presents itself as a summary and points at the deep tools, audit_content included", () => {
+    expect(WITH_OPPS).toMatch(/This is a summary/);
+    expect(WITH_OPPS).toMatch(/find_quick_wins/);
+    expect(WITH_OPPS).toMatch(/detect_cannibalization/);
+    expect(WITH_OPPS).toMatch(/analyze_content_decay/);
+    // audit_content is a SEPARATE 12-credit tool; the report points at it, never runs it.
+    expect(WITH_OPPS).toMatch(/audit_content/);
+  });
+
+  it("says so plainly when the engines found nothing (FULL_MODEL: all three empty)", () => {
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/No quick wins, cannibalization, or content decay found/);
+    expect(html).not.toMatch(/Quick wins \(/);
+    expect(html).not.toMatch(/Excluded \d+ branded/);
+  });
+
+  it("renders NO Opportunities section at all when there is no pull to analyze", () => {
+    const noPull = renderReportHtml({ ...FULL_MODEL, gsc: null, opportunities: null });
+    expect(noPull).not.toMatch(/<h2>Opportunities<\/h2>/);
   });
 });
 

@@ -13,7 +13,12 @@ import type {
   XRobotsConflict,
 } from "../audit/index.ts";
 import { auditOnpage, auditSchema, auditTech, ONPAGE_LABELS, ONPAGE_ORDER } from "../audit/index.ts";
-import type { GscRow, PullData } from "../gsc-data/index.ts";
+import type { CannibalGroup, GscRow, PageDecay, PullData, QuickWin } from "../gsc-data/index.ts";
+import {
+  analyzeContentDecay,
+  detectCannibalization,
+  findQuickWinsResult,
+} from "../gsc-data/index.ts";
 
 /**
  * The report model — the presentation-ready roll-up generate_report derives from an already-loaded
@@ -68,6 +73,18 @@ export interface CappedList<T> {
 /** Cap a list at REPORT_MAX_LISTED, keeping the pre-cap total. */
 function cap<T>(items: readonly T[]): CappedList<T> {
   return { items: items.slice(0, REPORT_MAX_LISTED), total: items.length };
+}
+
+/**
+ * Cap a list that was ALREADY capped upstream, carrying the ORIGINAL total through.
+ *
+ * findQuickWinsResult has its own cap (MAX_QUICK_WINS = 50) and hands back the pre-cap count
+ * beside it. Taking `items.length` as the total here would silently re-declare "50" as the whole
+ * answer for a site with 400 qualifying queries — the exact silent truncation that count exists
+ * to prevent.
+ */
+function capOfTotal<T>(items: readonly T[], total: number): CappedList<T> {
+  return { items: items.slice(0, REPORT_MAX_LISTED), total };
 }
 
 /** One aggregated (query|page) row: its key plus summed clicks/impressions over the window. */
@@ -182,6 +199,35 @@ export interface GscSummary {
   readonly topPages: readonly AggRow[];
 }
 
+/**
+ * The DISCOVERY roll-up (R1-b): find_quick_wins, detect_cannibalization and analyze_content_decay
+ * run over the pull the report has ALREADY loaded.
+ *
+ * The note this replaces said those engines "need extra data/cost". That was simply wrong — all
+ * three are pure functions of a PullData, the same object the GSC section is folded from, so the
+ * report was paying for the data and then declining to read it. No new pull, no new job, no new
+ * paid API call, no credit change.
+ *
+ * A SUMMARY, NOT A SUBSTITUTE. The paid discovery tools (10 credits each) return the full
+ * prioritized breakdown per query and page; these lists are capped and point at them.
+ */
+export interface OpportunitySummary {
+  /** Total is the PRE-CAP qualifying count from the engine, not the length of the shortlist. */
+  readonly quickWins: CappedList<QuickWin>;
+  /**
+   * Cannibalized queries with the BRANDED ones removed, exactly as formatCannibalization does.
+   * Several pages ranking for your own brand is sitelink behaviour, and acting on it means
+   * de-optimising your own brand pages — so a report that left them in would recommend self-harm.
+   */
+  readonly cannibalization: CappedList<CannibalGroup>;
+  /**
+   * How many branded queries were excluded. Reported rather than silently dropped: a user whose
+   * biggest query vanished with no explanation is owed the reason (formatCannibalization's rule).
+   */
+  readonly brandedExcluded: number;
+  readonly decay: CappedList<PageDecay>;
+}
+
 export interface ReportModel {
   readonly domain: string;
   readonly title: string;
@@ -191,6 +237,8 @@ export interface ReportModel {
   readonly tech: TechSummary | null;
   readonly schema: SchemaSummary | null;
   readonly gsc: GscSummary | null;
+  /** The discovery roll-up. Co-varies with `gsc`: both are derived from the same pull. */
+  readonly opportunities: OpportunitySummary | null;
   /**
    * Is Search Console CONNECTED for this project? Distinct from `gsc` being null, which only
    * means no data has been pulled. Without this the absent-section told a connected user to
@@ -366,6 +414,23 @@ function summarizeGsc(pull: PullData): GscSummary {
  * loaded. Either (or both) may be present; the tool guarantees at least one is non-null before
  * calling (both absent is the "run crawl_site or pull_gsc_data first" error, handled upstream).
  */
+/**
+ * Run the three PURE discovery engines over the already-loaded pull. Branded cannibalization
+ * groups are separated here, not in the renderer, so the model carries the same split the
+ * detect_cannibalization tool reports and the two can never disagree.
+ */
+function summarizeOpportunities(pull: PullData): OpportunitySummary {
+  const quickWins = findQuickWinsResult(pull);
+  const groups = detectCannibalization(pull);
+  const branded = groups.filter((group) => group.branded);
+  return {
+    quickWins: capOfTotal(quickWins.wins, quickWins.total),
+    cannibalization: cap(groups.filter((group) => !group.branded)),
+    brandedExcluded: branded.length,
+    decay: cap(analyzeContentDecay(pull)),
+  };
+}
+
 export function buildReportModel(input: ReportInput): ReportModel {
   const { crawl } = input;
   return {
@@ -379,6 +444,7 @@ export function buildReportModel(input: ReportInput): ReportModel {
     tech: crawl ? summarizeTech(crawl) : null,
     schema: crawl ? summarizeSchema(crawl) : null,
     gsc: input.pull ? summarizeGsc(input.pull) : null,
+    opportunities: input.pull ? summarizeOpportunities(input.pull) : null,
     // A pull implies a connection; otherwise trust the caller's read of gsc_connections.
     gscConnected: input.gscConnected ?? input.pull !== null,
   };

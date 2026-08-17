@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { AuditCrawl } from "../audit/index.ts";
 import { auditOnpage, auditSchema, auditTech, ONPAGE_LABELS, ONPAGE_ORDER } from "../audit/index.ts";
 import type { PullData } from "../gsc-data/index.ts";
+import {
+  analyzeContentDecay,
+  detectCannibalization,
+  findQuickWinsResult,
+} from "../gsc-data/index.ts";
 import { buildReportModel, REPORT_MAX_LISTED, resolveReportTitle } from "./model.ts";
 
 /** The model's own capping rule, restated here so a test compares against a value, not the code. */
@@ -423,6 +428,115 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     // The pre-cap total travels WITH the list so a truncated list is never the whole answer.
     expect(capped.tech?.slowPages.items).toHaveLength(REPORT_MAX_LISTED);
     expect(capped.tech?.slowPages.total).toBe(REPORT_MAX_LISTED + 7);
+  });
+});
+
+/**
+ * R1-b. The three DISCOVERY engines are pure functions of a PullData — the very object the report
+ * has already loaded — so the old "those need extra data/cost" note was simply wrong. This pull is
+ * shaped to trip all three at once, on a property whose brand is "example" so the branded split
+ * has something to separate.
+ */
+const DISCOVERY_PULL: PullData = {
+  days: 28,
+  property: "sc-domain:example.com",
+  current: {
+    start_date: "2026-06-22",
+    end_date: "2026-07-19",
+    rows: [
+      // Quick win: position in [8,20] with >= 20 impressions.
+      { query: "seo audit tool", page: "https://example.com/audit", clicks: 3, impressions: 400, ctr: 0.01, position: 12 },
+      // Cannibalization: two pages each clearing both floors on one non-branded query.
+      { query: "seo checklist", page: "https://example.com/c1", clicks: 30, impressions: 600, ctr: 0.05, position: 4 },
+      { query: "seo checklist", page: "https://example.com/c2", clicks: 10, impressions: 300, ctr: 0.03, position: 9 },
+      // BRANDED: the query IS the brand, and two pages sit at <= 1.5 (the sitelink shape).
+      { query: "example", page: "https://example.com/", clicks: 50, impressions: 800, ctr: 0.06, position: 1.0 },
+      { query: "example", page: "https://example.com/about", clicks: 12, impressions: 300, ctr: 0.04, position: 1.2 },
+    ],
+  },
+  previous: {
+    start_date: "2026-05-25",
+    end_date: "2026-06-21",
+    // Decay: /fading had 120 clicks and now has none.
+    rows: [
+      { query: "old topic", page: "https://example.com/fading", clicks: 120, impressions: 2000, ctr: 0.06, position: 3 },
+    ],
+  },
+};
+
+describe("buildReportModel — Opportunities (R1-b)", () => {
+  const model = buildReportModel({
+    domain: "example.com",
+    title: "T",
+    generatedAt: AT_ISO,
+    crawl: null,
+    pull: DISCOVERY_PULL,
+  });
+
+  it("runs all three PURE discovery engines over the pull the report already loaded", () => {
+    // Byte-identical to the tools, because it IS the same engine over the same pull.
+    expect(model.opportunities?.quickWins.items).toEqual(findQuickWinsResult(DISCOVERY_PULL).wins);
+    expect(model.opportunities?.decay.items).toEqual(analyzeContentDecay(DISCOVERY_PULL));
+    // Two: "seo audit tool" at 12, and the /c2 row at position 9 — which is also inside the
+    // [8, 20] band, so it is both a cannibalization competitor and a quick win.
+    expect(model.opportunities?.quickWins.total).toBe(2);
+    expect(model.opportunities?.decay.items[0]?.page).toBe("https://example.com/fading");
+    expect(model.opportunities?.decay.items[0]?.clicks_lost).toBe(120);
+  });
+
+  it("EXCLUDES branded cannibalization and counts what it excluded", () => {
+    const groups = detectCannibalization(DISCOVERY_PULL);
+    // The fixture is only meaningful if the engine actually branded one of the two groups.
+    expect(groups.filter((g) => g.branded)).toHaveLength(1);
+
+    // Several pages ranking for your own brand is sitelink behaviour, not cannibalization, and
+    // acting on it means de-optimising your own brand pages.
+    expect(model.opportunities?.cannibalization.items.map((g) => g.query)).toEqual([
+      "seo checklist",
+    ]);
+    expect(model.opportunities?.cannibalization.items.every((g) => !g.branded)).toBe(true);
+    // Reported, never silently dropped.
+    expect(model.opportunities?.brandedExcluded).toBe(1);
+  });
+
+  it("keeps the engine's PRE-CAP quick-win total when its own cap already cut the list", () => {
+    // findQuickWinsResult caps at MAX_QUICK_WINS (50) and hands back the pre-cap count beside it.
+    // Taking items.length as the total would re-declare 50 as the whole answer for a site with
+    // hundreds of qualifying queries.
+    const many: PullData = {
+      ...DISCOVERY_PULL,
+      current: {
+        ...DISCOVERY_PULL.current,
+        rows: Array.from({ length: 120 }, (_, i) => ({
+          query: `q${i}`,
+          page: `https://example.com/p${i}`,
+          clicks: 1,
+          impressions: 400,
+          ctr: 0.01,
+          position: 12,
+        })),
+      },
+    };
+    const capped = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: null,
+      pull: many,
+    });
+    expect(capped.opportunities?.quickWins.items).toHaveLength(REPORT_MAX_LISTED);
+    expect(capped.opportunities?.quickWins.total).toBe(120);
+  });
+
+  it("is null when there is no pull to analyze", () => {
+    const noPull = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: KNOWN_ISSUES,
+      pull: null,
+    });
+    expect(noPull.opportunities).toBeNull();
   });
 });
 
