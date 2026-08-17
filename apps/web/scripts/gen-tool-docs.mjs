@@ -732,24 +732,43 @@ export const DOC_PROSE = {
   ranked_keywords: {
     lead:
       "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +
-      "with its position, monthly search volume, and the exact URL that ranks — powered by " +
-      "DataForSEO Labs. It works on **any public domain**, so it reads your own site or a " +
-      "competitor's the same way. It is **synchronous**: the table comes back immediately, with " +
-      "no background job to poll.",
+      "with its position, monthly search volume, CPC, competition, estimated traffic, the exact " +
+      "URL that ranks and that page's SERP title — under a one-screen summary of the whole " +
+      "domain's organic footprint. It is powered by DataForSEO Labs and works on **any public " +
+      "domain**, so it reads your own site or a competitor's the same way. It is **synchronous**: " +
+      "the table comes back immediately, with no background job to poll.",
     whatItDoes:
       "Name the site in **one of two ways** — pass a `target` domain (a bare host or a full URL — " +
       "it is canonicalized for you), or pass the `project_id` of one of your own projects and the " +
       "domain is taken from it. Exactly one of the two: passing both is rejected rather than " +
       "resolved by precedence, because the two can name different sites and guessing would bill " +
-      "you for a lookup of the one you did not mean. Either way you get one row per ranked " +
-      "keyword:\n\n" +
+      "you for a lookup of the one you did not mean.\n\n" +
+      "You get a **domain summary first**, before any keyword rows: how many organic results the " +
+      "domain appears in, how those are spread across all twelve position bands from #1 to #100, " +
+      "its estimated monthly organic traffic, what the same traffic would cost as ads, and how " +
+      "many rankings are new, up, down or gone since DataForSEO last checked. It answers \"how is " +
+      "this domain doing\" without reading a single row.\n\nThen one row per ranked keyword:\n\n" +
       "- **Keyword** — the query the domain ranks for.\n" +
-      "- **Position** — where it ranks in the organic results.\n" +
+      "- **Position** — its rank among the **organic** results. When a SERP feature (a featured " +
+      "snippet, an answer box, an ad block) sits above it, the reply also gives the rank on the " +
+      "page — `position #3 organic (#4 on the page)`. Those are two different numbers in the same " +
+      "response: the first is what stays comparable over time, the second is how far a reader " +
+      "actually scrolls. When they agree, only one is printed.\n" +
       "- **Search volume** — average monthly Google searches for that keyword.\n" +
-      "- **URL** — the page on the domain that holds the ranking.\n\n" +
+      "- **CPC** and **competition** — the advertiser bid and the HIGH/MEDIUM/LOW band. They come " +
+      "with this lookup, so you do not need a separate `research_keywords` call to get them for a " +
+      "keyword you already rank for.\n" +
+      "- **Estimated traffic** — DataForSEO's estimate of the monthly visits *this ranking* " +
+      "earns. Usually a sharper priority signal than position and volume read separately.\n" +
+      "- **URL** and **title** — the page that holds the ranking, and the title it shows in the " +
+      "SERP.\n\n" +
+      "Each of those per-row fields is **omitted when DataForSEO did not send it**, rather than " +
+      "padded with `n/a`. A dated line under the table says when the vendor last refreshed the " +
+      "CPC and competition figures, and says so in a sentence once that is over a month old.\n\n" +
       "Only **organic** results are counted — paid placements are excluded. The header line says " +
-      "how many rows you got and, when the domain ranks for more than the `limit` you asked for, " +
-      "how many it ranks for in total, so a truncated list never reads like the whole picture.",
+      "how many rows you got, which ordering you got them in, and — when the domain ranks for " +
+      "more than the `limit` you asked for — how many it ranks for in total, so a truncated list " +
+      "never reads like the whole picture.",
     preExampleSections: [
       {
         heading: "Who can run it",
@@ -766,16 +785,34 @@ export const DOC_PROSE = {
     ],
     example:
       "Ask your MCP client in plain language:\n\n> What keywords does competitor.com rank for?\n\n" +
-      "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.",
+      "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.\n\n" +
+      "\"Top\" is a real instruction here: DataForSEO orders the domain's **whole** keyword set " +
+      "before returning the first `limit` of them. By default that ordering is highest search " +
+      "volume first; pass `sort` to get `traffic` (highest estimated traffic first) or `position` " +
+      "(best ranking first) instead.\n\n> Which of example.com's rankings bring the most traffic?",
     returns:
-      "A table with one row per ranked keyword — keyword, position, search volume, and the ranking " +
-      "URL — under a header saying how many of the domain's ranked keywords are shown; when you " +
-      "looked the site up by `project_id`, the header names that project. A domain with no " +
-      "organic rankings on record is reported as such.\n\nRankings are read for the United States " +
+      "A summary of the domain's organic footprint — organic results it appears in, all twelve " +
+      "position bands from #1 to #100, estimated monthly organic traffic, the paid-equivalent " +
+      "traffic cost, and how many rankings are new, up, down or gone since DataForSEO's previous " +
+      "check — followed by one row per ranked keyword: keyword, organic position (and the " +
+      "on-page position when a SERP feature outranks it), search volume, CPC, competition, " +
+      "estimated traffic, the ranking URL and its SERP title. Fields DataForSEO did not send are " +
+      "left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
+      "keywords are shown, in which ordering, and out of how many in total; when you looked the " +
+      "site up by `project_id`, it names that project. A dated line under the table says when the " +
+      "vendor last refreshed the CPC and competition figures. A domain with no organic rankings " +
+      "on record is reported as such — with the summary still shown, because \"no rows came back\" " +
+      "and \"this domain ranks for nothing\" are different findings.\n\n`limit` defaults to 100, " +
+      "not the 1,000-row maximum: DataForSEO charges per row, and a thousand bullet lines costs " +
+      "you more and reads worse. The header always names the domain's full ranked-keyword count, " +
+      "so you can see when raising it is worth it.\n\nRankings are read for the United States " +
       "in English unless you pass `location_code` and `language_code`. When a lookup left on that " +
       "default comes back thin AND the domain carries a country-code TLD, the reply says so and " +
       "names the TLD — it does **not** guess the matching location code, because a wrong code " +
-      "returns another country's rankings that look perfectly ordinary.\n\nAn input that is not a " +
+      "returns another country's rankings that look perfectly ordinary. Two-letter TLDs that are " +
+      "delegated to a country but sold worldwide (`.io`, `.ai`, `.co`, `.me`, `.tv` and the like) " +
+      "are deliberately **not** called country-code TLDs, because for almost every site using one " +
+      "that would be advice about the wrong country.\n\nAn input that is not a " +
       "public domain, a call naming neither `target` nor `project_id` (or both), and a " +
       "`project_id` that is not yours are all rejected before anything is charged; while live " +
       "data is off you get the \"not yet enabled\" message instead — also free.",
