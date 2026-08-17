@@ -1,4 +1,3 @@
-import { RootProvider } from "fumadocs-ui/provider/next";
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Newsreader } from "next/font/google";
 import type { ReactNode } from "react";
@@ -59,9 +58,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={`${newsreader.variable} ${plexMono.variable}`}>
-      <body>
-        <RootProvider theme={{ enabled: false }}>{children}</RootProvider>
-      </body>
+      {/* RootProvider is NOT here on purpose: it is a fumadocs client provider (search dialog +
+          sidebar state) that only /docs consumes, and mounting it at the root put its client
+          chunk on every marketing, auth and app page. It now lives in app/docs/layout.tsx. */}
+      <body>{children}</body>
     </html>
   );
 }
