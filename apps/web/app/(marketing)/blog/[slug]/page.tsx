@@ -25,7 +25,7 @@ export default async function Page(props: PageProps) {
         <h1 className="m-0 mb-[22px] font-serif text-[32px] font-medium leading-[1.15] tracking-[-0.015em] text-pretty sm:text-[42px]">
           {post.data.title}
         </h1>
-        <p className="m-0 font-serif text-[19px] italic leading-[1.65] text-body">{post.data.description}</p>
+        <p className="m-0 font-serif-italic text-[19px] italic leading-[1.65] text-body">{post.data.description}</p>
       </header>
 
       <div className="blog-prose mt-12 animate-[rise_0.6s_ease-out_0.1s_both]">
