@@ -1,6 +1,7 @@
 import type { LedgerEntry } from "@pseo/db/ledger-read";
 import type { ReactNode } from "react";
 import { formatDate, formatNumber } from "../../lib/format";
+import { cumulativeSpend, spendByDay, spendEvents, trailingUtcDays } from "../../lib/spend";
 
 /**
  * Small presentational pieces shared by the dashboard data pages (Overview + Usage).
@@ -80,35 +81,39 @@ export function StatCard({
 }
 
 /**
- * The Overview balance sparkline: cumulative committed spend over the trailing 30 days as an
- * amber step line on a hairline baseline. Derived entirely from the ledger rows handed in —
- * nothing here is hardcoded; no spend in the window means no sparkline (README: mock numbers
- * are placeholders for real data).
+ * The Overview balance sparkline: cumulative net spend over the trailing 30 days as an amber
+ * step line on a hairline baseline. Derived entirely from the ledger rows handed in — nothing
+ * here is hardcoded; fewer than two spend rows in the window means no sparkline (README: mock
+ * numbers are placeholders for real data).
+ *
+ * What counts as spend, and why a refund can step the line back DOWN, is spelled out once in
+ * ../../lib/spend — this component only turns those numbers into geometry.
  */
 export function SpendSparkline({ entries }: { entries: readonly LedgerEntry[] }) {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const spends = entries
-    .filter((entry) => entry.kind === "spend_commit" && entry.delta < 0)
-    .map((entry) => ({ at: Date.parse(entry.createdAt), amount: -entry.delta }))
-    .filter((spend) => Number.isFinite(spend.at) && spend.at >= cutoff)
-    .sort((a, b) => a.at - b.at);
-  const firstSpend = spends[0];
-  const lastSpend = spends[spends.length - 1];
-  if (spends.length < 2 || firstSpend === undefined || lastSpend === undefined) {
+  const events = spendEvents(entries, { since: Date.now() - 30 * 24 * 60 * 60 * 1000 });
+  const series = cumulativeSpend(events);
+  const firstPoint = series[0];
+  const lastPoint = series[series.length - 1];
+  if (series.length < 2 || firstPoint === undefined || lastPoint === undefined) {
     return null;
   }
 
-  const total = spends.reduce((sum, spend) => sum + spend.amount, 0);
-  const first = firstSpend.at;
-  const span = Math.max(1, lastSpend.at - first);
-  let running = 0;
+  // Normalise against the PEAK of the running series rather than its final total: with refunds
+  // in the window the two differ, and dividing by a total that a refund has driven to zero (or
+  // below) would blow the curve up. A window that only ever refunds has no peak to scale to.
+  const peak = Math.max(...series.map((point) => point.running));
+  if (peak <= 0) {
+    return null;
+  }
+  const first = firstPoint.at;
+  const span = Math.max(1, lastPoint.at - first);
   const points: string[] = ["0,4"];
   let previousY = 4;
-  for (const spend of spends) {
-    running += spend.amount;
-    const x = Math.round(((spend.at - first) / span) * 120);
-    // Step line: horizontal to the spend's x at the previous level, then down.
-    const y = Math.round(4 + (running / total) * 25);
+  for (const point of series) {
+    const x = Math.round(((point.at - first) / span) * 120);
+    // Step line: horizontal to the spend's x at the previous level, then down. Clamped to the
+    // drawing band because a leading refund can push `running` negative.
+    const y = Math.min(29, Math.max(4, Math.round(4 + (point.running / peak) * 25)));
     points.push(`${x},${previousY}`, `${x},${y}`);
     previousY = y;
   }
@@ -121,31 +126,28 @@ export function SpendSparkline({ entries }: { entries: readonly LedgerEntry[] })
   );
 }
 
+/** How many days of bars the Usage chart draws. */
+const CHART_DAYS = 14;
+
 /**
- * Usage's spend chart: committed credits per day over the trailing 14 days, as flex bars.
+ * Usage's spend chart: net credits spent per UTC day over the trailing 14 days, as flex bars.
  * Every figure is DERIVED from the ledger entries handed in — the bar heights, the day ticks
  * and the "N total" all come from the same rows, so the chart cannot disagree with the ledger.
+ *
+ * The spend rule itself lives in ../../lib/spend (shared with the Overview sparkline). One
+ * rendering-only decision belongs here: a day whose refunds outweigh its reserves nets NEGATIVE,
+ * and a bar cannot be drawn below its baseline — such a day is floored to the zero hairline
+ * while its tooltip and the header total keep the true signed figure.
  */
 export function SpendChart({ entries }: { entries: readonly LedgerEntry[] }) {
-  const DAY = 24 * 60 * 60 * 1000;
-  const today = new Date();
-  const startOfToday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-  const days = Array.from({ length: 14 }, (_, index) => startOfToday - (13 - index) * DAY);
+  const days = trailingUtcDays(CHART_DAYS, Date.now());
+  const events = spendEvents(entries, { since: days[0] });
+  const values = spendByDay(events, days);
 
-  const spendByDay = new Map<number, number>(days.map((day) => [day, 0]));
-  for (const entry of entries) {
-    if (entry.kind !== "spend_commit" || entry.delta >= 0) continue;
-    const at = Date.parse(entry.createdAt);
-    if (!Number.isFinite(at)) continue;
-    const date = new Date(at);
-    const day = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-    if (spendByDay.has(day)) {
-      spendByDay.set(day, (spendByDay.get(day) ?? 0) + -entry.delta);
-    }
-  }
-  const total = [...spendByDay.values()].reduce((sum, value) => sum + value, 0);
-  const max = Math.max(...spendByDay.values(), 1);
-  const tick = (index: number) => formatDate(new Date(days[index] ?? startOfToday).toISOString());
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const max = Math.max(...values, 1);
+  const tick = (index: number) =>
+    formatDate(new Date(days[index] ?? days[days.length - 1] ?? 0).toISOString());
 
   return (
     <div className="mb-10 border border-hairline bg-card px-7 pb-[18px] pt-6 animate-[rise_0.5s_ease-out_0.04s_both]">
@@ -156,13 +158,18 @@ export function SpendChart({ entries }: { entries: readonly LedgerEntry[] }) {
         <span className="font-mono text-[11px] text-muted">{formatNumber(total)} total</span>
       </div>
       <div aria-hidden="true" className="flex h-[72px] items-end gap-1.5 border-b border-hairline">
-        {days.map((day) => {
-          const value = spendByDay.get(day) ?? 0;
+        {days.map((day, index) => {
+          const value = values[index] ?? 0;
+          const drawn = value > 0;
           return (
-            <div key={day} className="flex h-full flex-1 flex-col justify-end" title={`${tick(days.indexOf(day))} · ${value} credits`}>
+            <div
+              key={day}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${tick(index)} · ${value} credits`}
+            >
               <div
-                className={value === 0 ? "bg-hairline-soft" : "bg-accent"}
-                style={{ height: value === 0 ? "2px" : `${Math.round((value / max) * 100)}%` }}
+                className={drawn ? "bg-accent" : "bg-hairline-soft"}
+                style={{ height: drawn ? `${Math.round((value / max) * 100)}%` : "2px" }}
               />
             </div>
           );
