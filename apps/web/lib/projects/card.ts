@@ -10,6 +10,7 @@ import {
   deriveProjectSignals,
   isGscConnected,
   type ConnectionRow,
+  type GscTokenStatus,
   type JobRow,
   type PullRow,
 } from "./signals";
@@ -46,6 +47,14 @@ export interface ProjectCardInput {
   readonly pull: PullRow | null;
   /** The project's `gsc_connections` row, or null when it has none. */
   readonly connection: ConnectionRow | null;
+  /**
+   * The stored health of the Google account behind that connection — `null` when there is no
+   * account to have one, ABSENT when the caller does not measure it (see `signals.ts`). Optional
+   * for the same reason `crawlHistory` is: a strictly additive read. A caller that omits it gets a
+   * card whose Search Console line carries no expiry marker and whose next step is decided by the
+   * pre-reconnect ladder — which is what every caller got before the health read existed.
+   */
+  readonly tokenStatus?: GscTokenStatus | null;
   /**
    * The project's recent `crawl_site` rows in EVERY state, for the card's crawl trail. Optional
    * because it is a strictly additive read: a caller that does not ask for the trail gets a card
@@ -151,13 +160,29 @@ export interface ProjectCard {
    */
   readonly pullWindow: PullWindow | null;
   readonly gsc: GscStatus;
+  /**
+   * True only when this project HAS a live account link whose stored `token_status` is `invalid` —
+   * the connection exists and the credential behind it is dead, so every Search Console pull will
+   * fail until the user re-approves.
+   *
+   * BESIDE `gsc`, not folded into it, for the reason `pullWindow` sits beside `pullAt`: the three
+   * `GscStatus` states are the fact every caller already reads, and widening the `connected`
+   * variant would make every existing reader of it re-derive a shape it did not ask for. It is
+   * also a different KIND of fact — `gsc` says what the mapping is, this says whether it works.
+   *
+   * False for an unconnected project, whatever health was read: a project with no account link
+   * cannot have an expired one, and saying so would put a reconnect warning on a card whose
+   * Search Console line reads "Not connected".
+   */
+  readonly gscExpired: boolean;
   /** The ladder's answer for this project — core's, so it matches whats_next word for word. */
   readonly nextStep: NextStep;
 }
 
 /** Build one project's card. `now` is injected so freshness is deterministic in tests. */
 export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCard {
-  const { project, crawl, pull, connection, crawlHistory, auditRuns, discoveryRuns } = input;
+  const { project, crawl, pull, connection, tokenStatus, crawlHistory, auditRuns, discoveryRuns } =
+    input;
   return {
     projectId: project.id,
     domain: project.domain,
@@ -174,7 +199,10 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
     gsc: isGscConnected(connection)
       ? { kind: "connected", property: connection?.gsc_property ?? null }
       : { kind: "not_connected" },
-    nextStep: decideProjectNextStep(deriveProjectSignals({ crawl, pull, connection }, now)),
+    gscExpired: isGscConnected(connection) && tokenStatus === "invalid",
+    nextStep: decideProjectNextStep(
+      deriveProjectSignals({ crawl, pull, connection, tokenStatus }, now),
+    ),
   };
 }
 

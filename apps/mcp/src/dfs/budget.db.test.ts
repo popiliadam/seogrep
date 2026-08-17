@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { getServiceClient, type Database, type ServiceClient } from "../db.ts";
 import {
@@ -75,7 +75,13 @@ afterEach(async () => {
 
 describe("the migration-0014 vendor-budget counter", () => {
   it("puts the SAME $3.00 cap in the database that the app compiles against", async () => {
-    const { data, error } = await getServiceClient().rpc("dfs_daily_budget_usd");
+    // Read through an UNTYPED view of the same client. `dfs_daily_budget_usd` is deliberately
+    // absent from the app's hand-written schema slice (db.ts, which lists only the RPCs the app
+    // actually calls): production never asks the database for the cap — it compiles it in as
+    // DAILY_BUDGET_USD, and this spec is the thing that proves the two agree. Widening the
+    // slice to please the type gate would make it claim an app usage that does not exist.
+    const untyped: SupabaseClient = getServiceClient();
+    const { data, error } = await untyped.rpc("dfs_daily_budget_usd");
     expect(error).toBeNull();
     expect(Number(data)).toBe(DAILY_BUDGET_USD);
   });
