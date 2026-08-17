@@ -20,9 +20,11 @@ ana ağaç; peer GSC oturumuyla dosya-sınır anlaşması yazılı; hakemler: 2 
   diff · kırık iç linkler · JSON-LD gövde saklama (5×4000) · tip-başına zorunlu-alan doğrulaması +
   invalid_json. 12/12 mutasyon; bayt-özdeşlik kapsam şerhiyle (broken-links yalnız veri kırık link
   içermiyorsa özdeş — bilinçli). Deploy + canlı taze imaj ölçüldü.
-- **N8 — audit_content HAZIR, İMZA-PARKINDA** ([#107](https://github.com/popiliadam/seogrep/pull/107)): 23. tool, GSC sorgu × title/h1
-  uyumsuzluğu; motor packages/core/src/content; 0026 persist; docs+pricing 5/5; 10/10 mutasyon.
-  **İKİ OPERATÖR ADIMI: fiyat imzası (12 kredi — iki planın bandı 10-15) + 0026 cloud-apply.**
+- **N8 — audit_content CANLIDA** ([#107](https://github.com/popiliadam/seogrep/pull/107) MERGED 2026-08-17): **fiyat 12 kredi İMZALANDI**
+  (operatör: "senin için okeyse onaylıyorum" — şef önerisi 12'ye açık onay) + 0026 operatör
+  SQL-dalgasıyla prod'da (tablo list_tables ile doğrulandı). Canlı ölçüldü: pricing satırı
+  "Content audit — 12" · docs /docs/tools-reference/audit-content "12 credits" · taze imaj
+  schema:ready (v26). **Yüzey 23 tool.** Crawl+audit planının TÜM kapsamı kapandı.
 - Kesinti kaydı: L işçisi haftalık API kotasında yarıda öldü (Aug 17 05:00 reset), resume'la
   kayıpsız tamamlandı. Chip-dalgası oturumunun 4 dilimi (#108-#111) bu tur sırasında merge oldu;
   **KVKK karar dosyası #108 İMZA BEKLİYOR** (N8'in bulduğu silme-hakkı çakışması orada çerçeveli).
