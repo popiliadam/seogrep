@@ -5,66 +5,123 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-18 — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`a88884d` · açık PR **0** · worktree temiz · yüzey **26 tool** (canlı `tools/list`
-ile ölçüldü, `TOOL_COSTS` ile birebir) · `make goals` **env yüklü** koşuda **16/16 PASS (1 skip)**.
+**Durum:** `main` @`ae9e75d` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
+
+**MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
+(yalnız `workflow_dispatch` DEĞİL — 2026-08-18'de şef bunu yanlış okudu). `require-ci` job'ı, o commit
+için CI yeşile dönene kadar bekler. **Kalıcılık kodu ancak MCP deploy'u bitince canlıda çalışır;**
+tablo prod'da hazır olduğu için deploy öncesi tek risk yok, tool'lar eskisi gibi (izsiz) çalışır.
 
 #### Kapı komutları — ezberden değil, buradan
 | ne | komut | NE ÖLÇMEZ |
 |---|---|---|
-| unit + build + typecheck | `TURBO_FORCE=1 bash guardrails/verify.sh` | **secret taraması YOK · DB şeritleri YOK · test dosyaları typecheck EDİLMEZ** |
+| unit + build + typecheck | `TURBO_FORCE=1 bash guardrails/verify.sh` | **secret taraması YOK · DB şeritleri YOK · MCP test dosyaları typecheck EDİLMEZ** |
 | DB şeritleri + tip kapısı | `bash guardrails/verify-db.sh` | 00:00–00:30 UTC'de her dalda deterministik kırmızı |
-| kalıcı hedefler + secret | `make goals` | **env yüklü değilse 5 kalem sessizce SKIP** |
+| kalıcı hedefler + secret | `make goals` | **env yüklü değilse kalemler sessizce SKIP** |
 
 **Şef-Bash `~/.zshrc` source ETMEZ.** Tam ölçüm için:
-`eval "$(grep -E '^[[:space:]]*export[[:space:]]+(PROD_URL|MCP_SMOKE_URL|MCP_SMOKE_KEY)=' ~/.zshrc)"`
-(`SUPABASE_URL`/`SERVICE_ROLE_KEY` profilde YOK → `dfs-budget-guard` yine SKIP verir; DFS harcamasını
-Supabase MCP ile doğrudan sorgula.)
+`eval "$(grep -E '^[[:space:]]*export[[:space:]]+(PROD_URL|MCP_SMOKE_URL)=' ~/.zshrc)"`
+
+**ŞERH (2026-08-18 ölçüldü):** `MCP_SMOKE_KEY` profilde **YOK** — eski handoff'un eval satırı onu
+sayıyordu ama `~/.zshrc`'de yalnız `PROD_URL` ve `MCP_SMOKE_URL` var. `SUPABASE_URL`/`SERVICE_ROLE_KEY`
+de yok → `dfs-budget-guard` SKIP verir; DFS harcamasını Supabase MCP ile doğrudan sorgula.
 
 #### İNSAN KUYRUĞU — sıradaki oturumun ilk bakacağı yer
-1. **`0027_domain_lookup_runs` migration'ı HENÜZ YAZILMADI.** Rank tracker ailesinin ön koşulu.
-   Yazıldığında **"hazır-park + operatöre tek-adım SQL"** deseniyle gider (0023/0024/0025/0026
-   emsali): PR başlığına `⚠️ 0027 CLOUD-APPLY BEKLİYOR`, gövdeye tek cümlelik operatör aksiyonu +
-   **bedel cümlesi**, ve **MERGE EDİLMEZ** — operatör uygular, şef `list_tables` ile **tabloya**
-   bakar (sinyale değil), sonra merge.
-   **Tasarım kararları planda hazır:** tablo adı `dfs_runs` OLMAZ (`dfs_spend` ile karışır) →
-   `domain_lookup_runs`; `project_id` NULLABLE olmak zorunda (çıplak `target` en tipik çağrı);
-   `research_keywords` ayrı tablo ister (domain'i yok); rank tracker jsonb değil **satır ekseni**
-   ister (`rank_snapshots`).
-2. **İmzalı ama dispatch edilmemiş 9 tool:** `discover_keywords` 40 · `track_keywords` 0 ·
+1. **`0027_domain_lookup_runs` ✅ KAPANDI.** Operatör prod'a uyguladı, tablo **okunarak** doğrulandı
+   (7 kolon · iki FK'in matchtype `s`/deltype `c` · `tool` CHECK · RLS enable+**force** · tek
+   `select_own` · index). [PR #131](https://github.com/popiliadam/seogrep/pull/131) merge:
+   migration + kalıcılık + panel, 3 taze Fable hakem PASS. Detay aşağıdaki bölümde.
+2. **`0028` revoke — YENİ, ÖLÇÜLDÜ, imzasız.** Cloud'da `pg_default_acl` yeni public tablolara
+   `postgres` grantor'ıyla **`arwdxtm`** veriyor → 0023/0024/0025/0026/0027'nin **beşinin de** yazdığı
+   *"UPDATE/DELETE kasten YOK"* cümlesi **cloud'da yanlış**; gerçek delik `service_role`
+   (`rolbypassrls`). **`credit_ledger` SAĞLAM** (`anon=arxtm`) çünkü 0002 açıkça REVOKE ediyor —
+   NEVER#2 etkilenmiyor. Yerelde aynı ifade 42501 ile reddediliyor, yani **hiçbir kapı bunu göremez**.
+3. **İmzalı ama dispatch edilmemiş 9 tool:** `discover_keywords` 40 · `track_keywords` 0 ·
    `serp_snapshot` 5+8/kelime (**depth 100 pinli**) · `keyword_positions` 10 · `backlink_changes` 35 ·
-   `disavow_candidates` 40 (**200 satır kapağı ŞART**, kapaksız 2,8×) · `backlink_details` 35 ·
-   `my_pages` 40 · `keyword_trends` 25 (**tek ölçülmemiş fiyat** — kalibrasyon taahhüdü bunda zorunlu).
-   AI ailesi: `ai_visibility` 90 · `ai_visibility_compare` hedef başına 90 — **satır kapağı ZORUNLU**
-   (kapaksız tek çağrı $1,10 vendor eder), ve 10 hedefli karşılaştırma 900 kredi = **D17 onay eşiği
-   üstü**, ürün kararı.
-3. **Eski imza kuyruğu (dokunulmadı):** KVKK karar dosyası #108 (8 madde) · GSC planı §7 ·
+   `disavow_candidates` 40 (**200 satır kapağı ŞART**) · `backlink_details` 35 · `my_pages` 40 ·
+   `keyword_trends` 25 (**tek ölçülmemiş fiyat**). AI ailesi: `ai_visibility` 90 ·
+   `ai_visibility_compare` hedef başına 90 — **satır kapağı ZORUNLU**, ve 10 hedefli karşılaştırma
+   900 kredi = **D17 onay eşiği üstü**, ürün kararı.
+4. **Eski imza kuyruğu (dokunulmadı):** KVKK karar dosyası #108 (8 madde) · GSC planı §7 ·
    `compare_pulls` / `analyze_ctr_gaps` / `inspect_url` fiyatları.
 
 #### VENDOR FİYATLARI — ölçüldü, bir daha tahmin etme
-Labs **$0,012/istek + $0,00012/satır** (prod verimizin dört noktasıyla doğrulandı) · Backlinks
-**$0,024 + $0,000036/satır** · SERP Live **$0,002/SERP** · Lighthouse **$0,005/sayfa** ·
-LLM Mentions **$0,10 + $0,001/satır** (en pahalı aile) · Keywords Data search_volume **$0,0900/çağrı**.
-Gelir kuru **agency $0,0124/kredi** (en muhafazakâr). Kural: `kredi ≈ tipik vendor × 400–500`,
-**en kötü hâl ≥3×**.
+Labs **$0,012/istek + $0,00012/satır** · Backlinks **$0,024 + $0,000036/satır** · SERP Live
+**$0,002/SERP** · Lighthouse **$0,005/sayfa** · LLM Mentions **$0,10 + $0,001/satır** (en pahalı aile) ·
+Keywords Data search_volume **$0,0900/çağrı**. Gelir kuru **agency $0,0124/kredi**.
+Kural: `kredi ≈ tipik vendor × 400–500`, **en kötü hâl ≥3×**.
 
-#### AÇIK CHIP'LER (beşi de gerçek, hiçbiri bu oturumda kapanmadı)
-`apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor** — bu oturumda **iki gerçek
-kusurun** kökü · `/status` prob sınırı (1000 ms, Fly→Supabase turu altında; makine-başına
-`unknown`/`ready` çelişiyor) · `worker.test.ts`'in `outcome()` fixture'ı eksik → **~7 reaper spec'i
-hata yolundan geçiyor** · port testlerindeki `*.example` domainleri (imkânsız senaryolar) ·
-**flaky `disconnect-button.test.tsx:302`** (bu oturumda ÜÇ kez düştü, her biri bir tam CI turu).
+#### AÇIK CHIP'LER
+Eskiler: `apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor** · `/status` prob sınırı ·
+`worker.test.ts`'in `outcome()` fixture'ı eksik · port testlerindeki `*.example` domainleri ·
+flaky `disconnect-button.test.tsx:302`.
+**2026-08-18'de eklenen üçü, üçü de ÖLÇÜLDÜ:**
+- **`0028` revoke** (yukarıda, madde 2).
+- **Dört sorgu spec'i filtre DEĞERLERİNİ pinlemiyor** — hakem `.eq("user_id", userId)` yerine
+  `projectId` geçirdi, `verify.sh` + `verify-db.sh` + `tsc` **hepsi yeşil kaldı**. Aynı delik
+  `audits-query` / `insights-query` / discovery / `lookups-query`'de birebir var; `.maybeSingle()`,
+  hata-THROW yolu ve `cardInputFor`'un fan-out'u TÜKETMESİ de pinsiz.
+- **Hiçbir index hiçbir kapıda pinli değil** — `gen-db-types.mjs` index üretmiyor, dolayısıyla drift
+  kapısı da göremiyor; beş koşu defterinin beşi için geçerli.
 
 #### BİLİNEN PARA SINIRLARI
-`normalizeDomain` **`www.` soyutlamıyor** → `rival.com` vs `www.rival.com` self-competitor
-kapısından geçer, kredi harcar (`compare_competitors`'ta da aynı) · prod'da **iki öksüz `open`
-rezervasyon** ($0,30'ar, 2026-08-07/08) — reaper yalnız sayar, politika bilinçli.
+`normalizeDomain` **`www.` soyutlamıyor** → `rival.com` vs `www.rival.com` self-competitor kapısından
+geçer, kredi harcar · prod'da **iki öksüz `open` rezervasyon** ($0,30'ar, 2026-08-07/08).
 
 #### FLAKE KAYDI — güncel
-GitHub **action indirme 429** (ayırt edici: kırmızı `Set up job`'da, `Run bash guardrails/...`
-satırına hiç gelmeden) · lokal Supabase seed **502** · `disconnect-button` rerender yarışı ·
-crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-db` penceresi**.
+GitHub **action indirme 429** · lokal Supabase seed **502** · `disconnect-button` rerender yarışı ·
+crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-db` penceresi** ·
+**YENİ (2026-08-18, ikisi de PR #131'de ölçüldü):** CI `verify-db`'de Kong/upstream 502
+(`jobs insert failed: An invalid response was received from the upstream server` — iddia değil
+**transport**) ve **port 55322 `address already in use`** (yığın hiç başlayamadı). İkisi de altyapı;
+üçüncü koşu temiz geçti. **Kırmızıyı "flake" ilan etmeden ÖNCE logu oku** — birincisi testlere kadar
+gelmişti ve orada bütün kod kanıtı zaten yeşildi.
+### 🗄️ 2026-08-18 — 0027 `domain_lookup_runs`: DFS ARAMALARI ARTIK İZ BIRAKIYOR (PR #131 CANLIDA)
+
+Üç senkron DFS alan araması (`ranked_keywords` 65 · `analyze_backlinks` 70 · `compare_competitors` 90)
+koşuyor, metni basıyor ve **hiçbir iz bırakmıyordu** — kiracı ödediği aramayı bir saat sonra göremiyordu.
+0024/0025/0026'nın açtığı eksen bu aile için de açıldı. **Hiçbir fiyat oynamadı, yüzey 26'da kaldı.**
+
+- **A — migration + tip yüzeyleri + zırh borcu.** Kardeşlerden **üç sapma**, üçü de okuyucunun
+  çarpacağı yere yazıldı: **job FK YOK** (üç tool `charge:"handler"`, `jobs` satırı hiç yok →
+  kardeşlerin provenance omurgası burada *yazılamaz*) · `project_id` **NULLABLE** (çıplak `target` =
+  rakip domain, en tipik paid çağrı) · ve bunun bedeli: bileşik FK **MATCH SIMPLE**'dır ve null satırda
+  kontrolü **atlar**, o satırlarda kiracı güvencesi `user_id`'dir → bu yüzden kardeşlerde OLMAYAN bir
+  **`auth.users` FK'i** eklendi (yoksa silinen hesabın çıplak-target koşuları öksüz kalırdı).
+  Q2 borcu kapandı: `NON_EXEMPTABLE_TABLES`'a `audit_content_runs` (0026 commit'liydi, listede değildi)
+  + `domain_lookup_runs`.
+- **B — kalıcılık.** `apps/mcp/src/dfs/runs.ts`: saf rapor kurucuları + `MAX_RUN_ROWS = 50` + fail-closed
+  writer. Yazım `withCredits` **içinde**, `return`'den **önce**, guard'sız, hata **throw** → kayıt
+  kaybolursa kiracı **ücretlendirilmez**. `total` daima **kapak öncesi**; vendor `null`'ı asla `0` değil.
+- **C — panel.** Kartta `Domain lookups` bölümü.
+
+**İki ürün kararı, ikisi de dürüstlük kararı:**
+1. Boş durum **"Not run yet" DEĞİL** → *"Not run **for this domain** yet"*. Koşuların çoğu `project_id`
+   null olacak (rakip domain) ve kart yalnız bu projeye ait satırları görür; "Not run yet", tool'u
+   yirmi kez rakibe koşmuş kullanıcıya **yanlış** bir şey söylerdi. İki bağımsız regex'le pinli.
+2. `compare_competitors` satırı **"closest" DEMİYOR**. Şef "closest:" yazdırmıştı; **işçi reddetti**:
+   `top`, ilk target-olmayan satırdır — discovery'de vendor'ın kendi sıralaması, kullanıcı listesi
+   verdiyse **sadece ilk yazdığı domain**. "Closest" ölçülmemiş bir yakınlık iddiasıdır (NEVER#7).
+   Satır `first rival:` diyor, ret `not.toMatch(/closest|strongest|biggest/i)` ile pinli, ve taze
+   Fable hakemi reddi **kaynak kanıtıyla onayladı**. *(`total` target'ı da sayar: "compared 4 domains"
+   = 1 target + 3 rakip.)*
+
+**Süreç:** 3 işçi (izole worktree, **seri**) + **3 taze Fable hakem turu, 3/3 PASS, blocking 0** ·
+**~39 mutasyon ekseni** · CI'da **32 yeni db testi** taze yığına karşı yeşil.
+**Onu yeşil kaldı ve onunun onu da raporlandı**; üçü chip oldu (yukarıdaki AÇIK CHIP'LER).
+
+**Üç işçinin üçü de KENDİ iş emrindeki hatayı buldu** — en ağırı B'ninki: fail-closed defter izi
+`[grant, …]` değil **`[purchase, spend_reserve, spend_release]`**, çünkü üç tool da ödenmiş-bakiye
+kapısının arkasında ve `grant`'le fonlanmış bir fixture rezervasyona **hiç ulaşmaz**; düzeltilmeseydi
+fail-closed testi **hiçbir şey ölçmezdi**. İş emri bir hipotezdir; ölçen taraf işçidir.
+
+**Şefin hatası kayda geçti:** hakem B ile işçi C paralel koşturuldu, paylaşılan Supabase yığını C'nin
+altında yeniden başladı ve **dokunmadığı bir dizinde** hayalet kırmızı üretti — imzalı ders 8, bu kez
+şefin elinden. İşçi doğru davrandı: hiçbir spec'e dokunmadan bekleyip yeniden koştu.
+
 
 ### 🚀 2026-08-18 — İMZA SONRASI 2. DALGA: YÜZEY 23 → 26 TOOL, ÜÇ YENİ TOOL CANLIDA
 
