@@ -5,6 +5,65 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🚀 2026-08-18 — İMZA SONRASI 2. DALGA: YÜZEY 23 → 26 TOOL, ÜÇ YENİ TOOL CANLIDA
+
+İmza paketi v2'nin (#120) açtığı üç tool ve bir projeksiyon derinleşmesi. **Mevcut hiçbir fiyat
+oynamadı** (25/65/70/90 dokunulmadı); eklenen üç satır imzalı: `keyword_gap` 45 · `link_gap` 45 ·
+`audit_speed` 15.
+
+- **`ranked_keywords` projeksiyonu** ([#125](https://github.com/popiliadam/seogrep/pull/125), fiyat 65 SABİT): tool ödediği yanıtın yarısını atıyordu.
+  Şef **canlı ölçüm** yaptı ve iki hipotezi doğruladı: `order_by` yolu çalışıyor (550k → 450k
+  sırayla döndü) ve `keyword_difficulty` + `search_intent` **zaten yanıtta var** — kullanıcı
+  bunları `research_keywords`'e ayrıca ödüyordu. Ölçüm dört alan daha gösterdi: **`rank_changes`**
+  (kelime bazında hareket — tool'u listeden değişim raporuna çeviriyor), `serp_item_types`
+  (**içinde `ai_overview`**), `check_url`, per-satır backlink profili. Sağlık karnesi (12 bant +
+  ETV + hareket) tablonun üstüne geldi, şema `competitors.ts`'ten **import** edildi. `order_by`
+  artık gönderiliyor — öncesinde hiç gönderilmiyordu, yani dokümanın "top 50 keywords" örneği
+  **yalandı**. Varsayılan limit 1000 → 100, marj 9,4× → **51×**. **61 mutasyon ekseni.**
+- **`keyword_gap` + `link_gap` CANLIDA** ([#124](https://github.com/popiliadam/seogrep/pull/124), 45'er): "rakibimin sıralandığı benim
+  sıralanmadığım kelimeler" ve "rakibime link veren bana vermeyen domainler". En kötü hâl marjı
+  4,23× / 9,3× (hakem kendi türetti). **İş emrinin iki maddesi vendor tanımı yüzünden REDDEDİLDİ**
+  ve reddin kendisi docs'a yazıldı: `keyword_gap`'te "benim pozisyonum" sütunu **basılamaz**
+  (`intersections:false` modunda kelime zaten sıralanmadığım için listede; boş sütun "ölçemedik"
+  diye okunurdu — NEVER#9), ve `link_gap`'te çok-rakip modu düşürüldü (vendor'ın
+  `intersection_mode` tanımı her-rakibe-mi/herhangi-birine-mi sorusunu **cevaplamıyor**).
+- **`audit_speed` CANLIDA** ([#127](https://github.com/popiliadam/seogrep/pull/127), 15 kredi, `urls ≤ 5`): Lighthouse **$0,005/sayfa** → marj
+  7,4×. **Asıl iş 30 sn'lik transport deadline'ıydı** — Lighthouse onu aşabilir ve aştığında
+  ölçülmüş arıza: para gider, veri gelmez, rezervasyon açık kalır. Seçilen (a): **kendi deadline'ı
+  55 sn + beş isteğin eşzamanlı koşulması**; `client.ts`'e dokunulmadı. Sınırın kaynağı dürüstçe
+  yazıldı: *"canlıya karşı ölçülmedi, zarftan seçilmiş üst sınır — yetmezse cevap worker modu,
+  daha büyük bir sayı değil."* **Kalıcılık ZORLANMADI:** `audit_runs` `crawl_job_id`'yi NOT NULL
+  tutuyor ve `audit_speed` crawl okumuyor → bu dilimde kalıcılık YOK, ve bu docs'un "Limitations"
+  bölümünde yazılı.
+- **Öksüz fixture `legacy/` altına TAŞINDI** ([#126](https://github.com/popiliadam/seogrep/pull/126), silinmedi): `search-volume.json`,
+  `research_keywords` Labs ucuna geçince referanssız kaldı. `legacy/README.md` emeklilik
+  gerekçesini **ve o sırada ölçülen takası** kaydediyor.
+
+**KAPI BUGÜN İKİ GERÇEK KUSUR YAKALADI — ikisi de `verify.sh`'nin GÖREMEDİĞİ yerden:**
+1. `compare-competitors.db.test.ts` `absent.example` kullanıyordu; `packages/core`'un
+   `NON_PUBLIC_TLDS` listesinde **`example` var**, yani çağrı ücretsiz ön-kapıda ölüyor ve test
+   vendor arızasından gelen bir red bekliyordu → **çalışma zamanı şeridi** yakaladı.
+2. `RankedKeywordsResult` genişleyince `project-target.db.test.ts`'in stub'ı eksik kaldı →
+   **tip şeridi** (`dbtest_typegate`) yakaladı. İşçi düzeltmekle kalmayıp `tsc`'nin henüz
+   raporlamadığı **ikinci kurbanı** aynı dosyada buldu, stub'ı gerçek parser'a delege etti, ve
+   **düzeltmeyi kasten geri alıp kapının kırmızı verdiğini ÖLÇTÜ**.
+Kökü aynı: `apps/mcp/tsconfig.json` `src/**/*.test.ts`'i typecheck'ten dışlıyor (chip'te).
+
+**HAKEM DESENİ — üç dilimde de aynı şekil:** taze Fable hakemlerinin üçü de işçinin bulamadığı
+ekseni buldu, ve üçü de **bir ayrımın tek yönünün pinli olması**ydı (`null` vs `0`). En sinsisi
+`audit_speed`'de çıktı: `extractLighthouseCostUsd`'de `??` yerine `||` olsa, vendor'ın **0
+bildirdiği** bir çağrı liste fiyatına yükselir ve gün **harcanmamış parayı sayardı**.
+
+**Süreç:** 3 işçi (izole worktree) + **3 taze Fable hakem turu**, ~140 mutasyon ekseni. İşçilerin
+üçü de kendi hatasını yakalayıp raporladı: biri no-op mutasyonu "kör nokta" sanmaktan döndü (zod
+`.default()` yalnız `undefined`'da ateşlenir), biri harness'ının filtre hatası yüzünden dört
+mutasyonu yanlış saydığını buldu, biri `origin/main`'i şefin sözüne güvenmeyip kendi kontrol etti.
+
+**Yeni flake sınıfı:** GitHub'ın **action indirme katmanı 429** verip üç job'ı `Set up job`
+aşamasında öldürdü — ayırt edici işaret: kırmızı `Run bash guardrails/...` satırına **hiç
+gelmeden** çıkıyor. Ayrıca lokal Supabase seed'inde bir 502 ve `disconnect-button` rerender
+yarışının ikinci görülüşü.
+
 ### ✍️ 2026-08-17 — İMZA ALINDI, DİSPATCH BAŞLADI: iki DFS tool'u yeniden fiyatlanmadan CANLIDA
 
 Operatör imza paketini **v2 hâliyle onayladı** (*"onaylıyorum, dispatch et"*) — ama önce
