@@ -3,8 +3,8 @@ import { ALL_TOOLS } from "./index.ts";
 import { PAID_BALANCE_TOOLS } from "../credits/paid-balance.ts";
 
 /**
- * Honesty pins for what the four DataForSEO tools SAY about themselves in tools/list — the
- * surface an MCP client shows a user before they spend 25 / 65 / 70 / 90 credits.
+ * Honesty pins for what the DataForSEO tools SAY about themselves in tools/list — the surface an
+ * MCP client shows a user before they spend 25 / 45 / 45 / 65 / 70 / 90 credits.
  *
  * Two lies are pinned shut here, both of the same kind: a description that asserts a
  * DEPLOYMENT STATE it cannot see.
@@ -27,8 +27,11 @@ function descriptionOf(name: string): string {
 }
 
 describe("DataForSEO tool descriptions", () => {
-  it("covers all four gated tools", () => {
-    expect(GATED).toHaveLength(4);
+  // Four -> six on 2026-08-17 (keyword_gap, link_gap). The count is restated rather than derived
+  // on purpose: a gated tool silently DROPPING out of the set would otherwise make every it.each
+  // below assert less while this file stayed green.
+  it("covers all six gated tools", () => {
+    expect(GATED).toHaveLength(6);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {
