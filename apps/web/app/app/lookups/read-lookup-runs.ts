@@ -42,11 +42,14 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
  * so this read can be (runs.ts says so), and `locale` is the two-field object that decides which
  * runs are comparable.
  *
- * BOUNDED, and the bound is disclosed rather than hidden: `buildDomainLookupHistory` reports
- * `windowFull` when the read came back at the ceiling, and the page then says that older runs
- * exist which it did not compare against. A change computed inside a truncated window can be
- * missing a prior run that really is in the table, and silence about that would let "no change
- * shown" read as "first run of its kind".
+ * BOUNDED AT `limit`, FETCHED AT `limit + 1`, and that one extra row is the whole point. A change
+ * computed inside a truncated window can be missing a prior run that really is in the table, so
+ * the page says out loud when older runs exist — and THAT SENTENCE HAS TO BE MEASURED. Asking for
+ * exactly `limit` cannot measure it: a full result only means "at least `limit`", which is equally
+ * true of a tenant with 201 runs and of one whose 200 are all on the page, so the second tenant
+ * would be told that paid runs exist which do not. The extra row is a PROBE, never content —
+ * `buildDomainLookupHistory` drops it after sorting and reports `windowFull` from the fact that it
+ * came back at all. It costs one row of four small fields.
  *
  * A failed read THROWS rather than degrading to an empty list — the repo's standing choice on
  * every panel read: "you have never run a domain lookup" is a claim, and a page that makes it
@@ -64,7 +67,7 @@ export async function listDomainLookupRuns(
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(DOMAIN_LOOKUP_HISTORY_LIMIT);
+    .limit(DOMAIN_LOOKUP_HISTORY_LIMIT + 1);
   if (error) {
     throw new Error(`domain_lookup_runs history lookup failed: ${error.message}`);
   }

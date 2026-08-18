@@ -118,6 +118,11 @@ export function LookupHistoryList({ history }: { history: DomainLookupHistory })
         THE CEILING, DISCLOSED WHEN IT BITES. Inside a truncated window a run's earlier comparable
         run may simply be outside the page, so "no change shown" on the oldest rows would otherwise
         read as "first run of its kind" — a claim this page did not measure.
+
+        "Older runs exist" is stated as a FACT because it is one: `windowFull` is now set from the
+        read's overflow probe — a run older than the last listed one that was actually fetched and
+        then dropped — and not from "the read came back full", which was true of a tenant whose
+        whole history fitted the page and made this very sentence a lie for them.
       */}
       {history.windowFull ? (
         <p className="m-0 mt-6 font-mono text-[11.5px] leading-[1.7] text-faint">

@@ -60,11 +60,33 @@ import {
  * fact the reader needs, and it is never dressed up: nothing here joins to `projects` to invent a
  * name for a row that has no project.
  *
- * WHAT A TRUNCATED WINDOW CANNOT SEE. The read is bounded (`DOMAIN_LOOKUP_HISTORY_LIMIT`), so the
- * OLDEST rows in the window may well have earlier comparable runs that were left outside it. Such
- * a row gets no change, which is indistinguishable from "this is the first run of its kind" — so
- * `windowFull` is returned and the page says so out loud rather than letting the absence read as a
- * measurement.
+ * WHAT A TRUNCATED WINDOW CANNOT SEE, AND HOW THE PAGE KNOWS IT IS TRUNCATED. The read is bounded
+ * (`DOMAIN_LOOKUP_HISTORY_LIMIT`), so the OLDEST rows shown may well have earlier comparable runs
+ * left outside the window. Such a row gets no change, which is indistinguishable from "this is the
+ * first run of its kind" — so the page says out loud that older runs exist.
+ *
+ * THAT SENTENCE IS A MEASUREMENT, NOT AN ASSUMPTION, and the first version of this module got it
+ * wrong in a way worth recording. It set the flag from `rows.length >= limit` — but the read
+ * returned at most `limit` rows, so the flag was true EXACTLY when the read came back full, which
+ * cannot tell "the tenant has 201 runs" from "the tenant has exactly 200 and this page shows every
+ * one of them". Every tenant crossing the ceiling would have passed through a state where the
+ * panel flatly claimed older paid runs existed that did not — a false claim about 65-90 credit
+ * history, made by the surface built to stop exactly that. The read therefore asks for
+ * `limit + 1` and the extra row is a PROBE: its existence is the whole measurement.
+ *
+ * THE PROBE IS NOT CONTENT, AND IT IS NOT A COMPARISON BASE EITHER. It is dropped — after the
+ * sort, so what is dropped is the OLDEST run and not whichever row happened to arrive last — before
+ * anything at all is derived from it. Both halves of that were a decision:
+ *
+ *   - not DISPLAYED, because it is row 201 of a page that promises the most recent 200, and a list
+ *     that silently ran one longer than it says is a list whose length means nothing;
+ *   - not COMPARED AGAINST, and this is the half that could have gone the other way. Letting it
+ *     serve as the oldest listed run's baseline would buy one more change clause, at the price of
+ *     that clause reading "since <date>" where the date belongs to a run the page never lists and
+ *     the reader cannot scroll to. That is the same defect as the false truncation claim wearing
+ *     different clothes: a statement about a measurement the reader cannot check. The rule kept
+ *     instead is flat and checkable — EVERY change on this page names a run that is ON this page —
+ *     and it is pinned by its own spec rather than left to this paragraph.
  */
 
 /**
@@ -126,13 +148,15 @@ export interface DomainLookupHistoryEntry {
   readonly change: DomainLookupChange | null;
 }
 
-/** The page's whole input: the rows, plus whether the window it was read through was full. */
+/** The page's whole input: the runs it lists, plus what it measured beyond them. */
 export interface DomainLookupHistory {
+  /** At most `limit` runs, newest first. The probe row, if any, is not among them. */
   readonly entries: readonly DomainLookupHistoryEntry[];
   /**
-   * True when the read came back with as many rows as it asked for, i.e. older runs exist that
-   * this page never saw — so the oldest entries' missing changes mean "not measured here", not
-   * "first of its kind".
+   * True when a run OLDER than the last listed one was actually seen — the overflow probe came
+   * back. Not "the read came back full": that was the earlier, false version of this flag, and it
+   * could not tell a tenant with 201 runs from one whose 200 are all on the page. So the oldest
+   * entries' missing changes mean "not measured here", and the page may say so.
    */
   readonly windowFull: boolean;
 }
@@ -221,12 +245,19 @@ interface Draft {
  * result with the wrong interval. A run whose own total is unreadable, or whose timestamp did not
  * parse, breaks its group's chain: the run after it gets no change rather than a change measured
  * across a gap this module cannot see into.
+ *
+ * `rows` may carry ONE MORE than `limit` — the read's overflow probe. It is sorted with the rest
+ * and then cut, so what leaves is the oldest run rather than whichever row arrived last, and it is
+ * cut BEFORE the change pass so nothing on the page can be measured against a run the page does
+ * not list. See the module header for why that trade was taken.
  */
 export function buildDomainLookupHistory(
   rows: readonly DomainLookupHistoryRow[],
   limit: number = DOMAIN_LOOKUP_HISTORY_LIMIT,
 ): DomainLookupHistory {
-  const drafts: Draft[] = [...rows].sort(newestFirst).map((row) => {
+  const ordered = [...rows].sort(newestFirst);
+  const listed = ordered.slice(0, limit);
+  const drafts: Draft[] = listed.map((row) => {
     const locale = readLocale(row.locale);
     return {
       row,
@@ -268,7 +299,10 @@ export function buildDomainLookupHistory(
       locale: draft.locale,
       change: changes.get(draft) ?? null,
     })),
-    windowFull: rows.length >= limit,
+    // The PROBE ANSWERED: a run older than the last listed one really was seen. Strictly greater,
+    // because a read that came back with exactly `limit` rows saw no such run — that off-by-one IS
+    // the false claim this flag was rebuilt to stop making.
+    windowFull: ordered.length > limit,
   };
 }
 

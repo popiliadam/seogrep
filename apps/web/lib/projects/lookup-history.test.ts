@@ -311,21 +311,135 @@ describe("a change is measured only between two runs that measured the same thin
   });
 });
 
-describe("the history says when it could not see the whole table", () => {
-  it("flags a full window, and only a full window", () => {
+/**
+ * THE OVERFLOW PROBE — and the boundary an earlier version of this spec could not express.
+ *
+ * That version pinned `windowFull` as "the read came back full", which is what the module then
+ * did, and the pin was worse than no pin: it FROZE a false claim. The read returned at most
+ * `limit` rows, so the flag was true exactly when `limit` rows came back — indistinguishable
+ * between a tenant with `limit + 1` runs and one whose `limit` runs are all on the page. The
+ * second tenant was told, flatly, that older paid runs existed which did not.
+ *
+ * It could not be expressed then because the builder ALONE cannot know it: nothing in a list of
+ * `limit` rows says whether a `limit + 1`-th exists. The read now fetches one extra row and this
+ * layer measures its presence, so the boundary below is finally a statement about the world
+ * rather than about the query's own ceiling.
+ */
+describe("the history says older runs exist only when it actually saw one", () => {
+  /** `limit` rows and no more: every run the tenant has is on the page, so nothing is claimed. */
+  it("claims nothing when the whole history fits exactly", () => {
     const rows = [ranked("2026-08-01T00:00:00.000Z", 1), ranked("2026-07-01T00:00:00.000Z", 1)];
-    expect(buildDomainLookupHistory(rows, 2).windowFull).toBe(true);
-    expect(buildDomainLookupHistory(rows, 3).windowFull).toBe(false);
+    const history = buildDomainLookupHistory(rows, 2);
+    expect(history.windowFull).toBe(false);
+    expect(history.entries).toHaveLength(2);
   });
 
-  /** The default ceiling is the one the query sends, so the flag cannot be true off-by-one. */
+  /** …and one row past it: the probe came back, so older runs demonstrably exist. */
+  it("claims older runs exist when one row past the ceiling came back", () => {
+    const rows = [
+      ranked("2026-08-01T00:00:00.000Z", 1),
+      ranked("2026-07-01T00:00:00.000Z", 1),
+      ranked("2026-06-01T00:00:00.000Z", 1),
+    ];
+    expect(buildDomainLookupHistory(rows, 2).windowFull).toBe(true);
+  });
+
+  /** THE PROBE IS NOT CONTENT: a page that promises `limit` runs must list exactly `limit`. */
+  it("never lists the probe row", () => {
+    const rows = [
+      ranked("2026-08-01T00:00:00.000Z", 1),
+      ranked("2026-07-01T00:00:00.000Z", 1),
+      ranked("2026-06-01T00:00:00.000Z", 1),
+    ];
+    const history = buildDomainLookupHistory(rows, 2);
+    expect(history.entries).toHaveLength(2);
+    expect(history.entries.map((entry) => entry.createdAt)).toEqual([
+      "2026-08-01T00:00:00.000Z",
+      "2026-07-01T00:00:00.000Z",
+    ]);
+  });
+
+  /**
+   * …AND THE ROW DROPPED IS THE OLDEST, not whichever arrived last. Rows are handed over with the
+   * oldest FIRST, so a cut taken before the sort would drop the NEWEST run — the one the reader
+   * most wants — and leave the page silently a month behind.
+   */
+  it("drops the oldest run, not the last one in the array", () => {
+    const history = buildDomainLookupHistory(
+      [
+        ranked("2026-06-01T00:00:00.000Z", 1),
+        ranked("2026-08-01T00:00:00.000Z", 3),
+        ranked("2026-07-01T00:00:00.000Z", 2),
+      ],
+      2,
+    );
+    expect(history.entries.map((entry) => entry.createdAt)).toEqual([
+      "2026-08-01T00:00:00.000Z",
+      "2026-07-01T00:00:00.000Z",
+    ]);
+  });
+
+  /**
+   * THE DECISION, PINNED: the probe is not a comparison base either.
+   *
+   * Letting it serve as the oldest listed run's baseline would buy one more change clause at the
+   * price of that clause reading "since <date>" for a run the page never lists and the reader
+   * cannot scroll to — a statement about a measurement they cannot check, which is the same
+   * defect as the false truncation claim in different clothes. Here the three runs are perfectly
+   * comparable, so this test fails the moment the cut moves after the change pass.
+   */
+  it("never measures a listed run against the probe", () => {
+    const history = buildDomainLookupHistory(
+      [
+        ranked("2026-08-01T00:00:00.000Z", 300),
+        ranked("2026-07-01T00:00:00.000Z", 200),
+        ranked("2026-06-01T00:00:00.000Z", 100),
+      ],
+      2,
+    );
+    expect(history.entries[0]?.change?.delta).toBe(100);
+    expect(history.entries[1]?.change).toBeNull();
+  });
+
+  /**
+   * THE INVARIANT BEHIND THAT DECISION, stated once as a property rather than as one more case:
+   * every "since <date>" on the page names a run that is ON the page.
+   */
+  it("only ever names a listed run as the previous one", () => {
+    const history = buildDomainLookupHistory(
+      [
+        ranked("2026-08-01T00:00:00.000Z", 300),
+        ranked("2026-07-01T00:00:00.000Z", 200),
+        backlinks("2026-07-15T00:00:00.000Z", 80),
+        backlinks("2026-06-15T00:00:00.000Z", 70),
+        ranked("2026-06-01T00:00:00.000Z", 100),
+      ],
+      3,
+    );
+    const listed = new Set(history.entries.map((entry) => entry.createdAt));
+    const named = history.entries
+      .map((entry) => entry.change?.previousCreatedAt)
+      .filter((stamp): stamp is string => stamp !== undefined);
+    expect(named.length).toBeGreaterThan(0);
+    for (const stamp of named) {
+      expect(listed.has(stamp)).toBe(true);
+    }
+  });
+
+  /** The default ceiling is the one the read sends, so the flag cannot be off by one. */
   it("defaults to the ceiling the read itself uses", () => {
     expect(DOMAIN_LOOKUP_HISTORY_LIMIT).toBeGreaterThan(0);
-    const rows = Array.from({ length: DOMAIN_LOOKUP_HISTORY_LIMIT }, (_unused, index) =>
-      ranked(`2026-08-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`, index),
+    const stamp = (index: number) =>
+      `2026-08-01T00:00:${String(index % 60).padStart(2, "0")}.${String(index).padStart(3, "0")}Z`;
+    const exactly = Array.from({ length: DOMAIN_LOOKUP_HISTORY_LIMIT }, (_unused, index) =>
+      ranked(stamp(index), index),
     );
-    expect(buildDomainLookupHistory(rows).windowFull).toBe(true);
-    expect(buildDomainLookupHistory(rows.slice(1)).windowFull).toBe(false);
+    expect(buildDomainLookupHistory(exactly).windowFull).toBe(false);
+    expect(buildDomainLookupHistory(exactly).entries).toHaveLength(DOMAIN_LOOKUP_HISTORY_LIMIT);
+
+    const withProbe = [...exactly, ranked(stamp(DOMAIN_LOOKUP_HISTORY_LIMIT), 1)];
+    expect(buildDomainLookupHistory(withProbe).windowFull).toBe(true);
+    expect(buildDomainLookupHistory(withProbe).entries).toHaveLength(DOMAIN_LOOKUP_HISTORY_LIMIT);
   });
 });
 

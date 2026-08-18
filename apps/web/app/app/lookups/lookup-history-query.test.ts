@@ -145,12 +145,20 @@ describe("the lookup history reads every run the caller owns", () => {
   });
 
   /**
-   * BOUNDED, by the SHARED constant. A literal here would drift from the ceiling the page
-   * discloses (`windowFull`), and the disclosure would then be off by however far the two drifted:
-   * the page would either claim truncation that did not happen or hide truncation that did.
+   * BOUNDED BY THE SHARED CONSTANT, PLUS THE OVERFLOW PROBE. A literal here would drift from the
+   * ceiling the page discloses (`windowFull`), and the disclosure would then be off by however far
+   * the two drifted.
+   *
+   * THE `+ 1` IS NOT SLACK, IT IS THE MEASUREMENT. Fetching exactly the ceiling leaves "the read
+   * came back full" as the only available signal, and that signal cannot tell a tenant with
+   * LIMIT + 1 runs from one whose LIMIT runs are all on the page — so the page would tell the
+   * second tenant that older paid runs exist which do not. Drop the `+ 1` and it starts making
+   * that false claim again, silently and only past the ceiling, where no fixture will meet it.
+   * This is the fast lane's half of stopping that; `lookup-history.test.ts` owns the other half,
+   * the flag's own boundary.
    */
-  it("takes a bounded window, the one the page discloses", () => {
-    expect(READ).toMatch(/\.limit\(\s*DOMAIN_LOOKUP_HISTORY_LIMIT\s*\)/);
+  it("fetches one row past the ceiling — the probe the page's truncation claim rests on", () => {
+    expect(READ).toMatch(/\.limit\(\s*DOMAIN_LOOKUP_HISTORY_LIMIT\s*\+\s*1\s*\)/);
     expect(SOURCE).toMatch(
       /import\s*\{[^}]*\bDOMAIN_LOOKUP_HISTORY_LIMIT\b[^}]*\}\s*from\s*["'][^"']*lookup-history["']/,
     );

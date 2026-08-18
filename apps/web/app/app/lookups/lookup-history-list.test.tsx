@@ -165,22 +165,34 @@ describe("the lookups page shows a change only where one was measured", () => {
 
 describe("the lookups page admits what its window could not see", () => {
   const ROWS = [
-    row({ tool: "ranked_keywords", created_at: "2026-08-16T09:00:00.000Z", total: 2, locale: EN_US }),
-    row({ tool: "ranked_keywords", created_at: "2026-07-16T09:00:00.000Z", total: 1, locale: EN_US }),
+    row({ tool: "ranked_keywords", created_at: "2026-08-16T09:00:00.000Z", total: 3, locale: EN_US }),
+    row({ tool: "ranked_keywords", created_at: "2026-07-16T09:00:00.000Z", total: 2, locale: EN_US }),
+    row({ tool: "ranked_keywords", created_at: "2026-06-16T09:00:00.000Z", total: 1, locale: EN_US }),
   ];
 
   /**
    * A truncated window can be missing the prior run of its own oldest rows, so "no change" there
    * would read as "first of its kind" — a claim the page never measured.
+   *
+   * THE PAIR IS THE POINT, and both halves are about the same boundary: with the overflow probe
+   * present the sentence is a measurement, and with the history fitting EXACTLY inside the window
+   * it must not appear at all. The second case is the one the page used to get wrong — it claimed
+   * older runs existed whenever the read came back full, which every tenant crossing the ceiling
+   * passes through with its history complete on the page.
    */
-  it("says older runs exist when the read came back full", () => {
-    const container = listOf(ROWS, 2);
-    expect(container.textContent).toMatch(/older runs/i);
+  it("says older runs exist when a run past the ceiling was seen", () => {
+    expect(listOf(ROWS, 2).textContent).toMatch(/older runs/i);
   });
 
-  it("says nothing of the sort when the whole history fitted", () => {
-    const container = listOf(ROWS, 3);
-    expect(container.textContent).not.toMatch(/older runs/i);
+  it("says nothing of the sort when the history fits the window exactly", () => {
+    expect(listOf(ROWS, 3).textContent).not.toMatch(/older runs/i);
+  });
+
+  /** …and the probe never reaches the table it caused the sentence about. */
+  it("does not list the run it only probed for", () => {
+    const rows = bodyRows(listOf(ROWS, 2));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((line) => line.textContent).join(" ")).not.toMatch(/2026-06-16/);
   });
 });
 
