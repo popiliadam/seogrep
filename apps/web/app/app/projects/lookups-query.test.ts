@@ -3,6 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DOMAIN_LOOKUP_TOOLS } from "../../../lib/projects/lookups";
+import {
+  errorBranchOf,
+  fanOutBindingsOf,
+  filtersOf,
+  paramsOf,
+  returnPropsOf,
+  singleRowTerminatorsOf,
+} from "./query-pins";
 
 /**
  * What the DOMAIN LOOKUP LINES read — the half no render spec can see.
@@ -79,6 +87,12 @@ function selectOf(body: string): string {
 
 const READ = bodyOf(PAGE, "latestDomainLookupRun");
 const COLUMNS = selectOf(READ);
+
+/** What the read was HANDED and what it does with it — see the two describes at the bottom. */
+const WHAT = "the lookup lines' read";
+const PARAMS = paramsOf(READ, WHAT);
+const FILTERS = filtersOf(READ, WHAT);
+const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
 
 describe("the lookup lines read the newest run of one domain lookup", () => {
   /** The right table: 0027 is a FOURTH sibling, not a row in audit_runs or gsc_discovery_runs. */
@@ -180,5 +194,98 @@ describe("the lookup lines do not download vendor payloads", () => {
     expect(columns).toEqual(
       ["tool", "created_at", "total:report->total", "top:report->top"].sort(),
     );
+  });
+});
+
+/**
+ * THE VALUES, not only the column names — the hole every pin above leaves open.
+ *
+ * Measured on 2026-08-18, not supposed: `.eq("user_id", userId)` rewritten to
+ * `.eq("user_id", projectId)` satisfies the tenancy pin above word for word, typechecks, and passes
+ * BOTH gates. It is not a leak — RLS still refuses another tenant's rows — it is a total silent
+ * degrade: the filter matches nothing, so every lookup line on every card reads "not run for this
+ * domain" while the query returns successfully.
+ *
+ * So each filter is compared against the read's OWN PARAMETER, taken from its signature instead of
+ * spelled here. That makes the pin a RELATIONSHIP: renaming `userId` renames both sides at once and
+ * this stays green, while pointing the filter at another id in scope reddens it. The one legitimate
+ * change it cannot survive is REORDERING the parameters — caller second, project third, tool
+ * fourth, here and in all three siblings — and that is a deliberate trade rather than an oversight:
+ * a read whose (user, project, tool) order moved deserves a human's eye either way.
+ */
+describe("the lookup lines compare each column against the value it was handed", () => {
+  /**
+   * The positions the pins below rest on, asserted once and by SHAPE rather than by name: four
+   * parameters, all distinct. Without this, a read that lost a parameter would compare
+   * `undefined` against `undefined` and every value pin would pass on nothing at all.
+   */
+  it("is handed the client, the caller, the project and the tool", () => {
+    expect(PARAMS).toHaveLength(4);
+    expect(new Set(PARAMS).size).toBe(4);
+  });
+
+  it("filters user_id on the caller it was handed, not another id in scope", () => {
+    expect(FILTERS.get("user_id")).toBe(PARAMS[1]);
+  });
+
+  it("filters project_id on the project it was handed", () => {
+    expect(FILTERS.get("project_id")).toBe(PARAMS[2]);
+  });
+
+  it("filters tool on the tool it was handed", () => {
+    expect(FILTERS.get("tool")).toBe(PARAMS[3]);
+  });
+});
+
+describe("the lookup lines' read fails visibly rather than emptying the card", () => {
+  /**
+   * `.maybeSingle()`, and EXACTLY it. Dropped, `data` comes back as an ARRAY and the
+   * `as unknown as DomainLookupRunRow | null` cast swallows the difference whole: truthy object,
+   * every field `undefined`, and the line falls back to its never-run copy on a project whose row
+   * was fetched successfully. `.single()` is the other wrong answer — it ERRORS on zero rows, and
+   * zero rows is the NORMAL state here (0027's commonest call is a bare competitor target), so it
+   * would turn "this tool has not run for this domain" into a thrown page.
+   */
+  it("asks for one row with the forgiving single-row terminator", () => {
+    expect(singleRowTerminatorsOf(READ)).toEqual(["maybeSingle"]);
+  });
+
+  /**
+   * A FAILED READ THROWS — the repo's deliberate choice over degrading, stated in `page.tsx`'s own
+   * doc comments and in `lookups.ts`: a card that silently prints "not run" because the database
+   * blipped is worse than a visible failure, because the user acts on it. Swapping the throw for
+   * `return null` is invisible to every other spec in this suite, so the branch is pinned by what
+   * it DOES — it raises, it does not return, and it carries the driver's own message so the failure
+   * can be diagnosed — rather than by matching the word `throw` somewhere in the body.
+   */
+  it("throws on a failed lookup and never returns a degraded row", () => {
+    const branch = errorBranchOf(READ, WHAT);
+    expect(branch).toMatch(/throw\s+new\s+Error\(/);
+    expect(branch).not.toMatch(/\breturn\b/);
+    expect(branch).toMatch(/error\.message/);
+  });
+});
+
+/**
+ * …AND THE ROWS REACH THE CARD. `ProjectCardInput.lookupRuns` is OPTIONAL — deliberately, so the
+ * card builder's own specs can omit it — which is exactly why `cardInputFor` can fetch all three
+ * lookups, pay for the round trips, and hand back `lookupRuns: undefined` with `tsc` and every
+ * spec here still green. The fan-out pin above watches the fan-out's OWN body; this watches its
+ * CALLER consuming it.
+ *
+ * Pinned as a relationship — the binding the `latestDomainLookupRuns` call lands in must be the
+ * expression the `lookupRuns` property holds — so renaming the binding costs nothing, while
+ * dropping it, or swapping it with the discovery binding beside it, reddens. The property KEY is
+ * spelled, because it is the contract with `ProjectCardInput` rather than a local choice.
+ *
+ * WHAT THIS STILL CANNOT SEE: that the rows then render. vitest has no RSC boundary, so nothing
+ * executes this page (signed lesson 12); `lookup-lines.test.tsx` proves the builder and the lines
+ * given rows, this proves the page gathers them, and no spec in the fast lane joins the two.
+ */
+describe("the lookup runs reach the card the page builds", () => {
+  it("keeps the fetched lookup runs on the card input", () => {
+    const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestDomainLookupRuns");
+    expect(binding, "cardInputFor no longer calls latestDomainLookupRuns at all").toBeDefined();
+    expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("lookupRuns")).toBe(binding);
   });
 });
