@@ -80,8 +80,9 @@ import { paramsOf, returnPropsOf } from "./query-pins";
  * not redden them. So they prove the SHAPE works and say nothing about the page still using it,
  * and the other seven reads have no behavioural lane at all.
  *
- * The two census tests below are what stop this table going stale: a TENTH read, or a tenth
- * property on the card input, reddens this file until it has a row.
+ * THREE census tests below are what stop this table going stale: a tenth read reddens this file
+ * whether it is written as a declaration or as an arrow (the `.from(` count catches the shape the
+ * name list cannot see), and so does a tenth property on the card input.
  */
 
 /** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
@@ -176,6 +177,22 @@ describe("every read this page makes has a row in the matrix above", () => {
       "latestDomainLookupRun",
     ]);
     expect(total).toBe(sorting.length);
+  });
+
+  /**
+   * NINE `.from(` calls, one per row of the matrix — the census `READS` cannot perform on its own.
+   * `functionNames` reads `function <name>(` declarations, so a read written as an arrow
+   * (`const extraRead = async (supabase) => supabase.from(...)`) is INVISIBLE to it: measured
+   * 2026-08-18 by a referee, a tenth read in that shape left all 224 specs in this directory green,
+   * which made the staleness contract this file's header claims FALSE for that shape. Counting the
+   * calls file-wide and pinning the total to the census closes it however the read is written.
+   *
+   * It closes a second gap in passing, and that one is why this is a count rather than a lint: the
+   * per-row table pin below asserts a body CONTAINS its table, so a body holding TWO reads would
+   * satisfy it while quietly serving the wrong one. Here the total would be ten against nine.
+   */
+  it("talks to PostgREST only inside reads the matrix accounts for", () => {
+    expect([...PAGE.matchAll(/\.from\(/g)].length).toBe(READS.length);
   });
 
   /**
@@ -333,8 +350,11 @@ describe("the crawl summary counts only crawls that succeeded", () => {
   /**
    * Already pinned in `query-and-nav.test.ts` — but through a file-wide search for the FIRST
    * `.from("jobs")` statement, and `page.tsx` now reads `jobs` three times. Re-pinned body-scoped
-   * here so the assertion keeps measuring the read it names: without it, deleting the filter from
-   * `latestSucceeded` would leave the old pin passing on `latestPullSummary`'s identical one.
+   * here so the assertion keeps measuring the read it names. The scenario that justifies it is a
+   * RE-POINT, not a deletion — measured both ways: re-pointing `latestSucceeded` at another
+   * table leaves the old file-wide pin GREEN, because it then finds `latestPullSummary`'s
+   * identical filter, while deleting the filter outright reddens the old pin too (this read is
+   * the first `.from("jobs")` in the file).
    *
    * A failed crawl must not date the card, and the reason is not cosmetic: the same row feeds
    * `deriveProjectSignals`, so a crawl that died an hour ago would move the project off the

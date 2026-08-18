@@ -437,16 +437,21 @@ describe("the rows the page reads reach the cards it builds", () => {
    * Pinned as the RELATIONSHIP, not the spelling: the property must hold a lookup in the map
    * parameter, keyed by the project parameter's id, with both names read out of the signature — so
    * renaming either survives, while `null`, a fresh empty Map, or keying on the caller reddens.
-   * The `?? null` tail is deliberately NOT pinned: `Map.get` returns `… | undefined` and the field
-   * is a required `ConnectionRow | null`, so `tsc` is already the gate on it and a second, weaker
-   * copy here would only redden on `|| null`.
+   * MATCHED WHOLE, not anchored at the start, and that distinction was measured rather than
+   * reasoned: an earlier version of this pin anchored only `^…get(project.id)` and left the tail
+   * free, so `connections.get(project.id) ? null : null` satisfied it — 224 specs green AND `tsc`
+   * exit 0, with every card's connection permanently null, i.e. the exact defect this pin exists
+   * for. The comment that version carried ("`tsc` is already the gate on the tail") was checkably
+   * wrong: `tsc` rejects `undefined` reaching a `ConnectionRow | null` field, and an always-null
+   * ternary is neither undefined nor a type error. The optional `?? null` is the ONLY tail the
+   * source is allowed to carry, so it is spelled out and everything else reddens.
    */
   it("keeps the connection row it looked up on the card input", () => {
     const params = paramsOf(CARD_INPUT, "cardInputFor");
     const held = returnPropsOf(CARD_INPUT, "cardInputFor").get("connection");
     expect(held, "cardInputFor no longer returns a `connection` property at all").toBeDefined();
     expect(resolved(CARD_INPUT, held as string)).toMatch(
-      new RegExp(`^${params[3]}\\.get\\(\\s*${params[2]}\\.id\\s*\\)`),
+      new RegExp(`^${params[3]}\\.get\\(\\s*${params[2]}\\.id\\s*\\)(\\s*\\?\\?\\s*null)?$`),
     );
   });
 
