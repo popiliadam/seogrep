@@ -338,6 +338,39 @@ describe("the crawl summary is filtered by the project and tool it was handed", 
   });
 });
 
+/**
+ * …AND IT TAKES THE NEWEST ONE. Its four siblings each pin their own sort order and their own
+ * `.limit(1)` in their own spec file; this read had NEITHER, and that is the whole reason this
+ * block exists rather than being one more line above.
+ */
+describe("the crawl summary is the LAST crawl, not the first one the project ever ran", () => {
+  const CRAWL = bodyOf(PAGE, "latestSucceeded");
+
+  /**
+   * NEWEST FIRST, and this is the ordering an in-memory pick cannot repair: `.limit(1)` truncates
+   * at the DATABASE, so ascending hands back the FIRST crawl a project ever ran. The card then
+   * prints last spring's page count and last spring's date as today's — and the SAME row feeds
+   * `deriveProjectSignals`, so the ladder calls a year-old crawl fresh and moves the project off
+   * `crawl_site` on the strength of it.
+   *
+   * Measured 2026-08-18, not supposed: flipping `ascending` to `true` here was green across the
+   * entire web suite AND `tsc`. `insights-query.test.ts`'s header already described this exact
+   * failure in words, for its own read — the sentence existed and the assertion did not.
+   */
+  it("orders the crawls newest first", () => {
+    expect(CRAWL).toMatch(/\.order\(\s*["']created_at["']\s*,\s*\{\s*ascending:\s*false\b/i);
+  });
+
+  /**
+   * …and takes exactly ONE row, which is what makes the sort order decide anything at all: without
+   * the limit the sort is free and `.maybeSingle()` — pinned above — would ERROR on the second row
+   * instead, so the two pins guard opposite halves of the same sentence.
+   */
+  it("takes exactly one row", () => {
+    expect(CRAWL).toMatch(/\.limit\(\s*1\s*\)/);
+  });
+});
+
 describe("the project list excludes archived projects by value, not by column", () => {
   /**
    * `.is("archived_at", null)` — the pin above matches the whole call, so this adds only the value
@@ -369,6 +402,43 @@ describe("the project list excludes archived projects by value, not by column", 
  * the fast lane executes this page (signed lesson 12); the card layer's own specs prove the other
  * half, and no spec in this suite joins the two.
  */
+/**
+ * What an object-literal property holds AT ITS FIRST MATCHING `const` DECLARATION — and that is
+ * the honest name for it, not "what the property finally holds". `connection,` is shorthand for a
+ * `const` declared four lines up; asserting on the shorthand would only prove the name still
+ * exists, which is exactly what `connection: null` leaves intact, so following the binding is
+ * worth doing. What it CANNOT do is resolve scope.
+ *
+ * THREE REFEREES DEFEATED THIS PIN ON THREE DIFFERENT AXES, each reproducing the production
+ * defect it exists for (every card reads "not connected" while token health keeps reporting on
+ * the connection it just denied having), each green across the whole suite AND `tsc` AND `eslint`:
+ *   1. the TAIL          — `connections.get(project.id) ? null : null`   (closed: whole-match)
+ *   2. REASSIGNMENT      — `let connection = …;` then `connection = null;` (closed: `const` only)
+ *   3. SCOPE             — a block-scoped decoy `const` inside a dead `if`, then
+ *                          `const connection = null;` at function scope. `.exec()` returns the
+ *                          FIRST textual match, so this function reports the decoy. NOT CLOSED.
+ *
+ * Axis 3 is not a missing character. Value flow is a scope question and text has no scopes, so a
+ * fourth regex would only move the boundary again — measured three times, once per round. The
+ * decision recorded here is REVISE, not a fourth patch: this pin stays because it still catches
+ * the ways this breaks BY ACCIDENT, and it is strictly more than the nothing that guarded this
+ * property before, but its guarantee is the one written above and no more. The replacement is a
+ * TypeScript-AST resolution of the declaration in scope at the return site; that is its own slice.
+ */
+function resolved(body: string, held: string): string {
+  if (!/^[A-Za-z_$][\w$]*$/.test(held)) return held;
+  // `const` ONLY, and that is the whole point of this line. Following a `let` would verify the
+  // DECLARATION and say nothing about the value at the return site: a referee wrote
+  // `let connection = connections.get(project.id) ?? null;` and then `connection = null;` on the
+  // next line, and every card's connection went permanently null with 225 specs, 1318 web tests,
+  // `tsc` and `eslint` all green — defect M6 itself, arriving from the position axis instead of
+  // the tail axis this function was hardened for. Refusing `let` means a reassignment leaves the
+  // raw identifier here, the anchored pin fails, and immutability past the declaration is then
+  // enforced by the compiler legitimately rather than by a claim in a comment.
+  const binding = new RegExp(`\\bconst\\s+${held}\\s*=\\s*([^;]+);`).exec(body);
+  return binding === null ? held : (binding[1] as string).replace(/\s+/g, " ").trim();
+}
+
 describe("the rows the page reads reach the cards it builds", () => {
   const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
   const PAGE_FN = pageComponent(PAGE);
@@ -377,6 +447,51 @@ describe("the rows the page reads reach the cards it builds", () => {
     const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestSucceeded");
     expect(binding, "cardInputFor no longer calls latestSucceeded at all").toBeDefined();
     expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("crawl")).toBe(binding);
+  });
+
+  /**
+   * THE CONNECTION ROW — the ONE field on this object that no spec consumed.
+   *
+   * It is not fetched by the fan-out above, so no `fanOutBindingsOf` pin can reach it: it is looked
+   * up in the map the page handed down, which is why it was missed when the six fan-out bindings
+   * were pinned. `ProjectCardInput.connection` accepts null, so `connection: null` typechecks, and
+   * `tokenStatus` beside it stays correct — measured 2026-08-18: green across the whole web suite
+   * AND `tsc`. In production every card's Search Console line reads "not connected" while its token
+   * health line keeps reporting on the connection it just denied having. A card contradicting
+   * itself, on a page whose next-step ladder then routes every project to `connect_gsc`.
+   *
+   * Pinned as the RELATIONSHIP, not the spelling: the property must hold a lookup in the map
+   * parameter, keyed by the project parameter's id, with both names read out of the signature — so
+   * renaming either survives, while `null`, a fresh empty Map, or keying on the caller reddens.
+   * MATCHED WHOLE, not anchored at the start, and that distinction was measured rather than
+   * reasoned: an earlier version of this pin anchored only `^…get(project.id)` and left the tail
+   * free, so `connections.get(project.id) ? null : null` satisfied it — 224 specs green AND `tsc`
+   * exit 0, with every card's connection permanently null, i.e. the exact defect this pin exists
+   * for. The comment that version carried ("`tsc` is already the gate on the tail") was checkably
+   * wrong: `tsc` rejects `undefined` reaching a `ConnectionRow | null` field, and an always-null
+   * ternary is neither undefined nor a type error. The optional `?? null` is the ONLY tail the
+   * source is allowed to carry, so it is spelled out and everything else reddens.
+   */
+  it("keeps the connection row it looked up on the card input", () => {
+    const params = paramsOf(CARD_INPUT, "cardInputFor");
+    const held = returnPropsOf(CARD_INPUT, "cardInputFor").get("connection");
+    expect(held, "cardInputFor no longer returns a `connection` property at all").toBeDefined();
+    expect(resolved(CARD_INPUT, held as string)).toMatch(
+      new RegExp(`^${params[3]}\\.get\\(\\s*${params[2]}\\.id\\s*\\)(\\s*\\?\\?\\s*null)?$`),
+    );
+  });
+
+  /**
+   * …AND THE HEALTH LINE IS FED THE SAME ROW. `tokenStatusFor` is already pinned by name above;
+   * its ARGUMENTS were not, and `tokenStatusFor(null, health)` typechecks — the mirror image of the
+   * defect above, arriving at the same contradictory card from the other side. Compared as text
+   * against what the `connection` property itself holds, so the two lines cannot be fed different
+   * rows whatever either one is called.
+   */
+  it("derives the token status from that same connection row", () => {
+    const params = paramsOf(CARD_INPUT, "cardInputFor");
+    const props = returnPropsOf(CARD_INPUT, "cardInputFor");
+    expect(props.get("tokenStatus")).toBe(`tokenStatusFor(${props.get("connection")}, ${params[4]})`);
   });
 
   it("maps over the projects it read and hands both maps on to the gatherer", () => {
