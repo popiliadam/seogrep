@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  errorBranchOf,
+  fanOutBindingsOf,
+  filtersOf,
+  paramsOf,
+  returnPropsOf,
+  singleRowTerminatorsOf,
+} from "./query-pins";
 
 /**
  * What the SEARCH CONSOLE PULL LINE reads — the half no render spec can see, and the one where the
@@ -73,6 +81,12 @@ function selectOf(body: string): string {
 
 const READ = bodyOf(PAGE, "latestPullSummary");
 const COLUMNS = selectOf(READ);
+
+/** What the read was HANDED and what it does with it — see the describes at the bottom. */
+const WHAT = "the pull line's read";
+const PARAMS = paramsOf(READ, WHAT);
+const FILTERS = filtersOf(READ, WHAT);
+const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
 
 describe("the pull line reads the newest succeeded pull", () => {
   it("reads jobs, filtered to pull_gsc_data", () => {
@@ -150,5 +164,70 @@ describe("the pull line does not download Search Console payloads", () => {
   it("is not routed back through the payload-fetching crawl read", () => {
     expect(bodyOf(PAGE, "cardInputFor")).toMatch(/latestPullSummary\(/);
     expect(bodyOf(PAGE, "cardInputFor")).not.toMatch(/latestSucceeded\([^)]*pull_gsc_data/);
+  });
+});
+
+/**
+ * THE VALUES, not only the column names. `.eq("user_id", userId)` rewritten to
+ * `.eq("user_id", projectId)` satisfies the tenancy pin above word for word, typechecks, and passes
+ * both gates — measured 2026-08-18. Not a leak (RLS still refuses another tenant's rows), a total
+ * silent degrade: the filter matches nothing and every card's pull line falls back to "not pulled".
+ *
+ * TWO OF THIS READ'S FOUR FILTERS ARE ALREADY VALUE-PINNED and deliberately not repeated here:
+ * `tool` and `status` are compared against LITERALS (`"pull_gsc_data"`, `"succeeded"`), which the
+ * regexes above already match in full. The parameter-relationship shape used for the other two
+ * would be wrong for a literal — there is no parameter for it to be the same as.
+ */
+describe("the pull line compares each column against the value it was handed", () => {
+  /** Three distinct parameters — without this, a lost one would compare `undefined` to `undefined`. */
+  it("is handed the client, the caller and the project", () => {
+    expect(PARAMS).toHaveLength(3);
+    expect(new Set(PARAMS).size).toBe(3);
+  });
+
+  it("filters user_id on the caller it was handed, not another id in scope", () => {
+    expect(FILTERS.get("user_id")).toBe(PARAMS[1]);
+  });
+
+  it("filters project_id on the project it was handed", () => {
+    expect(FILTERS.get("project_id")).toBe(PARAMS[2]);
+  });
+});
+
+describe("the pull line's read fails visibly rather than emptying the card", () => {
+  /**
+   * `.maybeSingle()`, and EXACTLY it. Dropped, `data` arrives as an ARRAY and the
+   * `as unknown as PullRow | null` cast swallows it: truthy object, every window field `undefined`,
+   * and the card says the project has never been pulled while the row sits in the response.
+   * `.single()` is the other wrong answer — it ERRORS on zero rows, which is the normal state of a
+   * project that has connected Search Console but not pulled yet.
+   */
+  it("asks for one row with the forgiving single-row terminator", () => {
+    expect(singleRowTerminatorsOf(READ)).toEqual(["maybeSingle"]);
+  });
+
+  /**
+   * A FAILED READ THROWS — this page's stated choice over degrading. A pull line that says "not
+   * pulled" because the database blipped sends the user to re-run a pull that already succeeded.
+   * Pinned by what the branch DOES, not by the presence of the word `throw`.
+   */
+  it("throws on a failed lookup and never returns a degraded row", () => {
+    const branch = errorBranchOf(READ, WHAT);
+    expect(branch).toMatch(/throw\s+new\s+Error\(/);
+    expect(branch).not.toMatch(/\breturn\b/);
+    expect(branch).toMatch(/error\.message/);
+  });
+
+  /**
+   * …AND THE ROW REACHES THE CARD. The pin above proves the CALL survived; this proves its RESULT
+   * did. `ProjectCardInput.pull` accepts null, so `pull: undefined` — the row fetched, the round
+   * trip paid for, the value dropped — typechecks and leaves every other spec here green. Pinned as
+   * a relationship (the binding `latestPullSummary` lands in must be what the `pull` property
+   * holds), so renaming the binding costs nothing and swapping it with `crawl` reddens.
+   */
+  it("keeps the fetched pull summary on the card input", () => {
+    const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestPullSummary");
+    expect(binding, "cardInputFor no longer calls latestPullSummary at all").toBeDefined();
+    expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("pull")).toBe(binding);
   });
 });
