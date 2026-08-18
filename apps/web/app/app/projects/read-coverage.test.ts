@@ -311,7 +311,12 @@ describe("the three list reads take the whole list", () => {
   it.each(["listActiveProjects", "readConnections", "readAccountHealth"])(
     "%s truncates nothing at the database",
     (fn) => {
-      expect(bodyOf(PAGE, fn)).not.toMatch(/\.limit\(/);
+      const body = bodyOf(PAGE, fn);
+      // The only NEGATIVE pin in this file, so it says what it is measured against first: an empty
+      // string satisfies `.not.toMatch` forever, and `bodyOf` throwing rather than returning "" is
+      // the whole reason it cannot be one (signed lesson 12).
+      expect(body).toMatch(/\.from\(/);
+      expect(body).not.toMatch(/\.limit\(/);
     },
   );
 });
