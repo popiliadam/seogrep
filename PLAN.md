@@ -5,9 +5,9 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-18 (3. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`0f7fecf` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+**Durum:** `main` @`f01c884` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
 **MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
@@ -23,10 +23,10 @@ webapp'te göstermek · **(3)** DFS katalog gap'lerini kapatmak. Üçü çok far
 | parça | durum | ölçüm |
 |---|---|---|
 | 1 — dört tool | **~%85** | `ranked_keywords` marj 9,4×→**51×** · `research_keywords` 3,5×→**12,9×** · `compare_competitors` 5 istek→**1** · dördünde trial kapısı + para dürüstlüğü + (3'ünde) 0027 kalıcılığı |
-| 2 — webapp | **~%35** | panelde `Domain lookups` var ama: `research_keywords` kalıcılığı **YOK** · **trend yok** (`lib/projects`'te `trend` kelimesi hiç geçmiyor) · **çıplak-target koşuları panelde HİÇ görünmüyor** (ve prod'daki ilk satır tam da öyleydi) · detay sayfası yok |
+| 2 — webapp | **~%55** | **PR #140 canlıda** (`/app/lookups`): çıplak-target koşuları artık görünüyor · geçmiş var (200 satır + taşma probu) · iki tool'da koşular arası değişim. Kalan: `research_keywords` kalıcılığı **YOK** (kendi tablosunu ister) · tool başına detay sayfası yok · `compare_competitors`'ta değişim **kasten yok** (total isteğin fonksiyonu) |
 | 3 — gap'ler | **~%15** | çağrılan uç **10/76** · sevk edilen tool **3/16** (`keyword_gap` · `link_gap` · `audit_speed`) · tasarlanıp fiyatlanan **12/16** |
 
-**TOPLAM ~%35–40 BİTTİ.** Kalan ~%60–65.
+**TOPLAM ~%40–45 BİTTİ.** Kalan ~%55–60. (Parça 2'nin ucuz yarısı 2026-08-18 3. oturumda kapandı; darboğaz DEĞİŞMEDİ — hâlâ imza.)
 
 **DARBOĞAZ ARTIK KOD DEĞİL.** 9 tool tasarlandı, fiyatlandı, gerekçesi yazıldı ve *imzasız dispatch
 yok* kuralıyla bekliyor. Bir sonraki oturumun kod tarafında yapabileceği en değerli şey, operatörün
@@ -39,9 +39,10 @@ masasındaki bir şeyi beklemektir. İmza gelirse parça 3 **%19 → %75** koşa
 2. **S5 — kiracı başına günlük DFS kotası.** Rank tracker ailesi (`serp_snapshot` ·
    `keyword_positions`) bu imzasız CANLIYA ÇIKMAMALI: fleet tavanı $3/gün ve tek kiracı onu tek
    başına tüketebilir.
-3. **Parça 2'nin ucuz yarısı** (imza gerekmez): `research_keywords` kendi koşu tablosunu ister
-   (0027'ye sığmaz — girdisi kelime listesi, `target` kolonu ona yalan olur) · panelde trend/geçmiş ·
-   çıplak-target koşularının görüneceği bir yüzey.
+3. **Parça 2'nin ucuz yarısı — İKİ ÜÇTE BİRİ KAPANDI (PR #140).** Çıplak-target yüzeyi ve
+   geçmiş/değişim canlıda. **Kalan tek kalem:** `research_keywords` kendi koşu tablosunu ister
+   (0027'ye sığmaz — girdisi kelime listesi, `target` kolonu ona yalan olur) → yeni migration →
+   **operatör kuyruğu**, "hazır-park" deseniyle.
 4. Kapı borçları — açık chip'ler (aşağıda).
 
 #### Kapı komutları — ezberden değil, buradan
@@ -103,6 +104,22 @@ Kural: `kredi ≈ tipik vendor × 400–500`, **en kötü hâl ≥3×**.
 Eskiler: `apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor** · `/status` prob sınırı ·
 `worker.test.ts`'in `outcome()` fixture'ı eksik · port testlerindeki `*.example` domainleri ·
 flaky `disconnect-button.test.tsx:302`.
+**2026-08-18 (3. oturum, PR #140) — beşi de MUTASYONLA ölçüldü, hiçbiri tahmin değil:**
+- **Sayfa→kurucu `limit` argümanı pinsiz.** `buildDomainLookupHistory(rows, 50)` bütün hızlı şeridi
+  geçiyor (56/56) ve alt bilgi 50 satırın üstünde "most recent 200" demeye devam ediyor. Sayfa
+  pini `buildDomainLookupHistory\(\s*await\s+listDomainLookupRuns\(` ile eşleşiyor, ek argüman
+  görünmüyor.
+- **Okumanın dönüş sözleşmesi pinsiz.** `.limit()` ile `return` arasına konan `.slice(0, 200)`
+  bütün şeritleri geçiyor: sorgu pinleri metni okuyor, DB şeridi ≤3 satır ekiyor. Sonucu: taşma
+  probu sessizce ölür ve truncation iddiası kaybolur.
+- **Truncation cümlesindeki rakam assert edilmiyor** — `{DOMAIN_LOOKUP_HISTORY_LIMIT}` yerine düz
+  `50` yazmak her yerde yeşil. Sayfadaki tek para-yüzlü sayının değerini hiçbir spec okumuyor.
+- **`project_id` negatif pininin tırnak sınıfı template literal'i kaçırıyor** — backtick'li
+  `.or(...)` hızlı şeridi 14/14 geçiyor. **DB şeridi yakaladı** (4 test kırmızı), yani KAPI
+  tutuyor; pin tek başına tutmuyor. (İmzalı ders 14'ün tırnak ekseninin üçüncü tekrarı.)
+- **200/201 sınırı gerçek PostgREST'e karşı hiç sınanmadı** — 201 satır ekmek gerekirdi, DB şeridi
+  için ağır bulundu. Sınır birim spec'lerinde + metin pininde yaşıyor.
+
 **2026-08-18'de eklenenler — hepsi ÖLÇÜLDÜ, hiçbiri tahmin değil:**
 - **İki metin-pini AST ister — REVISE kararı, [#137](https://github.com/popiliadam/seogrep/pull/137)'de şerhli.** "Matris dışında okuma yok" ve
   "döndürülen alan o ifadenin ürettiği değeri taşıyor" soruları metinle kapanmıyor: ÜÇ taze hakem,
@@ -132,6 +149,62 @@ crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-
 **transport**) ve **port 55322 `address already in use`** (yığın hiç başlayamadı). İkisi de altyapı;
 üçüncü koşu temiz geçti. **Kırmızıyı "flake" ilan etmeden ÖNCE logu oku** — birincisi testlere kadar
 gelmişti ve orada bütün kod kanıtı zaten yeşildi.
+### 👁️ 2026-08-18 — `/app/lookups`: ÖDENEN AMA HİÇ GÖSTERİLMEYEN KOŞULAR ARTIK GÖRÜNÜYOR (PR #140 CANLIDA)
+
+0027 üç senkron DFS alan aramasının her koşusunu yazıyordu; ürünün **tek okuyucusu** proje kartıydı ve
+o kart `.eq("project_id", projectId)` + `.limit(1)` ile okuyor. `project_id` **nullable** ve 0027'nin
+kendi başlığı çıplak-target çağrısını *"bu üç tool'un sunduğu en tipik PAID çağrı"* diye adlandırıyor.
+Ölçülen sonuç: **ürünün en tipik 65–90 kredilik çağrısı veritabanına satır yazıyor ve hiç kimse onu
+göstermiyordu.** İkinci delik: `.limit(1)` yüzünden panelde ne geçmiş ne değişim vardı.
+
+**Hiçbir migration, hiçbir fiyat, hiçbir yeni tool. Yüzey 26'da kaldı.** `apps/mcp/` ve `packages/db/`
+dokunulmadı. Canlı doğrulandı: `/app/lookups` deploy ÖNCESİ **404**, deploy SONRASI **307 → /login**.
+
+**Dört dürüstlük kararı, dördü de kaynağa dayandırıldı:**
+1. `compare_competitors`'ta **değişim yok** — `total`, `comparison.rows.length`, yani isteğin
+   fonksiyonu; delta "2 rakip kazandın" diye okunurdu (NEVER#7). İşçi ve iki hakem kaynaktan onayladı.
+2. **Benzeri benzerle karşılaştır.** `ranked_keywords`'ün `total`'ı vendor'ın kapak öncesi
+   `total_count`'u ve çağıran girdileri arasında yalnız **target + locale** ile değişiyor;
+   `analyze_backlinks`'in summary gövdesinde **locale HİÇ YOK** (bu yüzden `BacklinksRunReport`'ta
+   `locale` anahtarı da yok). Gruplar buna göre kuruldu — iki farklı arama pazarı arasındaki fark
+   asla büyüme diye basılmıyor.
+3. **Sayfadaki her değişim, sayfada listelenen bir koşuyu adlandırır.** Taşma probu sıralamadan
+   SONRA, değişim geçişinden ÖNCE kesiliyor: okuyucunun kaydıramayacağı bir tarihe `since` denemez.
+4. **Null `total` asla 0 değil**; sıfır delta `+0` değil "no change".
+
+**HAKEM FAIL'i GERÇEKTİ ve kullanıcı-görünürdü.** `windowFull = rows.length >= limit`, `limit` ile
+kapaklı bir okumaya karşı **tam olarak okuma dolu geldiğinde** ateşleniyordu: **tam 200 koşusu olan ve
+hepsi sayfada duran kiracıya**, göremediği eski ödenmiş koşular olduğu söylenirdi. Düzeltme
+`limit + 1` **taşma probu** — cümle artık gerçekten getirilmiş bir satırın ölçümü. *Kod doğruydu,
+CÜMLE yanlıştı, ve cümle yeşil bir testin arkasındaydı.*
+
+**NEVER#8 açıklaması, hakem tarafından yargılandı ve temiz bulundu:** işçi DÖRT assertion'ı değiştirdi;
+hepsi bu dilimde bir deneme önce kendi yazdığı ve **hakemin bulduğu yanlış iddiayı pinleyen**
+assertion'lardı (`origin/main`'de bu spec dosyalarının hiçbiri YOK — `git cat-file -e` ile ölçüldü).
+Yerine geleni **kesin olarak daha güçlü**: 2 pencere testi → 6, +1 render vakası. Zayıflatma yok.
+
+**Süreç:** 1 işçi (izole worktree) + **2 taze Fable hakem turu: FAIL → fix → PASS**, sonda blocking 0 ·
+**~27 mutasyon ekseni** · hakemlerin kendi türettiği mutasyonlardan **5'i YEŞİL kaldı ve beşi de
+raporlandı, hiçbiri yamalanmadı** (yukarıdaki chip'ler). Şefin ilettiği iki hipotezden biri (negatif
+delta işareti) **zaten pinliydi** — hipotezi bulgu diye yazmamak doğru karardı.
+
+**DERS ADAYI (imzasız) — kural yapmak insana ait.** *Bir sınırın kendi bağladığı bir değerden
+türetilen bayrak, ölçüm değil totolojidir.* `windowFull = rows.length >= limit`, `limit` ile kapaklı
+bir okumada yalnız "okuma doldu" der; "daha fazlası var" DEMEZ, ama cümlesi onu diyordu. Kapatan şey
+kelime değil **fazladan bir satır getirmek** oldu — yani iddiayı ölçülebilir kılmak. Aynı sınıf bu
+oturumda ikinci kez göründü: bir spec'in `.limit()` metnini pinlemesi, o `.limit()`'in sonucunun
+`return`'e kadar korunduğunu ölçmez. Genel biçim: **bir iddiayı, iddianın kendi girdisiyle
+sınırlanmış bir sayıdan türetme.** (Bir önceki oturumun imzasız adayının — "iddianın kapsamı, onu
+ölçen aracın kapsamıyla sınırlıdır" — dördüncü vakası olarak da okunabilir; ikisini tek kural yapıp
+yapmamak insanın kararı.)
+
+**Kapılar (şef koşusu):** `verify.sh` **PASS** (16/16 task) · `verify-db.sh` **PASS** (4 dosya/28 test,
+`lookup-history.db.test.ts` 5 test dahil) · `make goals` **16/16 PASS (1 skip)** —
+`dfs-budget-guard` **SKIP**, çünkü `SUPABASE_URL`/`SERVICE_ROLE_KEY` profilde yok. CI 6/6 yeşil.
+**Kapıların ölçmediği:** sayfayı hiçbir tarayıcı AÇMADI (auth guard arkasında, bu ortamda oturum yok;
+vitest'te RSC sınırı yok → sayfa→okuma→kurucu bağlantısı yalnız **metin** pini) · 200/201 sınırı
+gerçek PostgREST'e karşı sınanmadı · `verify.sh` secret taramıyor (onu `make goals`/`gitleaks` yaptı).
+
 ### 📐 2026-08-18 — PANEL KAPSAM MATRİSİ: 19 HÜCRE PİNLİ, İKİ SORU ARACI DEĞİŞTİRİYOR (#137)
 
 İki mutasyon her kapıyı geçiyordu — `connection: null` (her kart "not connected" der ama token
