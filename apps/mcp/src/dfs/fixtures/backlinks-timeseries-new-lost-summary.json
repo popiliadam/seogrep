@@ -1,0 +1,69 @@
+{
+  "version": "0.1.20230825",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.9756 sec.",
+  "cost": 0.02009,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "09291742-1535-0460-0000-6a346f24530b",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.9151 sec.",
+      "cost": 0.02009,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "timeseries_new_lost_summary", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "timeseries_new_lost_summary",
+        "target": "dataforseo.com",
+        "date_from": "2021-12-01",
+        "date_to": "2022-02-01",
+        "group_range": "month"
+      },
+      "result": [
+        {
+          "target": "dataforseo.com",
+          "date_from": "2021-12-01",
+          "date_to": "2022-02-01",
+          "group_range": "month",
+          "items_count": 3,
+          "items": [
+            {
+              "type": "backlinks_timeseries_new_lost_summary",
+              "date": "2021-12-31 00:00:00 +00:00",
+              "new_backlinks": 248,
+              "lost_backlinks": 173,
+              "new_referring_domains": 121,
+              "lost_referring_domains": 31,
+              "new_referring_main_domains": 59,
+              "lost_referring_main_domains": 31
+            },
+            {
+              "type": "backlinks_timeseries_new_lost_summary",
+              "date": "2022-01-31 00:00:00 +00:00",
+              "new_backlinks": 196,
+              "lost_backlinks": 481,
+              "new_referring_domains": 121,
+              "lost_referring_domains": 90,
+              "new_referring_main_domains": 59,
+              "lost_referring_main_domains": 90
+            },
+            {
+              "type": "backlinks_timeseries_new_lost_summary",
+              "date": "2022-02-28 00:00:00 +00:00",
+              "new_backlinks": 194,
+              "lost_backlinks": 190,
+              "new_referring_domains": 83,
+              "lost_referring_domains": 28,
+              "new_referring_main_domains": 39,
+              "lost_referring_main_domains": 28
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
