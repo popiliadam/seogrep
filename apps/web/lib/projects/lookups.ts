@@ -19,8 +19,9 @@
  * third departure, stated in the migration header). The card's query only ever sees rows whose
  * project_id IS this project, so a tenant can have run `ranked_keywords` twenty times against
  * rivals and still have no row here. The siblings' "Not run yet" would then be a FALSE statement —
- * the panel telling the user something the panel did not measure. `NEVER_RUN_FOR_DOMAIN` below
- * says "for this domain" instead, and that qualifier is pinned by its own spec.
+ * the panel telling the user something the panel did not measure. `DomainLookupLines` (in
+ * app/app/projects/project-list.tsx) says "Not run FOR THIS DOMAIN yet" instead and names the
+ * domain, and both halves of that qualifier are pinned by `lookup-lines.test.tsx`.
  *
  * WHAT IS READ IS DELIBERATELY NOT THE WHOLE REPORT. `domain_lookup_runs.report` carries up to
  * MAX_RUN_ROWS = 50 capped vendor rows plus a metrics block — a full ranked_keywords answer is the
