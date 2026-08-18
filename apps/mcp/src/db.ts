@@ -402,6 +402,47 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per DFS DOMAIN LOOKUP that ran, migration 0027 — the fourth sibling of audit_runs
+      // (0024), gsc_discovery_runs (0025) and audit_content_runs (0026), for the three synchronous
+      // domain lookups (ranked_keywords / analyze_backlinks / compare_competitors).
+      //
+      // NO job column, unlike all three siblings: these tools are charge:"handler" and synchronous,
+      // so they never write a `jobs` row and there is no job id to point at.
+      //
+      // `project_id` is NULLABLE here and NOT NULL there — all three tools accept EITHER a bare
+      // `target` (typically a competitor's domain) OR a project_id, and the bare-target call is the
+      // commonest paid one. `target` is the normalized domain the lookup ran against, and for a
+      // bare-target row it is the row's whole identity.
+      //
+      // `report` is the tool's STRUCTURAL result as jsonb (capped lists, headline counters on top,
+      // the run's locale inside), never the rendered text. Update is `never`, matching the
+      // migration's grants (SELECT + INSERT only): a run records what the vendor said at that
+      // moment, so re-running produces a NEW row rather than rewriting an old one. Rows leave only
+      // with their project (when there is one) or the account (ON DELETE CASCADE).
+      domain_lookup_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string | null;
+          tool: string;
+          target: string;
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id?: string | null;
+          tool: string;
+          target: string;
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.
