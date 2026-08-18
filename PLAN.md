@@ -7,13 +7,42 @@
 
 ### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`50be4d5` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+**Durum:** `main` @`0f7fecf` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
 **MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
 (yalnız `workflow_dispatch` DEĞİL — 2026-08-18'de şef bunu yanlış okudu). `require-ci` job'ı, o commit
 için CI yeşile dönene kadar bekler. **Kalıcılık kodu ancak MCP deploy'u bitince canlıda çalışır;**
 tablo prod'da hazır olduğu için deploy öncesi tek risk yok, tool'lar eskisi gibi (izsiz) çalışır.
+
+#### 🎯 HEDEFE GÖRE NEREDEYİZ — ölçüldü 2026-08-18, tahmin değil
+
+Bu ailenin kuruluş amacı üç parçaydı: **(1)** dört DFS tool'unu derinleştirmek · **(2)** sonuçlarını
+webapp'te göstermek · **(3)** DFS katalog gap'lerini kapatmak. Üçü çok farklı yerde:
+
+| parça | durum | ölçüm |
+|---|---|---|
+| 1 — dört tool | **~%85** | `ranked_keywords` marj 9,4×→**51×** · `research_keywords` 3,5×→**12,9×** · `compare_competitors` 5 istek→**1** · dördünde trial kapısı + para dürüstlüğü + (3'ünde) 0027 kalıcılığı |
+| 2 — webapp | **~%35** | panelde `Domain lookups` var ama: `research_keywords` kalıcılığı **YOK** · **trend yok** (`lib/projects`'te `trend` kelimesi hiç geçmiyor) · **çıplak-target koşuları panelde HİÇ görünmüyor** (ve prod'daki ilk satır tam da öyleydi) · detay sayfası yok |
+| 3 — gap'ler | **~%15** | çağrılan uç **10/76** · sevk edilen tool **3/16** (`keyword_gap` · `link_gap` · `audit_speed`) · tasarlanıp fiyatlanan **12/16** |
+
+**TOPLAM ~%35–40 BİTTİ.** Kalan ~%60–65.
+
+**DARBOĞAZ ARTIK KOD DEĞİL.** 9 tool tasarlandı, fiyatlandı, gerekçesi yazıldı ve *imzasız dispatch
+yok* kuralıyla bekliyor. Bir sonraki oturumun kod tarafında yapabileceği en değerli şey, operatörün
+masasındaki bir şeyi beklemektir. İmza gelirse parça 3 **%19 → %75** koşabilir.
+
+**SIRALAMA ÖNERİSİ (şefin, imzasız):**
+1. **İmza paketi** (operatör, ~15 dk) — iki gerçek karar: `keyword_trends` 25 kredi **tek ölçülmemiş
+   fiyattır** (imzalamak NEVER#9'a girer, kalibrasyon taahhüdü şart) ve `ai_visibility_compare`
+   10 hedefte **900 kredi** = D17 onay eşiği üstü, yani ürün kararı.
+2. **S5 — kiracı başına günlük DFS kotası.** Rank tracker ailesi (`serp_snapshot` ·
+   `keyword_positions`) bu imzasız CANLIYA ÇIKMAMALI: fleet tavanı $3/gün ve tek kiracı onu tek
+   başına tüketebilir.
+3. **Parça 2'nin ucuz yarısı** (imza gerekmez): `research_keywords` kendi koşu tablosunu ister
+   (0027'ye sığmaz — girdisi kelime listesi, `target` kolonu ona yalan olur) · panelde trend/geçmiş ·
+   çıplak-target koşularının görüneceği bir yüzey.
+4. Kapı borçları — açık chip'ler (aşağıda).
 
 #### Kapı komutları — ezberden değil, buradan
 | ne | komut | NE ÖLÇMEZ |
