@@ -12,6 +12,11 @@ bash guardrails/check-guards-selftest.sh
 # (audit M-13). İmzalı ders 7: yeşil kapı NE ölçtüğüyle raporlanır.
 bash guardrails/check-rls.sh
 bash guardrails/check-append-only.sh
+# ...and the third: every SELECT/INSERT/UPDATE/DELETE decided per relation, per role. The gate
+# it enforces cannot be a spec — the cloud project hands out DML at CREATE TABLE time that the
+# local stack does not, so a local assertion is green on both sides of the bug (0028's header
+# has the measurement). This line is the only place the claim is checked.
+bash guardrails/check-grants.sh
 pnpm install --frozen-lockfile
 # Store'u okur, bu yüzden install'dan SONRA (CI'daki licenses job'ının yerel karşılığı).
 bash guardrails/check-licenses.sh

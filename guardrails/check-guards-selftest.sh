@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Self-test for the static gates: check-rls.sh, check-append-only.sh and check-licenses.sh.
+# Self-test for the static gates: check-rls.sh, check-append-only.sh, check-grants.sh and
+# check-licenses.sh.
 # A guard that never fails proves nothing (M-12: both gates false-PASSed every synthetic
 # weakening because they searched migration HISTORY instead of FINAL STATE). This harness
 # runs each gate against synthetic migration trees and asserts the COLOUR of the answer.
@@ -10,7 +11,14 @@
 # real migrations are never copied). Directory prefix selects the gate under test:
 #   weakened-rls-*     -> guardrails/check-rls.sh          must go RED
 #   weakened-append-*  -> guardrails/check-append-only.sh  must go RED
-# fixtures/healthy alone must be GREEN for BOTH gates.
+#   weakened-grants-*  -> guardrails/check-grants.sh       must go RED
+# fixtures/healthy alone must be GREEN for ALL THREE gates.
+#
+# grants-green-*/ are composed the same way but asserted GREEN, explicitly, below the loop.
+# A gate has two sides and only one of them is a weakening: check-grants.sh must accept every
+# legitimate SPELLING of a revoke and must not demand revokes for a relation that was dropped.
+# Both of those were hypotheses when this harness was extended, and a false RED there sends an
+# author hunting a bug that does not exist.
 #
 # check-licenses.sh is composed differently: its fixtures are whole `pnpm licenses list
 # --prod --json` SNAPSHOTS under guardrails/fixtures/licenses/, one file per case, asserted
@@ -59,6 +67,12 @@ weakened-append-unqual-only-definition
 weakened-rls-dq-data-quotes
 weakened-append-dq-data-quotes
 weakened-rls-dq-data-quote-pairs-ident
+weakened-grants-new-table-no-revokes
+weakened-grants-service-role-missed
+weakened-grants-wrong-table
+weakened-grants-no-grants-at-all
+weakened-grants-column-grant-only
+weakened-grants-default-privileges
 "
 
 # RED alone is not enough: a gate that reddens for the WRONG reason still hides the
@@ -94,6 +108,30 @@ expected_finding() {
     weakened-rls-quoted-ident|weakened-rls-estring-escape|weakened-rls-dq-data-quotes|\
     weakened-rls-dq-data-quote-pairs-ident)
       printf '%s' 'public.credit_ledger - final state is DISABLE ROW LEVEL SECURITY' ;;
+    # check-grants.sh. Each pins the TABLE and the ROLE, not just the colour: the whole failure
+    # mode this gate exists for is a gate that reddens while looking at the wrong relation.
+    weakened-grants-new-table-no-revokes)
+      printf '%s\n%s' 'public.lookup_runs - anon: SELECT, INSERT, UPDATE, DELETE neither GRANTed nor REVOKEd' \
+                       'public.lookup_runs - service_role: UPDATE, DELETE neither GRANTed nor REVOKEd' ;;
+    weakened-grants-service-role-missed)
+      printf '%s' 'public.lookup_runs - service_role: UPDATE, DELETE neither GRANTed nor REVOKEd' ;;
+    weakened-grants-wrong-table)
+      printf '%s' 'public.lookup_runs - anon: SELECT, INSERT, UPDATE, DELETE neither GRANTed nor REVOKEd' ;;
+    weakened-grants-no-grants-at-all)
+      printf '%s\n%s' 'public.staging_scratch - anon: SELECT, INSERT, UPDATE, DELETE neither GRANTed nor REVOKEd' \
+                       'public.staging_scratch - service_role: SELECT, INSERT, UPDATE, DELETE neither GRANTed nor REVOKEd' ;;
+    # The column grant must NOT count as deciding table-level SELECT - if it did, this line
+    # would be absent and the fixture would go green.
+    weakened-grants-column-grant-only)
+      printf '%s' 'public.account_secrets - authenticated: SELECT neither GRANTed nor REVOKEd' ;;
+    weakened-grants-default-privileges)
+      printf '%s' 'ALTER DEFAULT PRIVILEGES ... GRANT ... ON TABLES' ;;
+    # GREEN grant cases: pinned on the PASS line, so a gate that stopped reading the tree
+    # altogether (and therefore passed everything) cannot masquerade as a correct green.
+    grants-green-spelling-variants)
+      printf '%s' 'CHECK-GRANTS: PASS (4 relations' ;;
+    grants-green-dropped-table)
+      printf '%s' 'CHECK-GRANTS: PASS (3 relations' ;;
     # Pinning the text is also what makes a DELETED licence snapshot a failure: a missing file
     # makes the gate exit 1, which would otherwise read as a correct RED.
     licenses-copyleft)
@@ -202,6 +240,7 @@ done
 healthy_dir="$(compose healthy)" || { echo "selftest: FAIL cannot compose healthy"; exit 1; }
 assert "healthy" check-rls.sh "$healthy_dir" green
 assert "healthy" check-append-only.sh "$healthy_dir" green
+assert "healthy" check-grants.sh "$healthy_dir" green
 
 # Licence gate (audit M-27). Two GREEN cases and four RED ones:
 #   * healthy-darwin  - today's real outside-allowlist set, the shape a laptop installs;
@@ -336,8 +375,9 @@ for d in "$FIXTURES"/weakened-*/; do
   case "$name" in
     weakened-rls-*) gate="check-rls.sh" ;;
     weakened-append-*) gate="check-append-only.sh" ;;
+    weakened-grants-*) gate="check-grants.sh" ;;
     *)
-      echo "selftest: FAIL fixture '$name' has no gate prefix (weakened-rls-* / weakened-append-*)"
+      echo "selftest: FAIL fixture '$name' has no gate prefix (weakened-rls-* / weakened-append-* / weakened-grants-*)"
       bad=$((bad + 1)); continue ;;
   esac
   dir="$(compose "$name")" || { echo "selftest: FAIL cannot compose $name"; bad=$((bad + 1)); continue; }
@@ -346,8 +386,19 @@ done
 
 # A floor on the fixture count, so wholesale deletion cannot quietly shrink the harness.
 # Raise it whenever fixtures are added; never lower it to make a run pass.
-if [ "$found" -lt 25 ]; then
-  echo "selftest: FAIL only $found weakened fixtures found (at least 25 required)"
+# ...and the GREEN side of check-grants.sh, which the weakened-* loop cannot express.
+for green_case in grants-green-spelling-variants grants-green-dropped-table; do
+  if [ ! -d "$FIXTURES/$green_case" ]; then
+    echo "selftest: FAIL required fixture missing: $FIXTURES/$green_case"
+    bad=$((bad + 1))
+    continue
+  fi
+  gdir="$(compose "$green_case")" || { echo "selftest: FAIL cannot compose $green_case"; bad=$((bad + 1)); continue; }
+  assert "$green_case" check-grants.sh "$gdir" green
+done
+
+if [ "$found" -lt 31 ]; then
+  echo "selftest: FAIL only $found weakened fixtures found (at least 31 required)"
   bad=$((bad + 1))
 fi
 

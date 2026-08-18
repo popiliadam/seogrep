@@ -44,3 +44,16 @@ grant select on public.events to authenticated;
 grant select, insert on public.events to service_role;
 grant select on public.projects to authenticated;
 grant select, insert, update on public.projects to service_role;
+
+-- Grant COMPLETENESS (guardrails/check-grants.sh): every SELECT/INSERT/UPDATE/DELETE that is
+-- not granted above is revoked here, for all three roles. Without these lines the healthy tree
+-- would be red for that gate, because "not mentioned" is exactly what a server default fills
+-- in. UPDATE/DELETE on the two append-only tables are already decided by the REVOKE above and
+-- are deliberately not repeated.
+revoke select, insert on public.credit_ledger from anon;
+revoke insert on public.credit_ledger from authenticated;
+revoke select, insert on public.events from anon;
+revoke insert on public.events from authenticated;
+revoke select, insert, update, delete on public.projects from anon;
+revoke insert, update, delete on public.projects from authenticated;
+revoke delete on public.projects from service_role;
