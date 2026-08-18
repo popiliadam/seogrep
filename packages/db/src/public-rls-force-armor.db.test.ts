@@ -75,10 +75,14 @@ const EXEMPT_TABLES: readonly string[] = [];
  * listed. A migration that legitimately drops a table has to delete its name here, in a diff a
  * reviewer sees.
  *
- * NOT listed: audit_content_runs. It exists in the running stack via 0026, which is not committed
- * on this branch, and guardrails/verify-db.sh resets to the COMMITTED migrations — listing it
- * would hand CI a false red that has nothing to do with RLS. It is still fully covered by the
- * enumeration whenever it exists, which is the whole argument for enumerating.
+ * WHAT THAT CAVEAT USED TO SAY, AND WHY IT IS GONE (2026-08-18). This comment previously excluded
+ * audit_content_runs with the reason "it exists in the running stack via 0026, which is not
+ * committed on this branch" — true when it was written, and stale the moment 0026 merged. It then
+ * sat stale for a whole migration, which is the exact failure mode a fixture list has: the
+ * enumeration kept covering the table, so nothing anywhere went red to say the list had fallen
+ * behind. 0026 and 0027 are both committed now, so both tables are listed, and the branch-state
+ * excuse is deleted rather than re-aimed at 0027 — a name is added here in the SAME commit as the
+ * migration that creates it, not in the next one.
  */
 const NON_EXEMPTABLE_TABLES: readonly string[] = [
   // Money. TRUNCATE armor already treats these three as the ones worth naming out loud.
@@ -97,10 +101,15 @@ const NON_EXEMPTABLE_TABLES: readonly string[] = [
   "events",
   "gsc_connections",
   "gsc_accounts",
-  // Per-tenant run ledgers (0023 / 0024 / 0025 — committed, so a reset stack has all three).
+  // Per-tenant run ledgers (0023 / 0024 / 0025 / 0026 / 0027 — all committed, so a reset stack
+  // has every one of them). domain_lookup_runs is the only member whose project_id is nullable,
+  // which makes user_id its sole tenant column and this spec's bit the thing standing between a
+  // dropped FORCE and a table nothing else narrows.
   "crawl_pages",
   "audit_runs",
   "gsc_discovery_runs",
+  "audit_content_runs",
+  "domain_lookup_runs",
 ];
 
 /**

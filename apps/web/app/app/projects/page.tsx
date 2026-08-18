@@ -2,6 +2,7 @@ import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import { DISCOVERY_TOOLS, type DiscoveryRunRow } from "../../../lib/projects/insights";
+import { DOMAIN_LOOKUP_TOOLS, type DomainLookupRunRow } from "../../../lib/projects/lookups";
 import {
   tokenStatusFor,
   type ConnectionRow,
@@ -337,6 +338,67 @@ async function latestDiscoveryRuns(
   return runs.filter((run): run is DiscoveryRunRow => run !== null);
 }
 
+/**
+ * The project's LAST run of one DFS domain lookup (migration 0027) — the row behind one lookup
+ * line. The fourth of these reads, and the same reasoning applies whole: "the newest run of each
+ * tool" has no single-query form in PostgREST, and fetching a project's whole lookup history to
+ * keep the newest of each in memory grows without bound. 0027's
+ * (user_id, project_id, created_at desc) index is exactly this shape, with `tool` as a residual
+ * filter — the migration header says so in its own words.
+ *
+ * `.eq("project_id", projectId)` IS THE PRODUCT DECISION, not boilerplate. 0027's `project_id` is
+ * NULLABLE and most rows will have it null: all three tools accept EITHER a bare `target` — any
+ * public domain, typically a COMPETITOR's — OR a project_id, and the bare-target call is the
+ * commonest paid call these tools serve. Those rows are lookups of a DIFFERENT domain, and a card
+ * that showed them would attribute a rival's ranked-keyword count to the tenant's own site. The
+ * equality filter never matches a null, which is precisely the behaviour wanted here; the card's
+ * empty line says "not run FOR THIS DOMAIN" rather than "not run" for the same reason
+ * (`lookups.ts`).
+ *
+ * SUB-FIELDS, NOT `report`. This table's report is the LARGEST in the family — up to MAX_RUN_ROWS
+ * = 50 capped vendor rows plus a metrics block, where the siblings store measurements this system
+ * had already capped on the way in. The two fields the lines print sit at its top level precisely
+ * so this read is O(1) in the size of the lookup. `DomainLookupRunRow` has no `report` field to
+ * put one in.
+ *
+ * Caller's authenticated client, explicit user_id filter beside RLS
+ * `domain_lookup_runs_select_own` (constitution NEVER #4). On this table the user_id filter is
+ * more than defence in depth: a project_id-null row has no parent in `public` at all, so `user_id`
+ * is the ONLY tenant guarantee it carries (0027's composite-FK note says so out loud).
+ */
+async function latestDomainLookupRun(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+  tool: string,
+): Promise<DomainLookupRunRow | null> {
+  const { data, error } = await supabase
+    .from("domain_lookup_runs")
+    .select("tool, created_at, total:report->total, top:report->top")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .eq("tool", tool)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`domain_lookup_runs lookup (${tool}) failed: ${error.message}`);
+  }
+  return (data as unknown as DomainLookupRunRow | null) ?? null;
+}
+
+/** The newest run of each domain lookup for one project — one line's worth of data per tool. */
+async function latestDomainLookupRuns(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<DomainLookupRunRow[]> {
+  const runs = await Promise.all(
+    DOMAIN_LOOKUP_TOOLS.map((tool) => latestDomainLookupRun(supabase, userId, projectId, tool)),
+  );
+  return runs.filter((run): run is DomainLookupRunRow => run !== null);
+}
+
 /** Gather every row one card is built from. */
 async function cardInputFor(
   supabase: Supabase,
@@ -345,12 +407,13 @@ async function cardInputFor(
   connections: Map<string, ConnectionRow>,
   health: Map<string, GscTokenStatus>,
 ): Promise<ProjectCardInput> {
-  const [crawl, pull, crawlHistory, auditRuns, discoveryRuns] = await Promise.all([
+  const [crawl, pull, crawlHistory, auditRuns, discoveryRuns, lookupRuns] = await Promise.all([
     latestSucceeded(supabase, userId, project.id, "crawl_site"),
     latestPullSummary(supabase, userId, project.id),
     recentCrawlRuns(supabase, userId, project.id),
     latestAuditRuns(supabase, userId, project.id),
     latestDiscoveryRuns(supabase, userId, project.id),
+    latestDomainLookupRuns(supabase, userId, project.id),
   ]);
   const connection = connections.get(project.id) ?? null;
   return {
@@ -360,6 +423,7 @@ async function cardInputFor(
     crawlHistory,
     auditRuns,
     discoveryRuns,
+    lookupRuns,
     connection,
     tokenStatus: tokenStatusFor(connection, health),
   };

@@ -876,7 +876,7 @@ describe("fetchAndRenderRankedKeywords — what the handler actually hands the p
 
   it("gives the renderer the same sort it gave the port", async () => {
     const { port } = recorder();
-    const text = await fetchAndRenderRankedKeywords(
+    const { text } = await fetchAndRenderRankedKeywords(
       port,
       { domain: "example.com", project: null },
       { target: "example.com", limit: 5, sort: "position", language_code: "en", location_code: 2840 },
@@ -884,9 +884,35 @@ describe("fetchAndRenderRankedKeywords — what the handler actually hands the p
     expect(text).toContain("best ranking first");
   });
 
+  /**
+   * ONE FETCH, TWO CONSUMERS. The handler needs the structural result to record the run (migration
+   * 0027) and the text to reply with; a second call to the port for the second of those would be a
+   * second PAID DataForSEO request and a second measurement that merely RESEMBLES the one the
+   * caller was shown. So the vendor is asked exactly once, and the object handed back is the very
+   * object that was rendered — identity, not a copy that could drift.
+   */
+  it("asks the vendor ONCE and returns the very result it rendered", async () => {
+    const { port, seen } = recorder();
+    const rendered = await fetchAndRenderRankedKeywords(
+      port,
+      { domain: "example.com", project: null },
+      { target: "example.com", limit: 5, sort: "volume", language_code: "en", location_code: 2840 },
+    );
+    expect(seen).toHaveLength(1);
+    expect(rendered.result.total_count).toBe(5312);
+    expect(rendered.text).toBe(
+      formatRankedKeywords(rendered.result, {
+        language_code: "en",
+        location_code: 2840,
+        sort: "volume",
+        project: null,
+      }),
+    );
+  });
+
   it("names the project in the output when the target came from one", async () => {
     const { port } = recorder();
-    const text = await fetchAndRenderRankedKeywords(
+    const { text } = await fetchAndRenderRankedKeywords(
       port,
       { domain: "adstark.com.tr", project: PROJECT },
       { project_id: PROJECT_ID, limit: 5, sort: "volume", language_code: "en", location_code: 2840 },

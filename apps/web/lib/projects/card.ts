@@ -7,6 +7,11 @@ import {
 } from "./history";
 import { buildInsightLines, type DiscoveryRunRow, type InsightLine } from "./insights";
 import {
+  buildDomainLookupLines,
+  type DomainLookupLine,
+  type DomainLookupRunRow,
+} from "./lookups";
+import {
   deriveProjectSignals,
   isGscConnected,
   type ConnectionRow,
@@ -77,6 +82,19 @@ export interface ProjectCardInput {
    * These rows carry only the report SUB-FIELDS the lines need (see `insights.ts`).
    */
   readonly discoveryRuns?: readonly DiscoveryRunRow[];
+  /**
+   * The project's recent `domain_lookup_runs` rows (migration 0027). Optional for the same reason
+   * `discoveryRuns` is: a strictly additive read, and a caller that does not ask for it gets a card
+   * whose three lookup lines all read "not run for this domain" — which is what a project with no
+   * lookups has. These rows carry only the report SUB-FIELDS the lines need (see `lookups.ts`).
+   *
+   * ONLY ROWS WHOSE `project_id` IS THIS PROJECT belong here. 0027's `project_id` is nullable and
+   * most rows will have it null (a bare-target lookup of somebody else's domain has no project at
+   * all), and those rows are about a DIFFERENT domain — putting one on this card would attribute
+   * a competitor's numbers to the tenant's own site. The page's query filters on `project_id`;
+   * this comment is the contract a second caller has to honour.
+   */
+  readonly lookupRuns?: readonly DomainLookupRunRow[];
 }
 
 /**
@@ -150,6 +168,13 @@ export interface ProjectCard {
    * assistant for.
    */
   readonly insights: readonly InsightLine[];
+  /**
+   * One line per DFS domain lookup, always all three, each carrying its newest run FOR THIS
+   * PROJECT or null. The panel SHOWS lookups; it never starts one — a line with no run names the
+   * tool to ask the assistant for, and says "for this domain" because a run against a competitor
+   * never lands here (see `lookups.ts`).
+   */
+  readonly lookups: readonly DomainLookupLine[];
   /** When the last SUCCEEDED `pull_gsc_data` ran, or null when none has. */
   readonly pullAt: string | null;
   /**
@@ -181,8 +206,17 @@ export interface ProjectCard {
 
 /** Build one project's card. `now` is injected so freshness is deterministic in tests. */
 export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCard {
-  const { project, crawl, pull, connection, tokenStatus, crawlHistory, auditRuns, discoveryRuns } =
-    input;
+  const {
+    project,
+    crawl,
+    pull,
+    connection,
+    tokenStatus,
+    crawlHistory,
+    auditRuns,
+    discoveryRuns,
+    lookupRuns,
+  } = input;
   return {
     projectId: project.id,
     domain: project.domain,
@@ -194,6 +228,7 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
     recentCrawls: buildCrawlHistory(crawlHistory ?? []),
     audits: buildAuditLines(auditRuns ?? []),
     insights: buildInsightLines(discoveryRuns ?? []),
+    lookups: buildDomainLookupLines(lookupRuns ?? []),
     pullAt: pull?.created_at ?? null,
     pullWindow: pull === null ? null : summarizePullWindow(pull),
     gsc: isGscConnected(connection)

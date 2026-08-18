@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { AuditLine } from "../../../lib/projects/audits";
 import type { ProjectCard } from "../../../lib/projects/card";
 import type { InsightLine } from "../../../lib/projects/insights";
+import type { DomainLookupLine } from "../../../lib/projects/lookups";
 import { formatStamp, type CrawlHistoryEntry } from "../../../lib/projects/history";
 import { formatDate } from "../../../lib/format";
 
@@ -236,6 +237,59 @@ function InsightLines({ lines }: { lines: readonly InsightLine[] }) {
 }
 
 /**
+ * The three DFS domain lookups, each with the date of its last run FOR THIS DOMAIN and that run's
+ * numbers — or, when none has run against this domain, the tool to ask for. The third sibling of
+ * `AuditLines` and `InsightLines`, deliberately the same layout for their reason.
+ *
+ * THE EMPTY LINE IS THE ONE THING THAT IS NOT A COPY, and the difference is a truth claim rather
+ * than a style choice. `domain_lookup_runs.project_id` is nullable and the commonest paid call to
+ * these tools is a BARE TARGET — somebody else's domain, no project at all (migration 0027's third
+ * departure). The card's query only sees rows whose project_id is this project, so a tenant who
+ * has run ranked_keywords twenty times against rivals still has no row here. The siblings'
+ * "Not run yet" would then state something the panel never measured; "Not run for this domain yet"
+ * states exactly what it did. The domain is named so the sentence is checkable rather than
+ * abstract, and the instruction is still "ask your assistant" — this panel starts nothing.
+ */
+function DomainLookupLines({
+  lines,
+  domain,
+}: {
+  lines: readonly DomainLookupLine[];
+  domain: string;
+}) {
+  return (
+    <div className="border-t border-hairline px-7 py-4">
+      <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">
+        Domain lookups
+      </span>
+      <ol className="m-0 mt-2.5 flex list-none flex-col gap-2 p-0">
+        {lines.map((line) => (
+          <li key={line.tool} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span className="font-mono text-[12.5px] text-body">{line.tool}</span>
+            {line.run === null ? (
+              <span className="font-serif text-[13.5px] text-muted">
+                Not run for this domain yet — ask your assistant to run {line.tool} for {domain}
+              </span>
+            ) : (
+              <>
+                <time className="font-mono text-[11px] text-faint" dateTime={line.run.createdAt}>
+                  {formatDate(line.run.createdAt)}
+                </time>
+                {/* No numbers when the stored report could not be read: the date still says the
+                    lookup ran, and inventing a 0 would say the vendor answered zero. */}
+                {line.run.summary === null ? null : (
+                  <span className="font-mono text-[11px] text-faint">{line.run.summary}</span>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/**
  * The last Search Console pull: when it ran, what window it covered, and whether that window was
  * truncated.
  *
@@ -289,6 +343,8 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
       <AuditLines lines={card.audits} />
 
       <InsightLines lines={card.insights} />
+
+      <DomainLookupLines lines={card.lookups} domain={card.domain} />
 
       <CrawlHistory entries={card.recentCrawls} />
 

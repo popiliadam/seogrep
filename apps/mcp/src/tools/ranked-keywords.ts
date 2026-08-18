@@ -19,6 +19,11 @@ import {
   type RankedKeywordsResult,
   type RankedKeywordsSort,
 } from "../dfs/ranked-keywords.ts";
+import {
+  rankedKeywordsRunReport,
+  writeDomainLookupRun,
+  type DomainLookupRunWriter,
+} from "../dfs/runs.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -478,6 +483,20 @@ function localeHint(
 }
 
 /**
+ * One lookup, fetched once: the vendor result AND the text rendered from it.
+ *
+ * BOTH are returned because the engine must run EXACTLY ONCE. The handler needs the structural
+ * result to record the run (migration 0027) and the text to reply with, and re-fetching for the
+ * second of those would be a second PAID DataForSEO request AND a second measurement that merely
+ * resembles the one the caller was shown — 0024's `AuditRendering` rule, with a vendor invoice
+ * attached to getting it wrong.
+ */
+export interface RankedKeywordsRendering {
+  readonly result: RankedKeywordsResult;
+  readonly text: string;
+}
+
+/**
  * The paid body of one lookup: build the vendor query, fetch it, render it.
  *
  * Exported and DATABASE-FREE on purpose. The handler wraps this in withCredits, whose reserve
@@ -490,7 +509,7 @@ export async function fetchAndRenderRankedKeywords(
   port: RankedKeywordsPort,
   subject: { readonly domain: string; readonly project: ProjectRef | null },
   input: RankedKeywordsInput,
-): Promise<string> {
+): Promise<RankedKeywordsRendering> {
   const result = await port.fetchRankedKeywords({
     target: subject.domain,
     limit: input.limit,
@@ -498,12 +517,15 @@ export async function fetchAndRenderRankedKeywords(
     language_code: input.language_code,
     location_code: input.location_code,
   });
-  return formatRankedKeywords(result, {
-    language_code: input.language_code,
-    location_code: input.location_code,
-    sort: input.sort,
-    project: subject.project,
-  });
+  return {
+    result,
+    text: formatRankedKeywords(result, {
+      language_code: input.language_code,
+      location_code: input.location_code,
+      sort: input.sort,
+      project: subject.project,
+    }),
+  };
 }
 
 /** Dependencies — the ranked-keywords port is injectable so tests run offline (mock/disabled). */
@@ -516,9 +538,16 @@ export interface RankedKeywordsDeps {
   readonly port?: RankedKeywordsPort;
   /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The run recorder (default: the real `writeDomainLookupRun`). A PORT for the reason every
+   * other writer in this family is one: a spec can make it FAIL without breaking a database, which
+   * is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: DomainLookupRunWriter;
 }
 
 export function makeRankedKeywordsTool(deps: RankedKeywordsDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeDomainLookupRun;
   return defineTool<RankedKeywordsInput>({
     name: "ranked_keywords",
     description: DESCRIPTION,
@@ -544,9 +573,35 @@ export function makeRankedKeywordsTool(deps: RankedKeywordsDeps = {}): Registere
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge).
-      return withCredits({ userId: ctx.userId }, { tool: "ranked_keywords" }, async () =>
-        textResult(await fetchAndRenderRankedKeywords(port, subject, input)),
-      );
+      return withCredits({ userId: ctx.userId }, { tool: "ranked_keywords" }, async () => {
+        const rendered = await fetchAndRenderRankedKeywords(port, subject, input);
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0027; dfs/runs.ts states the same contract from the other side). withCredits
+        // commits a handler that RETURNS and releases one that THROWS, so an error escaping here
+        // costs the tenant nothing. Caught and logged instead, the shape would be the house's
+        // worst at 65 credits a call: a charged caller, a delivered table, and a panel that says
+        // forever that the lookup never ran.
+        //
+        // `projectId` is null on a bare-target call — the commonest PAID call this tool serves,
+        // and the one 0027 made project_id nullable to record. `target` is the RESOLVED domain,
+        // never the caller's raw input: it is what was actually looked up, and for a project run
+        // it is what the project's domain was AT THE TIME.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: subject.project?.id ?? null,
+            tool: "ranked_keywords",
+            target: subject.domain,
+          },
+          rankedKeywordsRunReport(rendered.result, {
+            limit: input.limit,
+            sort: input.sort,
+            language_code: input.language_code,
+            location_code: input.location_code,
+          }),
+        );
+        return textResult(rendered.text);
+      });
     },
   });
 }
