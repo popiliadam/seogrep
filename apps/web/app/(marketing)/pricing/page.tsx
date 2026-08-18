@@ -23,6 +23,12 @@ const CREDIT_COSTS = [
   // folding it into a row labelled "on-page + technical + schema" would advertise a bundle price
   // for something a crawl alone does not buy.
   { action: "Content audit (queries vs page titles)", cost: "12" },
+  // audit_speed (2026-08-17): its own row for the same reason audit_content has one, plus a
+  // stronger one. The bundle above is priced on tools that re-read a crawl we already have;
+  // audit_speed buys a Google Lighthouse run per page from a paid provider, needs no crawl at
+  // all, and is the only audit that requires a paid balance. Folding it into the bundle would
+  // advertise one price for two different kinds of thing.
+  { action: "Page speed audit (up to 5 URLs)", cost: "15" },
   { action: "Keyword research (100 keywords)", cost: "25" },
   { action: "Ranked keywords (per domain)", cost: "65" },
   { action: "Backlink profile (per domain)", cost: "70" },

@@ -1,0 +1,130 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "18.4213 sec.",
+  "cost": 0.005,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08171200-0000-0000-0000-fixture0007",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "18.3011 sec.",
+      "cost": 0.005,
+      "result_count": 1,
+      "path": ["v3", "on_page", "lighthouse", "live", "json"],
+      "data": {
+        "api": "on_page",
+        "function": "lighthouse",
+        "url": "https://slowshop.org/",
+        "enable_javascript": true
+      },
+      "result": [
+        {
+          "lighthouse_version": "11.4.0",
+          "requested_url": "https://slowshop.org/",
+          "final_url": "https://www.slowshop.org/",
+          "fetch_time": "2026-08-17T09:12:44.831Z",
+          "categories": {
+            "performance": {
+              "id": "performance",
+              "title": "Performance",
+              "score": 0.41
+            },
+            "accessibility": {
+              "id": "accessibility",
+              "title": "Accessibility",
+              "score": 0.88
+            }
+          },
+          "audits": {
+            "first-contentful-paint": {
+              "id": "first-contentful-paint",
+              "title": "First Contentful Paint",
+              "score": 0.32,
+              "numericValue": 3218.4,
+              "numericUnit": "millisecond",
+              "displayValue": "3.2 s"
+            },
+            "largest-contentful-paint": {
+              "id": "largest-contentful-paint",
+              "title": "Largest Contentful Paint",
+              "score": 0.11,
+              "numericValue": 6104.2,
+              "numericUnit": "millisecond",
+              "displayValue": "6.1 s"
+            },
+            "total-blocking-time": {
+              "id": "total-blocking-time",
+              "title": "Total Blocking Time",
+              "score": 0.24,
+              "numericValue": 890,
+              "numericUnit": "millisecond",
+              "displayValue": "890 ms"
+            },
+            "cumulative-layout-shift": {
+              "id": "cumulative-layout-shift",
+              "title": "Cumulative Layout Shift",
+              "score": 0.52,
+              "numericValue": 0.19,
+              "numericUnit": "unitless",
+              "displayValue": "0.19"
+            },
+            "interactive": {
+              "id": "interactive",
+              "title": "Time to Interactive",
+              "score": 0.18,
+              "numericValue": 9412.7,
+              "numericUnit": "millisecond"
+            },
+            "render-blocking-resources": {
+              "id": "render-blocking-resources",
+              "title": "Eliminate render-blocking resources",
+              "score": 0.07,
+              "numericValue": 1840,
+              "numericUnit": "millisecond",
+              "displayValue": "Potential savings of 1,840 ms",
+              "details": {
+                "type": "opportunity",
+                "overallSavingsMs": 1840
+              }
+            },
+            "unused-javascript": {
+              "id": "unused-javascript",
+              "title": "Reduce unused JavaScript",
+              "score": 0.29,
+              "numericValue": 620,
+              "numericUnit": "millisecond",
+              "displayValue": "Potential savings of 210 KiB",
+              "details": {
+                "type": "opportunity",
+                "overallSavingsMs": 620,
+                "overallSavingsBytes": 215040
+              }
+            },
+            "uses-long-cache-ttl": {
+              "id": "uses-long-cache-ttl",
+              "title": "Serve static assets with an efficient cache policy",
+              "score": 0.5,
+              "numericValue": 0,
+              "details": {
+                "type": "opportunity",
+                "overallSavingsMs": 0
+              }
+            },
+            "viewport": {
+              "id": "viewport",
+              "title": "Has a `<meta name=\"viewport\">` tag with `width` or `initial-scale`",
+              "score": 1,
+              "details": {
+                "type": "debugdata"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -20,9 +20,15 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   //
   // Four -> six on 2026-08-17: keyword_gap and link_gap each send a paid DataForSEO request, so
   // each carries the risk this gate exists for. The set GREW; nothing left it.
-  it("is exactly the six DataForSEO tools", () => {
+  //
+  // Six -> seven the same day: audit_speed. It is the first member whose NAME does not announce
+  // it — it sits in the audit family, whose other four members read stored measurements and cost
+  // us only CPU — which is exactly why the structural rule (paid-balance.graph.test.ts) exists
+  // beside this hand-written pin.
+  it("is exactly the seven DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
+      "audit_speed",
       "compare_competitors",
       "keyword_gap",
       "link_gap",
@@ -31,7 +37,7 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
     ]);
   });
 
-  it("leaves every crawl / audit / report / GSC tool ungated", () => {
+  it("leaves every crawl / stored-data audit / report / GSC tool ungated", () => {
     const ungated = (Object.keys(TOOL_COSTS) as (keyof typeof TOOL_COSTS)[]).filter(
       (tool) => !PAID_BALANCE_TOOLS.has(tool),
     );

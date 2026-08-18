@@ -13,8 +13,11 @@ import { getServiceClient } from "../db.ts";
  * the attacker. Rather than shrink the trial (a farm answers by minting more accounts; only the
  * honest user is punished), the surface that CARRIES the risk is cut off from trial credits.
  *
- * The gate is deliberately narrow. Only the DataForSEO tools are listed; crawl, audit, report and
- * Search Console tools are untouched, because their marginal cost is our own CPU.
+ * The gate is deliberately narrow: it lists exactly the tools that spend VENDOR money. Crawl,
+ * report and Search Console tools are untouched, because their marginal cost is our own CPU — and
+ * so are audit_onpage / audit_tech / audit_schema / audit_content, which read stored measurements.
+ * `audit_speed` is the one audit that is NOT in that company: despite the family name it buys a
+ * Lighthouse run per page from DataForSEO, so it belongs on the paid side of the line.
  *
  * WHERE IT RUNS: credits/guard.ts, BEFORE the reserve. A refused call therefore burns zero
  * credits and writes no ledger row at all — refusing after a reserve would need a refund path,
@@ -40,6 +43,10 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // same denial-of-service risk the gate exists to stop.
   "keyword_gap",
   "link_gap",
+  // audit_speed, the same day — and the first member whose NAME does not announce it. It sits in
+  // the audit family, whose other four members only cost us CPU; this one buys a Lighthouse run
+  // per page. The import-graph spec is what caught it, not the name.
+  "audit_speed",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

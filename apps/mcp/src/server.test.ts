@@ -9,7 +9,7 @@ import { readPendingJobsBounded } from "./server.ts";
 import { safeKeyPrefix, type AuthContext, type AuthDecision } from "./auth.ts";
 // Additive imports for the fixed header-key endpoint specs, each on its own line so
 // every existing line above stays byte-identical: the production tool set (to prove
-// both routes advertise the same 23 tools) and a REAL limiter (to prove one shared budget).
+// both routes advertise the same 24 tools) and a REAL limiter (to prove one shared budget).
 import { createRateLimiter } from "./auth.ts";
 import { ALL_TOOLS } from "./tools/index.ts";
 // Additive import for the JSON-only Accept specs, on its own line so every existing
@@ -631,17 +631,17 @@ const toolNames = (body: { result: { tools: readonly { name: string }[] } }): re
   body.result.tools.map((tool) => tool.name);
 
 describe("mcp gateway fixed header-key endpoint", () => {
-  it("POST /mcp with x-api-key serves the SAME tool surface as the path form (all 25 tools)", async () => {
+  it("POST /mcp with x-api-key serves the SAME tool surface as the path form (all 26 tools)", async () => {
     // Injecting the production tool set proves the fixed route reaches the real MCP
-    // handler, not a reduced one: both routes must advertise the identical 25 tools
+    // handler, not a reduced one: both routes must advertise the identical 26 tools
     // (19 + list_gsc_properties + track_gsc_property + untrack_project, 2026-08-13;
-    // + audit_content, 2026-08-15; + keyword_gap + link_gap, 2026-08-17).
+    // + audit_content, 2026-08-15; + keyword_gap + link_gap + audit_speed, 2026-08-17).
     const app = await listen(appWith({ tools: ALL_TOOLS }));
     try {
       const viaHeader = await postFixedRpc(app.baseUrl, { "x-api-key": VALID_KEY }, TOOLS_LIST);
       expect(viaHeader.status).toBe(200);
       const headerBody = await viaHeader.json();
-      expect(headerBody.result.tools).toHaveLength(25);
+      expect(headerBody.result.tools).toHaveLength(26);
 
       const viaPath = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
       expect(viaPath.status).toBe(200);
