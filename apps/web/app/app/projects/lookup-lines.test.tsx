@@ -90,13 +90,24 @@ describe("the domain lookups section lists every lookup", () => {
    */
   it("leaves the audits and insights sections unqualified", () => {
     const { container } = render(<ProjectList cards={[cardWith({})]} />);
-    const audits = [...container.querySelectorAll("div")].find(
-      (node) => node.querySelector("span")?.textContent?.trim() === "Audits",
-    ) as HTMLElement;
-    const empties = within(audits).getAllByText(/not run yet/i);
-    expect(empties).toHaveLength(3);
-    for (const line of empties) {
-      expect(line.textContent).not.toMatch(/for this domain/i);
+
+    /**
+     * BOTH siblings, because this test named both and used to inspect only Audits — so
+     * "harmonising" the Search Console insights section alone would have passed it. The section is
+     * found by its own heading, exactly like `lookups()` above, so an assertion cannot be satisfied
+     * by a neighbour's lines.
+     */
+    for (const heading of ["Audits", "Search Console insights"]) {
+      const section = [...container.querySelectorAll("div")].find(
+        (node) => node.querySelector("span")?.textContent?.trim() === heading,
+      );
+      expect(section, `no ${heading} section on the card`).toBeDefined();
+
+      const empties = within(section as HTMLElement).getAllByText(/not run yet/i);
+      expect(empties, `${heading} should have three never-run lines`).toHaveLength(3);
+      for (const line of empties) {
+        expect(line.textContent).not.toMatch(/for this domain/i);
+      }
     }
   });
 

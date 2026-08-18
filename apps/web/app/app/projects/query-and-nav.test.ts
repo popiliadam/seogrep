@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import {
+  errorBranchOf,
+  fanOutBindingsOf,
+  filtersOf,
+  paramsOf,
+  returnPropsOf,
+  singleRowTerminatorsOf,
+} from "./query-pins";
 
 /**
  * What the panel READS, and whether anyone can reach it — the two things no render spec sees.
@@ -66,6 +74,51 @@ function queryOn(source: string, table: string): string {
   }
   const end = source.indexOf(";", from.index);
   return source.slice(from.index, end === -1 ? undefined : end);
+}
+
+/**
+ * The body of ONE top-level function, from its `function <name>` to the closing brace in column 0 —
+ * the same slice the five sibling query specs take, and needed here for the same reason: the pins
+ * below ask what a read was HANDED, and a parameter list only exists inside a function.
+ *
+ * Not-found throws rather than returning "": a renamed read would otherwise make every pin below
+ * pass vacuously against an empty string.
+ */
+function bodyOf(source: string, name: string): string {
+  const start = source.search(new RegExp(`function\\s+${name}\\b`));
+  if (start === -1) {
+    throw new Error(
+      `no \`function ${name}\` in page.tsx. If the read was renamed, rename it here too; if it ` +
+        "was deleted, the panel is being fed by something this spec does not check.",
+    );
+  }
+  const end = source.indexOf("\n}", start);
+  return source.slice(start, end === -1 ? undefined : end);
+}
+
+/**
+ * The page component itself, from `function ProjectsPage` to the END OF THE FILE — and it has to be
+ * written this way, which is worth stating because the reason is a live trap.
+ *
+ * `bodyOf` above ends a function at the first `\n}`, i.e. the first brace in column 0. Every helper
+ * read here has a one-line signature, so that is their closing brace. `ProjectsPage`'s signature is
+ * a MULTI-LINE destructured parameter, and its type annotation opens with `}: {` in column 0 four
+ * lines in — so `bodyOf` would hand back a stub ending inside the signature, and every pin below
+ * would then be measured against a string with no query in it. Measured, not assumed: it threw
+ * here first, because `fanOutBindingsOf` refuses a body it cannot find the fan-out in.
+ *
+ * Slicing to the end of the file is safe for what is asked below — the page's own `Promise.all` is
+ * the first one after this point — and it is deliberately not a general-purpose `bodyOf`.
+ */
+function pageComponent(source: string): string {
+  const start = source.search(/function\s+ProjectsPage\b/);
+  if (start === -1) {
+    throw new Error(
+      "no `function ProjectsPage` in page.tsx. If the component was renamed, rename it here too; " +
+        "if it was deleted, /app/projects is being served by something this spec does not check.",
+    );
+  }
+  return source.slice(start);
 }
 
 describe("the projects panel reads the rows it says it reads", () => {
@@ -200,5 +253,146 @@ describe("the panel is reachable", () => {
     ).toBeDefined();
     expect(entry).toMatch(/href:\s*["']\/app\/projects["']/i);
     expect(entry).toMatch(/label:\s*["']Projects["']/i);
+  });
+});
+
+/**
+ * THE FOUR READS NO SPEC FILE OF ITS OWN COVERS — and the VALUES they filter on.
+ *
+ * `audits-`, `insights-`, `lookups-`, `pull-` and `history-query.test.ts` each own one read. These
+ * four are the remainder: the project list, the connections map, the account-health map and the
+ * crawl summary. Two of them (`readConnections`, `listActiveProjects`) had no tenancy pin at all —
+ * dropping `.eq("user_id", userId)` from either left the whole suite green, and the pin the health
+ * read did carry asked only that the value be an EXPRESSION.
+ *
+ * Measured 2026-08-18, not supposed: re-pointing a `user_id` filter at another id in scope
+ * typechecks and passes both gates. It is not a leak — RLS is the real tenant gate on every one of
+ * these tables — it is a total silent degrade, a panel that reads successfully and shows nothing.
+ *
+ * So each filter is compared against the read's OWN PARAMETER, taken from its signature rather than
+ * spelled here: renaming survives, re-pointing reddens. The convention it rests on is that the
+ * caller is the SECOND parameter, in all four of these and in all five siblings — reordering the
+ * parameters is the one legitimate change this shape cannot survive, and that is a deliberate trade.
+ */
+const READS = [
+  { fn: "listActiveProjects", what: "the project list", params: 2, singleRow: false },
+  { fn: "readConnections", what: "the connections map", params: 2, singleRow: false },
+  { fn: "readAccountHealth", what: "the account-health map", params: 2, singleRow: false },
+  { fn: "latestSucceeded", what: "the crawl summary", params: 4, singleRow: true },
+] as const;
+
+for (const { fn, what, params, singleRow } of READS) {
+  describe(`${what} is scoped to the caller and fails visibly`, () => {
+    const BODY = bodyOf(PAGE, fn);
+
+    /** Distinct parameters — without this, a lost one would compare `undefined` to `undefined`. */
+    it(`takes ${params} distinct parameters`, () => {
+      expect(paramsOf(BODY, what)).toHaveLength(params);
+      expect(new Set(paramsOf(BODY, what)).size).toBe(params);
+    });
+
+    it("filters user_id on the caller it was handed, not another id in scope", () => {
+      expect(filtersOf(BODY, what).get("user_id")).toBe(paramsOf(BODY, what)[1]);
+    });
+
+    /**
+     * THE ROW SHAPE. A single-row read that lost `.maybeSingle()` hands back an ARRAY, and a list
+     * read that gained one hands back an OBJECT; both are swallowed whole by the
+     * `as unknown as …` cast every read here ends with, and both render as "nothing to show" on a
+     * query that succeeded. `.single()` cannot satisfy the first either — it ERRORS on zero rows,
+     * which is the normal state of a project that has never been crawled.
+     */
+    it(`asks PostgREST for ${singleRow ? "the one row" : "the whole list"}`, () => {
+      expect(singleRowTerminatorsOf(BODY)).toEqual(singleRow ? ["maybeSingle"] : []);
+    });
+
+    /**
+     * A FAILED READ THROWS — the page's own doc comments say why in prose: a lookup that degrades
+     * into an empty result reads as "you have no projects" / "your connection is fine", which is
+     * the panel asserting something it never measured. Pinned by what the branch DOES (raises, does
+     * not return, carries the driver's message), not by the presence of the word `throw`.
+     */
+    it("throws on failure and never degrades into an empty result", () => {
+      const branch = errorBranchOf(BODY, what);
+      expect(branch).toMatch(/throw\s+new\s+Error\(/);
+      expect(branch).not.toMatch(/\breturn\b/);
+      expect(branch).toMatch(/error\.message/);
+    });
+  });
+}
+
+describe("the crawl summary is filtered by the project and tool it was handed", () => {
+  const CRAWL = bodyOf(PAGE, "latestSucceeded");
+
+  /**
+   * The read `cardInputFor` drives once per project with a literal tool. Its `status` filter is
+   * already value-pinned above (`"succeeded"`, a literal the regex matches in full); these two are
+   * the ones that take a value from the caller, and re-pointing either turns every card's crawl
+   * fact into "never crawled" without failing anything else.
+   */
+  it("filters project_id and tool on what it was handed", () => {
+    const filters = filtersOf(CRAWL, "the crawl summary");
+    const params = paramsOf(CRAWL, "the crawl summary");
+    expect(filters.get("project_id")).toBe(params[2]);
+    expect(filters.get("tool")).toBe(params[3]);
+  });
+});
+
+describe("the project list excludes archived projects by value, not by column", () => {
+  /**
+   * `.is("archived_at", null)` — the pin above matches the whole call, so this adds only the value
+   * read through the parser, which is what keeps the two statements about this filter in one place
+   * when the next one is added. `.eq(…, null)` would be the classic PostgREST defect (it sends the
+   * STRING "null"); `.is("archived_at", something)` would silently stop excluding anything.
+   */
+  it("compares archived_at against null itself", () => {
+    expect(filtersOf(bodyOf(PAGE, "listActiveProjects"), "the project list").get("archived_at")).toBe(
+      "null",
+    );
+  });
+});
+
+/**
+ * …AND EVERY ROW THE PAGE READ REACHES A CARD.
+ *
+ * Two fan-outs, two places a paid-for row can be dropped on the floor. `cardInputFor` gathers six
+ * reads and returns them on one object — `ProjectCardInput` makes four of those fields OPTIONAL, so
+ * handing back `crawl: undefined` typechecks and leaves every spec in this directory green. The
+ * page's own fan-out then reads three more and must pass both maps ON to `cardInputFor`; replacing
+ * either argument with a fresh empty Map would blank every card's connection and health line while
+ * the reads still ran.
+ *
+ * Pinned as relationships — the binding a call lands in must be the expression that reaches the
+ * consumer — so renaming any binding costs nothing while dropping or swapping one reddens.
+ *
+ * WHAT THIS STILL CANNOT SEE: that the rows then render. vitest has no RSC boundary and nothing in
+ * the fast lane executes this page (signed lesson 12); the card layer's own specs prove the other
+ * half, and no spec in this suite joins the two.
+ */
+describe("the rows the page reads reach the cards it builds", () => {
+  const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
+  const PAGE_FN = pageComponent(PAGE);
+
+  it("keeps the fetched crawl summary on the card input", () => {
+    const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestSucceeded");
+    expect(binding, "cardInputFor no longer calls latestSucceeded at all").toBeDefined();
+    expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("crawl")).toBe(binding);
+  });
+
+  it("maps over the projects it read and hands both maps on to the gatherer", () => {
+    const reads = fanOutBindingsOf(PAGE_FN, "the page's own fan-out");
+    const projects = reads.get("listActiveProjects");
+    const connections = reads.get("readConnections");
+    const health = reads.get("readAccountHealth");
+    expect([projects, connections, health].filter((binding) => binding === undefined)).toEqual([]);
+
+    expect(PAGE_FN).toMatch(new RegExp(`\\b${projects}\\s*\\.map\\(`));
+    const args = /cardInputFor\(([^)]*)\)/
+      .exec(PAGE_FN)?.[1]
+      ?.split(",")
+      .map((argument) => argument.trim());
+    expect(args, "nothing calls cardInputFor any more").toBeDefined();
+    expect(args).toContain(connections);
+    expect(args).toContain(health);
   });
 });
