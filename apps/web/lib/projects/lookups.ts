@@ -158,8 +158,17 @@ function counted(tool: DomainLookupTool, total: number): string {
  * `number | null` precisely because DataForSEO's `total_count` can be absent, and runs.ts stores
  * that absence as null on purpose — "the vendor did not say" and "the domain ranks for nothing"
  * are different answers, and printing 0 for the first is the panel inventing a measurement.
+ *
+ * EXPORTED because `lookup-history.ts` (/app/lookups) prints the same line for the same rows, and
+ * one copy is the point: the two surfaces read the same table, and a second implementation of
+ * "what this run found" is a second place for the null-is-not-zero rule above to be forgotten.
+ * The parameter is the two report sub-fields alone rather than a whole `DomainLookupRunRow`, so
+ * the history page's wider row shape fits without either module knowing the other's columns.
  */
-function summarize(tool: DomainLookupTool, row: DomainLookupRunRow): string | null {
+export function summarizeDomainLookupRun(
+  tool: DomainLookupTool,
+  row: Pick<DomainLookupRunRow, "total" | "top">,
+): string | null {
   const total = asFiniteNumber(row.total);
   if (total === null) return null;
   if (total === 0) return NOTHING_FOUND[tool];
@@ -203,7 +212,7 @@ export function buildDomainLookupLines(
       run:
         latest === null
           ? null
-          : { createdAt: latest.created_at, summary: summarize(tool, latest) },
+          : { createdAt: latest.created_at, summary: summarizeDomainLookupRun(tool, latest) },
     };
   });
 }
