@@ -14,6 +14,11 @@ import {
   type DomainOrganicMetrics,
   type PositionBandKey,
 } from "../dfs/competitors.ts";
+import {
+  competitorsRunReport,
+  writeDomainLookupRun,
+  type DomainLookupRunWriter,
+} from "../dfs/runs.ts";
 import { normalizeDomain } from "./setup-project.ts";
 import {
   loadOwnProject,
@@ -343,9 +348,16 @@ export interface CompareCompetitorsDeps {
   readonly port?: CompetitorsPort;
   /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The run recorder (default: the real `writeDomainLookupRun`). A PORT for the reason every
+   * other writer in this family is one: a spec can make it FAIL without breaking a database, which
+   * is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: DomainLookupRunWriter;
 }
 
 export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeDomainLookupRun;
   return defineTool<CompareCompetitorsInput>({
     name: "compare_competitors",
     description: DESCRIPTION,
@@ -385,6 +397,29 @@ export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): R
           language_code: input.language_code,
           location_code: input.location_code,
         });
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0027; dfs/runs.ts states the same contract from the other side). withCredits
+        // commits a handler that RETURNS and releases one that THROWS, so an error escaping here
+        // costs the tenant nothing. Caught and logged instead, the shape would be the house's
+        // worst at 90 credits a call: a charged caller, a delivered table, and a panel that says
+        // forever that the comparison never ran.
+        //
+        // `projectId` is null on a bare-target call — the commonest PAID call this tool serves,
+        // and the one 0027 made project_id nullable to record. `target` is the RESOLVED domain,
+        // never the caller's raw input.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: subject.project?.id ?? null,
+            tool: "compare_competitors",
+            target: subject.domain,
+          },
+          competitorsRunReport(comparison, {
+            limit: input.limit,
+            language_code: input.language_code,
+            location_code: input.location_code,
+          }),
+        );
         return textResult(
           formatCompetitorComparison(comparison, {
             language_code: input.language_code,

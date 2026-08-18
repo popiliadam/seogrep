@@ -14,6 +14,11 @@ import {
   type ReferringDomainRow,
 } from "../dfs/backlinks.ts";
 import {
+  backlinksRunReport,
+  writeDomainLookupRun,
+  type DomainLookupRunWriter,
+} from "../dfs/runs.ts";
+import {
   loadOwnProject,
   projectIdField,
   resolveTarget,
@@ -180,9 +185,16 @@ export interface AnalyzeBacklinksDeps {
   readonly port?: BacklinksPort;
   /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The run recorder (default: the real `writeDomainLookupRun`). A PORT for the reason every
+   * other writer in this family is one: a spec can make it FAIL without breaking a database, which
+   * is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: DomainLookupRunWriter;
 }
 
 export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeDomainLookupRun;
   return defineTool<AnalyzeBacklinksInput>({
     name: "analyze_backlinks",
     description: DESCRIPTION,
@@ -210,6 +222,25 @@ export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): Regis
           target: subject.domain,
           limit: input.limit,
         });
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0027; dfs/runs.ts states the same contract from the other side). withCredits
+        // commits a handler that RETURNS and releases one that THROWS, so an error escaping here
+        // costs the tenant nothing. Caught and logged instead, the shape would be the house's
+        // worst at 70 credits a call: a charged caller, a delivered profile, and a panel that says
+        // forever that the lookup never ran.
+        //
+        // `projectId` is null on a bare-target call — the commonest PAID call this tool serves,
+        // and the one 0027 made project_id nullable to record. `target` is the RESOLVED domain,
+        // never the caller's raw input.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: subject.project?.id ?? null,
+            tool: "analyze_backlinks",
+            target: subject.domain,
+          },
+          backlinksRunReport(profile, { limit: input.limit }),
+        );
         return textResult(formatBacklinkProfile(profile, subject.project));
       });
     },
