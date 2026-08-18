@@ -3,6 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AUDIT_TOOLS } from "../../../lib/projects/audits";
+import {
+  errorBranchOf,
+  fanOutBindingsOf,
+  filtersOf,
+  paramsOf,
+  returnPropsOf,
+  singleRowTerminatorsOf,
+} from "./query-pins";
 
 /**
  * What the AUDIT LINES read — the half no render spec can see.
@@ -79,6 +87,12 @@ function selectOf(body: string): string {
 
 const READ = bodyOf(PAGE, "latestAuditRun");
 const COLUMNS = selectOf(READ);
+
+/** What the read was HANDED and what it does with it — see the describes at the bottom. */
+const WHAT = "the audit lines' read";
+const PARAMS = paramsOf(READ, WHAT);
+const FILTERS = filtersOf(READ, WHAT);
+const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
 
 describe("the audit lines read the newest run of one tool", () => {
   /** The right table: audits live in their own table, not in `jobs` (migration 0024). */
@@ -158,5 +172,80 @@ describe("the audit lines do not download audit reports", () => {
         "pages_with_schema:report->pagesWithSchema",
       ].sort(),
     );
+  });
+});
+
+/**
+ * THE VALUES, not only the column names. `.eq("user_id", userId)` rewritten to
+ * `.eq("user_id", projectId)` satisfies the tenancy pin above word for word, typechecks, and passes
+ * both gates — measured 2026-08-18. No leak (RLS still refuses another tenant's rows), a total
+ * silent degrade: the filter matches nothing and every audit line on every card reads "not run".
+ *
+ * Each filter is therefore compared against the read's OWN PARAMETER, read out of its signature
+ * rather than spelled here, so renaming survives and re-pointing does not.
+ * `lookups-query.test.ts` carries the full reasoning, including the one legitimate change this
+ * shape cannot survive (reordering the parameters).
+ */
+describe("the audit lines compare each column against the value it was handed", () => {
+  /** Four distinct parameters — without this, a lost one would compare `undefined` to `undefined`. */
+  it("is handed the client, the caller, the project and the tool", () => {
+    expect(PARAMS).toHaveLength(4);
+    expect(new Set(PARAMS).size).toBe(4);
+  });
+
+  it("filters user_id on the caller it was handed, not another id in scope", () => {
+    expect(FILTERS.get("user_id")).toBe(PARAMS[1]);
+  });
+
+  it("filters project_id on the project it was handed", () => {
+    expect(FILTERS.get("project_id")).toBe(PARAMS[2]);
+  });
+
+  it("filters tool on the tool it was handed", () => {
+    expect(FILTERS.get("tool")).toBe(PARAMS[3]);
+  });
+});
+
+describe("the audit lines' read fails visibly rather than emptying the card", () => {
+  /**
+   * `.maybeSingle()`, and EXACTLY it. Dropped, `data` arrives as an ARRAY and the
+   * `as unknown as AuditRunRow | null` cast swallows it: truthy object, every field `undefined`,
+   * never-run copy printed for a row that was fetched successfully. `.single()` is the other wrong
+   * answer — it ERRORS on zero rows, and an audit a project has never run is the normal case, so
+   * it would turn an empty line into a thrown page.
+   */
+  it("asks for one row with the forgiving single-row terminator", () => {
+    expect(singleRowTerminatorsOf(READ)).toEqual(["maybeSingle"]);
+  });
+
+  /**
+   * A FAILED READ THROWS — this page's stated choice over degrading: an audit line that says "not
+   * run" because the database blipped is worse than a visible failure, because the user acts on it.
+   * Pinned by what the branch DOES (raises, does not return, carries the driver's message), not by
+   * the presence of the word `throw`.
+   */
+  it("throws on a failed lookup and never returns a degraded row", () => {
+    const branch = errorBranchOf(READ, WHAT);
+    expect(branch).toMatch(/throw\s+new\s+Error\(/);
+    expect(branch).not.toMatch(/\breturn\b/);
+    expect(branch).toMatch(/error\.message/);
+  });
+});
+
+/**
+ * …AND THE ROWS REACH THE CARD. `ProjectCardInput.auditRuns` is OPTIONAL, so `cardInputFor` can
+ * fetch all three audits and hand back `auditRuns: undefined` with `tsc` and every spec here green.
+ * The fan-out pin above watches the fan-out's own body; this watches its CALLER consuming it, as a
+ * relationship — the binding the `latestAuditRuns` call lands in must be the expression the
+ * `auditRuns` property holds — so a rename costs nothing and a swap with a sibling binding reddens.
+ *
+ * WHAT THIS STILL CANNOT SEE: that the rows then render. Nothing in the fast lane executes this
+ * Server Component (signed lesson 12).
+ */
+describe("the audit runs reach the card the page builds", () => {
+  it("keeps the fetched audit runs on the card input", () => {
+    const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestAuditRuns");
+    expect(binding, "cardInputFor no longer calls latestAuditRuns at all").toBeDefined();
+    expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("auditRuns")).toBe(binding);
   });
 });
