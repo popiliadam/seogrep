@@ -403,10 +403,27 @@ describe("the project list excludes archived projects by value, not by column", 
  * half, and no spec in this suite joins the two.
  */
 /**
- * What an object-literal property FINALLY holds, following ONE local `const` when it goes through
- * one. `connection,` is shorthand for a `const` declared four lines up; asserting on the shorthand
- * would only prove the name still exists, which is exactly what `connection: null` leaves intact.
- * A `let` is deliberately NOT followed — see the body.
+ * What an object-literal property holds AT ITS FIRST MATCHING `const` DECLARATION — and that is
+ * the honest name for it, not "what the property finally holds". `connection,` is shorthand for a
+ * `const` declared four lines up; asserting on the shorthand would only prove the name still
+ * exists, which is exactly what `connection: null` leaves intact, so following the binding is
+ * worth doing. What it CANNOT do is resolve scope.
+ *
+ * THREE REFEREES DEFEATED THIS PIN ON THREE DIFFERENT AXES, each reproducing the production
+ * defect it exists for (every card reads "not connected" while token health keeps reporting on
+ * the connection it just denied having), each green across the whole suite AND `tsc` AND `eslint`:
+ *   1. the TAIL          — `connections.get(project.id) ? null : null`   (closed: whole-match)
+ *   2. REASSIGNMENT      — `let connection = …;` then `connection = null;` (closed: `const` only)
+ *   3. SCOPE             — a block-scoped decoy `const` inside a dead `if`, then
+ *                          `const connection = null;` at function scope. `.exec()` returns the
+ *                          FIRST textual match, so this function reports the decoy. NOT CLOSED.
+ *
+ * Axis 3 is not a missing character. Value flow is a scope question and text has no scopes, so a
+ * fourth regex would only move the boundary again — measured three times, once per round. The
+ * decision recorded here is REVISE, not a fourth patch: this pin stays because it still catches
+ * the ways this breaks BY ACCIDENT, and it is strictly more than the nothing that guarded this
+ * property before, but its guarantee is the one written above and no more. The replacement is a
+ * TypeScript-AST resolution of the declaration in scope at the return site; that is its own slice.
  */
 function resolved(body: string, held: string): string {
   if (!/^[A-Za-z_$][\w$]*$/.test(held)) return held;

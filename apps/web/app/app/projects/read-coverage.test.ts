@@ -140,7 +140,10 @@ const FROM_CALL_SOURCE = String.raw`\.from\s*[(<]`;
  * A FRESH RegExp per use, from one shared source string. Not a single `/…/g` constant: `test()` on
  * a global regex advances `lastIndex`, so one shared instance would return alternating answers
  * across the reads it filters — a recogniser that silently sees only every other read is worse
- * than no recogniser, and it would have made this census quietly wrong rather than loudly red.
+ * than no recogniser, and it would have made the recogniser see only 7 of the 9 reads. On THIS page that fails the
+ * name-equality census loudly (7 names against 9) rather than passing quietly — but the
+ * loudness is a property of today's page, not of the bug, which is why the shape is fixed
+ * rather than tolerated.
  */
 const fromCall = (flags = ""): RegExp => new RegExp(FROM_CALL_SOURCE, flags);
 
@@ -178,9 +181,10 @@ describe("every read this page makes has a row in the matrix above", () => {
   /**
    * SEVEN `.order(` calls, all of them inside a read that the matrix gives a `#n` to. The count is
    * asserted against the reads rather than typed as a number, so the pin says what it means: no
-   * sort exists on this page outside a row of the table above. Six of the nine reads sort; R2 and
-   * R3 build maps and R4… is the eighth, and it is included here precisely because it was the one
-   * whose sort nobody had pinned.
+   * sort exists on this page outside a row of the table above. SEVEN of the nine reads sort — the
+   * assertion below lists all seven — and the two that do not are R2 and R3, which build maps
+   * keyed by id where row order is unobservable. R4 is in the list precisely because it was the
+   * one whose sort nobody had pinned.
    */
   it("sorts only inside reads the matrix accounts for", () => {
     const sorting = MATRIX_ROWS.filter((name) => bodyOf(PAGE, name).includes(".order("));
@@ -211,6 +215,18 @@ describe("every read this page makes has a row in the matrix above", () => {
    * every lane stayed green, so the guarantee here is the one that regex actually spells and no
    * more. A spelling it does not cover would slip the census again — and that is why the recogniser
    * is a single named constant shared with `READS` rather than two literals that can drift apart.
+   *
+   * KNOWN ESCAPE, measured and left open on purpose: `s["from"]("projects")` is invisible here,
+   * green across every lane. The spelling axis is unbounded — bracket access, an alias, a bound
+   * method — so a regex closes whichever spelling was last tried and no more. Three referees
+   * escaped three different versions of this pin, one per round. The decision recorded is REVISE:
+   * the replacement resolves actual CALL TARGETS through the TypeScript AST (the repo already
+   * ships `typescript`), which is spelling-independent by construction, and that is its own slice.
+   * This census stays meanwhile because it catches the shapes a person writes by accident.
+   *
+   * Note the direction it fails in when it is wrong: a `.from(` inside a STRING LITERAL counts,
+   * so innocent code can force a spurious red and a matrix row. That is noisy but safe, and it is
+   * not to be "fixed" by loosening the count — a census that fails open is not a census.
    *
    * It closes a second gap in passing, and that one is why this is a count rather than a lint: the
    * per-row table pin below asserts a body CONTAINS its table, so a body holding TWO reads would
