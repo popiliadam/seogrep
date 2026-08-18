@@ -7,7 +7,7 @@
 
 ### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`1490882` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+**Durum:** `main` @`50be4d5` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
 **MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
@@ -75,13 +75,14 @@ Eskiler: `apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor
 `worker.test.ts`'in `outcome()` fixture'ı eksik · port testlerindeki `*.example` domainleri ·
 flaky `disconnect-button.test.tsx:302`.
 **2026-08-18'de eklenenler — hepsi ÖLÇÜLDÜ, hiçbiri tahmin değil:**
-- **`cardInputFor`'un `connection`'ı ve crawl özetinin SIRASI pinsiz** — [#135](https://github.com/popiliadam/seogrep/pull/135)'in
-  hakeminin yeşil kalan iki mutasyonu. `connection: null` → her kartın bağlantı satırı
-  "not connected" der ama token sağlığı doğru kalır (kendi kendiyle çelişen kart); `latestSucceeded`'da
-  `ascending: true` → `.limit(1)` en ESKİ crawl'ı alır, her kart projenin ilk crawl'ıyla damgalanır.
-  İkincisinin arızası `insights-query.test.ts`'in başlığında **kelimesi kelimesine yazılı** ama assert
-  edilmemiş. Chip "iki adı düzeltme, ÜÇÜNCÜYÜ ara" diyor: iki bağımsız aynı-sınıf boşluk, sorunun
-  isimlerde değil enumerasyonda olduğunu söyler.
+- **İki metin-pini AST ister — REVISE kararı, [#137](https://github.com/popiliadam/seogrep/pull/137)'de şerhli.** "Matris dışında okuma yok" ve
+  "döndürülen alan o ifadenin ürettiği değeri taşıyor" soruları metinle kapanmıyor: ÜÇ taze hakem,
+  üç turda, aynı iki pini **üç FARKLI eksende** deldi (kuyruk → yeniden atama → **kapsam**; ve
+  ok-fonksiyonu → `.from (` → `s["from"](`), her seferinde suite + `tsc` + `eslint` yeşilken üretim
+  kusuru geri geliyordu. Yama yapılmadı: değer akışı bir **kapsam** sorusudur ve metnin kapsamı
+  yoktur, yazım ekseni ise sınırsızdır. Yerine geçecek: TypeScript AST (çağrı hedefi çözümü ·
+  return noktasındaki kapsamda bildirim çözümü) — repo `typescript`'i zaten taşıyor. Chip yedi
+  kaçağın hepsini kırmızıya döndürülecek liste olarak taşıyor.
 - **Statik kapılar string literal içindeki SQL metnini gerçek karar sanıyor** — hakem sahte bir
   `; revoke …;` metnini literal'e gömdü, `check-grants` yeşile döndü. `main`'deki `check-rls.sh`'de
   de **aynı**: bu, paylaşılan okuyucunun devraldığı bir özellik (dollar-quoted gövdeler KASTEN
@@ -102,6 +103,49 @@ crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-
 **transport**) ve **port 55322 `address already in use`** (yığın hiç başlayamadı). İkisi de altyapı;
 üçüncü koşu temiz geçti. **Kırmızıyı "flake" ilan etmeden ÖNCE logu oku** — birincisi testlere kadar
 gelmişti ve orada bütün kod kanıtı zaten yeşildi.
+### 📐 2026-08-18 — PANEL KAPSAM MATRİSİ: 19 HÜCRE PİNLİ, İKİ SORU ARACI DEĞİŞTİRİYOR (#137)
+
+İki mutasyon her kapıyı geçiyordu — `connection: null` (her kart "not connected" der ama token
+sağlığı doğru kalır) ve `latestSucceeded`'da `ascending: true` (`.limit(1)` en ESKİ crawl'ı alır).
+İkisi de kapandı, ama asıl teslimat **matris**: dokuz okuma × dokuz özellik, spec başlığında,
+**kapalı hücreler de listelenerek** — yalnız bozukları sayan bir envanter denetlenemez.
+
+Matrisin açtıkları: `latestSucceeded`'ın **beş** hücresi boştu (bir değil) · `project` de `connection`
+gibi pinsizdi · `readConnections`'ın projeksiyonundan `account_id` düşünce M6'nın **ikinci bir yolu**
+çıkıyor. İki **nüfus sayımı** tabloyu bayatlamaktan koruyor: onuncu bir okuma ya da onuncu bir kart
+alanı dosyayı kırmızıya döndürür.
+
+**REVISE KARARI — bu oturumun tek FAIL'i ve tek eskalasyonu.** Üç taze hakem, üç turda, aynı iki pini
+**üç FARKLI eksende** deldi; her seferinde üretim kusuru geri geliyordu ve suite + `tsc` + `eslint`
+yeşildi:
+
+| tur | eksen (değer akışı) | eksen (okuma sayımı) |
+|---|---|---|
+| 1 | kuyruk `? null : null` → kapandı | ok-fonksiyonu → kapandı |
+| 2 | `let` + yeniden atama → kapandı | `.from (` tek boşluk → kapandı |
+| 3 | **kapsam**: ölü `if` içinde yem `const` → **KAPANMADI** | `s["from"](` → **KAPANMADI** |
+
+Dördüncü yama YAPILMADI ve bu **üçüncü hakem gönderilmeden ÖNCE** taahhüt edilmişti. Hakemin cümlesi:
+*"bu üç şanssız boşluk değil, aracın sınırının ampirik olarak çizilmesi."*
+
+**Ayrım korundu: PİNLER yanlış değil, KAPANIŞ İDDİALARI yanlıştı.** Saldırılan her "bilinen ifadedeki
+literal" pini (filtreler · değerler · sıralama · limit · tek-satır sonlandırıcı · hata dalı ·
+projeksiyon · argüman kimliği · iki nüfus sayımı) üç hakemin üçünde de doğru şekilde düştü, derleyiciler
+kördü. **19 hücre yük taşıyor ve kalıyor.** Değişen tek şey iddia: `resolved()` artık "alanın SONUNDA
+taşıdığı şey" demiyor, "İLK eşleşen `const` bildiriminde taşıdığı şey" diyor ve yenildiği üç ekseni
+adıyla listeliyor; sayım `s["from"](` kaçağını açıkça kaydediyor.
+
+**DERS ADAYI (imzasız), bu oturumda ÜÇ ayrı yerde çıktı:** *bir iddianın kapsamı, onu ölçen aracın
+kapsamıyla sınırlıdır — ve bunu yazmak zorundasın.* Bulut yetkilerinde ("yerelde yeşil, bulutta
+yanlış") · `bodyOf`'ta (kütük gövdeye yazılan iddia sonsuza dek geçer) · ve burada ("bu şekli kapatır"
+diyen yorum). Üçünde de kod değil **cümle** yanlıştı, ve üçünde de cümle **yeşil bir testin arkasında**
+duruyordu.
+
+**Süreç şerhi:** 1. deneme işçinin (iki kez API 529 ile düştü), 2. ve 3. deneme **şefin** — düzeltmeler
+için olağan ayrım yoktu ve her hakem bu şerhle gönderildi ("itibar tanıma"). Şef kendi eklediği satırdaki
+kendi hatasını ölçmeden önce yakaladı: paylaşılan `/…/g` sabitinde `.test()` **durumludur**, tanıyıcı
+dokuz okumanın yalnız yedisini görürdü.
+
 ### 🔐 2026-08-18 — 0028 BULUT GRANT DARALTMASI + SORGU PİNLERİ: KAPILARIN YALAN SÖYLEDİĞİ ÜÇ YER
 
 0027'yi doğrularken çıkan bulgudan doğdu ve iki dilime büyüdü. **Hiçbir fiyat, hiçbir tool, hiçbir
