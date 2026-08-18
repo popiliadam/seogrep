@@ -195,6 +195,8 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       // from the import graph instead of from what a name looks like.
       "tools/audit-speed.ts",
       "tools/compare-competitors.ts",
+      "tools/keyword-gap.ts",
+      "tools/link-gap.ts",
       "tools/ranked-keywords.ts",
       "tools/research-keywords.ts",
     ]);

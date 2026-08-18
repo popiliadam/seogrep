@@ -805,24 +805,56 @@ export const DOC_PROSE = {
   ranked_keywords: {
     lead:
       "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +
-      "with its position, monthly search volume, and the exact URL that ranks — powered by " +
-      "DataForSEO Labs. It works on **any public domain**, so it reads your own site or a " +
-      "competitor's the same way. It is **synchronous**: the table comes back immediately, with " +
-      "no background job to poll.",
+      "with its position, monthly search volume, CPC, competition, estimated traffic, the exact " +
+      "URL that ranks and that page's SERP title — under a one-screen summary of the whole " +
+      "domain's organic footprint. It is powered by DataForSEO Labs and works on **any public " +
+      "domain**, so it reads your own site or a competitor's the same way. It is **synchronous**: " +
+      "the table comes back immediately, with no background job to poll.",
     whatItDoes:
       "Name the site in **one of two ways** — pass a `target` domain (a bare host or a full URL — " +
       "it is canonicalized for you), or pass the `project_id` of one of your own projects and the " +
       "domain is taken from it. Exactly one of the two: passing both is rejected rather than " +
       "resolved by precedence, because the two can name different sites and guessing would bill " +
-      "you for a lookup of the one you did not mean. Either way you get one row per ranked " +
-      "keyword:\n\n" +
+      "you for a lookup of the one you did not mean.\n\n" +
+      "You get a **domain summary first**, before any keyword rows: how many organic results the " +
+      "domain appears in, how those are spread across all twelve position bands from #1 to #100, " +
+      "its estimated monthly organic traffic, what the same traffic would cost as ads, and how " +
+      "many rankings are new, up, down or gone since DataForSEO last checked. It answers \"how is " +
+      "this domain doing\" without reading a single row.\n\nThen one row per ranked keyword:\n\n" +
       "- **Keyword** — the query the domain ranks for.\n" +
-      "- **Position** — where it ranks in the organic results.\n" +
+      "- **Position** — its rank among the **organic** results. When a SERP feature (a featured " +
+      "snippet, an answer box, an ad block) sits above it, the reply also gives the rank on the " +
+      "page — `position #3 organic (#4 on the page)`. Those are two different numbers in the same " +
+      "response: the first is what stays comparable over time, the second is how far a reader " +
+      "actually scrolls. When they agree, only one is printed.\n" +
       "- **Search volume** — average monthly Google searches for that keyword.\n" +
-      "- **URL** — the page on the domain that holds the ranking.\n\n" +
+      "- **CPC** and **competition** — the advertiser bid and the HIGH/MEDIUM/LOW band. They come " +
+      "with this lookup, so you do not need a separate `research_keywords` call to get them for a " +
+      "keyword you already rank for.\n" +
+      "- **Difficulty** and **intent** — how hard the keyword is to rank for (0–100) and what " +
+      "searchers want from it. The same two figures `research_keywords` reports, in the same " +
+      "words, without a second call.\n" +
+      "- **Estimated traffic** — DataForSEO's estimate of the monthly visits *this ranking* " +
+      "earns. Usually a sharper priority signal than position and volume read separately.\n" +
+      "- **URL** and **title** — the page that holds the ranking, and the title it shows in the " +
+      "SERP.\n\n" +
+      "When there is more to say about the result page, a second indented line follows the row:\n\n" +
+      "- **Movement** — whether the ranking is new, moved up or moved down since DataForSEO's " +
+      "previous check, and where it was. This is what makes the tool a change report rather than " +
+      "a snapshot: run it on a schedule and the movement lines are the story.\n" +
+      "- **What else is on that SERP** — the other element types Google showed, `ai_overview` " +
+      "included. It is the direct explanation of the organic/on-page position gap above, naming " +
+      "what sits between your result and the top of the page.\n" +
+      "- **A verify link** — Google, at the exact locale DataForSEO measured. You cannot rebuild " +
+      "it from the keyword alone, and the locale is usually what a surprising result turns on.\n\n" +
+      "Each of those fields is **omitted when DataForSEO did not send it**, rather than padded " +
+      "with `n/a`; a row with nothing extra to say stays a single line. A dated line under the " +
+      "table says when the vendor last refreshed the CPC and competition figures, and says so in " +
+      "a sentence once that is over a month old.\n\n" +
       "Only **organic** results are counted — paid placements are excluded. The header line says " +
-      "how many rows you got and, when the domain ranks for more than the `limit` you asked for, " +
-      "how many it ranks for in total, so a truncated list never reads like the whole picture.",
+      "how many rows you got, which ordering you got them in, and — when the domain ranks for " +
+      "more than the `limit` you asked for — how many it ranks for in total, so a truncated list " +
+      "never reads like the whole picture.",
     preExampleSections: [
       {
         heading: "Who can run it",
@@ -839,16 +871,36 @@ export const DOC_PROSE = {
     ],
     example:
       "Ask your MCP client in plain language:\n\n> What keywords does competitor.com rank for?\n\n" +
-      "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.",
+      "Or narrow it down:\n\n> Show me the top 50 keywords example.com ranks for.\n\n" +
+      "\"Top\" is a real instruction here: DataForSEO orders the domain's **whole** keyword set " +
+      "before returning the first `limit` of them. By default that ordering is highest search " +
+      "volume first; pass `sort` to get `traffic` (highest estimated traffic first) or `position` " +
+      "(best ranking first) instead.\n\n> Which of example.com's rankings bring the most traffic?",
     returns:
-      "A table with one row per ranked keyword — keyword, position, search volume, and the ranking " +
-      "URL — under a header saying how many of the domain's ranked keywords are shown; when you " +
-      "looked the site up by `project_id`, the header names that project. A domain with no " +
-      "organic rankings on record is reported as such.\n\nRankings are read for the United States " +
+      "A summary of the domain's organic footprint — organic results it appears in, all twelve " +
+      "position bands from #1 to #100, estimated monthly organic traffic, the paid-equivalent " +
+      "traffic cost, and how many rankings are new, up, down or gone since DataForSEO's previous " +
+      "check — followed by one row per ranked keyword: keyword, organic position (and the " +
+      "on-page position when a SERP feature outranks it), search volume, CPC, competition, " +
+      "difficulty, intent, estimated traffic, the ranking URL and its SERP title, plus a second " +
+      "line carrying how the ranking moved, which other element types share that SERP " +
+      "(`ai_overview` among them) and a link to check Google yourself. Fields DataForSEO did not " +
+      "send are left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
+      "keywords are shown, in which ordering, and out of how many in total; when you looked the " +
+      "site up by `project_id`, it names that project. A dated line under the table says when the " +
+      "vendor last refreshed the CPC and competition figures. A domain with no organic rankings " +
+      "on record is reported as such — with the summary still shown, because \"no rows came back\" " +
+      "and \"this domain ranks for nothing\" are different findings.\n\n`limit` defaults to 100, " +
+      "not the 1,000-row maximum: DataForSEO charges per row, and a thousand bullet lines costs " +
+      "you more and reads worse. The header always names the domain's full ranked-keyword count, " +
+      "so you can see when raising it is worth it.\n\nRankings are read for the United States " +
       "in English unless you pass `location_code` and `language_code`. When a lookup left on that " +
       "default comes back thin AND the domain carries a country-code TLD, the reply says so and " +
       "names the TLD — it does **not** guess the matching location code, because a wrong code " +
-      "returns another country's rankings that look perfectly ordinary.\n\nAn input that is not a " +
+      "returns another country's rankings that look perfectly ordinary. Two-letter TLDs that are " +
+      "delegated to a country but sold worldwide (`.io`, `.ai`, `.co`, `.me`, `.tv` and the like) " +
+      "are deliberately **not** called country-code TLDs, because for almost every site using one " +
+      "that would be advice about the wrong country.\n\nAn input that is not a " +
       "public domain, a call naming neither `target` nor `project_id` (or both), and a " +
       "`project_id` that is not yours are all rejected before anything is charged; while live " +
       "data is off you get the \"not yet enabled\" message instead — also free.",
@@ -1004,6 +1056,157 @@ export const DOC_PROSE = {
           "You pay the same either way: it is a **flat price**, charged **once**, as a single tool " +
           "call. If any of those requests fails, the whole call fails and **you are not charged** " +
           "— a partial comparison is never billed.",
+      },
+    ],
+  },
+
+  keyword_gap: {
+    lead:
+      "`keyword_gap` lists the Google organic keywords a **competitor ranks for and you do not** — " +
+      "each with its monthly search volume, the position the competitor holds, and the page " +
+      "holding it — powered by DataForSEO Labs. It works on **any public domain**, so you can run " +
+      "it for your own site or for one competitor against another. It is **synchronous**: the " +
+      "list comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Name your side in **one of two ways** — pass a `target` domain (a bare host or a full URL " +
+      "— it is canonicalized for you), or pass the `project_id` of one of your own projects and " +
+      "the domain is taken from it. Exactly one of the two: passing both is rejected rather than " +
+      "resolved by precedence, because the two can name different sites and guessing would bill " +
+      "you for a lookup of the one you did not mean. Then name **one `competitor`** — the rival " +
+      "to mine. Naming the target as its own competitor is rejected before anything is charged: " +
+      "a domain has no gap against itself.\n\n" +
+      "Each row carries:\n\n" +
+      "- **Keyword** — the query the competitor ranks for.\n" +
+      "- **Search volume** — average monthly Google searches, and the order the list is sorted " +
+      "in, biggest opportunity first.\n" +
+      "- **The competitor's position** — where the rival ranks in the organic results.\n" +
+      "- **Keyword difficulty** — how hard the keyword is to rank for, on a 0–100 scale.\n" +
+      "- **CPC and competition band** — what advertisers pay for the same query, when DataForSEO " +
+      "has a figure.\n" +
+      "- **The ranking page** — the competitor URL that holds the position, and DataForSEO's " +
+      "estimate of the monthly visits it earns.\n\n" +
+      "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO " +
+      "has no value for is left out of the row rather than printed as a zero.",
+    preExampleSections: [
+      {
+        heading: "There is no \"your position\" column, and there cannot be",
+        body:
+          "A keyword appears in this list precisely **because your domain does not rank for it**, " +
+          "so DataForSEO returns no ranking of yours to print. That absence is the result, not a " +
+          "missing measurement — which is why the tool does not render an empty column that would " +
+          "read as \"we could not find your position\". If you want the keywords you and a rival " +
+          "**both** rank for, that is a different question and a different tool: " +
+          "[`compare_competitors`](/docs/tools-reference/compare-competitors) for the side-by-side " +
+          "picture, [`ranked_keywords`](/docs/tools-reference/ranked-keywords) for everything one " +
+          "domain ranks for.",
+      },
+      {
+        heading: "Who can run it",
+        body:
+          "`keyword_gap` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits — buy any credit pack " +
+          "and it unlocks straight away. Your trial credits are untouched and keep working for " +
+          "crawls, audits, reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"keyword gap analysis is not yet enabled on this deployment\"_ message and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as real data.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> What does competitor.com rank for that " +
+      "example.com doesn't?\n\nOr keep it short:\n\n> Show me the top 25 keyword gaps between my " +
+      "project and rival.com.",
+    returns:
+      "A header naming your side — or, when you passed a `project_id`, the project it came from " +
+      "— the competitor, the language and location the rankings were read for, and how many of " +
+      "the total gap keywords are shown; then one block per keyword. A rival you already match on " +
+      "every keyword is reported as no gap found, plainly, and you are still charged for the " +
+      "delivered analysis.\n\nAn input that is not a public domain (the target or the " +
+      "competitor), a call naming neither `target` nor `project_id` (or both), a competitor equal " +
+      "to the target, and a `project_id` that is not yours are all rejected before anything is " +
+      "charged; while live data is off you get the \"not yet enabled\" message instead — also " +
+      "free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One gap is **one** DataForSEO request, charged **once**, as a single tool call. If it " +
+          "fails, the whole call fails and **you are not charged** — a half-built list is never " +
+          "billed. Rankings are read for the United States in English unless you pass " +
+          "`location_code` and `language_code`.",
+      },
+    ],
+  },
+
+  link_gap: {
+    lead:
+      "`link_gap` lists the domains that **link to a competitor and not to you** — the outreach " +
+      "shortlist — powered by the DataForSEO Backlinks database. It works on **any public " +
+      "domain**, so you can run it for your own site or between two rivals. It is " +
+      "**synchronous**: the list comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Name your side in **one of two ways** — pass a `target` domain, or pass the `project_id` " +
+      "of one of your own projects and the domain is taken from it. Exactly one of the two: " +
+      "passing both is rejected rather than resolved by precedence, because the two can name " +
+      "different sites and guessing would bill you for a lookup of the one you did not mean. Then " +
+      "name **one `competitor`**. Naming the target as its own competitor is rejected before " +
+      "anything is charged.\n\n" +
+      "Each row carries:\n\n" +
+      "- **The referring domain** — the site that links to your competitor.\n" +
+      "- **Rank** — DataForSEO's authority measure for that domain on a 0–1,000 scale, and the " +
+      "order the list is sorted in, strongest first.\n" +
+      "- **Live backlinks** — how many links it currently sends the competitor.\n" +
+      "- **Referring pages** — how many of its own pages point there.\n" +
+      "- **Backlink spam score** — the average spam score of those links, so a prospect worth " +
+      "avoiding is visible before you spend a morning on it.\n" +
+      "- **First seen** — when DataForSEO's crawler first found a link from that domain.\n\n" +
+      "Only **live** backlinks are counted — links that have since been lost are excluded.",
+    preExampleSections: [
+      {
+        heading: "What the list does and does not claim",
+        body:
+          "These are the domains that link to your competitor and have **no link to you today**. " +
+          "That is a fact about the link graph, not a prediction: a site that covered your rival " +
+          "is a plausible place to be covered, but nothing here says it would link to you, and " +
+          "the spam-score column is printed precisely because some of them are places you should " +
+          "not want a link from.\n\n" +
+          "One competitor per call, deliberately. Running it against each rival in turn gives you " +
+          "the same picture and keeps every list traceable to the domain it came from.",
+      },
+      {
+        heading: "Who can run it",
+        body:
+          "`link_gap` needs a **paid credit balance**. It reads live data from a paid third-party " +
+          "provider, so it is not available on trial credits — buy any credit pack and it unlocks " +
+          "straight away. Your trial credits are untouched and keep working for crawls, audits, " +
+          "reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"link gap analysis is not yet enabled on this deployment\"_ message and **charges " +
+          "you nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
+          "placeholder figures dressed up as real data.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Who links to competitor.com but not to " +
+      "example.com?\n\nOr keep it short:\n\n> Show me the top 25 link-gap prospects for my " +
+      "project against rival.com.",
+    returns:
+      "A header naming your side — or, when you passed a `project_id`, the project it came from " +
+      "— the competitor, and how many of the total referring domains are shown; then one block " +
+      "per domain. A competitor with no referring domain you lack is reported as no gap found, " +
+      "plainly, and you are still charged for the delivered analysis.\n\nAn input that is not a " +
+      "public domain (the target or the competitor), a call naming neither `target` nor " +
+      "`project_id` (or both), a competitor equal to the target, and a `project_id` that is not " +
+      "yours are all rejected before anything is charged; while live data is off you get the " +
+      "\"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One gap is **one** DataForSEO request, charged **once**, as a single tool call. If it " +
+          "fails, the whole call fails and **you are not charged** — a half-built list is never " +
+          "billed.",
       },
     ],
   },

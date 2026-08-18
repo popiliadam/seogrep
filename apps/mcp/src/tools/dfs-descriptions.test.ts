@@ -27,11 +27,11 @@ function descriptionOf(name: string): string {
 }
 
 describe("DataForSEO tool descriptions", () => {
-  // 4 -> 5 on 2026-08-17 (audit_speed). The number is restated rather than derived on purpose: it
-  // is what makes a tool DROPPED from the gate fail here instead of quietly reducing the it.each
-  // suite to the tools that remain.
-  it("covers all five gated tools", () => {
-    expect(GATED).toHaveLength(5);
+  // Four -> seven on 2026-08-17 (keyword_gap, link_gap, audit_speed). The count is restated
+  // rather than derived on purpose: a gated tool silently DROPPING out of the set would otherwise
+  // make every it.each below assert less while this file stayed green.
+  it("covers all seven gated tools", () => {
+    expect(GATED).toHaveLength(7);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

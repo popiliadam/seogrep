@@ -1,0 +1,221 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.7412 sec.",
+  "cost": 0.0126,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08171200-0000-0000-0000-fixture0006",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.7203 sec.",
+      "cost": 0.0126,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "dataforseo_labs",
+        "google",
+        "domain_intersection",
+        "live"
+      ],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "domain_intersection",
+        "se_type": "google",
+        "target1": "rival.com",
+        "target2": "example.com",
+        "intersections": false,
+        "location_code": 2840,
+        "language_code": "en",
+        "limit": 100,
+        "item_types": [
+          "organic"
+        ],
+        "order_by": [
+          "keyword_data.keyword_info.search_volume,desc"
+        ]
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "target1": "rival.com",
+          "target2": "example.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 1841,
+          "items_count": 5,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "technical seo audit",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-08-14 06:11:52 +00:00",
+                  "competition": 0.41,
+                  "competition_level": "MEDIUM",
+                  "cpc": 12.44,
+                  "search_volume": 9900,
+                  "low_top_of_page_bid": 4.11,
+                  "high_top_of_page_bid": 18.02,
+                  "categories": [10019, 13418],
+                  "search_volume_trend": {
+                    "monthly": 4,
+                    "quarterly": 11,
+                    "yearly": 27
+                  }
+                },
+                "keyword_properties": {
+                  "se_type": "google",
+                  "core_keyword": null,
+                  "keyword_difficulty": 61,
+                  "detected_language": "en",
+                  "is_another_language": false
+                },
+                "search_intent_info": {
+                  "se_type": "google",
+                  "main_intent": "commercial",
+                  "foreign_intent": ["informational"],
+                  "last_updated_time": "2026-07-30 11:02:04 +00:00"
+                }
+              },
+              "first_domain_serp_element": {
+                "type": "organic",
+                "rank_group": 3,
+                "rank_absolute": 4,
+                "position": "left",
+                "domain": "rival.com",
+                "title": "Technical SEO Audit: The Complete 2026 Checklist",
+                "url": "https://rival.com/guides/technical-seo-audit",
+                "is_featured_snippet": false,
+                "main_domain": "rival.com",
+                "relative_url": "/guides/technical-seo-audit",
+                "etv": 1284.51,
+                "estimated_paid_traffic_cost": 15979.3,
+                "rank_changes": {
+                  "previous_rank_absolute": 6,
+                  "is_new": false,
+                  "is_up": true,
+                  "is_down": false
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "crawl budget optimization",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-08-14 06:11:52 +00:00",
+                  "competition": 0.18,
+                  "competition_level": "LOW",
+                  "cpc": 6.02,
+                  "search_volume": 2400,
+                  "categories": [10019]
+                }
+              },
+              "first_domain_serp_element": {
+                "type": "organic",
+                "rank_group": 1,
+                "rank_absolute": 1,
+                "position": "left",
+                "domain": "rival.com",
+                "title": "Crawl Budget Optimization",
+                "url": "https://rival.com/blog/crawl-budget",
+                "main_domain": "rival.com",
+                "relative_url": "/blog/crawl-budget"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "log file analysis for seo",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-08-14 06:11:52 +00:00"
+                },
+                "keyword_properties": {
+                  "se_type": "google",
+                  "keyword_difficulty": 34,
+                  "detected_language": "en",
+                  "is_another_language": false
+                }
+              },
+              "first_domain_serp_element": null
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": null,
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "search_volume": 880
+                }
+              },
+              "first_domain_serp_element": {
+                "type": "organic",
+                "rank_group": 7,
+                "rank_absolute": 9,
+                "domain": "rival.com",
+                "url": "https://rival.com/blog/orphan-pages",
+                "etv": 41.2
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "internal linking tool",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-08-14 06:11:52 +00:00",
+                  "competition": 0.73,
+                  "competition_level": "HIGH",
+                  "cpc": 21.86,
+                  "search_volume": 1600,
+                  "categories": [13418]
+                },
+                "keyword_properties": {
+                  "se_type": "google",
+                  "keyword_difficulty": 48,
+                  "detected_language": "en",
+                  "is_another_language": false
+                }
+              },
+              "first_domain_serp_element": {
+                "type": "organic",
+                "rank_group": 8,
+                "rank_absolute": 11,
+                "position": "left",
+                "domain": "rival.com",
+                "title": "Internal Linking Tool",
+                "url": "https://rival.com/tools/internal-links",
+                "main_domain": "rival.com",
+                "relative_url": "/tools/internal-links",
+                "etv": 96.04,
+                "estimated_paid_traffic_cost": 2099.42
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

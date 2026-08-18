@@ -33,6 +33,8 @@ describe("pricing page", () => {
       ["Ranked keywords (per domain)", "65"],
       ["Backlink profile (per domain)", "70"],
       ["Competitor comparison (per domain)", "90"],
+      ["Keyword gap (per competitor)", "45"],
+      ["Link gap (per competitor)", "45"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -75,6 +77,8 @@ describe("pricing page", () => {
     ranked_keywords: "Ranked keywords (per domain)",
     analyze_backlinks: "Backlink profile (per domain)",
     compare_competitors: "Competitor comparison (per domain)",
+    keyword_gap: "Keyword gap (per competitor)",
+    link_gap: "Link gap (per competitor)",
     generate_report: "Monthly report",
   };
 

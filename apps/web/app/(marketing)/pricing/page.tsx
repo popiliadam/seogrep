@@ -33,6 +33,11 @@ const CREDIT_COSTS = [
   { action: "Ranked keywords (per domain)", cost: "65" },
   { action: "Backlink profile (per domain)", cost: "70" },
   { action: "Competitor comparison (per domain)", cost: "90" },
+  // The two gap tools (2026-08-17, operator-signed). Their own rows, not a shared one: they read
+  // two different DataForSEO APIs and answer two different questions, and a grouped label would
+  // advertise one price for a pair a caller routinely runs separately.
+  { action: "Keyword gap (per competitor)", cost: "45" },
+  { action: "Link gap (per competitor)", cost: "45" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

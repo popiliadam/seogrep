@@ -18,15 +18,20 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // Operator decision 2026-08-06: gate the DataForSEO tools and NOTHING else. Adding or dropping
   // a name here changes who can spend real vendor money, so it must be deliberate.
   //
-  // audit_speed joined on 2026-08-17. It is the first member whose NAME does not announce it — it
-  // sits in the audit family, whose other four members read stored measurements and cost us only
-  // CPU — which is exactly why the structural rule (paid-balance.graph.test.ts) exists beside this
-  // hand-written pin.
-  it("is exactly the DataForSEO tools", () => {
+  // Four -> six on 2026-08-17: keyword_gap and link_gap each send a paid DataForSEO request, so
+  // each carries the risk this gate exists for. The set GREW; nothing left it.
+  //
+  // Six -> seven the same day: audit_speed. It is the first member whose NAME does not announce
+  // it — it sits in the audit family, whose other four members read stored measurements and cost
+  // us only CPU — which is exactly why the structural rule (paid-balance.graph.test.ts) exists
+  // beside this hand-written pin.
+  it("is exactly the seven DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "audit_speed",
       "compare_competitors",
+      "keyword_gap",
+      "link_gap",
       "ranked_keywords",
       "research_keywords",
     ]);

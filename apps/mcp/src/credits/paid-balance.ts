@@ -13,7 +13,7 @@ import { getServiceClient } from "../db.ts";
  * the attacker. Rather than shrink the trial (a farm answers by minting more accounts; only the
  * honest user is punished), the surface that CARRIES the risk is cut off from trial credits.
  *
- * The gate is deliberately narrow: it lists exactly the tools that spend VENDOR money. The crawl,
+ * The gate is deliberately narrow: it lists exactly the tools that spend VENDOR money. Crawl,
  * report and Search Console tools are untouched, because their marginal cost is our own CPU — and
  * so are audit_onpage / audit_tech / audit_schema / audit_content, which read stored measurements.
  * `audit_speed` is the one audit that is NOT in that company: despite the family name it buys a
@@ -27,18 +27,25 @@ import { getServiceClient } from "../db.ts";
 /**
  * Tools that require a paid balance — the vendor-cost surface, keyed by TOOL NAME.
  *
- * Keyed by name, NOT by a flag the caller passes: withCredits is reached from several places (the
+ * Keyed by name, NOT by a flag the caller passes: withCredits is reached from many places (the
  * handlers below, the registry's "surface" path, and the async worker), and a flag is a thing a
  * future tool can forget to set. A name in this table is consulted no matter which path the call
  * arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership, and
- * paid-balance.graph.test.ts derives the requirement from the IMPORT GRAPH so a new vendor-spending
- * tool cannot be left out of this set silently.
+ * paid-balance.graph.test.ts derives the requirement from the import graph — a new tool that can
+ * reach reserveSpend and is missing here turns that spec red rather than shipping ungated.
  */
 export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   "research_keywords",
   "ranked_keywords",
   "analyze_backlinks",
   "compare_competitors",
+  // The two gap tools (2026-08-17). Each spends a real DataForSEO request, so each carries the
+  // same denial-of-service risk the gate exists to stop.
+  "keyword_gap",
+  "link_gap",
+  // audit_speed, the same day — and the first member whose NAME does not announce it. It sits in
+  // the audit family, whose other four members only cost us CPU; this one buys a Lighthouse run
+  // per page. The import-graph spec is what caught it, not the name.
   "audit_speed",
 ]);
 

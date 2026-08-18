@@ -3,7 +3,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
-import type { RankedKeywordsPort } from "../dfs/ranked-keywords.ts";
+import {
+  parseRankedKeywordsResponse,
+  type RankedKeywordsPort,
+} from "../dfs/ranked-keywords.ts";
 import { loadOwnProject, projectNotFoundMessage, resolveTarget } from "./project-target.ts";
 import { makeRankedKeywordsTool } from "./ranked-keywords.ts";
 
@@ -85,17 +88,53 @@ async function ledgerRows(userId: string): Promise<LedgerRow[]> {
 
 const balanceOf = (rows: LedgerRow[]): number => rows.reduce((sum, row) => sum + row.delta, 0);
 
-/** A serving port that RECORDS the domain it was asked for. No network, no DataForSEO. */
+/**
+ * A one-row DataForSEO response, in the VENDOR's shape. It deliberately omits `target`, so the
+ * parser falls back to the target it was asked for — which is the whole point of the port below.
+ */
+const ONE_ROW_RESPONSE = {
+  status_code: 20000,
+  tasks: [
+    {
+      status_code: 20000,
+      result: [
+        {
+          total_count: 1,
+          items_count: 1,
+          items: [
+            {
+              keyword_data: { keyword: "seo uzmani", keyword_info: { search_volume: 3600 } },
+              ranked_serp_element: { serp_item: { rank_group: 3 } },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * A serving port that RECORDS the domain it was asked for. No network, no DataForSEO.
+ *
+ * Its answer is built by the REAL parser instead of being hand-assembled as a literal. The
+ * literal version was a test double free to be more permissive than production, and it was:
+ * the moment RankedKeywordsResult grew `items_count` and `metrics`, this stub stopped satisfying
+ * the type it claims to implement — invisibly, because `apps/mcp/tsconfig.json` excludes
+ * `src/**` + `*.test.ts` from typecheck, so `verify.sh` never reads this file. Only verify-db's
+ * dbtest type gate saw it (signed lesson 12: a double kinder than the runtime becomes a passing
+ * test). Going through parseRankedKeywordsResponse means the double cannot drift from the shape
+ * it stands in for, and a future field costs this file nothing.
+ *
+ * The target it answers with is the REQUESTED one, via the parser's fallback: these tests exist
+ * to prove the PROJECT's domain — never the caller's input — is what reached the provider and got
+ * named in the output.
+ */
 function recordingPort(recorded: string[]): RankedKeywordsPort {
   return {
     enabled: true,
     fetchRankedKeywords: async (query) => {
       recorded.push(query.target);
-      return {
-        target: query.target,
-        total_count: 1,
-        rows: [{ keyword: "seo uzmani", position: 3, search_volume: 3600, url: null }],
-      };
+      return parseRankedKeywordsResponse(ONE_ROW_RESPONSE, query.target);
     },
   };
 }
