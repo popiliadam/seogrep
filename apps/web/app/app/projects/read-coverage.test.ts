@@ -72,6 +72,14 @@ import { paramsOf, returnPropsOf } from "./query-pins";
  *  5. THAT `user.id` IS THE SIGNED-IN USER. It comes from `supabase.auth.getUser()` behind the
  *     /app layout's session guard, and neither is executed here.
  *
+ * TWO OF THE NINE HAVE A BEHAVIOURAL TWIN, and it is not a substitute. `lib/projects/audits.db`
+ * and `lookups.db` drive R7 and R9 against a real PostgREST in the `verify-db.sh` lane — including
+ * "takes the newest run of the tool, not the first one ever", which is M8's defect proven by
+ * execution rather than by text. But they drive a COPY of the query, re-typed inside the spec
+ * file, because a Server Component's private helpers cannot be imported: editing `page.tsx` does
+ * not redden them. So they prove the SHAPE works and say nothing about the page still using it,
+ * and the other seven reads have no behavioural lane at all.
+ *
  * The two census tests below are what stop this table going stale: a TENTH read, or a tenth
  * property on the card input, reddens this file until it has a row.
  */
