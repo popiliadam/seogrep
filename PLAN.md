@@ -5,6 +5,67 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 📋 2026-08-18 — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`a88884d` · açık PR **0** · worktree temiz · yüzey **26 tool** (canlı `tools/list`
+ile ölçüldü, `TOOL_COSTS` ile birebir) · `make goals` **env yüklü** koşuda **16/16 PASS (1 skip)**.
+
+#### Kapı komutları — ezberden değil, buradan
+| ne | komut | NE ÖLÇMEZ |
+|---|---|---|
+| unit + build + typecheck | `TURBO_FORCE=1 bash guardrails/verify.sh` | **secret taraması YOK · DB şeritleri YOK · test dosyaları typecheck EDİLMEZ** |
+| DB şeritleri + tip kapısı | `bash guardrails/verify-db.sh` | 00:00–00:30 UTC'de her dalda deterministik kırmızı |
+| kalıcı hedefler + secret | `make goals` | **env yüklü değilse 5 kalem sessizce SKIP** |
+
+**Şef-Bash `~/.zshrc` source ETMEZ.** Tam ölçüm için:
+`eval "$(grep -E '^[[:space:]]*export[[:space:]]+(PROD_URL|MCP_SMOKE_URL|MCP_SMOKE_KEY)=' ~/.zshrc)"`
+(`SUPABASE_URL`/`SERVICE_ROLE_KEY` profilde YOK → `dfs-budget-guard` yine SKIP verir; DFS harcamasını
+Supabase MCP ile doğrudan sorgula.)
+
+#### İNSAN KUYRUĞU — sıradaki oturumun ilk bakacağı yer
+1. **`0027_domain_lookup_runs` migration'ı HENÜZ YAZILMADI.** Rank tracker ailesinin ön koşulu.
+   Yazıldığında **"hazır-park + operatöre tek-adım SQL"** deseniyle gider (0023/0024/0025/0026
+   emsali): PR başlığına `⚠️ 0027 CLOUD-APPLY BEKLİYOR`, gövdeye tek cümlelik operatör aksiyonu +
+   **bedel cümlesi**, ve **MERGE EDİLMEZ** — operatör uygular, şef `list_tables` ile **tabloya**
+   bakar (sinyale değil), sonra merge.
+   **Tasarım kararları planda hazır:** tablo adı `dfs_runs` OLMAZ (`dfs_spend` ile karışır) →
+   `domain_lookup_runs`; `project_id` NULLABLE olmak zorunda (çıplak `target` en tipik çağrı);
+   `research_keywords` ayrı tablo ister (domain'i yok); rank tracker jsonb değil **satır ekseni**
+   ister (`rank_snapshots`).
+2. **İmzalı ama dispatch edilmemiş 9 tool:** `discover_keywords` 40 · `track_keywords` 0 ·
+   `serp_snapshot` 5+8/kelime (**depth 100 pinli**) · `keyword_positions` 10 · `backlink_changes` 35 ·
+   `disavow_candidates` 40 (**200 satır kapağı ŞART**, kapaksız 2,8×) · `backlink_details` 35 ·
+   `my_pages` 40 · `keyword_trends` 25 (**tek ölçülmemiş fiyat** — kalibrasyon taahhüdü bunda zorunlu).
+   AI ailesi: `ai_visibility` 90 · `ai_visibility_compare` hedef başına 90 — **satır kapağı ZORUNLU**
+   (kapaksız tek çağrı $1,10 vendor eder), ve 10 hedefli karşılaştırma 900 kredi = **D17 onay eşiği
+   üstü**, ürün kararı.
+3. **Eski imza kuyruğu (dokunulmadı):** KVKK karar dosyası #108 (8 madde) · GSC planı §7 ·
+   `compare_pulls` / `analyze_ctr_gaps` / `inspect_url` fiyatları.
+
+#### VENDOR FİYATLARI — ölçüldü, bir daha tahmin etme
+Labs **$0,012/istek + $0,00012/satır** (prod verimizin dört noktasıyla doğrulandı) · Backlinks
+**$0,024 + $0,000036/satır** · SERP Live **$0,002/SERP** · Lighthouse **$0,005/sayfa** ·
+LLM Mentions **$0,10 + $0,001/satır** (en pahalı aile) · Keywords Data search_volume **$0,0900/çağrı**.
+Gelir kuru **agency $0,0124/kredi** (en muhafazakâr). Kural: `kredi ≈ tipik vendor × 400–500`,
+**en kötü hâl ≥3×**.
+
+#### AÇIK CHIP'LER (beşi de gerçek, hiçbiri bu oturumda kapanmadı)
+`apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor** — bu oturumda **iki gerçek
+kusurun** kökü · `/status` prob sınırı (1000 ms, Fly→Supabase turu altında; makine-başına
+`unknown`/`ready` çelişiyor) · `worker.test.ts`'in `outcome()` fixture'ı eksik → **~7 reaper spec'i
+hata yolundan geçiyor** · port testlerindeki `*.example` domainleri (imkânsız senaryolar) ·
+**flaky `disconnect-button.test.tsx:302`** (bu oturumda ÜÇ kez düştü, her biri bir tam CI turu).
+
+#### BİLİNEN PARA SINIRLARI
+`normalizeDomain` **`www.` soyutlamıyor** → `rival.com` vs `www.rival.com` self-competitor
+kapısından geçer, kredi harcar (`compare_competitors`'ta da aynı) · prod'da **iki öksüz `open`
+rezervasyon** ($0,30'ar, 2026-08-07/08) — reaper yalnız sayar, politika bilinçli.
+
+#### FLAKE KAYDI — güncel
+GitHub **action indirme 429** (ayırt edici: kırmızı `Set up job`'da, `Run bash guardrails/...`
+satırına hiç gelmeden) · lokal Supabase seed **502** · `disconnect-button` rerender yarışı ·
+crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-db` penceresi**.
+
 ### 🚀 2026-08-18 — İMZA SONRASI 2. DALGA: YÜZEY 23 → 26 TOOL, ÜÇ YENİ TOOL CANLIDA
 
 İmza paketi v2'nin (#120) açtığı üç tool ve bir projeksiyon derinleşmesi. **Mevcut hiçbir fiyat
