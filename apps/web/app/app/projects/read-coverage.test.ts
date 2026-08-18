@@ -225,3 +225,172 @@ describe("every field the card input carries has a row in the matrix above", () 
     expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("project")).toBe(params[2]);
   });
 });
+
+/**
+ * The column list of the one `.select(...)` inside a function body, written as one or several
+ * concatenated string literals (the five sibling specs each carry their own copy of this, and it
+ * stays copied deliberately — see `query-pins.ts`'s header on why the file-IO half is not shared).
+ *
+ * Throws on anything that is not a literal list, which is what makes `.select("*")` and
+ * `.select(columns)` fail here rather than silently matching nothing.
+ */
+function columnsOf(body: string, what: string): readonly string[] {
+  const call = /\.select\(([\s\S]*?)\)\s*\n/.exec(body)?.[1];
+  if (call === undefined) {
+    throw new Error(`${what} has no \`.select(...)\` — did it start selecting *?`);
+  }
+  const pieces = [...call.matchAll(/["']([^"']*)["']/g)].map((match) => match[1]);
+  if (pieces.length === 0) {
+    throw new Error(`${what}'s \`.select(...)\` holds no string literal — is it selecting *?`);
+  }
+  return pieces
+    .join("")
+    .split(",")
+    .map((column) => column.trim())
+    .sort();
+}
+
+/**
+ * THE PROJECTION CELLS THE MATRIX FOUND EMPTY.
+ *
+ * Six of the nine reads pin their column list; three did not, and a projection is exactly the kind
+ * of thing no type can see — every one of these reads ends in `as unknown as Row`, so a column
+ * dropped from the `.select` string arrives as `undefined` on a row the query fetched successfully
+ * and the card renders its empty state. Green everywhere, blank in production.
+ */
+describe("the three unpinned projections ask for what their rows declare", () => {
+  /**
+   * `domain` is the load-bearing one: `ProjectRow.domain` is what every card is TITLED with, and a
+   * projection that lost it would render a page of cards headed `undefined` while the ladder,
+   * which never reads it, kept working perfectly.
+   */
+  it("the project list selects the id, the domain and the date", () => {
+    expect(columnsOf(bodyOf(PAGE, "listActiveProjects"), "the project list")).toEqual(
+      ["id", "domain", "created_at"].sort(),
+    );
+  });
+
+  /**
+   * `account_id` is the load-bearing one here: `isGscConnected` reads it and NOT the row's
+   * existence (defect #52), so a projection that fetched only `project_id, gsc_property` would
+   * hand every card a connection row whose `account_id` is `undefined` — "not connected" on every
+   * project that IS connected, which is the same production symptom as the `connection: null`
+   * defect one file over, reached from the database side.
+   */
+  it("the connections map selects the project key, the account link and the property", () => {
+    expect(columnsOf(bodyOf(PAGE, "readConnections"), "the connections map")).toEqual(
+      ["project_id", "account_id", "gsc_property"].sort(),
+    );
+  });
+
+  /**
+   * THE INVERSE PIN. Its four siblings are each pinned NEVER to select the payload column; this
+   * read is the one that must, because `summarizeCrawlResult` reads across the whole crawl jsonb
+   * and the crawler's 100-page cap is what bounds it. Dropping `result` here leaves the date and
+   * loses every number under it — a card that says a crawl happened and can say nothing about it —
+   * and adding anything else re-opens the waste the pull read was split off to end.
+   */
+  it("the crawl summary selects the date and the payload it summarizes, and nothing else", () => {
+    expect(columnsOf(bodyOf(PAGE, "latestSucceeded"), "the crawl summary")).toEqual(
+      ["created_at", "result"].sort(),
+    );
+  });
+});
+
+describe("the three list reads take the whole list", () => {
+  /**
+   * NO `.limit()`, and this is the mirror of the `.limit(1)` pin the six single-row reads carry.
+   * A limit here truncates at the DATABASE with no sort to make the truncation meaningful: on
+   * `projects` the user simply stops seeing sites they track, and on the two maps the cards that
+   * lost their row read "not connected" while the projects themselves render fine. Nothing else in
+   * this suite executes the query, so all three are invisible.
+   *
+   * WHAT THIS DOES NOT SAY: that the whole list arrives. PostgREST truncates at its own
+   * `db-max-rows` and no source pin can see server configuration — see cell 3 of the matrix.
+   */
+  it.each(["listActiveProjects", "readConnections", "readAccountHealth"])(
+    "%s truncates nothing at the database",
+    (fn) => {
+      expect(bodyOf(PAGE, fn)).not.toMatch(/\.limit\(/);
+    },
+  );
+});
+
+describe("the crawl summary counts only crawls that succeeded", () => {
+  /**
+   * Already pinned in `query-and-nav.test.ts` — but through a file-wide search for the FIRST
+   * `.from("jobs")` statement, and `page.tsx` now reads `jobs` three times. Re-pinned body-scoped
+   * here so the assertion keeps measuring the read it names: without it, deleting the filter from
+   * `latestSucceeded` would leave the old pin passing on `latestPullSummary`'s identical one.
+   *
+   * A failed crawl must not date the card, and the reason is not cosmetic: the same row feeds
+   * `deriveProjectSignals`, so a crawl that died an hour ago would move the project off the
+   * `crawl_site` rung of the ladder.
+   */
+  it("filters status against the succeeded literal, in its own body", () => {
+    expect(bodyOf(PAGE, "latestSucceeded")).toMatch(
+      /\.eq\(\s*["']status["']\s*,\s*["']succeeded["']\s*\)/i,
+    );
+  });
+});
+
+/**
+ * THE CHAIN OF CUSTODY. Every `user_id` filter on this page is pinned against its own function's
+ * SECOND PARAMETER — which proves the reads are consistent with each other and says nothing about
+ * what the page put in that parameter in the first place. Same for the project: `cardInputFor` is
+ * pinned to hand on the project it was given, and the caller is pinned to `.map` over the list it
+ * read, but nothing said the mapped element is what it passes. `projects[0]` satisfies both halves
+ * and renders the first project's crawl, audits and lookups on every card on the page.
+ */
+describe("the page hands the reads the caller and the project it actually read", () => {
+  const PAGE_FN = PAGE.slice(PAGE.search(/function\s+ProjectsPage\b/));
+
+  /** The identifier `supabase.auth.getUser()` was destructured into — read, never spelled. */
+  const AUTH_USER = (() => {
+    const found = /data:\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*,?\s*\}\s*=\s*await\s+supabase\.auth\.getUser\(\)/.exec(
+      PAGE_FN,
+    );
+    if (found === null) {
+      throw new Error(
+        "the page no longer destructures a user out of `supabase.auth.getUser()`. Whatever it " +
+          "filters its reads on now, this spec cannot tell you it is the signed-in caller.",
+      );
+    }
+    return found[1] as string;
+  })();
+
+  /**
+   * All three page-level reads get the SAME authenticated id. One of them was pinned this way
+   * (the health read, and only to prove it runs once per page rather than per project); the other
+   * two were pinned only against their own parameter, so handing `listActiveProjects` some other
+   * id in scope typechecks and returns nothing at all — a panel that reads successfully and shows
+   * you no projects.
+   */
+  it.each(["listActiveProjects", "readConnections", "readAccountHealth"])(
+    "hands %s the authenticated caller",
+    (fn) => {
+      expect(PAGE_FN).toMatch(new RegExp(`${fn}\\(\\s*supabase\\s*,\\s*${AUTH_USER}\\.id\\s*\\)`));
+    },
+  );
+
+  /**
+   * …and `cardInputFor` gets that same caller and the project the `.map` is CURRENTLY on. Both are
+   * read out of the source rather than spelled, so renaming the map's parameter or the user
+   * binding survives and passing a different element does not.
+   */
+  it("hands the gatherer the caller and the project being mapped", () => {
+    const mapped = /\.map\(\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*cardInputFor\(/.exec(PAGE_FN);
+    expect(
+      mapped,
+      "nothing maps a project straight into cardInputFor any more — what builds the cards now?",
+    ).not.toBeNull();
+
+    const args = /cardInputFor\(([^)]*)\)/
+      .exec(PAGE_FN)?.[1]
+      ?.split(",")
+      .map((argument) => argument.trim());
+    expect(args, "nothing calls cardInputFor any more").toBeDefined();
+    expect(args?.[1]).toBe(`${AUTH_USER}.id`);
+    expect(args?.[2]).toBe((mapped as RegExpExecArray)[1]);
+  });
+});
