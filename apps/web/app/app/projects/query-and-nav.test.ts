@@ -338,6 +338,39 @@ describe("the crawl summary is filtered by the project and tool it was handed", 
   });
 });
 
+/**
+ * …AND IT TAKES THE NEWEST ONE. Its four siblings each pin their own sort order and their own
+ * `.limit(1)` in their own spec file; this read had NEITHER, and that is the whole reason this
+ * block exists rather than being one more line above.
+ */
+describe("the crawl summary is the LAST crawl, not the first one the project ever ran", () => {
+  const CRAWL = bodyOf(PAGE, "latestSucceeded");
+
+  /**
+   * NEWEST FIRST, and this is the ordering an in-memory pick cannot repair: `.limit(1)` truncates
+   * at the DATABASE, so ascending hands back the FIRST crawl a project ever ran. The card then
+   * prints last spring's page count and last spring's date as today's — and the SAME row feeds
+   * `deriveProjectSignals`, so the ladder calls a year-old crawl fresh and moves the project off
+   * `crawl_site` on the strength of it.
+   *
+   * Measured 2026-08-18, not supposed: flipping `ascending` to `true` here was green across the
+   * entire web suite AND `tsc`. `insights-query.test.ts`'s header already described this exact
+   * failure in words, for its own read — the sentence existed and the assertion did not.
+   */
+  it("orders the crawls newest first", () => {
+    expect(CRAWL).toMatch(/\.order\(\s*["']created_at["']\s*,\s*\{\s*ascending:\s*false\b/i);
+  });
+
+  /**
+   * …and takes exactly ONE row, which is what makes the sort order decide anything at all: without
+   * the limit the sort is free and `.maybeSingle()` — pinned above — would ERROR on the second row
+   * instead, so the two pins guard opposite halves of the same sentence.
+   */
+  it("takes exactly one row", () => {
+    expect(CRAWL).toMatch(/\.limit\(\s*1\s*\)/);
+  });
+});
+
 describe("the project list excludes archived projects by value, not by column", () => {
   /**
    * `.is("archived_at", null)` — the pin above matches the whole call, so this adds only the value
@@ -369,6 +402,17 @@ describe("the project list excludes archived projects by value, not by column", 
  * the fast lane executes this page (signed lesson 12); the card layer's own specs prove the other
  * half, and no spec in this suite joins the two.
  */
+/**
+ * What an object-literal property FINALLY holds, following ONE local binding when it goes through
+ * one. `connection,` is shorthand for a `const` declared four lines up; asserting on the shorthand
+ * would only prove the name still exists, which is exactly what `connection: null` leaves intact.
+ */
+function resolved(body: string, held: string): string {
+  if (!/^[A-Za-z_$][\w$]*$/.test(held)) return held;
+  const binding = new RegExp(`\\b(?:const|let|var)\\s+${held}\\s*=\\s*([^;]+);`).exec(body);
+  return binding === null ? held : (binding[1] as string).replace(/\s+/g, " ").trim();
+}
+
 describe("the rows the page reads reach the cards it builds", () => {
   const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
   const PAGE_FN = pageComponent(PAGE);
@@ -377,6 +421,46 @@ describe("the rows the page reads reach the cards it builds", () => {
     const binding = fanOutBindingsOf(CARD_INPUT, "cardInputFor").get("latestSucceeded");
     expect(binding, "cardInputFor no longer calls latestSucceeded at all").toBeDefined();
     expect(returnPropsOf(CARD_INPUT, "cardInputFor").get("crawl")).toBe(binding);
+  });
+
+  /**
+   * THE CONNECTION ROW — the ONE field on this object that no spec consumed.
+   *
+   * It is not fetched by the fan-out above, so no `fanOutBindingsOf` pin can reach it: it is looked
+   * up in the map the page handed down, which is why it was missed when the six fan-out bindings
+   * were pinned. `ProjectCardInput.connection` accepts null, so `connection: null` typechecks, and
+   * `tokenStatus` beside it stays correct — measured 2026-08-18: green across the whole web suite
+   * AND `tsc`. In production every card's Search Console line reads "not connected" while its token
+   * health line keeps reporting on the connection it just denied having. A card contradicting
+   * itself, on a page whose next-step ladder then routes every project to `connect_gsc`.
+   *
+   * Pinned as the RELATIONSHIP, not the spelling: the property must hold a lookup in the map
+   * parameter, keyed by the project parameter's id, with both names read out of the signature — so
+   * renaming either survives, while `null`, a fresh empty Map, or keying on the caller reddens.
+   * The `?? null` tail is deliberately NOT pinned: `Map.get` returns `… | undefined` and the field
+   * is a required `ConnectionRow | null`, so `tsc` is already the gate on it and a second, weaker
+   * copy here would only redden on `|| null`.
+   */
+  it("keeps the connection row it looked up on the card input", () => {
+    const params = paramsOf(CARD_INPUT, "cardInputFor");
+    const held = returnPropsOf(CARD_INPUT, "cardInputFor").get("connection");
+    expect(held, "cardInputFor no longer returns a `connection` property at all").toBeDefined();
+    expect(resolved(CARD_INPUT, held as string)).toMatch(
+      new RegExp(`^${params[3]}\\.get\\(\\s*${params[2]}\\.id\\s*\\)`),
+    );
+  });
+
+  /**
+   * …AND THE HEALTH LINE IS FED THE SAME ROW. `tokenStatusFor` is already pinned by name above;
+   * its ARGUMENTS were not, and `tokenStatusFor(null, health)` typechecks — the mirror image of the
+   * defect above, arriving at the same contradictory card from the other side. Compared as text
+   * against what the `connection` property itself holds, so the two lines cannot be fed different
+   * rows whatever either one is called.
+   */
+  it("derives the token status from that same connection row", () => {
+    const params = paramsOf(CARD_INPUT, "cardInputFor");
+    const props = returnPropsOf(CARD_INPUT, "cardInputFor");
+    expect(props.get("tokenStatus")).toBe(`tokenStatusFor(${props.get("connection")}, ${params[4]})`);
   });
 
   it("maps over the projects it read and hands both maps on to the gatherer", () => {
