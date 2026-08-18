@@ -19,6 +19,8 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       ranked_keywords: 65,
       analyze_backlinks: 70,
       compare_competitors: 90,
+      keyword_gap: 45,
+      link_gap: 45,
       find_quick_wins: 10,
       detect_cannibalization: 10,
       analyze_content_decay: 10,
@@ -42,8 +44,12 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // the previous growth — no existing number moved — but with one difference that must not be
   // read past: 12 is UNSIGNED. This pin is what makes the proposal visible and immovable until a
   // human approves it; the PR carrying it is parked for exactly that signature (NEVER #6).
-  it("has exactly 23 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(23);
+  //
+  // 23 -> 25 on 2026-08-17: keyword_gap and link_gap at 45 credits each, SIGNED by the operator
+  // before the work started. Same shape as the previous two growths — no existing number moved —
+  // and unlike audit_content's 12, these two arrived with the signature already in hand.
+  it("has exactly 25 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(25);
   });
 
   it("exposes only non-negative integer costs", () => {

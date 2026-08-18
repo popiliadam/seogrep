@@ -15,12 +15,17 @@ import { TOOL_COSTS } from "./costs.ts";
  */
 
 describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
-  // Operator decision 2026-08-06: gate the four DataForSEO tools and NOTHING else. Adding or
-  // dropping a name here changes who can spend real vendor money, so it must be deliberate.
-  it("is exactly the four DataForSEO tools", () => {
+  // Operator decision 2026-08-06: gate the DataForSEO tools and NOTHING else. Adding or dropping
+  // a name here changes who can spend real vendor money, so it must be deliberate.
+  //
+  // Four -> six on 2026-08-17: keyword_gap and link_gap each send a paid DataForSEO request, so
+  // each carries the risk this gate exists for. The set GREW; nothing left it.
+  it("is exactly the six DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "compare_competitors",
+      "keyword_gap",
+      "link_gap",
       "ranked_keywords",
       "research_keywords",
     ]);

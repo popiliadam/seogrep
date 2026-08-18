@@ -13,8 +13,8 @@ import { getServiceClient } from "../db.ts";
  * the attacker. Rather than shrink the trial (a farm answers by minting more accounts; only the
  * honest user is punished), the surface that CARRIES the risk is cut off from trial credits.
  *
- * The gate is deliberately narrow. Only the four DataForSEO tools are listed; crawl, audit,
- * report and Search Console tools are untouched, because their marginal cost is our own CPU.
+ * The gate is deliberately narrow. Only the DataForSEO tools are listed; crawl, audit, report and
+ * Search Console tools are untouched, because their marginal cost is our own CPU.
  *
  * WHERE IT RUNS: credits/guard.ts, BEFORE the reserve. A refused call therefore burns zero
  * credits and writes no ledger row at all — refusing after a reserve would need a refund path,
@@ -24,16 +24,22 @@ import { getServiceClient } from "../db.ts";
 /**
  * Tools that require a paid balance — the vendor-cost surface, keyed by TOOL NAME.
  *
- * Keyed by name, NOT by a flag the caller passes: withCredits is reached from six places (the
- * four handlers below, the registry's "surface" path, and the async worker), and a flag is a
- * thing a future tool can forget to set. A name in this table is consulted no matter which path
- * the call arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership.
+ * Keyed by name, NOT by a flag the caller passes: withCredits is reached from many places (the
+ * handlers below, the registry's "surface" path, and the async worker), and a flag is a thing a
+ * future tool can forget to set. A name in this table is consulted no matter which path the call
+ * arrives on, so the gate fails CLOSED. paid-balance.test.ts pins the exact membership, and
+ * paid-balance.graph.test.ts derives the requirement from the import graph — a new tool that can
+ * reach reserveSpend and is missing here turns that spec red rather than shipping ungated.
  */
 export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   "research_keywords",
   "ranked_keywords",
   "analyze_backlinks",
   "compare_competitors",
+  // The two gap tools (2026-08-17). Each spends a real DataForSEO request, so each carries the
+  // same denial-of-service risk the gate exists to stop.
+  "keyword_gap",
+  "link_gap",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */
