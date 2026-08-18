@@ -28,17 +28,28 @@ webapp'te göstermek · **(3)** DFS katalog gap'lerini kapatmak. Üçü çok far
 
 **TOPLAM ~%40–45 BİTTİ.** Kalan ~%55–60. (Parça 2'nin ucuz yarısı 2026-08-18 3. oturumda kapandı; darboğaz DEĞİŞMEDİ — hâlâ imza.)
 
-**DARBOĞAZ ARTIK KOD DEĞİL.** 9 tool tasarlandı, fiyatlandı, gerekçesi yazıldı ve *imzasız dispatch
-yok* kuralıyla bekliyor. Bir sonraki oturumun kod tarafında yapabileceği en değerli şey, operatörün
-masasındaki bir şeyi beklemektir. İmza gelirse parça 3 **%19 → %75** koşabilir.
+**⚠️ BU PARAGRAF 2026-08-18 (4. oturum) DÜZELTİLDİ — İKİ OTURUM BOYUNCA YANLIŞTI.**
+~~"Darboğaz artık kod değil; 9 tool imzasız bekliyor."~~ **DOĞRU DEĞİL.** `docs/plans/2026-08-17-dfs-genisleme-imza-paketi.md`
+**1. satırı**: `# DFS genişleme — İMZA PAKETİ (v2 · **İMZALANDI 2026-08-17**)`, ve hemen altında:
+*"✅ İMZALANDI — operatör 2026-08-17: 'onaylıyorum, dispatch et.' Madde 1'in 11 satırı, Madde 2'nin
+90/hedef-başına-90'ı, ve Madde 3–9'un tamamı geçerlidir. **NEVER#6 karşılandı.**"*
+Dosyanın gövdesindeki `☐` kutuları imza ÖNCESİNDEN kalma form alanlarıdır; imza kaydı başlıktadır.
+**DARBOĞAZ KOD.** 9 tool + 2 AI tool'u dispatch edilebilir ve edilmelidir. İNSAN KUYRUĞU'nun
+3. maddesi ("İmzalı ama dispatch edilmemiş") başından beri doğruydu; onu çürüten bu paragraftı.
+**Ders:** aynı dosyanın iki yerinde çelişen iki ifade varsa, hangisinin daha yeni olduğu
+ÖLÇÜLMEDEN hiçbiri handoff'a taşınmaz.
 
-**SIRALAMA ÖNERİSİ (şefin, imzasız):**
-1. **İmza paketi** (operatör, ~15 dk) — iki gerçek karar: `keyword_trends` 25 kredi **tek ölçülmemiş
-   fiyattır** (imzalamak NEVER#9'a girer, kalibrasyon taahhüdü şart) ve `ai_visibility_compare`
-   10 hedefte **900 kredi** = D17 onay eşiği üstü, yani ürün kararı.
-2. **S5 — kiracı başına günlük DFS kotası.** Rank tracker ailesi (`serp_snapshot` ·
-   `keyword_positions`) bu imzasız CANLIYA ÇIKMAMALI: fleet tavanı $3/gün ve tek kiracı onu tek
-   başına tüketebilir.
+**SIRALAMA (4. oturum, düzeltilmiş):**
+1. ~~İmza paketi~~ **GEREKMİYOR — 2026-08-17'de imzalandı** (yukarıdaki düzeltme). İki "gerçek
+   karar" da imzanın İÇİNDE çözülmüş: `keyword_trends` 25 kredi **kalibrasyon taahhüdüne bağlı
+   olarak** imzalı (MADDE 6: v2'de zorunlu tek kalem odur) ve `ai_visibility_compare`'in
+   hedef-başına-90'ı imzalı — 900 kredinin D17 eşiğini aşması **kasıtlı ve doğru davranış**
+   (kullanıcıya koşmadan önce onay sorulur), engel değil.
+2. ~~S5 — kiracı başına günlük DFS kotası~~ **KALDIRILDI, imzada.** MADDE 5, operatörün kendi
+   itirazıyla: *"kredi zaten haktır, ikinci kota koymuyoruz"* → **kiracı kotası YOK**, `$3/gün`
+   bağlayıcı değil. **Hâlâ geçerli olan tek koşul** (MADDE 5.3): *gözetimsiz* harcama — yani
+   cron'la koşan rank tracker — kendi alt-bütçesini ister. Bu, `track_keywords`/`keyword_positions`
+   dilimi cron eklediğinde ateşlenir ve **önceden imzalıdır**, ayrı bir imza turu değildir.
 3. **Parça 2'nin ucuz yarısı — İKİ ÜÇTE BİRİ KAPANDI (PR #140).** Çıplak-target yüzeyi ve
    geçmiş/değişim canlıda. **Kalan tek kalem:** `research_keywords` kendi koşu tablosunu ister
    (0027'ye sığmaz — girdisi kelime listesi, `target` kolonu ona yalan olur) → yeni migration →
