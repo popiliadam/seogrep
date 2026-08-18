@@ -403,13 +403,22 @@ describe("the project list excludes archived projects by value, not by column", 
  * half, and no spec in this suite joins the two.
  */
 /**
- * What an object-literal property FINALLY holds, following ONE local binding when it goes through
+ * What an object-literal property FINALLY holds, following ONE local `const` when it goes through
  * one. `connection,` is shorthand for a `const` declared four lines up; asserting on the shorthand
  * would only prove the name still exists, which is exactly what `connection: null` leaves intact.
+ * A `let` is deliberately NOT followed — see the body.
  */
 function resolved(body: string, held: string): string {
   if (!/^[A-Za-z_$][\w$]*$/.test(held)) return held;
-  const binding = new RegExp(`\\b(?:const|let|var)\\s+${held}\\s*=\\s*([^;]+);`).exec(body);
+  // `const` ONLY, and that is the whole point of this line. Following a `let` would verify the
+  // DECLARATION and say nothing about the value at the return site: a referee wrote
+  // `let connection = connections.get(project.id) ?? null;` and then `connection = null;` on the
+  // next line, and every card's connection went permanently null with 225 specs, 1318 web tests,
+  // `tsc` and `eslint` all green — defect M6 itself, arriving from the position axis instead of
+  // the tail axis this function was hardened for. Refusing `let` means a reassignment leaves the
+  // raw identifier here, the anchored pin fails, and immutability past the declaration is then
+  // enforced by the compiler legitimately rather than by a claim in a comment.
+  const binding = new RegExp(`\\bconst\\s+${held}\\s*=\\s*([^;]+);`).exec(body);
   return binding === null ? held : (binding[1] as string).replace(/\s+/g, " ").trim();
 }
 

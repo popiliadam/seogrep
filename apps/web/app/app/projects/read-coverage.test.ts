@@ -81,8 +81,10 @@ import { paramsOf, returnPropsOf } from "./query-pins";
  * and the other seven reads have no behavioural lane at all.
  *
  * THREE census tests below are what stop this table going stale: a tenth read reddens this file
- * whether it is written as a declaration or as an arrow (the `.from(` count catches the shape the
- * name list cannot see), and so does a tenth property on the card input.
+ * whether it is written as a declaration or as an arrow — the `fromCall` count catches the shape
+ * the name list cannot see — and so does a tenth property on the card input. The recogniser's
+ * reach is exactly what its regex spells; see the census below for what that does and does not
+ * promise.
  */
 
 /** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
@@ -126,7 +128,23 @@ function functionNames(source: string): readonly string[] {
 }
 
 /** …of those, the ones that actually talk to PostgREST. This is the census the matrix rests on. */
-const READS = functionNames(PAGE).filter((name) => bodyOf(PAGE, name).includes(".from("));
+/**
+ * How a PostgREST call is recognised, in ONE place because two copies drifted once already: a
+ * referee's arrow read spelled `.from ("x")` — one space, valid TS, valid supabase-js — slipped a
+ * `.includes(".from(")` filter AND a `/\.from\(/g` count on the same pass, green across 225 specs,
+ * 1318 web tests, `tsc` and `eslint`. `[(<]` also admits the generic form `.from<Row>(`.
+ */
+const FROM_CALL_SOURCE = String.raw`\.from\s*[(<]`;
+
+/**
+ * A FRESH RegExp per use, from one shared source string. Not a single `/…/g` constant: `test()` on
+ * a global regex advances `lastIndex`, so one shared instance would return alternating answers
+ * across the reads it filters — a recogniser that silently sees only every other read is worse
+ * than no recogniser, and it would have made this census quietly wrong rather than loudly red.
+ */
+const fromCall = (flags = ""): RegExp => new RegExp(FROM_CALL_SOURCE, flags);
+
+const READS = functionNames(PAGE).filter((name) => fromCall().test(bodyOf(PAGE, name)));
 
 /** The nine rows the matrix above carries, in the order it carries them. */
 const MATRIX_ROWS = [
@@ -185,14 +203,21 @@ describe("every read this page makes has a row in the matrix above", () => {
    * (`const extraRead = async (supabase) => supabase.from(...)`) is INVISIBLE to it: measured
    * 2026-08-18 by a referee, a tenth read in that shape left all 224 specs in this directory green,
    * which made the staleness contract this file's header claims FALSE for that shape. Counting the
-   * calls file-wide and pinning the total to the census closes it however the read is written.
+   * calls file-wide and pinning the total to the census closes the arrow shape.
+   *
+   * WHAT "HOWEVER IT IS WRITTEN" IS WORTH, stated narrowly because the wider claim was measured
+   * false once: this counts `fromCall`, which admits `.from(`, `.from (` and `.from<Row>(`. A
+   * second referee escaped an earlier version of this pin with the single-space spelling while
+   * every lane stayed green, so the guarantee here is the one that regex actually spells and no
+   * more. A spelling it does not cover would slip the census again — and that is why the recogniser
+   * is a single named constant shared with `READS` rather than two literals that can drift apart.
    *
    * It closes a second gap in passing, and that one is why this is a count rather than a lint: the
    * per-row table pin below asserts a body CONTAINS its table, so a body holding TWO reads would
    * satisfy it while quietly serving the wrong one. Here the total would be ten against nine.
    */
   it("talks to PostgREST only inside reads the matrix accounts for", () => {
-    expect([...PAGE.matchAll(/\.from\(/g)].length).toBe(READS.length);
+    expect([...PAGE.matchAll(fromCall("g"))].length).toBe(READS.length);
   });
 
   /**
