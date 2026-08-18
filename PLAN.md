@@ -7,7 +7,7 @@
 
 ### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`56899b4` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+**Durum:** `main` @`1490882` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
 **MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
@@ -75,12 +75,13 @@ Eskiler: `apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor
 `worker.test.ts`'in `outcome()` fixture'ı eksik · port testlerindeki `*.example` domainleri ·
 flaky `disconnect-button.test.tsx:302`.
 **2026-08-18'de eklenenler — hepsi ÖLÇÜLDÜ, hiçbiri tahmin değil:**
-- **Sorgu spec'leri filtre DEĞERLERİNİ pinlemiyor** — hakem `.eq("user_id", userId)` yerine
-  `projectId` geçirdi, `verify.sh` + `verify-db.sh` + `tsc` **hepsi yeşil kaldı** (üretimde etkisi:
-  her kart sessizce "not run" okur). Aynı delik `audits-query` / `insights-query` / `lookups-query`
-  ve komşularında var; `.maybeSingle()`, hata-THROW yolu ve `cardInputFor`'un fan-out'u TÜKETMESİ
-  de pinsiz. **İŞ BAŞLADI** (dal `test/query-spec-value-pins`) — kapsam enumerate ediliyor, çünkü
-  dizinde dört değil ALTI aday spec var.
+- **`cardInputFor`'un `connection`'ı ve crawl özetinin SIRASI pinsiz** — [#135](https://github.com/popiliadam/seogrep/pull/135)'in
+  hakeminin yeşil kalan iki mutasyonu. `connection: null` → her kartın bağlantı satırı
+  "not connected" der ama token sağlığı doğru kalır (kendi kendiyle çelişen kart); `latestSucceeded`'da
+  `ascending: true` → `.limit(1)` en ESKİ crawl'ı alır, her kart projenin ilk crawl'ıyla damgalanır.
+  İkincisinin arızası `insights-query.test.ts`'in başlığında **kelimesi kelimesine yazılı** ama assert
+  edilmemiş. Chip "iki adı düzeltme, ÜÇÜNCÜYÜ ara" diyor: iki bağımsız aynı-sınıf boşluk, sorunun
+  isimlerde değil enumerasyonda olduğunu söyler.
 - **Statik kapılar string literal içindeki SQL metnini gerçek karar sanıyor** — hakem sahte bir
   `; revoke …;` metnini literal'e gömdü, `check-grants` yeşile döndü. `main`'deki `check-rls.sh`'de
   de **aynı**: bu, paylaşılan okuyucunun devraldığı bir özellik (dollar-quoted gövdeler KASTEN
@@ -101,6 +102,48 @@ crawl time-budget · lighthouse runner çökmesi · **00:00–00:30 UTC `verify-
 **transport**) ve **port 55322 `address already in use`** (yığın hiç başlayamadı). İkisi de altyapı;
 üçüncü koşu temiz geçti. **Kırmızıyı "flake" ilan etmeden ÖNCE logu oku** — birincisi testlere kadar
 gelmişti ve orada bütün kod kanıtı zaten yeşildi.
+### 🔐 2026-08-18 — 0028 BULUT GRANT DARALTMASI + SORGU PİNLERİ: KAPILARIN YALAN SÖYLEDİĞİ ÜÇ YER
+
+0027'yi doğrularken çıkan bulgudan doğdu ve iki dilime büyüdü. **Hiçbir fiyat, hiçbir tool, hiçbir
+kullanıcı-görünür davranış değişmedi** — değişen tek şey, kapıların ne ölçtüğü.
+
+- **0028 ([#133](https://github.com/popiliadam/seogrep/pull/133), operatör uyguladı, bulut okunarak doğrulandı).** 19 ilişkinin yetkileri
+  migration'ların verdiğine eşitlendi ve varsayılan ACL mekanizması kapatıldı. Yeni kapı
+  `guardrails/check-grants.sh`: tablo yaratan her migration her rol için her DML'i **ya GRANT ya
+  REVOKE** etmek zorunda — `verify.sh` **ve** CI `static-guards`'ta koşar, ve
+  `ALTER DEFAULT PRIVILEGES … GRANT … ON TABLES` ayrıca reddedilir.
+  **Ölçülmüş güvenlik kalemi:** `gsc_accounts`'ta `authenticated` şifreli refresh token'ı
+  okuyabiliyordu — RLS satırları kapsar, **kolonları değil**, ve 0021'in kolon savunması bulutta hiç
+  yürürlükte olmamış. Artık `FALSE`. **Ve düzeltmenin sırası tahmin edilemezdi:** tablo düzeyi
+  `revoke select`, kolon grant'lerini de siler (`pg_attribute.attacl` 7→0) — yalnız revoke etmek
+  **paneli kırardı**. Blok revoke → re-grant sırasıyla yazıldı.
+- **Sorgu pinleri ([#135](https://github.com/popiliadam/seogrep/pull/135)).** Hakem panelin veri yolunda dört şeyi kırmıştı ve
+  `verify.sh` + `verify-db.sh` + `tsc` **üçü de yeşil kalmıştı**. Dördü de kapandı — ama asıl bulgu
+  kapsamdı: altı spec dosyası **DOKUZ okuma** taşıyor ve **üçünün hiç sahibi yokmuş**
+  (`readConnections`'ta hiçbir pin yok; kiracı filtresi düşürülse bütün suite yeşil kalıyordu).
+  Değer pinleri **imzadan çıkarılan parametreyle** karşılaştırıyor, yazılışla değil — yeniden
+  adlandırma yeşil kalıyor, yani yanlış-pozitif maliyeti ölçülerek sınırlandı.
+
+**ÜÇ ŞEKİL, hepsi bu turda ölçüldü — kapı yeşilken neden yanılabilir:**
+1. **Yerelde yeşil, bulutta yanlış.** Yerel varsayılan ACL dar, bulutunki geniş; `42501` bekleyen
+   db-test'ler DÜRÜSTÇE geçiyordu ve bulut sapması hiçbir kapıda görünmüyordu.
+2. **Yeşil, çünkü hiç bakmıyor.** `readConnections` sahipsizdi.
+3. **Prose'da var, assert'te yok.** ÜÇ kez tekrarladı; en sonuncusunda `insights-query.test.ts`'in
+   başlığı arızayı kelimesi kelimesine tarif ediyor, iddia yok. **DERS ADAYI (imzasız):** *bir spec
+   başlığının tarif ettiği arıza, o spec'te assert edilmiş sayılmaz.*
+
+**Ve bir ölçüm-aracı tuzağı:** mevcut `bodyOf` konvansiyonu fonksiyonu ilk sütun-0 `}`'da bitirir;
+`ProjectsPage`'in çok satırlı destructured imzası kendi başlığına sütun-0 `}` koyar → **39 karakterlik
+kütük**. Oraya yazılan bir `.toMatch` sonsuza dek boş yere geçerdi; yakalayan şey `fanOutBindingsOf`'un
+sessizce boş dönmek yerine **throw** etmesi oldu. Aynı sınıf bu turda üç kez çıktı (`tsc -p` boş
+include'da exit 0 · `gen-db-types` index üretmiyor · `bodyOf` kütük). **Ölçüm aracının sessizce boş
+dönmesi, yanlış ölçmekten beterdir.**
+
+**Süreç:** 2 işçi + **2 taze Fable hakem turu, 2/2 PASS**. Hakemlerin ikisi de kendi mutasyonlarını
+türetti; A1 hakemininki ikisi yeşil kaldı ve chip'e döndü. Boş-geçiş avı somut sonuç verdi: yeni
+ayrıştırıcılar kasten sabitlendiğinde `query-pins.test.ts` kırmızıya döndü — yani yeni makinenin
+**kendi kapısı** var.
+
 ### 🗄️ 2026-08-18 — 0027 `domain_lookup_runs`: DFS ARAMALARI ARTIK İZ BIRAKIYOR (PR #131 CANLIDA)
 
 Üç senkron DFS alan araması (`ranked_keywords` 65 · `analyze_backlinks` 70 · `compare_competitors` 90)
