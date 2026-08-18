@@ -7,7 +7,7 @@
 
 ### 📋 2026-08-18 (2. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`ae9e75d` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
+**Durum:** `main` @`56899b4` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
 **MCP deploy:** `deploy-mcp.yml` `push:main` + `paths: apps/mcp/**` ile **kendiliğinden** tetiklenir
@@ -34,11 +34,27 @@ de yok → `dfs-budget-guard` SKIP verir; DFS harcamasını Supabase MCP ile do�
    (7 kolon · iki FK'in matchtype `s`/deltype `c` · `tool` CHECK · RLS enable+**force** · tek
    `select_own` · index). [PR #131](https://github.com/popiliadam/seogrep/pull/131) merge:
    migration + kalıcılık + panel, 3 taze Fable hakem PASS. Detay aşağıdaki bölümde.
-2. **`0028` revoke — YENİ, ÖLÇÜLDÜ, imzasız.** Cloud'da `pg_default_acl` yeni public tablolara
-   `postgres` grantor'ıyla **`arwdxtm`** veriyor → 0023/0024/0025/0026/0027'nin **beşinin de** yazdığı
-   *"UPDATE/DELETE kasten YOK"* cümlesi **cloud'da yanlış**; gerçek delik `service_role`
-   (`rolbypassrls`). **`credit_ledger` SAĞLAM** (`anon=arxtm`) çünkü 0002 açıkça REVOKE ediyor —
-   NEVER#2 etkilenmiyor. Yerelde aynı ifade 42501 ile reddediliyor, yani **hiçbir kapı bunu göremez**.
+2. **`0028` ✅ KAPANDI — bulut daraltıldı ve mekanizma kapatıldı.** Operatör uyguladı,
+   [PR #133](https://github.com/popiliadam/seogrep/pull/133) merge. Bulut **okunarak** doğrulandı:
+   `postgres` grantor'lı varsayılan ACL artık `anon=xtm, authenticated=xtm, service_role=xtm`
+   (yerelle **birebir aynı**) → yeni tablolar DML ile **doğmayacak**. 19 ilişkinin yetkileri
+   migration'ların verdiğine eşitlendi. **Güvenlik kalemi kapandı:**
+   `has_column_privilege(authenticated, gsc_accounts, encrypted_refresh_token, SELECT)` = **FALSE**
+   (öncesinde TRUE'ydu — 0021'in kolon savunması bulutta hiç yürürlükte değilmiş; RLS satırları
+   kapsar, **kolonları değil**). Revoke sonrası canlı ölçüm: `/status` `ok:true`, `errorsSinceBoot:0`,
+   `get_credit_balance` ve `list_projects` çalışıyor — hem de **süreç yeniden başlamadan**
+   (`uptimeSeconds` 12100), yani yetkileri altından değişen aynı canlı süreç okumaya devam etti.
+   Yeni kapı: `guardrails/check-grants.sh` — tablo yaratan her migration her rol için her DML'i
+   ya GRANT ya REVOKE etmek zorunda; `verify.sh` **ve** CI `static-guards`'ta koşar.
+   **Artık boşluk (0016'nın zaten belgelediği, değişmedi):** `supabase_admin` grantor'lı ikinci
+   varsayılan ACL hâlâ `arwdDxtm` — yalnız o rol tablo yaratırsa ateşlenir, migration'lar `postgres`
+   olarak koşuyor. Kozmetik: `credit_balances` (view) üç rolde de `TRUNCATE` taşıyor — bir view
+   truncate edilemez, aksiyon yok.
+   **ŞERH, biri ileride budamasın diye:** `subscriptions` INSERT/UPDATE **kullanılıyor** —
+   `apply_subscription_event` SECURITY **INVOKER**'dır (0018'de `security definer` YOK) ve Paddle
+   webhook'u ondan geçer. İşçi bunu DEFINER sanmıştı, hakem düzeltti; artefakt zaten doğruydu.
+   `gsc_connections` DELETE'inin ise gerçekten çağıranı yok (0016'nın başlığı bu yüzden **bayat**).
+
 3. **İmzalı ama dispatch edilmemiş 9 tool:** `discover_keywords` 40 · `track_keywords` 0 ·
    `serp_snapshot` 5+8/kelime (**depth 100 pinli**) · `keyword_positions` 10 · `backlink_changes` 35 ·
    `disavow_candidates` 40 (**200 satır kapağı ŞART**) · `backlink_details` 35 · `my_pages` 40 ·
@@ -58,12 +74,18 @@ Kural: `kredi ≈ tipik vendor × 400–500`, **en kötü hâl ≥3×**.
 Eskiler: `apps/mcp/tsconfig.json` **test dosyalarını typecheck'ten dışlıyor** · `/status` prob sınırı ·
 `worker.test.ts`'in `outcome()` fixture'ı eksik · port testlerindeki `*.example` domainleri ·
 flaky `disconnect-button.test.tsx:302`.
-**2026-08-18'de eklenen üçü, üçü de ÖLÇÜLDÜ:**
-- **`0028` revoke** (yukarıda, madde 2).
-- **Dört sorgu spec'i filtre DEĞERLERİNİ pinlemiyor** — hakem `.eq("user_id", userId)` yerine
-  `projectId` geçirdi, `verify.sh` + `verify-db.sh` + `tsc` **hepsi yeşil kaldı**. Aynı delik
-  `audits-query` / `insights-query` / discovery / `lookups-query`'de birebir var; `.maybeSingle()`,
-  hata-THROW yolu ve `cardInputFor`'un fan-out'u TÜKETMESİ de pinsiz.
+**2026-08-18'de eklenenler — hepsi ÖLÇÜLDÜ, hiçbiri tahmin değil:**
+- **Sorgu spec'leri filtre DEĞERLERİNİ pinlemiyor** — hakem `.eq("user_id", userId)` yerine
+  `projectId` geçirdi, `verify.sh` + `verify-db.sh` + `tsc` **hepsi yeşil kaldı** (üretimde etkisi:
+  her kart sessizce "not run" okur). Aynı delik `audits-query` / `insights-query` / `lookups-query`
+  ve komşularında var; `.maybeSingle()`, hata-THROW yolu ve `cardInputFor`'un fan-out'u TÜKETMESİ
+  de pinsiz. **İŞ BAŞLADI** (dal `test/query-spec-value-pins`) — kapsam enumerate ediliyor, çünkü
+  dizinde dört değil ALTI aday spec var.
+- **Statik kapılar string literal içindeki SQL metnini gerçek karar sanıyor** — hakem sahte bir
+  `; revoke …;` metnini literal'e gömdü, `check-grants` yeşile döndü. `main`'deki `check-rls.sh`'de
+  de **aynı**: bu, paylaşılan okuyucunun devraldığı bir özellik (dollar-quoted gövdeler KASTEN
+  şeffaf — `execute format(...)` içindeki sabotajı böyle yakalıyor), bir dilimin kusuru değil.
+  Kazayla oluşamaz: birinin sabotaj şeklinde metin yazması gerekir.
 - **Hiçbir index hiçbir kapıda pinli değil** — `gen-db-types.mjs` index üretmiyor, dolayısıyla drift
   kapısı da göremiyor; beş koşu defterinin beşi için geçerli.
 
