@@ -35,6 +35,7 @@ describe("pricing page", () => {
       ["Competitor comparison (per domain)", "90"],
       ["Keyword gap (per competitor)", "45"],
       ["Link gap (per competitor)", "45"],
+      ["Backlink history (per domain)", "35"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -79,6 +80,9 @@ describe("pricing page", () => {
     compare_competitors: "Competitor comparison (per domain)",
     keyword_gap: "Keyword gap (per competitor)",
     link_gap: "Link gap (per competitor)",
+    // backlink_changes (2026-08-18, signed at 35): its OWN row, not a member of the backlink
+    // profile row — that row buys today's profile and this one buys its history.
+    backlink_changes: "Backlink history (per domain)",
     generate_report: "Monthly report",
   };
 

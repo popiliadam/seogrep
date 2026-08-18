@@ -30,8 +30,10 @@ describe("DataForSEO tool descriptions", () => {
   // Four -> seven on 2026-08-17 (keyword_gap, link_gap, audit_speed). The count is restated
   // rather than derived on purpose: a gated tool silently DROPPING out of the set would otherwise
   // make every it.each below assert less while this file stayed green.
-  it("covers all seven gated tools", () => {
-    expect(GATED).toHaveLength(7);
+  // Seven -> eight on 2026-08-18 (backlink_changes). The count RISING is the only edit this pin
+  // sanctions; every it.each below now has one more tool to hold to the same three promises.
+  it("covers all eight gated tools", () => {
+    expect(GATED).toHaveLength(8);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

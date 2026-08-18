@@ -25,10 +25,15 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // it — it sits in the audit family, whose other four members read stored measurements and cost
   // us only CPU — which is exactly why the structural rule (paid-balance.graph.test.ts) exists
   // beside this hand-written pin.
-  it("is exactly the seven DataForSEO tools", () => {
+  //
+  // Seven -> eight on 2026-08-18: backlink_changes, which sends TWO paid DataForSEO requests per
+  // call and is therefore the heaviest member here by vendor round trips. The set GREW; nothing
+  // left it.
+  it("is exactly the eight DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "audit_speed",
+      "backlink_changes",
       "compare_competitors",
       "keyword_gap",
       "link_gap",

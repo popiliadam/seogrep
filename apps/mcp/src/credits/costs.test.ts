@@ -21,6 +21,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       compare_competitors: 90,
       keyword_gap: 45,
       link_gap: 45,
+      backlink_changes: 35,
       find_quick_wins: 10,
       detect_cannibalization: 10,
       analyze_content_decay: 10,
@@ -54,8 +55,14 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // the number and the `urls <= 5` cap together on the same day. Three signed additions in one
   // day, and the thing they have in common is what this pin protects: the table GREW each time
   // and no existing number moved.
-  it("has exactly 26 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(26);
+  //
+  // 26 -> 27 on 2026-08-18: backlink_changes (plan §B3) at a SIGNED 35 credits — MADDE 1 row #6 of
+  // the 2026-08-17 signature package, which the operator approved with "onaylıyorum, dispatch et".
+  // Same shape as the four growths above: the table GREW and no existing number moved. The 35 is
+  // BELOW the v1 draft's 45, and the reduction was the operator's own, made before this work
+  // started — nothing here re-prices anything.
+  it("has exactly 27 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(27);
   });
 
   it("exposes only non-negative integer costs", () => {
