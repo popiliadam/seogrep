@@ -603,6 +603,33 @@ describe("createLiveBacklinkChangesClient (fake transport — never real HTTP)",
   });
 
   /**
+   * The MIXED pair — one response priced, the other not — and the case `spent > 0 ? spent : est`
+   * could not see: with one real cost present the sum is already > 0, so the fallback never fired
+   * and the UNPRICED request was booked as free. Both orderings are driven, because which of the
+   * two endpoints declines to price is not something this adapter controls.
+   */
+  it.each([
+    ["the new/lost response", DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT],
+    ["the summary response", DFS_BACKLINKS_TIMESERIES_NEW_LOST_ENDPOINT],
+  ])("settles the request %s left unpriced at ITS OWN estimate, not at zero", async (_label, pricedEndpoint) => {
+    const transport = vi.fn<DfsTransport>(async (url) => {
+      const fixture = url === DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT ? summaryFixture : newLostFixture;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (url === pricedEndpoint ? fixture : withoutCost(fixture)),
+      };
+    });
+    await liveClient(transport, ledger).fetchBacklinkChanges(QUERY);
+    // The priced half at its REAL cost + the unpriced half at one request's share of the estimate.
+    const perRequestEstimate =
+      estimateBacklinkChangesUsd(DEFAULT_BACKLINK_CHANGES_PERIODS) / BACKLINK_CHANGES_REQUESTS;
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(FIXTURE_COST + perRequestEstimate, 10);
+    // …and strictly MORE than booking only the priced half, which is what the day used to record.
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(FIXTURE_COST);
+  });
+
+  /**
    * A failure on the FIRST request must not spend money on the second. This is the whole reason
    * the two requests are sequential rather than a Promise.all.
    */

@@ -445,9 +445,11 @@ export interface LiveBacklinkChangesOptions {
 /**
  * The real (paid) backlink-changes client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized
  * to BOTH requests at the requested window; (2) the new/lost request; (3) the summary request;
- * (4) ONE settlement with the two real costs summed. A failure at (2) means (3) never runs and no
- * money is spent on it; a failure at (3) leaves the reservation open at its full estimate, which
- * is never less than the spend that really happened.
+ * (4) ONE settlement with the two real costs summed. A response that omits `cost` settles at THAT
+ * request's own estimate rather than at $0.00 — the same per-request rule backlink-details.ts
+ * follows. A failure at (2) means (3) never runs and no money is spent on it; a failure at (3)
+ * leaves the reservation open at its full estimate, which is never less than the spend that
+ * really happened.
  */
 export function createLiveBacklinkChangesClient(
   opts: LiveBacklinkChangesOptions,
@@ -498,12 +500,18 @@ export function createLiveBacklinkChangesClient(
       });
       const profile = parseBacklinkProfileResponse(rawProfile);
 
+      // PER REQUEST, not per pair: a response the vendor declined to price settles at ITS OWN
+      // share of the estimate — never at $0.00. The pair-level `spent > 0 ? spent : estimate` this
+      // replaces could not see the MIXED case (one priced, one not): the sum was already > 0, so
+      // the fallback never fired and the unpriced request was booked as free, under-counting the
+      // $3/day guard by exactly the spend it could not see.
+      const perRequestEstimate = estimateBacklinkChangesUsd(periods) / BACKLINK_CHANGES_REQUESTS;
       const spent =
-        (extractBacklinkChangesCostUsd(rawChanges) ?? 0) +
-        (extractBacklinkChangesCostUsd(rawProfile) ?? 0);
+        (extractBacklinkChangesCostUsd(rawChanges) ?? perRequestEstimate) +
+        (extractBacklinkChangesCostUsd(rawProfile) ?? perRequestEstimate);
       await settleSpend(
         reservation,
-        spent > 0 ? spent : estimateBacklinkChangesUsd(periods),
+        spent,
         changes.points.length + profile.points.length,
         ledger,
       );
