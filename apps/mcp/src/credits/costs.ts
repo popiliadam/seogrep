@@ -49,6 +49,19 @@ export const TOOL_COSTS = {
   // 1,000-per-request ceiling the margin would fall through the signed floor. No existing number
   // moved.
   backlink_details: 35,
+  // disavow_candidates (plan 2026-08-17 §B3, MADDE 1 row #8): THREE DataForSEO Backlinks requests
+  // — the spam-filtered link window, the vendor's per-domain bulk_spam_score for the domains that
+  // window named, and the referring IP networks. SIGNED BY THE OPERATOR 2026-08-17 at 40 (down
+  // from the v1 draft's 55; the gap map's 55 is the stale figure and the signature is later).
+  // The signature records this row's worst-case margin as 2.8x — BELOW the x3 band — and writes
+  // its own remedy: "Çözüm fiyat değil kapak … Kapak koda yazılır, ve `limit`'in 1000'e çıkmasına
+  // izin verilmez." So the ROW CAPS in dfs/disavow-candidates.ts (300 link rows + 200 candidate
+  // domains + 50 network rows = 550 billed rows, margin 5.40x) are part of the signed price, not
+  // a soft limit: at the vendor's own 1,000-per-request ceiling the same three requests bill
+  // $0.180 and the margin collapses to 2.76x — the sub-band number the signature flagged. The
+  // price was not moved to fit the caps; the caps were derived to hold the price. No existing
+  // number moved.
+  disavow_candidates: 40,
   find_quick_wins: 10,
   detect_cannibalization: 10,
   analyze_content_decay: 10,

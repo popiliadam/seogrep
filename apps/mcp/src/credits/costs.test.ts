@@ -23,6 +23,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       link_gap: 45,
       backlink_changes: 35,
       backlink_details: 35,
+      disavow_candidates: 40,
       find_quick_wins: 10,
       detect_cannibalization: 10,
       analyze_content_decay: 10,
@@ -68,8 +69,15 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // and no existing number moved. It shares backlink_changes's 35 because it makes the same two
   // requests on the same Backlinks tariff; what keeps its worst case inside the signed band is
   // the ROW CAP pair in dfs/backlink-details.ts, which is part of the signed price.
-  it("has exactly 28 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(28);
+  //
+  // 28 -> 29 on 2026-08-19: disavow_candidates (plan §B3) at a SIGNED 40 credits — MADDE 1 row #8
+  // of the same 2026-08-17 signature package. Same shape as the six growths above: the table GREW
+  // and no existing number moved. It is the first row the operator signed with an explicit
+  // sub-band WARNING attached (worst case 2.8x, below the x3 band), and the signature's own
+  // remedy was a CAP rather than a price — so what protects this 40 is the row-cap trio in
+  // dfs/disavow-candidates.ts, and the gap map's older 55 is stale, not a second opinion.
+  it("has exactly 29 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(29);
   });
 
   it("exposes only non-negative integer costs", () => {

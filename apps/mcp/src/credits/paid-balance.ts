@@ -47,13 +47,23 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // the audit family, whose other four members only cost us CPU; this one buys a Lighthouse run
   // per page. The import-graph spec is what caught it, not the name.
   "audit_speed",
-  // backlink_changes (2026-08-17) — TWO real DataForSEO Backlinks requests per call, so it is the
-  // heaviest single member of this set by vendor round trips and belongs here for the same reason
-  // the gap tools do.
+  // backlink_changes (2026-08-17) — TWO real DataForSEO Backlinks requests per call, so one call
+  // spends vendor money twice over. It belongs here for the same reason the gap tools do.
   "backlink_changes",
   // backlink_details (2026-08-18) — also TWO real DataForSEO Backlinks requests per call, and on
   // the ROW tariff, so its worst case buys 900 billed rows. Same reason as backlink_changes.
   "backlink_details",
+  // disavow_candidates (2026-08-19) — THREE real DataForSEO Backlinks requests per call, on the
+  // ROW tariff. Same reason as the two backlink tools above.
+  //
+  // NO ROUND-TRIP RANKING IS CLAIMED FOR ANY MEMBER, here or in the docs, and the removal is the
+  // lesson: this entry and backlink_changes above both used to rank themselves top of this list by
+  // vendor round trips, and BOTH were false the day they were written. audit_speed fans out one
+  // Lighthouse request per URL up to MAX_SPEED_URLS — five — which no member of this list reaches.
+  // Nothing in this file carries a per-call request count, so a ranking over it cannot be checked
+  // from here; the one that escaped into a published docs page is exactly what NEVER #7 forbids.
+  // paid-balance.test.ts pins the shape out.
+  "disavow_candidates",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

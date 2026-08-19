@@ -1439,6 +1439,141 @@ export const DOC_PROSE = {
     ],
   },
 
+  disavow_candidates: {
+    lead:
+      "`disavow_candidates` finds the referring domains behind a site's worst-scoring live " +
+      "backlinks and hands you the **text of a Google disavow file** built from them. It is a " +
+      "**proposal you review** — SeoGrep does not submit disavow files to Google, and sends " +
+      "nothing anywhere. It works on **any public domain** and is **synchronous**: everything " +
+      "comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Name the site in **one of two ways** — pass a `target` domain, or pass the `project_id` of " +
+      "one of your own projects and the domain is taken from it. Exactly one of the two: passing " +
+      "both is rejected rather than resolved by precedence, because the two can name different " +
+      "sites. Then set `min_backlink_spam_score` — see the next section, it has no default and " +
+      "the tool will not run without it — and optionally narrow to followed links with " +
+      "`dofollow_only`.\n\n" +
+      "Behind one call are **three** DataForSEO Backlinks requests:\n\n" +
+      "- the site's **live backlinks, filtered by DataForSEO** on its own `backlink_spam_score` " +
+      "at the threshold you set, worst first — that window is what everything else is derived " +
+      "from;\n" +
+      "- DataForSEO's **per-domain `spam_score`** for the linking domains that window named " +
+      "(its `bulk_spam_score` endpoint). This is a **different field on a different endpoint** " +
+      "from the per-link score above, and the output keeps them apart;\n" +
+      "- the site's **referring networks** — the IP subnets its links sit in, a separate axis on " +
+      "which a link network shows up.\n\n" +
+      "The candidate list is ordered by that per-domain `spam_score`, highest first. A domain " +
+      "DataForSEO returned **no** score for sorts **last** and is printed as unreported — never " +
+      "as a zero, because a silence is not a clean bill of health. Ties break on the domain name.",
+    preExampleSections: [
+      {
+        heading: "It proposes. It never submits.",
+        body:
+          "This is the one thing to know before you use the output. The disavow text is returned " +
+          "to your conversation **as text**. There is no submission path in SeoGrep — no Search " +
+          "Console call, no upload, no \"apply\" button, not behind a flag. Uploading a disavow " +
+          "file is a decision with consequences for a site's link profile, so it stays with the " +
+          "human: if you decide to go ahead, **you** upload it yourself in Google Search " +
+          "Console.\n\n" +
+          "The refusal is printed in the output **and** carried in the file's own first lines, so " +
+          "it does not get separated from the file when you copy it out.",
+      },
+      {
+        heading: "The threshold is yours, and it is required",
+        body:
+          "`min_backlink_spam_score` has **no default**, and the call is rejected without it.\n\n" +
+          "That is deliberate. DataForSEO publishes a 0–100 spam score for a link but publishes " +
+          "**no cut-off** — there is no vendor-recommended \"spammy above this\" line, and " +
+          "Google publishes none either. Any number SeoGrep filled in for you would be our " +
+          "opinion about what counts as spam, arriving with the authority of a product default, " +
+          "on a page whose output is a list of other people's domains. So the tool asks you for " +
+          "the number instead, and **repeats the one you chose** in the output, next to the " +
+          "count of rows it examined.\n\n" +
+          "A threshold of **0** means no threshold at all: every live backlink enters the window.",
+      },
+      {
+        heading: "Whose numbers these are",
+        body:
+          "Every score in the output is a **DataForSEO field printed under DataForSEO's own " +
+          "name**, and the vendor really does spell it three different ways because it measures " +
+          "three different things: `backlink_spam_score` for one **link**, `spam_score` for one " +
+          "**referring domain**, `backlinks_spam_score` for one **network**. SeoGrep does not " +
+          "merge them into a score of its own, and there is no \"toxicity\", no risk level and " +
+          "no ranking of our making anywhere in the output.\n\n" +
+          "**\"Candidate\" means one thing only**: DataForSEO's score met the threshold you " +
+          "set. It is not a finding that these links are hurting the site, and neither " +
+          "DataForSEO nor SeoGrep can tell you what Google makes of any of them. Disavowing " +
+          "links that were fine costs you whatever value they were passing — which is why the " +
+          "output tells you to read every line, and why nothing here is applied for you.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Find disavow candidates for example.com, " +
+      "counting links DataForSEO scores 60 or worse.\n\nOr narrow it to followed links on one " +
+      "of your projects:\n\n> For my project, list disavow candidates from dofollow links " +
+      "scoring 75 and above.",
+    returns:
+      "A header naming the site — or, when you passed a `project_id`, the project it came from — " +
+      "then the refusal, then a plain statement of **how the list was built**: the threshold you " +
+      "chose, whether nofollowed links were kept, and which vendor field ordered which list. " +
+      "After that the **filtered backlinks** you were billed for, each with its own vendor " +
+      "score; the **candidate referring domains** with their per-domain score and how many links " +
+      "in **this window** each accounted for; the **referring networks**; the **disavow file " +
+      "text**; and the note naming all three vendor fields.\n\n" +
+      "Both vendor lists are captioned as **windows** — the rows you got, the offset and limit " +
+      "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by " +
+      "name, followed by the sentence that stops the arithmetic: _this window is a slice of that " +
+      "set, not a count of it_. The candidate list is **derived** from those rows rather than " +
+      "fetched, so it carries no vendor total at all — only a count of the window and the cap it " +
+      "was built under.\n\n" +
+      "A lookup that matched nothing says so plainly, naming **the window and the threshold it " +
+      "asked for**, and you are still charged for the delivered lookup — \"nothing above your " +
+      "cut-off in these rows\" is a real answer, not an error. A target that is not a public " +
+      "domain, a call naming neither `target` nor `project_id` (or both), a missing or " +
+      "out-of-range `min_backlink_spam_score`, a `limit` or `network_limit` outside the allowed " +
+      "range, and a `project_id` that is not yours are all rejected before anything is charged; " +
+      "while live data is off you get a \"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**. Behind it are **three** DataForSEO " +
+          "requests, and if any of them fails the whole call fails and **you are not charged** — " +
+          "a half-built candidate list is never billed. When the filtered window names no domain " +
+          "at all, the second request is not sent: there would be nothing to ask it about.\n\n" +
+          "`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider — three requests per call, **every one of them billed** — so it " +
+          "is not available on trial credits. Buy any credit pack and it unlocks straight away; " +
+          "your existing credits are untouched and keep working for crawls, audits, reports and " +
+          "Search Console tools.\n\n" +
+          "The `limit` and `network_limit` ceilings, and the cap on how many candidate domains " +
+          "are scored, are **part of the price** rather than stylistic limits: DataForSEO bills " +
+          "**per returned row**, and these caps are what hold the flat price inside the margin " +
+          "it was signed against. Asking for fewer rows costs the same; asking for more than a " +
+          "ceiling is refused before anything is charged.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its lists and its file text to the " +
+          "conversation and nothing else keeps them — there is no saved disavow file, no " +
+          "dashboard page and no \"new since last time\", so run it again for a fresh read. The " +
+          "lookup-history table that backs the other domain tools is bound to those tools by " +
+          "design and does not accept this one.\n\n" +
+          "The candidate domains come from **the filtered window you paid for**, not from the " +
+          "whole link profile: raise `limit` to examine more rows, and read the window caption " +
+          "for how far the slice sits from DataForSEO's whole-set count. Only **live** links are " +
+          "counted and subdomains are included, both pinned explicitly rather than left to a " +
+          "vendor default that could move.\n\n" +
+          "The file lists **whole domains** (`domain:` entries), never individual URLs: this " +
+          "tool answers at the referring-domain level, and emitting a bare URL would claim a " +
+          "page-level judgement it never made. And the referring-network list is a fact about " +
+          "**IP addresses**, not a verdict — domains share a subnet for ordinary hosting reasons " +
+          "as well as for link-network ones.",
+      },
+    ],
+  },
+
   generate_report: {
     lead:
       "`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site) " +

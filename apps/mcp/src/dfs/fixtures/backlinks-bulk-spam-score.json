@@ -1,0 +1,51 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3311 sec.",
+  "cost": 0.02411,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0012",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.3120 sec.",
+      "cost": 0.02411,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "bulk_spam_score", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "bulk_spam_score",
+        "targets": ["SpamFarm.example", "linkring.example", "quiet.example"]
+      },
+      "result": [
+        {
+          "items_count": 4,
+          "items": [
+            {
+              "type": "backlinks_bulk_spam_score",
+              "target": "spamfarm.example",
+              "spam_score": 84
+            },
+            {
+              "type": "backlinks_bulk_spam_score",
+              "target": "LINKRING.example",
+              "spam_score": 47
+            },
+            {
+              "type": "backlinks_bulk_spam_score",
+              "target": "quiet.example"
+            },
+            {
+              "type": "backlinks_bulk_spam_score",
+              "target": null,
+              "spam_score": 3
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

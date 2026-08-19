@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 // The single source of truth for per-tool credit costs lives in the MCP package; importing it
@@ -37,6 +40,7 @@ describe("pricing page", () => {
       ["Link gap (per competitor)", "45"],
       ["Backlink history (per domain)", "35"],
       ["Individual backlinks (per domain)", "35"],
+      ["Disavow candidates (per domain)", "40"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -88,6 +92,10 @@ describe("pricing page", () => {
     // row buys how they moved, and this one buys the individual links. Sharing a row with either
     // would advertise one price for two separate purchases.
     backlink_details: "Individual backlinks (per domain)",
+    // Its OWN row as well (2026-08-19, signed at 40): the three backlink rows above buy the
+    // profile, its history and the links; this one buys the per-DOMAIN spam scores and the disavow
+    // text built from them. Four separate DataForSEO purchases, four rows.
+    disavow_candidates: "Disavow candidates (per domain)",
     generate_report: "Monthly report",
   };
 
@@ -261,5 +269,69 @@ describe("pricing page", () => {
     expect(screen.getByText(/covers up to 100 pages for 20 credits/i)).toBeTruthy();
     expect(screen.getByText(/path filters/i)).toBeTruthy();
     expect(screen.getByText(/tiered large-site crawling is coming/i)).toBeTruthy();
+  });
+});
+
+/**
+ * THE PUBLIC PRICING TABLE RANKS NOTHING IT HAS NO NUMBER FOR (NEVER #7) — and this spec exists
+ * because the shape got in here twice, the second time after it had already been found and fixed
+ * everywhere else.
+ *
+ * A referee found "three DataForSEO requests, the most of any tool here" on the Disavow row and
+ * measured it FALSE: `audit_speed`, four rows above in this same table, buys one Lighthouse
+ * request per URL up to MAX_SPEED_URLS = 5. The first fix corrected four sites — the docs prose,
+ * the generated page and two `paid-balance` comments — and added a pin over each of them. A SECOND
+ * referee then found the sentence still alive HERE, because every one of those pins reads a
+ * different file and nothing read this one.
+ *
+ * COMMENTS ARE THE SUBJECT, not an afterthought: last time this sentence sat in a comment it was
+ * copied out of the comment into a published Billing section. A gate that reads only rendered
+ * output would call this file clean and let the claim make the same trip again.
+ *
+ * THE SHAPE IS FORBIDDEN RATHER THAN CORRECTED, for the reason the sibling pin gives: no registry
+ * and no `TOOL_COSTS` entry carries a per-call vendor-request count, so a ranking over tools is
+ * unbacked BY CONSTRUCTION and correcting the sentence would only produce a truer-sounding
+ * unverifiable claim. If a page ever needs the ranking, the number has to exist first.
+ *
+ * KNOWN LIMIT, stated rather than implied (signed lesson 14): this is an enumeration, and a
+ * natural-language axis is unbounded — a referee escaped the sibling list with "more vendor
+ * requests than every other SeoGrep tool sends". The list closes the spellings it names and no
+ * more, and it is shared in shape (not in code) with `apps/web/lib/tool-docs-gen.test.ts`.
+ */
+describe("the pricing page ranks nothing it has no number for (NEVER #7)", () => {
+  const UNCHECKABLE = [
+    /the most of any/i,
+    /more than any other/i,
+    /(?:the )?heaviest\b/i,
+    /(?:the )?most (?:requests|round.?trips|calls)/i,
+    /(?:the )?(?:largest|biggest|highest) number of (?:requests|round.?trips|calls)/i,
+    /than any other (?:tool|seogrep)/i,
+  ];
+
+  /**
+   * Read as TEXT, comments included — the opposite of every other spec in this file, which renders
+   * the component. `readFileSync` over the source is the only way to see a claim that never
+   * reaches the DOM but is one copy-paste away from doing so.
+   */
+  const SOURCE = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "page.tsx"), "utf8");
+
+  /** The subject must be non-empty, or every assertion below passes by vacuum. */
+  it("reads the pricing page's own source", () => {
+    expect(SOURCE.length).toBeGreaterThan(1000);
+    expect(SOURCE).toContain("Disavow candidates");
+  });
+
+  it.each(UNCHECKABLE)("claims no vendor-request superlative matching %s", (pattern) => {
+    // The lineage note above the Disavow row QUOTES the false sentence so a reader learns it was
+    // false rather than re-inventing it. That quotation is the one allowed form — and the exemption
+    // is scoped to the QUOTED SPAN, never to the line: a line-wide exemption was written first and
+    // MEASURED to swallow a real superlative that landed on the same line as the quote, which is
+    // the whole defect class this file exists for, reproduced inside its own guard.
+    const scanned = SOURCE.replace(/<<[^>]*>>/g, "<<quoted-and-refuted>>");
+    const offending = scanned
+      .split("\n")
+      .map((line, index) => ({ line, number: index + 1 }))
+      .filter((entry) => pattern.test(entry.line));
+    expect(offending, `uncheckable superlative(s) matching ${pattern}`).toEqual([]);
   });
 });
