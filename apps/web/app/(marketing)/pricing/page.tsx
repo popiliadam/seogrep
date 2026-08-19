@@ -42,6 +42,12 @@ const CREDIT_COSTS = [
   // "Backlink profile" one above: that row buys today's profile, this one buys its history, and
   // the two are separate DataForSEO purchases a caller runs at different times.
   { action: "Backlink history (per domain)", cost: "35" },
+  // backlink_details (2026-08-17, operator-signed at 35). A third backlink row, and deliberately
+  // not folded into either of the two above: "Backlink profile" buys today's totals, "Backlink
+  // history" buys how they moved, and this one buys the individual links themselves. Three
+  // separate DataForSEO purchases a caller runs at different times, so one grouped label would
+  // advertise one price for three different things.
+  { action: "Individual backlinks (per domain)", cost: "35" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

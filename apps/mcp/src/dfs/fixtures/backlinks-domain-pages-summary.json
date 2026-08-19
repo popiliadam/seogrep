@@ -1,0 +1,92 @@
+{
+  "version": "0.1.20230825",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.8813 sec.",
+  "cost": 0.02012,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "09291813-1535-0445-0000-209426c919d5",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "1.8456 sec.",
+      "cost": 0.02012,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "domain_pages_summary", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "domain_pages_summary",
+        "target": "forbes.com",
+        "limit": 1,
+        "order_by": ["backlinks,desc"]
+      },
+      "result": [
+        {
+          "target": "forbes.com",
+          "total_count": 3813583,
+          "items_count": 1,
+          "items": [
+            {
+              "type": "backlinks_page_summary",
+              "url": "http://www.forbes.com/",
+              "rank": 452,
+              "backlinks": 1259787,
+              "first_seen": "2019-01-15 22:56:46 +00:00",
+              "lost_date": null,
+              "backlinks_spam_score": 31,
+              "broken_backlinks": 0,
+              "broken_pages": 0,
+              "referring_domains": 20369,
+              "referring_domains_nofollow": 2690,
+              "referring_main_domains": 17112,
+              "referring_main_domains_nofollow": 2332,
+              "referring_ips": 15154,
+              "referring_subnets": 9934,
+              "referring_pages": 706965,
+              "referring_links_tld": {
+                "com": 560282,
+                "org": 58362,
+                "blogspot.com": 22648,
+                "fr": 20648,
+                "ac.uk": 8697
+              },
+              "referring_links_types": {
+                "anchor": 534171,
+                "image": 172482,
+                "redirect": 308,
+                "canonical": 4
+              },
+              "referring_links_attributes": {
+                "noopener": 28649,
+                "nofollow": 20928,
+                "noreferrer": 4994,
+                "ugc": 683
+              },
+              "referring_links_platform_types": {
+                "unknown": 465195,
+                "news": 143529,
+                "blogs": 91093,
+                "cms": 66664
+              },
+              "referring_links_semantic_locations": {
+                "": 586043,
+                "article": 63666,
+                "aside": 29492,
+                "section": 12800
+              },
+              "referring_links_countries": {
+                "": 377224,
+                "DE": 129952,
+                "US": 115580,
+                "FR": 20987
+              },
+              "referring_pages_nofollow": 55860
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

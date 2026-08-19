@@ -21,6 +21,7 @@ import { compareCompetitorsTool } from "./compare-competitors.ts";
 import { keywordGapTool } from "./keyword-gap.ts";
 import { linkGapTool } from "./link-gap.ts";
 import { backlinkChangesTool } from "./backlink-changes.ts";
+import { backlinkDetailsTool } from "./backlink-details.ts";
 import { generateReportTool } from "./generate-report.ts";
 import { whatsNextTool } from "./whats-next.ts";
 import { listGscPropertiesTool } from "./list-gsc-properties.ts";
@@ -59,6 +60,11 @@ export {
   makeBacklinkChangesTool,
   formatBacklinkChanges,
 } from "./backlink-changes.ts";
+export {
+  backlinkDetailsTool,
+  makeBacklinkDetailsTool,
+  formatBacklinkDetails,
+} from "./backlink-details.ts";
 export { generateReportTool, makeGenerateReportTool } from "./generate-report.ts";
 export { whatsNextTool, makeWhatsNextTool } from "./whats-next.ts";
 export { listGscPropertiesTool, makeListGscPropertiesTool } from "./list-gsc-properties.ts";
@@ -93,6 +99,7 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   keywordGapTool,
   linkGapTool,
   backlinkChangesTool,
+  backlinkDetailsTool,
   generateReportTool,
   whatsNextTool,
   listGscPropertiesTool,

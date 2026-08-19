@@ -36,6 +36,7 @@ describe("pricing page", () => {
       ["Keyword gap (per competitor)", "45"],
       ["Link gap (per competitor)", "45"],
       ["Backlink history (per domain)", "35"],
+      ["Individual backlinks (per domain)", "35"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -83,6 +84,10 @@ describe("pricing page", () => {
     // backlink_changes (2026-08-18, signed at 35): its OWN row, not a member of the backlink
     // profile row — that row buys today's profile and this one buys its history.
     backlink_changes: "Backlink history (per domain)",
+    // Its OWN row too (2026-08-18, signed at 35): the profile row buys today's totals, the history
+    // row buys how they moved, and this one buys the individual links. Sharing a row with either
+    // would advertise one price for two separate purchases.
+    backlink_details: "Individual backlinks (per domain)",
     generate_report: "Monthly report",
   };
 
