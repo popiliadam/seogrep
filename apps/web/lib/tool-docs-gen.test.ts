@@ -452,8 +452,8 @@ describe("DOC_PROSE ranks nothing it has no number for (NEVER #7)", () => {
     /than any other (?:tool|seogrep)/i,
   ];
 
-  it.each(Object.keys(DOC_PROSE))("%s claims no vendor-request superlative", (tool) => {
-    const text = JSON.stringify(DOC_PROSE[tool]);
+  it.each(Object.entries(DOC_PROSE))("%s claims no vendor-request superlative", (tool, prose) => {
+    const text = JSON.stringify(prose);
     for (const pattern of UNCHECKABLE) {
       expect(text, `${tool}: uncheckable superlative matching ${pattern}`).not.toMatch(pattern);
     }
