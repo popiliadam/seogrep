@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TOOL_COSTS } from "./costs.js";
+import { CREDIT_UNITS, TOOL_COSTS, creditCostFor, isPerUnitTool } from "./costs.js";
+import { MAX_COMPARE_TARGETS, MIN_COMPARE_TARGETS } from "../dfs/llm-mentions.js";
 
 // Byte-for-byte pin of the human-approved v0 credit costs (PR #12 merge sign-off).
 // CLAUDE.md NEVER #6: price / credit cost / package figures do not change without
@@ -34,6 +35,8 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       audit_schema: 5,
       audit_speed: 15,
       audit_content: 12,
+      ai_visibility: 90,
+      ai_visibility_compare: 90,
       generate_report: 15,
       whats_next: 0,
       list_gsc_properties: 0,
@@ -93,8 +96,15 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // measured at 3.8x. The gap map's 35 for this row is STALE; the signature is later and is what
   // this pin protects. What holds the 40 up is dfs/relevant-pages.ts: the row cap, the single
   // request, and the deliberate ABSENCE of the clickstream flag that would double the vendor bill.
-  it("has exactly 31 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(31);
+  //
+  // 31 -> 33 on 2026-08-19: ai_visibility and ai_visibility_compare, MADDE 2 of the same
+  // 2026-08-17 signature package, both at a SIGNED 90. Same shape as the nine growths above — the
+  // table GREW and no existing number moved — with ONE difference that must not be read past: the
+  // second 90 is a PER-COMPARED-TARGET price, not a call price, so one call of it charges 180 to
+  // 900. The table cannot say that on its own, which is what CREDIT_UNITS below is for; reading
+  // this row as a flat fee would give away up to 810 signed credits a call.
+  it("has exactly 33 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(33);
   });
 
   it("exposes only non-negative integer costs", () => {
@@ -102,5 +112,56 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       expect(Number.isInteger(cost)).toBe(true);
       expect(cost).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+/**
+ * THE PER-UNIT PRICE — the arithmetic the signature signed, pinned as arithmetic rather than as
+ * prose. `ai_visibility_compare` is 90 credits PER COMPARED TARGET over 2-10 targets, so the two
+ * numbers a reader can check are 180 (two targets) and 900 (ten). Both are asserted as LITERALS,
+ * not as `TOOL_COSTS.ai_visibility_compare * n`: a formula restating the implementation would stay
+ * green if the implementation stopped multiplying.
+ */
+describe("creditCostFor — the one place a per-unit price is multiplied", () => {
+  it("charges the flat table price for a per-call tool", () => {
+    expect(creditCostFor("discover_keywords")).toBe(40);
+    expect(creditCostFor("ai_visibility")).toBe(90);
+    expect(creditCostFor("whats_next")).toBe(0);
+  });
+
+  it("charges 90 PER COMPARED TARGET: 180 at two targets, 900 at ten", () => {
+    expect(creditCostFor("ai_visibility_compare", 2)).toBe(180);
+    expect(creditCostFor("ai_visibility_compare", 3)).toBe(270);
+    expect(creditCostFor("ai_visibility_compare", 10)).toBe(900);
+  });
+
+  it("refuses to multiply a per-CALL price — the shape that would invent a price nobody signed", () => {
+    expect(() => creditCostFor("discover_keywords", 4)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("ai_visibility", 2)).toThrow(/priced per call/i);
+  });
+
+  it("refuses a unit count outside the signed range, rather than reserving for it", () => {
+    expect(() => creditCostFor("ai_visibility_compare", 0)).toThrow(/outside that range/i);
+    expect(() => creditCostFor("ai_visibility_compare", 11)).toThrow(/outside that range/i);
+    expect(() => creditCostFor("ai_visibility_compare", 2.5)).toThrow(/outside that range/i);
+  });
+
+  it("names exactly one per-unit tool — every other price is per call", () => {
+    expect(Object.keys(CREDIT_UNITS)).toEqual(["ai_visibility_compare"]);
+    expect(isPerUnitTool("ai_visibility_compare")).toBe(true);
+    expect(isPerUnitTool("ai_visibility")).toBe(false);
+    expect(isPerUnitTool("compare_competitors")).toBe(false);
+  });
+
+  /**
+   * The ceiling in the price table and the ceiling on the wire are the SAME number, asserted
+   * against the port's own constants rather than restated. A `max_units` above the vendor's bound
+   * would price a comparison DataForSEO refuses; one below it would refuse a comparison the
+   * operator signed.
+   */
+  it("bounds the units at exactly the port's own compare range", () => {
+    expect(CREDIT_UNITS.ai_visibility_compare.max_units).toBe(MAX_COMPARE_TARGETS);
+    expect(creditCostFor("ai_visibility_compare", MIN_COMPARE_TARGETS)).toBe(180);
+    expect(() => creditCostFor("ai_visibility_compare", MAX_COMPARE_TARGETS + 1)).toThrow();
   });
 });

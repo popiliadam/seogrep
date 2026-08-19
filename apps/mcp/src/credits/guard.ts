@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TOOL_COSTS, type ToolName } from "./costs.ts";
+import { creditCostFor, type ToolName } from "./costs.ts";
 import {
   PaidBalanceRequiredError,
   hasPaidBalance,
@@ -63,6 +63,16 @@ export interface CreditMeta {
    * p_job_id, and no jobs row is written.
    */
   jobId?: string;
+  /**
+   * How many PRICED UNITS this call buys, for the one tool whose signed price is per unit rather
+   * than per call (credits/costs.ts CREDIT_UNITS — `ai_visibility_compare`, at 90 credits per
+   * COMPARED TARGET). Omitted everywhere else, which is exactly one unit.
+   *
+   * It is a COUNT, never an amount: the price stays TOOL_COSTS', creditCostFor does the
+   * multiplication, and a count outside the signed range throws instead of reserving. Passing it
+   * for a per-call tool throws too, so it cannot become a back door for a caller-chosen price.
+   */
+  units?: number;
 }
 
 async function reserve(
@@ -224,7 +234,9 @@ async function releaseSafely(reserveId: string): Promise<void> {
 
 /**
  * Run `fn` under a credit reserve for `meta.tool`. The cost comes from TOOL_COSTS
- * (the human-approved table) — never from the caller.
+ * (the human-approved table) — never from the caller. For the per-unit tool, `meta.units` says how
+ * many priced units the call buys and creditCostFor multiplies; the per-unit figure is still the
+ * table's, and the count is bounded by the signed range.
  */
 export async function withCredits<T>(
   ctx: CreditContext,
@@ -245,7 +257,7 @@ export async function withCredits<T>(
     );
   }
 
-  const cost = TOOL_COSTS[meta.tool];
+  const cost = creditCostFor(meta.tool, meta.units);
   if (cost === 0) {
     return fn();
   }
