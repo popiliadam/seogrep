@@ -322,6 +322,53 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
     const big = ledger.rows()[1]?.estimatedUsd ?? 0;
     expect(big).toBeCloseTo(estimateKeywordOverviewCostUsd(100), 8);
     expect(big).toBeGreaterThan(small);
+    // …and the sentence in the comment above, asserted rather than only described: each of those
+    // cost-less calls SETTLED at its own estimate. Reading `estimatedUsd` alone left the settled
+    // figure free to be $0.00 and this spec still green.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateKeywordOverviewCostUsd(1), 8);
+    expect(ledger.rows()[1]?.actualUsd).toBeCloseTo(estimateKeywordOverviewCostUsd(100), 8);
+  });
+
+  /**
+   * The fail-open direction the settle must never take. A response that omits `cost` still cost
+   * money, so settling it at $0.00 under-counts the day and the $3/day guard then lets through
+   * spending it never saw — nothing user-visible breaks, which is why no spec noticed. Replacing
+   * the fallback with `?? 0` left all 28 specs in this file green (measured 2026-08-19); this is
+   * the one that reddens it.
+   */
+  it("falls back to the per-request estimate when the response omits its cost", async () => {
+    const costless = { status_code: 20000, tasks: [{ status_code: 20000, result: [] }] };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => costless,
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+
+    await client.fetchKeywordOverview({
+      keywords: ["one", "two"],
+      language_code: "en",
+      location_code: 2840,
+    });
+
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateKeywordOverviewCostUsd(2), 8);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0);
+    // Settled, not merely left OPEN at its estimate: the reservation carries a real cost now.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateKeywordOverviewCostUsd(2), 8);
+  });
+
+  /** The KEEP direction of the same guard: a vendor-reported 0 is real data, not a missing cost. */
+  it("settles a vendor-reported ZERO cost at zero, not at the estimate", async () => {
+    const free = { status_code: 20000, cost: 0, tasks: [{ status_code: 20000, cost: 0, result: [] }] };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => free,
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+    await client.fetchKeywordOverview({ keywords: ["one"], language_code: "en", location_code: 2840 });
+    expect(ledger.rows()[0]?.actualUsd).toBe(0);
+    expect(await todaySpendUsd(ledger)).toBe(0);
   });
 
   it("refuses the call BEFORE any HTTP when today's budget is already at the cap", async () => {
