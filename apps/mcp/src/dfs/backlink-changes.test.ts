@@ -59,6 +59,26 @@ function pairTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   }));
 }
 
+/** The same response with every `cost` field removed — the vendor declining to price a request. */
+function withoutCost(fixture: unknown): unknown {
+  const clone = structuredClone(fixture) as { cost?: number; tasks?: { cost?: number }[] };
+  delete clone.cost;
+  for (const task of clone.tasks ?? []) delete task.cost;
+  return clone;
+}
+
+/** The pair transport again, but with BOTH responses unpriced — a vendor that quoted nothing. */
+function unpricedPairTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
+  return vi.fn<DfsTransport>(async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () =>
+      withoutCost(
+        url === DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT ? summaryFixture : newLostFixture,
+      ),
+  }));
+}
+
 /** A fixed UTC clock so every asserted request body is deterministic. */
 const FIXED_NOW = () => new Date("2026-08-18T09:30:00.000Z");
 
@@ -365,6 +385,27 @@ describe("estimateBacklinkChangesUsd", () => {
     );
   });
 
+  /**
+   * DIRECTION, not digits. Every other spec above multiplies by BUDGET_SAFETY_FACTOR on BOTH
+   * sides, so the factor was only ever asserted against itself: flipping 1.5 to 0.5 — an
+   * UNDER-estimate, the one direction this module's own header forbids — left the whole fast lane
+   * green (measured 2026-08-19). This asserts what the factor is FOR: every estimate strictly
+   * exceeds the vendor's own published formula for the same window.
+   */
+  it("ERRS HIGH: every estimate strictly exceeds the vendor's own formula", () => {
+    for (const periods of [
+      1,
+      DEFAULT_BACKLINK_CHANGES_PERIODS,
+      MAX_BACKLINK_CHANGES_PERIODS,
+    ] as const) {
+      const vendorFormula =
+        BACKLINK_CHANGES_REQUESTS *
+        (DFS_BACKLINKS_REQUEST_USD + (periods + 1) * DFS_BACKLINKS_ROW_USD);
+      expect(estimateBacklinkChangesUsd(periods)).toBeGreaterThan(vendorFormula);
+    }
+    expect(BUDGET_SAFETY_FACTOR).toBeGreaterThan(1);
+  });
+
   it("uses the BACKLINKS tariff, which is not the Labs one", () => {
     expect(DFS_BACKLINKS_REQUEST_USD).toBe(0.024);
     expect(DFS_BACKLINKS_ROW_USD).toBe(0.000036);
@@ -539,6 +580,26 @@ describe("createLiveBacklinkChangesClient (fake transport — never real HTTP)",
     expect(ledger.rows()).toHaveLength(1);
     expect(await todaySpendUsd(ledger)).toBeCloseTo(FIXTURE_COST * 2, 10);
     expect(ledger.rows()[0]?.rowCount).toBe(6);
+  });
+
+  /**
+   * A pair of requests the vendor declined to price still HAPPENED, and settling them at $0.00
+   * would under-count the day — the one direction the budget gate must never err in. The failure
+   * is invisible from outside: the caller still gets its two series, so nothing breaks except the
+   * $3/day counter, which then lets through spending it never saw. Deleting the `spent > 0 ?`
+   * fallback in backlink-changes.ts left the whole fast lane green (measured 2026-08-19); this is
+   * the spec that reddens it.
+   */
+  it("settles an UNPRICED pair at its own estimate, never at zero", async () => {
+    await liveClient(unpricedPairTransport(), ledger).fetchBacklinkChanges(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(
+      estimateBacklinkChangesUsd(DEFAULT_BACKLINK_CHANGES_PERIODS),
+      10,
+    );
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0);
+    // Settled, not merely left open: the reservation carries a real cost now.
+    expect(ledger.rows()[0]?.actualUsd).toBeGreaterThan(0);
   });
 
   /**
