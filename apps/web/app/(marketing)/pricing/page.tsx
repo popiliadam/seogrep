@@ -39,6 +39,14 @@ const CREDIT_COSTS = [
   // (NEVER #6). The v1 draft's second price above limit > 500 was dropped before signature:
   // there is ONE price here.
   { action: "Keyword discovery (seed or domain)", cost: "40" },
+  // my_pages (2026-08-17, operator-signed at 40). Its own row, and NOT a member of the "Ranked
+  // keywords" row below: that row buys the KEYWORDS a domain ranks for, this one buys the PAGES it
+  // ranks with — one row per page, carrying that page's position histogram and traffic estimates,
+  // and no keywords at all. Two different DataForSEO endpoints and two different purchases, so one
+  // label over both would advertise one price for two things. The signed 40 rests on the row cap in
+  // dfs/relevant-pages.ts (one request, at most 1,000 billed rows) and on the clickstream option
+  // NOT being bought, so this number moving means one of those moved too (NEVER #6).
+  { action: "Ranking pages (per domain)", cost: "40" },
   { action: "Ranked keywords (per domain)", cost: "65" },
   { action: "Backlink profile (per domain)", cost: "70" },
   { action: "Competitor comparison (per domain)", cost: "90" },
