@@ -37,6 +37,7 @@ describe("pricing page", () => {
       ["Link gap (per competitor)", "45"],
       ["Backlink history (per domain)", "35"],
       ["Individual backlinks (per domain)", "35"],
+      ["Disavow candidates (per domain)", "40"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -88,6 +89,10 @@ describe("pricing page", () => {
     // row buys how they moved, and this one buys the individual links. Sharing a row with either
     // would advertise one price for two separate purchases.
     backlink_details: "Individual backlinks (per domain)",
+    // Its OWN row as well (2026-08-19, signed at 40): the three backlink rows above buy the
+    // profile, its history and the links; this one buys the per-DOMAIN spam scores and the disavow
+    // text built from them. Four separate DataForSEO purchases, four rows.
+    disavow_candidates: "Disavow candidates (per domain)",
     generate_report: "Monthly report",
   };
 

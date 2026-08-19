@@ -48,6 +48,13 @@ const CREDIT_COSTS = [
   // separate DataForSEO purchases a caller runs at different times, so one grouped label would
   // advertise one price for three different things.
   { action: "Individual backlinks (per domain)", cost: "35" },
+  // disavow_candidates (2026-08-17, operator-signed at 40). A fourth backlink row, and again its
+  // own: the three above buy today's profile, its history and the links themselves, while this one
+  // buys the vendor's per-DOMAIN spam scores and the disavow text derived from them — three
+  // DataForSEO requests, the most of any tool here. It is also the row whose signature carries an
+  // explicit sub-band warning, closed by a cap rather than by a price, so this number moving means
+  // the cap moved too (NEVER #6).
+  { action: "Disavow candidates (per domain)", cost: "40" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 
