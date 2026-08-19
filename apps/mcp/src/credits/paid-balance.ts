@@ -75,6 +75,12 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // tool being free exempts nothing, because the criterion is "does it spend?" and one paid
   // request is a yes. No comparison to any member above is made or implied.
   "my_pages",
+  // The two AI-visibility tools (2026-08-19) — one real DataForSEO LLM Mentions request each, on
+  // the most expensive tariff this product touches ($0.10 per request plus $0.001 per row). The
+  // criterion is unchanged and is still "does it spend?", not "how much?"; what the price buys is
+  // stated in dfs/llm-mentions.ts, not compared to anything in this file.
+  "ai_visibility",
+  "ai_visibility_compare",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

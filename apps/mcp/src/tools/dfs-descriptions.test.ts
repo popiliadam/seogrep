@@ -38,8 +38,11 @@ describe("DataForSEO tool descriptions", () => {
   // call, so it makes the same three promises to the reader as the ten before it.
   // Eleven -> twelve the same day (my_pages), likewise: it spends one paid Labs request per call,
   // so it makes the same three promises to the reader as the eleven before it.
-  it("covers all twelve gated tools", () => {
-    expect(GATED).toHaveLength(12);
+  // Twelve -> fourteen on 2026-08-19 (ai_visibility, ai_visibility_compare), likewise: each spends
+  // one paid LLM Mentions request per call, so each makes the same three promises to the reader as
+  // the twelve before it.
+  it("covers all fourteen gated tools", () => {
+    expect(GATED).toHaveLength(14);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

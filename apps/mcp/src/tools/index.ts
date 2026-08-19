@@ -25,6 +25,8 @@ import { linkGapTool } from "./link-gap.ts";
 import { backlinkChangesTool } from "./backlink-changes.ts";
 import { backlinkDetailsTool } from "./backlink-details.ts";
 import { disavowCandidatesTool } from "./disavow-candidates.ts";
+import { aiVisibilityTool } from "./ai-visibility.ts";
+import { aiVisibilityCompareTool } from "./ai-visibility-compare.ts";
 import { generateReportTool } from "./generate-report.ts";
 import { whatsNextTool } from "./whats-next.ts";
 import { listGscPropertiesTool } from "./list-gsc-properties.ts";
@@ -81,6 +83,17 @@ export {
   makeDisavowCandidatesTool,
   formatDisavowCandidates,
 } from "./disavow-candidates.ts";
+export {
+  aiVisibilityTool,
+  makeAiVisibilityTool,
+  formatAiVisibility,
+} from "./ai-visibility.ts";
+export {
+  aiVisibilityCompareTool,
+  makeAiVisibilityCompareTool,
+  formatAiVisibilityCompare,
+  comparedTargetCount,
+} from "./ai-visibility-compare.ts";
 export { generateReportTool, makeGenerateReportTool } from "./generate-report.ts";
 export { whatsNextTool, makeWhatsNextTool } from "./whats-next.ts";
 export { listGscPropertiesTool, makeListGscPropertiesTool } from "./list-gsc-properties.ts";
@@ -125,6 +138,12 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   backlinkChangesTool,
   backlinkDetailsTool,
   disavowCandidatesTool,
+  // The two AI-visibility tools, LAST of the DataForSEO block on purpose: they answer a question
+  // none of the tools above touch — what a language model said — rather than what a search engine
+  // ranked. Neighbours in tools/list, and therefore in the docs nav, so the single-target tool and
+  // its side-by-side companion are read together.
+  aiVisibilityTool,
+  aiVisibilityCompareTool,
   generateReportTool,
   whatsNextTool,
   listGscPropertiesTool,

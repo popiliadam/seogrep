@@ -631,9 +631,9 @@ const toolNames = (body: { result: { tools: readonly { name: string }[] } }): re
   body.result.tools.map((tool) => tool.name);
 
 describe("mcp gateway fixed header-key endpoint", () => {
-  it("POST /mcp with x-api-key serves the SAME tool surface as the path form (all 31 tools)", async () => {
+  it("POST /mcp with x-api-key serves the SAME tool surface as the path form (all 33 tools)", async () => {
     // Injecting the production tool set proves the fixed route reaches the real MCP
-    // handler, not a reduced one: both routes must advertise the identical 31 tools
+    // handler, not a reduced one: both routes must advertise the identical 33 tools
     // (19 + list_gsc_properties + track_gsc_property + untrack_project, 2026-08-13;
     // + audit_content, 2026-08-15; + keyword_gap + link_gap + audit_speed, 2026-08-17;
     // + backlink_changes + backlink_details, 2026-08-18; + disavow_candidates
@@ -643,7 +643,7 @@ describe("mcp gateway fixed header-key endpoint", () => {
       const viaHeader = await postFixedRpc(app.baseUrl, { "x-api-key": VALID_KEY }, TOOLS_LIST);
       expect(viaHeader.status).toBe(200);
       const headerBody = await viaHeader.json();
-      expect(headerBody.result.tools).toHaveLength(31);
+      expect(headerBody.result.tools).toHaveLength(33);
 
       const viaPath = await postRpc(app.baseUrl, VALID_KEY, TOOLS_LIST);
       expect(viaPath.status).toBe(200);
