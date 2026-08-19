@@ -254,12 +254,19 @@ describe("NEVER #7 — a side-by-side view that ranks nothing", () => {
     resolvedTarget("rival-two", "rival-two.com"),
   ];
 
+  /**
+   * THE DATA IS CHOSEN SO ORDER CAN BE MEASURED. The caller's first target carries the SMALLEST
+   * figure and the vendor returned the biggest one FIRST, so the caller's order, the vendor's
+   * order and any value order are three different orders. Data where they coincide cannot tell a
+   * sorted answer from an unsorted one — measured: with our-brand holding the largest figure, a
+   * deliberate descending sort left the output identical and this file stayed green.
+   */
   const ANSWER = () =>
     formatAiVisibilityCompare(
       compareResultWith(
         [
-          compareRow("rival-one", { mentions_count: 0, mentions_share: null }),
-          compareRow("our-brand", { mentions_count: 37, mentions_share: 0.041 }, ["by_intent"]),
+          compareRow("rival-one", { mentions_count: 120, mentions_share: null }),
+          compareRow("our-brand", { mentions_count: 0, sources_count: 12 }, ["by_intent"]),
         ],
         KEYS,
       ),
@@ -286,9 +293,11 @@ describe("NEVER #7 — a side-by-side view that ranks nothing", () => {
   it("matches rows by the caller's own key, never by position", () => {
     const text = ANSWER();
     const ourBrand = text.slice(text.indexOf("1. our-brand"), text.indexOf("2. rival-one"));
-    // The vendor listed rival-one first; the 37 belongs to our-brand and must stay with it.
-    expect(ourBrand).toContain("mentions_count 37");
-    expect(ourBrand).not.toContain("mentions_count 0");
+    // The vendor listed rival-one FIRST; the 120 is rival-one's and must not land on our-brand.
+    expect(ourBrand).toContain("mentions_count 0");
+    expect(ourBrand).not.toContain("mentions_count 120");
+    const rivalOne = text.slice(text.indexOf("2. rival-one"), text.indexOf("3. rival-two"));
+    expect(rivalOne).toContain("mentions_count 120");
   });
 
   it("names a target the vendor did not report on — and refuses to call it a zero", () => {
@@ -304,6 +313,7 @@ describe("NEVER #7 — a side-by-side view that ranks nothing", () => {
     const text = ANSWER();
     expect(text).toContain("mentions_count 0");
     expect(text).toContain("mentions_share not reported by DataForSEO");
+    expect(text).not.toContain("mentions_share 0");
   });
 
   it("prints the platform, the locale, the vendor's timestamp and the missing date range", () => {
