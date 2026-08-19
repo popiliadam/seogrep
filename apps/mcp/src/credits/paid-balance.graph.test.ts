@@ -205,6 +205,15 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       "tools/discover-keywords.ts",
       "tools/keyword-gap.ts",
       "tools/link-gap.ts",
+      // my_pages (2026-08-19), TWO entries for ONE tool, and the second is the interesting one.
+      // tools/my-pages-crawl.ts defines no tool at all — it is the crawl-side join, and it reaches
+      // reserveSpend only because it imports `pageJoinKey` from dfs/relevant-pages.ts, which is
+      // deliberate: both sides of the join must normalise with the SAME function. The scanner is
+      // reachability, not intent, so it flags the file and the list says so rather than the file
+      // being moved out of tools/ to keep this list tidy. The spec below is what actually matters
+      // for money — it asks which TOOL NAMES these modules define, and this one defines none.
+      "tools/my-pages-crawl.ts",
+      "tools/my-pages.ts",
       "tools/ranked-keywords.ts",
       "tools/research-keywords.ts",
     ]);

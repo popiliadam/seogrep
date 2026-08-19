@@ -923,6 +923,149 @@ export const DOC_PROSE = {
     ],
   },
 
+  my_pages: {
+    lead:
+      "`my_pages` lists the pages of a domain that **DataForSEO Labs reports ranking figures for**, " +
+      "and compares them against the pages **your own last crawl fetched**. It is the PAGE axis of " +
+      "the question [`ranked_keywords`](/docs/tools-reference/ranked-keywords) answers on the " +
+      "keyword axis. It is **synchronous** — everything comes back immediately, with no background " +
+      "job to poll.",
+    whatItDoes:
+      "Each row is **one page**. What it carries is DataForSEO's **position histogram** for that " +
+      "page — how many search results of a given type hold it at positions 1, 2–3, 4–10 and so on " +
+      "through 91–100 — plus `etv`, `count`, `estimated_paid_traffic_cost` and the vendor's " +
+      "`is_new` / `is_up` / `is_down` / `is_lost` counters, per result type.\n\n" +
+      "**It does not return the keywords a page ranks for.** This DataForSEO endpoint returns none, " +
+      "so neither does SeoGrep. For the keywords behind one particular page, run " +
+      "[`ranked_keywords`](/docs/tools-reference/ranked-keywords) with that page's URL as the " +
+      "target.\n\n" +
+      "Pass `project_id` instead of `target` and the answer also splits into three groups:\n\n" +
+      "| Group | What it means |\n" +
+      "| --- | --- |\n" +
+      "| Reported by DataForSEO, and fetched by that crawl | Both sides know the page |\n" +
+      "| Reported by DataForSEO, not found in that crawl | The page is in this window of the " +
+      "vendor's list, and not among the pages your last crawl fetched |\n" +
+      "| Fetched by that crawl, not named in this window | Your crawl fetched it and this window " +
+      "of the vendor's list did not mention it |\n\n" +
+      "Two optional filters, `min_organic_etv` and `min_organic_count`, are applied **at " +
+      "DataForSEO** rather than after the fact. Neither is sent unless you ask for it, so by " +
+      "default nothing is dropped before you see it.",
+    preExampleSections: [
+      {
+        heading: "How the two sides are matched",
+        body:
+          "A page from DataForSEO and a page from your crawl are the same page when their " +
+          "**normalised addresses are equal**. The normalisation ignores the scheme (`http` vs " +
+          "`https`), the capitalisation of the host, a leading `www.`, the `#fragment`, one " +
+          "trailing slash and a default port.\n\n" +
+          "It deliberately **keeps** three things, because collapsing any of them would merge two " +
+          "real pages into one row: the **query string** in full and in its original order, the " +
+          "**capitalisation of the path** (`/Blog` and `/blog` are different resources on a " +
+          "case-sensitive server), and **subdomains** (`blog.example.com/x` is not " +
+          "`example.com/x`).\n\n" +
+          "One residual limit follows from that and is worth knowing: two addresses that differ " +
+          "only in the ORDER of their query parameters are treated as two pages and will not " +
+          "match. That errs toward showing you two rows, which you can see, rather than merging " +
+          "two pages' figures into one, which you could not. An address that does not parse as a " +
+          "URL at all is reported in its own group and is not counted as a miss on either side.",
+      },
+      {
+        heading: "What an absence does and does not mean",
+        body:
+          "Both comparison groups are **claims about two specific things** — this window of " +
+          "DataForSEO's list, and that one crawl — and the output says so beside each of them " +
+          "rather than leaving you to infer it.\n\n" +
+          "**\"Not found in that crawl\" is not \"the page does not exist\".** Your crawl is one " +
+          "run, on one day, starting from the site's own start URL and following links under its " +
+          "depth, page-count and robots limits. The answer names the crawl's date and how many " +
+          "pages it fetched, right beside the list.\n\n" +
+          "**\"Not named in this window\" is not \"the page does not rank\".** The vendor half is a " +
+          "window (`offset` / `limit`) over a longer list, scoped to the result types and locale " +
+          "you asked for. The answer names the rows the window covered and the result types it " +
+          "asked about, right beside that list too. Advance `offset` to read further.",
+      },
+      {
+        heading: "Whose numbers these are",
+        body:
+          "Every figure is a **DataForSEO field printed under DataForSEO's own name**. `etv` and " +
+          "`estimated_paid_traffic_cost` are **DataForSEO's own estimates** of monthly traffic and " +
+          "of what that traffic would cost to buy — they are not measurements of your traffic, and " +
+          "neither DataForSEO nor SeoGrep can tell you what a page will earn.\n\n" +
+          "The position buckets are **a histogram, not a position**: they are never averaged into " +
+          "one number, because the vendor did not send one. A bucket DataForSEO did not report is " +
+          "shown as unreported and the count of unreported buckets is stated — never rendered as a " +
+          "zero. A result type the vendor reported nothing for is **left out of that page " +
+          "entirely** rather than shown as a row of zeros.\n\n" +
+          "There is **no coverage score, no health percentage and no grade** here. The one count " +
+          "the tool prints is a count of what this window matched against that crawl, and the " +
+          "sentence carrying it says exactly that.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which pages of my project rank, and which of " +
+      "them did my last crawl miss?\n\nOr look at a domain you have never crawled:\n\n> Show me the " +
+      "pages DataForSEO reports ranking figures for on example.com, organic results only.",
+    returns:
+      "A heading naming the domain and, when a project was named, **the crawl it was compared " +
+      "against and the day that crawl ran**. Then a paragraph saying what this endpoint does and " +
+      "does not return, the result types and locale that were asked for, the vendor field the rows " +
+      "are ordered by, and the filters that were actually sent — printed in DataForSEO's own " +
+      "`[field, operator, value]` grammar, so what you read is what the vendor received.\n\n" +
+      "The page list is captioned as a **window**: the rows you got, the `offset` and `limit` they " +
+      "were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
+      "followed by the sentence that stops the arithmetic — _this window is a slice of that set, " +
+      "not a count of it_. When the vendor gave no total, the caption says that instead of " +
+      "back-filling one from the rows in hand.\n\n" +
+      "The comparison follows, in whichever of its three states applies: the three groups above " +
+      "when a project with a crawl was named; a plain sentence saying **no comparison was made** " +
+      "when you passed a bare `target`; and a plain sentence saying **the project has no completed " +
+      "crawl yet** when it does not — in which case DataForSEO's half is delivered in full and " +
+      "nothing in it is missing because of it.\n\n" +
+      "A lookup that matched nothing says so plainly, naming the window and the filters it asked " +
+      "for, and you are still charged for the delivered lookup — \"nothing here matched\" is a real " +
+      "answer, not an error. A `limit` or `offset` outside the allowed range, a call naming " +
+      "neither `target` nor `project_id` (or both), an archived project and a `project_id` that is " +
+      "not yours are all rejected before anything is charged; while live data is off you get a " +
+      "\"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
+          "request. If it fails, the whole call fails and **you are not charged**. Reading your own " +
+          "crawl costs nothing extra — it is data you have already paid for.\n\n" +
+          "`my_pages` needs a **paid credit balance**. It reads live data from a paid third-party " +
+          "provider, so it is not available on trial credits. Buy any credit pack and it unlocks " +
+          "straight away; your existing credits are untouched and keep working for crawls, audits, " +
+          "reports and Search Console tools.\n\n" +
+          "The `limit` ceiling is **part of the price** rather than a display preference: " +
+          "DataForSEO bills **per returned row**, and that cap is what holds the flat price inside " +
+          "the margin it was signed against. Asking for fewer rows costs the same; asking for more " +
+          "than the ceiling is refused before anything is charged.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "**No keywords.** Worth repeating, because the name invites the assumption: this endpoint " +
+          "reports how a page is distributed across result positions, not which searches put it " +
+          "there. Use [`ranked_keywords`](/docs/tools-reference/ranked-keywords) with a page URL " +
+          "for that.\n\n" +
+          "**Results are not stored.** Each call returns its window to the conversation and nothing " +
+          "else keeps them — there is no saved page list, no dashboard page and no \"new since last " +
+          "time\", so run it again for a fresh read. The lookup-history table that backs the other " +
+          "domain tools is bound to those tools by design and does not accept this one.\n\n" +
+          "**The crawl side is one crawl.** The comparison uses your project's most recent " +
+          "completed `crawl_site` run and only the pages that run actually fetched — URLs it " +
+          "skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's " +
+          "half and a sentence saying so; a bare `target` gets no comparison at all, because there " +
+          "is no project to compare it against.\n\n" +
+          "**Clickstream data is not bought.** DataForSEO offers a clickstream option on this " +
+          "endpoint that doubles the cost of the request; SeoGrep does not enable it, and every " +
+          "answer states that rather than leaving you to wonder why no clickstream figures appear.",
+      },
+    ],
+  },
+
   ranked_keywords: {
     lead:
       "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +

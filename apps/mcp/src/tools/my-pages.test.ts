@@ -1,0 +1,641 @@
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AuthContext } from "../auth.ts";
+import {
+  DEFAULT_RELEVANT_PAGES_ROWS,
+  MAX_RELEVANT_PAGES_ROWS,
+  RELEVANT_PAGE_ITEM_TYPES,
+  createMockRelevantPagesPort,
+  disabledRelevantPagesPort,
+  pageJoinKey,
+  type RelevantPageMetrics,
+  type RelevantPageRow,
+  type RelevantPagesResult,
+} from "../dfs/relevant-pages.ts";
+import {
+  VENDOR_JUDGEMENT_NOTE,
+  WHAT_THE_VENDOR_RETURNS,
+  formatMyPages,
+  makeMyPagesTool,
+  renderCrawledPage,
+  renderPositions,
+  renderVendorPage,
+} from "./my-pages.ts";
+import {
+  CRAWL_PAGE_READ_CAP,
+  joinPages,
+  toCrawledPage,
+  type CrawlSide,
+  type CrawledPage,
+  type LoadCrawlSideFn,
+} from "./my-pages-crawl.ts";
+import {
+  AMBIGUOUS_SUBJECT_MESSAGE,
+  NO_SUBJECT_MESSAGE,
+  projectNotFoundMessage,
+  type LoadProjectFn,
+  type ProjectRef,
+} from "./project-target.ts";
+import fixture from "../dfs/fixtures/labs-relevant-pages.json";
+
+/**
+ * Fast-lane (DB-less) proofs for my_pages. The credit LEDGER behaviour (net -40, release on vendor
+ * failure, zero rows on a free refusal, the tenant directions) is proven against the real stack in
+ * my-pages.db.test.ts. Here we prove the three things this surface is FOR:
+ *
+ *   1. THE JOIN — and specifically that BOTH SIDES use the SAME normaliser. The pin is DERIVED
+ *      rather than enumerated: for a matrix of vendor/crawl address pairs, membership of the
+ *      matched set must agree with `pageJoinKey(a) === pageJoinKey(b)` on every pair. A second
+ *      normaliser on our side would disagree on at least one and turn this red — which is the
+ *      whole point, because a join whose sides normalise differently reports "this page does not
+ *      rank" about pages that do, and an empty match set looks exactly like an honest one.
+ *   2. THE HONESTY OF THE THREE POPULATIONS — two of them are CLAIMS, and each must be printed
+ *      with the sentence that bounds it. An absence must never read as a finding.
+ *   3. NEVER #7 / #9 — every printed figure under the vendor's own name, a vendor silence in
+ *      words rather than 0, an ABSENT item type absent rather than zeroed, no score of any kind,
+ *      and no promise of keywords this endpoint does not return.
+ *
+ * The price controls are asserted AGAINST the port's own caps, because the caps ARE the signed 40.
+ */
+
+const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
+const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
+const OTHER_PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "example.com", archivedAt: null };
+const LOCALE = { language_code: "en", location_code: 2840 } as const;
+
+const loadProject: LoadProjectFn = async (userId, projectId) =>
+  userId === CTX.userId && projectId === PROJECT_ID ? PROJECT : null;
+
+const mockPort = () => createMockRelevantPagesPort(fixture);
+
+/** The four keyed fixture rows, as the port produces them. */
+async function fixtureResult(
+  overrides: { limit?: number; offset?: number } = {},
+): Promise<RelevantPagesResult> {
+  return mockPort().fetchRelevantPages({
+    target: "example.com",
+    limit: overrides.limit ?? DEFAULT_RELEVANT_PAGES_ROWS,
+    offset: overrides.offset ?? 0,
+    ...LOCALE,
+  });
+}
+
+/** Crawled pages from bare URLs, all fetched with HTTP 200. */
+function crawledPages(urls: readonly string[]): CrawledPage[] {
+  return urls.map((url) => toCrawledPage(url, 200));
+}
+
+/** A crawl side built from bare URLs, all fetched with HTTP 200. */
+function crawlOf(urls: readonly string[], ranAt = "2026-08-18T09:00:00.000Z"): CrawlSide {
+  return {
+    kind: "crawl",
+    jobId: "job-1",
+    ranAt,
+    truncated: false,
+    pages: crawledPages(urls),
+  };
+}
+
+const NO_METRICS: RelevantPageRow = {
+  page_address: "https://example.com/silent",
+  our_join_key: "example.com/silent",
+  metrics: {},
+};
+
+/** The vendor answered about ONE bucket and said nothing else. Its rendering is the sharpest edge. */
+const THIN_METRICS: RelevantPageMetrics = {
+  pos_1: null,
+  pos_2_3: null,
+  pos_4_10: null,
+  pos_11_20: 6,
+  pos_21_30: null,
+  pos_31_40: null,
+  pos_41_50: null,
+  pos_51_60: null,
+  pos_61_70: null,
+  pos_71_80: null,
+  pos_81_90: 0,
+  pos_91_100: null,
+  etv: null,
+  count: 6,
+  estimated_paid_traffic_cost: null,
+  is_new: null,
+  is_up: null,
+  is_down: null,
+  is_lost: 1,
+};
+
+function resultWith(rows: readonly RelevantPageRow[]): RelevantPagesResult {
+  return {
+    target: "example.com",
+    item_types_requested: ["organic"],
+    ordered_by_vendor_field: "metrics.organic.count",
+    vendor_filters_applied: [],
+    clickstream_purchased: false,
+    window: {
+      window_offset: 0,
+      window_limit: DEFAULT_RELEVANT_PAGES_ROWS,
+      window_row_count: rows.length,
+      vendor_total_count: 3271,
+      rows,
+    },
+  };
+}
+
+/**
+ * THE ENV THIS FILE MEASURES AGAINST — the sibling's device, and it was measured to matter there:
+ * a "reaches the credit guard" assertion reads a MISSING Supabase env as its signal, so with a
+ * developer's local stack exported the same spec passes for the wrong reason. Cleared per test.
+ */
+const SUPABASE_ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
+
+function withoutSupabaseEnv(): void {
+  let saved: Partial<Record<(typeof SUPABASE_ENV_KEYS)[number], string | undefined>> = {};
+  beforeEach(() => {
+    saved = {};
+    for (const key of SUPABASE_ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of SUPABASE_ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
+// =====================================================================================
+// 1. THE JOIN — one normaliser, applied to both sides
+// =====================================================================================
+
+describe("the join uses ONE normaliser, and it is the vendor adapter's", () => {
+  /**
+   * The addresses this join has to survive, drawn from the axes pageJoinKey documents as COLLAPSED
+   * and the axes it documents as KEPT. Each pair is (vendor address, our crawl's URL).
+   */
+  const PAIRS: readonly (readonly [string, string])[] = [
+    // collapsed: one trailing slash — the fixture's own first row against a crawler-stored URL.
+    ["https://example.com/pricing/", "https://example.com/pricing"],
+    // collapsed: leading www. and the scheme, together — the fixture's second row.
+    ["https://www.example.com/Blog/seo-guide", "http://example.com/Blog/seo-guide"],
+    // collapsed: host case and a default port.
+    ["https://EXAMPLE.com/a", "http://example.com:80/a"],
+    // KEPT: path case. Two resources on any case-sensitive server.
+    ["https://example.com/Blog/seo-guide", "https://example.com/blog/seo-guide"],
+    // KEPT: the query string, in full.
+    ["https://example.com/posts?page=2", "https://example.com/posts"],
+    // KEPT: parameter ORDER — the documented residual limit, erring toward "two pages".
+    ["https://example.com/p?a=1&b=2", "https://example.com/p?b=2&a=1"],
+    // KEPT: the subdomain.
+    ["https://blog.example.com/x", "https://example.com/x"],
+    // unkeyable on the vendor side: it can match nothing, including another unkeyable row.
+    ["::::", "::::"],
+  ];
+
+  /**
+   * DERIVED, not enumerated (signed lesson 14 — the axis is named: COLLAPSED × KEPT × UNKEYABLE).
+   * The expectation is computed from pageJoinKey itself, so this spec asserts the IDENTITY of the
+   * two sides' normalisation rather than a list of outcomes someone typed out. A second
+   * normaliser on our side that agreed on seven pairs and differed on one turns this red.
+   */
+  it.each(PAIRS)("vendor %s vs crawl %s: matched exactly when the two keys are equal", (vendorAddress, crawlUrl) => {
+    const vendorKey = pageJoinKey(vendorAddress);
+    const crawlKey = pageJoinKey(crawlUrl);
+    const row: RelevantPageRow = {
+      page_address: vendorAddress,
+      our_join_key: vendorKey,
+      metrics: {},
+    };
+    const join = joinPages([row], [toCrawledPage(crawlUrl, 200)]);
+    const shouldMatch = vendorKey !== null && crawlKey !== null && vendorKey === crawlKey;
+    expect(join.matched).toHaveLength(shouldMatch ? 1 : 0);
+  });
+
+  it("keys OUR side with the vendor adapter's own function, value for value", () => {
+    for (const [vendorAddress, crawlUrl] of PAIRS) {
+      expect(toCrawledPage(crawlUrl, null).joinKey).toBe(pageJoinKey(crawlUrl));
+      expect(toCrawledPage(vendorAddress, null).joinKey).toBe(pageJoinKey(vendorAddress));
+    }
+  });
+
+  /**
+   * No SECOND normaliser, checked structurally as well as behaviourally. The behavioural pin above
+   * catches a normaliser that DISAGREES on one of the eight axes; this one catches a hand-rolled
+   * copy that happens to agree today and drifts tomorrow. Matched on the shortest distinguishing
+   * fragments (signed lesson 11), not on any source literal.
+   */
+  it("contains no URL-normalising code of its own", () => {
+    const source = readFileSync(new URL("./my-pages-crawl.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/pageJoinKey/);
+    const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    expect(code).not.toMatch(/new URL\(/);
+    expect(code).not.toMatch(/www\\?\./);
+    expect(code).not.toMatch(/toLowerCase|endsWith\(["']\/["']\)/);
+  });
+
+  it("holds unkeyable addresses OUT of both claim populations", () => {
+    const unkeyed: RelevantPageRow = { page_address: "::::", our_join_key: null, metrics: {} };
+    const join = joinPages([unkeyed], [toCrawledPage("::::", 200)]);
+    expect(join.matched).toHaveLength(0);
+    expect(join.vendorOnly).toHaveLength(0);
+    expect(join.crawlOnly).toHaveLength(0);
+    expect(join.vendorUnkeyed).toHaveLength(1);
+    expect(join.crawlUnkeyed).toHaveLength(1);
+  });
+
+  it("keeps the vendor's own row order in both vendor-side populations", async () => {
+    const result = await fixtureResult();
+    const join = joinPages(result.window.rows, crawledPages(["https://example.com/pricing"]));
+    expect(join.matched.map((m) => m.vendor.page_address)).toEqual([
+      "https://example.com/pricing/",
+    ]);
+    expect(join.vendorOnly.map((row) => row.page_address)).toEqual([
+      "https://www.example.com/Blog/seo-guide",
+      "https://example.com/posts?page=2",
+      "https://example.com/thin-page",
+    ]);
+  });
+
+  it("reports every crawled URL that keyed to the same page, rather than hiding the extras", () => {
+    const row: RelevantPageRow = {
+      page_address: "https://example.com/pricing/",
+      our_join_key: "example.com/pricing",
+      metrics: {},
+    };
+    const join = joinPages(
+      [row],
+      [
+        toCrawledPage("https://example.com/pricing", 200),
+        toCrawledPage("http://example.com/pricing/", 301),
+      ],
+    );
+    expect(join.matched[0]?.crawled.map((page) => page.url)).toEqual([
+      "https://example.com/pricing",
+      "http://example.com/pricing/",
+    ]);
+    expect(join.crawlOnly).toHaveLength(0);
+  });
+});
+
+// =====================================================================================
+// 2. THE THREE POPULATIONS — and the sentence that bounds each claim
+// =====================================================================================
+
+describe("the three populations are legible, and neither absence reads as a finding", () => {
+  async function answer(crawl: CrawlSide): Promise<string> {
+    return formatMyPages(await fixtureResult(), LOCALE, crawl, PROJECT);
+  }
+
+  it("names all three groups when all three are non-empty", async () => {
+    const text = await answer(
+      crawlOf(["https://example.com/pricing", "https://example.com/about"]),
+    );
+    expect(text).toContain("Reported by DataForSEO, and fetched by that crawl (1)");
+    expect(text).toContain("Reported by DataForSEO, not found in that crawl (3)");
+    expect(text).toContain("Fetched by that crawl, not named in this window (1)");
+    expect(text).toContain("https://example.com/about (HTTP status 200)");
+  });
+
+  /**
+   * "We did not crawl it" is NOT "it does not exist". The bounding sentence must name the crawl,
+   * WHEN it ran and HOW MANY pages it fetched — an unqualified list under that heading is the
+   * overstatement this tool exists to avoid.
+   */
+  it("bounds 'not found in that crawl' with the crawl's own date, size and limits", async () => {
+    const text = await answer(crawlOf(["https://example.com/pricing"], "2026-08-18T09:00:00.000Z"));
+    expect(text).toMatch(/that crawl fetched 1 page on 2026-08-18/i);
+    expect(text).toMatch(/depth, page-count and robots limits/i);
+    expect(text).toMatch(/not a statement that the page does not exist/i);
+  });
+
+  /**
+   * "The vendor did not name it" is NOT "it does not rank". The bounding sentence must name the
+   * window's own bounds and the result types it was scoped to.
+   */
+  it("bounds 'not named in this window' with the window's rows and result types", async () => {
+    const text = await answer(crawlOf(["https://example.com/about"]));
+    expect(text).toMatch(/this window covered rows 1-4 of DataForSEO's list for result types organic/i);
+    expect(text).toMatch(/not a statement that the page does not rank/i);
+    expect(text).toMatch(/advance `offset`/i);
+  });
+
+  it("prints ONE count, and says it counts this window against that crawl", async () => {
+    const text = await answer(crawlOf(["https://example.com/pricing"]));
+    expect(text).toContain(
+      "Of the 4 pages in this window whose address could be keyed, 1 also appear in the crawl " +
+        "recorded 2026-08-18",
+    );
+    expect(text).toMatch(/not a measure of how much of your site ranks, and not a score of any kind/i);
+  });
+
+  it("says NOTHING WAS COMPARED when no project was named — not that the comparison was empty", async () => {
+    const text = formatMyPages(await fixtureResult(), LOCALE, { kind: "not_requested" }, null);
+    expect(text).toMatch(/No project was named, so nothing was compared against your own crawl/i);
+    expect(text).toContain("Pass `project_id`");
+    // None of the three population headings may appear: none of them was measured.
+    expect(text).not.toMatch(/not found in that crawl/i);
+    expect(text).not.toMatch(/not named in this window/i);
+    expect(text).not.toMatch(/could be keyed/i);
+  });
+
+  it("says a project has no crawl YET, and still delivers the vendor half", async () => {
+    const text = formatMyPages(await fixtureResult(), LOCALE, { kind: "none" }, PROJECT);
+    expect(text).toMatch(/no completed crawl to compare against/i);
+    expect(text).toMatch(/Run crawl_site/);
+    expect(text).toMatch(/no page below is missing because of it/i);
+    // The vendor half is intact: every fixture page is still printed.
+    expect(text).toContain("https://example.com/pricing/");
+    expect(text).toContain("https://example.com/thin-page");
+    expect(text).not.toMatch(/not found in that crawl/i);
+  });
+
+  it("names the truncation when the crawl side hit its read cap", async () => {
+    const crawl: CrawlSide = {
+      kind: "crawl",
+      jobId: "job-1",
+      ranAt: "2026-08-18T09:00:00.000Z",
+      truncated: true,
+      pages: [toCrawledPage("https://example.com/about", 200)],
+    };
+    expect(await answer(crawl)).toMatch(/only the first pages of that crawl were compared/i);
+    expect(CRAWL_PAGE_READ_CAP).toBeGreaterThan(0);
+  });
+
+  it("holds unkeyable addresses in their own group, named as uncomparable rather than missed", () => {
+    const text = formatMyPages(
+      resultWith([{ page_address: "::::", our_join_key: null, metrics: {} }]),
+      LOCALE,
+      crawlOf(["::::"]),
+      PROJECT,
+    );
+    expect(text).toMatch(/could not be keyed, and so could not be compared either way \(2\)/i);
+    expect(text).toMatch(/rather than counted as misses on either side/i);
+  });
+});
+
+// =====================================================================================
+// 3. NEVER #7 / #9 — whose numbers these are, and what is not claimed
+// =====================================================================================
+
+describe("every printed figure is a named vendor field, and a silence is not a zero", () => {
+  it("prints a vendor null in WORDS, never as 0", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/posts?page=2",
+      our_join_key: "example.com/posts?page=2",
+      metrics: { organic: THIN_METRICS },
+    });
+    expect(rendered).toContain("etv not reported by DataForSEO");
+    expect(rendered).toContain("estimated_paid_traffic_cost not reported by DataForSEO");
+    expect(rendered).toContain("is_new not reported by DataForSEO");
+    // ...and a vendor ZERO is an answer, printed as 0.
+    expect(rendered).toContain("pos_81_90 0");
+    expect(rendered).not.toMatch(/etv 0\b/);
+  });
+
+  it("counts the unreported position buckets instead of dropping or zeroing them", () => {
+    const line = renderPositions(THIN_METRICS);
+    expect(line).toContain("pos_11_20 6");
+    expect(line).toContain("pos_81_90 0");
+    expect(line).toContain("10 of the 12 position buckets were not reported by DataForSEO");
+    expect(line).not.toMatch(/pos_1 0\b/);
+  });
+
+  it("says so plainly when the vendor reported no position bucket at all", () => {
+    const silent: RelevantPageMetrics = { ...THIN_METRICS, pos_11_20: null, pos_81_90: null };
+    expect(renderPositions(silent)).toMatch(
+      /none of the 12 position buckets were reported by DataForSEO/i,
+    );
+  });
+
+  /**
+   * AN ITEM TYPE THE VENDOR DID NOT REPORT IS ABSENT, NOT ZERO. The fixture's second row carries
+   * `organic` only; rendering a `paid` block of zeros beside it would invent a measurement — the
+   * exact shape NEVER #7 forbids, and the one a "complete the table" refactor produces.
+   */
+  it("leaves an unreported result type out of the page entirely", async () => {
+    const result = await fixtureResult();
+    const blog = result.window.rows.find((row) => row.page_address.includes("seo-guide"));
+    const pricing = result.window.rows.find((row) => row.page_address.includes("pricing"));
+    expect(renderVendorPage(pricing as RelevantPageRow)).toContain("paid: count 3");
+    const rendered = renderVendorPage(blog as RelevantPageRow);
+    expect(rendered).toContain("organic: count 54");
+    expect(rendered).not.toMatch(/\bpaid\b/);
+    expect(rendered).not.toMatch(/featured_snippet|local_pack/);
+  });
+
+  it("says a page carries no figures rather than printing zeros for it", () => {
+    expect(renderVendorPage(NO_METRICS)).toMatch(
+      /DataForSEO reported no figures for this page in the result types that were asked for/i,
+    );
+  });
+
+  /**
+   * THE HEADLINE PROMISE THAT IS FALSE. The gap map sells this as "which of my pages rank AND FOR
+   * WHAT". This endpoint returns NO keywords, so the output must neither say nor imply otherwise —
+   * and must point at the tool that does answer it.
+   */
+  it("never implies it returns the keywords a page ranks for, and names the tool that does", async () => {
+    const text = formatMyPages(await fixtureResult(), LOCALE, { kind: "not_requested" }, null);
+    expect(text).toMatch(/It does NOT carry the keywords a page ranks for/i);
+    expect(text).toContain("ranked_keywords");
+    expect(text).not.toMatch(/and for what/i);
+    expect(text).not.toMatch(/which keywords (this|the|each) page/i);
+    // No keyword-bearing vocabulary at all: this answer is about PAGES.
+    expect(text).not.toMatch(/search_volume|keyword_difficulty/);
+  });
+
+  it("labels etv and estimated_paid_traffic_cost as DataForSEO's estimates, and predicts nothing", () => {
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/DataForSEO's OWN ESTIMATES/);
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(
+      /SeoGrep does not predict traffic, revenue or ranking success/i,
+    );
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/never as a zero/i);
+    // The join key's residual limits travel with the answer rather than living only in a comment.
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/query-parameter order are treated as two pages/i);
+  });
+
+  it("carries no score, grade, percentage or superlative anywhere in a full answer", async () => {
+    const text = formatMyPages(
+      await fixtureResult(),
+      LOCALE,
+      crawlOf(["https://example.com/pricing", "https://example.com/about"]),
+      PROJECT,
+    );
+    // "score" survives only inside the two sentences that REFUSE to compute one.
+    expect(text).not.toMatch(/\bscored?\b(?! of (any kind|its own))/i);
+    expect(text).not.toMatch(/coverage|health|grade|%/i);
+    expect(text).not.toMatch(/\b(best|worst|top|strongest|weakest|winning|easy win)\b/i);
+    expect(text).not.toMatch(/\b(most powerful|industry-leading|comprehensive|unmatched)\b/i);
+    // ...and it says the order is the vendor's, not ours.
+    expect(text).toMatch(/SeoGrep does not re-order them and computes no score of its own/);
+  });
+
+  it("keeps the whole-set count apart from the rows in hand", async () => {
+    const text = formatMyPages(await fixtureResult(), LOCALE, { kind: "not_requested" }, null);
+    expect(text).toContain("4 pages in this window (offset 0, limit 100)");
+    expect(text).toContain("DataForSEO counts 3,271 pages matching this lookup in total");
+    expect(text).toMatch(/this window is a slice of that set, not a count of it/);
+  });
+
+  it("says the vendor gave no total rather than back-filling one from the rows in hand", () => {
+    const result = resultWith([NO_METRICS]);
+    const text = formatMyPages(
+      { ...result, window: { ...result.window, vendor_total_count: null } },
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    expect(text).toMatch(/DataForSEO did not say how many pages this lookup matches in total/i);
+    expect(text).not.toMatch(/counts 1 pages/);
+  });
+
+  it("states that clickstream data was not purchased", async () => {
+    const text = formatMyPages(await fixtureResult(), LOCALE, { kind: "not_requested" }, null);
+    expect(text).toMatch(/Clickstream data was not purchased/i);
+  });
+
+  it("answers an empty window as a delivered result, not as 'this domain has no ranking pages'", () => {
+    const text = formatMyPages(resultWith([]), LOCALE, { kind: "none" }, PROJECT);
+    expect(text).toContain("No pages for your project");
+    expect(text).toMatch(/it is not a statement that the domain has no ranking pages/i);
+    expect(text).toContain(WHAT_THE_VENDOR_RETURNS);
+  });
+
+  it("prints a crawl page's missing status as unrecorded rather than as 0", () => {
+    expect(renderCrawledPage(toCrawledPage("https://example.com/a", null))).toContain(
+      "no HTTP status recorded",
+    );
+    expect(renderCrawledPage(toCrawledPage("https://example.com/a", 404))).toContain(
+      "HTTP status 404",
+    );
+  });
+});
+
+// =====================================================================================
+// 4. THE PRICE CONTROLS AND THE FREE GATES
+// =====================================================================================
+
+describe("the schema's maxima are the port's caps — the caps ARE the signed 40", () => {
+  withoutSupabaseEnv();
+  const tool = makeMyPagesTool({ port: mockPort(), loadProject });
+
+  function schema(): {
+    properties: Record<string, { maximum?: number; minimum?: number; default?: unknown }>;
+  } {
+    return tool.inputJsonSchema as never;
+  }
+
+  it("caps `limit` at the port's own MAX_RELEVANT_PAGES_ROWS, and defaults to its default", () => {
+    expect(schema().properties.limit?.maximum).toBe(MAX_RELEVANT_PAGES_ROWS);
+    expect(schema().properties.limit?.minimum).toBe(1);
+    expect(schema().properties.limit?.default).toBe(DEFAULT_RELEVANT_PAGES_ROWS);
+  });
+
+  it("rejects a limit one past the cap BEFORE anything is charged", async () => {
+    const rejected = await tool.run(CTX, {
+      project_id: PROJECT_ID,
+      limit: MAX_RELEVANT_PAGES_ROWS + 1,
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.content[0]?.text).toMatch(/invalid input/i);
+    expect(rejected.content[0]?.text).toContain("limit");
+  });
+
+  it("rejects a negative offset, and offers only the vendor's four result types", async () => {
+    const rejected = await tool.run(CTX, { project_id: PROJECT_ID, offset: -1 });
+    expect(rejected.isError).toBe(true);
+    const types = (tool.inputJsonSchema as { properties: Record<string, { items?: { enum?: string[] } }> })
+      .properties.item_types?.items?.enum;
+    expect(types).toEqual([...RELEVANT_PAGE_ITEM_TYPES]);
+  });
+
+  it("declares no clickstream field at all — buying it would halve the signed margin", () => {
+    expect(Object.keys(schema().properties)).not.toContain("include_clickstream_data");
+    expect(Object.keys(schema().properties)).not.toContain("include_subdomains");
+    expect(Object.keys(schema().properties)).not.toContain("exclude_top_domains");
+  });
+});
+
+describe("every refusal is FREE — returned before any credit reserve", () => {
+  withoutSupabaseEnv();
+
+  it("refuses a live-disabled deployment without serving sample pages", async () => {
+    const tool = makeMyPagesTool({ port: disabledRelevantPagesPort(), loadProject });
+    const refused = await tool.run(CTX, { project_id: PROJECT_ID });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/not yet enabled/i);
+    expect(refused.content[0]?.text).toMatch(/you were not charged/i);
+    // The "turned off" clause is legal HERE and only here: this sentence is returned when the
+    // port really IS disabled, so it reports the state rather than claiming to know it in advance.
+    // The static tools/list description is where that claim is pinned shut (see the block below).
+  });
+
+  it("refuses another tenant's project with the sentence that says nothing about existence", async () => {
+    const tool = makeMyPagesTool({ port: mockPort(), loadProject });
+    const refused = await tool.run(CTX, { project_id: OTHER_PROJECT_ID });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toBe(projectNotFoundMessage(OTHER_PROJECT_ID));
+  });
+
+  it("refuses naming both target and project_id, and naming neither", async () => {
+    const tool = makeMyPagesTool({ port: mockPort(), loadProject });
+    const both = await tool.run(CTX, { target: "example.com", project_id: PROJECT_ID });
+    expect(both.content[0]?.text).toBe(AMBIGUOUS_SUBJECT_MESSAGE);
+    const neither = await tool.run(CTX, {});
+    expect(neither.content[0]?.text).toBe(NO_SUBJECT_MESSAGE);
+  });
+
+  /**
+   * THE OTHER DIRECTION, and it is not decorative: a tool that refused EVERY input would satisfy
+   * every refusal spec above perfectly. A valid call must get PAST the free gates and reach the
+   * credit guard — which, with no Supabase env, is where it fails and names it.
+   */
+  it("lets a valid call through to the credit guard", async () => {
+    const tool = makeMyPagesTool({ port: mockPort(), loadProject });
+    await expect(tool.run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/SUPABASE/i);
+  });
+
+  /**
+   * A bare `target` reads NO crawl at all. The loader is injected as a throwing fake so this is
+   * measured rather than asserted: a handler that consulted the crawl side for a project-less call
+   * would be reading a table with no project to scope it to.
+   */
+  it("reads no crawl at all when no project was named", async () => {
+    const exploding: LoadCrawlSideFn = async () => {
+      throw new Error("the crawl side must not be read without a project");
+    };
+    const tool = makeMyPagesTool({ port: mockPort(), loadProject, loadCrawl: exploding });
+    await expect(tool.run(CTX, { target: "example.com" })).rejects.toThrow(/SUPABASE/i);
+  });
+
+  it("reads the crawl side for the RESOLVED project, and for the calling tenant only", async () => {
+    const seen: { userId: string; projectId: string }[] = [];
+    const recording: LoadCrawlSideFn = async (userId, projectId) => {
+      seen.push({ userId, projectId });
+      return { kind: "none" };
+    };
+    const tool = makeMyPagesTool({ port: mockPort(), loadProject, loadCrawl: recording });
+    await expect(tool.run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/SUPABASE/i);
+    expect(seen).toEqual([{ userId: CTX.userId, projectId: PROJECT_ID }]);
+  });
+});
+
+describe("the tools/list description keeps its promises", () => {
+  const tool = makeMyPagesTool();
+
+  it("states the paid balance, the free refusal, and no deployment state", () => {
+    expect(tool.description).toMatch(/paid credit balance/i);
+    expect(tool.description).toMatch(/charges nothing/i);
+    expect(tool.description).not.toMatch(/off during (the )?beta/i);
+    expect(tool.description).not.toMatch(/is (currently )?(turned )?off\b/i);
+  });
+
+  it("does not promise keywords, and points at the tool that does", () => {
+    expect(tool.description).toMatch(/does NOT carry the keywords a page ranks for/i);
+    expect(tool.description).toContain("ranked_keywords");
+  });
+});

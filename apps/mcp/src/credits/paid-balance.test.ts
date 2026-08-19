@@ -42,7 +42,11 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // per call. The set GREW; nothing left it. It is the first member added for a reason that is NOT
   // "it spends a lot": one request still spends from the shared daily vendor budget, which is the
   // thing this gate protects — so the criterion stays "does it spend?", never "how much?".
-  it("is exactly the eleven DataForSEO tools", () => {
+  //
+  // Eleven -> twelve on 2026-08-19: my_pages, which sends ONE paid DataForSEO Labs request per call
+  // and then joins the answer against stored crawl rows that cost nothing. The set GREW; nothing
+  // left it. Half of the tool being free is not an exemption — the criterion is "does it spend?".
+  it("is exactly the twelve DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "audit_speed",
@@ -53,6 +57,7 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
       "discover_keywords",
       "keyword_gap",
       "link_gap",
+      "my_pages",
       "ranked_keywords",
       "research_keywords",
     ]);
