@@ -36,8 +36,10 @@ describe("DataForSEO tool descriptions", () => {
   // Nine -> ten on 2026-08-19 (disavow_candidates), for the same reason and under the same rule.
   // Ten -> eleven the same day (discover_keywords), likewise: it spends one paid Labs request per
   // call, so it makes the same three promises to the reader as the ten before it.
-  it("covers all eleven gated tools", () => {
-    expect(GATED).toHaveLength(11);
+  // Eleven -> twelve the same day (my_pages), likewise: it spends one paid Labs request per call,
+  // so it makes the same three promises to the reader as the eleven before it.
+  it("covers all twelve gated tools", () => {
+    expect(GATED).toHaveLength(12);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

@@ -16,6 +16,7 @@ import { auditSpeedTool } from "./audit-speed.ts";
 import { auditContentTool } from "./audit-content.ts";
 import { researchKeywordsTool } from "./research-keywords.ts";
 import { discoverKeywordsTool } from "./discover-keywords.ts";
+import { myPagesTool } from "./my-pages.ts";
 import { rankedKeywordsTool } from "./ranked-keywords.ts";
 import { analyzeBacklinksTool } from "./analyze-backlinks.ts";
 import { compareCompetitorsTool } from "./compare-competitors.ts";
@@ -57,6 +58,9 @@ export {
   makeDiscoverKeywordsTool,
   formatDiscoverKeywords,
 } from "./discover-keywords.ts";
+export { myPagesTool, makeMyPagesTool, formatMyPages } from "./my-pages.ts";
+export { joinPages, loadCrawlSide, toCrawledPage } from "./my-pages-crawl.ts";
+export type { CrawlSide, CrawledPage, LoadCrawlSideFn, MatchedPage, PageJoin } from "./my-pages-crawl.ts";
 export { rankedKeywordsTool, makeRankedKeywordsTool } from "./ranked-keywords.ts";
 export { analyzeBacklinksTool, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
 export { compareCompetitorsTool, makeCompareCompetitorsTool } from "./compare-competitors.ts";
@@ -108,6 +112,11 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   // Beside research_keywords on purpose: that tool PRICES a list the caller already has, this one
   // asks the vendor to produce one. Neighbours in tools/list, and therefore in the docs nav.
   discoverKeywordsTool,
+  // Beside the keyword tools and BEFORE ranked_keywords on purpose: ranked_keywords answers "what
+  // keywords does this domain rank for", my_pages answers "which PAGES does it rank with" — the
+  // page axis of the same question, and the endpoint that does NOT return keywords. Neighbours in
+  // tools/list, and therefore in the docs nav, so the two are read together.
+  myPagesTool,
   rankedKeywordsTool,
   analyzeBacklinksTool,
   compareCompetitorsTool,
