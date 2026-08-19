@@ -5,7 +5,80 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-18 (3. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-19 (4. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`92de94a` · **1 PARK EDİLMİŞ PR** ([#151](https://github.com/popiliadam/seogrep/pull/151), operatör SQL bekliyor) · yüzey **33 tool** (oturum başında 26) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
+
+#### ⛔ ÖNCE BUNA BAK — operatörde bekleyen tek şey
+
+**[PR #151](https://github.com/popiliadam/seogrep/pull/151) HAZIR-PARK: `0029_keyword_research_runs`.** SQL tek blok hâlinde PR gövdesinde. Sıra **SQL → tabloya bakarak doğrula → merge**. Bedel yazılı: `apps/mcp` SQL'siz çıkarsa her `research_keywords` çağrısı vendor'a para öder, eksik tabloda düşer, kiracıya iade eder — tool çalışmaz ve ev her denemede vendor maliyeti öder. `apps/web` önce çıkarsa `/app/lookups`'ın **tamamı** düşer.
+
+#### 🎯 BU OTURUMDA NE OLDU — 9 PR canlıda, 1 parkta
+
+| # | dilim | sonuç |
+|---|---|---|
+| [#140](https://github.com/popiliadam/seogrep/pull/140) | `/app/lookups` — çıplak-target koşuları + geçmiş | canlı |
+| [#143](https://github.com/popiliadam/seogrep/pull/143) | `backlink_changes` 35 | canlı |
+| [#144](https://github.com/popiliadam/seogrep/pull/144) | `backlink_details` 35 | canlı |
+| [#145](https://github.com/popiliadam/seogrep/pull/145) | `disavow_candidates` 40 | canlı |
+| [#146](https://github.com/popiliadam/seogrep/pull/146) | `discover_keywords` 40 | canlı |
+| [#147](https://github.com/popiliadam/seogrep/pull/147) | `my_pages` 40 — `crawl_pages`'in ilk okuyucusu | canlı |
+| [#148](https://github.com/popiliadam/seogrep/pull/148) | para-yolu pinleri (3 delik) | canlı |
+| [#149](https://github.com/popiliadam/seogrep/pull/149) | settle sweep — **gerçek para kaybı** düzeltildi | canlı |
+| [#150](https://github.com/popiliadam/seogrep/pull/150) | `ai_visibility` 90 + `ai_visibility_compare` 90/hedef | canlı |
+| [#151](https://github.com/popiliadam/seogrep/pull/151) | `0029` + `research_keywords` koşu ekseni | **PARKTA** |
+
+**İmzalı 11 satırın 8'i sevk edildi.** Kalan: `serp_snapshot` (5+8/kelime) · `track_keywords` (0) · `keyword_positions` (10) · `keyword_trends` (25, **ertelendi** — aşağıya bak).
+
+#### 🚨 OTURUMUN EN ÖNEMLİ BULGUSU — iki oturum boyunca yanlış yerden başlatıldı
+
+**İmza paketi 2026-08-17'den beri İMZALI.** `docs/plans/2026-08-17-dfs-genisleme-imza-paketi.md` **1. satırı** öyle diyor ve NEVER#6'yı karşılanmış sayıyor. Handoff ise iki oturum boyunca *"9 tool imzasız bekliyor, darboğaz artık kod değil"* dedi. Çelişki **aynı dosyanın içindeydi**: gövdedeki `☐` kutuları imza ÖNCESİNDEN kalma form alanları, imza kaydı başlıkta. **S5 kotası da imzada KALDIRILMIŞ** (MADDE 5: *"kredi zaten haktır, ikinci kota koymuyoruz"*); ayakta kalan tek koşul cron'lu **gözetimsiz** harcamanın alt-bütçesi (MADDE 5.3) ve o da önceden imzalı. [#142](https://github.com/popiliadam/seogrep/pull/142) düzeltti.
+
+#### ⏸️ `keyword_trends` ERTELENDİ — gerekçe yazılı
+
+İmzada 25 kredi, ama şerhi *"tek ölçülmemiş kalem — Keywords Data / Trends ailesinin fiyatı bulunamadı"* diyor. Bu oturumun bütün disiplini **marjı imzalı tabana karşı pinlemek** üzerine kuruldu; bu tool'da pinlenecek bir taban **yok**. MADDE 6 zaten onu tek zorunlu kalibrasyon kalemi yapmış. İlk hafta gerçek `dfs_spend` verisi geldiğinde ölçülür, sonra sevk edilir.
+
+#### 💰 PARA YOLUNDA BULUNAN GERÇEK KUSURLAR
+
+1. **`backlink_changes` karışık fiyatlı çiftte harcama düşürüyordu** ([#149](https://github.com/popiliadam/seogrep/pull/149)): iki istekten biri `cost` bildirip diğeri bildirmediğinde **fiyatsız istek bedava sayılıyordu** — ölçülen kayıp tek çağrıda **$0,036702**, deftere hiç yazılmayan. Spec önce yazıldı, eski koda karşı kırmızı ölçüldü.
+2. **`cost` null geldiğinde settle $0,00 yazıyordu** — **altı** modülde ([#148](https://github.com/popiliadam/seogrep/pull/148) üçü, [#149](https://github.com/popiliadam/seogrep/pull/149) üçü daha). Yön fail-OPEN: `$3/gün` sayacı eksik sayar, kapı görmediği harcamayı geçirir.
+3. **`BUDGET_SAFETY_FACTOR` yalnız kendisiyle assert ediliyordu** — 1,5→0,5 (yasaklanan *eksik* tahmin yönü) hiçbir şeyi kırmıyordu. Sekiz modül tarandı.
+4. **Trial-ret nüfus sayımı ilk DÖRT tool'a sabitlenmişti** — 12 kapılı tool varken en yeni sekizini hiç kapsamıyordu. Artık `PAID_BALANCE_TOOLS`'tan **türetiliyor** (20 → 39 test, `my_pages` merge olunca kendiliğinden katıldı).
+5. **`min_units` saklanıyor, pinleniyor, dokümanda yazılıyor — ama ZORLANMIYORDU** ([#150](https://github.com/popiliadam/seogrep/pull/150)): `creditCostFor(compare, 1)` 90 döndürüyordu, `units` atlanınca da 90 — çağrı başına **810 imzalı kredi** hediye. Pin takımı 0/11/2,5'i deniyor, iddiayı çürüten tek değeri (1) atlıyordu.
+
+#### 🆕 BİRİM-BAŞINA FİYAT MEKANİZMASI (yeni mimari parça, [#150](https://github.com/popiliadam/seogrep/pull/150))
+
+`TOOL_COSTS` her yerde çağrı-başınaydı ve D17 onay eşiği de onu okuyordu. `ai_visibility_compare` hedef-başına fiyatlı, yani hiçbirine sığmıyordu. Üç dosya minimal değişti: `costs.ts` (`CREDIT_UNITS` + `creditCostFor` — bir kredi tutarının çarpıldığı **tek yer**), `guard.ts` (`CreditMeta.units` — çağıran bir **sayı** verir, asla tutar), `registry.ts` (`ToolSpec.units` — D17 artık **çağrıyı** tartar; bu olmadan 900 kredilik çağrı onaysız geçerdi).
+
+**ŞERH — sıradaki dalga bunu bir kez daha genişletecek:** `serp_snapshot` imzalı fiyatı **5 + kelime başına 8**, yani **taban + birim × N**. Mekanizma bugün yalnız `birim × N` yapıyor.
+
+#### 📉 KAPILARIN BU OTURUMDA YALAN SÖYLEDİĞİ YERLER
+
+- **`make goals` iki kez gerçek kusur yakaladı, ikisi de `verify.sh`'nin göremediği eksenden:** `trial-flow-e2e` pini canlı yüzeyi **literal** pinliyor ve 26'da kalmıştı (iki dilim güncellemeden geçti) · `no-secrets` yeni bir fixture'daki base64-şekilli `offset_token`'a kırmızı verdi ve **CI'ın gitleaks job'ı onu hiç görmemişti** (commit henüz PR'da değildi; kalem **geçmişi** tarar).
+- **`trial-flow-e2e` merge ile deploy ARASINDA zorunlu olarak kırmızıdır** ve bu kalemin başlığına yazıldı: `make goals`'ın merge'ün hemen ardından koşulan hâli **o kalem için kanıt değildir**.
+- **`goals/` hiçbir hızlı kapıda okunmuyor** — pini geri almak hiçbir şeyi kırmıyor.
+
+#### 🔧 AÇIK CHIP'LER — bu oturumda eklenenler (hepsi MUTASYONLA ölçüldü)
+
+- `withCredits` sıralaması per-birim tool'lara kör nokta bırakıyor (kapı maliyet aramasından önce koşuyor — bu **doğru**, ama sonucu: gelecekteki her per-birim tool kendi rezervasyon-pinini yazmalı). **Ders adayı:** *bir per-birim tool'un DONE'ı kendi rezervasyon-pin spec'ini içerir.*
+- `withCredits` units'siz per-birim meta'yı reddetmiyor (bileşik arıza, tek DB vakası kapatır).
+- `row_count` `dfs_spend`'e yazılırken iki şeritte pinsiz (bütçe aritmetiği okumuyor — teşhis kolonu).
+- Modül-yükleme anında dışa çağrı + token'lara bölünmüş `node:https` çağrısı **hiçbir kapıda** yok.
+- Sayfa→kurucu `limit` argümanı ve okumanın dönüş sözleşmesi pinsiz (`/app/lookups`).
+- `lighthouse.test.ts`'in karışık pini kendi kendine yetmiyor (fixture maliyeti = liste fiyatı).
+- `backlink-details.db.test.ts` (f) yalnız RET kanıtlıyor.
+- Gap map `:252` hâlâ `disavow_candidates` için 55 diyor (imza 40 ve sonrakidir).
+
+#### 📌 SIRADAKİ OTURUMUN İŞİ
+
+1. **#151'i kapat** (operatör SQL → doğrula → merge).
+2. **Rank tracker dalgası:** `0030` migration + `track_keywords` (0) + `serp_snapshot` (**taban+birim fiyat uzantısı**) + `keyword_positions` (10) + cron → **MADDE 5.3 alt-bütçesinin SAYISI imzasız**, o karar operatörde.
+3. Kalan chip'ler · `keyword_trends` kalibrasyondan sonra.
+4. **KOD OLMAYAN, EN YÜKSEK DEĞERLİ İŞ:** bu oturumda canlıya çıkan **yedi tool'un hiçbiri gerçek bir vendor çağrısı yapmadı.** Fixture'lar vendor'ın *dokümantasyon* örnekleri. Alan adları bugün farklıysa çağrı patlamaz, her alan `n/a` basar — dürüst ama **değersiz** bir 35–90 kredilik cevap. Her tool'a **birer** canlı çağrı, $3/gün tavanının çok altında, ve tek gerçek sözleşme testi o.
+
+---
+
+### 📋 2026-08-18 (3. oturum) — HANDOFF (ESKİ)
 
 **Durum:** `main` @`f01c884` · açık PR **0** · worktree temiz · yüzey **26 tool** (bu tur tool
 EKLEMEDİ — koşu ekseni açtı) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
