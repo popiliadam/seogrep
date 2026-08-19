@@ -1,0 +1,123 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3914 sec.",
+  "cost": 0.01248,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0010",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.3801 sec.",
+      "cost": 0.01248,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_ideas", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_ideas",
+        "se_type": "google",
+        "keywords": ["seo software"],
+        "language_code": "en",
+        "location_code": 2840,
+        "limit": 100
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "seed_keywords": ["seo software"],
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 48213,
+          "items_count": 4,
+          "offset": 0,
+          "offset_token": "fixture-offset-token-not-a-secret",
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "seo tools",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.71,
+                "competition_level": "HIGH",
+                "cpc": 14.22,
+                "search_volume": 40500,
+                "low_top_of_page_bid": 2.88,
+                "high_top_of_page_bid": 19.4,
+                "categories": [10019],
+                "monthly_searches": [
+                  { "year": 2026, "month": 7, "search_volume": 40500 },
+                  { "year": 2026, "month": 6, "search_volume": 33100 }
+                ],
+                "search_volume_trend": { "monthly": 22, "quarterly": 8, "yearly": -4 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "keyword_difficulty": 74,
+                "detected_language": "en"
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "commercial",
+                "foreign_intent": ["informational"],
+                "last_updated_time": "2026-06-02 11:04:19 +00:00"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "rank tracking software",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.44,
+                "competition_level": "MEDIUM",
+                "cpc": 9.05,
+                "search_volume": 2400,
+                "search_volume_trend": { "monthly": -3, "quarterly": null, "yearly": 17 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "keyword_difficulty": 38
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "transactional",
+                "foreign_intent": null
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "seo software for agencies uk",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00"
+              },
+              "keyword_properties": {
+                "se_type": "google"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": null,
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "search_volume": 110
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

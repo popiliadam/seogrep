@@ -1,0 +1,104 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3311 sec.",
+  "cost": 0.01236,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0012",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.3208 sec.",
+      "cost": 0.01236,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "related_keywords", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "related_keywords",
+        "se_type": "google",
+        "keyword": "seo software",
+        "depth": 1,
+        "language_code": "en",
+        "location_code": 2840,
+        "limit": 100
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "seed_keyword": "seo software",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 312,
+          "items_count": 3,
+          "offset": 0,
+          "items": [
+            {
+              "se_type": "google",
+              "depth": 1,
+              "related_keywords": ["seo software free", "seo software reviews"],
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "seo platform",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                  "competition": 0.59,
+                  "competition_level": "HIGH",
+                  "cpc": 18.7,
+                  "search_volume": 8100,
+                  "search_volume_trend": { "monthly": 5, "quarterly": 12, "yearly": 60 }
+                },
+                "keyword_properties": { "se_type": "google", "keyword_difficulty": 64 },
+                "search_intent_info": {
+                  "se_type": "google",
+                  "main_intent": "commercial",
+                  "foreign_intent": ["informational", "transactional"]
+                }
+              }
+            },
+            {
+              "se_type": "google",
+              "depth": 1,
+              "related_keywords": [],
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "technical seo tool",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                  "competition": 0.28,
+                  "competition_level": "LOW",
+                  "cpc": 7.33,
+                  "search_volume": 1600
+                },
+                "keyword_properties": { "se_type": "google", "keyword_difficulty": 29 }
+              }
+            },
+            {
+              "se_type": "google",
+              "depth": 1,
+              "related_keywords": null,
+              "keyword_data": {
+                "se_type": "google",
+                "keyword": "seo audit software enterprise",
+                "location_code": 2840,
+                "language_code": "en",
+                "keyword_info": {
+                  "se_type": "google",
+                  "last_updated_time": "2026-07-31 04:12:07 +00:00"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

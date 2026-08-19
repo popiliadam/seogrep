@@ -1,0 +1,88 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.5120 sec.",
+  "cost": 0.01236,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0013",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.5006 sec.",
+      "cost": 0.01236,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keywords_for_site", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keywords_for_site",
+        "se_type": "google",
+        "target": "example.com",
+        "language_code": "en",
+        "location_code": 2840,
+        "limit": 100
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "target": "example.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 8940,
+          "items_count": 3,
+          "offset": 0,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "example domain",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.12,
+                "competition_level": "LOW",
+                "cpc": 1.02,
+                "search_volume": 12100,
+                "search_volume_trend": { "monthly": 0, "quarterly": -6, "yearly": 3 }
+              },
+              "keyword_properties": { "se_type": "google", "keyword_difficulty": 18 },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "navigational",
+                "foreign_intent": []
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "what is an example domain",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.05,
+                "competition_level": "LOW",
+                "cpc": 0.44,
+                "search_volume": 880
+              },
+              "keyword_properties": { "se_type": "google", "keyword_difficulty": 9 }
+            },
+            {
+              "se_type": "google",
+              "keyword": "reserved domain names iana",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
