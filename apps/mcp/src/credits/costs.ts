@@ -148,19 +148,22 @@ export type ToolName = keyof typeof TOOL_COSTS;
  *     human-approved table and into a handler, which is exactly what the table exists to prevent.
  *
  * So the tool supplies a bounded COUNT and this table keeps the price: `creditCostFor` multiplies,
- * and `max_units` is the ceiling a single call can ever charge — 10 x 90 = 900 credits, which is
- * ABOVE the registry's 200-credit D17 confirmation threshold, so a wide comparison asks the caller
- * first. That is the intended behaviour, not a side effect (the signature calls the 900 out by
- * name).
+ * and `min_units`/`max_units` are what ONE CALL can really cost — 2 x 90 = 180 at the floor and
+ * 10 x 90 = 900 at the ceiling. The 900 is ABOVE the registry's 200-credit D17 confirmation
+ * threshold, so a wide comparison asks the caller first. That is the intended behaviour, not a
+ * side effect (the signature calls the 900 out by name). The docs generator renders that range
+ * rather than the bare 90, because "90 credits" on a page about a 2-10 target comparison is a
+ * number no call ever costs.
  *
- * `max_units` is stated here rather than imported from dfs/llm-mentions.ts on purpose: this module
+ * The bounds are stated here rather than imported from dfs/llm-mentions.ts on purpose: this module
  * is the price table and must stay free of runtime dependencies (apps/web imports it directly in a
- * jsdom test). costs.test.ts pins it EQUAL to MAX_COMPARE_TARGETS, so the two cannot drift.
+ * jsdom test). costs.test.ts pins them EQUAL to MIN_COMPARE_TARGETS / MAX_COMPARE_TARGETS, so the
+ * two cannot drift.
  */
 export const CREDIT_UNITS = {
-  ai_visibility_compare: { unit: "compared target", max_units: 10 },
+  ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
 } as const satisfies Partial<
-  Record<ToolName, { readonly unit: string; readonly max_units: number }>
+  Record<ToolName, { readonly unit: string; readonly min_units: number; readonly max_units: number }>
 >;
 
 /** A tool whose TOOL_COSTS entry is a PER-UNIT price rather than a per-call one. */

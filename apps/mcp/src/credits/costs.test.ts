@@ -160,6 +160,7 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
    * operator signed.
    */
   it("bounds the units at exactly the port's own compare range", () => {
+    expect(CREDIT_UNITS.ai_visibility_compare.min_units).toBe(MIN_COMPARE_TARGETS);
     expect(CREDIT_UNITS.ai_visibility_compare.max_units).toBe(MAX_COMPARE_TARGETS);
     expect(creditCostFor("ai_visibility_compare", MIN_COMPARE_TARGETS)).toBe(180);
     expect(() => creditCostFor("ai_visibility_compare", MAX_COMPARE_TARGETS + 1)).toThrow();

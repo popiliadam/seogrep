@@ -1,0 +1,85 @@
+---
+title: ai_visibility
+description: "Measure how a domain or a keyword is mentioned in one AI assistant's answers, from DataForSEO's LLM Mentions data. Pick a subject: \"domain\" (pass target…"
+---
+
+**Cost:** 90 credits.
+
+`ai_visibility` measures how a **domain or a keyword is mentioned in one AI assistant's answers**, using DataForSEO's LLM Mentions data. It answers a question no other SeoGrep tool touches: not what a search engine ranked, but what a language model said. It is **synchronous** — everything comes back immediately, with no background job to poll.
+
+## What it does
+
+Pick a **subject** and a **platform**. The subject is required and has no default, because the two ask different questions and take different inputs:
+
+| `subject` | What it measures | What you pass |
+| --- | --- | --- |
+| `domain` | How a site is mentioned | `target` or `project_id` |
+| `keyword` | How a search phrase is mentioned | `keyword` |
+
+The platform is `chat_gpt` or `google`, and it is required too — there is no "all assistants" option, because no such measurement exists here.
+
+Each row comes back with **DataForSEO's own fields under DataForSEO's own names**, in the order DataForSEO sent them. No field is renamed and none is computed.
+
+## What this answer is scoped to
+
+Every answer states its own limits, in full, on every run:
+
+- **One assistant.** A `chat_gpt` measurement says nothing about Google's AI answers, and neither says anything about an assistant DataForSEO was not asked about.
+- **One locale.** The location and language you asked under are named; if you passed neither, the answer says so rather than naming a default nobody chose.
+- **One moment.** The timestamp is DataForSEO's own, printed with the vendor key it came from. When the vendor reports no time, the answer says that — SeoGrep does not put its own clock in place of a missing vendor timestamp.
+- **No period.** This DataForSEO endpoint takes **no date range**, so there is none to ask for and none to state. The answer says so rather than leaving "now" to be assumed.
+
+## Whose numbers these are
+
+SeoGrep computes **no visibility score, no share of voice and no sentiment**, ranks nothing by a formula of its own, and re-orders nothing: this endpoint publishes no ordering field, so the rows arrive in the vendor's order and stay in it.
+
+A field DataForSEO **did not report** is printed as unreported, never as `0` — "the vendor reported no mentions" and "the vendor did not measure mentions" are different answers, and only the first one is about your brand. A genuine zero the vendor did send is printed as `0`.
+
+Where DataForSEO sends a **nested object or list**, it is not folded into the row; the answer names those fields instead, so you know there is more in the vendor's response than what you are reading.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Does example.com come up in ChatGPT answers?
+
+Or ask about a phrase rather than a site:
+
+> How is "project management software" mentioned in Google's AI answers, in the United States?
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `subject` | string | Yes | WHAT to look for in the assistant's answers — required, with no default, because the two answer different questions. "domain": how a site is mentioned (pass "target" or "project_id"). "keyword": how a search phrase is mentioned (pass "keyword"). Passing a field that belongs to the other subject is rejected, not ignored. |
+| `target` | string | No | The domain to measure AI mentions for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
+| `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
+| `keyword` | string | No | SUBJECT "keyword" ONLY: exactly one search phrase to measure mentions for. This endpoint takes one at a time, not a list — run the tool again for another. |
+| `platform` | string | Yes | WHICH assistant DataForSEO is asked about — required, with no default, because a measurement of one says nothing about the other. "chat_gpt": mentions observed in ChatGPT answers. "google": mentions observed in Google's AI answers. There is no "all assistants" option here, and no answer covers an assistant the vendor did not query. |
+| `internal_list_limit` | integer | No | How many rows DataForSEO may return per compared target (1-100, default 100). DataForSEO bills per returned row on this family, so this is the price control rather than a display preference — the signed price was measured at the ceiling. Asking for fewer rows costs the same; asking for more is refused. |
+| `location_name` | string | No | OPTIONAL DataForSEO `location_name` — a NAME, e.g. "United States", not the numeric location_code the other SeoGrep tools take (this vendor family publishes no code). Omitted by default, in which case DataForSEO applies its own default and the answer says the location was not specified rather than naming one nobody asked for. |
+| `language_code` | string | No | OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the answer says the language was not specified rather than naming one nobody asked for. |
+
+### Returns
+
+A heading naming **what was looked up** and the DataForSEO LLM Mentions function behind it, then the scope paragraph above — platform, locale, the vendor's own timestamp, and the absence of any date range.
+
+Then the rows, captioned with the row cap they came back under and DataForSEO's own whole-set count kept separate from them. This endpoint offers **no paging**: there is no offset to advance, so a wider set is a wider request rather than a next page. When the vendor gave no total, the caption says that instead of back-filling one from the rows in hand.
+
+A lookup that matched nothing says so plainly and you are still charged for the delivered lookup — and it is stated as an answer about **this platform, this locale and this moment**, not as a claim that nobody ever mentions you. A missing or foreign subject field, a row cap above the ceiling, a call naming neither `target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected before anything is charged; while live data is off you get a "not yet enabled" message instead — also free.
+
+### Billing
+
+One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO request. If it fails, the whole call fails and **you are not charged**.
+
+`ai_visibility` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+
+The `internal_list_limit` ceiling is **part of the price**, not a display preference: DataForSEO bills **per returned row** on this family, and that cap is what holds the flat price inside the margin it was signed against. Asking for fewer rows costs the same; asking for more than the ceiling is refused before anything is charged.
+
+### Limitations
+
+Results are **not stored**. Each call returns its rows to the conversation and nothing else keeps them — there is no saved history, no dashboard page and no "changed since last time", so run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+
+This is a measurement, **not a prediction**. It does not tell you what an assistant will say next, why it said what it said, or what to change to be mentioned more — and a measurement on one platform does not carry over to another.
+
+The location is a **name** (`location_name`), not the numeric location code the other SeoGrep tools take: this DataForSEO family publishes no code.

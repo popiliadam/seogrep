@@ -76,6 +76,17 @@ const CREDIT_COSTS = [
   // explicit sub-band warning, closed by a cap rather than by a price, so this number moving means
   // the cap moved too (NEVER #6).
   { action: "Disavow candidates (per domain)", cost: "40" },
+  // The two AI-visibility tools (2026-08-17 signature package MADDE 2, operator-signed at 90).
+  // Their own rows, and not members of any row above: everything above buys what a SEARCH ENGINE
+  // ranked or linked, and these two buy what a LANGUAGE MODEL said. Different vendor family,
+  // different tariff, and a caller runs them for a different reason.
+  { action: "AI visibility (per domain or keyword)", cost: "90" },
+  // THE ONE PER-UNIT ROW IN THIS TABLE. The signed price is 90 credits PER COMPARED TARGET over
+  // 2-10 targets, so a call costs 180-900 and no call costs 90. The label carries "per compared
+  // target" for exactly that reason: a bare 90 in this column would be a number nobody is ever
+  // charged. The unit and its range live in apps/mcp credits/costs.ts (CREDIT_UNITS), so this
+  // number moving means the signed unit price moved (NEVER #6).
+  { action: "AI visibility comparison (per compared target)", cost: "90" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

@@ -143,6 +143,22 @@ describe("renderCostLine", () => {
   it("renders a plural credit cost", () => {
     expect(renderCostLine(20)).toBe("**Cost:** 20 credits.");
   });
+
+  /**
+   * THE PER-UNIT LINE. `ai_visibility_compare` is priced per COMPARED TARGET, so no call of it
+   * ever costs the bare number in TOOL_COSTS: two targets cost 180 and ten cost 900. A page that
+   * printed "90 credits" would state a price nobody is charged, so the line renders the unit AND
+   * the range — and the range is computed from the rule, never typed into prose.
+   */
+  it("renders a per-unit cost with the range one call can really cost", () => {
+    expect(renderCostLine(90, { unit: "compared target", min_units: 2, max_units: 10 })).toBe(
+      "**Cost:** 90 credits per compared target — 2 to 10 compared targets per call, so 180 to 900 credits.",
+    );
+  });
+
+  it("leaves the flat line untouched when no unit rule is given", () => {
+    expect(renderCostLine(90, undefined)).toBe("**Cost:** 90 credits.");
+  });
 });
 
 describe("mdxEscapeInline", () => {
