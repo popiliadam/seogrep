@@ -685,6 +685,28 @@ describe("what counts as a placement", () => {
     expect(DOMAIN_MATCH_RULE).toBe("exact_host_www_stripped");
   });
 
+  /**
+   * THE AXIS THAT ACTUALLY MATTERED (signed lesson 14). The assertion above varies the TARGET —
+   * looking up a subdomain against an apex-domain result — and it stays GREEN even if the rule is
+   * loosened to `endsWith`, because "example.test" does not end with "blog.example.test". MEASURED:
+   * a mutation replacing the equality with `endsWith` left all 47 specs passing.
+   *
+   * The hazard runs the other way: an item on a SUBDOMAIN of the target, looked up by the APEX. Under
+   * `endsWith` a ranking blog post would be reported as the site's own ranking.
+   */
+  it("…and the other way round: a SUBDOMAIN result is not the apex domain ranking", () => {
+    const subdomainResult = (
+      withResult((r) => {
+        const items = r.items as Record<string, unknown>[];
+        r.items = items.map((item) =>
+          item.domain === TARGET ? { ...item, domain: `blog.${TARGET}` } : item,
+        );
+      }) as { tasks: { result: unknown[] }[] }
+    ).tasks[0].result[0];
+    expect(outcomeFor(subdomainResult, TARGET).status).toBe("absent_from_examined_results");
+    expect(outcomeFor(subdomainResult, `blog.${TARGET}`).status).toBe("ranked");
+  });
+
   it("carries every other vendor scalar VERBATIM, and names the nested fields it did not carry", () => {
     const outcome = outcomeFor(result, TARGET);
     if (outcome.status !== "ranked") throw new Error("unreachable");
