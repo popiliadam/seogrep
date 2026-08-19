@@ -51,7 +51,11 @@ const CREDIT_COSTS = [
   // disavow_candidates (2026-08-17, operator-signed at 40). A fourth backlink row, and again its
   // own: the three above buy today's profile, its history and the links themselves, while this one
   // buys the vendor's per-DOMAIN spam scores and the disavow text derived from them — three
-  // DataForSEO requests, the most of any tool here. It is also the row whose signature carries an
+  // DataForSEO requests, every one of them billed. A superlative stood here instead and was FALSE:
+  // <<the most of any tool here>>. audit_speed, four rows above, buys one Lighthouse request per URL
+  // up to MAX_SPEED_URLS = 5. A per-call vendor-request count exists in no registry, so no ranking
+  // over tools is checkable and none may be written; page.test.tsx forbids the shape. It is also the
+  // row whose signature carries an
   // explicit sub-band warning, closed by a cap rather than by a price, so this number moving means
   // the cap moved too (NEVER #6).
   { action: "Disavow candidates (per domain)", cost: "40" },
