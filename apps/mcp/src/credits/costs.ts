@@ -134,6 +134,35 @@ export const TOOL_COSTS = {
 export type ToolName = keyof typeof TOOL_COSTS;
 
 /**
+ * ONE per-unit price rule: what a unit is called, what one call costs before any units are counted,
+ * and how many units one call may buy.
+ *
+ * `base` is the SECOND shape TOOL_COSTS cannot express, and it exists because a signed price asked
+ * for it: `serp_snapshot` (signature package 2026-08-17, MADDE 1 row #4) is **5 credits + 8 per
+ * keyword**, i.e. a fixed part that does not scale with the count and a variable part that does.
+ * `unit x N` alone can express neither half of that without lying about the other: pricing it at 13
+ * per keyword overcharges every call above one keyword, and pricing it at 8 gives the fixed 5 away.
+ *
+ * It is OPTIONAL and ABSENT on the only rule signed so far, which is what keeps `ai_visibility_compare`
+ * byte-identical: an absent base is 0, and `0 + 90 x n` is `90 x n`. A base of 0 written out and an
+ * absent base mean exactly the same thing and must stay indistinguishable in the arithmetic.
+ *
+ * NEVER #6 applies to `base` exactly as it applies to TOOL_COSTS: it is a PRICE, and it does not move
+ * without a human signature across code + docs + pricing.
+ */
+export interface PerUnitPriceRule {
+  /** The thing being counted, in words, for the message a caller reads ("compared target"). */
+  readonly unit: string;
+  /**
+   * Credits charged ONCE per call, whatever the count. Absent means 0 — the only shape any signed
+   * price has today. See {@link creditsForUnits} for the one place it is added.
+   */
+  readonly base?: number;
+  readonly min_units: number;
+  readonly max_units: number;
+}
+
+/**
  * THE PER-UNIT PRICES — the one shape TOOL_COSTS alone cannot express.
  *
  * Every price above is what ONE CALL costs. `ai_visibility_compare` is the first signed price that
@@ -162,9 +191,7 @@ export type ToolName = keyof typeof TOOL_COSTS;
  */
 export const CREDIT_UNITS = {
   ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
-} as const satisfies Partial<
-  Record<ToolName, { readonly unit: string; readonly min_units: number; readonly max_units: number }>
->;
+} as const satisfies Partial<Record<ToolName, PerUnitPriceRule>>;
 
 /** A tool whose TOOL_COSTS entry is a PER-UNIT price rather than a per-call one. */
 export type PerUnitToolName = keyof typeof CREDIT_UNITS;
@@ -179,7 +206,9 @@ export function isPerUnitTool(tool: ToolName): tool is PerUnitToolName {
  *
  * The ONE place a credit amount is derived, so the multiplication cannot be re-implemented (and
  * mis-implemented) at a call site. `units` is a COUNT the caller's own request implies — the number
- * of compared targets — never a price: the per-unit figure stays TOOL_COSTS'.
+ * of compared targets — never a price: the per-unit figure stays TOOL_COSTS', and the fixed part (a
+ * rule's `base`, absent on every rule signed so far) stays CREDIT_UNITS'. The arithmetic itself lives
+ * in {@link creditsForUnits}, which is also where the count is bounded.
  *
  * Fail-closed in both directions, and in THREE ways rather than two. A per-call tool asked to
  * charge for more than one unit THROWS rather than silently multiplying a flat price. A per-unit
@@ -204,8 +233,7 @@ export function isPerUnitTool(tool: ToolName): tool is PerUnitToolName {
  * they are loud.
  */
 export function creditCostFor(tool: ToolName, units?: number): number {
-  const rule = isPerUnitTool(tool) ? CREDIT_UNITS[tool] : null;
-  if (rule === null) {
+  if (!isPerUnitTool(tool)) {
     if (units !== undefined && units !== 1) {
       throw new Error(
         `"${tool}" is priced per call, so it cannot be charged for ${units} units. Only ` +
@@ -214,18 +242,52 @@ export function creditCostFor(tool: ToolName, units?: number): number {
     }
     return TOOL_COSTS[tool];
   }
+  return creditsForUnits(tool, CREDIT_UNITS[tool], TOOL_COSTS[tool], units);
+}
+
+/**
+ * THE ONE PLACE `base + unit x count` IS COMPUTED — and the one place the count is enforced.
+ *
+ * Split out of {@link creditCostFor} rather than inlined so that a per-unit price can be exercised
+ * as ARITHMETIC before its tool exists. `serp_snapshot`'s signed 5 + 8 per keyword cannot be added
+ * to TOOL_COSTS in the slice that built its port: a non-zero TOOL_COSTS row with no pricing-page row
+ * turns apps/web's pricing spec RED in three places (MEASURED), which is exactly the gate that keeps
+ * a price from shipping ahead of the tool it prices. So the rule is proven here, against the signed
+ * numbers, and the table stays untouched until the tool lands.
+ *
+ * `label` is only ever a tool name in production; it is a plain string so the same enforcement can
+ * be measured against a rule whose tool is not in the table yet.
+ *
+ * Everything it refuses, it refuses LOUDLY (internal errors — the tool surfaces bound the count in
+ * zod long before this):
+ *   - OMISSION      — a per-unit tool asked with no count at all. Never a silent 1: with a default
+ *                     of 1 an omission was indistinguishable from an explicit 1, and a call site
+ *                     dropping `units:` gave away up to 810 signed credits while staying green.
+ *   - BELOW  min    — `min_units` is ENFORCED here, not merely stored. It was rendered on the
+ *                     pricing page and pinned in tests while the range check read `units < 1`, so a
+ *                     one-target comparison priced at 90 passed a floor the operator signed at 180.
+ *   - ABOVE  max    — pricing a call the vendor would refuse anyway.
+ *   - NON-INTEGER   — half a unit is not a count.
+ */
+export function creditsForUnits(
+  label: string,
+  rule: PerUnitPriceRule,
+  unitCredits: number,
+  units: number | undefined,
+): number {
+  const base = rule.base ?? 0;
   if (units === undefined) {
     throw new Error(
-      `"${tool}" is priced per ${rule.unit}, so the call must say how many it buys. Charging it ` +
-        `without a unit count would bill one call's flat ${TOOL_COSTS[tool]} for up to ` +
+      `"${label}" is priced per ${rule.unit}, so the call must say how many it buys. Charging it ` +
+        `without a unit count would bill one call's flat ${base + unitCredits} for up to ` +
         `${rule.max_units} ${rule.unit}s.`,
     );
   }
   if (!Number.isInteger(units) || units < rule.min_units || units > rule.max_units) {
     throw new Error(
-      `"${tool}" is priced per ${rule.unit} and charges for ${rule.min_units} to ` +
+      `"${label}" is priced per ${rule.unit} and charges for ${rule.min_units} to ` +
         `${rule.max_units} of them; ${units} is outside that range.`,
     );
   }
-  return TOOL_COSTS[tool] * units;
+  return base + unitCredits * units;
 }

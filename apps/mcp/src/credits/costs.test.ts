@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { CREDIT_UNITS, TOOL_COSTS, creditCostFor, isPerUnitTool } from "./costs.js";
+import {
+  CREDIT_UNITS,
+  TOOL_COSTS,
+  creditCostFor,
+  creditsForUnits,
+  isPerUnitTool,
+  type PerUnitPriceRule,
+} from "./costs.js";
 import { MAX_COMPARE_TARGETS, MIN_COMPARE_TARGETS } from "../dfs/llm-mentions.js";
+import {
+  CONFIRMATION_THRESHOLD_CREDITS,
+  evaluateConfirmation,
+} from "../tools/registry.js";
 
 // Byte-for-byte pin of the human-approved v0 credit costs (PR #12 merge sign-off).
 // CLAUDE.md NEVER #6: price / credit cost / package figures do not change without
@@ -210,5 +221,211 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
     // Symmetric with the line above, and it only passes because min_units is ENFORCED rather than
     // merely stored: below the vendor's floor is as unpriceable as above its ceiling.
     expect(() => creditCostFor("ai_visibility_compare", MIN_COMPARE_TARGETS - 1)).toThrow();
+  });
+});
+
+// =================================================================================================
+// THE BASE TERM — `base + unit x count`, and the proof the two older paths did not move.
+// =================================================================================================
+
+/**
+ * The SIGNED shape of `serp_snapshot` (signature package 2026-08-17, MADDE 1 row #4): 5 credits plus
+ * 8 per keyword. Restated HERE as test constants and deliberately NOT added to TOOL_COSTS /
+ * CREDIT_UNITS, because the price line cannot ship ahead of its tool: adding `serp_snapshot: 8` to
+ * TOOL_COSTS was MEASURED to turn apps/web's pricing spec RED in three places
+ * ("TOOL_COSTS.serp_snapshot costs 8 credits but no pricing-page row is declared for it"), and the
+ * 33-tool pin above would go red with it. The mechanism is therefore proven as ARITHMETIC against
+ * the signed numbers, and the human-approved table stays untouched until the tool lands.
+ *
+ * The cap of 10 is the port's own MAX_SERP_KEYWORDS (dfs/serp.ts) — the number the signed 5.3x
+ * worst-case margin holds at. It is restated as a literal here rather than imported, so this spec
+ * keeps asserting the SIGNED range even if the port's constant is later moved.
+ */
+const SIGNED_SERP_SNAPSHOT_RULE: PerUnitPriceRule = {
+  unit: "keyword",
+  base: 5,
+  min_units: 1,
+  max_units: 10,
+};
+const SIGNED_SERP_SNAPSHOT_UNIT_CREDITS = 8;
+
+/** `creditsForUnits` under the signed serp_snapshot rule — the call this mechanism was extended for. */
+const serpSnapshotCredits = (units: number | undefined): number =>
+  creditsForUnits(
+    "serp_snapshot",
+    SIGNED_SERP_SNAPSHOT_RULE,
+    SIGNED_SERP_SNAPSHOT_UNIT_CREDITS,
+    units,
+  );
+
+describe("creditsForUnits — base + unit x count", () => {
+  /**
+   * The signed arithmetic, asserted as LITERALS rather than as `5 + 8 * n`. A formula restating the
+   * implementation stays green when the implementation stops adding the base or stops multiplying;
+   * 13 / 21 / 45 / 85 are four numbers a human can check against the signature.
+   */
+  it("yields the SIGNED 5 + 8 per keyword: 13 at one keyword, 85 at ten", () => {
+    expect(serpSnapshotCredits(1)).toBe(13);
+    expect(serpSnapshotCredits(2)).toBe(21);
+    expect(serpSnapshotCredits(5)).toBe(45);
+    expect(serpSnapshotCredits(10)).toBe(85);
+  });
+
+  /**
+   * The base is FIXED, not per unit. The distinction is the whole reason for the field: 13 per
+   * keyword (5 folded into the unit) would charge 130 at ten keywords instead of 85.
+   */
+  it("charges the base ONCE per call, never once per unit", () => {
+    expect(serpSnapshotCredits(10)).not.toBe(13 * 10);
+    const perUnitDelta = serpSnapshotCredits(10) - serpSnapshotCredits(9);
+    expect(perUnitDelta).toBe(SIGNED_SERP_SNAPSHOT_UNIT_CREDITS);
+  });
+
+  /** An ABSENT base and an explicit 0 are the same price, and must stay indistinguishable. */
+  it("treats an absent base as exactly 0", () => {
+    const absent: PerUnitPriceRule = { unit: "x", min_units: 1, max_units: 4 };
+    const zero: PerUnitPriceRule = { unit: "x", base: 0, min_units: 1, max_units: 4 };
+    for (const units of [1, 2, 3, 4]) {
+      expect(creditsForUnits("t", absent, 7, units)).toBe(creditsForUnits("t", zero, 7, units));
+      expect(creditsForUnits("t", absent, 7, units)).toBe(7 * units);
+    }
+  });
+
+  /**
+   * min_units ENFORCED on a base-carrying rule too. 0 is the value a `< 1` check would let through
+   * on a rule whose floor is 1 — and it would price a keyword-less snapshot at the bare base of 5.
+   */
+  it("refuses a count outside the signed range — including the floor and a fraction", () => {
+    expect(() => serpSnapshotCredits(0)).toThrow(/outside that range/i);
+    expect(() => serpSnapshotCredits(11)).toThrow(/outside that range/i);
+    expect(() => serpSnapshotCredits(2.5)).toThrow(/outside that range/i);
+    expect(() => serpSnapshotCredits(-1)).toThrow(/outside that range/i);
+    expect(() => serpSnapshotCredits(0)).toThrow(/1 to 10/);
+    // A floor ABOVE 1 is the case ai_visibility_compare exercises; this one proves the check reads
+    // `rule.min_units` rather than a hard-coded 1 that happens to match this rule's floor.
+    const floorOfThree: PerUnitPriceRule = { unit: "x", base: 5, min_units: 3, max_units: 9 };
+    expect(() => creditsForUnits("t", floorOfThree, 8, 2)).toThrow(/3 to 9/);
+    expect(creditsForUnits("t", floorOfThree, 8, 3)).toBe(29);
+  });
+
+  /** Omission is an error on a base-carrying rule too, and it names the FULL one-call flat price. */
+  it("refuses an omitted count, quoting base + unit as the flat price it would otherwise bill", () => {
+    expect(() => serpSnapshotCredits(undefined)).toThrow(/must say how many it buys/i);
+    // 13, not 8: the sentence has to name what the wrong path would really have charged.
+    expect(() => serpSnapshotCredits(undefined)).toThrow(/flat 13 for up to 10 keywords/);
+  });
+});
+
+/**
+ * THE TWO OLDER PATHS, measured rather than assumed. Extending the mechanism must leave the per-call
+ * price and the existing per-unit price byte-identical — including the words of both refusals, which
+ * are behaviour a caller reads.
+ */
+describe("the base term did not move the per-call or the existing per-unit path", () => {
+  it("every per-call tool still returns its table price, and nothing else", () => {
+    for (const tool of Object.keys(TOOL_COSTS) as (keyof typeof TOOL_COSTS)[]) {
+      if (isPerUnitTool(tool)) continue;
+      expect(creditCostFor(tool)).toBe(TOOL_COSTS[tool]);
+      expect(creditCostFor(tool, 1)).toBe(TOOL_COSTS[tool]);
+    }
+  });
+
+  it("the per-unit tool still charges 90 per target with NO base folded in", () => {
+    for (const targets of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      expect(creditCostFor("ai_visibility_compare", targets)).toBe(90 * targets);
+    }
+    // The rule carries no base at all — an added one would show up as +N on every line above.
+    expect(CREDIT_UNITS.ai_visibility_compare).not.toHaveProperty("base");
+  });
+
+  /**
+   * BYTE-IDENTICAL, asserted as whole strings. Every earlier assertion in this file matches a
+   * fragment with a regex; a refactor that rebuilt these sentences around the new `base` term could
+   * satisfy all of them while changing what an operator reads in a log.
+   */
+  it("still speaks the exact same two refusals, word for word", () => {
+    expect(() => creditCostFor("ai_visibility_compare")).toThrow(
+      '"ai_visibility_compare" is priced per compared target, so the call must say how many it ' +
+        "buys. Charging it without a unit count would bill one call's flat 90 for up to 10 " +
+        "compared targets.",
+    );
+    expect(() => creditCostFor("ai_visibility_compare", 1)).toThrow(
+      '"ai_visibility_compare" is priced per compared target and charges for 2 to 10 of them; 1 ' +
+        "is outside that range.",
+    );
+    expect(() => creditCostFor("discover_keywords", 4)).toThrow(
+      '"discover_keywords" is priced per call, so it cannot be charged for 4 units. Only ' +
+        "ai_visibility_compare carry a per-unit price.",
+    );
+  });
+
+  /**
+   * The rule table itself, pinned byte-for-byte — it now carries a PRICE (`base`), so NEVER #6
+   * covers it exactly as it covers TOOL_COSTS.
+   *
+   * The `base` absence is not incidental. apps/web/scripts/gen-tool-docs.mjs renders a per-unit cost
+   * line as `cost x min` to `cost x max` and knows NOTHING about a base, so the first tool to ship
+   * one would publish a range understating its own price. This assertion is what makes that land as
+   * a RED gate on the slice that ships it rather than as a wrong number on a docs page.
+   */
+  it("pins the rule table, and refuses a base until the docs generator can render one", () => {
+    expect(CREDIT_UNITS).toEqual({
+      ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
+    });
+    for (const [tool, rule] of Object.entries(CREDIT_UNITS)) {
+      expect(
+        (rule as PerUnitPriceRule).base,
+        `${tool} carries a base: teach gen-tool-docs.mjs renderCostLine to add it before shipping`,
+      ).toBeUndefined();
+    }
+  });
+});
+
+/**
+ * THE D17 WEIGHING. The registry gate weighs `creditCostFor(name, spec.units?.(input))`, so a base
+ * reaches it automatically — but "automatically" is a hypothesis until it is measured, and the
+ * threshold comparison is STRICT (`>`), which is precisely where a 5-credit base can change the
+ * answer.
+ */
+describe("the D17 confirmation gate weighs the base", () => {
+  it("is the base, and only the base, that pushes a 200-credit call over the threshold", () => {
+    const withBase: PerUnitPriceRule = { unit: "keyword", base: 5, min_units: 1, max_units: 30 };
+    const withoutBase: PerUnitPriceRule = { unit: "keyword", min_units: 1, max_units: 30 };
+
+    expect(creditsForUnits("t", withoutBase, 8, 25)).toBe(CONFIRMATION_THRESHOLD_CREDITS);
+    expect(evaluateConfirmation(creditsForUnits("t", withoutBase, 8, 25), false)).toEqual({
+      requiresConfirmation: false,
+      estimate: 200,
+    });
+
+    expect(creditsForUnits("t", withBase, 8, 25)).toBe(205);
+    expect(evaluateConfirmation(creditsForUnits("t", withBase, 8, 25), false)).toEqual({
+      requiresConfirmation: true,
+      estimate: 205,
+    });
+  });
+
+  /**
+   * And for the signed rule the answer is NO — checked rather than assumed. The dearest
+   * `serp_snapshot` call the signature allows is 85 credits, well under the threshold, so adding a
+   * base does not silently start prompting a tool that never prompted before.
+   */
+  it("leaves the signed serp_snapshot ceiling under the threshold", () => {
+    expect(serpSnapshotCredits(SIGNED_SERP_SNAPSHOT_RULE.max_units)).toBe(85);
+    expect(serpSnapshotCredits(SIGNED_SERP_SNAPSHOT_RULE.max_units)).toBeLessThan(
+      CONFIRMATION_THRESHOLD_CREDITS,
+    );
+    expect(
+      evaluateConfirmation(serpSnapshotCredits(SIGNED_SERP_SNAPSHOT_RULE.max_units), false)
+        .requiresConfirmation,
+    ).toBe(false);
+  });
+
+  /** The existing per-unit tool's own D17 behaviour, unchanged: 900 is over, 180 is not. */
+  it("still asks first for a ten-target comparison and not for a two-target one", () => {
+    expect(evaluateConfirmation(creditCostFor("ai_visibility_compare", 10), false)
+      .requiresConfirmation).toBe(true);
+    expect(evaluateConfirmation(creditCostFor("ai_visibility_compare", 2), false)
+      .requiresConfirmation).toBe(false);
   });
 });
