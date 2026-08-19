@@ -656,6 +656,46 @@ describe("found vs searched-and-not-found vs not-measured", () => {
     const row = await rowFor({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] });
     expect(row.outcome.status).toBe("not_measured");
   });
+
+  /**
+   * THE ENVELOPE SAYS 20000 AND THE TASK DOES NOT. DataForSEO answers HTTP 200 with a 20000 envelope
+   * while the TASK inside it failed, and such a task can still carry a `result` array — a stale or
+   * partial payload from an attempt nobody should read as a measurement. Publishing that payload is
+   * the NEVER #7 shape at its worst: a failed, possibly-billed request printed as a real rank.
+   *
+   * The response below is the FIXTURE'S OWN result — the one that ranks the target at rank_group 3 —
+   * hung under a task whose status is 40501. The row must be `not_measured`, and its reason must name
+   * THE TASK'S OWN STATUS: "something went wrong" is not a reason a reader can act on, and it does not
+   * separate this from a transport failure.
+   *
+   * MEASURED HOLE (referee finding M14): with the task-level `status_code !== 20000` throw deleted
+   * from `unwrapFirstResult`, all 48 specs in this file — and all 2465 in this app — stayed GREEN.
+   * This spec is the one that goes red.
+   */
+  it("a FAILED TASK under a 20000 envelope is not-measured, even when it still carries a result", async () => {
+    const staleButFailed = structuredClone(serpFixture) as {
+      tasks: { status_code: number; status_message?: string; result: unknown[] }[];
+    };
+    staleButFailed.tasks[0].status_code = 40501;
+    staleButFailed.tasks[0].status_message = "Invalid Field";
+    // The payload really is the ranked one — otherwise this spec could pass for the wrong reason.
+    expect(JSON.stringify(staleButFailed.tasks[0].result)).toContain(TARGET);
+
+    const row = await rowFor(staleButFailed);
+    expect(row.outcome.status).toBe("not_measured");
+    if (row.outcome.status !== "not_measured") throw new Error("unreachable");
+    // The TASK's own status, not a generic sentence: 40501 must be readable in the reason.
+    expect(row.outcome.reason).toMatch(/40501/);
+    expect(row.outcome.reason).toMatch(/task/i);
+    // …and not the reason a merely-empty response would have carried.
+    expect(row.outcome.reason).not.toMatch(/no result object/i);
+    expect(row.outcome.means).toMatch(/UNKNOWN/);
+    // Nothing of the stale payload leaks into the outcome — no rank, no placement, no target.
+    expect(row.outcome).not.toHaveProperty("placements");
+    expect(row.outcome).not.toHaveProperty("organic_items_examined");
+    expect(JSON.stringify(row.outcome)).not.toMatch(/"rank_group"/);
+    expect(JSON.stringify(row.outcome)).not.toContain(TARGET);
+  });
 });
 
 // =============================================================================================
