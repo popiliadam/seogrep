@@ -101,15 +101,17 @@ const NON_EXEMPTABLE_TABLES: readonly string[] = [
   "events",
   "gsc_connections",
   "gsc_accounts",
-  // Per-tenant run ledgers (0023 / 0024 / 0025 / 0026 / 0027 — all committed, so a reset stack
-  // has every one of them). domain_lookup_runs is the only member whose project_id is nullable,
-  // which makes user_id its sole tenant column and this spec's bit the thing standing between a
-  // dropped FORCE and a table nothing else narrows.
+  // Per-tenant run ledgers (0023 / 0024 / 0025 / 0026 / 0027 / 0029 — all committed, so a reset
+  // stack has every one of them). domain_lookup_runs is the only member whose project_id is
+  // nullable, and keyword_research_runs has no project column AT ALL, which makes user_id their
+  // sole tenant column and this spec's bit the thing standing between a dropped FORCE and a table
+  // nothing else narrows.
   "crawl_pages",
   "audit_runs",
   "gsc_discovery_runs",
   "audit_content_runs",
   "domain_lookup_runs",
+  "keyword_research_runs",
 ];
 
 /**
