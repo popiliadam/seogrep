@@ -533,6 +533,54 @@ describe("createMockBacklinkDetailsPort", () => {
   });
 });
 
+/**
+ * FOUND BY MUTATION, NOT BY DESIGN. The specs above asked for "forbes.com" and the fixtures
+ * answer for "forbes.com", so deleting the vendor-target echo entirely (`extractResponseTarget()
+ * ?? query.target` -> `query.target`) changed no assertion in either port. That is signed lesson
+ * 12's shape exactly: a double whose VALUES coincide with the input turns a missing constraint
+ * into a passing test. These specs ask for a target the fixtures do NOT answer for, so the echo
+ * is pinned by a difference rather than by a coincidence.
+ */
+describe("the target is the one DataForSEO answered for, not the one that was typed", () => {
+  const TYPED = "typed-by-the-user.example";
+
+  it("the MOCK port echoes the vendor's target over the requested one", async () => {
+    const details = await createMockBacklinkDetailsPort({
+      backlinks: backlinksFixture,
+      targetPages: pagesFixture,
+    }).fetchBacklinkDetails({ ...QUERY, target: TYPED });
+    expect(details.target).toBe("forbes.com");
+  });
+
+  it("the LIVE client echoes the vendor's target over the requested one", async () => {
+    const transport = pairTransport();
+    const details = await liveClient(transport, ledger).fetchBacklinkDetails({
+      ...QUERY,
+      target: TYPED,
+    });
+    expect(details.target).toBe("forbes.com");
+    // ...while the request itself still went out for what the caller actually asked about.
+    expect(sentBody(transport, 0).target).toBe(TYPED);
+    expect(sentBody(transport, 1).target).toBe(TYPED);
+  });
+
+  /** When the vendor names no target, the requested one is the only honest label left. */
+  it("falls back to the requested target only when the vendor named none", async () => {
+    const anonymous = envelope({ total_count: 5, items: [{ domain_from: "a.example" }] });
+    const transport = vi.fn<DfsTransport>(async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url === DFS_BACKLINKS_DOMAIN_PAGES_SUMMARY_ENDPOINT ? pagesFixture : anonymous,
+    }));
+    const details = await liveClient(transport, ledger).fetchBacklinkDetails({
+      ...QUERY,
+      target: TYPED,
+    });
+    expect(details.target).toBe(TYPED);
+  });
+});
+
 describe("disabledBacklinkDetailsPort", () => {
   it("is not enabled and throws if its fetch is ever called", async () => {
     const port = disabledBacklinkDetailsPort();
