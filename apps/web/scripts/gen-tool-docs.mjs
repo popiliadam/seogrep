@@ -802,6 +802,127 @@ export const DOC_PROSE = {
       "returns the \"not yet enabled\" message instead and charges nothing.",
   },
 
+  discover_keywords: {
+    lead:
+      "`discover_keywords` asks DataForSEO Labs to **produce keywords you do not have yet** — from " +
+      "one seed keyword, a list of seeds, or a domain. It answers the question that comes *before* " +
+      "[`research_keywords`](/docs/tools-reference/research-keywords), which prices a list you " +
+      "already wrote: this one hands you rows you did not type. It is **synchronous** — everything " +
+      "comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Pick a **mode**. It is required and has no default, because the four modes ask DataForSEO " +
+      "four different questions — and take four different inputs:\n\n" +
+      "| `mode` | What comes back | What you pass |\n" +
+      "| --- | --- | --- |\n" +
+      "| `ideas` | Keywords from the same product/service categories as your seeds | `seeds` — a " +
+      "list of keywords |\n" +
+      "| `suggestions` | Longer search queries that **contain** your seed | `seed` — exactly one " +
+      "keyword |\n" +
+      "| `related` | The keywords Google lists under **\"searches related to\"** your seed | `seed`, " +
+      "plus optional `depth` |\n" +
+      "| `for_site` | Keywords DataForSEO considers **relevant to a domain** — no seed involved | " +
+      "`target` or `project_id` |\n\n" +
+      "Each row carries DataForSEO's own `search_volume`, `cpc`, `competition`, " +
+      "`competition_level`, `keyword_difficulty`, search intent, search-volume trend and the date " +
+      "the vendor last refreshed the row.\n\n" +
+      "Two optional filters, `min_volume` and `max_difficulty`, are applied **at DataForSEO** " +
+      "rather than after the fact. Neither is sent unless you ask for it, so by default nothing is " +
+      "dropped before you see it.",
+    preExampleSections: [
+      {
+        heading: "A field from another mode is rejected, not ignored",
+        body:
+          "Pass `seed` with `mode: \"for_site\"` and the call is **refused** — it is not quietly " +
+          "dropped. That is deliberate: `for_site` looks up a domain, so a silently ignored seed " +
+          "would run a different lookup than the one you asked for, and bill you for it. The " +
+          "error names the field and says what the mode does take, so it is a one-step fix.\n\n" +
+          "The same rule runs in both directions: `ideas` will not accept a domain, `depth` " +
+          "belongs to `related` alone, and `include_subdomains` to `for_site` alone.",
+      },
+      {
+        heading: "Whose numbers these are",
+        body:
+          "Every value in the output is a **DataForSEO field printed under DataForSEO's own " +
+          "name**. The vendor publishes **two different competition measurements** and they stay " +
+          "apart: `competition` is a 0–1 float, `competition_level` is an advertiser band " +
+          "(`LOW` / `MEDIUM` / `HIGH`). SeoGrep does not merge them, derive one from the other, or " +
+          "rename either into something friendlier.\n\n" +
+          "A field the vendor **did not report** is printed as unreported, never as `0` — \"nobody " +
+          "has a figure for this\" and \"nobody searches this\" are different facts. A genuine zero " +
+          "the vendor did send is printed as `0`. Secondary intent is the one exception in the " +
+          "other direction: an empty list cannot be told apart from a field the vendor never sent, " +
+          "so an empty one is printed as nothing at all rather than as \"no secondary intent\".",
+      },
+      {
+        heading: "What it does not tell you",
+        body:
+          "There is **no opportunity score** here, no \"easy win\" label and no ordering of ours: " +
+          "the rows come back in the one vendor order the tool asks for — by DataForSEO's own " +
+          "`keyword_info.search_volume`, highest first — and the output names that field so you " +
+          "know what \"first\" means.\n\n" +
+          "`keyword_difficulty` is **DataForSEO's own 0–100 estimate about the search results** for " +
+          "a keyword. It is not a forecast of where your site would rank, not a promise that a low " +
+          "number is winnable, and neither DataForSEO nor SeoGrep can tell you what traffic any of " +
+          "these keywords would bring you. Which of them to target is your decision; this tool " +
+          "brings you the vendor's rows and says whose they are.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Find longer search queries containing \"seo " +
+      "software\".\n\nOr start from a domain instead of a keyword:\n\n> What keywords does " +
+      "DataForSEO consider relevant to example.com? Skip anything under 500 monthly searches.",
+    returns:
+      "A heading naming **which mode ran** and the DataForSEO Labs function behind it, then what " +
+      "that mode means in the vendor's own terms, then the locale, the vendor field the rows are " +
+      "ordered by, and the filters that were actually sent — printed in DataForSEO's own " +
+      "`[field, operator, value]` grammar, so what you read is what the vendor received.\n\n" +
+      "The keyword list is captioned as a **window**: the rows you got, the `offset` and `limit` " +
+      "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
+      "followed by the sentence that stops the arithmetic — _this window is a slice of that set, " +
+      "not a count of it_. When the vendor gave no total, the caption says that instead of " +
+      "back-filling one from the rows in hand.\n\n" +
+      "A lookup that matched nothing says so plainly, naming the window and the filters it asked " +
+      "for, and you are still charged for the delivered lookup — \"nothing here matched\" is a " +
+      "real answer, not an error. A missing or foreign mode field, a `limit` or `depth` outside " +
+      "the allowed range, a `for_site` call naming neither `target` nor `project_id` (or both), " +
+      "and a `project_id` that is not yours are all rejected before anything is charged; while " +
+      "live data is off you get a \"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
+          "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
+          "`discover_keywords` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "it unlocks straight away; your existing credits are untouched and keep working for " +
+          "crawls, audits, reports and Search Console tools.\n\n" +
+          "The `limit` ceiling is **part of the price** rather than a display preference: " +
+          "DataForSEO bills **per returned row**, and that cap is what holds the flat price inside " +
+          "the margin it was signed against. Asking for fewer rows costs the same; asking for more " +
+          "than the ceiling is refused before anything is charged.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its window to the conversation and " +
+          "nothing else keeps them — there is no saved keyword list, no dashboard page and no " +
+          "\"new since last time\", so run it again for a fresh read. The lookup-history table " +
+          "that backs the other domain tools is bound to those tools by design and does not " +
+          "accept this one.\n\n" +
+          "The keywords are **the vendor's, not yours**: none of your seeds is guaranteed to " +
+          "appear in the answer, and a set of many thousands is normal — read the window caption " +
+          "for how far your slice sits from DataForSEO's whole-set count, and page through it with " +
+          "`offset`.\n\n" +
+          "`for_site` is DataForSEO's own judgement about which keywords are **relevant to a " +
+          "domain**. It is not a list of what that site currently ranks for — that is " +
+          "[`ranked_keywords`](/docs/tools-reference/ranked-keywords) — and the two will not " +
+          "agree. `related` follows \"searches related to\" outward from your seed, so a deeper " +
+          "`depth` drifts further from it.",
+      },
+    ],
+  },
+
   ranked_keywords: {
     lead:
       "`ranked_keywords` lists the Google organic keywords a domain **already ranks for** — each " +

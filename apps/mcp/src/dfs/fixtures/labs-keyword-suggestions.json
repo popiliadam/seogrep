@@ -1,0 +1,100 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2612 sec.",
+  "cost": 0.01236,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0011",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.2544 sec.",
+      "cost": 0.01236,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_suggestions", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_suggestions",
+        "se_type": "google",
+        "keyword": "seo software",
+        "language_code": "en",
+        "location_code": 2840,
+        "limit": 100
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "seed_keyword": "seo software",
+          "seed_keyword_data": {
+            "se_type": "google",
+            "keyword": "seo software",
+            "keyword_info": {
+              "se_type": "google",
+              "search_volume": 22200,
+              "cpc": 27.66,
+              "competition": 0.88,
+              "competition_level": "HIGH",
+              "last_updated_time": "2026-07-31 04:12:07 +00:00"
+            }
+          },
+          "location_code": 2840,
+          "language_code": "en",
+          "total_count": 1204,
+          "items_count": 3,
+          "offset": 0,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "best seo software 2026",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.63,
+                "competition_level": "HIGH",
+                "cpc": 21.4,
+                "search_volume": 5400,
+                "search_volume_trend": { "monthly": 9, "quarterly": 31, "yearly": 120 }
+              },
+              "keyword_properties": { "se_type": "google", "keyword_difficulty": 55 },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "commercial",
+                "foreign_intent": ["transactional"]
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "free seo software",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00",
+                "competition": 0.35,
+                "competition_level": "MEDIUM",
+                "cpc": 6.11,
+                "search_volume": 3600
+              },
+              "keyword_properties": { "se_type": "google", "keyword_difficulty": 41 }
+            },
+            {
+              "se_type": "google",
+              "keyword": "seo software comparison chart",
+              "location_code": 2840,
+              "language_code": "en",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-07-31 04:12:07 +00:00"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

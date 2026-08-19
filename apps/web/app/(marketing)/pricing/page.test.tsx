@@ -33,6 +33,7 @@ describe("pricing page", () => {
       ["Content audit (queries vs page titles)", "12"],
       ["Page speed audit (up to 5 URLs)", "15"],
       ["Keyword research (100 keywords)", "25"],
+      ["Keyword discovery (seed or domain)", "40"],
       ["Ranked keywords (per domain)", "65"],
       ["Backlink profile (per domain)", "70"],
       ["Competitor comparison (per domain)", "90"],
@@ -80,6 +81,10 @@ describe("pricing page", () => {
     // bundle's price would advertise something audit_speed is not.
     audit_speed: "Page speed audit (up to 5 URLs)",
     research_keywords: "Keyword research (100 keywords)",
+    // Its OWN row (2026-08-19, signed at 40), not a member of the research row above: that row
+    // prices a list the caller already has, this one buys a list DataForSEO produces. Sharing a
+    // label would advertise one price for two separate purchases.
+    discover_keywords: "Keyword discovery (seed or domain)",
     ranked_keywords: "Ranked keywords (per domain)",
     analyze_backlinks: "Backlink profile (per domain)",
     compare_competitors: "Competitor comparison (per domain)",
