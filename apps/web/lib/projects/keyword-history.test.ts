@@ -146,6 +146,59 @@ describe("buildKeywordRunHistory — which runs may be subtracted from which", (
     expect(entries[0]?.change).toBeNull();
   });
 
+  /**
+   * TWO SETS THAT WOULD COLLIDE UNDER A NAIVE JOINER. `["seo tools"]` is one keyword containing a
+   * space; `["seo", "tools"]` is two keywords. Joined with a space both read "seo tools", so a
+   * single-character choice in the key decides whether the panel subtracts one from the other.
+   *
+   * MEASURED, not assumed (mutation, 2026-08-19): replacing the NUL joiner with a space left every
+   * other case in this file GREEN, so nothing here could see the collision. The coverage condition
+   * does not save it either — a two-keyword run the vendor answered once has the same `answered`
+   * as a one-keyword run it answered.
+   */
+  it("never collides two sets that only a naive joiner would merge", () => {
+    const { entries } = buildKeywordRunHistory([
+      run({
+        created_at: "2026-08-10T00:00:00.000Z",
+        keyword_set: ["seo", "tools"],
+        answered: 1,
+        total: 1000,
+      }),
+      run({
+        created_at: "2026-08-01T00:00:00.000Z",
+        keyword_set: ["seo tools"],
+        answered: 1,
+        total: 800,
+      }),
+    ]);
+    expect(entries[0]?.change).toBeNull();
+  });
+
+  /**
+   * …AND THE SAME COLLISION ONE FIELD OVER. `location_code 28` beside `answered 402` and
+   * `location_code 2840` beside `answered 2` are different runs whose key PARTS concatenate to the
+   * same characters, so this is what makes the separator between the parts load-bearing rather
+   * than decorative. Also measured: with the parts joined by "", this case goes red and nothing
+   * else in the file does.
+   */
+  it("never collides two runs whose key parts merely concatenate the same way", () => {
+    const { entries } = buildKeywordRunHistory([
+      run({
+        created_at: "2026-08-10T00:00:00.000Z",
+        locale: { language_code: "en", location_code: 28 },
+        answered: 402,
+        total: 1000,
+      }),
+      run({
+        created_at: "2026-08-01T00:00:00.000Z",
+        locale: { language_code: "en", location_code: 2840 },
+        answered: 2,
+        total: 800,
+      }),
+    ]);
+    expect(entries[0]?.change).toBeNull();
+  });
+
   /** …nor a superset, which is the same refusal approached from the other side. */
   it("never compares a set with a superset of itself", () => {
     const { entries } = buildKeywordRunHistory([
