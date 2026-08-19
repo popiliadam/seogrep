@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   PAID_BALANCE_TOOLS,
@@ -27,16 +28,15 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // beside this hand-written pin.
   //
   // Seven -> eight on 2026-08-18: backlink_changes, which sends TWO paid DataForSEO requests per
-  // call and is therefore the heaviest member here by vendor round trips. The set GREW; nothing
-  // left it.
+  // call, so one call spends vendor money twice over. The set GREW; nothing left it.
   //
   // Eight -> nine on 2026-08-18: backlink_details, which sends the same TWO paid requests per call
   // as backlink_changes but on the ROW tariff, so its worst case buys 900 billed rows. The set
   // GREW; nothing left it.
   //
   // Nine -> ten on 2026-08-19: disavow_candidates, which sends THREE paid DataForSEO requests per
-  // call — more than any other member — and is therefore the heaviest here by vendor round trips.
-  // The set GREW; nothing left it.
+  // call, on the ROW tariff. The set GREW; nothing left it. No ranking by round trips is claimed
+  // for it — the first draft of this line claimed one and it was false; see the spec below.
   it("is exactly the ten DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
@@ -122,5 +122,33 @@ describe("PaidBalanceRequiredError", () => {
     expect(isPaidBalanceRequired(new Error("reserve_credits failed"))).toBe(false);
     expect(isPaidBalanceRequired("PaidBalanceRequiredError")).toBe(false);
     expect(isPaidBalanceRequired(null)).toBe(false);
+  });
+});
+
+/**
+ * THE SOURCE OF THE ONE FALSE SENTENCE THAT REACHED A CUSTOMER.
+ *
+ * backlink_changes' entry called itself "the heaviest single member of this set by vendor round
+ * trips" and disavow_candidates' called its three requests "the most of any member here". The
+ * first was already false when it was written and the second inherited it, and from here the
+ * wording was copied into disavow_candidates' published Billing section as "the most of any
+ * SeoGrep tool" — where audit_speed's up-to-five Lighthouse requests per call make it plainly
+ * wrong (NEVER #7; apps/web/lib/tool-docs-gen.test.ts pins the published half).
+ *
+ * A comment is not a claim a type checker reads, which is exactly why it travelled. This file
+ * holds NO per-call request count for any tool, so no ranking over this set can be derived here
+ * and none may be asserted here either. Scanned as source text, on the module only: this spec's
+ * own patterns would otherwise match themselves.
+ */
+describe("the membership comments rank nothing this file cannot count", () => {
+  const source = readFileSync(new URL("./paid-balance.ts", import.meta.url), "utf8");
+
+  it.each([
+    ["superlative 'the most of any'", /the most of any/i],
+    ["superlative 'more than any other'", /more than any other/i],
+    ["superlative 'heaviest'", /heaviest/i],
+    ["superlative 'most requests / round trips'", /most (?:requests|round.?trips|calls)/i],
+  ])("carries no %s", (_label, pattern) => {
+    expect(source).not.toMatch(pattern);
   });
 });

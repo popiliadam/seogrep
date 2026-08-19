@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 // exported so this unit test can pin the template render + the --check sync logic without the
 // built MCP registry (the CLI loads that lazily, so importing the module here is side-effect free).
 import {
+  DOC_PROSE,
   FRONTMATTER_DESCRIPTION_MAX,
   checkToolsMetaSync,
   dayPhrase,
@@ -422,5 +423,39 @@ describe("substituteProseTokens — the leftover-token guard", () => {
     expect(substituteProseTokens("{{MAX_GSC_ROWS}} rows, {{GSC_LAG_DAYS}} back", constants)).toBe(
       "15,000 rows, 3 days back",
     );
+  });
+});
+
+/**
+ * NEVER #7, ON THE ONE SURFACE THAT REACHES A CUSTOMER.
+ *
+ * disavow_candidates' Billing section shipped the sentence "three requests per call, the most of
+ * any SeoGrep tool". It is FALSE: audit_speed fans out one Lighthouse request per URL, up to
+ * MAX_SPEED_URLS (five) per call, so the claim is wrong on any audit_speed call with four or more
+ * URLs. It reached a published page because nothing here could check it — DOC_PROSE is prose, and
+ * neither the tool registry nor TOOL_COSTS carries a per-call vendor-request count for anything to
+ * check a ranking AGAINST. A superlative nothing can verify is not a claim, it is a guess with
+ * confident punctuation, and the lineage is documented: the same wording sat in two paid-balance.ts
+ * comments first (one of them false from the day it was written) before it was copied outward.
+ *
+ * So the SHAPE is forbidden rather than corrected. If a future page really needs to rank tools by
+ * vendor round trips, the number has to exist in the registry first; then the assertion can be
+ * derived rather than typed, and this spec can be replaced by one that checks it.
+ */
+describe("DOC_PROSE ranks nothing it has no number for (NEVER #7)", () => {
+  const UNCHECKABLE = [
+    /the most of any/i,
+    /more than any other/i,
+    /(?:the )?heaviest\b/i,
+    /(?:the )?most (?:requests|round.?trips|calls)/i,
+    /(?:the )?(?:largest|biggest|highest) number of (?:requests|round.?trips|calls)/i,
+    /than any other (?:tool|seogrep)/i,
+  ];
+
+  it.each(Object.keys(DOC_PROSE))("%s claims no vendor-request superlative", (tool) => {
+    const text = JSON.stringify(DOC_PROSE[tool]);
+    for (const pattern of UNCHECKABLE) {
+      expect(text, `${tool}: uncheckable superlative matching ${pattern}`).not.toMatch(pattern);
+    }
   });
 });

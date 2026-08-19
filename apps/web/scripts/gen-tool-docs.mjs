@@ -1542,7 +1542,7 @@ export const DOC_PROSE = {
           "a half-built candidate list is never billed. When the filtered window names no domain " +
           "at all, the second request is not sent: there would be nothing to ask it about.\n\n" +
           "`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider — three requests per call, the most of any SeoGrep tool — so it " +
+          "third-party provider — three requests per call, **every one of them billed** — so it " +
           "is not available on trial credits. Buy any credit pack and it unlocks straight away; " +
           "your existing credits are untouched and keep working for crawls, audits, reports and " +
           "Search Console tools.\n\n" +
