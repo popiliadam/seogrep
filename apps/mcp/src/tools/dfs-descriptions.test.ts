@@ -33,8 +33,9 @@ describe("DataForSEO tool descriptions", () => {
   // Seven -> eight on 2026-08-18 (backlink_changes). The count RISING is the only edit this pin
   // sanctions; every it.each below now has one more tool to hold to the same three promises.
   // Eight -> nine the same day (backlink_details), for the same reason and under the same rule.
-  it("covers all nine gated tools", () => {
-    expect(GATED).toHaveLength(9);
+  // Nine -> ten on 2026-08-19 (disavow_candidates), for the same reason and under the same rule.
+  it("covers all ten gated tools", () => {
+    expect(GATED).toHaveLength(10);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

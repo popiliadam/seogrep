@@ -54,6 +54,9 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // backlink_details (2026-08-18) — also TWO real DataForSEO Backlinks requests per call, and on
   // the ROW tariff, so its worst case buys 900 billed rows. Same reason as backlink_changes.
   "backlink_details",
+  // disavow_candidates (2026-08-19) — THREE real DataForSEO Backlinks requests per call, the most
+  // of any member here, and on the ROW tariff. Same reason as the two backlink tools above.
+  "disavow_candidates",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */
