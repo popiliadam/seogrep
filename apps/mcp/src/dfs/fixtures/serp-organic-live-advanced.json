@@ -1,0 +1,91 @@
+{
+  "version": "0.1.20260819",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "3.4218 sec.",
+  "cost": 0.02,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "fixture-task-0001",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "3.3011 sec.",
+      "cost": 0.02,
+      "result_count": 1,
+      "path": ["v3", "serp", "google", "organic", "live", "advanced"],
+      "data": {
+        "api": "serp",
+        "function": "live",
+        "se": "google",
+        "se_type": "organic",
+        "keyword": "seo software",
+        "location_name": "United States",
+        "language_code": "en",
+        "device": "desktop",
+        "depth": 100
+      },
+      "result": [
+        {
+          "keyword": "seo software",
+          "type": "organic",
+          "se_domain": "google.com",
+          "location_code": 2840,
+          "language_code": "en",
+          "check_url": "https://www.google.com/search?q=seo+software&num=100&hl=en&gl=US",
+          "datetime": "2026-08-19 09:14:22 +00:00",
+          "spell": null,
+          "item_types": ["organic", "featured_snippet", "people_also_ask"],
+          "se_results_count": 428000000,
+          "items_count": 4,
+          "items": [
+            {
+              "type": "featured_snippet",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "position": "left",
+              "domain": "rival-one-fixture.test",
+              "title": "What is SEO software?",
+              "url": "https://rival-one-fixture.test/guides/what-is-seo-software",
+              "links": null
+            },
+            {
+              "type": "organic",
+              "rank_group": 1,
+              "rank_absolute": 2,
+              "position": "left",
+              "domain": "rival-one-fixture.test",
+              "title": "SEO Software — Rival One",
+              "url": "https://rival-one-fixture.test/seo-software",
+              "breadcrumb": "rival-one-fixture.test > seo-software",
+              "is_featured_snippet": false,
+              "rating": null,
+              "about_this_result": { "type": "about_this_result_element" }
+            },
+            {
+              "type": "organic",
+              "rank_group": 3,
+              "rank_absolute": 4,
+              "position": "left",
+              "domain": "example-fixture.test",
+              "title": "SEO Software for Growing Teams — Example",
+              "url": "https://example-fixture.test/seo-software",
+              "breadcrumb": "example-fixture.test > seo-software",
+              "is_featured_snippet": false,
+              "rating": null,
+              "links": null
+            },
+            {
+              "type": "people_also_ask",
+              "rank_group": 2,
+              "rank_absolute": 3,
+              "position": "left",
+              "items": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
