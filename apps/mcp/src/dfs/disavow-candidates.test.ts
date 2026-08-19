@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as disavowModule from "./disavow-candidates.ts";
 import {
@@ -159,13 +160,17 @@ describe("the outward world belongs to the human", () => {
     const endpoints = Object.entries(disavowModule)
       .filter(([key]) => key.startsWith("DFS_") && key.endsWith("_ENDPOINT"))
       .map(([, value]) => value as string);
+    // Pinned to LITERAL URLs, not to the constants themselves. Comparing the exported constants
+    // to the same imported constants is a value-tautology: both sides move together, so the spec
+    // stayed GREEN when a constant was rewritten to a Google URL (measured, referee round 2 / M5).
+    // A literal on the right-hand side is the only version of this assertion that bites.
     expect(endpoints.sort()).toEqual([
-      DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT,
-      DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT,
-    ].sort());
+      "https://api.dataforseo.com/v3/backlinks/bulk_spam_score/live",
+      "https://api.dataforseo.com/v3/backlinks/referring_networks/live",
+    ]);
     // The link endpoint is IMPORTED from backlink-details.ts rather than restated, so the module
-    // declares two of the three and reuses the third.
-    expect(DFS_BACKLINKS_LIST_ENDPOINT.startsWith("https://api.dataforseo.com/")).toBe(true);
+    // declares two of the three and reuses the third — pinned to its literal for the same reason.
+    expect(DFS_BACKLINKS_LIST_ENDPOINT).toBe("https://api.dataforseo.com/v3/backlinks/backlinks/live");
   });
 
   it("says in the FILE ITSELF that nothing was sent, because a chat caveat gets separated", async () => {
@@ -176,6 +181,54 @@ describe("the outward world belongs to the human", () => {
     expect(result.disavow_txt).not.toMatch(/penali[sz]/i);
     expect(result.disavow_txt).not.toMatch(/toxic/i);
     expect(result.disavow_txt).toMatch(/no claim is made that these links harm your site/i);
+  });
+
+  /**
+   * THE SAME RULE, ON THE MODULE THAT ACTUALLY OWNS THE TRANSPORT.
+   *
+   * tools/disavow-candidates.test.ts already scans the LAYER ABOVE for a submission path. That
+   * left the one file that holds the outbound socket unscanned, and the hole was measured, not
+   * imagined: `void fetch("https://searchconsole.googleapis.com/v1/notify")` inserted here before
+   * request 1 kept 108/108 unit specs, `tsc --noEmit` and `eslint src` ALL GREEN (referee round 2,
+   * finding B1). The endpoint-set spec above cannot see it — an extra call that reuses no exported
+   * constant changes no constant — and the wire pin cannot either, because the injected transport
+   * only ever sees the calls that go THROUGH it.
+   */
+  it("this module's own source contains no submission path — no Google endpoint, no fetch", () => {
+    const source = readFileSync(new URL("./disavow-candidates.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/googleapis\.com/i);
+    expect(source).not.toMatch(/searchconsole|search-console/i);
+    expect(source).not.toMatch(/webmasters/i);
+    // Every request this port makes goes through the INJECTED transport. A bare fetch/XHR is by
+    // definition a call that escaped it, whatever host it names.
+    expect(source).not.toMatch(/\bfetch\s*\(/);
+    expect(source).not.toMatch(/\bXMLHttpRequest\b/);
+    expect(source).not.toMatch(/\brequest\s*\(\s*["'`]https?:/i);
+    // Any URL literal that is not DataForSEO — the two endpoint constants above are the only
+    // http(s) literals this file is allowed to contain.
+    expect(source).not.toMatch(/\bhttps?:\/\/(?!api\.dataforseo\.com)/i);
+    // ...and no TODO promising one later. A commented submission path is still a plan to submit.
+    expect(source).not.toMatch(/TODO[^\n]*(submit|upload|apply)/i);
+  });
+
+  /**
+   * ...and the RUNTIME half, because a source scan only sees the shapes it was told to look for.
+   * An outbound call written through a variable (`const f = globalThis.fetch; f(url)`) or with a
+   * host assembled in a template literal names no forbidden token and carries no URL literal — it
+   * reads past every regex above. It cannot get past this: the transport is injected, so ANY use
+   * of global fetch during a lookup is by construction a request that left the port unaccounted.
+   */
+  it("never touches global fetch — every request goes through the injected transport", async () => {
+    const escaped = vi.fn(() => {
+      throw new Error("an outbound call escaped the injected transport");
+    });
+    vi.stubGlobal("fetch", escaped);
+    try {
+      await liveClient(trioTransport(), ledger).fetchDisavowCandidates(QUERY);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(escaped).not.toHaveBeenCalled();
   });
 });
 
