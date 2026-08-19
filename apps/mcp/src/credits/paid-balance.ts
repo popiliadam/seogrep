@@ -70,6 +70,11 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // criterion is "does it spend?", never "how much?" — and per the note above, no member's
   // per-call request count lives in this file, so this entry compares itself to nothing.
   "discover_keywords",
+  // my_pages (2026-08-19) — one real DataForSEO Labs request per call, billed per returned row up
+  // to that port's cap. Its OTHER half reads `crawl_pages`, which spends nothing at all; half a
+  // tool being free exempts nothing, because the criterion is "does it spend?" and one paid
+  // request is a yes. No comparison to any member above is made or implied.
+  "my_pages",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

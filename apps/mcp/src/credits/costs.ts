@@ -30,6 +30,19 @@ export const TOOL_COSTS = {
   // prices a list the caller already has, this one asks the vendor to produce one. No existing
   // number moved.
   discover_keywords: 40,
+  // my_pages (plan 2026-08-17 §B, MADDE 1 row #11): DataForSEO Labs `relevant_pages` — one row per
+  // PAGE of a domain, carrying that page's position histogram and traffic estimates, joined
+  // against the pages our own crawl fetched. SIGNED BY THE OPERATOR 2026-08-17 at 40, with the
+  // vendor cost MEASURED on the Labs tariff ($0.012 per request + $0.00012 per row): typical
+  // $0.024 at 100 rows (20.7x) and worst $0.132 at 1,000 rows (3.8x). The gap map's 35 is the
+  // STALE figure and the signature is later. There is ONE price, so the ROW CAP is the only thing
+  // holding the signed worst case up: MAX_RELEVANT_PAGES_ROWS (1,000) and ONE request per lookup
+  // (dfs/relevant-pages.ts) are part of the signed price, not soft limits — and so is the ABSENCE
+  // of `include_clickstream_data`, which doubles the vendor cost of the same request and would
+  // drop the worst case to 1.88x, under the signature package's own 3x band. Reading `crawl_pages`
+  // costs no vendor money: the join is analysis over data the tenant already paid for. No existing
+  // number moved.
+  my_pages: 40,
   ranked_keywords: 65,
   analyze_backlinks: 70,
   compare_competitors: 90,

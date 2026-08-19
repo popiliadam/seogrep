@@ -17,6 +17,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       pull_gsc_data: 5,
       research_keywords: 25,
       discover_keywords: 40,
+      my_pages: 40,
       ranked_keywords: 65,
       analyze_backlinks: 70,
       compare_competitors: 90,
@@ -84,8 +85,16 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // a different vendor family (Labs, not Backlinks) and ONE request, whose worst case at the
   // 1,000-row cap the signature measured at 3.8x. The v1 idea of a SECOND price above limit > 500
   // was dropped in v2: there is one price, and MAX_DISCOVER_ROWS is what holds it.
-  it("has exactly 30 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(30);
+  //
+  // 30 -> 31 on 2026-08-19: my_pages (plan §B) at a SIGNED 40 credits — MADDE 1 row #11 of the same
+  // 2026-08-17 signature package. Same shape as the eight growths above: the table GREW and no
+  // existing number moved. It shares discover_keywords' 40 by arithmetic rather than by analogy —
+  // the same Labs tariff and ONE request, whose worst case at the 1,000-row cap the signature
+  // measured at 3.8x. The gap map's 35 for this row is STALE; the signature is later and is what
+  // this pin protects. What holds the 40 up is dfs/relevant-pages.ts: the row cap, the single
+  // request, and the deliberate ABSENCE of the clickstream flag that would double the vendor bill.
+  it("has exactly 31 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(31);
   });
 
   it("exposes only non-negative integer costs", () => {
