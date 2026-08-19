@@ -481,6 +481,31 @@ describe("buildCandidateSet", () => {
     expect(result.candidates.rows[0]?.window_dofollow_link_count).toBe(1);
   });
 
+  /**
+   * FOUND BY MUTATION, NOT BY DESIGN (finding M15). `row.dofollow === true` -> `!== false`
+   * survived every spec above, because no row in any fixture has a MISSING `dofollow`. It would
+   * have counted "the vendor did not say" as a dofollow link — publishing, under a vendor field's
+   * name, a fact the vendor never stated (NEVER #7).
+   */
+  it("does not count a link the vendor never marked dofollow", () => {
+    const set = buildCandidateSet(
+      parseBacklinkRowsResponse(
+        envelope({
+          items: [
+            { domain_from: "a.example", dofollow: true },
+            { domain_from: "a.example" },
+            { domain_from: "a.example", dofollow: false },
+          ],
+        }),
+        BOUNDS,
+      ),
+      new Map(),
+      MAX_CANDIDATE_DOMAINS,
+    );
+    expect(set.rows[0]?.window_link_count).toBe(3);
+    expect(set.rows[0]?.window_dofollow_link_count).toBe(1);
+  });
+
   it("lists each distinct linking domain exactly once, keeping the vendor's own spelling", () => {
     const links = parseBacklinkRowsResponse(linksFixture, BOUNDS);
     expect(distinctLinkDomains(links)).toEqual([
@@ -1034,6 +1059,68 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
     await expect(liveClient(transport, ledger).fetchDisavowCandidates(QUERY)).rejects.toThrow(
       /task failed \(status 40501\)/,
     );
+  });
+
+  /**
+   * FOUND BY MUTATION, NOT BY DESIGN (finding M13). The "throws when the THIRD request fails"
+   * spec above only exercises an HTTP-level failure, which `post()` throws on BEFORE anything is
+   * parsed — so wrapping the network PARSE in a try/catch that degraded to an empty window
+   * survived every spec, and a complete-looking disavow file was served from two requests out of
+   * three. A 200 carrying a failed task is the realistic shape of that failure, and it must throw.
+   */
+  it("throws when the THIRD response carries a FAILED TASK, not just a failed HTTP status", async () => {
+    const transport = trioTransport({
+      [DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT]: {
+        status_code: 20000,
+        tasks: [{ status_code: 40501, status_message: "Invalid Field" }],
+      },
+    });
+    await expect(liveClient(transport, ledger).fetchDisavowCandidates(QUERY)).rejects.toThrow(
+      /task failed \(status 40501\)/,
+    );
+    // ...and the SECOND response too, for the same reason.
+    const midway = trioTransport({
+      [DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT]: {
+        status_code: 20000,
+        tasks: [{ status_code: 40501, status_message: "Invalid Field" }],
+      },
+    });
+    await expect(liveClient(midway, ledger).fetchDisavowCandidates(QUERY)).rejects.toThrow(
+      /task failed \(status 40501\)/,
+    );
+  });
+
+  /**
+   * FOUND BY MUTATION, NOT BY DESIGN (finding M16) — the same shape backlink-details.ts records
+   * against itself. Every spec above asks for "example.com" and the fixtures answer for
+   * "example.com", so deleting the vendor-target echo on the LIVE path
+   * (`extractResponseTarget(rawLinks) ?? query.target` -> `query.target`) changed no assertion.
+   * These ask for a target the fixtures do NOT answer for, so the echo is pinned by a difference
+   * rather than by a coincidence — and the disavow file's own header carries that target.
+   */
+  it("the LIVE client echoes the vendor's target over the one that was typed", async () => {
+    const transport = trioTransport();
+    const result = await liveClient(transport, ledger).fetchDisavowCandidates({
+      ...QUERY,
+      target: "typed-by-the-user.example",
+    });
+    expect(result.target).toBe("example.com");
+    expect(result.disavow_txt).toContain("for example.com");
+    // ...while the requests still went out for what the caller actually asked about.
+    expect(sentBody(transport, 0).target).toBe("typed-by-the-user.example");
+    expect(sentBody(transport, 2).target).toBe("typed-by-the-user.example");
+  });
+
+  /** When the vendor names no target, the requested one is the only honest label left. */
+  it("falls back to the requested target only when the vendor named none", async () => {
+    const anonymous = envelope({ total_count: 5, items: [{ domain_from: "a.example" }] });
+    const transport = trioTransport({ [DFS_BACKLINKS_LIST_ENDPOINT]: anonymous });
+    const result = await liveClient(transport, ledger).fetchDisavowCandidates({
+      ...QUERY,
+      target: "typed-by-the-user.example",
+    });
+    expect(result.target).toBe("typed-by-the-user.example");
+    expect(result.disavow_txt).toContain("for typed-by-the-user.example");
   });
 
   it("returns windows whose bounds are the ones actually sent", async () => {
