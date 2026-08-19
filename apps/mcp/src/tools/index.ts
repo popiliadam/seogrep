@@ -15,6 +15,7 @@ import { auditSchemaTool } from "./audit-schema.ts";
 import { auditSpeedTool } from "./audit-speed.ts";
 import { auditContentTool } from "./audit-content.ts";
 import { researchKeywordsTool } from "./research-keywords.ts";
+import { discoverKeywordsTool } from "./discover-keywords.ts";
 import { rankedKeywordsTool } from "./ranked-keywords.ts";
 import { analyzeBacklinksTool } from "./analyze-backlinks.ts";
 import { compareCompetitorsTool } from "./compare-competitors.ts";
@@ -51,6 +52,11 @@ export {
   renderContentAudit,
 } from "./audit-content.ts";
 export { researchKeywordsTool } from "./research-keywords.ts";
+export {
+  discoverKeywordsTool,
+  makeDiscoverKeywordsTool,
+  formatDiscoverKeywords,
+} from "./discover-keywords.ts";
 export { rankedKeywordsTool, makeRankedKeywordsTool } from "./ranked-keywords.ts";
 export { analyzeBacklinksTool, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
 export { compareCompetitorsTool, makeCompareCompetitorsTool } from "./compare-competitors.ts";
@@ -99,6 +105,9 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   auditSpeedTool,
   auditContentTool,
   researchKeywordsTool,
+  // Beside research_keywords on purpose: that tool PRICES a list the caller already has, this one
+  // asks the vendor to produce one. Neighbours in tools/list, and therefore in the docs nav.
+  discoverKeywordsTool,
   rankedKeywordsTool,
   analyzeBacklinksTool,
   compareCompetitorsTool,

@@ -201,6 +201,8 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       "tools/compare-competitors.ts",
       // disavow_candidates (2026-08-19): reaches reserveSpend through dfs/disavow-candidates.ts.
       "tools/disavow-candidates.ts",
+      // discover_keywords (2026-08-19): reaches reserveSpend through dfs/discover-keywords.ts.
+      "tools/discover-keywords.ts",
       "tools/keyword-gap.ts",
       "tools/link-gap.ts",
       "tools/ranked-keywords.ts",
