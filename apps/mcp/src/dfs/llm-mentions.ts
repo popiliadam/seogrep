@@ -699,7 +699,9 @@ export function parseAiVisibilityCompareResponse(
     if (typeof key !== "string" || key === "") return [];
     // The key is the CALLER's, not one of the vendor's metrics, so it is lifted out rather than
     // left to be rendered as a measurement.
-    const { [AGGREGATION_KEY_FIELD]: _lifted, ...metrics } = row.vendor_metrics;
+    const metrics = Object.fromEntries(
+      Object.entries(row.vendor_metrics).filter(([field]) => field !== AGGREGATION_KEY_FIELD),
+    );
     return [
       {
         aggregation_key: key,
