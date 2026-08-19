@@ -74,7 +74,7 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  * Part B matches these vendor rows against our own `crawl_pages.url` rows. The two sides do NOT
  * arrive in the same shape, and the mismatch is inside this one endpoint:
  *
- *   - the REQUEST's `target` is documented "without https:// and www.";
+ *   - the REQUEST's `target` is documented as a bare domain, with no scheme and no `www.`;
  *   - the RESPONSE's `page_address` is documented "Absolute URL of the relevant page";
  *   - our crawler stores `crawl_pages.url` through its own normalizer (crawler/crawl.ts
  *     `normalizeUrl`): scheme KEPT, fragment dropped, one trailing slash trimmed.
@@ -129,9 +129,9 @@ export const DFS_RELEVANT_PAGES_ENDPOINT =
  *
  * WHAT IT DELIBERATELY COLLAPSES — because the two forms are the same page and the two sides of
  * the join demonstrably disagree about them:
- *   - the SCHEME, entirely. `https://x.com/a`, `http://x.com/a` and a bare `x.com/a` all key the
- *     same. The vendor documents `target` scheme-less and `page_address` scheme-ful in the SAME
- *     endpoint, so a key that carries the scheme is a key that mismatches on vendor whim.
+ *   - the SCHEME, entirely. An `https` URL, the same URL under `http`, and the bare `x.com/a` form
+ *     all key the same. The vendor documents `target` scheme-less and `page_address` scheme-ful in
+ *     the SAME endpoint, so a key that carries the scheme is a key that mismatches on vendor whim.
  *   - HOST CASE. Hosts are case-insensitive; `WWW.Example.COM` and `example.com` are one host.
  *   - a leading `www.`. Our own domain normalizer drops it and the vendor's `target` contract
  *     drops it, so a `page_address` that keeps it must not become a second page.
