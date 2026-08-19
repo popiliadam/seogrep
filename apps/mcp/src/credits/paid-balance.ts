@@ -47,6 +47,10 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // the audit family, whose other four members only cost us CPU; this one buys a Lighthouse run
   // per page. The import-graph spec is what caught it, not the name.
   "audit_speed",
+  // backlink_changes (2026-08-17) — TWO real DataForSEO Backlinks requests per call, so it is the
+  // heaviest single member of this set by vendor round trips and belongs here for the same reason
+  // the gap tools do.
+  "backlink_changes",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

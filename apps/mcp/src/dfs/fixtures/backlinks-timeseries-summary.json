@@ -1,0 +1,84 @@
+{
+  "version": "0.1.20230825",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.0709 sec.",
+  "cost": 0.02009,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "09291624-1535-0459-0000-f120c4dac3d4",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.0071 sec.",
+      "cost": 0.02009,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "timeseries_summary", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "timeseries_summary",
+        "target": "dataforseo.com",
+        "date_from": "2021-12-01",
+        "date_to": "2022-02-01",
+        "group_range": "month"
+      },
+      "result": [
+        {
+          "target": "dataforseo.com",
+          "date_from": "2021-12-01",
+          "date_to": "2022-02-01",
+          "group_range": "month",
+          "items_count": 3,
+          "items": [
+            {
+              "type": "backlinks_timeseries_summary",
+              "date": "2021-12-31 00:00:00 +00:00",
+              "rank": 293,
+              "backlinks": 1334,
+              "backlinks_nofollow": 176,
+              "referring_pages": 1254,
+              "referring_domains": 422,
+              "referring_domains_nofollow": 74,
+              "referring_main_domains": 391,
+              "referring_main_domains_nofollow": 55,
+              "referring_ips": 379,
+              "referring_subnets": 325,
+              "referring_pages_nofollow": 30
+            },
+            {
+              "type": "backlinks_timeseries_summary",
+              "date": "2022-01-31 00:00:00 +00:00",
+              "rank": 297,
+              "backlinks": 1483,
+              "backlinks_nofollow": 211,
+              "referring_pages": 1396,
+              "referring_domains": 484,
+              "referring_domains_nofollow": 89,
+              "referring_main_domains": 450,
+              "referring_main_domains_nofollow": 70,
+              "referring_ips": 425,
+              "referring_subnets": 363,
+              "referring_pages_nofollow": 31
+            },
+            {
+              "type": "backlinks_timeseries_summary",
+              "date": "2022-02-28 00:00:00 +00:00",
+              "rank": 299,
+              "backlinks": 1594,
+              "backlinks_nofollow": 242,
+              "referring_pages": 1506,
+              "referring_domains": 528,
+              "referring_domains_nofollow": 96,
+              "referring_main_domains": 489,
+              "referring_main_domains_nofollow": 76,
+              "referring_ips": 462,
+              "referring_subnets": 390,
+              "referring_pages_nofollow": 35
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -38,6 +38,10 @@ const CREDIT_COSTS = [
   // advertise one price for a pair a caller routinely runs separately.
   { action: "Keyword gap (per competitor)", cost: "45" },
   { action: "Link gap (per competitor)", cost: "45" },
+  // backlink_changes (2026-08-17, operator-signed at 35). Its own row rather than a member of the
+  // "Backlink profile" one above: that row buys today's profile, this one buys its history, and
+  // the two are separate DataForSEO purchases a caller runs at different times.
+  { action: "Backlink history (per domain)", cost: "35" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

@@ -1211,6 +1211,117 @@ export const DOC_PROSE = {
     ],
   },
 
+  backlink_changes: {
+    lead:
+      "`backlink_changes` shows what happened to a site's backlink profile **over time** — how " +
+      "many backlinks and referring domains arrived and disappeared in each period, and what the " +
+      "profile itself looked like at each of those points. It works on **any public domain**, so " +
+      "you can run it for your own site or for a rival. It is **synchronous**: both series come " +
+      "back immediately, with no background job to poll.",
+    whatItDoes:
+      "Name the site in **one of two ways** — pass a `target` domain, or pass the `project_id` of " +
+      "one of your own projects and the domain is taken from it. Exactly one of the two: passing " +
+      "both is rejected rather than resolved by precedence, because the two can name different " +
+      "sites and guessing would bill you for the history of the one you did not mean. Then choose " +
+      "how the history is bucketed with `group_range` (`day`, `week`, `month` or `year`) and how " +
+      "far back to go with `periods`.\n\n" +
+      "You get **two series**, both straight from DataForSEO:\n\n" +
+      "- **New and lost** — per bucket, how many backlinks and how many referring domains were " +
+      "gained and lost. DataForSEO's own definition applies: a link counts as **new** when it " +
+      "appeared in its index after the window opened, and **lost** when it was present before the " +
+      "window and was not found after it.\n" +
+      "- **The profile at each bucket** — per bucket, the total backlinks, the total referring " +
+      "domains, and DataForSEO's rank for the domain on a 0–1,000 scale.\n\n" +
+      "Subdomains are **included**, pinned explicitly rather than left to a default that could " +
+      "move. A figure DataForSEO did not return is printed as `n/a`, never as a zero.",
+    preExampleSections: [
+      {
+        heading: "The two series do not add up to each other — on purpose",
+        body:
+          "This is the one thing to know before reading the output. The two numbers come from two " +
+          "different DataForSEO measurements counted against two different definitions: one " +
+          "counts arrivals and departures, the other is a snapshot of the totals. They do **not** " +
+          "reconcile, and DataForSEO's own published examples show it — for the same domain and " +
+          "the same months, its new-and-lost figures net to +90 and +31 referring domains while " +
+          "its profile totals move by +62 and +44.\n\n" +
+          "Neither figure is wrong; they answer different questions. So SeoGrep prints **both** " +
+          "and derives **nothing** from them: there is no \"net change\" column and no churn " +
+          "percentage, because building one would mean publishing a reconciliation the vendor " +
+          "never made. The output says so in a line of its own, so the number is never quietly " +
+          "read as the other one's explanation.",
+      },
+      {
+        heading: "What a bucket is, exactly",
+        body:
+          "DataForSEO rounds the window **out to whole periods** and labels each bucket with the " +
+          "last day of the period it covers — ask for months from the 23rd and you get whole " +
+          "months, which is why you can receive one bucket more than you asked for. The header " +
+          "prints the window **DataForSEO says it answered for**, not the one that was requested.\n\n" +
+          "A bucket DataForSEO has no data for comes back as **0**, not as a gap. That is the " +
+          "vendor's own behaviour and it means a printed zero can mean either \"nothing " +
+          "happened\" or \"nothing recorded\" — the two are not distinguishable in this data, and " +
+          "SeoGrep does not guess which one you are looking at. Only a field the vendor omits " +
+          "entirely is printed as `n/a`.\n\n" +
+          "History starts at **2019-01-30**, DataForSEO's own earliest date. A longer window " +
+          "simply begins there.",
+      },
+      {
+        heading: "Who can run it",
+        body:
+          "`backlink_changes` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider — two requests per call — so it is not available on trial " +
+          "credits. Buy any credit pack and it unlocks straight away; your existing credits are " +
+          "untouched and keep working for crawls, audits, reports and Search Console tools.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
+          "_\"backlink change history is not yet enabled on this deployment\"_ message and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder figures dressed up as real data.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> How has example.com's backlink profile changed " +
+      "over the last year?\n\nOr narrow the window:\n\n> Show me weekly new and lost backlinks for " +
+      "my project over the last 8 weeks.",
+    returns:
+      "A header naming the site — or, when you passed a `project_id`, the project it came from — " +
+      "the grouping, and the window DataForSEO answered for; then the new-and-lost series, then " +
+      "the profile series, then the line explaining why the two are not each other's arithmetic. " +
+      "**Each series states its own bucket count**, because the two are answered separately and " +
+      "can come back with different numbers of buckets — one figure covering both would be a " +
+      "claim about one series taken from the other. A domain DataForSEO holds no history for is " +
+      "reported plainly as no history " +
+      "found, and you are still charged for the delivered lookup.\n\nA target that is not a public " +
+      "domain, a call naming neither `target` nor `project_id` (or both), a `periods` value " +
+      "outside the allowed range, and a `project_id` that is not yours are all rejected before " +
+      "anything is charged; while live data is off you get the \"not yet enabled\" message " +
+      "instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**. Behind it are **two** DataForSEO " +
+          "requests — the new-and-lost series and the profile series — and if either one fails " +
+          "the whole call fails and **you are not charged**. A half-built history is never billed." +
+          "\n\nThe `periods` ceiling is part of the price rather than a stylistic limit: " +
+          "DataForSEO bills per returned row, and the window is what decides how many rows come " +
+          "back.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its two series to the conversation and " +
+          "nothing else keeps them, so there is no backlink-history page in the dashboard and no " +
+          "\"compared with last month\" — run it again for a fresh read. The lookup-history table " +
+          "that backs the other domain tools is bound to those tools by design and does not " +
+          "accept this one.\n\n" +
+          "Two fields DataForSEO returns are deliberately **not** printed: the new and lost " +
+          "counts for *referring main domains*. They are a second, different definition of " +
+          "\"domain\", and showing them beside the referring-domain counts would invite you to " +
+          "read the difference as a signal the vendor never described.",
+      },
+    ],
+  },
+
   generate_report: {
     lead:
       "`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site) " +

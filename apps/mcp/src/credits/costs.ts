@@ -31,6 +31,14 @@ export const TOOL_COSTS = {
   // decision file set. No existing number moved.
   keyword_gap: 45,
   link_gap: 45,
+  // backlink_changes (plan 2026-08-17 §B3, MADDE 1 row #6): the two DataForSEO Backlinks
+  // time-series endpoints — new/lost per bucket, and the profile's own totals per bucket.
+  // SIGNED BY THE OPERATOR 2026-08-17 at 35 (down from the v1 draft's 45). Two vendor requests on
+  // the Backlinks tariff ($0.024/request + $0.000036/row), which is why the signed typical is
+  // $0.061 and the signed worst case $0.12 — and the WINDOW CAP that keeps the worst case there
+  // (MAX_BACKLINK_CHANGES_PERIODS, dfs/backlink-changes.ts) is part of the signed price, not a
+  // soft limit. No existing number moved.
+  backlink_changes: 35,
   find_quick_wins: 10,
   detect_cannibalization: 10,
   analyze_content_decay: 10,
