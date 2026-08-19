@@ -188,6 +188,14 @@ describe("the keyword read is ordered and bounded at the DATABASE", () => {
 });
 
 describe("the keyword read is the tenant boundary, and it is the only one", () => {
+  /**
+   * BOTH TENANTS HOLD A RUN, and that second seed is the whole design of this test rather than
+   * scenery. MEASURED (mutation, 2026-08-19): with only the owner seeded, deleting the read's
+   * `.eq("user_id", …)` left this spec GREEN — the other tenant's unscoped read returned their own
+   * empty list, which is indistinguishable from the filter working. Seeding them a row makes the
+   * two answers differ: RLS alone hands back THEIR run, the explicit filter hands back nothing, so
+   * the assertion below can finally tell defence-in-depth (NEVER #4) from RLS on its own.
+   */
   it("returns the caller's runs and NONE of another tenant's", async () => {
     const owner = await makeUser();
     const other = await makeUser();
@@ -197,13 +205,19 @@ describe("the keyword read is the tenant boundary, and it is the only one", () =
       report: report(),
       createdAt: "2026-08-10T00:00:00.000Z",
     });
+    await seedRun({
+      userId: other.id,
+      keywordSet: ["theirs only"],
+      report: report(),
+      createdAt: "2026-08-10T00:00:00.000Z",
+    });
 
     // POSITIVE CONTROL FIRST: without it, the negative would also pass on a table nobody can read.
     const mine = await runsFor(await clientForUser(owner), owner.id);
-    expect(mine).toHaveLength(1);
+    expect(mine.map((row) => row.keyword_set)).toEqual([["mine only"]]);
 
-    // The other tenant, asking for the OWNER's id through their own JWT: RLS answers, not the
-    // filter. On this table there is no project column to fall back on if it did not.
+    // The other tenant, asking for the OWNER's id through their own JWT. RLS refuses the owner's
+    // rows; the app filter refuses their own. Neither may come back.
     const theirs = await runsFor(await clientForUser(other), owner.id);
     expect(theirs).toEqual([]);
   });
