@@ -105,6 +105,22 @@ export const TOOL_COSTS = {
   // PROPOSED AT 12 AND NOT YET SIGNED — NEVER #6: this number is invalid until a human approves
   // it across code + docs + pricing, and the PR carrying it is parked for that signature.
   audit_content: 12,
+  // The two AI-VISIBILITY tools (2026-08-17 signature package, MADDE 2 — SIGNED BY THE OPERATOR).
+  // DataForSEO's LLM Mentions family: what a language model said about a domain or a keyword, on
+  // ONE platform, in ONE locale. The tariff is $0.10 per request + $0.001 per returned row — ten
+  // times the per-request cost of every other family this product touches — so the ROW CAP is what
+  // holds these numbers up, not a soft limit: at MAX_INTERNAL_LIST_ROWS (100, dfs/llm-mentions.ts)
+  // one lookup bills $0.20 against $1.116 of revenue (5.58x), and UNCAPPED at 1,000 rows it bills
+  // $1.10 against the same $1.116 — a margin of 1.01x, i.e. gone. The signature says so in its own
+  // words and makes `internal_list_limit <= 100` MANDATORY.
+  ai_visibility: 90,
+  // ai_visibility_compare is the ONLY PER-UNIT price in this table: the signed number is 90 credits
+  // PER COMPARED TARGET over 2-10 targets, so one call charges 180-900. The number below is the
+  // UNIT price, never the call price — see CREDIT_UNITS, which is what makes that readable to the
+  // machinery (creditCostFor) instead of leaving 90 to be mistaken for a flat fee. The comparison
+  // is ONE vendor request (cross_aggregated_metrics takes all 2-10 groups natively), which is why
+  // the per-target margin RISES with the target count rather than falling.
+  ai_visibility_compare: 90,
   generate_report: 15,
   whats_next: 0,
   // The Search Console property-management surface (2026-08-13, operator-approved scope
@@ -116,3 +132,100 @@ export const TOOL_COSTS = {
 } as const;
 
 export type ToolName = keyof typeof TOOL_COSTS;
+
+/**
+ * THE PER-UNIT PRICES — the one shape TOOL_COSTS alone cannot express.
+ *
+ * Every price above is what ONE CALL costs. `ai_visibility_compare` is the first signed price that
+ * is not: the operator signed 90 credits PER COMPARED TARGET over 2-10 targets, so one call costs
+ * 180-900. Three ways of not saying that were rejected before this table was written:
+ *
+ *   - charging the flat 90 for any target count gives away up to 810 credits of SIGNED value per
+ *     call, which is a price change nobody signed (NEVER #6);
+ *   - writing 900 into TOOL_COSTS and refunding the difference bills every 2-target comparison at
+ *     ten targets' price until a refund lands, and invents a refund path the ledger does not have;
+ *   - letting the tool hand withCredits its own credit AMOUNT moves the price out of this
+ *     human-approved table and into a handler, which is exactly what the table exists to prevent.
+ *
+ * So the tool supplies a bounded COUNT and this table keeps the price: `creditCostFor` multiplies,
+ * and `min_units`/`max_units` are what ONE CALL can really cost — 2 x 90 = 180 at the floor and
+ * 10 x 90 = 900 at the ceiling. The 900 is ABOVE the registry's 200-credit D17 confirmation
+ * threshold, so a wide comparison asks the caller first. That is the intended behaviour, not a
+ * side effect (the signature calls the 900 out by name). The docs generator renders that range
+ * rather than the bare 90, because "90 credits" on a page about a 2-10 target comparison is a
+ * number no call ever costs.
+ *
+ * The bounds are stated here rather than imported from dfs/llm-mentions.ts on purpose: this module
+ * is the price table and must stay free of runtime dependencies (apps/web imports it directly in a
+ * jsdom test). costs.test.ts pins them EQUAL to MIN_COMPARE_TARGETS / MAX_COMPARE_TARGETS, so the
+ * two cannot drift.
+ */
+export const CREDIT_UNITS = {
+  ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
+} as const satisfies Partial<
+  Record<ToolName, { readonly unit: string; readonly min_units: number; readonly max_units: number }>
+>;
+
+/** A tool whose TOOL_COSTS entry is a PER-UNIT price rather than a per-call one. */
+export type PerUnitToolName = keyof typeof CREDIT_UNITS;
+
+/** Whether `tool` is priced per unit (and therefore may be charged for more than one unit). */
+export function isPerUnitTool(tool: ToolName): tool is PerUnitToolName {
+  return tool in CREDIT_UNITS;
+}
+
+/**
+ * What ONE call of `tool` costs when it buys `units` priced units.
+ *
+ * The ONE place a credit amount is derived, so the multiplication cannot be re-implemented (and
+ * mis-implemented) at a call site. `units` is a COUNT the caller's own request implies — the number
+ * of compared targets — never a price: the per-unit figure stays TOOL_COSTS'.
+ *
+ * Fail-closed in both directions, and in THREE ways rather than two. A per-call tool asked to
+ * charge for more than one unit THROWS rather than silently multiplying a flat price. A per-unit
+ * tool asked for a count outside min_units..max_units throws rather than charging for a call the
+ * vendor would refuse anyway. And a per-unit tool asked with NO count at all throws rather than
+ * defaulting to one — the third case, and the one this signature originally got wrong.
+ *
+ * That third case is why `units` has no default. With `units = 1` an OMISSION was indistinguishable
+ * from an explicit 1, so `creditCostFor("ai_visibility_compare")` returned the bare 90: the flat
+ * price for a tool whose cheapest signed call is 180 and whose dearest is 900. Every call site
+ * happened to pass the count, so nothing was mispriced — but the shape meant a call site DROPPING
+ * `units:` (a refactor, a new caller) would give away up to 810 credits of signed value silently
+ * and stay green, which is the NEVER #6 shape this whole mechanism exists to prevent. Omission is
+ * now an error for a per-unit tool; for a per-call tool it stays the ordinary, overwhelmingly
+ * common path and means exactly what it always meant.
+ *
+ * min_units is likewise ENFORCED here, not merely stored: it was rendered on the pricing page and
+ * pinned in tests while the range check read `units < 1`, so a one-target comparison priced at 90
+ * passed a floor the operator signed at 180.
+ *
+ * All three are internal errors — the tool surfaces bound the count in zod long before this — so
+ * they are loud.
+ */
+export function creditCostFor(tool: ToolName, units?: number): number {
+  const rule = isPerUnitTool(tool) ? CREDIT_UNITS[tool] : null;
+  if (rule === null) {
+    if (units !== undefined && units !== 1) {
+      throw new Error(
+        `"${tool}" is priced per call, so it cannot be charged for ${units} units. Only ` +
+          `${Object.keys(CREDIT_UNITS).join(", ")} carry a per-unit price.`,
+      );
+    }
+    return TOOL_COSTS[tool];
+  }
+  if (units === undefined) {
+    throw new Error(
+      `"${tool}" is priced per ${rule.unit}, so the call must say how many it buys. Charging it ` +
+        `without a unit count would bill one call's flat ${TOOL_COSTS[tool]} for up to ` +
+        `${rule.max_units} ${rule.unit}s.`,
+    );
+  }
+  if (!Number.isInteger(units) || units < rule.min_units || units > rule.max_units) {
+    throw new Error(
+      `"${tool}" is priced per ${rule.unit} and charges for ${rule.min_units} to ` +
+        `${rule.max_units} of them; ${units} is outside that range.`,
+    );
+  }
+  return TOOL_COSTS[tool] * units;
+}

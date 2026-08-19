@@ -188,6 +188,15 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       relative(SRC_DIR, file),
     );
     expect(spendingToolModules.sort()).toEqual([
+      // The two AI-visibility tools (2026-08-19), plus the module they SHARE. ai-visibility-shared.ts
+      // defines no tool at all — it is the rendering both surfaces use, and it reaches reserveSpend
+      // only because it imports PLATFORM_MEANS and the row cap from dfs/llm-mentions.ts, which is
+      // deliberate: the platform wording and the price-bearing cap must come from the port rather
+      // than be retyped. Same shape as tools/my-pages-crawl.ts below; the spec after this one is
+      // what matters for money, and it asks which TOOL NAMES these modules define.
+      "tools/ai-visibility-compare.ts",
+      "tools/ai-visibility-shared.ts",
+      "tools/ai-visibility.ts",
       "tools/analyze-backlinks.ts",
       // audit_speed (2026-08-17): the first vendor-spending tool whose name puts it in the audit
       // family. It reaches reserveSpend through dfs/lighthouse.ts, so the scanner finds it here

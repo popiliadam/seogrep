@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { withCredits } from "./guard.ts";
 import { PAID_BALANCE_TOOLS, isPaidBalanceRequired } from "./paid-balance.ts";
-import { TOOL_COSTS } from "./costs.ts";
+import { CREDIT_UNITS, TOOL_COSTS, creditCostFor, isPerUnitTool } from "./costs.ts";
 import { getServiceClient } from "../db.ts";
 
 /**
@@ -187,11 +187,23 @@ describe("paid-balance gate — trial accounts and every gated DataForSEO tool",
 });
 
 describe("paid-balance gate — paying accounts are unaffected", () => {
+  /**
+   * The census is DERIVED, so this loop runs over whatever joins the gate — including, since
+   * 2026-08-19, the surface's first PER-UNIT price. That difference is not cosmetic here: for
+   * `ai_visibility_compare` TOOL_COSTS holds the price of one COMPARED TARGET, not of a call, and
+   * a call buys two to ten of them. Charging with no unit count and expecting `opening - 90` was
+   * asserting a debit no real call of that tool ever produces — it read as a per-call proof and was
+   * green only because creditCostFor still defaulted a missing count to 1. It does not any more,
+   * so the loop names the count and expects what the count actually costs (180 at the floor).
+   */
   it.each(GATED)("charges %s normally once the account has purchased", async (tool) => {
     const userId = await makePaidUser();
     const opening = await balanceOf(userId);
+    // The signed FLOOR for a per-unit tool, and undefined — the ordinary path — for every other.
+    const units = isPerUnitTool(tool) ? CREDIT_UNITS[tool].min_units : undefined;
+    const expected = creditCostFor(tool, units);
 
-    const result = await withCredits({ userId }, { tool }, async () => "vendor data");
+    const result = await withCredits({ userId }, { tool, units }, async () => "vendor data");
 
     expect(result).toBe("vendor data");
     expect(await ledgerKinds(userId)).toEqual([
@@ -200,7 +212,9 @@ describe("paid-balance gate — paying accounts are unaffected", () => {
       "spend_reserve",
       "spend_commit",
     ]);
-    expect(await balanceOf(userId)).toBe(opening - TOOL_COSTS[tool]);
+    expect(await balanceOf(userId)).toBe(opening - expected);
+    // A per-CALL tool's debit is still exactly its table row; only the per-unit one multiplies.
+    if (!isPerUnitTool(tool)) expect(expected).toBe(TOOL_COSTS[tool]);
   });
 });
 

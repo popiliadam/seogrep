@@ -43,6 +43,8 @@ describe("pricing page", () => {
       ["Backlink history (per domain)", "35"],
       ["Individual backlinks (per domain)", "35"],
       ["Disavow candidates (per domain)", "40"],
+      ["AI visibility (per domain or keyword)", "90"],
+      ["AI visibility comparison (per compared target)", "90"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -106,6 +108,14 @@ describe("pricing page", () => {
     // profile, its history and the links; this one buys the per-DOMAIN spam scores and the disavow
     // text built from them. Four separate DataForSEO purchases, four rows.
     disavow_candidates: "Disavow candidates (per domain)",
+    // Its OWN row (2026-08-19, signed at 90): every DataForSEO row above buys what a search engine
+    // ranked or linked; this one buys what a language model said, from a different vendor family.
+    ai_visibility: "AI visibility (per domain or keyword)",
+    // THE PER-UNIT ROW. The number in TOOL_COSTS is the price of ONE compared target, and the
+    // rules below compare it against the rendered cell as-is — which is right, because the cell
+    // renders the UNIT price and the label says what the unit is. What keeps that honest is the
+    // label, and the spec after this map is what stops the label losing "per compared target".
+    ai_visibility_compare: "AI visibility comparison (per compared target)",
     generate_report: "Monthly report",
   };
 
@@ -250,6 +260,22 @@ describe("pricing page", () => {
         0,
       );
     }
+  });
+
+  /**
+   * THE PER-UNIT ROW MUST SAY SO. Its cell renders 90 — the price of ONE compared target — and a
+   * call of that tool costs 180 to 900. The label is the only thing on this page that tells the
+   * reader which of those the 90 is, so losing the words "per compared target" would turn a true
+   * number into a false price. Asserted on the RENDERED row rather than on the constant, because
+   * the constant is what a future edit would rewrite.
+   */
+  it("labels the per-compared-target row as per-unit, so its number cannot read as a call price", () => {
+    render(<Page />);
+    const label = PAID_TOOL_ROW.ai_visibility_compare ?? "";
+    expect(label).toMatch(/per compared target/i);
+    const row = screen.getByText(label).closest("tr");
+    if (row === null) throw new Error("no credit-cost row rendered for the comparison tool");
+    expect(within(row).getByText("90")).toBeTruthy();
   });
 
   it("shows the beta badge and no popularity claims", () => {

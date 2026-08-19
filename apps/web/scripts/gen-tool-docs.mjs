@@ -80,8 +80,23 @@ export function frontmatterDescription(pageText) {
   return match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
 }
 
-/** The single credit-cost line, derived from TOOL_COSTS[name]. Zero renders as free. */
-export function renderCostLine(cost) {
+/**
+ * The single credit-cost line, derived from TOOL_COSTS[name]. Zero renders as free.
+ *
+ * `unitRule` is the CREDIT_UNITS entry for a tool whose price is PER UNIT rather than per call
+ * (today: ai_visibility_compare, at 90 credits per compared target over 2-10 targets). When one is
+ * given, the line renders the unit price AND the range one call can really cost — because "90
+ * credits" on the page of a tool no call of which ever costs 90 is a wrong number, not a short one.
+ * Omitted for every other tool, which keeps the flat line byte-identical to what it always was.
+ */
+export function renderCostLine(cost, unitRule) {
+  if (unitRule) {
+    const { unit, min_units: min, max_units: max } = unitRule;
+    return (
+      `**Cost:** ${cost} credits per ${unit} — ${min} to ${max} ${unit}s per call, ` +
+      `so ${cost * min} to ${cost * max} credits.`
+    );
+  }
   if (cost === 0) return "**Cost:** Free (0 credits).";
   if (cost === 1) return "**Cost:** 1 credit.";
   return `**Cost:** ${cost} credits.`;
@@ -138,7 +153,7 @@ export function yamlString(value) {
  * `description` (tool description with its cost sentence stripped), the cost line (from `cost`), and
  * the "### Input" table (from `toolMeta.inputJsonSchema`). Editorial prose comes from `prose`.
  */
-export function renderToolPage(toolMeta, cost, prose) {
+export function renderToolPage(toolMeta, cost, prose, unitRule) {
   const description = truncateAtWord(stripCostSentences(toolMeta.description), FRONTMATTER_DESCRIPTION_MAX);
   const frontmatter = [
     "---",
@@ -147,7 +162,7 @@ export function renderToolPage(toolMeta, cost, prose) {
     "---",
   ].join("\n");
 
-  const blocks = [frontmatter, renderCostLine(cost)];
+  const blocks = [frontmatter, renderCostLine(cost, unitRule)];
   if (prose.lead) blocks.push(prose.lead.trim());
   blocks.push(`## What it does\n\n${prose.whatItDoes.trim()}`);
   for (const section of prose.preExampleSections || []) {
@@ -1838,6 +1853,203 @@ export const DOC_PROSE = {
     ],
   },
 
+  ai_visibility: {
+    lead:
+      "`ai_visibility` measures how a **domain or a keyword is mentioned in one AI assistant's " +
+      "answers**, using DataForSEO's LLM Mentions data. It answers a question no other SeoGrep " +
+      "tool touches: not what a search engine ranked, but what a language model said. It is " +
+      "**synchronous** — everything comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Pick a **subject** and a **platform**. The subject is required and has no default, because " +
+      "the two ask different questions and take different inputs:\n\n" +
+      "| `subject` | What it measures | What you pass |\n" +
+      "| --- | --- | --- |\n" +
+      "| `domain` | How a site is mentioned | `target` or `project_id` |\n" +
+      "| `keyword` | How a search phrase is mentioned | `keyword` |\n\n" +
+      "The platform is `chat_gpt` or `google`, and it is required too — there is no \"all " +
+      "assistants\" option, because no such measurement exists here.\n\n" +
+      "Each row comes back with **DataForSEO's own fields under DataForSEO's own names**, in the " +
+      "order DataForSEO sent them. No field is renamed and none is computed.",
+    preExampleSections: [
+      {
+        heading: "What this answer is scoped to",
+        body:
+          "Every answer states its own limits, in full, on every run:\n\n" +
+          "- **One assistant.** A `chat_gpt` measurement says nothing about Google's AI answers, " +
+          "and neither says anything about an assistant DataForSEO was not asked about.\n" +
+          "- **One locale.** The location and language you asked under are named; if you passed " +
+          "neither, the answer says so rather than naming a default nobody chose.\n" +
+          "- **One moment.** The timestamp is DataForSEO's own, printed with the vendor key it " +
+          "came from. When the vendor reports no time, the answer says that — SeoGrep does not " +
+          "put its own clock in place of a missing vendor timestamp.\n" +
+          "- **No period.** This DataForSEO endpoint takes **no date range**, so there is none to " +
+          "ask for and none to state. The answer says so rather than leaving \"now\" to be assumed.",
+      },
+      {
+        heading: "Whose numbers these are",
+        body:
+          "SeoGrep computes **no visibility score, no share of voice and no sentiment**, ranks " +
+          "nothing by a formula of its own, and re-orders nothing: this endpoint publishes no " +
+          "ordering field, so the rows arrive in the vendor's order and stay in it.\n\n" +
+          "A field DataForSEO **did not report** is printed as unreported, never as `0` — \"the " +
+          "vendor reported no mentions\" and \"the vendor did not measure mentions\" are " +
+          "different answers, and only the first one is about your brand. A genuine zero the " +
+          "vendor did send is printed as `0`.\n\n" +
+          "Where DataForSEO sends a **nested object or list**, it is not folded into the row; the " +
+          "answer names those fields instead, so you know there is more in the vendor's response " +
+          "than what you are reading.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Does example.com come up in ChatGPT answers?\n\n" +
+      "Or ask about a phrase rather than a site:\n\n> How is \"project management software\" " +
+      "mentioned in Google's AI answers, in the United States?",
+    returns:
+      "A heading naming **what was looked up** and the DataForSEO LLM Mentions function behind " +
+      "it, then the scope paragraph above — platform, locale, the vendor's own timestamp, and the " +
+      "absence of any date range.\n\n" +
+      "Then the rows, captioned with the row cap they came back under and DataForSEO's own " +
+      "whole-set count kept separate from them. This endpoint offers **no paging**: there is no " +
+      "offset to advance, so a wider set is a wider request rather than a next page. When the " +
+      "vendor gave no total, the caption says that instead of back-filling one from the rows in " +
+      "hand.\n\n" +
+      "A lookup that matched nothing says so plainly and you are still charged for the delivered " +
+      "lookup — and it is stated as an answer about **this platform, this locale and this " +
+      "moment**, not as a claim that nobody ever mentions you. A missing or foreign subject " +
+      "field, a row cap above the ceiling, a call naming neither `target` nor `project_id` (or " +
+      "both), and a `project_id` that is not yours are all rejected before anything is charged; " +
+      "while live data is off you get a \"not yet enabled\" message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
+          "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
+          "`ai_visibility` needs a **paid credit balance**. It reads live data from a paid " +
+          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "it unlocks straight away; your existing credits are untouched and keep working for " +
+          "crawls, audits, reports and Search Console tools.\n\n" +
+          "The `internal_list_limit` ceiling is **part of the price**, not a display preference: " +
+          "DataForSEO bills **per returned row** on this family, and that cap is what holds the " +
+          "flat price inside the margin it was signed against. Asking for fewer rows costs the " +
+          "same; asking for more than the ceiling is refused before anything is charged.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its rows to the conversation and nothing " +
+          "else keeps them — there is no saved history, no dashboard page and no \"changed since " +
+          "last time\", so run it again for a fresh read. The lookup-history table that backs the " +
+          "other domain tools is bound to those tools by design and does not accept this one.\n\n" +
+          "This is a measurement, **not a prediction**. It does not tell you what an assistant " +
+          "will say next, why it said what it said, or what to change to be mentioned more — and " +
+          "a measurement on one platform does not carry over to another.\n\n" +
+          "The location is a **name** (`location_name`), not the numeric location code the other " +
+          "SeoGrep tools take: this DataForSEO family publishes no code.",
+      },
+    ],
+  },
+
+  ai_visibility_compare: {
+    lead:
+      "`ai_visibility_compare` asks the same question as " +
+      "[`ai_visibility`](/docs/tools-reference/ai-visibility) about **several targets side by " +
+      "side** — your site and its rivals, or a set of keywords — in a single DataForSEO request. " +
+      "It is **synchronous** — everything comes back immediately, with no background job to poll.",
+    whatItDoes:
+      "Pass **2 to 10 targets** (DataForSEO's own bound for this endpoint) and a platform. Each " +
+      "target is one of three things, and exactly one:\n\n" +
+      "| Field | What it compares |\n" +
+      "| --- | --- |\n" +
+      "| `domain` | Any public domain, including a competitor's |\n" +
+      "| `keyword` | A search phrase rather than a site |\n" +
+      "| `project_id` | One of your own projects — its domain is used |\n\n" +
+      "An optional `label` names the target in the answer; it defaults to the domain or keyword " +
+      "itself. Two targets may not share a label — DataForSEO echoes the label back and it is " +
+      "what rows are matched on, so a collision is refused rather than guessed at.\n\n" +
+      "All the targets are bought in **one** DataForSEO request, not one request per target.",
+    preExampleSections: [
+      {
+        heading: "It ranks nothing",
+        body:
+          "A side-by-side view is read top-down as a leaderboard unless it says otherwise, so " +
+          "this one says otherwise. **The targets appear in the order you listed them.** " +
+          "DataForSEO publishes no ordering field for this endpoint, so there is nothing to sort " +
+          "by and SeoGrep sorts nothing: position in the answer means only what you typed.\n\n" +
+          "There is no visibility score, no share of voice and no winner. Every figure is a " +
+          "DataForSEO field under DataForSEO's own name.",
+      },
+      {
+        heading: "\"No row\" is not \"zero\"",
+        body:
+          "A compared target DataForSEO returned **no row for** is named as unanswered, and the " +
+          "answer says plainly that this is not a zero. The two are different facts — the vendor " +
+          "did not report on that target at all — and only one of them is about the target.\n\n" +
+          "The same rule runs inside a row: a field the vendor did not report prints as " +
+          "unreported, while a genuine zero the vendor did send prints as `0`.",
+      },
+      {
+        heading: "What this answer is scoped to",
+        body:
+          "The same four limits [`ai_visibility`](/docs/tools-reference/ai-visibility) states, and " +
+          "for the same reason: **one assistant**, **one locale**, **one moment** (DataForSEO's " +
+          "own timestamp, under the vendor key it came from), and **no date range at all** — this " +
+          "endpoint takes none, so there is no period to ask for.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Compare how example.com, rival-one.com and " +
+      "rival-two.com are mentioned in ChatGPT answers.\n\nThe client will ask you to confirm " +
+      "before a wide comparison runs — see Billing.",
+    returns:
+      "A heading naming how many targets were compared and the DataForSEO function behind them, " +
+      "then the scope paragraph, then the note that the order is yours.\n\n" +
+      "Then one block per target, **in your order**, each naming what its label stands for — your " +
+      "project, a domain or a keyword — followed by that target's rows under DataForSEO's own " +
+      "field names, or the sentence that says the vendor returned no row for it. Targets the " +
+      "vendor did not answer are also listed together at the end, so a long comparison does not " +
+      "hide them.\n\n" +
+      "A comparison set outside 2-10, a target naming none (or several) of `domain` / `keyword` / " +
+      "`project_id`, two targets sharing a label, and a `project_id` that is not yours are all " +
+      "rejected before anything is charged; while live data is off you get a \"not yet enabled\" " +
+      "message instead — also free.",
+    postReturnsSections: [
+      {
+        heading: "Billing",
+        body:
+          "**The price is per compared target**, not per call — this is the one tool in SeoGrep " +
+          "priced that way. Comparing ten targets costs ten targets' worth of credits and " +
+          "comparing two costs two, and the cost line above states both ends of that range. The " +
+          "reservation is opened before the DataForSEO request and is sized from the targets you " +
+          "actually passed; if the request fails, the whole reservation is released and **you are " +
+          "not charged**.\n\n" +
+          "Because a wide comparison can be expensive, one above SeoGrep's safety threshold " +
+          "**asks you first**: the call returns an estimate and charges nothing until you run it " +
+          "again with `\"confirm\": true`.\n\n" +
+          "`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a " +
+          "paid third-party provider, so it is not available on trial credits. Buy any credit " +
+          "pack and it unlocks straight away; your existing credits are untouched and keep " +
+          "working for crawls, audits, reports and Search Console tools.\n\n" +
+          "The `internal_list_limit` ceiling is **part of the price** here too: DataForSEO bills " +
+          "per returned row on this family, and every compared target can contribute its own " +
+          "capped list.",
+      },
+      {
+        heading: "Limitations",
+        body:
+          "Results are **not stored**. Each call returns its comparison to the conversation and " +
+          "nothing else keeps them — no saved comparison, no dashboard page, no \"changed since " +
+          "last time\". The lookup-history table that backs the other domain tools is bound to " +
+          "those tools by design and does not accept this one.\n\n" +
+          "This is a measurement, **not a prediction** and not a verdict: it does not say which " +
+          "target is doing better, why an assistant mentioned one and not another, or what to " +
+          "change. A measurement on one platform does not carry over to another.\n\n" +
+          "The location is a **name** (`location_name`), not the numeric location code the other " +
+          "SeoGrep tools take: this DataForSEO family publishes no code.",
+      },
+    ],
+  },
+
   generate_report: {
     lead:
       "`generate_report` rolls up a project's latest [`crawl_site`](/docs/tools-reference/crawl-site) " +
@@ -2055,6 +2267,7 @@ async function loadRegistry() {
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
       TOOL_COSTS: costs.TOOL_COSTS,
+      CREDIT_UNITS: costs.CREDIT_UNITS,
       constants: { maxRowLimit: pull.MAX_ROW_LIMIT, lagDays: windows.GSC_FRESHNESS_LAG_DAYS },
     };
   } catch (error) {
@@ -2066,10 +2279,10 @@ async function loadRegistry() {
 }
 
 /** The frozen page for one tool (throws if its prose block is missing). */
-function pageFor(tool, cost, constants) {
+function pageFor(tool, cost, constants, unitRule) {
   const prose = DOC_PROSE[tool.name];
   if (!prose) throw new Error(`No DOC_PROSE entry for tool "${tool.name}" — add one before generating.`);
-  return substituteProseTokens(renderToolPage(tool, cost, prose), constants);
+  return substituteProseTokens(renderToolPage(tool, cost, prose, unitRule), constants);
 }
 
 /** The tools-reference meta.json content, derived from ALL_TOOLS order. */
@@ -2090,9 +2303,12 @@ function ensureParentNav() {
 }
 
 /** Write all tool pages + tools-reference meta.json + parent nav. */
-function writeAll({ ALL_TOOLS, TOOL_COSTS, constants }) {
+function writeAll({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) {
   for (const tool of ALL_TOOLS) {
-    writeFileSync(new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR), pageFor(tool, TOOL_COSTS[tool.name], constants));
+    writeFileSync(
+      new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR),
+      pageFor(tool, TOOL_COSTS[tool.name], constants, CREDIT_UNITS[tool.name]),
+    );
   }
   writeFileSync(new URL("meta.json", TOOLS_DIR), toolsMetaJson(ALL_TOOLS));
   const navChanged = ensureParentNav();
@@ -2103,7 +2319,7 @@ function writeAll({ ALL_TOOLS, TOOL_COSTS, constants }) {
 }
 
 /** Run the three --check gates. Returns a list of human-readable failures (empty = in sync). */
-function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, constants }) {
+function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) {
   const errors = [];
   const expectedSlugs = ALL_TOOLS.map((t) => deriveSlug(t.name));
 
@@ -2117,7 +2333,7 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, constants }) {
       errors.push(`(i) missing page ${slug}.mdx — run \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
       continue;
     }
-    if (actual !== pageFor(tool, TOOL_COSTS[tool.name], constants)) {
+    if (actual !== pageFor(tool, TOOL_COSTS[tool.name], constants, CREDIT_UNITS[tool.name])) {
       errors.push(`(i) ${slug}.mdx is out of sync — regenerate with \`node apps/web/scripts/gen-tool-docs.mjs\`.`);
     }
   }
@@ -2155,7 +2371,9 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, constants }) {
   // long tool description can't silently regress a page's <meta name="description">. Measured on the
   // ACTUAL rendered page, so a regression that bypasses truncation is caught here.
   for (const tool of ALL_TOOLS) {
-    const length = frontmatterDescription(pageFor(tool, TOOL_COSTS[tool.name], constants)).length;
+    const length = frontmatterDescription(
+      pageFor(tool, TOOL_COSTS[tool.name], constants, CREDIT_UNITS[tool.name]),
+    ).length;
     if (length > FRONTMATTER_DESCRIPTION_MAX) {
       errors.push(
         `(iv) ${deriveSlug(tool.name)}.mdx frontmatter description is ${length} chars ` +

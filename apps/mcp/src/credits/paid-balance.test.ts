@@ -46,8 +46,15 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // Eleven -> twelve on 2026-08-19: my_pages, which sends ONE paid DataForSEO Labs request per call
   // and then joins the answer against stored crawl rows that cost nothing. The set GREW; nothing
   // left it. Half of the tool being free is not an exemption — the criterion is "does it spend?".
-  it("is exactly the twelve DataForSEO tools", () => {
+  //
+  // Twelve -> fourteen on 2026-08-19: ai_visibility and ai_visibility_compare, one paid DataForSEO
+  // LLM Mentions request each. The set GREW; nothing left it. The compare tool is the first member
+  // whose price is PER COMPARED TARGET rather than per call, which changes what it charges and
+  // changes nothing about why it is gated: it spends from the same shared daily vendor budget.
+  it("is exactly the fourteen DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
+      "ai_visibility",
+      "ai_visibility_compare",
       "analyze_backlinks",
       "audit_speed",
       "backlink_changes",

@@ -1,0 +1,82 @@
+---
+title: ai_visibility_compare
+description: "Compare how several domains or keywords are mentioned in one AI assistant's answers, side by side, from DataForSEO's LLM Mentions data. Pass 2-10 targets…"
+---
+
+**Cost:** 90 credits per compared target — 2 to 10 compared targets per call, so 180 to 900 credits.
+
+`ai_visibility_compare` asks the same question as [`ai_visibility`](/docs/tools-reference/ai-visibility) about **several targets side by side** — your site and its rivals, or a set of keywords — in a single DataForSEO request. It is **synchronous** — everything comes back immediately, with no background job to poll.
+
+## What it does
+
+Pass **2 to 10 targets** (DataForSEO's own bound for this endpoint) and a platform. Each target is one of three things, and exactly one:
+
+| Field | What it compares |
+| --- | --- |
+| `domain` | Any public domain, including a competitor's |
+| `keyword` | A search phrase rather than a site |
+| `project_id` | One of your own projects — its domain is used |
+
+An optional `label` names the target in the answer; it defaults to the domain or keyword itself. Two targets may not share a label — DataForSEO echoes the label back and it is what rows are matched on, so a collision is refused rather than guessed at.
+
+All the targets are bought in **one** DataForSEO request, not one request per target.
+
+## It ranks nothing
+
+A side-by-side view is read top-down as a leaderboard unless it says otherwise, so this one says otherwise. **The targets appear in the order you listed them.** DataForSEO publishes no ordering field for this endpoint, so there is nothing to sort by and SeoGrep sorts nothing: position in the answer means only what you typed.
+
+There is no visibility score, no share of voice and no winner. Every figure is a DataForSEO field under DataForSEO's own name.
+
+## "No row" is not "zero"
+
+A compared target DataForSEO returned **no row for** is named as unanswered, and the answer says plainly that this is not a zero. The two are different facts — the vendor did not report on that target at all — and only one of them is about the target.
+
+The same rule runs inside a row: a field the vendor did not report prints as unreported, while a genuine zero the vendor did send prints as `0`.
+
+## What this answer is scoped to
+
+The same four limits [`ai_visibility`](/docs/tools-reference/ai-visibility) states, and for the same reason: **one assistant**, **one locale**, **one moment** (DataForSEO's own timestamp, under the vendor key it came from), and **no date range at all** — this endpoint takes none, so there is no period to ask for.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Compare how example.com, rival-one.com and rival-two.com are mentioned in ChatGPT answers.
+
+The client will ask you to confirm before a wide comparison runs — see Billing.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `targets` | object[] | Yes | The targets to compare — 2 to 10, which is DataForSEO's own bound for this endpoint. Each one is a domain, a keyword or one of your project ids. THE PRICE IS PER COMPARED TARGET (90 credits each), so this list is what the call costs: comparing ten targets costs ten targets' worth of credits, and a comparison above the safety threshold asks you to confirm before it runs. |
+| `platform` | string | Yes | WHICH assistant DataForSEO is asked about — required, with no default, because a measurement of one says nothing about the other. "chat_gpt": mentions observed in ChatGPT answers. "google": mentions observed in Google's AI answers. There is no "all assistants" option here, and no answer covers an assistant the vendor did not query. |
+| `internal_list_limit` | integer | No | How many rows DataForSEO may return per compared target (1-100, default 100). DataForSEO bills per returned row on this family, so this is the price control rather than a display preference — the signed price was measured at the ceiling. Asking for fewer rows costs the same; asking for more is refused. |
+| `location_name` | string | No | OPTIONAL DataForSEO `location_name` — a NAME, e.g. "United States", not the numeric location_code the other SeoGrep tools take (this vendor family publishes no code). Omitted by default, in which case DataForSEO applies its own default and the answer says the location was not specified rather than naming one nobody asked for. |
+| `language_code` | string | No | OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the answer says the language was not specified rather than naming one nobody asked for. |
+
+### Returns
+
+A heading naming how many targets were compared and the DataForSEO function behind them, then the scope paragraph, then the note that the order is yours.
+
+Then one block per target, **in your order**, each naming what its label stands for — your project, a domain or a keyword — followed by that target's rows under DataForSEO's own field names, or the sentence that says the vendor returned no row for it. Targets the vendor did not answer are also listed together at the end, so a long comparison does not hide them.
+
+A comparison set outside 2-10, a target naming none (or several) of `domain` / `keyword` / `project_id`, two targets sharing a label, and a `project_id` that is not yours are all rejected before anything is charged; while live data is off you get a "not yet enabled" message instead — also free.
+
+### Billing
+
+**The price is per compared target**, not per call — this is the one tool in SeoGrep priced that way. Comparing ten targets costs ten targets' worth of credits and comparing two costs two, and the cost line above states both ends of that range. The reservation is opened before the DataForSEO request and is sized from the targets you actually passed; if the request fails, the whole reservation is released and **you are not charged**.
+
+Because a wide comparison can be expensive, one above SeoGrep's safety threshold **asks you first**: the call returns an estimate and charges nothing until you run it again with `"confirm": true`.
+
+`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+
+The `internal_list_limit` ceiling is **part of the price** here too: DataForSEO bills per returned row on this family, and every compared target can contribute its own capped list.
+
+### Limitations
+
+Results are **not stored**. Each call returns its comparison to the conversation and nothing else keeps them — no saved comparison, no dashboard page, no "changed since last time". The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+
+This is a measurement, **not a prediction** and not a verdict: it does not say which target is doing better, why an assistant mentioned one and not another, or what to change. A measurement on one platform does not carry over to another.
+
+The location is a **name** (`location_name`), not the numeric location code the other SeoGrep tools take: this DataForSEO family publishes no code.

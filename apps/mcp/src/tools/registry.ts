@@ -12,7 +12,7 @@ import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
-import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
+import { creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
 
 /**
  * Zod-based tool registry — the foundation the docs automation (D11) builds on: a
@@ -77,6 +77,21 @@ export interface ToolSpec<TIn> {
   readonly handler: (ctx: AuthContext, input: TIn, rawInput: unknown) => Promise<ToolResult>;
   /** Credit-settlement mode. Defaults to "surface" (sync charge under the guard). */
   readonly charge?: ChargeMode;
+  /**
+   * How many PRICED UNITS this call buys, read off the parsed input — declared ONLY by a tool whose
+   * signed price is per unit rather than per call (credits/costs.ts CREDIT_UNITS). Optional in the
+   * TYPE because every other tool omits it — omitted means one unit — but REQUIRED for a per-unit
+   * name, and defineTool throws at declaration time when one is missing.
+   *
+   * It exists for the D17 gate below and nothing else: that gate has to weigh what the CALL will
+   * cost, and for `ai_visibility_compare` that is 90 x targets — 900 at ten targets, well over the
+   * 200-credit threshold. Reading TOOL_COSTS[name] alone would have weighed 90 and let a
+   * 900-credit call through unconfirmed. The hook yields a COUNT, never an amount, so the price
+   * arithmetic stays in creditCostFor and a tool cannot understate its own estimate to dodge the
+   * gate (a count below the real one is bounded by the same zod schema the handler charges from,
+   * and the two read the same field).
+   */
+  readonly units?: (input: TIn) => number;
 }
 
 /**
@@ -184,11 +199,14 @@ export function refundAssurance(charge: ChargeMode, error: unknown): string | nu
 /**
  * D17 credit confirmation threshold — the SaaS analogue of the consent ledger: a call whose
  * ESTIMATED cost exceeds this many credits must be explicitly confirmed before it runs, so a
- * large batch can never silently drain a balance. No tool in TOOL_COSTS reaches it today (the
- * whole table sits well below the threshold), so this is a forward-looking guard for future bulk
- * operations — the over-threshold path is exercised by the pure unit tests with SYNTHETIC
- * estimates, never by a real registered tool (confirmationGate takes the estimate as an argument
- * for exactly that).
+ * large batch can never silently drain a balance.
+ *
+ * NO SINGLE ROW of TOOL_COSTS reaches it (the whole table sits well below), and for a long time
+ * that meant no registered tool could — the over-threshold path was exercised only with SYNTHETIC
+ * estimates. `ai_visibility_compare` (2026-08-19) is the first tool that DOES reach it, because
+ * its signed price is 90 credits PER COMPARED TARGET: at three targets the estimate is 270 and at
+ * ten it is 900. That is the gate working as designed on the first call expensive enough to need
+ * it, not a threshold to move — the signature names the 900 and says asking first is correct.
  */
 export const CONFIRMATION_THRESHOLD_CREDITS = 200;
 
@@ -285,8 +303,22 @@ export function toInputJsonSchema(schema: z.ZodType<unknown>): Record<string, un
  *     itself synchronously (it calls withCredits from inside, after any pre-reserve gate); a
  *     "worker" tool enqueues an async job whose reserve/commit is the worker's, keyed to the real
  *     jobs.id. Wrapping either here would double-charge.
+ *
+ * DECLARATION-TIME, not call-time: a tool whose price is PER UNIT must declare the `units` hook.
+ * creditCostFor already refuses to price a per-unit tool without a count, but that refusal lands
+ * when a user calls the tool; this one lands when the module is imported, which is every gate that
+ * builds the registry. Without it, forgetting the hook would leave the D17 gate weighing the unit
+ * price (90) instead of the call price (up to 900) and waving a 900-credit call through
+ * unconfirmed — a silent under-estimate rather than a loud failure.
  */
 export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
+  if (isPerUnitTool(spec.name) && spec.units === undefined) {
+    throw new Error(
+      `"${spec.name}" is priced per unit, so its spec must declare a "units" hook: the D17 ` +
+        `confirmation gate weighs what the CALL costs, and without the hook it would weigh one ` +
+        `unit's price instead.`,
+    );
+  }
   const inputJsonSchema = toInputJsonSchema(spec.inputSchema);
   const charge: ChargeMode = spec.charge ?? "surface";
   return {
@@ -303,9 +335,17 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
       // mode BEFORE dispatch: a call whose estimate exceeds the threshold and did not set
       // confirm:true returns a confirmation prompt and settles nothing (the guard/handler never
       // run). `confirm` is read from the RAW input (a reserved registry param, never in the tool
-      // schema). No current tool exceeds the threshold, so on the real surface this always returns
-      // null; the over-threshold path is pinned by registry.test.ts with synthetic estimates.
-      const gate = confirmationGate(spec.name, TOOL_COSTS[spec.name], rawInput);
+      // schema).
+      //
+      // The estimate is the CALL's, not the row's: for a per-unit tool it is the unit price times
+      // the units this input buys (spec.units), which is the only reason a 900-credit ten-target
+      // comparison meets the gate at all. Every other tool declares no `units`, so this is
+      // TOOL_COSTS[name] exactly as before.
+      const gate = confirmationGate(
+        spec.name,
+        creditCostFor(spec.name, spec.units?.(parsed.data)),
+        rawInput,
+      );
       if (gate) return gate;
 
       if (charge === "surface") {

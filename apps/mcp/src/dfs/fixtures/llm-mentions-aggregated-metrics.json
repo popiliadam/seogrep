@@ -1,0 +1,61 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.4821 sec.",
+  "cost": 0.103,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08191200-0000-0000-0000-fixture0021",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.4703 sec.",
+      "cost": 0.103,
+      "result_count": 1,
+      "path": ["v3", "ai_optimization", "llm_mentions", "aggregated_metrics", "live"],
+      "data": {
+        "api": "ai_optimization",
+        "function": "aggregated_metrics",
+        "platform": "chat_gpt",
+        "location_name": "United States",
+        "language_code": "en",
+        "internal_list_limit": 100
+      },
+      "result": [
+        {
+          "platform": "chat_gpt",
+          "location_name": "United States",
+          "language_code": "en",
+          "datetime": "2026-08-18 09:00:00 +00:00",
+          "total_count": 412,
+          "items_count": 3,
+          "items": [
+            {
+              "target": "example-fixture.test",
+              "mentions_count": 37,
+              "mentions_share": 0.041,
+              "sources_count": 12,
+              "first_seen": "2026-06-02 11:30:00 +00:00",
+              "last_seen": "2026-08-17 22:05:00 +00:00",
+              "mentions_by_intent": { "informational": 21, "commercial": 16 },
+              "top_sources": ["example-fixture.test", "docs.example-fixture.test"]
+            },
+            {
+              "target": "second-fixture.test",
+              "mentions_count": 0,
+              "mentions_share": null,
+              "sources_count": 0,
+              "first_seen": null,
+              "last_seen": null
+            },
+            {
+              "target": "third-fixture.test"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
