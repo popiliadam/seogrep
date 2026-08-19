@@ -48,6 +48,23 @@ function fixtureTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   }));
 }
 
+/** The same response with every `cost` field removed — the vendor declining to price a request. */
+function withoutCost(fixture: unknown): unknown {
+  const clone = structuredClone(fixture) as { cost?: number; tasks?: { cost?: number }[] };
+  delete clone.cost;
+  for (const task of clone.tasks ?? []) delete task.cost;
+  return clone;
+}
+
+/** The fixture transport again, but UNPRICED — a vendor that answered and quoted nothing. */
+function unpricedTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
+  return vi.fn<DfsTransport>(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => withoutCost(gapFixture),
+  }));
+}
+
 const liveClient = (transport: DfsTransport, spendLedger: MemorySpendLedger) =>
   createLiveKeywordGapClient({ login: "user@x.test", password: "pw", transport, ledger: spendLedger });
 
@@ -194,6 +211,20 @@ describe("estimateKeywordGapUsd", () => {
   });
 
   /**
+   * DIRECTION, not digits. Every spec above multiplies by BUDGET_SAFETY_FACTOR on BOTH sides, so
+   * the factor was only ever asserted against itself: flipping 1.5 to 0.5 — an UNDER-estimate,
+   * the one direction this module's own header forbids — left the whole fast lane green
+   * (measured 2026-08-19). This asserts what the factor is FOR.
+   */
+  it("ERRS HIGH: every estimate strictly exceeds the vendor's own formula", () => {
+    for (const limit of [1, DEFAULT_KEYWORD_GAP_LIMIT, KEYWORD_GAP_MAX_LIMIT] as const) {
+      const vendorFormula = DFS_LABS_REQUEST_USD + limit * DFS_LABS_ROW_USD;
+      expect(estimateKeywordGapUsd(limit)).toBeGreaterThan(vendorFormula);
+    }
+    expect(BUDGET_SAFETY_FACTOR).toBeGreaterThan(1);
+  });
+
+  /**
    * The MARGIN the signed 45-credit price rests on, asserted rather than trusted. Revenue is 45
    * credits at the most conservative rate the pricing decision uses ($0.0124/credit); the vendor
    * cost is the PUBLISHED formula WITHOUT the safety factor, because the safety factor is a
@@ -312,6 +343,24 @@ describe("createLiveKeywordGapClient (fake transport — never real HTTP)", () =
     expect(ledger.rows()).toHaveLength(1);
     expect(ledger.rows()[0]?.endpoint).toBe(DFS_DOMAIN_INTERSECTION_ENDPOINT);
     expect(ledger.rows()[0]?.rowCount).toBe(4);
+  });
+
+  /**
+   * A request the vendor declined to price still HAPPENED, and settling it at $0.00 would
+   * under-count the day — the one direction the budget gate must never err in. The failure is
+   * invisible from outside: the caller still gets its gap rows, so nothing breaks except the
+   * $3/day counter, which then lets through spending it never saw. Deleting the
+   * `?? estimateKeywordGapUsd(...)` fallback left the whole fast lane green (measured
+   * 2026-08-19 — the same unpinned shape the two sibling gap adapters carried); this is the spec
+   * that reddens it.
+   */
+  it("settles an UNPRICED request at its own estimate, never at zero", async () => {
+    await liveClient(unpricedTransport(), ledger).fetchKeywordGap(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 10);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0);
+    // Settled, not merely left open: the reservation carries a real cost now.
+    expect(ledger.rows()[0]?.actualUsd).toBeGreaterThan(0);
   });
 
   it("throws on a non-OK HTTP response instead of reporting an empty gap", async () => {

@@ -44,6 +44,23 @@ function fixtureTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   }));
 }
 
+/** The same response with every `cost` field removed — the vendor declining to price a request. */
+function withoutCost(fixture: unknown): unknown {
+  const clone = structuredClone(fixture) as { cost?: number; tasks?: { cost?: number }[] };
+  delete clone.cost;
+  for (const task of clone.tasks ?? []) delete task.cost;
+  return clone;
+}
+
+/** The fixture transport again, but UNPRICED — a vendor that answered and quoted nothing. */
+function unpricedTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
+  return vi.fn<DfsTransport>(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => withoutCost(linkGapFixture),
+  }));
+}
+
 const liveClient = (transport: DfsTransport, spendLedger: MemorySpendLedger) =>
   createLiveLinkGapClient({ login: "user@x.test", password: "pw", transport, ledger: spendLedger });
 
@@ -193,6 +210,20 @@ describe("estimateLinkGapUsd", () => {
     expect(rowDelta).toBeCloseTo(100 * DFS_BACKLINKS_ROW_USD * BUDGET_SAFETY_FACTOR, 10);
   });
 
+  /**
+   * DIRECTION, not digits. Every other spec here multiplies by BUDGET_SAFETY_FACTOR on BOTH
+   * sides, so the factor was only ever asserted against itself: flipping 1.5 to 0.5 — an
+   * UNDER-estimate, the one direction this module's own header forbids — left the whole fast lane
+   * green (measured 2026-08-19). This asserts what the factor is FOR.
+   */
+  it("ERRS HIGH: every estimate strictly exceeds the vendor's own formula", () => {
+    for (const limit of [1, DEFAULT_LINK_GAP_LIMIT, LINK_GAP_MAX_LIMIT] as const) {
+      const vendorFormula = DFS_BACKLINKS_REQUEST_USD + limit * DFS_BACKLINKS_ROW_USD;
+      expect(estimateLinkGapUsd(limit)).toBeGreaterThan(vendorFormula);
+    }
+    expect(BUDGET_SAFETY_FACTOR).toBeGreaterThan(1);
+  });
+
   it("uses the BACKLINKS tariff, which is not the Labs one", () => {
     // $0.024/request against Labs' $0.012 — a copy-paste of the sibling adapter's constants would
     // under-reserve every link gap by half a request.
@@ -316,6 +347,23 @@ describe("createLiveLinkGapClient (fake transport — never real HTTP)", () => {
     expect(ledger.rows()).toHaveLength(1);
     expect(ledger.rows()[0]?.endpoint).toBe(DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT);
     expect(ledger.rows()[0]?.rowCount).toBe(3);
+  });
+
+  /**
+   * A request the vendor declined to price still HAPPENED, and settling it at $0.00 would
+   * under-count the day — the one direction the budget gate must never err in. The failure is
+   * invisible from outside: the caller still gets its prospect rows, so nothing breaks except the
+   * $3/day counter, which then lets through spending it never saw. Deleting the
+   * `?? estimateLinkGapUsd(...)` fallback left the whole fast lane green (measured 2026-08-19);
+   * this is the spec that reddens it.
+   */
+  it("settles an UNPRICED request at its own estimate, never at zero", async () => {
+    await liveClient(unpricedTransport(), ledger).fetchLinkGap(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateLinkGapUsd(QUERY.limit), 10);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0);
+    // Settled, not merely left open: the reservation carries a real cost now.
+    expect(ledger.rows()[0]?.actualUsd).toBeGreaterThan(0);
   });
 
   it("throws on a non-OK HTTP response instead of reporting an empty gap", async () => {
