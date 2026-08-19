@@ -64,11 +64,11 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // from here; the one that escaped into a published docs page is exactly what NEVER #7 forbids.
   // paid-balance.test.ts pins the shape out.
   "disavow_candidates",
-  // discover_keywords (2026-08-19) — ONE real DataForSEO Labs request per call, billed per
-  // returned row up to that port's cap. It is gated on exactly the same ground as every member
-  // above: the call spends vendor money, and the daily budget it spends from is shared with the
-  // customers who paid for it. A cheaper call is not an ungated one — a farm minting accounts
-  // spends the day's allowance just as effectively with a one-request tool.
+  // discover_keywords (2026-08-19) — a real DataForSEO Labs call, billed per returned row up to
+  // that port's cap. Gated on exactly the same ground as every member above: it spends vendor
+  // money, and the daily budget it spends from is shared with the customers who paid for it. The
+  // criterion is "does it spend?", never "how much?" — and per the note above, no member's
+  // per-call request count lives in this file, so this entry compares itself to nothing.
   "discover_keywords",
 ]);
 
