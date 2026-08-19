@@ -38,12 +38,22 @@
 --   stated rather than hidden: this column is NOT the caller's literal argument, and a surface
 --   that wanted to replay a request verbatim cannot get it from here.
 --
---   DOES CASE MATTER? NO, and this is measured rather than assumed. DataForSEO's Labs
---   keyword_overview endpoint echoes keywords lowercased (every keyword in the repo's own captured
---   response fixture, apps/mcp/src/dfs/fixtures/keyword-overview.json, comes back lowercase), so
---   "SEO Tools" and "seo tools" are the same row on the vendor's side. Keeping them apart HERE
---   would split one subject into two that can never be compared, for a difference the measurement
---   does not have.
+--   DOES CASE MATTER? NO — and the EVIDENCE FOR THAT IS WEAKER THAN THE DECISION, which is why
+--   the two are separated here rather than blended into one confident sentence. What the repo can
+--   show: every keyword in its own captured response fixture
+--   (apps/mcp/src/dfs/fixtures/keyword-overview.json) comes back lowercase. What the repo CANNOT
+--   show: the casing of the REQUEST that produced it, which is recorded nowhere. So "the vendor
+--   lowercases what you send" is an INFERENCE from a response-only capture, not a measurement of
+--   the round trip — the exact gap signed lesson 9 exists to name, and it is written down instead
+--   of being rounded up to "measured".
+--
+--   The decision survives the weaker evidence, which is the point of stating both. Folding case is
+--   safe in the direction that matters: if the vendor really is case-insensitive, splitting "SEO
+--   Tools" from "seo tools" would fork ONE subject into two that can never be compared, for a
+--   difference the answer does not carry. If the vendor were case-SENSITIVE, folding would merge
+--   two subjects — but then the merged rows would disagree on their numbers, which is visible,
+--   whereas a silent fork is not. A capture of a mixed-case REQUEST would settle it and upgrade
+--   this paragraph from inference to measurement; until someone runs one, it stays an inference.
 --
 --   HOW DOES A 40-KEYWORD LIST RELATE TO A 39-KEYWORD SUBSET? AT THIS GRAIN, NOT AT ALL, and the
 --   refusal is the point. The comparable number a set-shaped run carries is an AGGREGATE (total
