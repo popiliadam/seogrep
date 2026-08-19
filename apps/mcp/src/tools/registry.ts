@@ -12,7 +12,7 @@ import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
-import { creditCostFor, type ToolName } from "../credits/costs.ts";
+import { creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
 
 /**
  * Zod-based tool registry — the foundation the docs automation (D11) builds on: a
@@ -79,8 +79,9 @@ export interface ToolSpec<TIn> {
   readonly charge?: ChargeMode;
   /**
    * How many PRICED UNITS this call buys, read off the parsed input — declared ONLY by a tool whose
-   * signed price is per unit rather than per call (credits/costs.ts CREDIT_UNITS). Omitted means
-   * one unit, which is every other tool.
+   * signed price is per unit rather than per call (credits/costs.ts CREDIT_UNITS). Optional in the
+   * TYPE because every other tool omits it — omitted means one unit — but REQUIRED for a per-unit
+   * name, and defineTool throws at declaration time when one is missing.
    *
    * It exists for the D17 gate below and nothing else: that gate has to weigh what the CALL will
    * cost, and for `ai_visibility_compare` that is 90 x targets — 900 at ten targets, well over the
@@ -302,8 +303,22 @@ export function toInputJsonSchema(schema: z.ZodType<unknown>): Record<string, un
  *     itself synchronously (it calls withCredits from inside, after any pre-reserve gate); a
  *     "worker" tool enqueues an async job whose reserve/commit is the worker's, keyed to the real
  *     jobs.id. Wrapping either here would double-charge.
+ *
+ * DECLARATION-TIME, not call-time: a tool whose price is PER UNIT must declare the `units` hook.
+ * creditCostFor already refuses to price a per-unit tool without a count, but that refusal lands
+ * when a user calls the tool; this one lands when the module is imported, which is every gate that
+ * builds the registry. Without it, forgetting the hook would leave the D17 gate weighing the unit
+ * price (90) instead of the call price (up to 900) and waving a 900-credit call through
+ * unconfirmed — a silent under-estimate rather than a loud failure.
  */
 export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
+  if (isPerUnitTool(spec.name) && spec.units === undefined) {
+    throw new Error(
+      `"${spec.name}" is priced per unit, so its spec must declare a "units" hook: the D17 ` +
+        `confirmation gate weighs what the CALL costs, and without the hook it would weigh one ` +
+        `unit's price instead.`,
+    );
+  }
   const inputJsonSchema = toInputJsonSchema(spec.inputSchema);
   const charge: ChargeMode = spec.charge ?? "surface";
   return {

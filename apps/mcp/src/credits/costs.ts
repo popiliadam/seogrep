@@ -181,15 +181,32 @@ export function isPerUnitTool(tool: ToolName): tool is PerUnitToolName {
  * mis-implemented) at a call site. `units` is a COUNT the caller's own request implies — the number
  * of compared targets — never a price: the per-unit figure stays TOOL_COSTS'.
  *
- * Fail-closed in both directions. A per-call tool asked to charge for more than one unit THROWS
- * rather than silently multiplying a flat price, and a per-unit tool asked for a count outside
- * 1..max_units throws rather than charging for a call the vendor would refuse anyway. Both are
- * internal errors — the tool surfaces bound the count in zod long before this — so they are loud.
+ * Fail-closed in both directions, and in THREE ways rather than two. A per-call tool asked to
+ * charge for more than one unit THROWS rather than silently multiplying a flat price. A per-unit
+ * tool asked for a count outside min_units..max_units throws rather than charging for a call the
+ * vendor would refuse anyway. And a per-unit tool asked with NO count at all throws rather than
+ * defaulting to one — the third case, and the one this signature originally got wrong.
+ *
+ * That third case is why `units` has no default. With `units = 1` an OMISSION was indistinguishable
+ * from an explicit 1, so `creditCostFor("ai_visibility_compare")` returned the bare 90: the flat
+ * price for a tool whose cheapest signed call is 180 and whose dearest is 900. Every call site
+ * happened to pass the count, so nothing was mispriced — but the shape meant a call site DROPPING
+ * `units:` (a refactor, a new caller) would give away up to 810 credits of signed value silently
+ * and stay green, which is the NEVER #6 shape this whole mechanism exists to prevent. Omission is
+ * now an error for a per-unit tool; for a per-call tool it stays the ordinary, overwhelmingly
+ * common path and means exactly what it always meant.
+ *
+ * min_units is likewise ENFORCED here, not merely stored: it was rendered on the pricing page and
+ * pinned in tests while the range check read `units < 1`, so a one-target comparison priced at 90
+ * passed a floor the operator signed at 180.
+ *
+ * All three are internal errors — the tool surfaces bound the count in zod long before this — so
+ * they are loud.
  */
-export function creditCostFor(tool: ToolName, units = 1): number {
+export function creditCostFor(tool: ToolName, units?: number): number {
   const rule = isPerUnitTool(tool) ? CREDIT_UNITS[tool] : null;
   if (rule === null) {
-    if (units !== 1) {
+    if (units !== undefined && units !== 1) {
       throw new Error(
         `"${tool}" is priced per call, so it cannot be charged for ${units} units. Only ` +
           `${Object.keys(CREDIT_UNITS).join(", ")} carry a per-unit price.`,
@@ -197,10 +214,17 @@ export function creditCostFor(tool: ToolName, units = 1): number {
     }
     return TOOL_COSTS[tool];
   }
-  if (!Number.isInteger(units) || units < 1 || units > rule.max_units) {
+  if (units === undefined) {
     throw new Error(
-      `"${tool}" is priced per ${rule.unit} and charges for 1 to ${rule.max_units} of them; ` +
-        `${units} is outside that range.`,
+      `"${tool}" is priced per ${rule.unit}, so the call must say how many it buys. Charging it ` +
+        `without a unit count would bill one call's flat ${TOOL_COSTS[tool]} for up to ` +
+        `${rule.max_units} ${rule.unit}s.`,
+    );
+  }
+  if (!Number.isInteger(units) || units < rule.min_units || units > rule.max_units) {
+    throw new Error(
+      `"${tool}" is priced per ${rule.unit} and charges for ${rule.min_units} to ` +
+        `${rule.max_units} of them; ${units} is outside that range.`,
     );
   }
   return TOOL_COSTS[tool] * units;

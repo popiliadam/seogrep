@@ -146,6 +146,49 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
     expect(() => creditCostFor("ai_visibility_compare", 2.5)).toThrow(/outside that range/i);
   });
 
+  /**
+   * THE FLOOR ITSELF — the value the three cases above deliberately step around.
+   *
+   * `min_units: 2` was stored, rendered on the pricing page and pinned against the port's own
+   * MIN_COMPARE_TARGETS while the range check read `units < 1`, so ONE target was priced at a flat
+   * 90 against a signed floor of 180. 0, 11 and 2.5 all pass a `< 1` check as readily as a
+   * `< min_units` one; 1 is the single value that separates them, which is why its absence let a
+   * false sentence survive review. Asserted as a LITERAL 1 rather than
+   * `MIN_COMPARE_TARGETS - 1` — a formula tracking the constant would follow the floor down if the
+   * floor ever moved and stop testing anything.
+   */
+  it("refuses ONE unit — the floor is 2, and 1 is the value a `< 1` check would let through", () => {
+    expect(() => creditCostFor("ai_visibility_compare", 1)).toThrow(/outside that range/i);
+    expect(() => creditCostFor("ai_visibility_compare", 1)).toThrow(/2 to 10/);
+  });
+
+  /**
+   * OMISSION — not a count at all, and the shape a refactor produces rather than a caller.
+   *
+   * `units` is optional at every call site that passes it (registry hook, CreditMeta), so dropping
+   * it is a deletion, not a typo, and used to be legal: it defaulted to 1 and returned the bare 90.
+   * Pinned as a DISTINCT message from the range error, so this stays a test of the omission branch
+   * even if the range check is later widened or narrowed.
+   */
+  it("refuses a per-unit tool with NO count — omission is an error, never a silent 1", () => {
+    expect(() => creditCostFor("ai_visibility_compare")).toThrow(/must say how many it buys/i);
+  });
+
+  /**
+   * The other side of that coin, and the one that must NOT have moved: every per-call tool is
+   * charged with no `units` argument at all. Making omission an error for the per-unit tool while
+   * breaking this path would break all 32 other tools at once.
+   */
+  it("still charges a per-call tool with no units argument — the common path is untouched", () => {
+    expect(creditCostFor("ai_visibility")).toBe(90);
+    expect(creditCostFor("ai_visibility", 1)).toBe(90);
+    expect(creditCostFor("whats_next")).toBe(0);
+    for (const tool of Object.keys(TOOL_COSTS) as (keyof typeof TOOL_COSTS)[]) {
+      if (isPerUnitTool(tool)) continue;
+      expect(creditCostFor(tool)).toBe(TOOL_COSTS[tool]);
+    }
+  });
+
   it("names exactly one per-unit tool — every other price is per call", () => {
     expect(Object.keys(CREDIT_UNITS)).toEqual(["ai_visibility_compare"]);
     expect(isPerUnitTool("ai_visibility_compare")).toBe(true);
@@ -164,5 +207,8 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
     expect(CREDIT_UNITS.ai_visibility_compare.max_units).toBe(MAX_COMPARE_TARGETS);
     expect(creditCostFor("ai_visibility_compare", MIN_COMPARE_TARGETS)).toBe(180);
     expect(() => creditCostFor("ai_visibility_compare", MAX_COMPARE_TARGETS + 1)).toThrow();
+    // Symmetric with the line above, and it only passes because min_units is ENFORCED rather than
+    // merely stored: below the vendor's floor is as unpriceable as above its ceiling.
+    expect(() => creditCostFor("ai_visibility_compare", MIN_COMPARE_TARGETS - 1)).toThrow();
   });
 });

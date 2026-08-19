@@ -69,8 +69,11 @@ export interface CreditMeta {
    * COMPARED TARGET). Omitted everywhere else, which is exactly one unit.
    *
    * It is a COUNT, never an amount: the price stays TOOL_COSTS', creditCostFor does the
-   * multiplication, and a count outside the signed range throws instead of reserving. Passing it
-   * for a per-call tool throws too, so it cannot become a back door for a caller-chosen price.
+   * multiplication, and a count outside the signed range (2 to 10) throws instead of reserving.
+   * Passing it for a per-call tool throws too, so it cannot become a back door for a caller-chosen
+   * price. OMITTING it for the per-unit tool throws as well — the case that matters here, because
+   * this field is optional in the type and a call site that drops it would otherwise reserve the
+   * bare 90 for up to ten targets and stay green.
    */
   units?: number;
 }

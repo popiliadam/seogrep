@@ -107,6 +107,47 @@ describe("defineTool", () => {
     expect(schema.required).toEqual(["project_id"]);
     expect(Object.keys(schema.properties).sort()).toEqual(["max_urls", "project_id"]);
   });
+
+  /**
+   * DECLARATION-TIME refusal for a per-unit price, and the reason it is here rather than left to
+   * creditCostFor: creditCostFor's own refusal lands when a USER calls the tool, whereas a missing
+   * `units` hook is a mistake made when the module is WRITTEN. The gap between the two is a D17
+   * under-estimate — the gate would weigh the unit price (90) rather than the call price (up to
+   * 900) and wave a 900-credit call through unconfirmed, which is a quieter failure than a throw.
+   *
+   * Both branches are asserted: the per-unit name without a hook must throw, and the SAME spec
+   * with a hook must not. Only the second half proves the check reads the hook rather than the
+   * name alone.
+   */
+  it("refuses to declare a per-unit tool without a units hook, at declaration time", () => {
+    const spec = {
+      name: "ai_visibility_compare",
+      description: "d",
+      inputSchema: z.object({ targets: z.array(z.string()) }),
+      charge: "handler",
+      handler: async () => textResult("ok"),
+    } as const;
+    expect(() => defineTool(spec)).toThrow(/must declare a "units" hook/i);
+    expect(() =>
+      defineTool({ ...spec, units: (input: { targets: string[] }) => input.targets.length }),
+    ).not.toThrow();
+  });
+
+  /**
+   * The other side: a PER-CALL tool must stay declarable with no `units` hook at all. That is 32
+   * of the 33 tools, so a check keyed to the wrong condition would fail the whole surface rather
+   * than the one tool it is meant to guard.
+   */
+  it("still declares a per-call tool with no units hook", () => {
+    expect(() =>
+      defineTool({
+        name: "ai_visibility",
+        description: "d",
+        inputSchema: z.object({}),
+        handler: async () => textResult("ok"),
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("defineTool charge modes", () => {
