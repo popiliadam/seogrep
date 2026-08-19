@@ -112,7 +112,37 @@ const SILENT_ROW: DiscoverKeywordRow = {
   last_updated_time: null,
 };
 
+/**
+ * THE ENV THIS FILE MEASURES AGAINST. Every "reaches the credit guard" assertion below reads a
+ * MISSING Supabase env as its signal — the guard is the first thing past the free gates, and with
+ * no DB configured it throws naming SUPABASE. That makes the assertion depend on the ambient
+ * shell, and it was MEASURED to matter: with the local stack's env exported (as a developer shell
+ * has it during a DB-lane run) nine of these specs failed, because the reserve reached a real
+ * database instead of failing. So the env is cleared per test rather than assumed — a spec whose
+ * result depends on who ran it is not a measurement.
+ */
+const SUPABASE_ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
+
+function withoutSupabaseEnv(): void {
+  let saved: Partial<Record<(typeof SUPABASE_ENV_KEYS)[number], string | undefined>> = {};
+  beforeEach(() => {
+    saved = {};
+    for (const key of SUPABASE_ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of SUPABASE_ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
 describe("THE MODE DISCRIMINATION — four modes, four inputs, nothing borrowed", () => {
+  withoutSupabaseEnv();
   const tool = makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
 
   it("requires the mode and offers no default — a default would answer a different question", () => {
@@ -562,22 +592,7 @@ describe("the output says WHICH question was answered, and over WHAT window", ()
 });
 
 describe("discover_keywords free pre-reserve gates (no credit machinery)", () => {
-  const ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
-  let saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>;
-  beforeEach(() => {
-    saved = {};
-    for (const key of ENV_KEYS) {
-      saved[key] = process.env[key];
-      delete process.env[key];
-    }
-  });
-  afterEach(() => {
-    for (const key of ENV_KEYS) {
-      const value = saved[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  });
+  withoutSupabaseEnv();
 
   const serving = () => makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
 
