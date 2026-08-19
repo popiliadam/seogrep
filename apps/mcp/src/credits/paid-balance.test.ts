@@ -37,7 +37,12 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // Nine -> ten on 2026-08-19: disavow_candidates, which sends THREE paid DataForSEO requests per
   // call, on the ROW tariff. The set GREW; nothing left it. No ranking by round trips is claimed
   // for it — the first draft of this line claimed one and it was false; see the spec below.
-  it("is exactly the ten DataForSEO tools", () => {
+  //
+  // Ten -> eleven on 2026-08-19: discover_keywords, which sends ONE paid DataForSEO Labs request
+  // per call. The set GREW; nothing left it. It is the first member added for a reason that is NOT
+  // "it spends a lot": one request still spends from the shared daily vendor budget, which is the
+  // thing this gate protects — so the criterion stays "does it spend?", never "how much?".
+  it("is exactly the eleven DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "audit_speed",
@@ -45,6 +50,7 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
       "backlink_details",
       "compare_competitors",
       "disavow_candidates",
+      "discover_keywords",
       "keyword_gap",
       "link_gap",
       "ranked_keywords",

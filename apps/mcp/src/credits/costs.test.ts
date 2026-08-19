@@ -16,6 +16,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       get_job_status: 0,
       pull_gsc_data: 5,
       research_keywords: 25,
+      discover_keywords: 40,
       ranked_keywords: 65,
       analyze_backlinks: 70,
       compare_competitors: 90,
@@ -76,8 +77,15 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // sub-band WARNING attached (worst case 2.8x, below the x3 band), and the signature's own
   // remedy was a CAP rather than a price — so what protects this 40 is the row-cap trio in
   // dfs/disavow-candidates.ts, and the gap map's older 55 is stale, not a second opinion.
-  it("has exactly 29 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(29);
+  //
+  // 29 -> 30 on 2026-08-19: discover_keywords (plan §B) at a SIGNED 40 credits — MADDE 1 row #1 of
+  // the same 2026-08-17 signature package. Same shape as the seven growths above: the table GREW
+  // and no existing number moved. It shares disavow_candidates' 40 by arithmetic, not by analogy —
+  // a different vendor family (Labs, not Backlinks) and ONE request, whose worst case at the
+  // 1,000-row cap the signature measured at 3.8x. The v1 idea of a SECOND price above limit > 500
+  // was dropped in v2: there is one price, and MAX_DISCOVER_ROWS is what holds it.
+  it("has exactly 30 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(30);
   });
 
   it("exposes only non-negative integer costs", () => {

@@ -19,6 +19,17 @@ export const TOOL_COSTS = {
   get_job_status: 0,
   pull_gsc_data: 5,
   research_keywords: 25,
+  // discover_keywords (plan 2026-08-17 §B, MADDE 1 row #1): the DataForSEO Labs keyword-DISCOVERY
+  // family — keyword_ideas / keyword_suggestions / related_keywords / keywords_for_site behind one
+  // `mode`. SIGNED BY THE OPERATOR 2026-08-17 at 40, with the vendor cost MEASURED: typical $0.024
+  // at 100 rows (20.7x) and worst $0.132 at 1,000 rows (3.8x) on the Labs tariff ($0.012 per
+  // request + $0.00012 per row). The v1 draft's second price tier above `limit` > 500 was DROPPED
+  // in v2 — there is ONE price, so the ROW CAP is the only thing holding the signed worst case up:
+  // MAX_DISCOVER_ROWS (1,000) and ONE request per lookup (dfs/discover-keywords.ts) are part of
+  // the signed price, not soft limits. It does not re-price research_keywords above it: that tool
+  // prices a list the caller already has, this one asks the vendor to produce one. No existing
+  // number moved.
+  discover_keywords: 40,
   ranked_keywords: 65,
   analyze_backlinks: 70,
   compare_competitors: 90,
