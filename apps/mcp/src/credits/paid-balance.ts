@@ -51,6 +51,9 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // heaviest single member of this set by vendor round trips and belongs here for the same reason
   // the gap tools do.
   "backlink_changes",
+  // backlink_details (2026-08-18) — also TWO real DataForSEO Backlinks requests per call, and on
+  // the ROW tariff, so its worst case buys 900 billed rows. Same reason as backlink_changes.
+  "backlink_details",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

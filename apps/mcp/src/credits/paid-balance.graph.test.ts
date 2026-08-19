@@ -196,6 +196,8 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       "tools/audit-speed.ts",
       // backlink_changes (2026-08-18): reaches reserveSpend through dfs/backlink-changes.ts.
       "tools/backlink-changes.ts",
+      // backlink_details (2026-08-18): reaches reserveSpend through dfs/backlink-details.ts.
+      "tools/backlink-details.ts",
       "tools/compare-competitors.ts",
       "tools/keyword-gap.ts",
       "tools/link-gap.ts",

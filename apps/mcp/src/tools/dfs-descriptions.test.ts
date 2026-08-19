@@ -32,8 +32,9 @@ describe("DataForSEO tool descriptions", () => {
   // make every it.each below assert less while this file stayed green.
   // Seven -> eight on 2026-08-18 (backlink_changes). The count RISING is the only edit this pin
   // sanctions; every it.each below now has one more tool to hold to the same three promises.
-  it("covers all eight gated tools", () => {
-    expect(GATED).toHaveLength(8);
+  // Eight -> nine the same day (backlink_details), for the same reason and under the same rule.
+  it("covers all nine gated tools", () => {
+    expect(GATED).toHaveLength(9);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

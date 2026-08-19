@@ -39,6 +39,16 @@ export const TOOL_COSTS = {
   // (MAX_BACKLINK_CHANGES_PERIODS, dfs/backlink-changes.ts) is part of the signed price, not a
   // soft limit. No existing number moved.
   backlink_changes: 35,
+  // backlink_details (plan 2026-08-17 §B4, MADDE 1 row #9): the two DataForSEO Backlinks ROW
+  // endpoints — the individual links (/backlinks/live) and the target's own pages
+  // (/domain_pages_summary/live). SIGNED BY THE OPERATOR 2026-08-17 at 35, the same number as
+  // backlink_changes and for the same shape of call: two requests on the Backlinks tariff
+  // ($0.024/request + $0.000036/row). The ROW CAPS that keep the worst case inside the signed
+  // margin band (MAX_BACKLINK_DETAIL_ROWS 700 + MAX_TARGET_PAGE_ROWS 200 = 900 billed rows,
+  // dfs/backlink-details.ts) are part of the signed price, not a soft limit: at the vendor's own
+  // 1,000-per-request ceiling the margin would fall through the signed floor. No existing number
+  // moved.
+  backlink_details: 35,
   find_quick_wins: 10,
   detect_cannibalization: 10,
   analyze_content_decay: 10,

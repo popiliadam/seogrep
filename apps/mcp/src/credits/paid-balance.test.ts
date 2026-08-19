@@ -29,11 +29,16 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // Seven -> eight on 2026-08-18: backlink_changes, which sends TWO paid DataForSEO requests per
   // call and is therefore the heaviest member here by vendor round trips. The set GREW; nothing
   // left it.
-  it("is exactly the eight DataForSEO tools", () => {
+  //
+  // Eight -> nine on 2026-08-18: backlink_details, which sends the same TWO paid requests per call
+  // as backlink_changes but on the ROW tariff, so its worst case buys 900 billed rows. The set
+  // GREW; nothing left it.
+  it("is exactly the nine DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "analyze_backlinks",
       "audit_speed",
       "backlink_changes",
+      "backlink_details",
       "compare_competitors",
       "keyword_gap",
       "link_gap",

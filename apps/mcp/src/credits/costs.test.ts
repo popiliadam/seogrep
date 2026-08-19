@@ -22,6 +22,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       keyword_gap: 45,
       link_gap: 45,
       backlink_changes: 35,
+      backlink_details: 35,
       find_quick_wins: 10,
       detect_cannibalization: 10,
       analyze_content_decay: 10,
@@ -61,8 +62,14 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // Same shape as the four growths above: the table GREW and no existing number moved. The 35 is
   // BELOW the v1 draft's 45, and the reduction was the operator's own, made before this work
   // started — nothing here re-prices anything.
-  it("has exactly 27 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(27);
+  //
+  // 27 -> 28 on 2026-08-18: backlink_details (plan §B4) at a SIGNED 35 credits — MADDE 1 row #9 of
+  // the same 2026-08-17 signature package. Same shape as the five growths above: the table GREW
+  // and no existing number moved. It shares backlink_changes's 35 because it makes the same two
+  // requests on the same Backlinks tariff; what keeps its worst case inside the signed band is
+  // the ROW CAP pair in dfs/backlink-details.ts, which is part of the signed price.
+  it("has exactly 28 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(28);
   });
 
   it("exposes only non-negative integer costs", () => {
