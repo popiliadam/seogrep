@@ -1,0 +1,50 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.6118 sec.",
+  "cost": 0.104,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08191200-0000-0000-0000-fixture0022",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.6002 sec.",
+      "cost": 0.104,
+      "result_count": 1,
+      "path": ["v3", "ai_optimization", "llm_mentions", "cross_aggregated_metrics", "live"],
+      "data": {
+        "api": "ai_optimization",
+        "function": "cross_aggregated_metrics",
+        "location_name": "United States",
+        "language_code": "en",
+        "internal_list_limit": 100
+      },
+      "result": [
+        {
+          "location_name": "United States",
+          "language_code": "en",
+          "total_count": 2,
+          "items_count": 2,
+          "items": [
+            {
+              "aggregation_key": "our-brand",
+              "mentions_count": 37,
+              "mentions_share": 0.041,
+              "sources_count": 12,
+              "mentions_by_intent": { "informational": 21, "commercial": 16 }
+            },
+            {
+              "aggregation_key": "rival-one",
+              "mentions_count": 0,
+              "mentions_share": null,
+              "sources_count": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
