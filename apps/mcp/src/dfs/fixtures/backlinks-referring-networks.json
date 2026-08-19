@@ -1,0 +1,72 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.9142 sec.",
+  "cost": 0.02407,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0013",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.8981 sec.",
+      "cost": 0.02407,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "referring_networks", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "referring_networks",
+        "target": "example.com",
+        "network_address_type": "subnet",
+        "limit": 20,
+        "order_by": ["backlinks,desc"]
+      },
+      "result": [
+        {
+          "target": "example.com",
+          "total_count": 1877,
+          "items_count": 4,
+          "items": [
+            {
+              "type": "backlinks_referring_network",
+              "network_address": "185.220.101.0/24",
+              "backlinks": 1904,
+              "first_seen": "2024-02-11 08:12:04 +00:00",
+              "lost_date": null,
+              "backlinks_spam_score": 76,
+              "referring_domains": 212,
+              "referring_domains_nofollow": 4,
+              "referring_main_domains": 209,
+              "referring_pages": 1904
+            },
+            {
+              "type": "backlinks_referring_network",
+              "network_address": "45.83.64.0/24",
+              "backlinks": 611,
+              "first_seen": "2023-11-04 19:02:55 +00:00",
+              "lost_date": "2026-06-01 00:00:00 +00:00",
+              "backlinks_spam_score": 0,
+              "referring_domains": 0,
+              "referring_domains_nofollow": 0,
+              "referring_main_domains": 0,
+              "referring_pages": 611
+            },
+            {
+              "type": "backlinks_referring_network",
+              "network_address": "203.0.113.0/24"
+            },
+            {
+              "type": "backlinks_referring_network",
+              "network_address": null,
+              "backlinks": 12,
+              "backlinks_spam_score": 99,
+              "referring_domains": 12
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

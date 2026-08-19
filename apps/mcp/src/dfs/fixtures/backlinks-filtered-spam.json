@@ -1,0 +1,119 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.4471 sec.",
+  "cost": 0.02403,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08181200-0000-0000-0000-fixture0011",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "1.4210 sec.",
+      "cost": 0.02403,
+      "result_count": 1,
+      "path": ["v3", "backlinks", "backlinks", "live"],
+      "data": {
+        "api": "backlinks",
+        "function": "backlinks",
+        "target": "example.com",
+        "limit": 100,
+        "mode": "as_is",
+        "backlinks_status_type": "live",
+        "include_subdomains": true,
+        "rank_scale": "one_thousand",
+        "order_by": ["backlink_spam_score,desc"],
+        "filters": [["backlink_spam_score", ">=", 40]]
+      },
+      "result": [
+        {
+          "target": "example.com",
+          "mode": "as_is",
+          "custom_mode": null,
+          "total_count": 4291,
+          "items_count": 5,
+          "items": [
+            {
+              "type": "backlink",
+              "domain_from": "SpamFarm.example",
+              "url_from": "https://SpamFarm.example/links/1",
+              "url_to": "https://example.com/pricing",
+              "tld_from": "example",
+              "backlink_spam_score": 71,
+              "rank": 12,
+              "first_seen": "2024-02-11 08:12:04 +00:00",
+              "last_seen": "2026-08-02 03:55:41 +00:00",
+              "item_type": "anchor",
+              "dofollow": true,
+              "anchor": "cheap seo services",
+              "is_broken": false,
+              "url_to_status_code": 200
+            },
+            {
+              "type": "backlink",
+              "domain_from": "SpamFarm.example",
+              "url_from": "https://SpamFarm.example/links/2",
+              "url_to": "https://example.com/",
+              "tld_from": "example",
+              "backlink_spam_score": 68,
+              "rank": 9,
+              "first_seen": "2024-02-11 08:12:09 +00:00",
+              "last_seen": "2026-08-02 03:55:44 +00:00",
+              "item_type": "image",
+              "dofollow": false,
+              "anchor": null,
+              "is_broken": false,
+              "url_to_status_code": 200
+            },
+            {
+              "type": "backlink",
+              "domain_from": "linkring.example",
+              "url_from": "https://linkring.example/partners/",
+              "url_to": "https://example.com/blog/seo-guide",
+              "tld_from": "example",
+              "backlink_spam_score": 55,
+              "rank": 31,
+              "first_seen": "2023-11-04 19:02:55 +00:00",
+              "last_seen": "2026-08-01 22:10:00 +00:00",
+              "item_type": "anchor",
+              "dofollow": true,
+              "anchor": "click here",
+              "is_broken": true,
+              "url_to_status_code": 404
+            },
+            {
+              "type": "backlink",
+              "domain_from": null,
+              "url_from": null,
+              "url_to": "https://example.com/",
+              "backlink_spam_score": 90,
+              "rank": 0,
+              "item_type": "redirect",
+              "dofollow": true,
+              "anchor": null,
+              "is_broken": false,
+              "url_to_status_code": 200
+            },
+            {
+              "type": "backlink",
+              "domain_from": "quiet.example",
+              "url_from": "https://quiet.example/a",
+              "url_to": "https://example.com/",
+              "tld_from": "example",
+              "rank": 44,
+              "first_seen": "2025-01-30 11:00:00 +00:00",
+              "last_seen": "2026-07-30 11:00:00 +00:00",
+              "item_type": "anchor",
+              "dofollow": true,
+              "anchor": "example",
+              "is_broken": false,
+              "url_to_status_code": 200
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
