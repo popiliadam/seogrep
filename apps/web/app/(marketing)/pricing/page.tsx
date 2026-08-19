@@ -30,6 +30,15 @@ const CREDIT_COSTS = [
   // advertise one price for two different kinds of thing.
   { action: "Page speed audit (up to 5 URLs)", cost: "15" },
   { action: "Keyword research (100 keywords)", cost: "25" },
+  // discover_keywords (2026-08-17, operator-signed at 40). Its own row, beside the research one
+  // rather than inside it: "Keyword research" prices a list the caller already has, this one asks
+  // DataForSEO to produce a list they do not. Different question, different vendor endpoint
+  // family, and a caller runs them at different moments — one label over both would advertise
+  // one price for two purchases. The signed 40 rests on the row cap in dfs/discover-keywords.ts
+  // (one request, at most 1,000 billed rows), so this number moving means the cap moved too
+  // (NEVER #6). The v1 draft's second price above limit > 500 was dropped before signature:
+  // there is ONE price here.
+  { action: "Keyword discovery (seed or domain)", cost: "40" },
   { action: "Ranked keywords (per domain)", cost: "65" },
   { action: "Backlink profile (per domain)", cost: "70" },
   { action: "Competitor comparison (per domain)", cost: "90" },
