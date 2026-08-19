@@ -349,5 +349,20 @@ describe("disavow_candidates credit path against the local stack", () => {
     const rows = await ledgerRows(stranger.userId);
     expect(rows.map((r) => r.kind)).toEqual(["purchase"]);
     expect(balanceOf(rows)).toBe(300);
+
+    /**
+     * THE OTHER DIRECTION, and it is not decoration — it is measured. With only the refusal above,
+     * this spec stayed GREEN when the handler's tenant filter was replaced by a hard-coded
+     * stranger id: a tool that refuses EVERY project_id, including its owner's, satisfies a
+     * refusal-only assertion perfectly. The owner running their OWN project must resolve and be
+     * charged, or "tenant isolation" is indistinguishable from "broken".
+     */
+    await seedPurchase(owner.userId, 300);
+    const mine = await tool.run(owner, { project_id: data.id, min_backlink_spam_score: 40 });
+    expect(mine.isError).toBeUndefined();
+    expect(mine.content[0]?.text).toContain("Disavow candidates for your project");
+    const ownerRows = await ledgerRows(owner.userId);
+    expect(ownerRows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
+    expect(balanceOf(ownerRows)).toBe(300 - TOOL_COSTS.disavow_candidates);
   });
 });

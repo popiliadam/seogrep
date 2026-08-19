@@ -175,12 +175,21 @@ async function formattedFixtureAnswer(overrides: Record<string, unknown> = {}): 
 }
 
 describe("THE HARD RULE — this tool proposes, and says so; it never submits", () => {
-  it("prints the refusal in the output, byte-identical to the one inside the file", async () => {
-    const text = await formattedFixtureAnswer();
-    expect(text).toContain(NO_SUBMISSION_NOTICE);
+  /**
+   * The refusal must appear TWICE and be asserted as two whole LINES, not with `toContain`.
+   * Measured, not assumed: with `toContain` this spec stayed GREEN when the answer's own notice
+   * was deleted, because the copy inside the file body satisfied the substring — the answer would
+   * have lost its refusal and nothing would have said so (signed lesson 12). Whole lines, in both
+   * places, is the assertion that actually bites.
+   */
+  it("prints the refusal as its own line, AND again inside the file it hands over", async () => {
+    const lines = (await formattedFixtureAnswer()).split("\n");
     expect(NO_SUBMISSION_NOTICE).toBe(DISAVOW_TXT_PROPOSAL_NOTICE);
-    // ...and the file the reader copies out carries it too, so the two cannot be separated.
-    expect(text).toContain(`# ${DISAVOW_TXT_PROPOSAL_NOTICE}`);
+    // In the answer, on its own — not buried in a paragraph and not only in the file.
+    expect(lines).toContain(NO_SUBMISSION_NOTICE);
+    // ...and in the file the reader copies out, so the two cannot be separated.
+    expect(lines).toContain(`# ${DISAVOW_TXT_PROPOSAL_NOTICE}`);
+    expect(lines.filter((line) => line.includes(NO_SUBMISSION_NOTICE))).toHaveLength(2);
   });
 
   it("says whose job the upload is, and names Search Console as the place the HUMAN goes", async () => {
@@ -400,8 +409,8 @@ describe("the output makes clear it is a PROPOSAL over a WINDOW", () => {
     expect(text).toContain("backlink_spam_score >= 90");
     expect(text).toContain("(offset 0, limit 100)");
     expect(text).toMatch(/not a statement that the site has no such links/i);
-    // Even the empty answer carries the refusal — it is the claim that must never be dropped.
-    expect(text).toContain(NO_SUBMISSION_NOTICE);
+    // Even the empty answer carries the refusal, on its own line — the claim that is never dropped.
+    expect(text.split("\n")).toContain(NO_SUBMISSION_NOTICE);
     expect(text).not.toContain("domain:");
   });
 });
