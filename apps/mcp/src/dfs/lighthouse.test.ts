@@ -375,6 +375,50 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     expect(await todaySpendUsd(ledger)).toBe(0);
   });
 
+  /**
+   * The other half of that same `??`, and the fail-open direction: a response that omits `cost`
+   * entirely still cost money, so booking it at $0.00 under-counts the day and the $3/day guard
+   * then lets through spending it never saw. The zero-cost spec above cannot catch this — a
+   * reported 0 is extracted as 0, so the fallback never runs — and replacing the fallback with
+   * `?? 0` left all 35 specs in this file green (measured 2026-08-19).
+   *
+   * The fan-out makes the MIXED case reachable here too: one page priced, the other not. Because
+   * the fallback is applied PER REQUEST inside `measure`, the unpriced page contributes its own
+   * page price rather than disappearing into a sum that is already > 0.
+   */
+  it("falls back to the per-page list price for each response that omits its cost", async () => {
+    const costless = structuredClone(fixtureResponse) as { cost?: number; tasks: { cost?: number }[] };
+    delete costless.cost;
+    for (const task of costless.tasks) delete task.cost;
+    const transport: DfsTimedTransport = async (_url, init) => ({
+      ok: true,
+      status: 200,
+      json: async () => (init.body.includes("/pricing") ? costless : fixtureResponse),
+    });
+    const port = createLiveSpeedClient({ login: "u", password: "p", transport, ledger });
+    await port.fetchPageSpeed([URL_UNDER_TEST, "https://slowshop.org/pricing"]);
+
+    // The priced page at its real 0.005 + the unpriced page at LIGHTHOUSE_PAGE_USD — never at 0.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.005 + LIGHTHOUSE_PAGE_USD, 10);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0.005);
+
+    // …and with BOTH pages unpriced, both are still booked.
+    const bothLedger = createMemorySpendLedger();
+    const allCostless: DfsTimedTransport = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => costless,
+    });
+    const bothPort = createLiveSpeedClient({
+      login: "u",
+      password: "p",
+      transport: allCostless,
+      ledger: bothLedger,
+    });
+    await bothPort.fetchPageSpeed([URL_UNDER_TEST, "https://slowshop.org/pricing"]);
+    expect(bothLedger.rows()[0]?.actualUsd).toBeCloseTo(2 * LIGHTHOUSE_PAGE_USD, 10);
+  });
+
   it("refuses the whole lookup at the daily cap, before any request goes out", async () => {
     let requests = 0;
     const counting: DfsTimedTransport = async () => {
