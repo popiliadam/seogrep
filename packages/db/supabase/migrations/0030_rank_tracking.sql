@@ -340,8 +340,9 @@ create table public.keyword_position_measurements (
   -- rank_ABSOLUTE IS DELIBERATELY NOT BOUND THE SAME WAY, and treating the two scales alike would
   -- be the easy mistake here. rank_absolute counts ALL SERP elements — featured snippets, answer
   -- boxes, "people also ask" — so on a feature-rich page it LEGITIMATELY exceeds the organic count.
-  -- rank_group #4 / rank_absolute 9 of 10 organic results examined is exactly the disagreement
-  -- serp.ts calls the finding, and a symmetric constraint would refuse an honest row.
+  -- rank_group #10 / rank_absolute 14 of 10 organic results examined — ten organic results with
+  -- four features above them — is exactly the disagreement serp.ts calls the finding, and a
+  -- symmetric constraint would refuse an honest row. Spec (k) stores that row on purpose.
   constraint keyword_position_measurements_rank_group_within_examined
     check (
       best_rank_group is null

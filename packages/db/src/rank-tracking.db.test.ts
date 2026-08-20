@@ -477,6 +477,11 @@ describe("the three SERP outcomes survive storage", () => {
    */
   it("(k) ACCEPTS a rank_absolute above the organic count — the two scales count different things", async () => {
     const user = await makeUser();
+    // THE NUMBERS ARE THE ASSERTION. rank_absolute 14 EXCEEDS the 10 organic results examined —
+    // ten organic results with four SERP features above them, the vendor's own arithmetic. A
+    // fixture whose absolute sat INSIDE the organic count would pass under the very constraint
+    // this spec exists to forbid, and the mutation that adds one would stay green (measured:
+    // rank_absolute 9 of 10 examined did exactly that).
     expect(
       await insertMeasurement(
         user.id,
@@ -484,8 +489,8 @@ describe("the three SERP outcomes survive storage", () => {
         identity({
           status: "ranked",
           organic_items_examined: 10,
-          best_rank_group: 4,
-          best_rank_absolute: 9,
+          best_rank_group: 10,
+          best_rank_absolute: 14,
         }),
       ),
     ).toBeNull();
