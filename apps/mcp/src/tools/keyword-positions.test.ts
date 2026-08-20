@@ -360,6 +360,19 @@ describe("two readings are the same series only if everything they were measured
     expect(groupIntoSeries(rows)).toHaveLength(8);
   });
 
+  /**
+   * THE SEPARATOR IS LOAD-BEARING. Two of the key's parts can contain spaces, so a space-joined
+   * key merges these two DIFFERENT identities into one series — and the merge is invisible: they
+   * would be printed under one heading with a movement between them that was never measured.
+   */
+  it("does not let a keyword with spaces forge a series boundary", () => {
+    const rows = [
+      reading({ keyword: "seo tools United", locationName: "States" }),
+      reading({ keyword: "seo tools", locationName: "United States" }),
+    ];
+    expect(groupIntoSeries(rows)).toHaveLength(2);
+  });
+
   it("keeps one identity's readings together, newest first", () => {
     const rows = [
       reading({ fetchedAt: "2026-08-20T04:00:00.000Z" }),
