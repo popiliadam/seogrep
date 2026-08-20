@@ -14,10 +14,16 @@ import type { Database } from "./types.js";
  * THE ONE THING THIS FILE EXISTS FOR. The SERP port keeps three answers apart with a discriminated
  * union — `ranked`, `absent_from_examined_results`, `not_measured` — and the whole honesty of the
  * rank tracker rests on that distinction surviving a round trip through Postgres. The migration
- * claims four CHECK constraints keep it alive. A claim in a migration comment is not a
- * measurement, so every one of them is broken here ON PURPOSE, in BOTH directions, and the one
- * deliberate asymmetry (a `ranked` row MAY carry a null rank — "found, and the vendor did not say
- * where") is asserted to be ACCEPTED rather than merely undocumented.
+ * claims SEVEN CHECK constraints keep it alive. A claim in a migration comment is not a
+ * measurement, so every one of them is broken here ON PURPOSE, in BOTH directions, and the
+ * deliberate asymmetries (a `ranked` row MAY carry a null rank — "found, and the vendor did not
+ * say where" — on EITHER of the vendor's two scales) are asserted to be ACCEPTED rather than
+ * merely undocumented.
+ *
+ * EVERY CONSTRAINT IS MEASURED IN BOTH DIRECTIONS, and the second direction is the point: a CHECK
+ * that refuses a legitimate row is worse than the gap it closed, and only a row that must still be
+ * ACCEPTED can show that it does not. (j)-(n) below carry the pair for each of the three
+ * constraints added after the first referee pass.
  *
  * The rest follows the sibling suites' reasoning without restating it: FK and privilege probes go
  * through `service_role` (the app's only writer, and rolbypassrls, so a constraint is the only
@@ -432,6 +438,147 @@ describe("the three SERP outcomes survive storage", () => {
       identity({ status: "not_measured", not_measured_reason: "x", fetched_at: null }),
     );
     expect(failure?.code).toBe(NOT_NULL_VIOLATION);
+  });
+
+  /**
+   * A RANK IS A PLACE AMONG THE ITEMS THAT WERE COUNTED. `best_rank_group` is lifted from
+   * placements that serp.ts filtered OUT OF the very items `organic_items_examined` counts, so a
+   * rank_group above that count is a placement from outside the set the row claims to describe.
+   * Both of these stored before the constraint existed, and `keyword_positions` printed them
+   * verbatim: "rank_group #5 … of 0 organic result(s) examined".
+   */
+  it("(j) refuses a rank_group above the count of items examined — #5 of 3, and #5 of 0", async () => {
+    const user = await makeUser();
+    for (const examined of [3, 0]) {
+      const failure = await insertMeasurement(
+        user.id,
+        null,
+        identity({ status: "ranked", organic_items_examined: examined, best_rank_group: 5 }),
+      );
+      expect(failure?.code, `#5 of ${examined}`).toBe(CHECK_VIOLATION);
+    }
+    // THE OTHER DIRECTION — the boundary itself is legitimate and must still store: the last
+    // result examined is a place among the results examined. A constraint written with `<` would
+    // pass every assertion above and refuse this row.
+    expect(
+      await insertMeasurement(
+        user.id,
+        null,
+        identity({ status: "ranked", organic_items_examined: 3, best_rank_group: 3 }),
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * THE SCALE THAT IS NOT BOUND, and the reason this suite states it as a row rather than a
+   * comment: `rank_absolute` counts ALL SERP elements, so on a feature-rich page it LEGITIMATELY
+   * exceeds the organic count. A symmetric constraint — the obvious next line to write — would
+   * refuse exactly the disagreement serp.ts calls the finding.
+   */
+  it("(k) ACCEPTS a rank_absolute above the organic count — the two scales count different things", async () => {
+    const user = await makeUser();
+    expect(
+      await insertMeasurement(
+        user.id,
+        null,
+        identity({
+          status: "ranked",
+          organic_items_examined: 10,
+          best_rank_group: 4,
+          best_rank_absolute: 9,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * THE NULL-AXIS VARIANT of (j), which (j)'s constraint cannot see: a NULL rank makes its
+   * comparison NULL, and a NULL CHECK passes. "Found, and the vendor did not say where — among
+   * zero results examined" is still a placement drawn from an empty set.
+   */
+  it("(l) refuses a ranked row that examined nothing, even with no rank to compare", async () => {
+    const user = await makeUser();
+    const failure = await insertMeasurement(
+      user.id,
+      null,
+      identity({
+        status: "ranked",
+        organic_items_examined: 0,
+        best_rank_group: null,
+        best_rank_absolute: null,
+      }),
+    );
+    expect(failure?.code).toBe(CHECK_VIOLATION);
+    // THE OTHER DIRECTION — an ABSENCE keeps its zero. An empty SERP examined zero organic results
+    // and that is an honest measurement; a constraint that read `organic_items_examined >= 1` for
+    // every row would make it unstorable.
+    expect(
+      await insertMeasurement(
+        user.id,
+        null,
+        identity({ status: "absent_from_examined_results", organic_items_examined: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * THE VENDOR'S CLOCK IS BOTH OR NEITHER. The value is verbatim vendor text; the field is the KEY
+   * it arrived under. A value with no field is a timestamp nobody can attribute, and a field with
+   * no value names nothing — serp.ts observationFrom sets the two together or sets neither.
+   */
+  it("(m) refuses an unpaired vendor clock in EITHER direction, and accepts both pairs", async () => {
+    const user = await makeUser();
+    const base = { status: "not_measured", not_measured_reason: "transport error" };
+    expect(
+      (
+        await insertMeasurement(
+          user.id,
+          null,
+          identity({ ...base, vendor_reported_time_value: "2026-08-20 04:00:00 +00:00" }),
+        )
+      )?.code,
+      "value with no field",
+    ).toBe(CHECK_VIOLATION);
+    expect(
+      (await insertMeasurement(user.id, null, identity({ ...base, vendor_reported_time_field: "datetime" })))
+        ?.code,
+      "field with no value",
+    ).toBe(CHECK_VIOLATION);
+    // Both directions of the ACCEPTED pair: the vendor spoke, and the vendor said nothing.
+    expect(
+      await insertMeasurement(
+        user.id,
+        null,
+        identity({
+          ...base,
+          vendor_reported_time_field: "datetime",
+          vendor_reported_time_value: "2026-08-20 04:00:00 +00:00",
+        }),
+      ),
+    ).toBeNull();
+    expect(await insertMeasurement(user.id, null, identity(base))).toBeNull();
+  });
+
+  /**
+   * THE SHAPE NO CHECK MAY REFUSE, asserted as accepted so nobody later "tightens" it away. The
+   * vendor's two rank fields are independent (SerpPlacement carries both as `number | null`), so a
+   * placement with an absolute rank and no organic rank is a real vendor response. Its honesty is
+   * the RENDERER's duty — keyword-positions.test.ts pins the sentence — not a constraint's.
+   */
+  it("(n) accepts a ranked row with rank_absolute and NO rank_group — two scales, one withheld", async () => {
+    const user = await makeUser();
+    expect(
+      await insertMeasurement(
+        user.id,
+        null,
+        identity({
+          status: "ranked",
+          organic_items_examined: 100,
+          best_rank_group: null,
+          best_rank_absolute: 7,
+        }),
+      ),
+    ).toBeNull();
   });
 });
 
