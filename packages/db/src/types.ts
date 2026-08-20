@@ -548,6 +548,86 @@ export type Database = {
           },
         ]
       }
+      keyword_position_measurements: {
+        Row: {
+          best_rank_absolute: number | null
+          best_rank_group: number | null
+          created_at: string
+          depth_requested: number
+          device: string
+          domain_match_rule: string
+          fetched_at: string
+          id: string
+          keyword: string
+          language_code: string
+          location_name: string
+          not_measured_reason: string | null
+          organic_items_examined: number | null
+          project_id: string | null
+          report: Json
+          search_engine: string
+          status: string
+          target_domain: string
+          user_id: string
+          vendor_reported_time_field: string | null
+          vendor_reported_time_value: string | null
+        }
+        Insert: {
+          best_rank_absolute?: number | null
+          best_rank_group?: number | null
+          created_at?: string
+          depth_requested: number
+          device: string
+          domain_match_rule: string
+          fetched_at: string
+          id?: string
+          keyword: string
+          language_code: string
+          location_name: string
+          not_measured_reason?: string | null
+          organic_items_examined?: number | null
+          project_id?: string | null
+          report: Json
+          search_engine: string
+          status: string
+          target_domain: string
+          user_id: string
+          vendor_reported_time_field?: string | null
+          vendor_reported_time_value?: string | null
+        }
+        Update: {
+          best_rank_absolute?: number | null
+          best_rank_group?: number | null
+          created_at?: string
+          depth_requested?: number
+          device?: string
+          domain_match_rule?: string
+          fetched_at?: string
+          id?: string
+          keyword?: string
+          language_code?: string
+          location_name?: string
+          not_measured_reason?: string | null
+          organic_items_examined?: number | null
+          project_id?: string | null
+          report?: Json
+          search_engine?: string
+          status?: string
+          target_domain?: string
+          user_id?: string
+          vendor_reported_time_field?: string | null
+          vendor_reported_time_value?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "keyword_position_measurements_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
+      }
       paddle_events: {
         Row: {
           created_at: string
@@ -669,6 +749,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      tracked_keywords: {
+        Row: {
+          created_at: string
+          device: string
+          id: string
+          keyword: string
+          language_code: string
+          location_name: string
+          project_id: string
+          untracked_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device: string
+          id?: string
+          keyword: string
+          language_code: string
+          location_name: string
+          project_id: string
+          untracked_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device?: string
+          id?: string
+          keyword?: string
+          language_code?: string
+          location_name?: string
+          project_id?: string
+          untracked_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tracked_keywords_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
       }
       trial_claims: {
         Row: {

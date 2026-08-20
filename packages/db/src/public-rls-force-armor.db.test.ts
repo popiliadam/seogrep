@@ -110,6 +110,14 @@ const NON_EXEMPTABLE_TABLES: readonly string[] = [
   "gsc_discovery_runs",
   "audit_content_runs",
   "domain_lookup_runs",
+  // The rank tracker's two tables, added in the SAME commit as the migration that creates them —
+  // the rule the paragraph above ends on. Neither is a run ledger: `tracked_keywords` is
+  // registration state whose project_id is NOT NULL, and `keyword_position_measurements` is the
+  // measurement series, whose project_id is NULLABLE — so it joins domain_lookup_runs as a table
+  // where user_id is the sole tenant column on some rows, and this spec's bit is what stands
+  // between a dropped FORCE and a table nothing else narrows.
+  "tracked_keywords",
+  "keyword_position_measurements",
 ];
 
 /**
