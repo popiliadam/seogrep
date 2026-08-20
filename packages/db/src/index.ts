@@ -8,4 +8,4 @@
  *
  * It sat at 0 through thirteen migrations, which is exactly the drift the pin now prevents.
  */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
