@@ -134,8 +134,8 @@ describe("defineTool", () => {
   });
 
   /**
-   * The other side: a PER-CALL tool must stay declarable with no `units` hook at all. That is 32
-   * of the 33 tools, so a check keyed to the wrong condition would fail the whole surface rather
+   * The other side: a PER-CALL tool must stay declarable with no `units` hook at all. That is 34
+   * of the 35 tools, so a check keyed to the wrong condition would fail the whole surface rather
    * than the one tool it is meant to guard.
    */
   it("still declares a per-call tool with no units hook", () => {

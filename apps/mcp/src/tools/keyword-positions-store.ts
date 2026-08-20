@@ -1,5 +1,5 @@
 import { getServiceClient } from "../db.ts";
-import type { SerpDevice } from "../dfs/serp.ts";
+import type { TrackedDevice } from "./serp-devices.ts";
 
 /**
  * The read layer behind `keyword_positions`: the stored SERP measurements for one domain, newest
@@ -25,7 +25,7 @@ export interface StoredMeasurement {
   readonly targetDomain: string;
   readonly locationName: string;
   readonly languageCode: string;
-  readonly device: SerpDevice;
+  readonly device: TrackedDevice;
   readonly searchEngine: string;
   readonly depthRequested: number;
   readonly domainMatchRule: string;
@@ -45,7 +45,7 @@ export interface MeasurementFilter {
   readonly keyword?: string;
   readonly locationName?: string;
   readonly languageCode?: string;
-  readonly device?: SerpDevice;
+  readonly device?: TrackedDevice;
 }
 
 /** The window in hand, and the whole-set count that is deliberately not derived from it. */
@@ -128,7 +128,7 @@ export const loadStoredMeasurements: LoadMeasurementsFn = async (userId, filter,
     targetDomain: row.target_domain,
     locationName: row.location_name,
     languageCode: row.language_code,
-    device: row.device as SerpDevice,
+    device: row.device as TrackedDevice,
     searchEngine: row.search_engine,
     depthRequested: row.depth_requested,
     domainMatchRule: row.domain_match_rule,

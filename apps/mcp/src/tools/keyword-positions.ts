@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
-import type { SerpDevice } from "../dfs/serp.ts";
-import { SERP_DEVICES } from "./track-keywords.ts";
+import { SERP_DEVICES, type TrackedDevice } from "./serp-devices.ts";
 import {
   loadOwnProject,
   projectIdField,
@@ -179,7 +178,7 @@ export function makeKeywordPositionsTool(deps: KeywordPositionsDeps = {}): Regis
         keyword: input.keyword === undefined ? undefined : normalizeKeywordFilter(input.keyword),
         locationName: input.location_name,
         languageCode: input.language_code,
-        device: input.device as SerpDevice | undefined,
+        device: input.device as TrackedDevice | undefined,
       };
       // Free pre-reserve gate 2 — the whole-set COUNT, which is both the honesty gate and the
       // number the caption prints. It is a head-only query, so the free path costs one count and

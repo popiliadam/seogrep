@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEVICE_MEANS, type SerpDevice } from "../dfs/serp.ts";
+import { SERP_DEVICES, type TrackedDevice } from "./serp-devices.ts";
 import {
   loadOwnProject,
   projectNotFoundMessage,
@@ -37,7 +37,7 @@ import { defineTool, errorResult, textResult, type RegisteredTool } from "./regi
  * =====================================================================================
  * "seo tools" on the US desktop SERP and "seo tools" on the UK mobile SERP are two different
  * questions with two different answers — the SERP port says so in the sentence it ships to callers
- * (DEVICE_MEANS: "Measured on the desktop SERP only … this says nothing about a mobile ranking").
+ * (the port's DEVICE_MEANS: "Measured on the desktop SERP only … this says nothing about a mobile ranking").
  * So the locale and the device are part of what is tracked, not something chosen later when a
  * measurement is taken: a subscription that named neither would leave nothing to measure and would
  * fuse two series into one. The cost is stated rather than hidden — tracking one keyword on two
@@ -59,13 +59,9 @@ export const DEFAULT_LOCATION_NAME = "United States";
 export const DEFAULT_LANGUAGE_CODE = "en";
 
 /** The device measured when the caller does not say. Desktop, matching the vendor's own default. */
-export const DEFAULT_DEVICE: SerpDevice = "desktop";
+export const DEFAULT_DEVICE: TrackedDevice = "desktop";
 
-/**
- * The devices this product measures, DERIVED from the port's own table rather than retyped: a
- * third device added there cannot become an input this surface silently refuses to describe.
- */
-export const SERP_DEVICES = Object.keys(DEVICE_MEANS) as [SerpDevice, ...SerpDevice[]];
+
 
 /** What the caller asks this tool to do. Two verbs, one registration surface. */
 export const TRACK_ACTIONS = ["track", "untrack"] as const;
@@ -133,7 +129,7 @@ const DESCRIPTION =
 export function describeIdentity(input: {
   readonly location_name: string;
   readonly language_code: string;
-  readonly device: SerpDevice;
+  readonly device: TrackedDevice;
 }): string {
   return `${input.location_name} · language ${input.language_code} · ${input.device} SERP`;
 }
