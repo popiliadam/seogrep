@@ -344,6 +344,13 @@ create table public.keyword_position_measurements (
   -- rank_group #10 / rank_absolute 14 of 10 organic results examined — ten organic results with
   -- four features above them — is exactly the disagreement serp.ts calls the finding, and a
   -- symmetric constraint would refuse an honest row. Spec (k) stores that row on purpose.
+  --
+  -- THE ONE THING THAT WOULD INVALIDATE THIS CHECK, named so it is not discovered as a mystery
+  -- rejection: it holds because the port measures ONE PAGE FROM THE TOP (serp.ts pins SERP_DEPTH
+  -- and asks for no offset), so the ranks in hand run 1..items.length. A writer that ever fetched
+  -- a LATER page would carry ranks starting above the count of items it examined, and those honest
+  -- rows would be refused here. That is a signed change to a pinned price decision (NEVER #6) and
+  -- must revisit this constraint in the same breath.
   constraint keyword_position_measurements_rank_group_within_examined
     check (
       best_rank_group is null
