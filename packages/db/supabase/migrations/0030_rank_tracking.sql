@@ -49,10 +49,10 @@
 -- output, so a renderer cannot read a 0 or a null and guess which of the three it meant." A
 -- nullable `position integer` column would throw all of that away on the way to disk: "not among
 -- the 100 results we counted" and "we never took a measurement" would both arrive as NULL, and
--- every later reader would have to guess. So the discriminant is STORED, as `status`, and the four
+-- every later reader would have to guess. So the discriminant is STORED, as `status`, and the SEVEN
 -- CHECK constraints below bind every other column to it:
 --
---   status = 'ranked'                       -> organic_items_examined NOT NULL,
+--   status = 'ranked'                       -> organic_items_examined NOT NULL and >= 1,
 --                                              not_measured_reason NULL,
 --                                              best_rank_* MAY be set (see below).
 --   status = 'absent_from_examined_results' -> organic_items_examined NOT NULL (the SCOPE of the
@@ -65,11 +65,16 @@
 -- carry a NULL `best_rank_group`, because the vendor may return a placement WITHOUT a rank
 -- (SerpPlacement.rank_group is `number | null`). It means "found, and the vendor did not say
 -- where" — recoverable ONLY because `status` is a column of its own. A schema that inferred the
--- status from the rank would have three different meanings for one NULL; this one has none.
+-- status from the rank would have three different meanings for one NULL; this one has none. The
+-- two vendor scales are independent, so that null comes in two flavours — no rank at all, and no
+-- ORGANIC rank beside a reported `best_rank_absolute` — and both are storable on purpose. Keeping
+-- them apart is the renderer's job, not a constraint's; see the block after the CHECKs.
 --
 -- Constraints rather than app discipline (0013's argument, and 0029's own): the WRITER of these
 -- rows is a different slice from the reader, so a rule that lives only in the write path is a rule
--- the read path has to trust. rank-tracking.db.test.ts breaks each of the four on purpose.
+-- the read path has to trust. rank-tracking.db.test.ts breaks each of the seven on purpose — and
+-- asserts, for each, a neighbouring row that must still be ACCEPTED, because a constraint that
+-- refuses something legitimate is worse than the gap it was written to close.
 --
 -- ── IDENTITY IS COLUMNS HERE, NOT REPORT JSON — the OPPOSITE of 0027 and 0029 ────────────────
 --
@@ -308,7 +313,7 @@ create table public.keyword_position_measurements (
   report jsonb not null,
   created_at timestamptz not null default now(),
 
-  -- ── THE FOUR CHECKS THAT MAKE THE THREE OUTCOMES RECOVERABLE ───────────────────────────────
+  -- ── THE SEVEN CHECKS THAT MAKE THE THREE OUTCOMES RECOVERABLE ─────────────────────────────
   -- Written as equivalences (`(A) = (B)`) rather than as implications on purpose: an implication
   -- would let the OTHER direction through, and both directions are wrong. A `ranked` row with no
   -- examined count would be a placement inside an unknown scope; a `not_measured` row WITH one
@@ -324,6 +329,53 @@ create table public.keyword_position_measurements (
     check (status = 'ranked' or best_rank_group is null),
   constraint keyword_position_measurements_rank_absolute_only_when_ranked
     check (status = 'ranked' or best_rank_absolute is null),
+
+  -- A RANK IS A PLACE AMONG THE ITEMS THAT WERE COUNTED. `best_rank_group` is lifted from the
+  -- placements, and the placements are a SUBSET of the very organic items `organic_items_examined`
+  -- counts (serp.ts outcomeFor filters the placements OUT OF `items`, and the count IS
+  -- `items.length`), so a rank_group larger than that count is a placement that was not among the
+  -- results examined. Without this, "#5 of 3 examined" and "#5 of 0 examined" both store, and the
+  -- renderer prints them verbatim: arithmetic nonsense wearing a plausible face.
+  --
+  -- rank_ABSOLUTE IS DELIBERATELY NOT BOUND THE SAME WAY, and treating the two scales alike would
+  -- be the easy mistake here. rank_absolute counts ALL SERP elements — featured snippets, answer
+  -- boxes, "people also ask" — so on a feature-rich page it LEGITIMATELY exceeds the organic count.
+  -- rank_group #4 / rank_absolute 9 of 10 organic results examined is exactly the disagreement
+  -- serp.ts calls the finding, and a symmetric constraint would refuse an honest row.
+  constraint keyword_position_measurements_rank_group_within_examined
+    check (
+      best_rank_group is null
+      or organic_items_examined is null
+      or best_rank_group <= organic_items_examined
+    ),
+  -- THE SAME INVARIANT ON THE AXIS WHERE THE RANK IS ABSENT. Varying the null-axis of the shape
+  -- above finds a hole the constraint just written cannot see, because a null rank makes its
+  -- comparison null and a null CHECK passes: `ranked` + best_rank_group NULL +
+  -- organic_items_examined 0 is "found, and the vendor did not say where — among zero results
+  -- examined", which is still a placement drawn from an empty set. A `ranked` outcome exists ONLY
+  -- where at least one placement was found among the counted items (serp.ts returns `ranked` only
+  -- when `placements.length > 0`, and every placement came from `items`), so at least one item was
+  -- counted. Absence keeps its zero: an `absent_from_examined_results` row with 0 examined is the
+  -- honest record of an empty SERP and stays storable.
+  constraint keyword_position_measurements_ranked_examined_at_least_one
+    check (status <> 'ranked' or organic_items_examined >= 1),
+  -- THE VENDOR'S CLOCK IS BOTH OR NEITHER. The value is the vendor's verbatim text and the field is
+  -- the KEY it arrived under; serp.ts observationFrom sets the two together or sets neither. A value
+  -- with no field is a timestamp whose meaning nobody can state, and a field with no value names
+  -- nothing. The renderer prints the field BESIDE the value, so an unpaired row would put a vendor
+  -- time on the page under a key the vendor never sent — or hide a reported time behind a lone key.
+  constraint keyword_position_measurements_vendor_time_paired
+    check ((vendor_reported_time_field is null) = (vendor_reported_time_value is null)),
+
+  -- WHAT THIS BLOCK STILL CANNOT REFUSE, written down rather than left silent. A `ranked` row with
+  -- best_rank_group NULL and best_rank_absolute SET looks contradictory and is not: the two are
+  -- INDEPENDENT vendor fields (SerpPlacement carries `rank_group: number | null` beside
+  -- `rank_absolute: number | null`, and serp.ts toPlacement reads each on its own), so a vendor item
+  -- carrying an absolute rank and no organic rank produces exactly that row. Refusing it would make
+  -- an honest vendor response unstorable, which is the one outcome worse than the gap. It is a
+  -- RENDERING duty instead, and it is discharged there: keyword-positions-format.ts gives that shape
+  -- its own sentence — the rank_absolute the vendor DID report, and no organic position — instead of
+  -- saying no rank was reported at all.
 
   -- CROSS-TENANT ARMOR, 0017 pattern — WITH 0027's COST, restated rather than cross-referenced,
   -- because a reader of THIS table must not have to find it elsewhere. `project_id` is NULLABLE
