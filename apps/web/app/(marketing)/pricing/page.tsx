@@ -87,6 +87,14 @@ const CREDIT_COSTS = [
   // charged. The unit and its range live in apps/mcp credits/costs.ts (CREDIT_UNITS), so this
   // number moving means the signed unit price moved (NEVER #6).
   { action: "AI visibility comparison (per compared target)", cost: "90" },
+  // keyword_positions (2026-08-17 signature package MADDE 1 row #5, operator-signed at 10). The
+  // ONLY row on this page whose price is not backed by a vendor purchase: it reads SERP
+  // measurements this account already paid for when they were taken, so the credits buy the
+  // analysis rather than a request. It is priced beside the three stored-measurement scans (10
+  // each) for that reason, and kept out of their grouped row because it reads a different stored
+  // measurement and answers a different question. track_keywords, which chooses WHICH keywords are
+  // watched, is free and therefore has no row here at all.
+  { action: "Stored keyword positions (per domain)", cost: "10" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

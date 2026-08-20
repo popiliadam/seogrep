@@ -1,0 +1,49 @@
+---
+title: track_keywords
+description: "Choose which keywords a project's ranking is watched for, on one location, language and device. Registration only: it takes no measurement and contacts…"
+---
+
+**Cost:** Free (0 credits).
+
+`track_keywords` chooses which keywords a project's ranking is watched for — on one location, one language and one device. It is **registration only**: it records what to watch and takes no measurement, contacts no search engine, and costs nothing.
+
+## What it does
+
+Pass a `project_id` and the keywords you want watched. They are stored trimmed and lower-cased, so two spellings that differ only in case or spacing are one tracked keyword. Running it again for the same keyword is safe — nothing is duplicated and nothing is re-dated. Set `action` to `untrack` to stop watching one.
+
+## The location and the device are part of what is tracked
+
+Google returns different results, and a different layout, on desktop and on mobile — and different results again in another country. So a tracked keyword is not just a word: it is a word **plus** where and how it is measured. Tracking `seo tools` on the US desktop SERP and on the UK mobile SERP is two tracked keywords, and their positions are never mixed into one series, because a desktop ranking says nothing about a mobile one.
+
+That also means each combination counts separately against the limit below.
+
+## How many a project may track
+
+A project may track up to **100** keywords at once (counting each location and device separately). The limit is about what measuring the whole set costs and how much of it can be measured in a day — not about storage of the list itself, which is free. If you hit it, untrack what you no longer watch: the answer tells you how many are tracked and how many the request would have added.
+
+## Untracking keeps everything
+
+`action: "untrack"` archives the keyword rather than deleting it. Every position already measured for it stays exactly where it is and [`keyword_positions`](/docs/tools-reference/keyword-positions) still reads it. Tracking it again brings back the same record, including the date you first started watching it — and untracking something twice does not change that date either.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Track "seo tools" and "rank tracker" for my example.com project on mobile.
+
+Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the `project_id`.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project_id` | string (uuid) | Yes | The project these keywords belong to (from list_projects). Tracking is per project: the domain whose ranking is being watched is the project's. |
+| `keywords` | string[] | Yes | The keywords to track (or untrack), up to 100 — the same number one project may track in total. They are stored trimmed and lower-cased, so two spellings differing only in case or spacing are ONE tracked keyword. |
+| `action` | string | No | "track" (default) starts watching these keywords; "untrack" stops. Untracking archives the keyword rather than deleting it — tracking it again brings back the same record, and no stored measurement is ever removed by either. |
+| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). It is part of what is tracked: the same keyword in two locations is two tracked keywords. |
+| `language_code` | string | No | The search language (default "en"). Part of what is tracked, like the location. |
+| `device` | string | No | Which SERP to watch (default "desktop"). Google returns different results and a different layout on each, so a desktop ranking says nothing about a mobile one — the device is part of what is tracked. |
+
+### Returns
+
+What is tracked now for that project on that location, language and device — split into newly tracked, tracked again, and already tracked — together with a reminder that tracking records what to watch and measures nothing.

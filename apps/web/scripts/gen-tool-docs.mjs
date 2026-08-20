@@ -219,6 +219,7 @@ export function dayPhrase(days) {
  *
  *   • `{{MAX_GSC_ROWS}}` = MAX_ROW_LIMIT       (apps/mcp/src/gsc-data/pull.ts)
  *   • `{{GSC_LAG_DAYS}}` = GSC_FRESHNESS_LAG_DAYS, rendered as a phrase (apps/mcp/.../windows.ts)
+ *   • `{{MAX_TRACKED_KEYWORDS}}` = MAX_TRACKED_KEYWORDS_PER_PROJECT (apps/mcp/.../tracked-keywords-store.ts)
  *
  * The same derivation format.ts makes for the tool-output caveat: prose is exactly where a changed
  * constant goes unnoticed, because nothing compiles against a sentence — and a wrong number here
@@ -228,13 +229,18 @@ export function dayPhrase(days) {
  * page that states a wrong (or literally "undefined") limit.
  */
 export function substituteProseTokens(text, constants) {
-  const { maxRowLimit, lagDays } = constants || {};
+  const { maxRowLimit, lagDays, maxTrackedKeywords } = constants || {};
   const out = String(text)
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
     )
     .replace(/\{\{GSC_LAG_DAYS\}\}/g, () =>
       dayPhrase(positiveInteger(lagDays, "{{GSC_LAG_DAYS}}", "lagDays")),
+    )
+    .replace(/\{\{MAX_TRACKED_KEYWORDS\}\}/g, () =>
+      groupThousands(
+        positiveInteger(maxTrackedKeywords, "{{MAX_TRACKED_KEYWORDS}}", "maxTrackedKeywords"),
+      ),
     );
   // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
   // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
@@ -2224,6 +2230,107 @@ export const DOC_PROSE = {
       "through, and the tools to run next.",
   },
 
+  track_keywords: {
+    lead:
+      "`track_keywords` chooses which keywords a project's ranking is watched for — on one " +
+      "location, one language and one device. It is **registration only**: it records what to " +
+      "watch and takes no measurement, contacts no search engine, and costs nothing.",
+    whatItDoes:
+      "Pass a `project_id` and the keywords you want watched. They are stored trimmed and " +
+      "lower-cased, so two spellings that differ only in case or spacing are one tracked " +
+      "keyword. Running it again for the same keyword is safe — nothing is duplicated and " +
+      "nothing is re-dated. Set `action` to `untrack` to stop watching one.",
+    preExampleSections: [
+      {
+        heading: "The location and the device are part of what is tracked",
+        body:
+          "Google returns different results, and a different layout, on desktop and on mobile — " +
+          "and different results again in another country. So a tracked keyword is not just a " +
+          "word: it is a word **plus** where and how it is measured. Tracking `seo tools` on the " +
+          "US desktop SERP and on the UK mobile SERP is two tracked keywords, and their positions " +
+          "are never mixed into one series, because a desktop ranking says nothing about a mobile " +
+          "one.\n\nThat also means each combination counts separately against the limit below.",
+      },
+      {
+        heading: "How many a project may track",
+        body:
+          "A project may track up to **{{MAX_TRACKED_KEYWORDS}}** keywords at once (counting each " +
+          "location and device separately). The limit is about what measuring the whole set " +
+          "costs and how much of it can be measured in a day — not about storage of the list " +
+          "itself, which is free. If you hit it, untrack what you no longer watch: the answer " +
+          "tells you how many are tracked and how many the request would have added.",
+      },
+      {
+        heading: "Untracking keeps everything",
+        body:
+          "`action: \"untrack\"` archives the keyword rather than deleting it. Every position " +
+          "already measured for it stays exactly where it is and " +
+          "[`keyword_positions`](/docs/tools-reference/keyword-positions) still reads it. " +
+          "Tracking it again brings back the same record, including the date you first started " +
+          "watching it — and untracking something twice does not change that date either.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Track \"seo tools\" and \"rank tracker\" for " +
+      "my example.com project on mobile.\n\nRun " +
+      "[`list_projects`](/docs/tools-reference/list-projects) first if you need the `project_id`.",
+    returns:
+      "What is tracked now for that project on that location, language and device — split into " +
+      "newly tracked, tracked again, and already tracked — together with a reminder that " +
+      "tracking records what to watch and measures nothing.",
+  },
+
+  keyword_positions: {
+    lead:
+      "`keyword_positions` reads the SERP positions SeoGrep has already measured and stored for a " +
+      "domain's keywords: each reading with its own date, location, language and device. It " +
+      "**measures nothing** — no search engine is contacted and no new position is read.",
+    whatItDoes:
+      "Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest " +
+      "first, grouped into one series per keyword, location, language and device. Narrow it with " +
+      "`keyword`, `location_name`, `language_code` or `device`, and bound the answer with " +
+      "`limit` — the reply always states how many readings match your filter in total, " +
+      "separately from how many are in the window.",
+    preExampleSections: [
+      {
+        heading: "A gap is not a decline",
+        body:
+          "Two readings a month apart are two observations, not a trend, and SeoGrep will not " +
+          "draw a line through the days nobody measured. Every comparison between two readings " +
+          "says how far apart they were, and an interval longer than a day says outright that " +
+          "nothing was measured in between. No answer here claims a direction of travel: a " +
+          "movement is printed as `#7 → #4`, never as a rise or a fall.",
+      },
+      {
+        heading: "\"Not found\" and \"not measured\" are different answers",
+        body:
+          "A reading that searched and found nothing reports the absence **and how many results " +
+          "were examined** — it is not position 0, and it says nothing about results beyond " +
+          "those examined. A reading that never happened says so instead: the position is " +
+          "unknown, and nothing was examined at all.\n\nA position is never compared across " +
+          "either of them, because there is no second position to compare with. A reading where " +
+          "the domain was found but the vendor reported no rank is a third case, and it says " +
+          "that too.",
+      },
+      {
+        heading: "If nothing has been measured yet",
+        body:
+          "The tool says so and **charges nothing**. Positions appear here once a SERP snapshot " +
+          "has been taken for a domain's keywords; " +
+          "[`track_keywords`](/docs/tools-reference/track-keywords) chooses which keywords to " +
+          "watch, which is a separate step and also free.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Show me the stored positions for \"seo tools\" " +
+      "on my example.com project.",
+    returns:
+      "One block per keyword, location, language and device — with what each reading was measured " +
+      "under (search engine, depth, and how a domain was matched), each reading's own date, and " +
+      "the elapsed time between them. Ranks are DataForSEO's own `rank_group` and " +
+      "`rank_absolute`; SeoGrep adds no score of its own.",
+  },
+
   untrack_project: {
     lead:
       "`untrack_project` stops tracking one of your projects by moving it to your **archive**. " +
@@ -2277,16 +2384,22 @@ async function loadRegistry() {
   const costsUrl = new URL("../../mcp/dist/credits/costs.js", import.meta.url);
   const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
   const windowsUrl = new URL("../../mcp/dist/gsc-data/windows.js", import.meta.url);
+  const trackedUrl = new URL("../../mcp/dist/tools/tracked-keywords-store.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
     const pull = await import(pullUrl);
     const windows = await import(windowsUrl);
+    const tracked = await import(trackedUrl);
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
       TOOL_COSTS: costs.TOOL_COSTS,
       CREDIT_UNITS: costs.CREDIT_UNITS,
-      constants: { maxRowLimit: pull.MAX_ROW_LIMIT, lagDays: windows.GSC_FRESHNESS_LAG_DAYS },
+      constants: {
+        maxRowLimit: pull.MAX_ROW_LIMIT,
+        lagDays: windows.GSC_FRESHNESS_LAG_DAYS,
+        maxTrackedKeywords: tracked.MAX_TRACKED_KEYWORDS_PER_PROJECT,
+      },
     };
   } catch (error) {
     throw new Error(
