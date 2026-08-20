@@ -31,7 +31,12 @@ import type { MeasurementWindow, StoredMeasurement } from "./keyword-positions-s
  *     across it would be a claim about an unobserved moment.
  *
  * A `ranked` reading whose vendor rank is null is a fourth case the schema deliberately allows
- * ("found, and the vendor did not say where"), and it is printed as exactly that.
+ * ("found, and the vendor did not say where"), and it is printed as exactly that. It comes in TWO
+ * shapes, because `rank_group` (organic-only) and `rank_absolute` (all SERP elements) are two
+ * different scales and the vendor may withhold either: "no rank at all" and "no ORGANIC rank, and
+ * this absolute one" are separate sentences. Collapsing them printed "DataForSEO reported no rank"
+ * over a row where it had reported one — the renderer, not the schema, hiding a fact the vendor
+ * sent. Neither scale is ever converted into the other, and no comparison crosses them.
  */
 
 /** Longer than this between two adjacent readings and the answer says so, in words. */
@@ -140,7 +145,7 @@ export function renderClocks(row: StoredMeasurement): string {
     : `    DataForSEO reported ${row.vendorReportedTimeField ?? "a time"} "${row.vendorReportedTimeValue}"; the time above is SeoGrep's own clock at the moment the response arrived.`;
 }
 
-/** ONE reading. Three shapes for three answers, and a fourth for the rank the vendor withheld. */
+/** ONE reading. Three shapes for three answers, and TWO more for each rank the vendor withheld. */
 export function renderReading(row: StoredMeasurement): string {
   const when = row.fetchedAt;
   if (row.status === "not_measured") {
@@ -156,10 +161,24 @@ export function renderReading(row: StoredMeasurement): string {
       "and it says nothing about results beyond those examined."
     );
   }
+  const examinedClause = `${row.organicItemsExamined ?? 0} organic result(s) were examined.`;
   if (row.bestRankGroup === null) {
+    // TWO SCALES, EITHER OF WHICH THE VENDOR MAY WITHHOLD — so "no rank_group" is NOT "no rank".
+    // Collapsing these two into one sentence printed "DataForSEO reported no rank" over a row on
+    // which DataForSEO had reported one, on its other scale, and the renderer was the only thing
+    // hiding it: the schema stores that shape on purpose (migration 0029 says why it cannot be
+    // constrained away).
+    if (row.bestRankAbsolute === null) {
+      return (
+        `  ${when} — found, but DataForSEO reported no rank for the placement on either of its ` +
+        `two scales — no rank_group (organic-only) and no rank_absolute (all SERP elements) — so ` +
+        `the position is not stated. ${examinedClause}`
+      );
+    }
     return (
-      `  ${when} — found, but DataForSEO reported no rank for the placement, so the position is ` +
-      `not stated. ${row.organicItemsExamined ?? 0} organic result(s) were examined.`
+      `  ${when} — found, and DataForSEO reported rank_absolute ${row.bestRankAbsolute} (its rank ` +
+      `among ALL SERP elements) but no rank_group, so the ORGANIC position is not stated. ` +
+      examinedClause
     );
   }
   const absolute =
@@ -177,8 +196,9 @@ export function renderReading(row: StoredMeasurement): string {
  * attached under the newer one and always names the elapsed span.
  *
  * The arithmetic branch is deliberately the narrowest one: both readings ranked, both carrying a
- * vendor rank. Every other pairing is described rather than subtracted, because there is no second
- * number to subtract — and because a reading that was never taken cannot be an endpoint of
+ * `rank_group`. Every other pairing is described rather than subtracted, because there is no second
+ * number ON THAT SCALE to subtract — a reported `rank_absolute` is not a substitute, it counts a
+ * different set of things — and because a reading that was never taken cannot be an endpoint of
  * anything.
  */
 export function renderInterval(newer: StoredMeasurement, older: StoredMeasurement): string {
@@ -201,9 +221,14 @@ export function renderInterval(newer: StoredMeasurement, older: StoredMeasuremen
     );
   }
   if (newer.bestRankGroup === null || older.bestRankGroup === null) {
+    // "no rank_group", never "no rank": one of these readings may well carry a rank_absolute, and
+    // saying it carries no rank would be the same false sentence renderReading used to print. The
+    // absolute is still not substituted — the two are different scales, and subtracting across
+    // them would invent a movement on a scale neither reading was compared on.
     return (
-      `    ↕ ${elapsed} apart. One of these two readings carries no vendor rank, so there is no ` +
-      `pair of positions to compare.${gap}`
+      `    ↕ ${elapsed} apart. One of these two readings carries no rank_group, so there is no ` +
+      `pair of positions to compare on the organic scale — and rank_absolute is a different scale, ` +
+      `never subtracted from a rank_group.${gap}`
     );
   }
   return `    ↕ ${elapsed} apart: rank_group #${older.bestRankGroup} → #${newer.bestRankGroup}.${gap}`;

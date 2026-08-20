@@ -252,6 +252,42 @@ describe("the three outcomes stay three, all the way to the page", () => {
     expect(text).not.toMatch(/#null|#0\b/);
   });
 
+  /**
+   * THE TWO VENDOR SCALES ARE NOT ONE FACT. `rank_group` (organic-only) and `rank_absolute` (all
+   * SERP elements) are independent vendor fields and either may be absent — migration 0029 says in
+   * its own words why no CHECK can refuse the pair (group null, absolute set) and why the honesty
+   * of that row is therefore the RENDERER's duty. Before this branch existed, this row printed
+   * "DataForSEO reported no rank for the placement" over a rank DataForSEO had in fact reported.
+   */
+  it("names the scale the vendor DID report when only rank_group is missing", () => {
+    const text = formatKeywordPositions("x", "", {
+      ...window,
+      windowRowCount: 1,
+      storedMeasurementCount: 1,
+      rows: [reading({ bestRankGroup: null, bestRankAbsolute: 7 })],
+    });
+    expect(text).toMatch(/reported rank_absolute 7 \(its rank among ALL SERP elements\) but no rank_group/);
+    // The false sentence this branch replaced, pinned as ABSENT on exactly the row that used to
+    // print it.
+    expect(text).not.toMatch(/reported no rank/);
+    // …and the absolute is REPORTED, never promoted into an organic position.
+    expect(text).toMatch(/ORGANIC position is not stated/);
+    expect(text).not.toMatch(/#7|rank_group #/);
+  });
+
+  it("says NEITHER scale was reported only when neither was", () => {
+    const text = formatKeywordPositions("x", "", {
+      ...window,
+      windowRowCount: 1,
+      storedMeasurementCount: 1,
+      rows: [reading({ bestRankGroup: null, bestRankAbsolute: null })],
+    });
+    expect(text).toMatch(/on either of its two scales/);
+    expect(text).toMatch(/no rank_group \(organic-only\) and no rank_absolute \(all SERP elements\)/);
+    // No number is invented for a row that carries none.
+    expect(text).not.toMatch(/rank_absolute \d/);
+  });
+
   it("keeps the vendor's clock and ours apart on every reading", () => {
     const text = formatKeywordPositions("x", "", window);
     expect(text).toMatch(/DataForSEO reported datetime "2026-08-20 04:00:00 \+00:00"/);
@@ -333,6 +369,21 @@ describe("a gap in the series is not a decline", () => {
     const line = renderInterval(newer, reading({ bestRankGroup: null }));
     expect(line).toMatch(/no pair of positions to compare/);
     expect(line).not.toMatch(/→/);
+  });
+
+  /**
+   * The same false sentence, on the interval line: a reading with a rank_absolute and no
+   * rank_group does not "carry no vendor rank". What is missing is the SCALE the comparison runs
+   * on, and the other scale is still not substituted — subtracting a rank_absolute from a
+   * rank_group would invent a movement on a scale neither reading was measured against.
+   */
+  it("names rank_group as the missing scale rather than claiming no rank was reported", () => {
+    const line = renderInterval(newer, reading({ bestRankGroup: null, bestRankAbsolute: 7 }));
+    expect(line).toMatch(/carries no rank_group/);
+    expect(line).toMatch(/rank_absolute is a different scale, never subtracted from a rank_group/);
+    expect(line).not.toMatch(/carries no vendor rank/);
+    expect(line).not.toMatch(/→/);
+    expect(line).not.toMatch(/#7/);
   });
 
   it("always says how far apart two readings are, even a comparable pair", () => {
