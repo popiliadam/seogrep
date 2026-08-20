@@ -54,6 +54,8 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       list_gsc_properties: 0,
       track_gsc_property: 0,
       untrack_project: 0,
+      track_keywords: 0,
+      keyword_positions: 10,
     });
   });
 
@@ -115,8 +117,15 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // second 90 is a PER-COMPARED-TARGET price, not a call price, so one call of it charges 180 to
   // 900. The table cannot say that on its own, which is what CREDIT_UNITS below is for; reading
   // this row as a flat fee would give away up to 810 signed credits a call.
-  it("has exactly 33 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(33);
+  //
+  // 33 -> 35 on 2026-08-20: the rank tracker's two tools, MADDE 1 rows #3 and #5 of the same
+  // 2026-08-17 signature package — track_keywords at a SIGNED 0 and keyword_positions at a SIGNED
+  // 10. Same shape as the ten growths above: the table GREW and no existing number moved. What is
+  // different from every DataForSEO row above is the BASIS of the 10 — there is no vendor cost to
+  // divide by, because the measurements it reads were paid for when they were TAKEN. It is
+  // anchored on the three stored-measurement scans (10 each), not on a margin.
+  it("has exactly 35 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(35);
   });
 
   it("exposes only non-negative integer costs", () => {

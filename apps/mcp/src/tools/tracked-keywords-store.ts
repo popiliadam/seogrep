@@ -1,5 +1,5 @@
 import { getServiceClient } from "../db.ts";
-import type { SerpDevice } from "../dfs/serp.ts";
+import type { TrackedDevice } from "./serp-devices.ts";
 
 /**
  * The storage layer behind `track_keywords`: what a tracked keyword IS, how one is named, and the
@@ -19,7 +19,7 @@ export interface TrackedKeywordIdentity {
   readonly keyword: string;
   readonly locationName: string;
   readonly languageCode: string;
-  readonly device: SerpDevice;
+  readonly device: TrackedDevice;
 }
 
 /** One stored row, as the tool needs to read it back. */
