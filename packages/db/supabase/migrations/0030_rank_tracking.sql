@@ -340,18 +340,24 @@ create table public.keyword_position_measurements (
 );
 -- Reverse: drop table public.keyword_position_measurements;
 
--- THE SERIES QUERY, which is the only query this table has: one tenant, one subject, one keyword,
+-- THE SERIES QUERY, which is the only query this table has: one tenant, one DOMAIN, one keyword,
 -- newest first —
---   where user_id = ? and project_id = ? and keyword = ? order by fetched_at desc limit N
--- The bare-target series runs on the SAME index: those rows all carry project_id NULL, `project_id
--- is null` is an indexable btree condition (btree indexes nulls), and `target_domain` stays a
--- RESIDUAL filter — a tenant's ad-hoc measurements are bounded by what they paid to take, so
--- pushing that column into the index buys nothing measurable (0025's argument, unchanged).
+--   where user_id = ? and target_domain = ? and keyword = ? order by fetched_at desc limit N
+--
+-- THE SUBJECT IS THE DOMAIN, NOT THE PROJECT, and that is why `project_id` is not in this index.
+-- A measurement is about a domain: the same keyword measured for example.test through a project
+-- and measured for example.test ad hoc are two readings of ONE series, and splitting them by which
+-- input named the domain would hide half a tenant's own history from them for a reason that has
+-- nothing to do with what was measured. `project_id` stays PROVENANCE (and the cascade edge);
+-- `target_domain` is the question. tools/keyword-positions.ts filters on exactly this shape.
 -- Ordered by fetched_at and NOT by created_at, for the reason the header gives.
--- It is also the backing index for both parent-delete lookups: `user_id` leads it, and
--- (user_id, project_id) is its prefix.
+--
+-- The parent-delete lookups both run off `user_id`, this index's LEADING column: the account
+-- cascade uses it directly, and a project delete scans this tenant's rows with `project_id` as a
+-- residual filter — bounded by one tenant either way, which is the same trade 0025 and 0027 make
+-- for their own residual columns. No second index is created for it.
 create index keyword_position_measurements_series_idx
-  on public.keyword_position_measurements (user_id, project_id, keyword, fetched_at desc);
+  on public.keyword_position_measurements (user_id, target_domain, keyword, fetched_at desc);
 -- Reverse: drop index public.keyword_position_measurements_series_idx;
 
 alter table public.keyword_position_measurements enable row level security;

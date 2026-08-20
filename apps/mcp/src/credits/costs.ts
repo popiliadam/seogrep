@@ -129,6 +129,24 @@ export const TOOL_COSTS = {
   list_gsc_properties: 0,
   track_gsc_property: 0,
   untrack_project: 0,
+  // The rank tracker's two tools (plan 2026-08-17 signature package, MADDE 1 rows #3 and #5 —
+  // SIGNED BY THE OPERATOR). Neither calls a paid API, and the two zeros of the signature are two
+  // different zeros:
+  //
+  // track_keywords = 0 (row #3). Registration only: it records which keywords a project wants
+  // watched and takes no measurement at all, so there is no vendor cost and nothing to price. It
+  // joins the three 0-credit Search Console tools above on exactly that ground.
+  track_keywords: 0,
+  // keyword_positions = 10 (row #5, "saklanmışı okur" — it reads what was stored). Vendor cost
+  // $0.00: the measurements it reads were paid for when they were TAKEN, by the tool that spends
+  // the DataForSEO money, so the margin here is not a ratio at all. The 10 is the analysis, and it
+  // is anchored on the three stored-measurement scans (find_quick_wins / detect_cannibalization /
+  // analyze_content_decay, 10 each) rather than on any DataForSEO family — the same question those
+  // three answer about stored data, on a different axis. It is NOT on the paid-balance gate: that
+  // gate lists the tools that can spend vendor money, and this one cannot reach reserveSpend
+  // (paid-balance.graph.test.ts derives that from the import graph rather than from this comment).
+  // No existing number moved.
+  keyword_positions: 10,
 } as const;
 
 export type ToolName = keyof typeof TOOL_COSTS;
