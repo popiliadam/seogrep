@@ -33,6 +33,8 @@
     "whats-next",
     "list-gsc-properties",
     "track-gsc-property",
-    "untrack-project"
+    "untrack-project",
+    "track-keywords",
+    "keyword-positions"
   ]
 }

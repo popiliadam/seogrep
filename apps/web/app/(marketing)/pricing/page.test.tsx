@@ -45,6 +45,7 @@ describe("pricing page", () => {
       ["Disavow candidates (per domain)", "40"],
       ["AI visibility (per domain or keyword)", "90"],
       ["AI visibility comparison (per compared target)", "90"],
+      ["Stored keyword positions (per domain)", "10"],
       ["Monthly report", "15"],
     ];
     for (const [label, cost] of rows) {
@@ -116,6 +117,12 @@ describe("pricing page", () => {
     // renders the UNIT price and the label says what the unit is. What keeps that honest is the
     // label, and the spec after this map is what stops the label losing "per compared target".
     ai_visibility_compare: "AI visibility comparison (per compared target)",
+    // Its OWN row (2026-08-17 signature, signed at 10), and the first paid row on this page with
+    // no vendor purchase behind it: it reads stored SERP measurements. It is NOT a member of the
+    // scan row above — those three read a Search Console pull and a crawl, this one reads the
+    // position series — and its free companion track_keywords has no row at all, which the
+    // coverage rule below is right to allow for a 0-credit tool.
+    keyword_positions: "Stored keyword positions (per domain)",
     generate_report: "Monthly report",
   };
 
