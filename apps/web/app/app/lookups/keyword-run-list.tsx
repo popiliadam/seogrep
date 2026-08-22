@@ -1,0 +1,143 @@
+import { formatDate } from "../../../lib/format";
+import {
+  KEYWORD_RUN_HISTORY_LIMIT,
+  describeKeywordRunChange,
+  summarizeKeywordRun,
+  type KeywordRunHistory,
+  type KeywordRunHistoryEntry,
+} from "../../../lib/projects/keyword-history";
+
+/**
+ * The /app/lookups keyword-research table — presentation only, and in its own module so a spec can
+ * RENDER it. `page.tsx` is an async Server Component that talks to PostgREST; nothing in the fast
+ * lane executes one (signed lesson 12), so the markup would otherwise be tested by nothing at all.
+ * `lookup-history-list.tsx` is split from the same page for the same reason.
+ *
+ * Deliberately NOT a client module: it has no state and no handlers, so it renders on the server
+ * like the domain table beside it.
+ */
+
+/**
+ * How many keywords a row prints before it says "+N more".
+ *
+ * A run may be about 100 keywords and the column would otherwise be the whole page. Six is enough
+ * to recognise a set at a glance; the count beside it is what says how big the set really is, so
+ * the truncation never hides the SIZE of what was measured — only the words.
+ */
+const KEYWORDS_SHOWN = 6;
+
+function KeywordSet({ keywords }: { keywords: readonly string[] }) {
+  const shown = keywords.slice(0, KEYWORDS_SHOWN);
+  const hidden = keywords.length - shown.length;
+  return (
+    <>
+      <span className="block font-serif text-[15px] leading-[1.5]">{shown.join(", ")}</span>
+      {hidden > 0 ? (
+        <span className="block font-mono text-[11px] text-faint">+{hidden} more</span>
+      ) : null}
+    </>
+  );
+}
+
+export function KeywordRunList({ history }: { history: KeywordRunHistory }) {
+  if (history.entries.length === 0) {
+    return (
+      <div className="border border-dashed border-hairline-mid bg-card px-8 py-14 text-center">
+        <p aria-hidden="true" className="m-0 mb-3.5 font-mono text-[12px] text-faint">
+          $ research_keywords → no runs recorded
+        </p>
+        {/*
+          WHAT WAS MEASURED, in the spirit of the project card's "Not run for this domain yet"
+          decision (lib/projects/lookups.ts). This read covers every keyword research run on the
+          account with no scope of any kind — there is no project column to filter by — so, unlike
+          the card, no qualifier about scope is needed and adding one would be false modesty.
+          The word that IS load-bearing is RECORDED: the table records a run at the moment it
+          happens, so a run from before it existed is not in it, and "you have never looked up a
+          keyword" is a claim about the tenant that this page cannot make.
+        */}
+        <p className="m-0 mb-2 font-serif text-[22px] font-medium">
+          No keyword research recorded yet.
+        </p>
+        <p className="mx-auto m-0 max-w-[52ch] font-serif text-[15px] leading-[1.6] text-muted">
+          Ask your assistant to look up search volume for a list of keywords and the run lands here
+          — the keywords it asked about, what they were worth, and how that moved since last time.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse border-t border-ink text-left">
+          <thead>
+            <tr className="border-b border-hairline font-mono text-[10.5px] uppercase tracking-[0.12em] text-faint">
+              <th scope="col" className="py-2.5 pr-5 font-normal">
+                Keywords
+              </th>
+              <th scope="col" className="py-2.5 pr-5 font-normal">
+                Market
+              </th>
+              <th scope="col" className="py-2.5 pr-5 font-normal">
+                What it found
+              </th>
+              <th scope="col" className="w-[120px] py-2.5 font-normal">
+                Ran
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.entries.map((entry: KeywordRunHistoryEntry) => (
+              <tr
+                key={`${entry.keywords.join("\u0000")}-${entry.createdAt}`}
+                className="border-b border-hairline align-baseline transition-colors duration-150 hover:bg-card"
+              >
+                <td className="py-[15px] pr-5">
+                  <KeywordSet keywords={entry.keywords} />
+                </td>
+                <td className="whitespace-nowrap py-[15px] pr-5 font-mono text-[11.5px] text-faint">
+                  {entry.locale ? (
+                    `${entry.locale.languageCode} · ${entry.locale.locationCode}`
+                  ) : (
+                    <span className="text-faintest">not recorded</span>
+                  )}
+                </td>
+                <td className="py-[15px] pr-5 font-serif text-[14.5px] leading-[1.55]">
+                  {/*
+                    A run whose report could not be read shows its keywords and NO numbers — never
+                    a 0. The stored counters are the vendor's answer projected once; a missing one
+                    means "not readable", which is not the same claim as "nothing is searched".
+                  */}
+                  {summarizeKeywordRun(entry) ?? (
+                    <span className="font-mono text-[12px] text-faintest">no numbers recorded</span>
+                  )}
+                  {entry.change ? (
+                    <span className="mt-1 block font-mono text-[11.5px] text-muted">
+                      {describeKeywordRunChange(entry.change)}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="whitespace-nowrap py-[15px] font-mono text-[12px] text-faint">
+                  <time dateTime={entry.createdAt}>{formatDate(entry.createdAt)}</time>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {/*
+        THE CEILING, DISCLOSED WHEN IT BITES — the domain table's rule, same mechanism. Inside a
+        truncated window a run's earlier comparable run may simply be outside the page, so "no
+        change shown" on the oldest rows would otherwise read as "first run of its kind".
+        `windowFull` is set from the read's overflow probe — a run older than the last listed one
+        that was actually fetched and then dropped — and never from "the read came back full".
+      */}
+      {history.windowFull ? (
+        <p className="m-0 mt-6 font-mono text-[11.5px] leading-[1.7] text-faint">
+          Showing the most recent {KEYWORD_RUN_HISTORY_LIMIT} runs. Older runs exist and are not on
+          this page, so the oldest rows here may have an earlier run they were not compared against.
+        </p>
+      ) : null}
+    </>
+  );
+}

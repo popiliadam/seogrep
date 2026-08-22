@@ -548,6 +548,30 @@ export type Database = {
           },
         ]
       }
+      keyword_research_runs: {
+        Row: {
+          created_at: string
+          id: string
+          keyword_set: string[]
+          report: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          keyword_set: string[]
+          report: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          keyword_set?: string[]
+          report?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       paddle_events: {
         Row: {
           created_at: string
