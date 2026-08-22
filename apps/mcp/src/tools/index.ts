@@ -32,6 +32,8 @@ import { whatsNextTool } from "./whats-next.ts";
 import { listGscPropertiesTool } from "./list-gsc-properties.ts";
 import { trackGscPropertyTool } from "./track-gsc-property.ts";
 import { untrackProjectTool } from "./untrack-project.ts";
+import { trackKeywordsTool } from "./track-keywords.ts";
+import { keywordPositionsTool } from "./keyword-positions.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
@@ -99,6 +101,12 @@ export { whatsNextTool, makeWhatsNextTool } from "./whats-next.ts";
 export { listGscPropertiesTool, makeListGscPropertiesTool } from "./list-gsc-properties.ts";
 export { trackGscPropertyTool, makeTrackGscPropertyTool } from "./track-gsc-property.ts";
 export { untrackProjectTool, makeUntrackProjectTool } from "./untrack-project.ts";
+export { trackKeywordsTool, makeTrackKeywordsTool } from "./track-keywords.ts";
+export {
+  keywordPositionsTool,
+  makeKeywordPositionsTool,
+} from "./keyword-positions.ts";
+export { formatKeywordPositions } from "./keyword-positions-format.ts";
 
 /**
  * The production tool set, in tools/list order. The composition root (server.ts
@@ -149,4 +157,10 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   listGscPropertiesTool,
   trackGscPropertyTool,
   untrackProjectTool,
+  // The rank tracker, LAST and as a PAIR on purpose: one registers which keywords a project wants
+  // watched (free, and it measures nothing), the other reads what was measured for them. They are
+  // two halves of one subject and neither is readable without the other, so they are neighbours in
+  // tools/list and therefore in the docs nav.
+  trackKeywordsTool,
+  keywordPositionsTool,
 ];
