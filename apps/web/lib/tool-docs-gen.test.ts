@@ -22,6 +22,16 @@ import {
   truncateAtWord,
 } from "../scripts/gen-tool-docs.mjs";
 
+// The PRICE TABLE itself, imported the same way apps/web's pricing spec imports it. This file is the
+// only place the renderer and the table meet, which is what makes the guarantee below measurable:
+// what a docs page SAYS one call costs, checked against what `creditsForUnits` really charges for it.
+import {
+  CREDIT_UNITS,
+  TOOL_COSTS,
+  creditsForUnits,
+  type PerUnitPriceRule,
+} from "../../mcp/src/credits/costs";
+
 describe("deriveSlug", () => {
   it("turns a snake_case tool name into a hyphenated page slug", () => {
     expect(deriveSlug("setup_project")).toBe("setup-project");
@@ -158,6 +168,94 @@ describe("renderCostLine", () => {
 
   it("leaves the flat line untouched when no unit rule is given", () => {
     expect(renderCostLine(90, undefined)).toBe("**Cost:** 90 credits.");
+  });
+
+  /**
+   * THE BASE TERM. `serp_snapshot` is signed at 5 credits + 8 per keyword over 1-10 keywords
+   * (signature package 2026-08-17, MADDE 1 row #4). Before this branch existed the renderer knew
+   * nothing about `base` and this exact rule MEASURABLY produced
+   *   "**Cost:** 8 credits per keyword — 1 to 10 keywords per call, so 8 to 80 credits."
+   * — understating the signed price by the whole base at every count, on the tool's own docs page.
+   *
+   * Asserted as a WHOLE STRING with LITERAL 13 and 85, never as `base + cost * n`: a formula
+   * restating the renderer stays green when the renderer stops adding the base, which is the exact
+   * regression this spec exists for.
+   */
+  it("renders a rule that carries a BASE: the fixed part, the unit part, and the true range", () => {
+    expect(renderCostLine(8, { unit: "keyword", base: 5, min_units: 1, max_units: 10 })).toBe(
+      "**Cost:** 5 credits per call plus 8 credits per keyword — 1 to 10 keywords per call, " +
+        "so 13 to 85 credits.",
+    );
+  });
+
+  /**
+   * The base is charged ONCE per call, not once per unit — the distinction the field exists for.
+   * Folding it into the unit price (13 per keyword) would publish 130 at the cap instead of 85.
+   */
+  it("adds the base ONCE, never once per unit", () => {
+    const line = renderCostLine(8, { unit: "keyword", base: 5, min_units: 1, max_units: 10 });
+    expect(line).toContain("13 to 85 credits");
+    expect(line).not.toContain("130");
+  });
+
+  /** An ABSENT base and an explicit 0 are the same price, and must render indistinguishably. */
+  it("treats an absent base as 0 — the baseless line is byte-identical either way", () => {
+    const absent = renderCostLine(90, { unit: "compared target", min_units: 2, max_units: 10 });
+    const zero = renderCostLine(90, { unit: "compared target", base: 0, min_units: 2, max_units: 10 });
+    expect(zero).toBe(absent);
+    // …and that line is the one this page has always carried, word for word.
+    expect(absent).toBe(
+      "**Cost:** 90 credits per compared target — 2 to 10 compared targets per call, so 180 to 900 credits.",
+    );
+    expect(absent).not.toContain("per call plus");
+  });
+});
+
+/**
+ * THE GUARANTEE: a per-unit tool cannot publish a price it does not charge.
+ *
+ * This REPLACES a narrower gate that lived in apps/mcp/src/credits/costs.test.ts, which asserted that
+ * NO rule in CREDIT_UNITS carries a `base` at all, with a failure message telling the next author to
+ * teach `renderCostLine` about bases before shipping one. That gate bought its guarantee by
+ * forbidding the feature, and it could only ever fire on the base axis: a renderer that mis-rendered
+ * a BASELESS rule satisfied it completely.
+ *
+ * What is asserted instead is the thing that gate was protecting, one level up and for every rule the
+ * table will ever hold: the credits a page STATES for the cheapest and dearest call it describes are
+ * the credits `creditsForUnits` really charges for those calls. The numbers are read back OUT of the
+ * rendered line rather than recomputed alongside it, so a renderer that drops a term, folds the base
+ * into the unit price, or stops printing the range at all goes red here — with or without a base.
+ */
+describe("every priced rule renders the price it is really charged (NEVER #6)", () => {
+  const RANGE = /so (\d+) to (\d+) credits\.$/;
+
+  it("states, for each CREDIT_UNITS rule, the true cost of a floor call and a ceiling call", () => {
+    const rules = Object.entries(CREDIT_UNITS) as [keyof typeof TOOL_COSTS, PerUnitPriceRule][];
+    expect(rules.length).toBeGreaterThan(0); // an empty table must not vacuously pass this
+
+    for (const [tool, rule] of rules) {
+      const unitCredits = TOOL_COSTS[tool];
+      const line = renderCostLine(unitCredits, rule);
+
+      const match = line.match(RANGE);
+      expect(match, `${tool}: the cost line states no credit range at all: ${line}`).not.toBeNull();
+      const [statedFloor, statedCeiling] = [Number(match![1]), Number(match![2])];
+
+      expect(statedFloor, `${tool}: docs page understates/overstates its cheapest call`).toBe(
+        creditsForUnits(tool, rule, unitCredits, rule.min_units),
+      );
+      expect(statedCeiling, `${tool}: docs page understates/overstates its dearest call`).toBe(
+        creditsForUnits(tool, rule, unitCredits, rule.max_units),
+      );
+
+      // The fixed part must be VISIBLE, not merely folded into the totals: a reader pricing a count
+      // between the bounds has only the line's own words to work from.
+      if ((rule.base ?? 0) > 0) {
+        expect(line, `${tool}: carries a base the line never names`).toContain(
+          `${rule.base} credits per call plus `,
+        );
+      }
+    }
   });
 });
 

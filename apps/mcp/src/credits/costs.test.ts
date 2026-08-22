@@ -6,6 +6,7 @@ import {
   creditsForUnits,
   isPerUnitTool,
   type PerUnitPriceRule,
+  type ToolName,
 } from "./costs.js";
 import { MAX_COMPARE_TARGETS, MIN_COMPARE_TARGETS } from "../dfs/llm-mentions.js";
 import {
@@ -361,22 +362,55 @@ describe("the base term did not move the per-call or the existing per-unit path"
 
   /**
    * The rule table itself, pinned byte-for-byte — it now carries a PRICE (`base`), so NEVER #6
-   * covers it exactly as it covers TOOL_COSTS.
+   * covers it exactly as it covers TOOL_COSTS. An added, removed or altered `base` on any rule here
+   * fails on this line alone.
    *
-   * The `base` absence is not incidental. apps/web/scripts/gen-tool-docs.mjs renders a per-unit cost
-   * line as `cost x min` to `cost x max` and knows NOTHING about a base, so the first tool to ship
-   * one would publish a range understating its own price. This assertion is what makes that land as
-   * a RED gate on the slice that ships it rather than as a wrong number on a docs page.
+   * THE GUARANTEE THAT MOVED, and why it is not gone. This `it` used to also assert that NO rule
+   * carries a base at all, because apps/web/scripts/gen-tool-docs.mjs rendered a per-unit cost line
+   * as `cost x min` to `cost x max` and knew NOTHING about a base — so the first tool to ship one
+   * would publish a range understating its own price (MEASURED: the signed serp_snapshot rule
+   * rendered "8 to 80 credits" for a call costing 13 to 85). That gate bought its guarantee by
+   * forbidding the feature, and could only ever fire on the base axis.
+   *
+   * `renderCostLine` now renders the base, and the guarantee is asserted where the renderer and this
+   * table actually meet — apps/web/lib/tool-docs-gen.test.ts, "every priced rule renders the price it
+   * is really charged": for EVERY rule in this table, base or not, the credits a docs page STATES for
+   * the cheapest and dearest call are read back out of the rendered line and compared against
+   * `creditsForUnits`. That covers strictly more than the absence check did.
+   *
+   * What stays HERE is the half apps/web cannot see: that the arithmetic this table feeds the page is
+   * itself well-formed — a real integer price at both ends, with the base counted exactly ONCE per
+   * call rather than smuggled into the per-unit figure.
    */
-  it("pins the rule table, and refuses a base until the docs generator can render one", () => {
+  it("pins the rule table, and prices every rule at both ends with the base counted ONCE", () => {
     expect(CREDIT_UNITS).toEqual({
       ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
     });
-    for (const [tool, rule] of Object.entries(CREDIT_UNITS)) {
-      expect(
-        (rule as PerUnitPriceRule).base,
-        `${tool} carries a base: teach gen-tool-docs.mjs renderCostLine to add it before shipping`,
-      ).toBeUndefined();
+
+    const rules = Object.entries(CREDIT_UNITS) as [ToolName, PerUnitPriceRule][];
+    expect(rules.length).toBeGreaterThan(0); // an empty table must not vacuously pass the loop below
+
+    for (const [tool, rule] of rules) {
+      const unitCredits = TOOL_COSTS[tool];
+      const floor = creditsForUnits(tool, rule, unitCredits, rule.min_units);
+      const ceiling = creditsForUnits(tool, rule, unitCredits, rule.max_units);
+
+      expect(Number.isInteger(floor), `${tool}: floor call is not an integer price`).toBe(true);
+      expect(Number.isInteger(ceiling), `${tool}: ceiling call is not an integer price`).toBe(true);
+      expect(floor, `${tool}: cheapest call is free or negative`).toBeGreaterThan(0);
+      expect(ceiling, `${tool}: dearest call is cheaper than the cheapest`).toBeGreaterThanOrEqual(
+        floor,
+      );
+
+      // The base is a PER-CALL term: the whole distance between the two ends is the unit price times
+      // the distance in units, and nothing else. A base folded into `unitCredits` widens this gap.
+      expect(ceiling - floor, `${tool}: base is being charged per unit, not per call`).toBe(
+        unitCredits * (rule.max_units - rule.min_units),
+      );
+      // …and what remains at the floor, once the counted units are paid for, is exactly the base.
+      expect(floor - unitCredits * rule.min_units, `${tool}: the base is not what it says`).toBe(
+        rule.base ?? 0,
+      );
     }
   });
 });
