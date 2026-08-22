@@ -5,7 +5,86 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-19 (4. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-20 (4. oturum, GÜNCEL) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`ca645a9` · **2 PARK EDİLMİŞ PR** · yüzey **33 tool** canlı (park inince **35**) · imzalı 14 tool'un **10'u canlıda**.
+
+#### ⛔ OPERATÖRDE BEKLEYEN — SIRA ZORUNLU
+
+**İki SQL bloğu, BU SIRAYLA.** İkisi de `0029` numarasını istiyor ve `packages/db/src/index.test.ts` numaralandırmayı **boşluksuz 1..N** olarak pinliyor:
+
+1. **[PR #151](https://github.com/popiliadam/seogrep/pull/151) — `0029_keyword_research_runs`** (önce açıldı, **0029 onun**). `research_keywords`'ün koşu ekseni.
+2. **[PR #154](https://github.com/popiliadam/seogrep/pull/154) — rank tracker depolama** (`tracked_keywords` + `keyword_position_measurements`). #151 merge olduktan sonra **rebase + 0030'a rename** edilecek, sonra SQL uygulanır.
+
+**Her iki PR'ın gövdesinde SQL tek blok hâlinde var.** Sıra: SQL → şef **tabloya bakarak** doğrular (sinyale değil) → merge. Bedel her iki PR'da yazılı; özet: `apps/mcp` SQL'siz çıkarsa ilgili tool vendor'a **para öder**, eksik tabloda düşer, kiracıya iade eder.
+
+#### 🔢 OPERATÖRDE BEKLEYEN — İKİ SAYI, İKİSİ DE İMZASIZ
+
+1. **`serp_snapshot`'ın kelime kapağı.** İmzada **5 + kelime başına 8** ve en kötü marj **5,3×** yazıyor, ama **kapağın sayısı yazmıyor**. Marj N ile düşüyor (taban amortize oluyor): 1'de 8,06× · **10'da 5,27×** · 20'de 5,12× · asimptot 4,96×. **5,3× yalnız N ≤ 10'da doğru.** `MAX_SERP_KEYWORDS = 10` bugün spec'te pinli, sessizce kayamaz — ama **karşı-imza gerekiyor**, ve daha geniş bir tracker isteniyorsa **fiyat oynar** (NEVER#6).
+2. **Cron alt-bütçesi.** MADDE 5 kiracı kotasını kaldırdı; MADDE 5.3 **gözetimsiz** (cron'lu) harcamanın kendi alt-bütçesini istemesini ayakta bıraktı. Rank tracker'ın otomatik tazeleyicisi tam olarak o — **sayı imzasız**. Filo tavanı $3/gün. **Tazeleyici bu sayı olmadan yazılmayacak.**
+
+#### ⚠️ İMZALI BELGEDE İÇ TUTARSIZLIK — ölçüldü, uydurulmadı
+
+`docs/plans/2026-08-17-dfs-genisleme-imza-paketi.md` **kendi içinde çelişiyor**: H3 bölümü SERP Live'ı **"$0,002/SERP"** derken imzalı MADDE 1 satırı **"$0,02/kelime"** diyor — **on kat fark**. Sevk edilen kod `$0,02`'yi uyguluyor (imzalı satırla uyumlu, muhafazakâr yön). `$0,002` doğruysa marj on kat daha iyi ve kapak çok daha geniş olabilir. **`serp_snapshot` tool'u inerken uzlaştırılmalı.**
+
+#### 🎯 BU OTURUMDA NE OLDU — 12 PR canlıda, 2 parkta
+
+`/app/lookups` ([#140](https://github.com/popiliadam/seogrep/pull/140)) · `backlink_changes` 35 ([#143](https://github.com/popiliadam/seogrep/pull/143)) · `backlink_details` 35 ([#144](https://github.com/popiliadam/seogrep/pull/144)) · `disavow_candidates` 40 ([#145](https://github.com/popiliadam/seogrep/pull/145)) · `discover_keywords` 40 ([#146](https://github.com/popiliadam/seogrep/pull/146)) · `my_pages` 40 ([#147](https://github.com/popiliadam/seogrep/pull/147)) · para-yolu pinleri ([#148](https://github.com/popiliadam/seogrep/pull/148)) · settle sweep ([#149](https://github.com/popiliadam/seogrep/pull/149)) · AI ailesi 90 + 90/hedef ([#150](https://github.com/popiliadam/seogrep/pull/150)) · imza düzeltmesi ([#142](https://github.com/popiliadam/seogrep/pull/142)) · handoff ([#152](https://github.com/popiliadam/seogrep/pull/152)) · **SERP portu + taban+birim fiyat uzantısı ([#153](https://github.com/popiliadam/seogrep/pull/153))**.
+
+#### 📍 KALAN İŞ — SIRAYLA
+
+1. **`serp_snapshot` Part B** — son yazılmamış imzalı tool. Portu ([#153](https://github.com/popiliadam/seogrep/pull/153)) ve fiyat mekanizması **hazır**; kapak karşı-imzası ve `$0,002` sorusu ona bağlı. **Part B kontratı** (rank tracker işçisinden): `keyword_position_measurements`'a yazar · çıplak target için `project_id` **nullable** · `report` kapaklı bir `placements` listesi + üstünde `placements_found`/`placements_stored` sayaçları taşır · `best_rank_group`/`best_rank_absolute` **en iyi** yerleşiminkidir ve **kapaklamadan ÖNCE** kaldırılır.
+2. **Chip dalgası** — ~18 kalem, hepsi mutasyonla ölçülmüş ve talimatlı (aşağıdaki bölümler).
+3. **Cron tazeleyici** — operatörün sayısını bekliyor.
+4. **`keyword_trends`** — **ertelendi**: imzada 25 kredi ama vendor maliyeti **hiç ölçülmemiş**, yani pinlenecek marj tabanı **yok**. MADDE 6 onu tek zorunlu kalibrasyon kalemi yapmış. **Bir hafta gerçek `dfs_spend` verisi** gerekiyor — karar değil, zaman.
+
+#### 🧪 KOD OLMAYAN, EN YÜKSEK DEĞERLİ İŞ
+
+**Bu oturumda canlıya çıkan yedi tool'un hiçbiri gerçek bir vendor çağrısı yapmadı.** Fixture'lar vendor'ın *dokümantasyon* örnekleri (bazıları 2023 tarihli), ölçülmüş yanıt değil. Alan adları bugün farklıysa çağrı **patlamaz**, her alan `n/a` basar — dürüst ama **değersiz** bir 35–90 kredilik cevap. Her tool'a **birer** canlı çağrı, $3/gün tavanının çok altında, ve **tek gerçek sözleşme testi** o.
+
+#### 🆕 FİYAT MEKANİZMASININ BUGÜNKÜ HÂLİ
+
+`creditCostFor(tool, units)` — bir kredi tutarının çarpıldığı **tek yer**. Üç şekil destekleniyor: **çağrı-başına** (her eski tool) · **birim × N** (`ai_visibility_compare` 90/hedef) · **taban + birim × N** ([#153](https://github.com/popiliadam/seogrep/pull/153), `serp_snapshot` 5+8/kelime için hazır, **kullanılmıyor**). Çağıran bir **sayı** verir, asla bir tutar. `min_units`/`max_units` zorlanıyor, atlama **hata**. D17 onay eşiği **çağrıyı** tartıyor, tablo satırını değil.
+
+**MAYIN, pinli ama düzeltilmemiş:** `gen-tool-docs.mjs`'in `renderCostLine`'ı taban terimini **bilmiyor** — taban taşıyan ilk tool kendi fiyatını **eksik gösteren** bir aralık yayınlar. Bir spec hiçbir kuralın taban taşımadığını assert ediyor ve hata mesajı `renderCostLine`'ı adıyla çağırıyor, yani mayın **onu döşeyen dilimde** patlar. `serp_snapshot` inerken düzeltilmeli.
+
+#### 🔧 AÇIK CHIP'LER — 4. oturumda eklenenler, hepsi MUTASYONLA ölçüldü
+
+**Para yolu:** `withCredits` sıralaması per-birim tool'lara kör nokta bırakıyor (kapı maliyet aramasından önce koşuyor — bu **doğru**; sonucu: her per-birim tool kendi rezervasyon-pinini yazmalı) · `withCredits` units'siz per-birim meta'yı reddetmiyor · `row_count` iki şeritte pinsiz (bütçe aritmetiği okumuyor) · `creditsForUnits` fiyatı **parametre** olarak alıyor, tablo satırı yoksa pricing spec'i ısırmıyor · çağrı-başına yolda `units: 0` reddi pinsiz.
+
+**Kapı kapsamı:** **hiçbir kapı canlı DML ACL'lerini tablo genelinde saymıyor** (hakem `authenticated`'a `grant insert` uyguladı, FORCE RLS reddetti ama hiçbir spec kırmadı — sistemik) · modül-yükleme anında dışa çağrı ve token'lara bölünmüş `node:https` çağrısı hiçbir kapıda yok · `goals/` hiçbir hızlı kapıda okunmuyor.
+
+**SERP portu:** `result` null/yok dalı pinsiz (mevcut spec **kazara** hayatta) · boş `tasks` dizisi pinsiz · `lighthouse.test.ts`'in karışık pini kendi kendine yetmiyor (fixture maliyeti = liste fiyatı).
+
+**Rank tracker:** kapak sınırı, aralık uç sırası, pencere sıralaması **yalnız DB şeridinde** pinli · `location_name`/`language_code` normalize edilmiyor · arşivlenmiş proje untrack edemiyor.
+
+**Panel:** sayfa→kurucu `limit` argümanı ve okumanın dönüş sözleşmesi pinsiz · `backlink-details.db.test.ts` (f) yalnız RET kanıtlıyor.
+
+**Docs:** gap map `:252` hâlâ `disavow_candidates` için 55 diyor (imza 40 ve sonrakidir).
+
+#### 🧯 TEKRARLAYAN İKİ ARIZA — sıradaki oturum bilsin
+
+1. **Ham NUL karakteri bir kaynak dosyayı git'e göre BINARY yapar** ve o commit'in diff'i hakemin gözünden **kaybolur**. İki ayrı dalda ayrı ayrı oldu. Kaçış dizisi kullan.
+2. **Bir mutasyonun uygulandığını DOĞRULA.** Fixture'ın değerleri çakışıyorsa mutasyon hiçbir şeyi değiştirmez ve "yeşil kaldı" diye yanlış bulgu raporlarsın. Şef bunu bir kez kendi yaşadı (pin muafiyeti satır bazlıydı, mutasyon aynı satıra düştü), işçiler üç kez.
+
+#### Kapı komutları — ezberden değil, buradan
+| ne | komut | NE ÖLÇMEZ |
+|---|---|---|
+| unit + build + typecheck | `TURBO_FORCE=1 bash guardrails/verify.sh` | secret YOK · DB şeritleri YOK · `goals/` YOK |
+| DB şeritleri + tip kapısı + migration | `bash guardrails/verify-db.sh` | 00:00–00:30 UTC'de deterministik kırmızı |
+| kalıcı hedefler + secret | `make goals` | env yoksa **beş** canlı-uç kalemi sessizce SKIP |
+| secret (geçmiş) | `gitleaks detect --source . --no-banner` | çalışma ağacını değil **geçmişi** tarar |
+
+**Şef-Bash `~/.zshrc` source ETMEZ:** `eval "$(grep -E '^[[:space:]]*export[[:space:]]+(PROD_URL|MCP_SMOKE_URL)=' ~/.zshrc)"`
+
+**`trial-flow-e2e` merge ile deploy ARASINDA zorunlu olarak kırmızıdır** — `make goals`'ın merge'ün hemen ardından koşulan hâli o kalem için **kanıt değildir**.
+
+#### FLAKE KAYDI — 4. oturumda ölçülenler
+Kong/upstream 502 (`An invalid response was received from the upstream server`, genelde seed helper'da, **assertion'dan önce**) — **kökü CI'da `toomanyrequests: Rate exceeded`**, yani Docker Hub kotası; yığın eksik ayağa kalkıyor · `disconnect-button.test.tsx` rerender yarışı · paylaşılan yerel Supabase: iki worktree aynı yığını kullanıyor, biri `db reset` yaparsa diğeri **dokunmadığı dosyada** kırmızı görür.
+
+---
+
+### 📋 2026-08-19 (4. oturum, ESKİ SÜRÜM)
 
 **Durum:** `main` @`92de94a` · **1 PARK EDİLMİŞ PR** ([#151](https://github.com/popiliadam/seogrep/pull/151), operatör SQL bekliyor) · yüzey **33 tool** (oturum başında 26) · `make goals` env yüklü koşuda **16/16 PASS (1 skip)**.
 
