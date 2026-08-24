@@ -13,7 +13,7 @@ import type { TrackedDevice } from "./serp-devices.ts";
  * every statement below carries its own tenant filter, on the write as much as on the read.
  */
 
-/** The identity of a tracked keyword — the six columns migration 0029 makes unique together. */
+/** The identity of a tracked keyword — the six columns migration 0030 makes unique together. */
 export interface TrackedKeywordIdentity {
   readonly projectId: string;
   readonly keyword: string;
@@ -164,7 +164,7 @@ export const countActiveTrackedKeywords: CountActiveTrackedFn = async (userId, p
 };
 
 /**
- * The registration write: one upsert on the identity index (migration 0029's
+ * The registration write: one upsert on the identity index (migration 0030's
  * `tracked_keywords_identity_key`), which is what makes asking twice idempotent — and what makes
  * re-tracking an untracked keyword REVIVE its original row (same id, same `created_at`) instead of
  * forking a second history for the same question. `untracked_at: null` is written explicitly on
