@@ -727,8 +727,10 @@ describe("the D17 confirmation gate weighs the base", () => {
  *
  *   A DROPPED `units:` THROWS — loudly, in production, on every call (costs.ts's omission guard).
  *   It is not a silent give-away; the tool stops answering. The fast lane still cannot see it,
- *   because nothing there runs the throwing line — which is exactly what `serp-snapshot.reserve
- *   .test.ts` says in its own header.
+ *   because nothing there runs the throwing line FROM A HANDLER'S RESERVE PATH — which is exactly
+ *   what `serp-snapshot.reserve.test.ts` says in its own header. (Read without that qualifier the
+ *   sentence is false: this very file calls `creditCostFor` with a per-unit tool and asserts the
+ *   throw. What no sibling spec can see is a CALL SITE's mistake.)
  *
  *   A WRONG COUNT is the silent one, and it is the reason this gate exists. Hardcoding `units: 1`
  *   where the call site should compute the real count was measured to bill 13 credits for a
