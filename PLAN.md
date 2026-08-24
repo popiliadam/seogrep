@@ -5,7 +5,69 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-24 (4. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-24 (5. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`e2ceddd` · **5 PR merge edildi** (#162 #163 #164 #165, dört dilim) · worktree temiz ·
+migration **0030** prod'da · canlı yüzey **36 tool** (bu oturum tool EKLEMEDİ — panel ve pin işiydi).
+
+#### ✅ BU OTURUMDA KAPANAN — dört dilim, hepsi hakem + üç kapı
+
+1. **`/app/rankings` — rank tracker'ın panel yüzeyi** ([#164](https://github.com/popiliadam/seogrep/pull/164), 12 dosya / 2717 satır).
+   Parça 2'nin **en yüksek değerli** kalemi. `serp_snapshot` para alıp web'de iz bırakmıyordu; artık
+   seri panelde. Dürüstlük kuralları MCP tool'undan **taşındı, yeniden yazılmadı** (aynı
+   `GAP_SENTENCE`, aynı `MAX_CONTIGUOUS_GAP_HOURS`, üç outcome üç ayrı cümle). Seri anahtarı **sekiz**
+   alan — tool'un beşi + `target_domain` (panel tek domain'e kapsanmış değil).
+2. **`/app/lookups` okuma pinleri W1–W4** ([#165](https://github.com/popiliadam/seogrep/pull/165)).
+   W4 **gerçek kusurdu**: iki okuma da yalnız `created_at desc` ile sıralıyordu, `now()` transaction
+   saati olduğu için eşitlik ULAŞILABİLİR, ve değişim zinciri o sırayı yürüdüğü için **"önceki
+   koşu"nun kimliği tanımsızdı**. 10 mutasyon, hepsi kırmızı.
+3. **Para yolu P4/P5/P6** ([#163](https://github.com/popiliadam/seogrep/pull/163)). `costs.test.ts` 26 → **35 spec**, sıfır silme.
+4. **Doküman sapmaları D1/D2** ([#162](https://github.com/popiliadam/seogrep/pull/162)).
+
+#### 🎯 SIRADAKİ OTURUMUN İŞİ — sırayla
+
+1. **PARÇA 2'nin KALANI.** Tasarım kararı **verildi ve 0027'nin kendi testinden geçirildi**:
+   - **0027'ye GİRER** (CHECK 3 → 7): `backlink_changes` · `backlink_details` · `disavow_candidates` ·
+     `my_pages`. Dördü de **yalnız** `target` + `project_id` alıyor — mode yok, keyword yok. 0027'deki
+     üçüyle **birebir aynı şekil**. *(Dilim sevk edildi; durumu aşağıda.)*
+   - **GİRMEZ, ayrı eksen ister:** `discover_keywords` (4 mode, **3'ünde domain yok**) ·
+     `ai_visibility` (konu domain **VEYA keyword**) · `ai_visibility_compare` (**manşet konu YOK**,
+     düz 2-10 hedef, her biri domain/keyword/proje). Üçü de 0027'nin `target` sütununu yalancı yapar —
+     `research_keywords`'ün dışlanma gerekçesinin aynısı. Bunlara **konusu ayrımlı** (discriminated
+     subject) bir tablo gerekir: `mode`/`subject_kind` saklanır ki null'ın anlamı satırdan satıra
+     değişmesin.
+   - ⚠️ **CHECK genişletmek `drop constraint` ister.** Şefin yetkisi **yalnız eklemeli** SQL; bu SQL
+     **operatöre gider** (yerleşik desen: SQL PR gövdesinde, operatör uygular, şef **tabloya bakarak**
+     doğrular — sinyale değil).
+2. **CHIP DALGASI** — §3, dokuz kalem kapandı ve çıkarıldı, **altı yeni chip eklendi** (§3.6).
+   En değerlisi **T1**: dört dosyada tek yönlü kiracı testi, ve #164 şablonu hazır verdi.
+3. **`keyword_trends`** — bir hafta `dfs_spend` verisi sonrası (karar değil, ZAMAN).
+
+#### ⏳ OPERATÖRDE BEKLEYEN — hiçbiri kodu bloke etmiyor
+
+1. **CANLI SMOKE.** Sevk edilen tool'ların hiçbiri gerçek vendor çağrısı yapmadı; fixture'lar vendor
+   *dokümantasyon* örnekleri. Alan adları değiştiyse çağrı **patlamaz**, sessizce `n/a` basar.
+   **Şef yapamıyor: izin katmanı prod POST'unu reddediyor.**
+2. **Cron alt-bütçesi** — `docs/plans/2026-08-24-serp-kapak-ve-cron-butcesi.md`.
+3. **Ürün adaleti:** vendor tamamen düşerse kiracı tam ödüyor (`dfs/serp.ts:855-865`).
+4. **YENİ — N3:** iki panel farklı sınır açıklıyor; birleştirmek mevcut bir assertion'ı düzenlemeyi
+   gerektirir (NEVER#8). Bugün latent. Hangi kardeşin doğru olduğu operatör kararı.
+
+#### 🚨 BU OTURUMDA YAKALANAN — hepsi kapı yeşilken görünmüyordu
+
+1. **Yedi bayat sayı, yedisi de FARKLI eksende bulundu.** Handoff birini biliyordu. Referans ekseni →
+   2 dosya daha. **Sayı** ekseni → `db.ts:517` (ne şef ne hakem ilk iki eksende gördü). Prose kontrolü →
+   `costs.test.ts:256`. Tam ölçüm → **dokuz** fiyat sapması (chip **bir** diyordu).
+   **İmzalı ders 14'ün ölçülmüş yeni vakası, ve bu kez şefe VE hakeme birden düştü.**
+2. **Bir spec kapının YAPISI yüzünden görünmez şekilde kırıktı** (N1). `verify-db.sh` her koşudan önce
+   `db reset` yapıyor, o yüzden sabit-id çarpışması hiç görünmedi. Kapı örtmüyordu — **bakmıyordu**.
+3. **Şef bir ÖLÇÜM İDDİASI yazdı ve ölçmemişti.** Gap map notuna "her öneri costs.ts'e karşı okundu"
+   yazıldı; gerçekte handoff'un saydığı tool'lar grep'lenmişti. Üç tool kaçtı ve `link_gap` hakkında
+   **iki yarısı da yanlış** bir cümle yayınlandı (imzalı ders 11, bu kez şefin elinden).
+4. **Dört mutasyondan ikisi HİÇ UYGULANMADI** ve "yeşil kaldı" dedi — ikisi de var olmayan bir bulgu
+   üretecekti. Yakalatan şey: **eşleşme sayısı değil, DEĞİŞEN SATIRIN kendisini** kanıt istemek.
+
+### 📋 2026-08-24 (4. oturum KAPANIŞ) — ESKİ HANDOFF
 
 **Durum:** `main` @`a9a670c` · açık PR **0** · worktree **temiz** · migration **0030**'a kadar uygulanmış
 (prod'da okunarak doğrulandı) · canlı yüzey **36 tool** · `make goals` deploy sonrası koşuda
