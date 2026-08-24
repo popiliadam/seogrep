@@ -163,22 +163,33 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /**
  * `report->locale`, in EITHER of the two shapes this table carries — and that is the vendor's
  * doing, not a slip. The Labs family (discover_keywords) takes a numeric `location_code`; the LLM
- * Mentions family takes a string `location_name`, and both of its fields are optional on the wire.
- * 0032's header is why the two live in the report rather than in one column with two meanings.
+ * Mentions family takes a string `location_name`, and BOTH of that family's fields are optional on
+ * the wire. 0032's header is why the two live in the report rather than in one column with two
+ * meanings.
  *
- * BOTH HALVES OR NOTHING within a shape: a half-read locale names no market, and filling in the
- * missing half is how one market's figures get shown under another's name.
+ * THE SHAPE IS CHOSEN BY WHICH KEY IS PRESENT, not by which value parsed, and that distinction is
+ * the whole reason this function is not three lines. A `{ language_code: "tr" }` with no location
+ * of any kind is a COMPLETE mentions locale (that family's location really is optional — "asked in
+ * Turkish, no location given" is what the request was) and a BROKEN Labs one (that family's
+ * `location_code` is required input and the writer always stores it). Reading the value alone
+ * cannot tell those apart, so the KEY decides: the writer emits `location_name` on every mentions
+ * report — explicitly null when the caller sent none, because `JSON.stringify` drops only
+ * `undefined` — and never emits it on a Labs one.
+ *
+ * WITHIN THE LABS SHAPE IT IS BOTH HALVES OR NOTHING: a half-read locale names no market, and
+ * filling in the missing half is how one market's figures get shown under another's name.
  */
 export function readMarket(value: unknown): string | null {
   const record = asRecord(value);
   if (record === null) return null;
   const language = asText(record.language_code);
-  const code = asFiniteNumber(record.location_code);
-  if (code !== null) return language === null ? null : `${language} · ${code}`;
+  if ("location_code" in record) {
+    const code = asFiniteNumber(record.location_code);
+    return code === null || language === null ? null : `${language} · ${code}`;
+  }
+  if (!("location_name" in record)) return null;
   const name = asText(record.location_name);
   if (name === null && language === null) return null;
-  // The mentions locale is optional on BOTH halves, so one alone is a real, complete answer here —
-  // "asked in English, no location given" is what the request actually was.
   return name === null ? `${language}` : language === null ? name : `${language} · ${name}`;
 }
 
