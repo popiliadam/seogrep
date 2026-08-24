@@ -166,7 +166,7 @@ export function renderReading(row: StoredMeasurement): string {
     // TWO SCALES, EITHER OF WHICH THE VENDOR MAY WITHHOLD — so "no rank_group" is NOT "no rank".
     // Collapsing these two into one sentence printed "DataForSEO reported no rank" over a row on
     // which DataForSEO had reported one, on its other scale, and the renderer was the only thing
-    // hiding it: the schema stores that shape on purpose (migration 0029 says why it cannot be
+    // hiding it: the schema stores that shape on purpose (migration 0030 says why it cannot be
     // constrained away).
     if (row.bestRankAbsolute === null) {
       return (
