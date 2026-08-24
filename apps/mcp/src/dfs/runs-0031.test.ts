@@ -496,3 +496,192 @@ describe("disavow_candidates: our counts and the vendor's, under different names
     expect(report.total).toBe(0);
   });
 });
+
+// --- my_pages -----------------------------------------------------------------------------------
+
+function metrics(over: Partial<RelevantPageMetrics> = {}): RelevantPageMetrics {
+  return {
+    pos_1: null,
+    pos_2_3: null,
+    pos_4_10: null,
+    pos_11_20: null,
+    pos_21_30: null,
+    pos_31_40: null,
+    pos_41_50: null,
+    pos_51_60: null,
+    pos_61_70: null,
+    pos_71_80: null,
+    pos_81_90: null,
+    pos_91_100: null,
+    etv: null,
+    count: null,
+    estimated_paid_traffic_cost: null,
+    is_new: null,
+    is_up: null,
+    is_down: null,
+    is_lost: null,
+    ...over,
+  };
+}
+
+function vendorPage(
+  address: string,
+  over: Partial<Record<RelevantPageItemType, RelevantPageMetrics>> = {},
+): RelevantPageRow {
+  return { page_address: address, our_join_key: address, metrics: over };
+}
+
+function pagesResult(over: Partial<RelevantPagesResult> = {}): RelevantPagesResult {
+  return {
+    target: "example.com",
+    item_types_requested: ["organic"],
+    ordered_by_vendor_field: "metrics.organic.count",
+    vendor_filters_applied: [],
+    clickstream_purchased: false,
+    window: {
+      window_offset: 0,
+      window_limit: 20,
+      window_row_count: 1,
+      vendor_total_count: 812,
+      rows: [vendorPage("https://example.com/pricing", { organic: metrics({ count: 44, etv: 910 }) })],
+    },
+    ...over,
+  };
+}
+
+const PAGES_QUERY = { limit: 20, offset: 0, language_code: "en", location_code: 2840 } as const;
+
+describe("my_pages: a vendor count, with everything that scoped it stored beside it", () => {
+  /**
+   * `total` IS a vendor count — but of the pages matching THIS run's item types and filters. Both
+   * are caller-chosen and both change what is counted, so both are stored: without them the number
+   * cannot be compared with anything, which is exactly why the history panel refuses this tool a
+   * change clause.
+   */
+  it("stores the item types and the vendor filters that scoped the count", () => {
+    const report = myPagesRunReport(
+      pagesResult({
+        item_types_requested: ["organic", "paid"],
+        vendor_filters_applied: [["metrics.organic.etv", ">=", 100]],
+      }),
+      CRAWL_NOT_REQUESTED,
+      { limit: 20, offset: 40, language_code: "tr", location_code: 2792 },
+    );
+    expect(report.total).toBe(812);
+    expect(report.item_types).toEqual(["organic", "paid"]);
+    expect(report.vendor_filters_applied).toEqual([["metrics.organic.etv", ">=", 100]]);
+    expect(report.locale).toEqual({ language_code: "tr", location_code: 2792 });
+    expect(report.offset).toBe(40);
+  });
+
+  it("caps the page list while `shown` and `total` stay PRE-cap", () => {
+    const report = myPagesRunReport(
+      pagesResult({
+        window: {
+          window_offset: 0,
+          window_limit: 200,
+          window_row_count: 140,
+          vendor_total_count: 812,
+          rows: Array.from({ length: 140 }, (_, i) =>
+            vendorPage(`https://example.com/${i}`, { organic: metrics({ count: 140 - i }) }),
+          ),
+        },
+      }),
+      CRAWL_NOT_REQUESTED,
+      PAGES_QUERY,
+    );
+    expect(report.pages).toHaveLength(MAX_RUN_ROWS);
+    expect(report.shown).toBe(140);
+    expect(report.total).toBe(812);
+  });
+
+  /**
+   * An item type the vendor reported NOTHING for is ABSENT from `metrics`, so the headline reads
+   * `?? null` and never `?? 0`. A page whose organic block is missing is not a page with zero
+   * organic SERPs (NEVER #7).
+   */
+  it("`top` is the window's first page, and a missing organic block is null rather than 0", () => {
+    const withOrganic = myPagesRunReport(
+      pagesResult({
+        window: {
+          window_offset: 0,
+          window_limit: 20,
+          window_row_count: 2,
+          vendor_total_count: 812,
+          rows: [
+            vendorPage("https://example.com/a", { organic: metrics({ count: 44, etv: 910 }) }),
+            vendorPage("https://example.com/b", { organic: metrics({ count: 2 }) }),
+          ],
+        },
+      }),
+      CRAWL_NOT_REQUESTED,
+      PAGES_QUERY,
+    );
+    expect(withOrganic.top).toEqual({
+      page: "https://example.com/a",
+      organic_count: 44,
+      organic_etv: 910,
+    });
+
+    const noOrganic = myPagesRunReport(
+      pagesResult({
+        window: {
+          window_offset: 0,
+          window_limit: 20,
+          window_row_count: 1,
+          vendor_total_count: null,
+          rows: [vendorPage("https://example.com/paid-only", { paid: metrics({ count: 3 }) })],
+        },
+      }),
+      CRAWL_NOT_REQUESTED,
+      PAGES_QUERY,
+    );
+    expect(noOrganic.top).toEqual({
+      page: "https://example.com/paid-only",
+      organic_count: null,
+      organic_etv: null,
+    });
+    expect(noOrganic.total).toBeNull();
+  });
+
+  it("`top` is null on an empty window", () => {
+    const report = myPagesRunReport(
+      pagesResult({
+        window: {
+          window_offset: 0,
+          window_limit: 20,
+          window_row_count: 0,
+          vendor_total_count: 0,
+          rows: [],
+        },
+      }),
+      CRAWL_NOT_REQUESTED,
+      PAGES_QUERY,
+    );
+    expect(report.top).toBeNull();
+    // A vendor ZERO is the vendor's own answer and is stored as 0, not as null.
+    expect(report.total).toBe(0);
+  });
+
+  /** The crawl card is stored verbatim, counts only — never the crawled URLs (0027's payload rule). */
+  it("stores the crawl card as counts, and keeps its three states distinguishable", () => {
+    const compared: MyPagesCrawlView = {
+      kind: "crawl",
+      job_id: "job-1",
+      ran_at: "2026-08-20T00:00:00.000Z",
+      pages_compared: 88,
+      truncated: false,
+      matched: 12,
+      vendor_only: 30,
+      crawl_only: 76,
+    };
+    const report = myPagesRunReport(pagesResult(), compared, PAGES_QUERY);
+    expect(report.crawl).toEqual(compared);
+    // …and the un-requested state is not the same value as "compared nothing".
+    expect(myPagesRunReport(pagesResult(), CRAWL_NOT_REQUESTED, PAGES_QUERY).crawl).toMatchObject({
+      kind: "not_requested",
+      matched: null,
+      pages_compared: null,
+    });
+  });
+});
