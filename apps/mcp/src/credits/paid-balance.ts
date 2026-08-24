@@ -81,6 +81,13 @@ export const PAID_BALANCE_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>([
   // stated in dfs/llm-mentions.ts, not compared to anything in this file.
   "ai_visibility",
   "ai_visibility_compare",
+  // serp_snapshot (2026-08-24) — ONE paid DataForSEO live-SERP request PER KEYWORD, because the
+  // vendor's `keyword` parameter is singular. The criterion is unchanged and is still "does it
+  // spend?", not "how much?"; what is different about this member is that a single call issues a
+  // request per keyword up to the signed cap, so the reservation against the shared daily vendor
+  // budget is sized from the caller's list rather than fixed. No comparison to any member above is
+  // made or implied — no per-call request count lives in this file.
+  "serp_snapshot",
 ]);
 
 /** Whether `tool` may only run on an account that has paid. */

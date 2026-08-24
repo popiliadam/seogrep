@@ -95,6 +95,16 @@ const CREDIT_COSTS = [
   // measurement and answers a different question. track_keywords, which chooses WHICH keywords are
   // watched, is free and therefore has no row here at all.
   { action: "Stored keyword positions (per domain)", cost: "10" },
+  // THE SECOND PER-UNIT ROW, and the first with a FIXED part (2026-08-17 signature package MADDE 1
+  // row #4, operator-signed; the keyword cap counter-signed 2026-08-24). The signed price is 5
+  // credits per call PLUS 8 per keyword over 1-10 keywords, so a call costs 13 to 85 and no call
+  // costs 8. The number in this column is the per-keyword price, exactly as the comparison row
+  // above carries a per-target one — and the label is the only thing that tells a reader which is
+  // which, which is why it names BOTH halves. The 8 and the 5 both live in apps/mcp
+  // credits/costs.ts (TOOL_COSTS and CREDIT_UNITS.serp_snapshot.base); either of them moving is a
+  // signed price change (NEVER #6), and so is the keyword cap, which is what holds the signed
+  // worst-case margin up.
+  { action: "SERP snapshot (per keyword, plus 5 credits per call)", cost: "8" },
   { action: "Monthly report", cost: "15" },
 ] as const;
 

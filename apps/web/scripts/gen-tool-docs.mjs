@@ -229,7 +229,7 @@ export function dayPhrase(days) {
  * page that states a wrong (or literally "undefined") limit.
  */
 export function substituteProseTokens(text, constants) {
-  const { maxRowLimit, lagDays, maxTrackedKeywords } = constants || {};
+  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords } = constants || {};
   const out = String(text)
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
@@ -241,6 +241,12 @@ export function substituteProseTokens(text, constants) {
       groupThousands(
         positiveInteger(maxTrackedKeywords, "{{MAX_TRACKED_KEYWORDS}}", "maxTrackedKeywords"),
       ),
+    )
+    // The SERP-snapshot keyword cap. It is a PRICE decision (apps/mcp credits/costs.ts explains
+    // why it is what holds the signed worst-case margin up), so a page that retyped it could
+    // publish a bound the code no longer charges for.
+    .replace(/\{\{MAX_SERP_KEYWORDS\}\}/g, () =>
+      groupThousands(positiveInteger(maxSerpKeywords, "{{MAX_SERP_KEYWORDS}}", "maxSerpKeywords")),
     );
   // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
   // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
@@ -2280,6 +2286,69 @@ export const DOC_PROSE = {
       "tracking records what to watch and measures nothing.",
   },
 
+  serp_snapshot: {
+    lead:
+      "`serp_snapshot` measures where a domain appears in Google's organic results for each of " +
+      "your keywords — on one location, one language and one device — and **stores every " +
+      "reading**, so [`keyword_positions`](/docs/tools-reference/keyword-positions) can show the " +
+      "series later. It is the only part of the rank tracker that contacts a search engine.",
+    whatItDoes:
+      "Pass a `project_id` (or any `target` domain) and up to **{{MAX_SERP_KEYWORDS}}** keywords. " +
+      "Each keyword is a **separate live search**, so the list is what the call costs — that is " +
+      "why the price has a per-keyword part. Duplicates are refused rather than quietly removed, " +
+      "and the list is never trimmed to fit: a shorter answer to a longer question is not the " +
+      "answer you asked for.",
+    preExampleSections: [
+      {
+        heading: "Three answers, and none of them is a number you can misread",
+        body:
+          "A keyword comes back as exactly one of three things, and they are never collapsed:\n\n" +
+          "- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and " +
+          "`rank_absolute` (its rank among every element on the page, including featured snippets " +
+          "and ad blocks). Both are reported, because they disagree whenever a SERP feature sits " +
+          "above the result, and that gap is itself the finding.\n" +
+          "- **Searched for and not found** — together with **how many organic results were " +
+          "actually examined**. That is the scope of the claim: it is not position 0, and it says " +
+          "nothing about results beyond the ones counted.\n" +
+          "- **Not measured** — the request or the response failed, so the position is unknown. " +
+          "Nothing was examined, so this is not a statement that the domain is absent.\n\n" +
+          "SeoGrep computes no visibility score, no share of voice and no ranking of its own.",
+      },
+      {
+        heading: "What a reading is scoped to",
+        body:
+          "A position is a measurement at a moment, not a property of a site. Every reading is " +
+          "taken on **one** search engine, **one** location, **one** language, **one** device and " +
+          "to one fixed depth, and the answer states all of them — Google returns different " +
+          "results and a different layout on desktop and on mobile, so a desktop reading says " +
+          "nothing about a mobile one.\n\nA result counts as yours only when its host matches " +
+          "yours exactly, after lower-casing and removing a leading `www.`. A subdomain does " +
+          "**not** count: `blog.example.com` is not `example.com`, because \"our blog ranks\" and " +
+          "\"our site ranks\" are different findings and only you know which one you asked about.",
+      },
+      {
+        heading: "It measures on demand, and only on demand",
+        body:
+          "Nothing here runs on a schedule. A snapshot happens because you asked for one, so no " +
+          "credits are ever spent while you are not looking. " +
+          "[`track_keywords`](/docs/tools-reference/track-keywords) records which keywords you " +
+          "want watched — that is free and takes no measurement — and this tool is what turns a " +
+          "watched keyword into a reading.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Take a SERP snapshot for \"seo tools\" and " +
+      "\"rank tracker\" on my example.com project, on mobile.\n\nRun " +
+      "[`list_projects`](/docs/tools-reference/list-projects) first if you need the `project_id`.",
+    returns:
+      "One block per keyword, in the order you passed them, each carrying its own answer of the " +
+      "three above — and, where the domain was found, every placement it was found at with " +
+      "DataForSEO's own ranks and URLs. The reply states what the snapshot was measured under " +
+      "(search engine, location, language, device, depth requested and how a domain was matched), " +
+      "separates DataForSEO's own account of when it measured from SeoGrep's clock, and confirms " +
+      "how many readings were stored.",
+  },
+
   keyword_positions: {
     lead:
       "`keyword_positions` reads the SERP positions SeoGrep has already measured and stored for a " +
@@ -2399,6 +2468,11 @@ async function loadRegistry() {
         maxRowLimit: pull.MAX_ROW_LIMIT,
         lagDays: windows.GSC_FRESHNESS_LAG_DAYS,
         maxTrackedKeywords: tracked.MAX_TRACKED_KEYWORDS_PER_PROJECT,
+        // The SERP keyword cap, taken from the PRICE TABLE rather than from dfs/serp.ts. It is
+        // the same number by construction (costs.test.ts pins CREDIT_UNITS.serp_snapshot.max_units
+        // EQUAL to the port's MAX_SERP_KEYWORDS), and reading it here keeps this generator's
+        // imports to the two modules it already loads — the registry and the prices.
+        maxSerpKeywords: costs.CREDIT_UNITS.serp_snapshot.max_units,
       },
     };
   } catch (error) {

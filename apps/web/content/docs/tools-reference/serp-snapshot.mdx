@@ -1,0 +1,55 @@
+---
+title: serp_snapshot
+description: "Measure where a domain appears in Google's organic results for up to 10 keywords, on one location, one language and one device, and store each reading so…"
+---
+
+**Cost:** 5 credits per call plus 8 credits per keyword — 1 to 10 keywords per call, so 13 to 85 credits.
+
+`serp_snapshot` measures where a domain appears in Google's organic results for each of your keywords — on one location, one language and one device — and **stores every reading**, so [`keyword_positions`](/docs/tools-reference/keyword-positions) can show the series later. It is the only part of the rank tracker that contacts a search engine.
+
+## What it does
+
+Pass a `project_id` (or any `target` domain) and up to **10** keywords. Each keyword is a **separate live search**, so the list is what the call costs — that is why the price has a per-keyword part. Duplicates are refused rather than quietly removed, and the list is never trimmed to fit: a shorter answer to a longer question is not the answer you asked for.
+
+## Three answers, and none of them is a number you can misread
+
+A keyword comes back as exactly one of three things, and they are never collapsed:
+
+- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and `rank_absolute` (its rank among every element on the page, including featured snippets and ad blocks). Both are reported, because they disagree whenever a SERP feature sits above the result, and that gap is itself the finding.
+- **Searched for and not found** — together with **how many organic results were actually examined**. That is the scope of the claim: it is not position 0, and it says nothing about results beyond the ones counted.
+- **Not measured** — the request or the response failed, so the position is unknown. Nothing was examined, so this is not a statement that the domain is absent.
+
+SeoGrep computes no visibility score, no share of voice and no ranking of its own.
+
+## What a reading is scoped to
+
+A position is a measurement at a moment, not a property of a site. Every reading is taken on **one** search engine, **one** location, **one** language, **one** device and to one fixed depth, and the answer states all of them — Google returns different results and a different layout on desktop and on mobile, so a desktop reading says nothing about a mobile one.
+
+A result counts as yours only when its host matches yours exactly, after lower-casing and removing a leading `www.`. A subdomain does **not** count: `blog.example.com` is not `example.com`, because "our blog ranks" and "our site ranks" are different findings and only you know which one you asked about.
+
+## It measures on demand, and only on demand
+
+Nothing here runs on a schedule. A snapshot happens because you asked for one, so no credits are ever spent while you are not looking. [`track_keywords`](/docs/tools-reference/track-keywords) records which keywords you want watched — that is free and takes no measurement — and this tool is what turns a watched keyword into a reading.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Take a SERP snapshot for "seo tools" and "rank tracker" on my example.com project, on mobile.
+
+Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the `project_id`.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `target` | string | No | The domain to measure SERP positions for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
+| `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
+| `keywords` | string[] | Yes | The keywords to measure (1-10). EACH ONE IS A SEPARATE PAID SEARCH, so this list is what the call costs. Duplicates are refused rather than de-duplicated — you would be billed twice for one answer — and the list is never trimmed to fit, because a shorter answer to a longer question is not the answer you asked for. |
+| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). Results differ by country, so this is part of what the measurement means. |
+| `language_code` | string | No | The search language (default "en"). |
+| `device` | string | No | Which SERP to measure (default "desktop"). Google returns different results and a different layout on each, so a desktop reading says nothing about a mobile one. |
+
+### Returns
+
+One block per keyword, in the order you passed them, each carrying its own answer of the three above — and, where the domain was found, every placement it was found at with DataForSEO's own ranks and URLs. The reply states what the snapshot was measured under (search engine, location, language, device, depth requested and how a domain was matched), separates DataForSEO's own account of when it measured from SeoGrep's clock, and confirms how many readings were stored.

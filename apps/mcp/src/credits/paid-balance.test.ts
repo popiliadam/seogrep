@@ -51,7 +51,13 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
   // LLM Mentions request each. The set GREW; nothing left it. The compare tool is the first member
   // whose price is PER COMPARED TARGET rather than per call, which changes what it charges and
   // changes nothing about why it is gated: it spends from the same shared daily vendor budget.
-  it("is exactly the fourteen DataForSEO tools", () => {
+  //
+  // Fourteen -> fifteen on 2026-08-24: serp_snapshot, one paid DataForSEO live-SERP request PER
+  // KEYWORD (the vendor's `keyword` parameter is singular). The set GREW; nothing left it. It is
+  // the first member whose vendor spend is sized by the caller's own list rather than fixed per
+  // call, and that changes nothing about why it is gated: it spends from the same shared daily
+  // vendor budget, and the criterion is still "does it spend?".
+  it("is exactly the fifteen DataForSEO tools", () => {
     expect([...PAID_BALANCE_TOOLS].sort()).toEqual([
       "ai_visibility",
       "ai_visibility_compare",
@@ -67,6 +73,7 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
       "my_pages",
       "ranked_keywords",
       "research_keywords",
+      "serp_snapshot",
     ]);
   });
 
@@ -84,6 +91,11 @@ describe("PAID_BALANCE_TOOLS (the vendor-cost surface)", () => {
     expect(ungated).toContain("find_quick_wins");
     expect(ungated).toContain("detect_cannibalization");
     expect(ungated).toContain("analyze_content_decay");
+    // The rank tracker's other two halves: registration and reading stored measurements. Neither
+    // can reach reserveSpend, and gating a free registration tool behind a paid balance would be a
+    // product change nobody signed — serp_snapshot is the one of the three that spends.
+    expect(ungated).toContain("track_keywords");
+    expect(ungated).toContain("keyword_positions");
   });
 
   it("names only tools that exist in TOOL_COSTS (no typo can hide here)", () => {

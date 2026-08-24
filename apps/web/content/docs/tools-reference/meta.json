@@ -35,6 +35,7 @@
     "track-gsc-property",
     "untrack-project",
     "track-keywords",
+    "serp-snapshot",
     "keyword-positions"
   ]
 }

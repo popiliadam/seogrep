@@ -9,6 +9,7 @@ import {
   type ToolName,
 } from "./costs.js";
 import { MAX_COMPARE_TARGETS, MIN_COMPARE_TARGETS } from "../dfs/llm-mentions.js";
+import { MAX_SERP_KEYWORDS, MIN_SERP_KEYWORDS } from "../dfs/serp.js";
 import {
   CONFIRMATION_THRESHOLD_CREDITS,
   evaluateConfirmation,
@@ -56,6 +57,7 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       untrack_project: 0,
       track_keywords: 0,
       keyword_positions: 10,
+      serp_snapshot: 8,
     });
   });
 
@@ -124,8 +126,15 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // different from every DataForSEO row above is the BASIS of the 10 — there is no vendor cost to
   // divide by, because the measurements it reads were paid for when they were TAKEN. It is
   // anchored on the three stored-measurement scans (10 each), not on a margin.
-  it("has exactly 35 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(35);
+  //
+  // 35 -> 36 on 2026-08-24: serp_snapshot, MADDE 1 row #4 of the same 2026-08-17 signature package
+  // — the MEASURING half of the rank tracker, at a SIGNED 8 per keyword plus a fixed 5 per call.
+  // Same shape as the eleven growths above: the table GREW and no existing number moved. It is the
+  // FIRST row whose price has a fixed part, so the 8 below is a UNIT price and no call of this tool
+  // ever costs 8 — CREDIT_UNITS carries the 5 and the 1-10 keyword range, and one call costs 13 to
+  // 85. Reading this row as a flat fee would give away the signed base on every call.
+  it("has exactly 36 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(36);
   });
 
   it("exposes only non-negative integer costs", () => {
@@ -210,9 +219,12 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
     }
   });
 
-  it("names exactly one per-unit tool — every other price is per call", () => {
-    expect(Object.keys(CREDIT_UNITS)).toEqual(["ai_visibility_compare"]);
+  // One -> two on 2026-08-24: serp_snapshot joins, at a SIGNED 8 per keyword plus a fixed 5 per
+  // call. The set GREW; nothing left it, and no existing rule changed.
+  it("names exactly two per-unit tools — every other price is per call", () => {
+    expect(Object.keys(CREDIT_UNITS)).toEqual(["ai_visibility_compare", "serp_snapshot"]);
     expect(isPerUnitTool("ai_visibility_compare")).toBe(true);
+    expect(isPerUnitTool("serp_snapshot")).toBe(true);
     expect(isPerUnitTool("ai_visibility")).toBe(false);
     expect(isPerUnitTool("compare_competitors")).toBe(false);
   });
@@ -240,12 +252,15 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
 
 /**
  * The SIGNED shape of `serp_snapshot` (signature package 2026-08-17, MADDE 1 row #4): 5 credits plus
- * 8 per keyword. Restated HERE as test constants and deliberately NOT added to TOOL_COSTS /
- * CREDIT_UNITS, because the price line cannot ship ahead of its tool: adding `serp_snapshot: 8` to
- * TOOL_COSTS was MEASURED to turn apps/web's pricing spec RED in three places
- * ("TOOL_COSTS.serp_snapshot costs 8 credits but no pricing-page row is declared for it"), and the
- * 33-tool pin above would go red with it. The mechanism is therefore proven as ARITHMETIC against
- * the signed numbers, and the human-approved table stays untouched until the tool lands.
+ * 8 per keyword, over 1 to 10 keywords.
+ *
+ * WRITTEN OUT HERE AS AN INDEPENDENT RESTATEMENT OF THE SIGNATURE, and it stays that way now that
+ * the tool has landed (2026-08-24). These constants were originally local because the price line
+ * could not ship ahead of its tool; keeping them local afterwards buys something different and
+ * worth more — every assertion below is anchored to the numbers a human signed rather than to
+ * whatever the table currently holds, so an edit to CREDIT_UNITS cannot quietly re-baseline the
+ * arithmetic it is checked against. The shipped table is compared to this restatement once, in
+ * the spec directly below, which is where a drift between the two becomes visible.
  *
  * The cap of 10 is the port's own MAX_SERP_KEYWORDS (dfs/serp.ts) — the number the signed 5.3x
  * worst-case margin holds at. It is restated as a literal here rather than imported, so this spec
@@ -269,6 +284,31 @@ const serpSnapshotCredits = (units: number | undefined): number =>
   );
 
 describe("creditsForUnits — base + unit x count", () => {
+  /**
+   * THE SHIPPED PRICE IS THE SIGNED PRICE — the one place the human-approved table is compared
+   * against this file's independent restatement of the signature. Every other assertion in this
+   * block runs on the local constants, so without this line the two could drift apart in silence:
+   * the arithmetic would keep proving that 5 + 8 x N works while the table charged something else.
+   */
+  it("is the price the table really ships: 8 per keyword, base 5, over 1 to 10", () => {
+    expect(TOOL_COSTS.serp_snapshot).toBe(SIGNED_SERP_SNAPSHOT_UNIT_CREDITS);
+    expect(CREDIT_UNITS.serp_snapshot).toEqual(SIGNED_SERP_SNAPSHOT_RULE);
+    // …and the shipped rule prices the same four calls as the restatement above.
+    for (const units of [1, 2, 5, 10]) {
+      expect(creditCostFor("serp_snapshot", units)).toBe(serpSnapshotCredits(units));
+    }
+    expect(creditCostFor("serp_snapshot", 1)).toBe(13);
+    expect(creditCostFor("serp_snapshot", 10)).toBe(85);
+  });
+
+  /** The cap in the price table and the cap on the wire are the SAME number, never two copies. */
+  it("bounds the keywords at exactly the port's own snapshot range", () => {
+    expect(CREDIT_UNITS.serp_snapshot.min_units).toBe(MIN_SERP_KEYWORDS);
+    expect(CREDIT_UNITS.serp_snapshot.max_units).toBe(MAX_SERP_KEYWORDS);
+    expect(() => creditCostFor("serp_snapshot", MAX_SERP_KEYWORDS + 1)).toThrow();
+    expect(() => creditCostFor("serp_snapshot", MIN_SERP_KEYWORDS - 1)).toThrow();
+  });
+
   /**
    * The signed arithmetic, asserted as LITERALS rather than as `5 + 8 * n`. A formula restating the
    * implementation stays green when the implementation stops adding the base or stops multiplying;
@@ -345,6 +385,8 @@ describe("the base term did not move the per-call or the existing per-unit path"
       expect(creditCostFor("ai_visibility_compare", targets)).toBe(90 * targets);
     }
     // The rule carries no base at all — an added one would show up as +N on every line above.
+    // Still asserted after serp_snapshot shipped a real base (2026-08-24): a base is PER RULE, and
+    // the whole risk of the second rule is that its 5 leaks onto the first one's line.
     expect(CREDIT_UNITS.ai_visibility_compare).not.toHaveProperty("base");
   });
 
@@ -363,9 +405,12 @@ describe("the base term did not move the per-call or the existing per-unit path"
       '"ai_visibility_compare" is priced per compared target and charges for 2 to 10 of them; 1 ' +
         "is outside that range.",
     );
+    // The tail of this one NAMES THE PER-UNIT TABLE, so it grew when serp_snapshot joined it
+    // (2026-08-24). That is the sentence tracking the table, not the sentence changing: the
+    // message is `Object.keys(CREDIT_UNITS).join(", ")` and always was.
     expect(() => creditCostFor("discover_keywords", 4)).toThrow(
       '"discover_keywords" is priced per call, so it cannot be charged for 4 units. Only ' +
-        "ai_visibility_compare carry a per-unit price.",
+        "ai_visibility_compare, serp_snapshot carry a per-unit price.",
     );
   });
 
@@ -394,6 +439,7 @@ describe("the base term did not move the per-call or the existing per-unit path"
   it("pins the rule table, and prices every rule at both ends with the base counted ONCE", () => {
     expect(CREDIT_UNITS).toEqual({
       ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
+      serp_snapshot: { unit: "keyword", base: 5, min_units: 1, max_units: 10 },
     });
 
     const rules = Object.entries(CREDIT_UNITS) as [ToolName, PerUnitPriceRule][];
