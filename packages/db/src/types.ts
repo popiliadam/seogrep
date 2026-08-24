@@ -741,6 +741,47 @@ export type Database = {
           },
         ]
       }
+      subject_lookup_runs: {
+        Row: {
+          created_at: string
+          id: string
+          project_id: string | null
+          report: Json
+          subject: string[]
+          subject_kind: string
+          tool: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          project_id?: string | null
+          report: Json
+          subject: string[]
+          subject_kind: string
+          tool: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          project_id?: string | null
+          report?: Json
+          subject?: string[]
+          subject_kind?: string
+          tool?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_lookup_runs_user_id_project_id_fkey"
+            columns: ["user_id", "project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["user_id", "id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           created_at: string

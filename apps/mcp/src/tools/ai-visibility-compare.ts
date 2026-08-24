@@ -28,6 +28,11 @@ import {
   vendorFunctionOf,
 } from "./ai-visibility-shared.ts";
 import {
+  aiVisibilityCompareRunRows,
+  writeSubjectLookupRuns,
+  type SubjectLookupRunWriter,
+} from "../dfs/subject-runs.ts";
+import {
   loadOwnProject,
   resolveTarget,
   type LoadProjectFn,
@@ -314,9 +319,15 @@ export function formatAiVisibilityCompare(
 export interface AiVisibilityCompareDeps {
   readonly port?: AiVisibilityPort;
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The `subject_lookup_runs` writer (migration 0032). ONE call drives it 2-10 times — once per
+   * compared target — because 0032 keys these rows by the subject rather than by the call.
+   */
+  readonly writeRun?: SubjectLookupRunWriter;
 }
 
 export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeSubjectLookupRuns;
   return defineTool<AiVisibilityCompareInput>({
     name: "ai_visibility_compare",
     description: DESCRIPTION,
@@ -371,7 +382,38 @@ export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}):
         { tool: "ai_visibility_compare", units: comparedTargetCount(input) },
         async () => {
           const result = await port.fetchAiVisibilityCompare(query);
-          return textResult(formatAiVisibilityCompare(result, resolved));
+          const text = formatAiVisibilityCompare(result, resolved);
+          // ONE ROW PER COMPARED TARGET, recorded before the reply is returned and UNGUARDED —
+          // migration 0032. withCredits commits a handler that RETURNS and releases one that
+          // THROWS, so an error escaping here costs the tenant nothing; swallowed, at up to 900
+          // credits a call it would leave a comparison PARTLY on the panel, charged in full.
+          //
+          // ONE INSERT FOR THE WHOLE COMPARISON, never a loop of them. A row-at-a-time write is N
+          // transactions: measured, making the SECOND row fail left the FIRST stored while the
+          // reserve was released in full — a row on the panel for a lookup that was never
+          // delivered and never charged. The batch commits or rejects as one, and its rows share
+          // `created_at` because a single statement has a single transaction clock, which is what
+          // makes a comparison list as one adjacent block. dfs/subject-runs.ts holds the argument.
+          //
+          // The rows go out in the caller's order and each carries its own resolved project — the
+          // fan-out itself, including the match on the vendor's echoed key and the row for a
+          // target the vendor answered nothing for, is dfs/subject-runs.ts's and is unit-tested
+          // there.
+          await writeRun(
+            aiVisibilityCompareRunRows(
+              result,
+              resolved.map((target) => target.project?.id ?? null),
+            ).map((row) => ({
+              target: {
+                userId: ctx.userId,
+                projectId: row.projectId,
+                tool: "ai_visibility_compare" as const,
+                identity: row.identity,
+              },
+              report: row.report,
+            })),
+          );
+          return textResult(text);
         },
       );
     },

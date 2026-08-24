@@ -63,6 +63,12 @@ async function runWithCapturedCharge(input: unknown): Promise<Charge> {
       aggregated: aggregatedFixture,
       crossAggregated: crossFixture,
     }),
+    // The run-ledger write (migration 0032), stubbed for the same reason the PORT above is: this
+    // file substitutes the guard so the handler body REALLY runs, and the real writer reaches
+    // Supabase, which this lane has no env for. Nothing here asserts anything about the write —
+    // that it happens on delivery and never on a refusal is subject-lookup-runs.db.test.ts's
+    // question, against a real database. Every assertion below is untouched.
+    writeRun: async () => undefined,
   });
   const result = await tool.run(CTX, input);
   expect(result.isError).toBeUndefined();
