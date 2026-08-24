@@ -203,9 +203,9 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
 
   /**
    * …and the same sweep over the WHOLE per-call surface, so a tool added later inherits the refusal
-   * instead of needing a line of its own. The loop above it ("still charges a per-call tool with no
-   * units argument") proves 34 tools still price at their table value; this one proves the same 34
-   * refuse to be priced for a count of zero.
+   * instead of needing a line of its own. The sibling loop BELOW ("still charges a per-call tool
+   * with no units argument") proves 34 tools still price at their table value; this one proves the
+   * same 34 refuse to be priced for a count of zero.
    */
   it("refuses a zero count on EVERY per-call tool, not just the ones named above", () => {
     for (const tool of Object.keys(TOOL_COSTS) as ToolName[]) {
@@ -253,7 +253,7 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
   /**
    * The other side of that coin, and the one that must NOT have moved: every per-call tool is
    * charged with no `units` argument at all. Making omission an error for the per-unit tool while
-   * breaking this path would break all 32 other tools at once.
+   * breaking this path would break all 34 per-call tools at once.
    */
   it("still charges a per-call tool with no units argument — the common path is untouched", () => {
     expect(creditCostFor("ai_visibility")).toBe(90);
