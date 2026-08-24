@@ -11,6 +11,11 @@ import type {
   DomainOrganicMetrics,
 } from "./competitors.ts";
 import type {
+  BacklinkChangePoint,
+  BacklinkChangesResult,
+  BacklinkProfilePoint,
+} from "./backlink-changes.ts";
+import type {
   RankedKeywordRow,
   RankedKeywordsResult,
   RankedKeywordsSort,
@@ -21,9 +26,17 @@ import type {
  *
  * The fourth sibling of `audit/runs.ts` (0024, crawl audits), `gsc-data/runs.ts` (0025, pull
  * analyses) and `tools/audit-content-runs.ts` (0026), and the first for tools that read NO stored
- * measurement at all: ranked_keywords (65), analyze_backlinks (70) and compare_competitors (90)
- * call DataForSEO inside the request, print a table and vanish. The tenant pays 65-90 credits and,
- * an hour later, has nothing to look at — the panel cannot show that the lookup ever happened.
+ * measurement at all: they call DataForSEO inside the request, print a table and vanish. The
+ * tenant pays and, an hour later, has nothing to look at — the panel cannot show that the lookup
+ * ever happened.
+ *
+ * SEVEN TOOLS write here, not three. 0027 opened the table for ranked_keywords (65),
+ * analyze_backlinks (70) and compare_competitors (90); migration 0031 widened its `tool` CHECK to
+ * cover backlink_changes (35), backlink_details (35), disavow_candidates (40) and my_pages (40),
+ * which shipped afterwards with the identical input shape and the identical amnesia. 0031's header
+ * records the test a tool must pass to belong here and names the three DFS tools that still fail
+ * it (discover_keywords, ai_visibility, ai_visibility_compare — each of which would have to put a
+ * non-domain in `target` on some of its rows).
  *
  * WHY THIS MODULE LIVES UNDER `dfs/` rather than `tools/`. It is the write half of the DFS family
  * and it sits beside `dfs/budget.ts`, the other DB-backed module in this directory, under the
@@ -179,11 +192,83 @@ export interface CompetitorsRunReport {
   readonly rows: readonly ComparisonRow[];
 }
 
-/** The three reports — the only three things `domain_lookup_runs.report` ever holds. */
+
+// =================================================================================================
+// THE FOUR TOOLS MIGRATION 0031 ADDED — backlink_changes (35), backlink_details (35),
+// disavow_candidates (40), my_pages (40).
+//
+// They shipped after 0027 and shipped the same way the first three did: synchronous,
+// charge:"handler", a table printed inside the request and no trace afterwards. 0031's header
+// records the test they had to pass to share this table (`target` is genuinely the normalized
+// domain the lookup ran against) and which tools still fail it. What follows is the half 0031
+// cannot enforce: WHAT each report's headline counters mean, and the cap on every list.
+//
+// EVERY ONE OF THESE FOUR REPORTS OBEYS THE SAME TWO RULES AS THE FIRST THREE.
+//   1. `total` and `top` sit at the TOP level, O(1), because PostgREST navigates into jsonb but
+//      cannot count an array or take its first element — a counter reachable only through a row
+//      list costs the panel a whole vendor payload per card per render.
+//   2. Every list is capRows'd. That matters MORE here than it did for the first three:
+//      backlink_details asks the vendor for up to 700 link rows plus 200 page rows per call, and
+//      disavow_candidates for up to 300 links plus 50 networks.
+//
+// WHAT IS DELIBERATELY NOT STORED: disavow_candidates' `disavow_txt`. It is the rendered BODY of a
+// Google-format file — prose with a comment header, produced for a human to paste — and 0027's
+// rule is that this column holds the structural result and never the rendered text. Everything
+// that file is derived FROM is stored (the criteria and the candidate rows), so it can be rebuilt;
+// storing the rendering itself would put a formatting decision beyond the reach of a re-render.
+// =================================================================================================
+
+/**
+ * backlink_changes' report.
+ *
+ * NO `locale` KEY — the two Backlinks time-series endpoints take no locale parameter, the same
+ * absence BacklinksRunReport records for the same family of endpoints.
+ *
+ * WHAT `total` IS, and it is the one counter in this file that is neither a vendor number nor a
+ * count of a single fetched list by accident. It is OUR count of the NEW/LOST series' buckets, and
+ * the PROFILE series' bucket count is carried SEPARATELY as `profile_buckets` rather than added to
+ * it. The tool refuses to derive any third number from its two series (SERIES_DO_NOT_RECONCILE_NOTE,
+ * tools/backlink-changes.ts) because DataForSEO's own published examples for the two endpoints
+ * disagree on the same target and window; a stored `total` that summed them would be exactly the
+ * reconciliation the tool declines to print, sitting in a column a panel reads without the note.
+ */
+export interface BacklinkChangesRunReport {
+  /** The bucket size the answer is grouped by, as the RESULT reports it (vendor-echoed). */
+  readonly group_range: string;
+  /** How many periods back the CALLER asked for. Not how many buckets came back. */
+  readonly periods: number;
+  /** The window the VENDOR says it answered for; null when it did not name the dates. */
+  readonly date_from: string | null;
+  readonly date_to: string | null;
+  /** OUR count of the NEW/LOST series' buckets, pre-cap. Never a sum across the two series. */
+  readonly total: number;
+  /** OUR count of the PROFILE series' buckets, pre-cap. Kept apart from `total` on purpose. */
+  readonly profile_buckets: number;
+  /**
+   * The LATEST profile bucket — the newest snapshot of the target's own totals in this answer.
+   *
+   * MEASURED, not positional: the buckets are stored in the vendor's order and nothing here
+   * re-sorts them, so "the last element" would be a claim about an ordering DataForSEO documents
+   * nowhere. This is the bucket with the greatest parseable `date`; on a tie the earlier one wins,
+   * and a series in which no bucket carries a parseable date yields null rather than a guess.
+   */
+  readonly top: {
+    readonly date: string;
+    readonly backlinks: number | null;
+    readonly referring_domains: number | null;
+  } | null;
+  /** The first MAX_RUN_ROWS new/lost buckets. `total` above is the pre-cap count. */
+  readonly changes: readonly BacklinkChangePoint[];
+  /** The first MAX_RUN_ROWS profile buckets. `profile_buckets` above is the pre-cap count. */
+  readonly profile: readonly BacklinkProfilePoint[];
+}
+
+/** The four reports — the only four things `domain_lookup_runs.report` ever holds. */
 export type DomainLookupReport =
   | RankedKeywordsRunReport
   | BacklinksRunReport
-  | CompetitorsRunReport;
+  | CompetitorsRunReport
+  | BacklinkChangesRunReport;
 
 /**
  * Build ranked_keywords' report from the result the FORMATTER is about to render (pure).
@@ -268,6 +353,52 @@ export function competitorsRunReport(
   };
 }
 
+/**
+ * The profile bucket with the greatest PARSEABLE date, or null when no bucket has one.
+ *
+ * Measured rather than positional — see BacklinkChangesRunReport.top. A tie keeps the EARLIER
+ * element (strict `>`), so the answer is deterministic for a vendor that repeats a date.
+ */
+function latestProfilePoint(
+  points: readonly BacklinkProfilePoint[],
+): BacklinkProfilePoint | null {
+  let best: BacklinkProfilePoint | null = null;
+  let bestAt = Number.NEGATIVE_INFINITY;
+  for (const point of points) {
+    const at = Date.parse(point.date);
+    if (Number.isNaN(at) || at <= bestAt) continue;
+    best = point;
+    bestAt = at;
+  }
+  return best;
+}
+
+/** Build backlink_changes' report from the result the formatter is about to render (pure). */
+export function backlinkChangesRunReport(
+  changes: BacklinkChangesResult,
+  query: { readonly periods: number },
+): BacklinkChangesRunReport {
+  const latest = latestProfilePoint(changes.profile);
+  return {
+    group_range: changes.group_range,
+    periods: query.periods,
+    date_from: changes.date_from,
+    date_to: changes.date_to,
+    total: changes.changes.length,
+    profile_buckets: changes.profile.length,
+    top:
+      latest === null
+        ? null
+        : {
+            date: latest.date,
+            backlinks: latest.backlinks,
+            referring_domains: latest.referring_domains,
+          },
+    changes: capRows(changes.changes),
+    profile: capRows(changes.profile),
+  };
+}
+
 /** Everything one `domain_lookup_runs` row is keyed by. */
 export interface DomainLookupRunTarget {
   readonly userId: string;
@@ -279,14 +410,22 @@ export interface DomainLookupRunTarget {
    * tenant guarantee on such a row, which is exactly what 0027's composite-FK note says out loud.
    */
   readonly projectId: string | null;
-  /** One of the three synchronous lookups — the CHECK constraint's vocabulary, typed. */
+  /** One of the seven synchronous lookups — the CHECK constraint's vocabulary, typed. */
   readonly tool: DomainLookupTool;
   /** The RESOLVED normalized domain the lookup ran against, never the caller's raw input. */
   readonly target: string;
 }
 
-/** The three tools 0027's CHECK constraint names. A fourth is a compile error before it is a 23514. */
-export type DomainLookupTool = "ranked_keywords" | "analyze_backlinks" | "compare_competitors";
+/**
+ * The SEVEN tools the CHECK constraint names, after migration 0031 widened it from 0027's three.
+ * An eighth is a compile error before it is a 23514 — which is the order those two failures should
+ * arrive in, because only the first of them is free.
+ */
+export type DomainLookupTool =
+  | "ranked_keywords"
+  | "analyze_backlinks"
+  | "compare_competitors"
+  | "backlink_changes";
 
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type DomainLookupRunWriter = (
