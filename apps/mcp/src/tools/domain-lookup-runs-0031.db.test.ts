@@ -374,3 +374,90 @@ describe("3. FAIL-CLOSED — a run that cannot be recorded is not charged for", 
   });
 });
 
+describe("4. THE REPORT — structural, and O(1) at the TOP through the panel's own projection", () => {
+  /**
+   * READ BACK THE WAY THE PANEL READS IT. `/app/lookups` selects `total:report->total` and
+   * `top:report->top` from PostgREST — it never downloads `report`. So this asserts the counters
+   * through that same projection: a counter moved one level deeper is still IN the row, and a spec
+   * that fetched the document and indexed into it in JavaScript would happily find it there.
+   */
+  it("every one of the four exposes report->total and report->top to PostgREST", async () => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 400);
+
+    for (const { extra, serving } of LOOKUPS) {
+      expect(
+        (await serving().run(ctx, { target: "example.com", ...extra })).isError,
+      ).toBeUndefined();
+    }
+
+    const { data, error } = await service
+      .from("domain_lookup_runs")
+      .select("tool, target, total:report->total, top:report->top")
+      .eq("user_id", ctx.userId);
+    expect(error).toBeNull();
+
+    const byTool = new Map(
+      (data ?? []).map((row) => [row.tool, row as unknown as { total: unknown; top: unknown }]),
+    );
+    expect([...byTool.keys()].sort()).toEqual([
+      "backlink_changes",
+      "backlink_details",
+      "disavow_candidates",
+      "my_pages",
+    ]);
+
+    for (const [tool, row] of byTool) {
+      // A number, at the top level, reachable without the document. `null` is allowed by the
+      // report types for two of these tools, but not on these fixtures — so a null here means the
+      // projection missed the field, which is exactly the failure being hunted.
+      expect(typeof row.total, `${tool} report->total`).toBe("number");
+    }
+
+    // backlink_changes counts the NEW/LOST buckets and the fixture carries three of them.
+    expect(byTool.get("backlink_changes")?.total).toBe(3);
+    // …and its `top` is the LATEST profile bucket, not the first.
+    expect(byTool.get("backlink_changes")?.top).toMatchObject({
+      date: "2022-02-28 00:00:00 +00:00",
+    });
+  });
+
+  /** …and none of the four stored the sentence the caller read. */
+  it("stores a structure, never the rendered table", async () => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 400);
+
+    for (const { extra, serving } of LOOKUPS) {
+      expect(
+        (await serving().run(ctx, { target: "example.com", ...extra })).isError,
+      ).toBeUndefined();
+    }
+
+    for (const row of await runRows(ctx.userId)) {
+      expect(typeof row.report, row.tool).toBe("object");
+      expect(typeof row.report, row.tool).not.toBe("string");
+    }
+  });
+
+  /**
+   * THE CHECK STILL BINDS. 0031 widened it to seven names and no further: the three DFS tools it
+   * deliberately left out would each have to put a non-domain in `target` on some of their rows,
+   * and an insert from one of them fails LOUDLY rather than quietly widening what the panel claims
+   * to show.
+   */
+  it("still refuses a tool the widened CHECK does not name", async () => {
+    const ownerId = await makeUserId();
+    for (const tool of ["discover_keywords", "ai_visibility", "ai_visibility_compare"]) {
+      const { error } = await service.from("domain_lookup_runs").insert({
+        user_id: ownerId,
+        project_id: null,
+        tool,
+        target: "example.com",
+        report: { total: 0 },
+      });
+      expect(error?.message ?? "", tool).toMatch(
+        /domain_lookup_runs_tool_check|violates check constraint/i,
+      );
+    }
+  });
+});
