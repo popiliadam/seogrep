@@ -473,6 +473,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per MEASURED SUBJECT, migration 0032 — the run axis for the three DFS tools whose
+      // subject is not a domain and not always the same KIND of thing twice: discover_keywords,
+      // ai_visibility and ai_visibility_compare.
+      //
+      // `subject_kind` and `subject` are read TOGETHER and are the row's whole identity:
+      // 'domain' / 'keyword' carry exactly one value, 'keyword_set' carries the sorted seed set.
+      // A DATABASE constraint binds the cardinality to the discriminant, so the kind is not
+      // decoration. One ai_visibility_compare CALL writes 2-10 rows — one per compared target,
+      // which is also the priced unit — so a row count here is targets, never calls.
+      //
+      // Update is `never`, matching the migration's grants (SELECT + INSERT only): a run records
+      // what the vendor said at that moment, so re-running writes a NEW row.
+      subject_lookup_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string | null;
+          tool: string;
+          subject_kind: string;
+          subject: string[];
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id?: string | null;
+          tool: string;
+          subject_kind: string;
+          subject: string[];
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // The rank tracker's two tables, migration 0030. They are NOT a fifth run sibling: one is
       // registration state and the other is a measurement series, and the difference shows in
       // their Update types.
