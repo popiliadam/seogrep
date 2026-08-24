@@ -719,11 +719,26 @@ describe("the D17 confirmation gate weighs the base", () => {
 /**
  * EVERY PER-UNIT TOOL CARRIES ITS OWN RESERVATION PIN — the rule turned into a gate.
  *
- * WHY THIS IS A SPEC AND NOT A SENTENCE IN A DOC. Dropping `units:` from a per-unit tool's
- * reservation call site is INVISIBLE to the whole fast lane: the tool still answers, the ledger
- * still balances, and the only thing that changes is the number of credits reserved. It was
- * MEASURED — the suite stays green — and the single thing that catches it is a spec written for
- * that one tool, by convention named `<tool>.reserve.test.ts`.
+ * WHY THIS IS A SPEC AND NOT A SENTENCE IN A DOC, stated as it was MEASURED rather than as it
+ * first got written down. What the fast lane cannot see is the RESERVE PATH: `withCredits` runs
+ * the paid-balance gate before the cost lookup, so no sibling spec ever executes the line that
+ * prices a per-unit reserve. Two different mistakes ride on that blindness, and they are NOT the
+ * same mistake:
+ *
+ *   A DROPPED `units:` THROWS — loudly, in production, on every call (costs.ts's omission guard).
+ *   It is not a silent give-away; the tool stops answering. The fast lane still cannot see it,
+ *   because nothing there runs the throwing line — which is exactly what `serp-snapshot.reserve
+ *   .test.ts` says in its own header.
+ *
+ *   A WRONG COUNT is the silent one, and it is the reason this gate exists. Hardcoding `units: 1`
+ *   where the call site should compute the real count was measured to bill 13 credits for a
+ *   ten-keyword `serp_snapshot` the operator signed at 85 — in range, tool answers, ledger
+ *   balances, and 2,621 fast-lane specs stay GREEN. That is the NEVER #6 give-away, and only a
+ *   spec written for that one tool — by convention `<tool>.reserve.test.ts` — prices the reserve.
+ *
+ * The DB lane pins the charge independently (serp-snapshot.db.test.ts asserts the ledger delta),
+ * so this is a claim about `verify.sh` alone — which is the gate that has to be able to catch it
+ * without a database.
  *
  * A convention nobody enforces is a convention that survives exactly as long as the person who
  * remembers it. Both of today's per-unit tools happen to have their pin; this asserts that the
@@ -738,7 +753,11 @@ describe("the D17 confirmation gate weighs the base", () => {
  * Deliberately NOT asserted here: what the pin CONTAINS. A spec that dictated the assertions of
  * another spec would be a gate on wording rather than on coverage, and would go stale the first
  * time a tool priced its units differently. This pins the obligation; the pin itself is reviewed
- * like any other spec.
+ * like any other spec — so this gate proves a file EXISTS, never that it covers anything.
+ *
+ * And a third per-unit tool pinned ONLY in the DB lane would still fail here. That is intended:
+ * `verify.sh` runs without a database, and it is the gate that has to be able to catch a
+ * mispriced reserve on its own.
  */
 describe("the per-unit reservation pin is an obligation, not a convention", () => {
   it("gives every tool in CREDIT_UNITS its own *.reserve.test.ts", () => {
@@ -753,8 +772,10 @@ describe("the per-unit reservation pin is an obligation, not a convention", () =
 
     expect(
       missing,
-      `per-unit tool(s) with no reservation pin: ${missing.join(", ") || "(none)"} — a call site ` +
-        "that drops `units:` reserves the flat price and no other spec would notice",
+      `per-unit tool(s) with no reservation pin: ${missing.join(", ") || "(none)"} — nothing in ` +
+        "the fast lane prices this tool's reserve, so a call site passing the WRONG count stays " +
+        "green (measured: `units: 1` bills 13 for a ten-keyword call signed at 85). A DROPPED " +
+        "`units:` throws instead — loudly, and only in production.",
     ).toEqual([]);
 
     // …and the register is not empty, so the loop above cannot pass vacuously.
