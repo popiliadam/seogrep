@@ -334,3 +334,165 @@ describe("backlink_details: a window, with the whole-set count kept beside it", 
     expect(Object.keys(backlinkDetailsRunReport(details(), DETAILS_QUERY))).not.toContain("locale");
   });
 });
+
+// --- disavow_candidates -------------------------------------------------------------------------
+
+const CRITERIA: DisavowCriteria = {
+  min_backlink_spam_score: 60,
+  dofollow_only: true,
+  candidate_cap: 200,
+  link_window_ordered_by_vendor_field: "backlink_spam_score",
+  candidates_ordered_by_vendor_field: "spam_score",
+};
+
+function candidate(over: Partial<DisavowCandidate> = {}): DisavowCandidate {
+  return {
+    domain: "spammy.example",
+    spam_score: 92,
+    window_link_count: 14,
+    window_dofollow_link_count: 14,
+    window_max_backlink_spam_score: 88,
+    window_example_url_from: "https://spammy.example/a",
+    window_example_url_to: "https://example.com/",
+    ...over,
+  };
+}
+
+function networkRow(over: Partial<ReferringNetworkRow> = {}): ReferringNetworkRow {
+  return {
+    network_address: "192.0.2.0/24",
+    backlinks: 40,
+    referring_domains: 12,
+    referring_domains_nofollow: 1,
+    referring_main_domains: 10,
+    backlinks_spam_score: 71,
+    first_seen: "2021-01-01 00:00:00 +00:00",
+    lost_date: null,
+    ...over,
+  };
+}
+
+function candidateSet(over: Partial<CandidateSet> = {}): CandidateSet {
+  return {
+    window_candidate_cap: 200,
+    window_candidate_count: 1,
+    window_distinct_domain_count: 1,
+    rows: [candidate()],
+    ...over,
+  };
+}
+
+function disavow(over: Partial<DisavowCandidates> = {}): DisavowCandidates {
+  return {
+    target: "example.com",
+    criteria: CRITERIA,
+    links: {
+      window_offset: 0,
+      window_limit: 100,
+      window_row_count: 1,
+      vendor_total_count: 5400,
+      rows: [linkRow({ domain_from: "spammy.example", backlink_spam_score: 88 })],
+    },
+    candidates: candidateSet(),
+    referring_networks: {
+      window_offset: 0,
+      window_limit: 20,
+      window_row_count: 1,
+      vendor_total_count: 310,
+      rows: [networkRow()],
+    },
+    disavow_txt: "# SeoGrep proposal\ndomain:spammy.example\n",
+    ...over,
+  };
+}
+
+describe("disavow_candidates: our counts and the vendor's, under different names", () => {
+  it("`total` is OUR candidate count; the vendor's number is `matching_links_total`", () => {
+    const report = disavowCandidatesRunReport(
+      disavow({
+        candidates: candidateSet({
+          window_candidate_count: 37,
+          window_distinct_domain_count: 41,
+          rows: Array.from({ length: 37 }, (_, i) => candidate({ domain: `s${i}.example` })),
+        }),
+      }),
+    );
+    expect(report.total).toBe(37);
+    expect(report.distinct_domains).toBe(41);
+    // The vendor's count is of the FILTERED link set, never of the target's whole profile.
+    expect(report.matching_links_total).toBe(5400);
+    expect(report.matching_links_shown).toBe(1);
+  });
+
+  it("caps the candidate list and the network window, counters staying PRE-cap", () => {
+    const report = disavowCandidatesRunReport(
+      disavow({
+        candidates: candidateSet({
+          window_candidate_count: 200,
+          window_distinct_domain_count: 260,
+          rows: Array.from({ length: 200 }, (_, i) => candidate({ domain: `s${i}.example` })),
+        }),
+        referring_networks: {
+          window_offset: 0,
+          window_limit: 50,
+          window_row_count: 50,
+          vendor_total_count: 310,
+          rows: Array.from({ length: 50 }, (_, i) => networkRow({ network_address: `10.0.${i}.0/24` })),
+        },
+      }),
+    );
+    expect(report.candidates).toHaveLength(MAX_RUN_ROWS);
+    expect(report.total).toBe(200);
+    expect(report.referring_networks.rows).toHaveLength(MAX_RUN_ROWS);
+    expect(report.referring_networks.shown).toBe(50);
+    expect(report.referring_networks.total_count).toBe(310);
+  });
+
+  /**
+   * THE RENDERED FILE IS NOT STORED. `disavow_txt` is prose with a comment header, produced for a
+   * human to paste; 0027's rule is that this column holds the structural result. Everything the
+   * file is derived from IS stored, so it can be rebuilt — which is the difference between
+   * omitting a rendering and losing data.
+   */
+  it("stores the criteria and the rows, and NOT the rendered disavow file", () => {
+    const report = disavowCandidatesRunReport(disavow());
+    expect(report.criteria).toEqual(CRITERIA);
+    expect(Object.keys(report)).not.toContain("disavow_txt");
+    expect(JSON.stringify(report)).not.toContain("domain:spammy.example");
+    expect(Object.keys(report)).not.toContain("locale");
+  });
+
+  it("`top` is the first candidate, carrying a vendor null score as null", () => {
+    const report = disavowCandidatesRunReport(
+      disavow({
+        candidates: candidateSet({
+          window_candidate_count: 2,
+          window_distinct_domain_count: 2,
+          rows: [
+            candidate({ domain: "first.example", spam_score: null, window_link_count: 3 }),
+            candidate({ domain: "second.example" }),
+          ],
+        }),
+      }),
+    );
+    expect(report.top).toEqual({
+      domain: "first.example",
+      spam_score: null,
+      window_link_count: 3,
+    });
+  });
+
+  it("`top` is null when nothing survived the criteria", () => {
+    const report = disavowCandidatesRunReport(
+      disavow({
+        candidates: candidateSet({
+          window_candidate_count: 0,
+          window_distinct_domain_count: 0,
+          rows: [],
+        }),
+      }),
+    );
+    expect(report.top).toBeNull();
+    expect(report.total).toBe(0);
+  });
+});
