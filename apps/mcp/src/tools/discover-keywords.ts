@@ -21,6 +21,12 @@ import {
 } from "../dfs/discover-keywords.ts";
 import type { VendorWindow } from "../dfs/backlink-details.ts";
 import {
+  discoverKeywordsRunReport,
+  discoverSubjectIdentity,
+  writeSubjectLookupRun,
+  type SubjectLookupRunWriter,
+} from "../dfs/subject-runs.ts";
+import {
   loadOwnProject,
   projectIdField,
   resolveTarget,
@@ -596,9 +602,16 @@ export interface DiscoverKeywordsDeps {
   readonly port?: DiscoverKeywordsPort;
   /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The `subject_lookup_runs` writer (migration 0032). Injected so a spec can make the write fail
+   * without breaking a database, and so the DB lane can corrupt its argument to reach the
+   * fail-closed path the tool itself cannot produce.
+   */
+  readonly writeRun?: SubjectLookupRunWriter;
 }
 
 export function makeDiscoverKeywordsTool(deps: DiscoverKeywordsDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeSubjectLookupRun;
   return defineTool<DiscoverKeywordsInput>({
     name: "discover_keywords",
     description: DESCRIPTION,
@@ -629,7 +642,31 @@ export function makeDiscoverKeywordsTool(deps: DiscoverKeywordsDeps = {}): Regis
       // as one chain. The vendor request failing throws, so withCredits releases.
       return withCredits({ userId: ctx.userId }, { tool: "discover_keywords" }, async () => {
         const result = await port.fetchDiscoverKeywords(query);
-        return textResult(formatDiscoverKeywords(result, input, project));
+        const text = formatDiscoverKeywords(result, input, project);
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0032; dfs/subject-runs.ts states the same contract from the other side).
+        // withCredits commits a handler that RETURNS and releases one that THROWS, so an error
+        // escaping here costs the tenant nothing. Caught and logged instead, the shape would be
+        // the house's worst at 40 credits a call: a charged caller, a delivered table, and a panel
+        // that says forever that the lookup never ran.
+        //
+        // THE IDENTITY COMES OFF THE RESULT'S OWN SUBJECT UNION, never off `input`: the port
+        // clamps the seed list and the depth, so reading the caller's arguments would record a
+        // question that was not the one the vendor answered. `projectId` is null on all three seed
+        // modes — they name no domain at all — and on a bare-target `for_site` call.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: project?.id ?? null,
+            tool: "discover_keywords",
+            identity: discoverSubjectIdentity(result.subject),
+          },
+          discoverKeywordsRunReport(result, {
+            language_code: input.language_code,
+            location_code: input.location_code,
+          }),
+        );
+        return textResult(text);
       });
     },
   });
