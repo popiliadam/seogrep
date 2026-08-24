@@ -34,6 +34,7 @@ import { trackGscPropertyTool } from "./track-gsc-property.ts";
 import { untrackProjectTool } from "./untrack-project.ts";
 import { trackKeywordsTool } from "./track-keywords.ts";
 import { keywordPositionsTool } from "./keyword-positions.ts";
+import { serpSnapshotTool } from "./serp-snapshot.ts";
 
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
@@ -107,6 +108,20 @@ export {
   makeKeywordPositionsTool,
 } from "./keyword-positions.ts";
 export { formatKeywordPositions } from "./keyword-positions-format.ts";
+export {
+  serpSnapshotTool,
+  makeSerpSnapshotTool,
+  serpKeywordCount,
+  serpSnapshotCredits,
+} from "./serp-snapshot.ts";
+export { formatSerpSnapshot } from "./serp-snapshot-format.ts";
+export {
+  bestPlacement,
+  measurementReport,
+  measurementRow,
+  writeSerpMeasurements,
+  MAX_STORED_PLACEMENTS,
+} from "./serp-snapshot-store.ts";
 
 /**
  * The production tool set, in tools/list order. The composition root (server.ts
@@ -157,10 +172,12 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   listGscPropertiesTool,
   trackGscPropertyTool,
   untrackProjectTool,
-  // The rank tracker, LAST and as a PAIR on purpose: one registers which keywords a project wants
-  // watched (free, and it measures nothing), the other reads what was measured for them. They are
-  // two halves of one subject and neither is readable without the other, so they are neighbours in
-  // tools/list and therefore in the docs nav.
+  // The rank tracker, LAST and as a TRIO on purpose, in the order a caller uses them: one
+  // registers which keywords a project wants watched (free, and it measures nothing), one MEASURES
+  // and stores a reading (the only one of the three that spends vendor money), and one reads back
+  // what was measured. They are three parts of one subject and none is readable without the
+  // others, so they are neighbours in tools/list and therefore in the docs nav.
   trackKeywordsTool,
+  serpSnapshotTool,
   keywordPositionsTool,
 ];

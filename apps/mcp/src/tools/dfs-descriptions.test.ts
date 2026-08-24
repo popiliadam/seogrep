@@ -41,8 +41,11 @@ describe("DataForSEO tool descriptions", () => {
   // Twelve -> fourteen on 2026-08-19 (ai_visibility, ai_visibility_compare), likewise: each spends
   // one paid LLM Mentions request per call, so each makes the same three promises to the reader as
   // the twelve before it.
-  it("covers all fourteen gated tools", () => {
-    expect(GATED).toHaveLength(14);
+  // Fourteen -> fifteen on 2026-08-24 (serp_snapshot), likewise: it spends one paid live-SERP
+  // request per keyword, so it makes the same three promises to the reader as the fourteen before
+  // it.
+  it("covers all fifteen gated tools", () => {
+    expect(GATED).toHaveLength(15);
   });
 
   it.each(GATED)("%s does not assert that live data is off", (name) => {

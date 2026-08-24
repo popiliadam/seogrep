@@ -147,6 +147,24 @@ export const TOOL_COSTS = {
   // (paid-balance.graph.test.ts derives that from the import graph rather than from this comment).
   // No existing number moved.
   keyword_positions: 10,
+  // serp_snapshot = 8 PER KEYWORD, on top of a fixed 5 per call — the MEASURING sibling of the two
+  // rows above (MADDE 1 row #4 of the same 2026-08-17 signature package, SIGNED BY THE OPERATOR;
+  // its keyword cap counter-signed 2026-08-24 as option A1). The 8 here is the UNIT price and is
+  // never a call price: CREDIT_UNITS below carries the 5, and one call costs 13 to 85.
+  //
+  // The vendor cost was MEASURED: DataForSEO's live SERP tariff is FLAT PER REQUEST ($0.02 at the
+  // pinned depth of 100) with no per-row term, and `keyword` is SINGULAR in the vendor's own
+  // contract — so an N-keyword snapshot is N requests, not one batched one. That is why this price
+  // has a base at all: the fixed 5 amortises as N grows, so the margin FALLS with the count (8.06x
+  // at one keyword, 5.27x at ten) and the worst case sits at the CAP rather than at the floor.
+  //
+  // MAX_SERP_KEYWORDS (10, dfs/serp.ts) is therefore PART OF THE SIGNED PRICE, not a soft limit: it
+  // is the largest count at which the signature's own "worst case 5.3x" is still true — eleven
+  // keywords give 5.24x, and no cap however wide can reach 5.3x again without moving the price (the
+  // asymptote is 4.96x). SERP_DEPTH (100) is pinned for the same reason: depth 10 is a different
+  // vendor price tier, so a caller-chosen depth would be a caller-chosen price. Moving either is
+  // NEVER #6. No existing number moved.
+  serp_snapshot: 8,
 } as const;
 
 export type ToolName = keyof typeof TOOL_COSTS;
@@ -161,7 +179,7 @@ export type ToolName = keyof typeof TOOL_COSTS;
  * `unit x N` alone can express neither half of that without lying about the other: pricing it at 13
  * per keyword overcharges every call above one keyword, and pricing it at 8 gives the fixed 5 away.
  *
- * It is OPTIONAL and ABSENT on the only rule signed so far, which is what keeps `ai_visibility_compare`
+ * It is OPTIONAL, and `ai_visibility_compare` carries none — which is what keeps that rule
  * byte-identical: an absent base is 0, and `0 + 90 x n` is `90 x n`. A base of 0 written out and an
  * absent base mean exactly the same thing and must stay indistinguishable in the arithmetic.
  *
@@ -172,8 +190,8 @@ export interface PerUnitPriceRule {
   /** The thing being counted, in words, for the message a caller reads ("compared target"). */
   readonly unit: string;
   /**
-   * Credits charged ONCE per call, whatever the count. Absent means 0 — the only shape any signed
-   * price has today. See {@link creditsForUnits} for the one place it is added.
+   * Credits charged ONCE per call, whatever the count. Absent means 0 — the shape
+   * `ai_visibility_compare` has. See {@link creditsForUnits} for the one place it is added.
    */
   readonly base?: number;
   readonly min_units: number;
@@ -202,13 +220,26 @@ export interface PerUnitPriceRule {
  * rather than the bare 90, because "90 credits" on a page about a 2-10 target comparison is a
  * number no call ever costs.
  *
- * The bounds are stated here rather than imported from dfs/llm-mentions.ts on purpose: this module
- * is the price table and must stay free of runtime dependencies (apps/web imports it directly in a
- * jsdom test). costs.test.ts pins them EQUAL to MIN_COMPARE_TARGETS / MAX_COMPARE_TARGETS, so the
- * two cannot drift.
+ * `serp_snapshot` is the SECOND, and the first to use `base`: the operator signed 5 credits per call
+ * PLUS 8 per keyword over 1-10 keywords, so one call costs 13 to 85. Both halves are prices and both
+ * are covered by NEVER #6. Two shapes were available and neither is honest — folding the 5 into the
+ * unit (13 per keyword) overcharges every call above one keyword by 5 credits a keyword, and dropping
+ * it (8 per keyword) gives the signed fixed part away on every call — which is precisely the gap
+ * `base` was added to close.
+ *
+ * ITS max_units IS THE SIGNED WORST CASE, not a comfort limit. The margin falls with the count
+ * because the base amortises, so 10 is the largest cap at which the signature's own 5.3x is still
+ * true; a wider one would price a call nobody signed. Its min_units is 1 — one keyword is a
+ * legitimate snapshot, and a zero-keyword call would otherwise be priced at the bare base.
+ *
+ * The bounds are stated here rather than imported from dfs/llm-mentions.ts and dfs/serp.ts on
+ * purpose: this module is the price table and must stay free of runtime dependencies (apps/web
+ * imports it directly in a jsdom test). costs.test.ts pins them EQUAL to the ports' own
+ * MIN/MAX constants, so the two cannot drift.
  */
 export const CREDIT_UNITS = {
   ai_visibility_compare: { unit: "compared target", min_units: 2, max_units: 10 },
+  serp_snapshot: { unit: "keyword", base: 5, min_units: 1, max_units: 10 },
 } as const satisfies Partial<Record<ToolName, PerUnitPriceRule>>;
 
 /** A tool whose TOOL_COSTS entry is a PER-UNIT price rather than a per-call one. */
@@ -225,7 +256,7 @@ export function isPerUnitTool(tool: ToolName): tool is PerUnitToolName {
  * The ONE place a credit amount is derived, so the multiplication cannot be re-implemented (and
  * mis-implemented) at a call site. `units` is a COUNT the caller's own request implies — the number
  * of compared targets — never a price: the per-unit figure stays TOOL_COSTS', and the fixed part (a
- * rule's `base`, absent on every rule signed so far) stays CREDIT_UNITS'. The arithmetic itself lives
+ * rule's `base`, carried today by `serp_snapshot`) stays CREDIT_UNITS'. The arithmetic itself lives
  * in {@link creditsForUnits}, which is also where the count is bounded.
  *
  * Fail-closed in both directions, and in THREE ways rather than two. A per-call tool asked to

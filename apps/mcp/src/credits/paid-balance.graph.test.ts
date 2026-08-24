@@ -225,6 +225,13 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       "tools/my-pages.ts",
       "tools/ranked-keywords.ts",
       "tools/research-keywords.ts",
+      // serp_snapshot (2026-08-24): reaches reserveSpend through dfs/serp.ts. Its two companion
+      // modules do NOT appear here and that is the measurement, not an omission —
+      // tools/serp-snapshot-store.ts and tools/serp-snapshot-format.ts import dfs/serp.ts with
+      // `import type` only, an edge the compiler erases, so neither carries a line of code that
+      // could spend. The rank tracker's other two tools (track_keywords, keyword_positions) are
+      // absent for a stronger reason: they never reach the port at all.
+      "tools/serp-snapshot.ts",
     ]);
   });
 
