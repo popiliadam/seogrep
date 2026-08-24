@@ -253,3 +253,75 @@ describe("1. THE ROW — a delivered lookup leaves one (migration 0031's widened
   );
 });
 
+describe("2. NO ROW ON A REFUSAL — an undelivered lookup leaves nothing behind", () => {
+  /**
+   * THE LIVE-DISABLED PATH. It is a free refusal returned BEFORE the reserve, so the promise is
+   * double: no ledger row and no run row. A tool that recorded the run anyway would publish a
+   * lookup that never happened onto a panel whose whole subject is what the tenant paid for.
+   */
+  it.each(LOOKUPS)("$name: a live-disabled refusal writes no run row and no ledger row", async ({
+    extra,
+    disabled,
+  }) => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 300);
+
+    const result = await disabled().run(ctx, { target: "example.com", ...extra });
+    expect(result.isError).toBe(true);
+
+    expect(await runRows(ctx.userId)).toEqual([]);
+    expect(await ledgerKinds(ctx.userId)).toEqual(["purchase"]);
+  });
+
+  /**
+   * THE NOT-FOUND PATH, through the REAL loader against a project this tenant does not own. It is
+   * the other free refusal, and it is reached even EARLIER than the one above — before the port is
+   * consulted at all — so a run row appearing here would mean the write had been hoisted out of
+   * the serving path entirely.
+   */
+  it.each(LOOKUPS)("$name: another tenant's project is refused, and leaves no run row", async ({
+    extra,
+    serving,
+  }) => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 300);
+    const strangerProjectId = await makeProject(await makeUserId(), `theirs-${randomUUID()}.test`);
+
+    const result = await serving().run(ctx, { project_id: strangerProjectId, ...extra });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(projectNotFoundMessage(strangerProjectId));
+
+    expect(await runRows(ctx.userId)).toEqual([]);
+    expect(await ledgerKinds(ctx.userId)).toEqual(["purchase"]);
+  });
+
+  /**
+   * THE VENDOR-FAILURE PATH. Here the reserve DID happen, so the promise is different: the reserve
+   * is RELEASED and there is still no run row. The marker is the absence of `spend_commit`.
+   */
+  it("a vendor failure releases the reserve and records nothing", async () => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 300);
+    const tool = makeBacklinkDetailsTool({
+      port: {
+        enabled: true,
+        fetchBacklinkDetails: async () => {
+          throw new Error("DataForSEO request failed: HTTP 500");
+        },
+      },
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(tool.run(ctx, { target: "example.com" })).rejects.toThrow(/HTTP 500/);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    const kinds = await ledgerKinds(ctx.userId);
+    expect(kinds).toEqual(["purchase", "spend_reserve", "spend_release"]);
+    expect(kinds).not.toContain("spend_commit");
+    expect(await runRows(ctx.userId)).toEqual([]);
+  });
+});
+
