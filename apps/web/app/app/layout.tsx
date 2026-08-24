@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/app/projects", label: "Projects" },
   { href: "/app/connection", label: "Connection" },
   { href: "/app/lookups", label: "Lookups" },
+  { href: "/app/rankings", label: "Rankings" },
   { href: "/app/reports", label: "Reports" },
   { href: "/app/usage", label: "Usage" },
   { href: "/app/billing", label: "Billing" },
