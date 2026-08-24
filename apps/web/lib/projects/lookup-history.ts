@@ -1,6 +1,6 @@
 import { formatDate, formatNumber } from "../format";
 import {
-  DOMAIN_LOOKUP_TOOLS,
+  DOMAIN_LOOKUP_ROW_TOOLS,
   summarizeDomainLookupRun,
   type DomainLookupTool,
 } from "./lookups";
@@ -17,8 +17,8 @@ import {
  * paid measurements unreadable:
  *
  *   - `project_id` is NULLABLE and 0027's header states that the BARE-TARGET call — looking up
- *     somebody else's domain — is the commonest paid call these three tools serve. Every one of
- *     those rows is invisible in the product: 65-90 credits spent, a row written, and no surface
+ *     somebody else's domain — is the commonest paid call these tools serve. Every one of
+ *     those rows is invisible in the product: 35-90 credits spent, a row written, and no surface
  *     that shows it to the tenant who paid. This page is the first reader of them.
  *   - `.limit(1)` means only the newest run per tool per project is ever visible, so "what did
  *     this domain look like last month" — 0027's own stated motivation — could not be asked.
@@ -51,6 +51,39 @@ import {
  *     it would read as "you gained two competitors" when the caller merely typed a longer list.
  *     The number is honest; the SUBTRACTION would not be.
  *
+ * THE FOUR TOOLS MIGRATION 0031 ADDED, decided the same way — by reading what each `total` varies
+ * with in the write path, not by resemblance to the three above. Only ONE of them earns a change,
+ * and three refusals is the honest outcome rather than a gap:
+ *
+ *   - backlink_details — COMPARABLE, on the TARGET alone. `BacklinkDetailsRunReport.total` is the
+ *     vendor's `total_count` for the LINK set: its count of the whole live-backlink set for the
+ *     target, which the fetched rows are only a window over. It does not move with `limit` or
+ *     `offset` (those bound the window, not the count), the four parameters that WOULD move it —
+ *     `mode`, `status_type`, `include_subdomains`, the rank scale — are pinned constants in the
+ *     adapter rather than caller input, and the Backlinks endpoints take no locale. So it joins
+ *     analyze_backlinks in LOCALE_FREE_TOOLS: same target, same question, honest subtraction.
+ *   - backlink_changes — NO CHANGE. Its `total` is OUR count of the NEW/LOST series' BUCKETS, a
+ *     property of the window the caller chose (`group_range` x `periods`), not a count of anything
+ *     about the domain. Two runs at different bucket sizes count different things, and even at the
+ *     same settings the window SLIDES, so a delta would read as "your history grew" when the caller
+ *     merely asked for more periods. The tool itself refuses to derive a third number from its own
+ *     two series (SERIES_DO_NOT_RECONCILE_NOTE) because DataForSEO's published examples for the two
+ *     endpoints disagree; this page will not derive one across two runs of it either.
+ *   - disavow_candidates — NO CHANGE. Its `total` is OUR count of the candidate DOMAINS, derived
+ *     from a window of links that the CALLER'S OWN criteria filtered (`min_backlink_spam_score`,
+ *     `dofollow_only`) and then capped. Two runs at different thresholds count different sets; the
+ *     criteria are stored in the report but are NOT part of this page's comparison key, so the page
+ *     cannot tell those two runs apart and therefore subtracts nothing. "We could compare when the
+ *     criteria match" is true, and is left undone deliberately — it needs a key this read does not
+ *     fetch.
+ *   - my_pages — NO CHANGE, for the same shape of reason one level subtler. Its `total` IS a vendor
+ *     count, but of the pages matching THAT RUN's `item_types` and its optional `min_organic_etv` /
+ *     `min_organic_count` filters. Both are caller-chosen and both change what is counted; the
+ *     comparison key here is (tool, target, locale), which cannot see either. Two runs of the same
+ *     domain in the same locale can have counted different sets and would look identical to this
+ *     module — which is precisely the case where a delta is a manufactured measurement rather than
+ *     a missing one.
+ *
  * WHY `project_id` IS NOT PART OF THE COMPARISON KEY. `target` is the resolved, normalized domain
  * the lookup RAN AGAINST, whichever input produced it (0027's column comment), so a project run
  * and a bare-target run of the same domain in the same locale measured the same thing and their
@@ -70,7 +103,7 @@ import {
  * returned at most `limit` rows, so the flag was true EXACTLY when the read came back full, which
  * cannot tell "the tenant has 201 runs" from "the tenant has exactly 200 and this page shows every
  * one of them". Every tenant crossing the ceiling would have passed through a state where the
- * panel flatly claimed older paid runs existed that did not — a false claim about 65-90 credit
+ * panel flatly claimed older paid runs existed that did not — a false claim about 35-90 credit
  * history, made by the surface built to stop exactly that. The read therefore asks for
  * `limit + 1` and the extra row is a PROBE: its existence is the whole measurement.
  *
@@ -93,7 +126,7 @@ import {
  * How many runs one page shows.
  *
  * 200 rather than the reports list's 50: a row here is four small fields (no vendor payload — see
- * the query's own comment), and these three tools are the product's most expensive calls, so a
+ * the query's own comment), and these tools are among the product's most expensive calls, so a
  * tenant reading their spend history wants more than a fortnight of it. It is a CEILING, not a
  * page size: there is no paging on this surface (the reports list's YAGNI, same reasoning), and
  * the ceiling is disclosed in the page copy the moment it bites.
@@ -161,11 +194,26 @@ export interface DomainLookupHistory {
   readonly windowFull: boolean;
 }
 
-/** The two tools whose `total` answers a question a later run can be subtracted from. */
-const COMPARABLE_TOOLS: readonly DomainLookupTool[] = ["ranked_keywords", "analyze_backlinks"];
+/** The tools whose `total` answers a question a later run can be subtracted from. */
+const COMPARABLE_TOOLS: readonly DomainLookupTool[] = [
+  "ranked_keywords",
+  "analyze_backlinks",
+  "backlink_details",
+];
+
+/**
+ * Of those, the ones whose `total` does not vary with a locale — so their comparison group is the
+ * TARGET alone and a run with no readable locale is still comparable.
+ *
+ * Membership is a fact about the ENDPOINT, not a convenience: both of these read DataForSEO
+ * Backlinks endpoints, which take no locale parameter at all, which is why neither report carries
+ * a `locale` key for this module to read (apps/mcp/src/dfs/runs.ts says so on both). Adding a
+ * locale-bearing tool to this set would silently compare two different search markets.
+ */
+const LOCALE_FREE_TOOLS: readonly DomainLookupTool[] = ["analyze_backlinks", "backlink_details"];
 
 function isDomainLookupTool(tool: string): tool is DomainLookupTool {
-  return (DOMAIN_LOOKUP_TOOLS as readonly string[]).includes(tool);
+  return (DOMAIN_LOOKUP_ROW_TOOLS as readonly string[]).includes(tool);
 }
 
 function asFiniteNumber(value: unknown): number | null {
@@ -200,7 +248,7 @@ function comparisonGroup(entry: {
   if (!COMPARABLE_TOOLS.includes(entry.tool)) return null;
   // NUL-joined: a domain cannot contain one, so no two different groups can collide into one key.
   const head = `${entry.tool}\u0000${entry.target}`;
-  if (entry.tool === "analyze_backlinks") return head;
+  if (LOCALE_FREE_TOOLS.includes(entry.tool)) return head;
   if (entry.locale === null) return null;
   return `${head}\u0000${entry.locale.languageCode}\u0000${entry.locale.locationCode}`;
 }

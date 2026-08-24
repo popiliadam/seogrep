@@ -31,7 +31,7 @@ export function LookupHistoryList({ history }: { history: DomainLookupHistory })
     return (
       <div className="border border-dashed border-hairline-mid bg-card px-8 py-14 text-center">
         <p aria-hidden="true" className="m-0 mb-3.5 font-mono text-[12px] text-faint">
-          $ ranked_keywords · analyze_backlinks · compare_competitors → no runs yet
+          $ domain_lookup_runs → no runs yet
         </p>
         <p className="m-0 mb-2 font-serif text-[22px] font-medium">No domain lookups yet.</p>
         {/*
@@ -41,10 +41,17 @@ export function LookupHistoryList({ history }: { history: DomainLookupHistory })
           "you have never looked anything up", which this page cannot know for a tool it does not
           read.
         */}
-        <p className="mx-auto m-0 max-w-[52ch] font-serif text-[15px] leading-[1.6] text-muted">
+        {/*
+          ALL SEVEN NAMED, not a sample. Migration 0031 widened this table from three tools to
+          seven, and an empty state that named only the first three would tell a tenant who ran
+          my_pages that their run belongs somewhere else. The list is long on purpose: these are
+          the exact strings a caller asks their assistant for.
+        */}
+        <p className="mx-auto m-0 max-w-[62ch] font-serif text-[15px] leading-[1.6] text-muted">
           Nothing has been looked up on this account yet — for one of your projects or for a bare
-          domain. Ask your assistant to run ranked_keywords, analyze_backlinks or
-          compare_competitors and the run lands here.
+          domain. Ask your assistant to run ranked_keywords, analyze_backlinks,
+          compare_competitors, backlink_changes, backlink_details, disavow_candidates or my_pages,
+          and the run lands here.
         </p>
       </div>
     );
