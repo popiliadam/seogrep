@@ -174,3 +174,163 @@ describe("backlink_changes: two series, counted apart and never reconciled", () 
     expect(report.group_range).toBe("month");
   });
 });
+
+// --- backlink_details ---------------------------------------------------------------------------
+
+function linkRow(over: Partial<BacklinkDetailRow> = {}): BacklinkDetailRow {
+  return {
+    domain_from: "seoblog.example",
+    url_from: "https://seoblog.example/post",
+    url_to: "https://example.com/pricing",
+    anchor: "example",
+    item_type: "anchor",
+    dofollow: true,
+    rank: 412,
+    backlink_spam_score: 8,
+    first_seen: "2021-01-01 00:00:00 +00:00",
+    last_seen: "2026-01-01 00:00:00 +00:00",
+    is_broken: false,
+    url_to_status_code: 200,
+    ...over,
+  };
+}
+
+function pageRow(over: Partial<TargetPageRow> = {}): TargetPageRow {
+  return {
+    url: "https://example.com/pricing",
+    backlinks: 900,
+    referring_domains: 120,
+    referring_domains_nofollow: 12,
+    broken_backlinks: 0,
+    rank: 300,
+    backlinks_spam_score: 4,
+    first_seen: "2021-01-01 00:00:00 +00:00",
+    lost_date: null,
+    ...over,
+  };
+}
+
+function details(over: Partial<BacklinkDetails> = {}): BacklinkDetails {
+  return {
+    target: "example.com",
+    links: {
+      window_offset: 0,
+      window_limit: 50,
+      window_row_count: 1,
+      vendor_total_count: 42_671_699,
+      rows: [linkRow()],
+    },
+    target_pages: {
+      window_offset: 0,
+      window_limit: 20,
+      window_row_count: 1,
+      vendor_total_count: 3120,
+      rows: [pageRow()],
+    },
+    ...over,
+  };
+}
+
+const DETAILS_QUERY = { limit: 50, offset: 0, page_limit: 20 } as const;
+
+describe("backlink_details: a window, with the whole-set count kept beside it", () => {
+  /**
+   * THREE DIFFERENT NUMBERS, and the vendor's own example is why they must not merge: 2 fetched
+   * rows against a `total_count` of 42,671,699. `total` describes the whole set, `shown` describes
+   * what arrived, and the stored row list is shorter than both.
+   */
+  it("`total` is the vendor's whole-set count while `shown` and the stored rows are the window", () => {
+    const report = backlinkDetailsRunReport(
+      details({
+        links: {
+          window_offset: 0,
+          window_limit: 700,
+          window_row_count: 200,
+          vendor_total_count: 42_671_699,
+          rows: Array.from({ length: 200 }, (_, i) => linkRow({ domain_from: `d${i}.example` })),
+        },
+      }),
+      { limit: 700, offset: 0, page_limit: 20 },
+    );
+    expect(report.total).toBe(42_671_699);
+    expect(report.shown).toBe(200);
+    expect(report.links.rows).toHaveLength(MAX_RUN_ROWS);
+    expect(report.links.total_count).toBe(42_671_699);
+    expect(report.links.shown).toBe(200);
+  });
+
+  it("caps the TARGET-PAGES list too, on the same rule", () => {
+    const report = backlinkDetailsRunReport(
+      details({
+        target_pages: {
+          window_offset: 0,
+          window_limit: 200,
+          window_row_count: 90,
+          vendor_total_count: 3120,
+          rows: Array.from({ length: 90 }, (_, i) => pageRow({ url: `https://example.com/${i}` })),
+        },
+      }),
+      { limit: 50, offset: 0, page_limit: 200 },
+    );
+    expect(report.target_pages.rows).toHaveLength(MAX_RUN_ROWS);
+    expect(report.target_pages.shown).toBe(90);
+    expect(report.target_pages.total_count).toBe(3120);
+  });
+
+  /**
+   * `offset` is stored BECAUSE of `top`. The rows are ordered `rank,desc`, so at offset 0 `top` is
+   * the highest-ranked live backlink and at any other offset it is merely where the caller's window
+   * began — the same ŞERH `CompetitorsRunReport.top` carries. A report without the offset would
+   * leave a reader no way to tell those two apart.
+   */
+  it("`top` is the window's first row, and the offset that qualifies it is stored beside it", () => {
+    const report = backlinkDetailsRunReport(
+      details({
+        links: {
+          window_offset: 500,
+          window_limit: 50,
+          window_row_count: 2,
+          vendor_total_count: 900,
+          rows: [
+            linkRow({ domain_from: "first.example", rank: 700, dofollow: false, url_to: null }),
+            linkRow({ domain_from: "second.example", rank: 10 }),
+          ],
+        },
+      }),
+      { limit: 50, offset: 500, page_limit: 20 },
+    );
+    expect(report.top).toEqual({
+      domain: "first.example",
+      url_to: null,
+      rank: 700,
+      dofollow: false,
+    });
+    expect(report.offset).toBe(500);
+  });
+
+  it("`top` is null on an empty window, and a vendor null stays null through the jsonb trip", () => {
+    const report = backlinkDetailsRunReport(
+      details({
+        links: {
+          window_offset: 0,
+          window_limit: 50,
+          window_row_count: 0,
+          vendor_total_count: null,
+          rows: [],
+        },
+      }),
+      DETAILS_QUERY,
+    );
+    expect(report.top).toBeNull();
+    // NOT 0: "the vendor did not say" and "there are no backlinks" are different answers.
+    expect(report.total).toBeNull();
+    const json = domainLookupReportToJson(report) as unknown as Record<string, unknown>;
+    expect(json.total).toBeNull();
+    expect(json.shown).toBe(0);
+  });
+
+  /** No `locale` key: the Backlinks endpoints have none (BacklinksRunReport's rule, same family). */
+  it("carries NO locale key", () => {
+    expect(Object.keys(backlinkDetailsRunReport(details(), DETAILS_QUERY))).not.toContain("locale");
+  });
+});
