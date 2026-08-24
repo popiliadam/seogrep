@@ -415,7 +415,7 @@ describe("3. FAIL-CLOSED — a run that cannot be recorded is not charged for", 
   /**
    * A REAL database rejection on the REAL writer: the row it is handed carries an EMPTY subject,
    * which 0032's `subject_lookup_runs_subject_not_empty` CHECK refuses. Nothing is stubbed on the
-   * write path — `writeSubjectLookupRun` runs, PostgREST answers, and this is the error a
+   * write path — `writeSubjectLookupRuns` runs, PostgREST answers, and this is the error a
    * production insert would raise.
    *
    * The ledger is the proof: reserve then RELEASE, and NO `spend_commit` anywhere. A handler that
