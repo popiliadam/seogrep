@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   CREDIT_UNITS,
@@ -711,5 +713,74 @@ describe("the D17 confirmation gate weighs the base", () => {
       .requiresConfirmation).toBe(true);
     expect(evaluateConfirmation(creditCostFor("ai_visibility_compare", 2), false)
       .requiresConfirmation).toBe(false);
+  });
+});
+
+/**
+ * EVERY PER-UNIT TOOL CARRIES ITS OWN RESERVATION PIN — the rule turned into a gate.
+ *
+ * WHY THIS IS A SPEC AND NOT A SENTENCE IN A DOC, stated as it was MEASURED rather than as it
+ * first got written down. What the fast lane cannot see is the RESERVE PATH: `withCredits` runs
+ * the paid-balance gate before the cost lookup, so no sibling spec ever executes the line that
+ * prices a per-unit reserve. Two different mistakes ride on that blindness, and they are NOT the
+ * same mistake:
+ *
+ *   A DROPPED `units:` THROWS — loudly, in production, on every call (costs.ts's omission guard).
+ *   It is not a silent give-away; the tool stops answering. The fast lane still cannot see it,
+ *   because nothing there runs the throwing line FROM A HANDLER'S RESERVE PATH — which is exactly
+ *   what `serp-snapshot.reserve.test.ts` says in its own header. (Read without that qualifier the
+ *   sentence is false: this very file calls `creditCostFor` with a per-unit tool and asserts the
+ *   throw. What no sibling spec can see is a CALL SITE's mistake.)
+ *
+ *   A WRONG COUNT is the silent one, and it is the reason this gate exists. Hardcoding `units: 1`
+ *   where the call site should compute the real count was measured to bill 13 credits for a
+ *   ten-keyword `serp_snapshot` the operator signed at 85 — in range, tool answers, ledger
+ *   balances, and 2,621 fast-lane specs stay GREEN. That is the NEVER #6 give-away, and only a
+ *   spec written for that one tool — by convention `<tool>.reserve.test.ts` — prices the reserve.
+ *
+ * The DB lane pins the charge independently (serp-snapshot.db.test.ts asserts the ledger delta),
+ * so this is a claim about `verify.sh` alone — which is the gate that has to be able to catch it
+ * without a database.
+ *
+ * A convention nobody enforces is a convention that survives exactly as long as the person who
+ * remembers it. Both of today's per-unit tools happen to have their pin; this asserts that the
+ * NEXT one cannot ship without it. `CREDIT_UNITS` is the register of per-unit pricing (NEVER #6),
+ * so it is the right thing to iterate: adding a row there is precisely the moment the obligation
+ * begins.
+ *
+ * It reads the DIRECTORY rather than importing the specs, because importing them would run them
+ * and prove nothing about their existence; a missing file must be a missing file, not a failed
+ * import inside somebody else's test.
+ *
+ * Deliberately NOT asserted here: what the pin CONTAINS. A spec that dictated the assertions of
+ * another spec would be a gate on wording rather than on coverage, and would go stale the first
+ * time a tool priced its units differently. This pins the obligation; the pin itself is reviewed
+ * like any other spec — so this gate proves a file EXISTS, never that it covers anything.
+ *
+ * And a third per-unit tool pinned ONLY in the DB lane would still fail here. That is intended:
+ * `verify.sh` runs without a database, and it is the gate that has to be able to catch a
+ * mispriced reserve on its own.
+ */
+describe("the per-unit reservation pin is an obligation, not a convention", () => {
+  it("gives every tool in CREDIT_UNITS its own *.reserve.test.ts", () => {
+    const toolsDir = fileURLToPath(new URL("../tools/", import.meta.url));
+    const present = readdirSync(toolsDir).filter((name) => name.endsWith(".reserve.test.ts"));
+
+    // The spec file is named from the tool with underscores as dashes — the repo-wide convention
+    // for every tool module, asserted rather than assumed so a rename cannot silently orphan a pin.
+    const missing = (Object.keys(CREDIT_UNITS) as ToolName[]).filter(
+      (tool) => !present.includes(`${tool.replaceAll("_", "-")}.reserve.test.ts`),
+    );
+
+    expect(
+      missing,
+      `per-unit tool(s) with no reservation pin: ${missing.join(", ") || "(none)"} — nothing in ` +
+        "the fast lane prices this tool's reserve, so a call site passing the WRONG count stays " +
+        "green (measured: `units: 1` bills 13 for a ten-keyword call signed at 85). A DROPPED " +
+        "`units:` throws instead — loudly, and only in production.",
+    ).toEqual([]);
+
+    // …and the register is not empty, so the loop above cannot pass vacuously.
+    expect(Object.keys(CREDIT_UNITS).length).toBeGreaterThan(0);
   });
 });
