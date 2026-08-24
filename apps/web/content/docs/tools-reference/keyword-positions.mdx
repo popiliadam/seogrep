@@ -1,0 +1,48 @@
+---
+title: keyword_positions
+description: "Read the SERP positions already measured and stored for a domain's keywords — each reading with its own date, location, language and device. It measures…"
+---
+
+**Cost:** 10 credits.
+
+`keyword_positions` reads the SERP positions SeoGrep has already measured and stored for a domain's keywords: each reading with its own date, location, language and device. It **measures nothing** — no search engine is contacted and no new position is read.
+
+## What it does
+
+Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest first, grouped into one series per keyword, location, language and device. Narrow it with `keyword`, `location_name`, `language_code` or `device`, and bound the answer with `limit` — the reply always states how many readings match your filter in total, separately from how many are in the window.
+
+## A gap is not a decline
+
+Two readings a month apart are two observations, not a trend, and SeoGrep will not draw a line through the days nobody measured. Every comparison between two readings says how far apart they were, and an interval longer than a day says outright that nothing was measured in between. No answer here claims a direction of travel: a movement is printed as `#7 → #4`, never as a rise or a fall.
+
+## "Not found" and "not measured" are different answers
+
+A reading that searched and found nothing reports the absence **and how many results were examined** — it is not position 0, and it says nothing about results beyond those examined. A reading that never happened says so instead: the position is unknown, and nothing was examined at all.
+
+A position is never compared across either of them, because there is no second position to compare with. A reading where the domain was found but the vendor reported no rank is a third case, and it says that too.
+
+## If nothing has been measured yet
+
+The tool says so and **charges nothing**. Positions appear here once a SERP snapshot has been taken for a domain's keywords; [`track_keywords`](/docs/tools-reference/track-keywords) chooses which keywords to watch, which is a separate step and also free.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> Show me the stored positions for "seo tools" on my example.com project.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `target` | string | No | The domain to read stored positions for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
+| `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
+| `keyword` | string | No | One keyword's series. Omit to read every keyword measured for this domain. Matched as stored — trimmed and lower-cased, the same way track_keywords stores it. |
+| `location_name` | string | No | Only readings measured in this location. Omit to read every location — the readings are grouped by location either way, and never mixed into one series. |
+| `language_code` | string | No | Only readings measured in this search language. Omit to read every language. |
+| `device` | string | No | Only readings measured on this device. Omit to read both — desktop and mobile are different SERPs and are never folded into one series. |
+| `limit` | integer | No | How many readings this answer may hold (1-200, default 50), newest first. It bounds the ANSWER, not the store: the output always states how many readings match the filter in total, separately. |
+
+### Returns
+
+One block per keyword, location, language and device — with what each reading was measured under (search engine, depth, and how a domain was matched), each reading's own date, and the elapsed time between them. Ranks are DataForSEO's own `rank_group` and `rank_absolute`; SeoGrep adds no score of its own.

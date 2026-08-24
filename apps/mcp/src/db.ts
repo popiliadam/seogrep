@@ -473,6 +473,106 @@ export type Database = {
         };
         Relationships: [];
       };
+      // The rank tracker's two tables, migration 0030. They are NOT a fifth run sibling: one is
+      // registration state and the other is a measurement series, and the difference shows in
+      // their Update types.
+      //
+      // tracked_keywords — what a project asked to have watched, one row per (project, keyword,
+      // location, language, device). Update is NOT `never` here, and that is the whole point of
+      // the table: `untracked_at` is an archive stamp the tenant flips (null -> stamped -> null),
+      // the same shape `projects.archived_at` has. Nothing historical is rewritable by it — no
+      // measurement is touched by untracking — and the migration grants exactly SELECT + INSERT +
+      // UPDATE, with DELETE revoked, so rows leave only with their project.
+      tracked_keywords: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string;
+          keyword: string;
+          location_name: string;
+          language_code: string;
+          device: string;
+          created_at: string;
+          untracked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id: string;
+          keyword: string;
+          location_name: string;
+          language_code: string;
+          device: string;
+          created_at?: string;
+          untracked_at?: string | null;
+        };
+        Update: {
+          untracked_at?: string | null;
+        };
+        Relationships: [];
+      };
+      // keyword_position_measurements — ONE ROW PER KEYWORD PER SNAPSHOT (never per placement:
+      // two of the three outcomes carry no placement at all and would be zero rows). `status` is
+      // the stored discriminant of the SERP port's three answers, and it is what keeps "not found
+      // among the results examined" apart from "never measured" — the migration's four CHECK
+      // constraints bind every other column to it. There is deliberately no nullable `position`.
+      //
+      // `project_id` is NULLABLE: a snapshot may measure any domain, including one that is nobody's
+      // project. Update is `never`, matching the grants (SELECT + INSERT): a measurement is what
+      // the SERP looked like at that moment, and re-measuring writes a NEW row — otherwise "where
+      // did I rank last month" would be a question whose answer can be rewritten.
+      keyword_position_measurements: {
+        Row: {
+          id: string;
+          user_id: string;
+          project_id: string | null;
+          keyword: string;
+          target_domain: string;
+          location_name: string;
+          language_code: string;
+          device: string;
+          search_engine: string;
+          depth_requested: number;
+          domain_match_rule: string;
+          status: string;
+          best_rank_group: number | null;
+          best_rank_absolute: number | null;
+          organic_items_examined: number | null;
+          not_measured_reason: string | null;
+          vendor_reported_time_field: string | null;
+          vendor_reported_time_value: string | null;
+          fetched_at: string;
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          project_id?: string | null;
+          keyword: string;
+          target_domain: string;
+          location_name: string;
+          language_code: string;
+          device: string;
+          search_engine: string;
+          depth_requested: number;
+          domain_match_rule: string;
+          status: string;
+          best_rank_group?: number | null;
+          best_rank_absolute?: number | null;
+          organic_items_examined?: number | null;
+          not_measured_reason?: string | null;
+          vendor_reported_time_field?: string | null;
+          vendor_reported_time_value?: string | null;
+          fetched_at: string;
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.

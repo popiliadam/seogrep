@@ -1,20 +1,20 @@
 # goal: trial-flow-e2e
 created: 2026-07-20
 kaynak: Faz 3 T16 — trial hesabın akışı uçtan uca: kayıt→key (insan adımı, MCP_SMOKE_URL bunun
-kanıtı) → auth → tool yüzeyi 33/33 → ledger'dan bakiye okunuyor. Bu predicate PARASIZ ince dilimdir
+kanıtı) → auth → tool yüzeyi 35/35 → ledger'dan bakiye okunuyor. Bu predicate PARASIZ ince dilimdir
 (get_credit_balance 0 kredi); tam paralı zincir (crawl→audit→rapor) gerçek-client kanıtı olarak
 PLAN'a işlenir. MCP_SMOKE_URL set değilken SKIP (landing-live deseni).
 
 ## predicate
 ```predicate
 [ -z "${MCP_SMOKE_URL:-}" ] && exit 97
-[ "$(curl -sf --max-time 20 -X POST "$MCP_SMOKE_URL" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -o '"inputSchema"' | wc -l | tr -d ' ')" = "33" ]
+[ "$(curl -sf --max-time 20 -X POST "$MCP_SMOKE_URL" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -o '"inputSchema"' | wc -l | tr -d ' ')" = "35" ]
 curl -sf --max-time 20 -X POST "$MCP_SMOKE_URL" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_credit_balance","arguments":{}}}' | grep -qiE 'balance|credits'
 ```
 
 ## on-violation
-Şüpheliler: registry değişikliği (33-tool pin kırıldıysa docs-schema-sync de bakar), auth yolu, credit_balances view, revoke edilmiş smoke key.
-Runbook: tools/list sayısı ≠33 ise son merge'ün tool diff'ine bak → get_credit_balance hatasıysa fly logs + Supabase advisors → ledger tutarsızlığı şüphesinde İNSANI UYANDIR (contract.md: balance != SUM(ledger)). Otomatik düzeltme YOK.
+Şüpheliler: registry değişikliği (35-tool pin kırıldıysa docs-schema-sync de bakar), auth yolu, credit_balances view, revoke edilmiş smoke key.
+Runbook: tools/list sayısı ≠35 ise son merge'ün tool diff'ine bak → get_credit_balance hatasıysa fly logs + Supabase advisors → ledger tutarsızlığı şüphesinde İNSANI UYANDIR (contract.md: balance != SUM(ledger)). Otomatik düzeltme YOK.
 
 ## pin geçmişi — neden burada duruyor
 
@@ -61,3 +61,12 @@ Aynı gün üçüncü taşıma, ve yine registry değişikliğiyle **AYNI COMMIT
 (33) ve `server.test.ts` (33) ile aynı anda oynadı — bu kez tek dilimde İKİ tool geldiği için pin
 iki birden atladı. İki vakanın kuralı burada da geçerli: bu kalem merge ile MCP deploy'u ARASINDA
 kırmızıdır ve o penceredeki yeşil, bu kalem için kanıt değildir.
+
+### 33 → 35 — 2026-08-20, `track_keywords` + `keyword_positions`
+
+Dördüncü taşıma, ve yine registry değişikliğiyle **AYNI COMMIT'te**. Sayı `costs.test.ts` (35) ve
+`server.test.ts` (35) ile aynı anda oynadı — bu dilimde de İKİ tool geldiği için pin iki birden
+atladı. İki vakanın kuralı burada da geçerli: bu kalem merge ile MCP deploy'u ARASINDA kırmızıdır
+ve o penceredeki yeşil, bu kalem için kanıt değildir. **Ek olarak bu dilim özel:** PR, 0029
+migration'ı operatör tarafından uygulanana kadar PARK'tadır, yani deploy'dan sonra bile kalem
+ancak şema canlıda olduğunda anlamlıdır.
