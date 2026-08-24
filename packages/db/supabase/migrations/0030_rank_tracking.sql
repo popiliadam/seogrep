@@ -271,7 +271,7 @@ create table public.keyword_position_measurements (
   domain_match_rule text not null,
   -- ── WHAT WAS FOUND ─────────────────────────────────────────────────────────────────────────
   -- THE DISCRIMINANT. The three answers serp.ts refuses to collapse, kept apart on disk by a
-  -- column of their own and by the four CHECKs below. The CHECK on the value set is what stops a
+  -- column of their own and by the seven CHECKs below. The CHECK on the value set is what stops a
   -- fourth status arriving as a silent typo that every reader then treats as "some other thing".
   status text not null check (
     status in ('ranked', 'absent_from_examined_results', 'not_measured')

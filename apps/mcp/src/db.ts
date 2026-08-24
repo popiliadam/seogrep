@@ -514,7 +514,7 @@ export type Database = {
       // keyword_position_measurements — ONE ROW PER KEYWORD PER SNAPSHOT (never per placement:
       // two of the three outcomes carry no placement at all and would be zero rows). `status` is
       // the stored discriminant of the SERP port's three answers, and it is what keeps "not found
-      // among the results examined" apart from "never measured" — the migration's four CHECK
+      // among the results examined" apart from "never measured" — the migration's seven CHECK
       // constraints bind every other column to it. There is deliberately no nullable `position`.
       //
       // `project_id` is NULLABLE: a snapshot may measure any domain, including one that is nobody's

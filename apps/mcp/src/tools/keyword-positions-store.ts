@@ -16,7 +16,7 @@ import type { TrackedDevice } from "./serp-devices.ts";
  * `.eq("user_id", …)`.
  */
 
-/** The three answers a stored measurement can carry — migration 0029's `status` column. */
+/** The three answers a stored measurement can carry — migration 0030's `status` column. */
 export type MeasurementStatus = "ranked" | "absent_from_examined_results" | "not_measured";
 
 /** One stored measurement, exactly as the table holds it. Nothing is computed on the way out. */
@@ -111,7 +111,7 @@ export const countStoredMeasurements: CountMeasurementsFn = async (userId, filte
 /**
  * The window: the newest `limit` measurements matching the filter. Ordered by `fetched_at` — the
  * moment the measurement was taken — and never by `created_at`, which would re-date a row written
- * later than it was measured (migration 0029's three-clocks note).
+ * later than it was measured (migration 0030's three-clocks note).
  */
 export const loadStoredMeasurements: LoadMeasurementsFn = async (userId, filter, limit) => {
   const base = getServiceClient()
