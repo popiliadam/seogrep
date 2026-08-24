@@ -141,6 +141,16 @@ beforeEach(() => {
 // =============================================================================================
 // THE HARD RULE: this port PROPOSES a disavow file. It never submits one.
 // =============================================================================================
+/**
+ * DOMAIN NAMES IN THIS FILE. Every name standing in for something a CALLER supplies — the
+ * looked-up target, a user-typed competitor — is a `.org`, deliberately. `example` is on
+ * NON_PUBLIC_TLDS (@pseo/core, net/hostname), and every tool that reaches this port resolves its
+ * subject through `normalizeDomain` FIRST, so a `*.example` target is refused before the port is
+ * touched: a fixture built on one is a double whose input the runtime would have rejected (signed
+ * lesson 12). Names the VENDOR returns are left alone — nothing normalizes those, and they are the
+ * one place a fixture may legitimately carry a name our own gate would never have let through.
+ */
+
 describe("the outward world belongs to the human", () => {
   it("talks to api.dataforseo.com and to nothing else, on every request it makes", async () => {
     const transport = trioTransport();
@@ -819,7 +829,7 @@ describe("createMockDisavowCandidatesPort", () => {
   it("echoes the vendor's target over the one that was typed", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates({
       ...QUERY,
-      target: "typed-by-the-user.example",
+      target: "typed-by-the-user.org",
     });
     expect(result.target).toBe("example.com");
     expect(result.disavow_txt).toContain("for example.com");
@@ -1155,13 +1165,13 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
     const transport = trioTransport();
     const result = await liveClient(transport, ledger).fetchDisavowCandidates({
       ...QUERY,
-      target: "typed-by-the-user.example",
+      target: "typed-by-the-user.org",
     });
     expect(result.target).toBe("example.com");
     expect(result.disavow_txt).toContain("for example.com");
     // ...while the requests still went out for what the caller actually asked about.
-    expect(sentBody(transport, 0).target).toBe("typed-by-the-user.example");
-    expect(sentBody(transport, 2).target).toBe("typed-by-the-user.example");
+    expect(sentBody(transport, 0).target).toBe("typed-by-the-user.org");
+    expect(sentBody(transport, 2).target).toBe("typed-by-the-user.org");
   });
 
   /** When the vendor names no target, the requested one is the only honest label left. */
@@ -1170,10 +1180,10 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
     const transport = trioTransport({ [DFS_BACKLINKS_LIST_ENDPOINT]: anonymous });
     const result = await liveClient(transport, ledger).fetchDisavowCandidates({
       ...QUERY,
-      target: "typed-by-the-user.example",
+      target: "typed-by-the-user.org",
     });
-    expect(result.target).toBe("typed-by-the-user.example");
-    expect(result.disavow_txt).toContain("for typed-by-the-user.example");
+    expect(result.target).toBe("typed-by-the-user.org");
+    expect(result.disavow_txt).toContain("for typed-by-the-user.org");
   });
 
   it("returns windows whose bounds are the ones actually sent", async () => {

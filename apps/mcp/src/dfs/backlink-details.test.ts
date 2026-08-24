@@ -114,6 +114,16 @@ beforeEach(() => {
 // THE CENTRAL CLAIM: a paginated answer is a WINDOW, and the vendor's whole-set count is a
 // DIFFERENT NUMBER that this port refuses to let a renderer confuse with it.
 // =============================================================================================
+/**
+ * DOMAIN NAMES IN THIS FILE. Every name standing in for something a CALLER supplies — the
+ * looked-up target, a user-typed competitor — is a `.org`, deliberately. `example` is on
+ * NON_PUBLIC_TLDS (@pseo/core, net/hostname), and every tool that reaches this port resolves its
+ * subject through `normalizeDomain` FIRST, so a `*.example` target is refused before the port is
+ * touched: a fixture built on one is a double whose input the runtime would have rejected (signed
+ * lesson 12). Names the VENDOR returns are left alone — nothing normalizes those, and they are the
+ * one place a fixture may legitimately carry a name our own gate would never have let through.
+ */
+
 describe("window bounds vs the vendor's whole-set total", () => {
   it("carries the vendor's 42,671,699 total NEXT TO the 2 rows it actually fetched", () => {
     const window = parseBacklinkRowsResponse(backlinksFixture, BOUNDS);
@@ -542,7 +552,7 @@ describe("createMockBacklinkDetailsPort", () => {
  * is pinned by a difference rather than by a coincidence.
  */
 describe("the target is the one DataForSEO answered for, not the one that was typed", () => {
-  const TYPED = "typed-by-the-user.example";
+  const TYPED = "typed-by-the-user.org";
 
   it("the MOCK port echoes the vendor's target over the requested one", async () => {
     const details = await createMockBacklinkDetailsPort({

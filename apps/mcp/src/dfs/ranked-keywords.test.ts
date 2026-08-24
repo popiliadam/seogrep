@@ -67,6 +67,16 @@ beforeEach(() => {
   ledger = createMemorySpendLedger();
 });
 
+/**
+ * DOMAIN NAMES IN THIS FILE. Every name standing in for something a CALLER supplies — the
+ * looked-up target, a user-typed competitor — is a `.org`, deliberately. `example` is on
+ * NON_PUBLIC_TLDS (@pseo/core, net/hostname), and every tool that reaches this port resolves its
+ * subject through `normalizeDomain` FIRST, so a `*.example` target is refused before the port is
+ * touched: a fixture built on one is a double whose input the runtime would have rejected (signed
+ * lesson 12). Names the VENDOR returns are left alone — nothing normalizes those, and they are the
+ * one place a fixture may legitimately carry a name our own gate would never have let through.
+ */
+
 describe("parseRankedKeywordsResponse", () => {
   it("projects EVERY paid field of an item, not just the four it used to keep", () => {
     const result = parseRankedKeywordsResponse(fixtureResponse);
@@ -162,11 +172,11 @@ describe("parseRankedKeywordsResponse", () => {
     ["search_volume", { search_volume: 42 }, "search_volume", 42],
   ] as const)("reads keyword_info.%s when present, and nulls it when absent", (_name, info, field, value) => {
     const withField = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k", keyword_info: info } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "k", keyword_info: info } }] }),
     );
     expect(withField.rows[0]?.[field]).toBe(value);
     const without = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k", keyword_info: {} } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "k", keyword_info: {} } }] }),
     );
     expect(without.rows[0]?.[field]).toBeNull();
   });
@@ -177,18 +187,18 @@ describe("parseRankedKeywordsResponse", () => {
     ["title", { title: "A page" }, "title", "A page"],
     ["type", { type: "organic" }, "type", "organic"],
     ["rank_group", { rank_group: 4 }, "position", 4],
-    ["url", { url: "https://x.example/a" }, "url", "https://x.example/a"],
+    ["url", { url: "https://x.org/a" }, "url", "https://x.org/a"],
   ] as const)("reads serp_item.%s when present, and nulls it when absent", (_name, serp, field, value) => {
     const withField = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [{ keyword_data: { keyword: "k" }, ranked_serp_element: { serp_item: serp } }],
       }),
     );
     expect(withField.rows[0]?.[field]).toBe(value);
     const without = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [{ keyword_data: { keyword: "k" }, ranked_serp_element: { serp_item: {} } }],
       }),
     );
@@ -205,11 +215,11 @@ describe("parseRankedKeywordsResponse", () => {
     ["serp_info.check_url", { serp_info: { check_url: "https://g/?q=x" } }, "check_url", "https://g/?q=x"],
   ] as const)("reads keyword_data.%s when present, and nulls it when absent", (_name, extra, field, value) => {
     const present = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k", ...extra } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "k", ...extra } }] }),
     );
     expect(present.rows[0]?.[field]).toBe(value);
     const absent = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k" } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "k" } }] }),
     );
     expect(absent.rows[0]?.[field]).toBeNull();
   });
@@ -225,20 +235,20 @@ describe("parseRankedKeywordsResponse", () => {
   ] as const)("reads %s, and empties it when the vendor omits or nulls it", (field, parent, key, value) => {
     const present = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [{ keyword_data: { keyword: "k", [parent]: { [key]: value } } }],
       }),
     );
     expect(present.rows[0]?.[field]).toEqual(value);
     const nulled = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [{ keyword_data: { keyword: "k", [parent]: { [key]: null } } }],
       }),
     );
     expect(nulled.rows[0]?.[field]).toEqual([]);
     const omitted = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "k" } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "k" } }] }),
     );
     expect(omitted.rows[0]?.[field]).toEqual([]);
   });
@@ -252,7 +262,7 @@ describe("parseRankedKeywordsResponse", () => {
   it("projects rank_changes, defaulting the flags the vendor omits to false", () => {
     const result = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [
           {
             keyword_data: { keyword: "k" },
@@ -274,7 +284,7 @@ describe("parseRankedKeywordsResponse", () => {
   it("leaves rank_change NULL when the vendor sent no rank_changes object", () => {
     const result = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [{ keyword_data: { keyword: "k" }, ranked_serp_element: { serp_item: {} } }],
       }),
     );
@@ -284,7 +294,7 @@ describe("parseRankedKeywordsResponse", () => {
   it("keeps serp_item_types RAW — dropping organic is the renderer's choice, not the parser's", () => {
     const result = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         items: [
           {
             keyword_data: { keyword: "k", serp_info: { serp_item_types: ["organic", "ai_overview"] } },
@@ -297,7 +307,7 @@ describe("parseRankedKeywordsResponse", () => {
 
   it("nulls every optional field when keyword_info and ranked_serp_element are both absent", () => {
     const result = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [{ keyword_data: { keyword: "bare" } }] }),
+      envelope({ target: "x.org", items: [{ keyword_data: { keyword: "bare" } }] }),
     );
     expect(result.rows).toEqual([{ ...EMPTY_ROW, keyword: "bare" }]);
   });
@@ -334,11 +344,11 @@ describe("parseRankedKeywordsResponse", () => {
 
   it("treats an empty successful result as zero rows (a domain with no rankings)", () => {
     const result = parseRankedKeywordsResponse(
-      envelope({ target: "nowhere.example", total_count: 0, items_count: 0, items: [] }),
-      "nowhere.example",
+      envelope({ target: "nowhere.org", total_count: 0, items_count: 0, items: [] }),
+      "nowhere.org",
     );
     expect(result).toEqual({
-      target: "nowhere.example",
+      target: "nowhere.org",
       total_count: 0,
       items_count: 0,
       metrics: EMPTY_ORGANIC_METRICS,
@@ -413,7 +423,7 @@ describe("parseRankedKeywordsResponse — result.metrics.organic (the discarded 
    */
   it.each(POSITION_BAND_KEYS)("reads position band %s individually", (band) => {
     const { metrics } = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", metrics: { organic: { [band]: 7 } }, items: [] }),
+      envelope({ target: "x.org", metrics: { organic: { [band]: 7 } }, items: [] }),
     );
     expect(metrics[band]).toBe(7);
     // ...and only that one: a projection that copied the whole bag would light up its neighbours.
@@ -423,14 +433,14 @@ describe("parseRankedKeywordsResponse — result.metrics.organic (the discarded 
 
   it("returns the shared EMPTY metrics when the result carries no metrics block at all", () => {
     const { metrics } = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", items: [] }),
+      envelope({ target: "x.org", items: [] }),
     );
     expect(metrics).toEqual(EMPTY_ORGANIC_METRICS);
   });
 
   it("returns the shared EMPTY metrics when `metrics` is present but `organic` is not", () => {
     const { metrics } = parseRankedKeywordsResponse(
-      envelope({ target: "x.example", metrics: { paid: { count: 3 } }, items: [] }),
+      envelope({ target: "x.org", metrics: { paid: { count: 3 } }, items: [] }),
     );
     expect(metrics).toEqual(EMPTY_ORGANIC_METRICS);
   });
@@ -443,7 +453,7 @@ describe("parseRankedKeywordsResponse — result.metrics.organic (the discarded 
   it("survives a non-numeric value in the organic block instead of failing a PAID parse", () => {
     const { metrics } = parseRankedKeywordsResponse(
       envelope({
-        target: "x.example",
+        target: "x.org",
         metrics: { organic: { count: 12, pos_1: "not a number", se_type: "google" } },
         items: [],
       }),
