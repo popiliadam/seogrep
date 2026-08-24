@@ -80,7 +80,20 @@
 **`trial-flow-e2e` merge ile deploy ARASINDA zorunlu olarak kırmızıdır** — `make goals`'ın merge'ün hemen ardından koşulan hâli o kalem için **kanıt değildir**.
 
 #### FLAKE KAYDI — 4. oturumda ölçülenler
-Kong/upstream 502 (`An invalid response was received from the upstream server`, genelde seed helper'da, **assertion'dan önce**) — **kökü CI'da `toomanyrequests: Rate exceeded`**, yani Docker Hub kotası; yığın eksik ayağa kalkıyor · `disconnect-button.test.tsx` rerender yarışı · paylaşılan yerel Supabase: iki worktree aynı yığını kullanıyor, biri `db reset` yaparsa diğeri **dokunmadığı dosyada** kırmızı görür.
+Kong/upstream 502 (`An invalid response was received from the upstream server`, genelde seed helper'da, **assertion'dan önce**) — **kökü CI'da `toomanyrequests: Rate exceeded`**, yani Docker Hub kotası; yığın eksik ayağa kalkıyor · `disconnect-button.test.tsx` rerender yarışı · paylaşılan yerel Supabase: **üç** worktree aynı yığını kullanıyor, biri `db reset` yaparsa diğeri **dokunmadığı dosyada** kırmızı görür.
+
+**YENİ ŞEKİL — 2026-08-22, ve öncekilerden FARKLI olduğu için ayrı yazılıyor.** Docker kotası yığını eksik başlattığında ortaya çıkan kırmızı **her zaman transport hatası olarak görünmüyor**; bir kez **gerçek bir assertion** olarak çıktı:
+
+> `worker.db.test.ts > executeJob lost-response commit: the job SUCCEEDS — no failed job, no false refund promise`
+> `AssertionError: expected 'failed' to be 'succeeded'`
+
+Aynı logun **tepesinde** `toomanyrequests: Rate exceeded` vardı. Yeniden koşuda geçti; dal o dosyaya hiç dokunmamıştı ve yerelde iki kez yeşildi.
+
+**Neden tehlikeli:** bu şekil "bilinen flake" listesinin hiçbir kalıbına uymuyor — `upstream server` demiyor, `already in use` demiyor, seed helper'da değil, **iddianın kendisi düşüyor**. Yani bir sonraki oturum onu haklı olarak gerçek bir arıza sanabilir.
+
+**Kural:** `verify-db` kırmızı verdiğinde **önce logun BAŞINA bak** — `toomanyrequests` ya da `failed to pull docker image` varsa yığın eksik kalkmıştır ve o koşunun **hiçbir kırmızısı**, şekli ne olursa olsun, kanıt değildir. Ancak temiz bir imaj çekimiyle koşulmuş bir kırmızı iddiadır.
+
+**Ve yerel de aynı şekilde güvenilmez olabilir:** aynı gün yerelde altı test düştü, **altısı da** seed helper'da transport hatasıydı — yani yerel yeşil/kırmızı, paylaşılan yığın bozukken **sinyal değil**. Bu durumda otorite CI'dır (temiz koşuda).
 
 ---
 
