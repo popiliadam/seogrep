@@ -4,7 +4,13 @@ import { getServiceClient } from "../db.ts";
 import { creditCostFor } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import {
+  DFS_SERP_SEARCH_ENGINE,
+  ESTIMATED_SERP_REQUEST_USD,
+  SERP_DEPTH,
+  buildSerpCostAccounting,
+  buildSerpRow,
   createMockSerpSnapshotPort,
+  validateSerpKeywords,
   type SerpSnapshotPort,
 } from "../dfs/serp.ts";
 import { makeSerpSnapshotTool } from "./serp-snapshot.ts";
@@ -24,8 +30,9 @@ import { projectNotFoundMessage } from "./project-target.ts";
  *       the positive direction, without which (d) would pass on a tool that refuses everyone;
  *   (e) the THREE OUTCOMES reach the three stored `status` values through a REAL insert;
  *   (f) a row migration 0030's CHECK refuses SURFACES — the write throws, the reserve is
- *       RELEASED, nothing is committed and nothing is stored. Fail-closed, measured rather than
- *       asserted in prose;
+ *       RELEASED, nothing is committed, and the STORABLE keyword sent beside it is not stored
+ *       either. Fail-closed AND all-or-nothing, both driven by a fixture that really does carry one
+ *       storable row and one the database refuses;
  *   (g) THE ROUND TRIP: what serp_snapshot writes, keyword_positions reads back and renders.
  *
  * NO DataForSEO call happens here (NEVER #5): every port below is either the injectable mock or a
@@ -200,6 +207,70 @@ const failingPort: SerpSnapshotPort = {
 
 function toolWith(raw: unknown) {
   return makeSerpSnapshotTool({ port: createMockSerpSnapshotPort(raw, CLOCK) });
+}
+
+/**
+ * A KEYWORD-KEYED port: every keyword gets its OWN envelope, so ONE snapshot can carry a row the
+ * database will store BESIDE a row the database will refuse.
+ *
+ * WHY {@link toolWith} CANNOT EXPRESS THAT, and why it matters here rather than being a tidier
+ * helper: `createMockSerpSnapshotPort` maps EVERY keyword over ONE envelope, so a rejected envelope
+ * makes every row in the snapshot rejected. A spec built on it can assert that nothing was stored,
+ * but "nothing" is then just "no row was ever storable" — the ALL-OR-NOTHING property is not in the
+ * fixture at all. Measured, not reasoned: with the single-envelope fixture, replacing the shipped
+ * batch insert with a row-at-a-time loop kept every lane green, because the loop's very FIRST insert
+ * was the failing one and there was nothing stored to leak. Spec (f) below drives the mixed pair,
+ * storable keyword FIRST, which is the only arrangement that shape can fail.
+ *
+ * NOTHING HERE RE-IMPLEMENTS THE PORT IT STANDS IN FOR. Each row is built by the SHIPPED
+ * `buildSerpRow` — the same function `createMockSerpSnapshotPort` calls — and the snapshot's money
+ * by the SHIPPED `buildSerpCostAccounting`, so a change to either travels into this fixture instead
+ * of being shadowed by a copy of it. The keyword list still goes through the SHIPPED
+ * `validateSerpKeywords`, so the duplicate and cap refusals are the real ones.
+ *
+ * The one fold this helper does NOT own is the vendor-reported/estimate SOURCE across keywords. It
+ * REFUSES a mixed set rather than guessing at a rollup rule that lives in serp.ts, which is why no
+ * spec below builds one.
+ */
+function toolWithPerKeyword(byKeyword: Readonly<Record<string, unknown>>) {
+  const port: SerpSnapshotPort = {
+    enabled: true,
+    fetchSerpSnapshot: async (query) => {
+      const keywords = validateSerpKeywords(query.keywords);
+      const rows = keywords.map((keyword) => {
+        const raw = byKeyword[keyword];
+        if (raw === undefined) {
+          throw new Error(`keyed port: no envelope was given for keyword "${keyword}"`);
+        }
+        return buildSerpRow(query, keyword, raw, CLOCK(), ESTIMATED_SERP_REQUEST_USD);
+      });
+      const sources = new Set(rows.map((row) => row.cost.vendor_cost_usd_source));
+      const source = [...sources];
+      if (source.length !== 1 || source[0] === undefined) {
+        throw new Error(
+          "keyed port: the keywords settled at different cost sources, and folding them is " +
+            "serp.ts's rule, not this fixture's",
+        );
+      }
+      return {
+        asked: {
+          target_domain: query.target_domain,
+          keywords,
+          location_name: query.location_name,
+          language_code: query.language_code,
+          device: query.device,
+          search_engine: DFS_SERP_SEARCH_ENGINE,
+          depth_requested: SERP_DEPTH,
+        },
+        rows,
+        cost: buildSerpCostAccounting(rows.length, {
+          totalUsd: rows.reduce((sum, row) => sum + row.cost.vendor_cost_usd, 0),
+          source: source[0],
+        }),
+      };
+    },
+  };
+  return makeSerpSnapshotTool({ port });
 }
 
 const positionsTool = makeKeywordPositionsTool();
@@ -405,39 +476,76 @@ describe("serp_snapshot credit path against the local stack", () => {
   });
 
   /**
-   * (f) A ROW THE DATABASE REFUSES SURFACES — it is not clamped, not caught, and not paid for.
+   * (f) A ROW THE DATABASE REFUSES SURFACES — it is not clamped, not caught, and not paid for —
+   * AND IT TAKES A PERFECTLY STORABLE SIBLING DOWN WITH IT.
    *
-   * The envelope below returns ONE organic result whose `rank_group` is 5. That is a rank drawn
-   * from outside the set the row claims to have counted, and migration 0030's
-   * `rank_group_within_examined` CHECK refuses it: without that constraint "#5 of 1 examined" would
-   * store and every later reader would print arithmetic nonsense wearing a plausible face.
+   * THE FIXTURE IS MIXED, AND THAT IS THE WHOLE POINT. Two keywords, two DIFFERENT envelopes:
+   *
+   *   "storable keyword"   -> a whole 2-item page with the target at rank_group 1. Every one of
+   *                           0030's CHECKs is satisfied; the database will take this row.
+   *   "unstorable keyword" -> ONE organic result whose `rank_group` is 5. That is a rank drawn from
+   *                           outside the set the row claims to have counted (#5 of 1 examined), and
+   *                           `keyword_position_measurements_rank_group_within_examined` refuses it:
+   *                           without that constraint every later reader would print arithmetic
+   *                           nonsense wearing a plausible face.
    *
    * IT IS NOT A HYPOTHETICAL. The shipped fixture `serp-organic-live-advanced.json` produces
    * exactly this shape for `example-fixture.test` — it is an abridged capture whose organic result
    * at rank_group 2 was not included, so its rank_group 3 sits above its 2 examined items.
    *
+   * THE STORABLE KEYWORD IS SENT FIRST, and the order is load-bearing rather than incidental: a
+   * row-at-a-time writer inserts it, SUCCEEDS, and only then hits the rejection — leaving the tenant
+   * one stored measurement they were never charged for, which serp-snapshot-store.ts names as the
+   * one outcome worse than losing all of them. Reversed, that writer's first insert would be the
+   * failing one and this spec would pass on a broken writer. It was passing on one: with the
+   * previous single-envelope fixture BOTH rows violated the CHECK, and a row-at-a-time loop measured
+   * green in every lane.
+   *
    * What is asserted is the fail-closed chain end to end: the insert is rejected, the rejection
    * escapes the handler, withCredits RELEASES, no `spend_commit` is written, the balance is whole,
-   * and NOTHING is stored — including the keywords whose own rows were fine, because the write is
-   * one statement for the whole snapshot.
+   * and NEITHER row is stored. The last paragraph then proves the storable row really was storable
+   * by storing it — so "all or nothing" is a claim about this spec's own data rather than prose.
    */
-  it("(f) a CHECK violation surfaces: released, uncommitted, and nothing stored", async () => {
+  it("(f) a CHECK violation surfaces: released, uncommitted, and the STORABLE row is not stored either", async () => {
     const ctx = await makeCtx();
     await seedPurchase(ctx.userId, 500);
     const project = await makeProject(ctx.userId);
-    const tool = toolWith(envelope([organic(5, 7, project.domain)]));
+    const storable = envelope(page([project.domain, "rival.com"]));
+    const tool = toolWithPerKeyword({
+      "storable keyword": storable,
+      "unstorable keyword": envelope([organic(5, 7, project.domain)]),
+    });
 
     await expect(
-      tool.run(ctx, { project_id: project.id, keywords: ["seo tools", "second keyword"] }),
+      tool.run(ctx, {
+        project_id: project.id,
+        keywords: ["storable keyword", "unstorable keyword"],
+      }),
     ).rejects.toThrow(/keyword_position_measurements write failed/);
 
     const rows = await ledgerRows(ctx.userId);
     expect(kindsOf(rows)).toEqual(["purchase", "spend_reserve", "spend_release"]);
     expect(kindsOf(rows)).not.toContain("spend_commit");
     expect(balanceOf(rows)).toBe(500);
-    // ALL-OR-NOTHING: the second keyword's row was storable and is not stored either.
+    // ALL-OR-NOTHING: the storable keyword's row is not stored either. A row-at-a-time writer
+    // stores it here and this assertion is what catches that.
     expect(await measurementsOf(ctx.userId)).toEqual([]);
+
+    // …AND IT REALLY WAS STORABLE. The SAME envelope, sent alone, is accepted by the same table —
+    // so the emptiness above is atomicity, not a second unstorable row wearing a friendly name.
+    const alone = await toolWithPerKeyword({ "storable keyword": storable }).run(ctx, {
+      project_id: project.id,
+      keywords: ["storable keyword"],
+    });
+    expect(alone.isError).toBeUndefined();
+    const stored = await measurementsOf(ctx.userId);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.keyword).toBe("storable keyword");
+    expect(stored[0]?.status).toBe("ranked");
+    expect(stored[0]?.best_rank_group).toBe(1);
+    expect(stored[0]?.organic_items_examined).toBe(2);
   });
+
 
   /**
    * (g) THE ROUND TRIP — the proof the two halves of the rank tracker meet. What serp_snapshot
