@@ -31,6 +31,11 @@ import type {
   RankedKeywordsResult,
   RankedKeywordsSort,
 } from "./ranked-keywords.ts";
+import type {
+  RelevantPageItemType,
+  RelevantPageRow,
+  RelevantPagesResult,
+} from "./relevant-pages.ts";
 
 /**
  * The DOMAIN LOOKUP RUN LEDGER (migration 0027): one row per DFS domain lookup that delivered.
@@ -364,14 +369,81 @@ export interface DisavowCandidatesRunReport {
   readonly referring_networks: CappedList<ReferringNetworkRow>;
 }
 
-/** The six reports — the only six things `domain_lookup_runs.report` ever holds. */
+/** The crawl side of a my_pages run, as a small O(1) card — never the crawl's page list. */
+export interface MyPagesCrawlView {
+  /**
+   * THREE STATES, kept apart exactly as `CrawlSide` keeps them (tools/my-pages-crawl.ts):
+   * "not_requested" = no project was named, so no crawl was looked for — NOT "there is no crawl";
+   * "none" = a project was named and has no succeeded crawl; "crawl" = one crawl was compared.
+   * Collapsing any two of them would store a claim nobody measured.
+   */
+  readonly kind: "not_requested" | "none" | "crawl";
+  /** The `jobs` row the pages came from — one crawl run. Null unless `kind` is "crawl". */
+  readonly job_id: string | null;
+  /** When that crawl ran (ISO). The comparison is as of THIS date, not as of the lookup. */
+  readonly ran_at: string | null;
+  /** How many crawled pages were compared. Null unless `kind` is "crawl". */
+  readonly pages_compared: number | null;
+  /** True when the crawl read hit its cap, i.e. the crawl may hold more pages than were compared. */
+  readonly truncated: boolean | null;
+  /** Vendor rows THIS crawl also fetched. Null unless `kind` is "crawl". */
+  readonly matched: number | null;
+  /** Vendor rows that crawl did not fetch — NOT "pages that do not exist". */
+  readonly vendor_only: number | null;
+  /** Crawled pages THIS WINDOW did not name — NOT "pages that do not rank". */
+  readonly crawl_only: number | null;
+}
+
+/**
+ * my_pages' report.
+ *
+ * WHAT `total` IS: the vendor's `total_count` for the relevant-pages set — its count of the pages
+ * matching THIS run's item types and THIS run's optional `min_organic_etv` / `min_organic_count`
+ * filters. Both of those are caller-chosen and both change WHAT IS COUNTED, so they are stored
+ * beside it (`item_types`, `vendor_filters_applied`) rather than left to be assumed. That is also
+ * why the history panel shows no change clause for this tool: two runs of the same domain in the
+ * same locale can still have counted different sets, and the panel's comparison key cannot see it.
+ */
+export interface MyPagesRunReport {
+  readonly locale: DomainLookupLocale;
+  /** The window row cap the caller asked for. */
+  readonly limit: number;
+  /** Where the window starts. Same ŞERH as backlink_details' `offset` — see `top` below. */
+  readonly offset: number;
+  /** The SERP item types actually sent on the wire — never "whatever the vendor defaults to". */
+  readonly item_types: readonly RelevantPageItemType[];
+  /** The vendor-grammar filters actually sent. Empty when the caller asked for none. */
+  readonly vendor_filters_applied: readonly unknown[];
+  /** DFS `total_count` for this run's matching set. Null = the vendor did not say. */
+  readonly total: number | null;
+  /** Page rows RECEIVED in the window, before MAX_RUN_ROWS. */
+  readonly shown: number;
+  /**
+   * The FIRST PAGE OF THE WINDOW, under the vendor's own `metrics.organic.count` ordering — the
+   * same offset ŞERH as backlink_details' `top`. The two figures are the ORGANIC block's, because
+   * that is the block the ordering is on; a run that asked for other item types still keeps them,
+   * in `pages` below.
+   */
+  readonly top: {
+    readonly page: string;
+    readonly organic_count: number | null;
+    readonly organic_etv: number | null;
+  } | null;
+  /** The first MAX_RUN_ROWS vendor pages, VERBATIM. `total`/`shown` above are the pre-cap numbers. */
+  readonly pages: readonly RelevantPageRow[];
+  /** What the join against the tenant's own crawl found — counts only, never the crawled URLs. */
+  readonly crawl: MyPagesCrawlView;
+}
+
+/** The seven reports — the only seven things `domain_lookup_runs.report` ever holds. */
 export type DomainLookupReport =
   | RankedKeywordsRunReport
   | BacklinksRunReport
   | CompetitorsRunReport
   | BacklinkChangesRunReport
   | BacklinkDetailsRunReport
-  | DisavowCandidatesRunReport;
+  | DisavowCandidatesRunReport
+  | MyPagesRunReport;
 
 /**
  * Build ranked_keywords' report from the result the FORMATTER is about to render (pure).
@@ -576,6 +648,38 @@ export function disavowCandidatesRunReport(
   };
 }
 
+/** Build my_pages' report from the window the formatter is about to render (pure). */
+export function myPagesRunReport(
+  result: RelevantPagesResult,
+  crawl: MyPagesCrawlView,
+  query: { readonly limit: number; readonly offset: number } & DomainLookupLocale,
+): MyPagesRunReport {
+  const best = result.window.rows[0];
+  // The ORGANIC block specifically — it is the block `ordered_by_vendor_field` sorts on. An item
+  // type the vendor reported nothing for is ABSENT from `metrics` rather than present-and-zeroed,
+  // so this is `?? null` and never `?? 0` (NEVER #7).
+  const organic = best?.metrics.organic;
+  return {
+    locale: { language_code: query.language_code, location_code: query.location_code },
+    limit: query.limit,
+    offset: query.offset,
+    item_types: result.item_types_requested,
+    vendor_filters_applied: result.vendor_filters_applied,
+    total: result.window.vendor_total_count,
+    shown: result.window.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            page: best.page_address,
+            organic_count: organic?.count ?? null,
+            organic_etv: organic?.etv ?? null,
+          },
+    pages: capRows(result.window.rows),
+    crawl,
+  };
+}
+
 /** Everything one `domain_lookup_runs` row is keyed by. */
 export interface DomainLookupRunTarget {
   readonly userId: string;
@@ -604,7 +708,8 @@ export type DomainLookupTool =
   | "compare_competitors"
   | "backlink_changes"
   | "backlink_details"
-  | "disavow_candidates";
+  | "disavow_candidates"
+  | "my_pages";
 
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type DomainLookupRunWriter = (

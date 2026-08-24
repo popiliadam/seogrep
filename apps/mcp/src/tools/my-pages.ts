@@ -23,6 +23,12 @@ import {
   type PageJoin,
 } from "./my-pages-crawl.ts";
 import {
+  myPagesRunReport,
+  writeDomainLookupRun,
+  type DomainLookupRunWriter,
+  type MyPagesCrawlView,
+} from "../dfs/runs.ts";
+import {
   loadOwnProject,
   projectIdField,
   resolveTarget,
@@ -478,6 +484,53 @@ export function formatMyPages(
   ].join("\n\n");
 }
 
+/**
+ * The crawl side of the RUN ROW (migration 0031): the three `CrawlSide` states kept apart, plus
+ * the join's three population counts. Pure, and exported so a spec executes it directly.
+ *
+ * THE THREE STATES ARE NOT COLLAPSED, for `CrawlSide`'s own reason: "no project was named, so no
+ * crawl was looked for" and "a project was named and has no crawl" are different sentences, and a
+ * row that stored either as "0 pages compared" would be a claim nobody measured.
+ *
+ * THE JOIN IS RECOMPUTED here rather than lifted out of the formatter, and that is safe for
+ * exactly one reason: `joinPages` is PURE and both callers hand it the SAME two lists, so this is
+ * one measurement computed twice and not a second measurement that merely resembles it. The rule
+ * that forbids a second computation is about the PAID vendor call (dfs/runs.ts says so); nothing
+ * here reaches DataForSEO.
+ *
+ * WHAT IS STORED IS COUNTS, NEVER THE CRAWLED URLS. The crawl side can carry up to
+ * CRAWL_PAGE_READ_CAP pages, they are the tenant's own data already stored in `crawl_pages`, and
+ * `domain_lookup_runs` is a SUMMARY table (0027's payload rule).
+ */
+export function myPagesCrawlView(
+  crawl: CrawlSide,
+  vendorRows: readonly RelevantPageRow[],
+): MyPagesCrawlView {
+  if (crawl.kind !== "crawl") {
+    return {
+      kind: crawl.kind,
+      job_id: null,
+      ran_at: null,
+      pages_compared: null,
+      truncated: null,
+      matched: null,
+      vendor_only: null,
+      crawl_only: null,
+    };
+  }
+  const join = joinPages(vendorRows, crawl.pages);
+  return {
+    kind: "crawl",
+    job_id: crawl.jobId,
+    ran_at: crawl.ranAt,
+    pages_compared: crawl.pages.length,
+    truncated: crawl.truncated,
+    matched: join.matched.length,
+    vendor_only: join.vendorOnly.length,
+    crawl_only: join.crawlOnly.length,
+  };
+}
+
 /** Dependencies — every outward reach is injectable so the fast lane runs offline and DB-less. */
 export interface MyPagesDeps {
   /**
@@ -489,9 +542,16 @@ export interface MyPagesDeps {
   readonly loadProject?: LoadProjectFn;
   /** The tenant-scoped crawl-side loader (default: the real one). Injected likewise. */
   readonly loadCrawl?: LoadCrawlSideFn;
+  /**
+   * The run recorder (default: the real `writeDomainLookupRun`, migration 0031). A PORT for the
+   * reason every other writer in this family is one: a spec can make it FAIL without breaking a
+   * database, which is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: DomainLookupRunWriter;
 }
 
 export function makeMyPagesTool(deps: MyPagesDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeDomainLookupRun;
   return defineTool<MyPagesInput>({
     name: "my_pages",
     description: DESCRIPTION,
@@ -532,7 +592,32 @@ export function makeMyPagesTool(deps: MyPagesDeps = {}): RegisteredTool {
           min_organic_etv: input.min_organic_etv,
           min_organic_count: input.min_organic_count,
         });
-        return textResult(formatMyPages(result, input, crawl, subject.project));
+        const text = formatMyPages(result, input, crawl, subject.project);
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0031; dfs/runs.ts states the same contract from the other side). withCredits
+        // COMMITS a handler that returns and RELEASES one that throws, so an error escaping here
+        // costs the tenant nothing. Caught and logged instead, the shape would be the house's
+        // worst: a charged caller, a delivered table, and a panel that says forever that the
+        // lookup never ran.
+        //
+        // `projectId` is null on a bare-target call. `target` is the RESOLVED domain, never the
+        // caller's raw input: it is what was actually looked up, and for a project run it is what
+        // the project's domain was AT THE TIME.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: subject.project?.id ?? null,
+            tool: "my_pages",
+            target: subject.domain,
+          },
+          myPagesRunReport(result, myPagesCrawlView(crawl, result.window.rows), {
+            limit: input.limit,
+            offset: input.offset,
+            language_code: input.language_code,
+            location_code: input.location_code,
+          }),
+        );
+        return textResult(text);
       });
     },
   });
