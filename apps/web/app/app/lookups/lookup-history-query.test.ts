@@ -145,6 +145,30 @@ describe("the lookup history reads every run the caller owns", () => {
   });
 
   /**
+   * …AND THAT ORDER IS TOTAL. `created_at` is `timestamptz default now()` and `now()` is the
+   * TRANSACTION clock, so two runs can share a stamp to the microsecond, and `order by created_at
+   * desc` ALONE leaves their relative order UNDEFINED in Postgres. That is a correctness defect
+   * rather than untidiness on this page: `buildDomainLookupHistory` WALKS the row order to decide
+   * which run "change since the previous run" names — its own sort is on `created_at` too and is
+   * stable, so tied rows keep the order PostgREST handed over — so an undefined order makes the
+   * IDENTITY of "previous" undefined, and two identical page loads can print a different delta and
+   * a different date to the same tenant with nothing changed in the database.
+   *
+   * PINNED AS THE ORDERED PAIR, not as "an `id` order exists somewhere". A tiebreaker written
+   * BEFORE the axis it breaks ties on is not a tiebreaker at all — it IS the sort, and the page
+   * would be ordered by a random uuid while every other pin here stayed green.
+   *
+   * PINNED WITH ITS DIRECTION for the same reason the primary key's is: an order that is
+   * deterministic per query but flips on a one-word edit is still a page whose "previous run" moves
+   * under the reader between two builds.
+   */
+  it("breaks a created_at tie on the primary key, after the stamp and in the same direction", () => {
+    expect(READ).toMatch(/\.order\(\s*["']id["']\s*,\s*\{\s*ascending:\s*false\b/i);
+    const ordered = [...READ.matchAll(/\.order\(\s*["']([a-z_]+)["']/gi)].map((match) => match[1]);
+    expect(ordered).toEqual(["created_at", "id"]);
+  });
+
+  /**
    * BOUNDED BY THE SHARED CONSTANT, PLUS THE OVERFLOW PROBE. A literal here would drift from the
    * ceiling the page discloses (`windowFull`), and the disclosure would then be off by however far
    * the two drifted.
@@ -168,6 +192,32 @@ describe("the lookup history reads every run the caller owns", () => {
   /** A LIST, not a row: `.maybeSingle()` here would hand back one run and call it a history. */
   it("asks PostgREST for the whole list", () => {
     expect(singleRowTerminatorsOf(READ)).toEqual([]);
+  });
+
+  /**
+   * THE ROWS THE DATABASE RETURNED ARE THE ROWS THAT LEAVE — the other half of the pin above, and
+   * the half nothing measured. A `.slice(0, DOMAIN_LOOKUP_HISTORY_LIMIT)` dropped in between the
+   * `.limit()` and the `return` passes every lane in this repo today: it typechecks, it leaves the
+   * `+ 1` above untouched so the probe pin stays green, and every render spec renders from rows it
+   * never sees. What it actually does is throw the PROBE ROW away at the one point where its
+   * absence is indistinguishable from a short table — so `windowFull` goes permanently false, the
+   * page silently stops disclosing its own ceiling, and the oldest rows' missing changes go back to
+   * reading as "first run of its kind". The builder is what cuts the list, AFTER sorting, and it is
+   * unit-tested doing so.
+   *
+   * BOTH DIRECTIONS ARE ASSERTED: no trimmer on the way out, and the returned expression still
+   * derives straight from `data`. Either one alone is escapable — a trim written as
+   * `data?.splice(...)` or a return rebuilt out of a local would satisfy the other.
+   *
+   * `.filter(` is matched only where it is NOT followed by a quote: PostgREST's own
+   * `.filter("col", "eq", value)` is a legitimate longhand on this chain (`filtersOf` reads it),
+   * while a JS array filter never opens with a string literal. A pin that reddened on the
+   * legitimate spelling would be teaching the next reader to edit the spec.
+   */
+  it("hands back what came back, and trims nothing on the way out", () => {
+    expect(READ).not.toMatch(/\.(slice|splice|pop|shift)\(/);
+    expect(READ).not.toMatch(/\.filter\(\s*(?!["'])/);
+    expect(READ).toMatch(/return\s*\(?\s*data\s*\?\?\s*\[\]/);
   });
 
   /**
@@ -253,6 +303,30 @@ describe("the rows the read fetched reach the page", () => {
   it("builds the history from the rows the read returns", () => {
     expect(PAGE).toMatch(/buildDomainLookupHistory\(\s*await\s+listDomainLookupRuns\(/);
     expect(PAGE).toMatch(/listDomainLookupRuns\(\s*supabase\s*,\s*user\.id\s*\)/);
+  });
+
+  /**
+   * …AND UNDER THE BOUND THE READ WAS WRITTEN FOR. `buildDomainLookupHistory` takes an OPTIONAL
+   * second argument — `limit`, defaulting to `DOMAIN_LOOKUP_HISTORY_LIMIT` — which exists so the
+   * builder's own specs can drive the ceiling with four rows instead of two hundred and one. The
+   * page has no business passing it, and until this pin nothing said so: `buildDomainLookupHistory(
+   * rows, 50)` matched the open-ended pin above word for word, typechecked, and passed the whole
+   * fast lane.
+   *
+   * WHAT THAT COSTS is a page that lists 50 of the 201 runs it fetched and paid 65-90 credits each
+   * for, while the footer beside it goes on naming DOMAIN_LOOKUP_HISTORY_LIMIT — the constant is
+   * what the sentence interpolates, not the bound that was applied — so 150 real runs vanish under
+   * a sentence claiming the page shows 200. The read's `.limit()` and the builder's cut are two
+   * halves of ONE ceiling and they are kept equal by there being exactly one number: the constant.
+   *
+   * MATCHED AS THE WHOLE CALL, closing paren included, because arity is the thing being pinned. A
+   * fragment ending at the read's own `(` cannot see what follows it — that is exactly how the
+   * argument got in.
+   */
+  it("applies the module's own ceiling — no second bound of the page's own", () => {
+    expect(PAGE).toMatch(
+      /buildDomainLookupHistory\(\s*await\s+listDomainLookupRuns\(\s*supabase\s*,\s*user\.id\s*\)\s*\)/,
+    );
   });
 });
 

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
@@ -208,5 +211,81 @@ describe("the lookups page never invents a project", () => {
     ]);
     const table = container.querySelector("table") as HTMLElement;
     expect(within(table).queryByText(/9f1c-project-id/)).toBeNull();
+  });
+});
+
+/**
+ * THE NUMBER IN THE TRUNCATION SENTENCE, pinned against the exported constant rather than against
+ * its current value — the one claim on this component that NO render can measure.
+ *
+ * A hand-typed literal equal to today's ceiling renders BYTE-IDENTICALLY to the interpolated
+ * constant, so every assertion above stays green while the sentence stops being derived from the
+ * bound at all; the next time the constant moves, the read fetches one number of rows and the page
+ * announces another, and the disclosure is a claim about a window nobody used. Since no render can
+ * tell {CONST} from {LITERAL}, the measurement has to be of the SOURCE — the same rule the query
+ * specs beside this one run under (signed lesson 11).
+ *
+ * COMMENTS OUT FIRST, and that is load-bearing rather than hygienic: the component's own JSX
+ * comment above the sentence explains the rule in prose and names `windowFull` while doing it, so a
+ * pin matched against the raw file could locate the paragraph DESCRIBING the rule instead of the
+ * markup obeying it — and would go on passing after the markup stopped.
+ *
+ * ASSERTED ON BOTH HALVES. The identifier must be what the sentence interpolates, and — after
+ * every `{…}` expression is removed — no DIGIT may remain in the sentence at all, which is what
+ * closes the plain-prose spelling ("the most recent 200 lookups") that the first half alone would
+ * miss. The attributes are outside the slice, so the className's own numbers are not in scope.
+ */
+
+/** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/** Comments out, markup only — prose is not code. */
+function codeOf(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+const COMPONENT = codeOf(
+  readFileSync(resolve(HERE, "lookup-history-list.tsx"), "utf8"),
+);
+
+/**
+ * The TEXT of the `history.windowFull` disclosure — attributes excluded, so what is measured is
+ * the sentence a tenant reads and not the Tailwind classes around it. It THROWS when the paragraph
+ * cannot be found: a pin that silently matched an empty string would pass forever the moment the
+ * disclosure was restructured, which is the failure mode being designed out here.
+ */
+function disclosureOf(): string {
+  const flag = COMPONENT.indexOf("history.windowFull");
+  if (flag === -1) {
+    throw new Error(
+      "no `history.windowFull` branch in lookup-history-list.tsx. If the ceiling disclosure moved, point " +
+        "this pin at its new home — do NOT delete it: a hand-typed ceiling renders identically to " +
+        "the constant, so nothing else in either lane can tell the two apart.",
+    );
+  }
+  const open = COMPONENT.indexOf("<p", flag);
+  const textStart = COMPONENT.indexOf(">", open);
+  const end = COMPONENT.indexOf("</p>", textStart);
+  if (open === -1 || textStart === -1 || end === -1) {
+    throw new Error("the `history.windowFull` branch holds no <p>…</p> this pin can read.");
+  }
+  return COMPONENT.slice(textStart + 1, end);
+}
+
+describe("the disclosed ceiling is derived from the constant, not retyped", () => {
+  it("interpolates the exported ceiling and spells no number of its own", () => {
+    const sentence = disclosureOf();
+    expect(sentence).toMatch(/\{\s*DOMAIN_LOOKUP_HISTORY_LIMIT\s*\}/);
+    expect(sentence.replace(/\{[^{}]*\}/g, "")).not.toMatch(/\d/);
+  });
+
+  /**
+   * …and it is the SHARED one. A local `const DOMAIN_LOOKUP_HISTORY_LIMIT = 200` beside the
+   * markup satisfies the pin above word for word while drifting from the read's own bound.
+   */
+  it("takes that ceiling from the module that owns it", () => {
+    expect(COMPONENT).toMatch(
+      /import\s*\{[^}]*\bDOMAIN_LOOKUP_HISTORY_LIMIT\b[^}]*\}\s*from\s*["'][^"']*lookup-history["']/,
+    );
   });
 });
