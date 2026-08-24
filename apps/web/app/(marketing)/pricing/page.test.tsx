@@ -5,7 +5,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 // The single source of truth for per-tool credit costs lives in the MCP package; importing it
 // here turns any future cost change that misses this page into a failing test (B-M1 drift guard).
-import { TOOL_COSTS } from "../../../../mcp/src/credits/costs";
+import { CREDIT_UNITS, TOOL_COSTS } from "../../../../mcp/src/credits/costs";
 import Page from "./page";
 
 describe("pricing page", () => {
@@ -123,6 +123,14 @@ describe("pricing page", () => {
     // position series — and its free companion track_keywords has no row at all, which the
     // coverage rule below is right to allow for a 0-credit tool.
     keyword_positions: "Stored keyword positions (per domain)",
+    // THE SECOND PER-UNIT ROW (2026-08-24, signed at 8 per keyword plus a fixed 5 per call), and
+    // the measuring half of the same rank tracker as the row above: that one reads stored
+    // measurements and spends nothing, this one buys a live SERP per keyword. The rules below
+    // compare the rendered cell against TOOL_COSTS as-is, which is right for the same reason it is
+    // right for the comparison row — the cell renders the UNIT price and the label says what the
+    // unit is. This label has to carry MORE than that one, because this rule also has a base: the
+    // spec after this map pins both halves.
+    serp_snapshot: "SERP snapshot (per keyword, plus 5 credits per call)",
     generate_report: "Monthly report",
   };
 
@@ -283,6 +291,29 @@ describe("pricing page", () => {
     const row = screen.getByText(label).closest("tr");
     if (row === null) throw new Error("no credit-cost row rendered for the comparison tool");
     expect(within(row).getByText("90")).toBeTruthy();
+  });
+
+  /**
+   * THE ROW WITH A FIXED PART MUST NAME IT. Its cell renders 8 — the price of ONE keyword — while
+   * a call of that tool costs 13 to 85, because 5 credits are charged once per call whatever the
+   * count. The label is the only thing on this page carrying either fact, so a label that lost
+   * "per keyword" would read as a call price and a label that lost the base would understate every
+   * call by exactly the base.
+   *
+   * BOTH halves are asserted against the PRICE TABLE, not against the string: the base is read out
+   * of CREDIT_UNITS, so a signed change to it fails here rather than leaving the page quoting a
+   * number nobody charges.
+   */
+  it("labels the per-keyword row with its unit AND its per-call base", () => {
+    render(<Page />);
+    const label = PAID_TOOL_ROW.serp_snapshot ?? "";
+    expect(label).toMatch(/per keyword/i);
+    const base = CREDIT_UNITS.serp_snapshot.base;
+    expect(base).toBeGreaterThan(0);
+    expect(label).toContain(`${base} credits per call`);
+    const row = screen.getByText(label).closest("tr");
+    if (row === null) throw new Error("no credit-cost row rendered for the snapshot tool");
+    expect(within(row).getByText(String(TOOL_COSTS.serp_snapshot))).toBeTruthy();
   });
 
   it("shows the beta badge and no popularity claims", () => {
