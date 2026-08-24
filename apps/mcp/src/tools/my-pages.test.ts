@@ -17,6 +17,7 @@ import {
   WHAT_THE_VENDOR_RETURNS,
   formatMyPages,
   makeMyPagesTool,
+  myPagesCrawlView,
   renderCrawledPage,
   renderPositions,
   renderVendorPage,
@@ -637,5 +638,65 @@ describe("the tools/list description keeps its promises", () => {
   it("does not promise keywords, and points at the tool that does", () => {
     expect(tool.description).toMatch(/does NOT carry the keywords a page ranks for/i);
     expect(tool.description).toContain("ranked_keywords");
+  });
+});
+
+describe("the crawl card stored on the run row (migration 0031)", () => {
+  /**
+   * THE THREE STATES STAY THREE. "No project was named, so no crawl was looked for" and "a project
+   * was named and has no succeeded crawl" are different sentences — `CrawlSide` keeps them apart
+   * for that reason and the stored card must too, because a row that recorded either as
+   * "0 pages compared" would carry a claim nobody measured.
+   */
+  it("keeps not_requested and none distinguishable, and both distinct from a comparison", async () => {
+    const result = await fixtureResult();
+    const rows = result.window.rows;
+
+    expect(myPagesCrawlView({ kind: "not_requested" }, rows)).toEqual({
+      kind: "not_requested",
+      job_id: null,
+      ran_at: null,
+      pages_compared: null,
+      truncated: null,
+      matched: null,
+      vendor_only: null,
+      crawl_only: null,
+    });
+    expect(myPagesCrawlView({ kind: "none" }, rows).kind).toBe("none");
+    expect(myPagesCrawlView({ kind: "none" }, rows).pages_compared).toBeNull();
+  });
+
+  /**
+   * THE COUNTS ARE THE JOIN'S OWN, recomputed rather than re-derived: the card is asserted against
+   * `joinPages` run independently here, so a card that counted something else — say `rows.length`
+   * minus the matches — fails rather than merely looking plausible.
+   */
+  it("carries the join's three populations, and the crawl's identity beside them", async () => {
+    const result = await fixtureResult();
+    const rows = result.window.rows;
+    // One vendor page the crawl also fetched, and one page only the crawl has.
+    const crawledUrls = [rows[0]?.page_address as string, "https://example.com/only-crawled"];
+    const expected = joinPages(rows, crawledPages(crawledUrls));
+
+    const card = myPagesCrawlView(crawlOf(crawledUrls), rows);
+    expect(card.kind).toBe("crawl");
+    expect(card.job_id).toBe("job-1");
+    expect(card.ran_at).toBe("2026-08-18T09:00:00.000Z");
+    expect(card.pages_compared).toBe(2);
+    expect(card.truncated).toBe(false);
+    expect(card.matched).toBe(expected.matched.length);
+    expect(card.vendor_only).toBe(expected.vendorOnly.length);
+    expect(card.crawl_only).toBe(expected.crawlOnly.length);
+    // …and the join really was non-trivial: one match and one crawl-only page.
+    expect(card.matched).toBe(1);
+    expect(card.crawl_only).toBe(1);
+  });
+
+  /** COUNTS ONLY — no crawled URL and no vendor address leaves through this card. */
+  it("stores no URL at all", async () => {
+    const result = await fixtureResult();
+    const card = myPagesCrawlView(crawlOf(["https://example.com/only-crawled"]), result.window.rows);
+    expect(JSON.stringify(card)).not.toContain("only-crawled");
+    expect(JSON.stringify(card)).not.toContain("http");
   });
 });
