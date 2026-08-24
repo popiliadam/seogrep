@@ -21,6 +21,12 @@ import type {
   TargetPageRow,
 } from "./backlink-details.ts";
 import type {
+  DisavowCandidate,
+  DisavowCandidates,
+  DisavowCriteria,
+  ReferringNetworkRow,
+} from "./disavow-candidates.ts";
+import type {
   RankedKeywordRow,
   RankedKeywordsResult,
   RankedKeywordsSort,
@@ -312,13 +318,60 @@ export interface BacklinkDetailsRunReport {
   readonly target_pages: CappedList<TargetPageRow>;
 }
 
-/** The five reports — the only five things `domain_lookup_runs.report` ever holds. */
+/**
+ * disavow_candidates' report.
+ *
+ * NO `locale` KEY, for BacklinksRunReport's reason.
+ *
+ * WHAT `total` IS: OUR count of the candidate DOMAINS this run produced — not a vendor number, and
+ * the report says so by carrying the vendor's own count under a different name
+ * (`matching_links_total`). The candidate list is DERIVED from a window of links the caller's own
+ * criteria filtered, so every counter here is a statement about THIS run's criteria; `criteria` is
+ * stored verbatim beside them so a later reader can see which question was asked.
+ */
+export interface DisavowCandidatesRunReport {
+  /** The thresholds and vendor orderings that produced the list, VERBATIM. */
+  readonly criteria: DisavowCriteria;
+  /** OUR count of the candidate domains in this run, pre-cap. */
+  readonly total: number;
+  /** Distinct domains the link window named BEFORE the candidate cap was applied. */
+  readonly distinct_domains: number;
+  /**
+   * DFS `total_count` for the FILTERED link set — the vendor's count of the links matching THIS
+   * run's criteria, never of the target's whole backlink profile. Null = the vendor did not say.
+   */
+  readonly matching_links_total: number | null;
+  /** Links RECEIVED in the filtered window, before MAX_RUN_ROWS. */
+  readonly matching_links_shown: number;
+  /**
+   * The first candidate, under the candidate ordering the port applies (vendor `spam_score` first;
+   * see compareCandidates). `spam_score` is DataForSEO's per-domain score and is null when the
+   * vendor returned none for that domain — which is not 0, and is never rendered as one.
+   */
+  readonly top: {
+    readonly domain: string;
+    readonly spam_score: number | null;
+    readonly window_link_count: number;
+  } | null;
+  /**
+   * The first MAX_RUN_ROWS candidates. A PLAIN capped array rather than a CappedList: a CappedList
+   * carries `total_count`, which on this list would have to be a permanent null standing for
+   * "there is no vendor number here at all" rather than for "the vendor did not say" — two
+   * different facts under one null is exactly what 0027's locale-column note refuses.
+   */
+  readonly candidates: readonly DisavowCandidate[];
+  /** The referring-network window: a real vendor set, so it keeps its vendor count. */
+  readonly referring_networks: CappedList<ReferringNetworkRow>;
+}
+
+/** The six reports — the only six things `domain_lookup_runs.report` ever holds. */
 export type DomainLookupReport =
   | RankedKeywordsRunReport
   | BacklinksRunReport
   | CompetitorsRunReport
   | BacklinkChangesRunReport
-  | BacklinkDetailsRunReport;
+  | BacklinkDetailsRunReport
+  | DisavowCandidatesRunReport;
 
 /**
  * Build ranked_keywords' report from the result the FORMATTER is about to render (pure).
@@ -491,6 +544,38 @@ export function backlinkDetailsRunReport(
   };
 }
 
+/**
+ * Build disavow_candidates' report from the result the formatter is about to render (pure).
+ *
+ * It takes NO query argument, and that is not an omission: every parameter this tool accepts is
+ * already inside `result.criteria`, carried there by the port so the ANSWER states the question.
+ * Re-reading them off the input here would open the one gap that matters — a criterion the port
+ * clamped (clampLinkRows, clampSpamScore) would be recorded at the value the caller typed rather
+ * than the value the lookup ran under.
+ */
+export function disavowCandidatesRunReport(
+  result: DisavowCandidates,
+): DisavowCandidatesRunReport {
+  const best = result.candidates.rows[0];
+  return {
+    criteria: result.criteria,
+    total: result.candidates.window_candidate_count,
+    distinct_domains: result.candidates.window_distinct_domain_count,
+    matching_links_total: result.links.vendor_total_count,
+    matching_links_shown: result.links.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            domain: best.domain,
+            spam_score: best.spam_score,
+            window_link_count: best.window_link_count,
+          },
+    candidates: capRows(result.candidates.rows),
+    referring_networks: cappedWindow(result.referring_networks),
+  };
+}
+
 /** Everything one `domain_lookup_runs` row is keyed by. */
 export interface DomainLookupRunTarget {
   readonly userId: string;
@@ -518,7 +603,8 @@ export type DomainLookupTool =
   | "analyze_backlinks"
   | "compare_competitors"
   | "backlink_changes"
-  | "backlink_details";
+  | "backlink_details"
+  | "disavow_candidates";
 
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type DomainLookupRunWriter = (
