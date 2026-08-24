@@ -72,42 +72,46 @@ export function renderPlacement(placement: SerpPlacement): string {
 export function renderKeywordRow(index: number, row: SerpKeywordRow): string {
   const heading = `${index + 1}. "${row.measurement.keyword}"`;
   const outcome = row.outcome;
+  const clocks = renderRowClocks(row);
   if (outcome.status === "not_measured") {
-    return `${heading} — NOT MEASURED: ${outcome.reason}\n    ${outcome.means}`;
+    return `${heading} — NOT MEASURED: ${outcome.reason}\n    ${outcome.means}\n${clocks}`;
   }
   if (outcome.status === "absent_from_examined_results") {
-    return `${heading} — not found among the ${outcome.organic_items_examined} organic ` +
-      `result(s) examined.\n    ${outcome.means}`;
+    return (
+      `${heading} — not found among the ${outcome.organic_items_examined} organic ` +
+      `result(s) examined.\n    ${outcome.means}\n${clocks}`
+    );
   }
   const found =
     `${heading} — found in ${outcome.placements.length} of the ` +
     `${outcome.organic_items_examined} organic result(s) examined:`;
-  return [found, ...outcome.placements.map(renderPlacement), `    ${outcome.means}`].join("\n");
+  return [found, ...outcome.placements.map(renderPlacement), `    ${outcome.means}`, clocks].join(
+    "\n",
+  );
 }
 
 /**
- * OUR clock and the vendor's, never merged. `fetched_at` is when THIS process received the
- * response; the vendor's own time is printed under the key it arrived on, or its absence is stated.
- * The port refuses to substitute one for the other and this line carries that refusal to the page.
+ * OUR clock and the vendor's, on EVERY keyword's own block — never summarised across the snapshot.
+ *
+ * That is not symmetry for its own sake: an N-keyword snapshot is N SEPARATE REQUESTS (the vendor's
+ * `keyword` parameter is singular), so the keywords have N different vendor timestamps and N
+ * different arrival times. A single summary line would have to pick one and speak for all of them,
+ * which is a measurement claim about requests it never read — and this module has no way to know
+ * they agreed. `keyword_positions` prints the pair per reading for the same reason; this is the
+ * same discipline at the moment the reading is taken.
+ *
+ * `fetched_at` is when THIS process received the response; the vendor's own time is printed under
+ * the key it arrived on, or its absence is stated. The port refuses to substitute one for the other
+ * and this line carries that refusal to the page.
  */
-export function renderClocks(rows: readonly SerpKeywordRow[]): string {
-  const reported = rows.filter((row) => row.observed.vendor_reported_time_value !== null);
-  const [first] = rows;
-  const ours =
-    first === undefined
-      ? ""
-      : `SeoGrep's own clock at the moment the first response arrived: ${first.observed.fetched_at}.`;
-  if (reported.length === 0) {
-    return `${ours} DataForSEO did not report when it measured, so no vendor time is shown.`;
-  }
-  const sample = reported[0] as SerpKeywordRow;
-  return (
-    `${ours} DataForSEO reported ` +
-    `${sample.observed.vendor_reported_time_field ?? "a time"} ` +
-    `"${sample.observed.vendor_reported_time_value ?? ""}" for ${reported.length} of ` +
-    `${rows.length} keyword(s); that is the vendor's account of when it measured, and it is a ` +
-    "different claim from the clock reading above."
-  );
+export function renderRowClocks(row: SerpKeywordRow): string {
+  const ours = `    Received at ${row.observed.fetched_at} (SeoGrep's own clock).`;
+  return row.observed.vendor_reported_time_value === null
+    ? `${ours} DataForSEO did not report when it measured.`
+    : `${ours} DataForSEO reported ` +
+        `${row.observed.vendor_reported_time_field ?? "a time"} ` +
+        `"${row.observed.vendor_reported_time_value}" as when it measured — a different claim ` +
+        "from the clock reading above.";
 }
 
 /** The whole answer. */
@@ -131,7 +135,6 @@ export function formatSerpSnapshot(subject: string, result: SerpSnapshotResult):
     meaning,
     `${CALLER_ORDER_NOTE} ${examined}`,
     result.rows.map((row, index) => renderKeywordRow(index, row)).join("\n\n"),
-    renderClocks(result.rows),
     storedNote(result.rows.length),
   ]
     .filter((block) => block.length > 0)

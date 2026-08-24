@@ -471,12 +471,39 @@ describe("what the answer says (NEVER #7)", () => {
     expect(text).toMatch(/computes no score/i);
   });
 
-  /** Our clock and the vendor's are two different claims and are never merged into one. */
-  it("keeps the two clocks apart", async () => {
-    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
-    expect(text).toContain("2026-08-24T09:00:00.000Z");
-    expect(text).toContain('datetime "2026-08-19 09:14:22 +00:00"');
+  /**
+   * OUR clock and the vendor's are two different claims and are never merged — and the pair is
+   * printed PER KEYWORD, never once for the snapshot. An N-keyword snapshot is N separate requests
+   * with N separate timestamps, so a single summary line would have to speak for requests it never
+   * read; the assertion below is that BOTH keywords carry their own pair.
+   */
+  it("keeps the two clocks apart, on every keyword's own block", async () => {
+    const text = formatSerpSnapshot(
+      '"rival-one-fixture.test"',
+      await snapshotOf({ keywords: ["seo software", "second keyword"] }),
+    );
+    expect(text.match(/Received at 2026-08-24T09:00:00\.000Z \(SeoGrep's own clock\)/g)).toHaveLength(
+      2,
+    );
+    expect(text.match(/datetime "2026-08-19 09:14:22 \+00:00"/g)).toHaveLength(2);
     expect(text).toMatch(/different claim from the clock reading/i);
+  });
+
+  /** A row the vendor gave no time for says so, rather than borrowing our own clock reading. */
+  it("states the ABSENCE of a vendor time instead of substituting ours", async () => {
+    const port = createMockSerpSnapshotPort(NO_RESULT_ENVELOPE, CLOCK);
+    const text = formatSerpSnapshot(
+      '"x.test"',
+      await port.fetchSerpSnapshot({
+        target_domain: "x.test",
+        keywords: ["k"],
+        location_name: "United States",
+        language_code: "en",
+        device: "desktop",
+      }),
+    );
+    expect(text).toContain("DataForSEO did not report when it measured");
+    expect(text).toContain("Received at 2026-08-24T09:00:00.000Z");
   });
 
   it("says how many measurements were stored, and where to read them back", async () => {
