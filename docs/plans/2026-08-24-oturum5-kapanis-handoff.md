@@ -1,4 +1,8 @@
-# 5. OTURUM KAPANIŞ HANDOFF — 2026-08-24
+# 5. OTURUM KAPANIŞ HANDOFF — 2026-08-24/25
+
+> **SON DURUM (oturum gerçekten kapandı):** `main` @`9eed09c` · **11 PR merge** · açık PR **0** ·
+> **PARÇA 2 TAMAMEN KAPANDI** — on tool'un onunun da panelde yüzeyi var · migration **0032**
+> prod'da UYGULANDI ve TABLO OKUNARAK doğrulandı · canlı yüzey **36 tool**.
 
 > Taze oturum `PLAN.md`'nin handoff bloğundan başlar; **bu dosya ayrıntı**. Buradaki her sayı bu
 > oturumda koda ya da prod'a karşı ölçüldü. **Ölçmediklerim adıyla yazılı.**
@@ -44,6 +48,10 @@ Operatör SQL'i uyguladı ("Success. No rows returned"). O bir **sinyal**; ölç
 | #162 | doküman sapmaları | 6 yanlış migration referansı · 7 bayat CHECK sayısı · **9** kaymış fiyat önerisi |
 | #166 | handoff + chip envanteri | 9 chip çıktı, 3 tarif düzeldi, 6 yeni chip |
 | #168 | **T1 — çift yönlü kiracı testi** | iki dosyada (dört değil, aşağı bak) |
+| #170 | **P1** — per-birim rezervasyon pini **kuraldan kapıya** |
+| #171 | chip batch **T2 · T6 · T7** |
+| #172 | **K7** — index zırhı: 14 index'in hiçbiri pinli değildi |
+| #173 | **0032** — Parça 2'nin son üç tool'u |
 
 ---
 
@@ -201,3 +209,99 @@ edilmemişti, sızmadı; dal genelinde `uid=|gid=|/Users/apple` tarandı → **0
 
 ### Biçimlendirme
 Repo'da prettier config **yok** → formatter `eslint` (**N10**).
+
+---
+
+## 9. OTURUMUN İKİNCİ YARISI — Parça 2 kapandı, dört chip daha düştü
+
+### 9.1 `subject_lookup_runs` (0032) — ve hakemin yakaladığı şey
+
+Son üç tool (`discover_keywords` 40 · `ai_visibility` 90 · `ai_visibility_compare` 90/hedef)
+0027'ye giremiyordu. Çözüm: **tek tablo, kimliği BİRLİKTE okunan iki sütun** — `subject_kind`
+(saklanan ayırt edici) + `subject text[]`, kardinaliteyi kind'a bağlayan CHECK ile. 0030'un
+`status` şekli. `ai_visibility_compare` **koşuya değil KONUYA** anahtarlandı: bir çağrı 2-10 satır.
+
+**PROD'DA, tabloya bakarak doğrulandı:** RLS enabled+**forced** · 1 policy · **4 CHECK** ·
+`credit_ledger` **701, dokunulmadı** · `anon` hiç DML yok · `authenticated` yalnız SELECT ·
+`service_role` SELECT+INSERT. SQL **tamamen eklemeliydi**, o yüzden şef uyguladı.
+
+> **HAKEM TURU 1 FAIL — ve bu oturumun en değerli bulgusu.** Üç kapı da YEŞİLDİ (`verify.sh` ·
+> `verify-db` 26 yeni DB spec dahil · `gitleaks` · `make goals` 16/16) ve sekiz mutasyonun sekizi
+> kırmızıydı. Buna rağmen karşılaştırma yazımı **atomik değildi**: 2-10 satır `for` döngüsünde,
+> her biri ayrı `.insert(row)` → ayrı transaction, ayrı `now()`.
+>
+> **Üç sonucu vardı:** (1) *k*. insert patlarsa öncekiler **kalıcı olur** ve `withCredits`
+> rezervasyonu serbest bırakır → **ücretlendirilmemiş satırlar**, tekrar denemede **kopyalar**;
+> (2) iki yorum *"tek transaction … damgayı YAPISI GEREĞİ paylaşırlar"* diye **yanlış bir üretim
+> özelliği** iddia ediyordu; (3) o özelliği adlandıran spec yazıcıyı **ilk** çağrıda düşürdüğü
+> için **totolojik** geçiyordu — önemli eksen (**ikinci** satır) hiç koşulmamıştı.
+>
+> Düzeltmenin deseni **repoda zaten vardı**: `serp-snapshot-store.ts:229`, 0032'nin anahtar-seçim
+> argümanını ödünç aldığı **kardeş** migration'ın deposu, N satırı tek `.insert(rows.map(...))`
+> ile yazıyor.
+
+### 9.2 K7 — index zırhı
+
+14 `create index` (12 düz + **2 unique**) ve **hiçbiri hiçbir kapıda pinli değildi**.
+`gen-db-types` index üretmiyor · üç statik kapı index bakmıyor · hiçbir spec `pg_indexes` demiyor.
+Beklenti **migration'lardan türetiliyor**, yorumlar **önce sökülerek** (birkaç migration'da
+`-- Reverse:` blokları var ve o satırlar **yorum içinde duran gerçek SQL**). **İki yön de** iddia
+ediliyor.
+
+### 9.3 P1 — kuraldan kapıya, ve şefin kendi regresyonu
+
+Per-birim bir tool'un rezervasyon pini bir **konvansiyondu**; artık `CREDIT_UNITS`'teki her tool
+için **zorlanıyor**.
+
+> **Şefin ilk gerekçesi YANLIŞTI ve hakem çürüttü.** "`units:` düşürmek düz fiyatı rezerve eder"
+> yazdım; `costs.ts:356` **fırlatıyor** — ve **o fırlatmayı iki dilim önce ben eklemiştim (P5/#163)**.
+> Doğru tarif kardeş dosyada (`serp-snapshot.reserve.test.ts:18-21`) o cümleyi yazdığım anda
+> **zaten duruyordu**. Gerçek delik **yanlış SAYI**: `units: 1` on kelimelik bir çağrıyı **13**
+> kredi ediyor, imza **85** — 2.621 spec yeşil.
+
+---
+
+## 10. ŞEFİN ÖLÇÜM HATALARI — TAM LİSTE, altı tane
+
+§3'teki üçe ek olarak oturumun ikinci yarısında üç tane daha. **Altısı da aynı sınıf: bir iddiayı,
+onu doğrulayan eksenden BAŞKA bir eksende kontrol etmek.**
+
+| # | hata | doğrusu |
+|---|---|---|
+| 1 | *"her öneri costs.ts'e karşı okundu"* — okunmamıştı | üç tool kaçtı |
+| 2 | `link_gap` *"hiç sevk edilmedi, imzası yok"* | **imzalı ve canlı, 45** |
+| 3 | "four CHECK" → **"beş"** | repo'nun kendi kelimesi **yedi** |
+| 4 | T1 chip'i "bir dosya" dedi, şef **"dört"** | **iki** — sahip-tarafı yarısı aynı testin **GÖVDESİNDE**, şef **adları** grep'ledi |
+| 5 | T6 için **yedi dosya** | **beş** — `\b` sınırı `www.example.com` içindeki `.example`'ı yakaladı, ama TLD **`com`** ve o public |
+| 6 | K7 için **"12 index"** | **14** — `grep -c "create index"` iki `create unique index`'i kaçırdı |
+
+**Altısı da hakemler ya da işçiler tarafından yakalandı. Hiçbiri kapıdan geçmedi — ama hiçbirini
+kapı da yakalayamazdı.** Yeşil bir `verify.sh`, yanlış bir yorumun ya da yanlış bir gerekçenin
+üstünden geçer. Yakalayan şey her seferinde **taze bağlamlı ikinci bir okuyucu** oldu.
+
+> **DERS (imzasız, ve bu oturumun en güçlü adayı):** *Bir chip'in TARİFİ de bir iddiadır ve
+> ölçülmeden iş emrine taşınmaz.* Bu oturumda **dört chip tarifi** yanlış çıktı — ikisini chip
+> yanlış söyledi, **ikisini şef yanlış "düzeltti"**. Bir chip'i düzeltmek, onu doğrulamak değildir.
+
+---
+
+## 11. YENİ CHIP'LER — ikinci yarı
+
+| # | chip | ölçüm |
+|---|---|---|
+| **N11** | **CPU çekişmesi zamanlama-duyarlı spec'leri besliyor** | Üç ajan paralelken `disconnect-button.test.tsx` rerender yarışı kırmızı verdi; izole koşuda 20/20, tam kapı sonra PASS. Worktree izolasyonu **dosya** çakışmasını çözüyor, **CPU**'yu değil — imzalı ders 8'in inceltilmesi |
+| **N12** | **`serp.test.ts` `example-fixture.test` kullanıyor** | `test` de `NON_PUBLIC_TLDS`'te — T6'nın aynısı, farklı TLD. **Kasten düzeltilmedi:** literal iki paylaşılan fixture JSON'ında ve **beş** spec dosyasında, biri koşulamayan bir DB şeridi |
+| **N13** | **`0032` bulut-uygula edildi ama `0023–0031` deseni gibi başkaları da olabilir** | 0032 şef tarafından uygulandı çünkü **eklemeliydi**. Bir sonraki migration `drop constraint` isterse **operatöre gider** — hangisinin hangisi olduğu iş emrinde yazılmalı |
+
+---
+
+## 12. NE KALDI — ve kim yapabilir
+
+| iş | kim | neden |
+|---|---|---|
+| **CANLI SMOKE** | **OPERATÖR** | Şef yapamıyor: izin katmanı prod POST'unu reddediyor. Ve bu **en kritik** açık: fixture'lar DFS **dokümantasyon** örnekleri, ölçülmüş yanıt değil. Alan adları değiştiyse çağrı **patlamaz**, sessizce `n/a` basar — hiçbir kapı bunu göremez |
+| **`keyword_trends`** | **ZAMAN** | bir hafta gerçek `dfs_spend` verisi → vendor maliyeti ölçülür → marj pinlenir → sevk edilir |
+| **cron alt-bütçesi** · **ürün adaleti** · **N3** | **OPERATÖR** | imzasız sayılar ve bir politika kararı |
+| kalan chip'ler | **KOD** | `K1`–`K6` · `P2` `P3` · `T3` `T4` `T5` `T8` · `D3` · `W5` `W6` · `N2`–`N13` |
+| **K5** | **DECOMPOSE** | 42 hata / 21 dosya + `packages/*` de dışlıyor |
+| **T3** | **REVISE** | locale hem abonelik kimliği hem vendor değeri; dört modül birlikte |
