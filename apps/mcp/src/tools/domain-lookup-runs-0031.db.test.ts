@@ -325,3 +325,52 @@ describe("2. NO ROW ON A REFUSAL — an undelivered lookup leaves nothing behind
   });
 });
 
+describe("3. FAIL-CLOSED — a run that cannot be recorded is not charged for", () => {
+  /**
+   * A REAL database rejection on the DEFAULT writer: the project loader reports an id that does
+   * NOT exist, so 0027's composite FK refuses the insert. Nothing is stubbed on the WRITE path.
+   * The ledger is the proof — reserve then RELEASE, no `spend_commit` — because a handler that
+   * caught the write error and returned the table would charge the tenant for a lookup the panel
+   * will never show.
+   */
+  it.each(LOOKUPS)("$name: a rejected insert releases the reserve — no commit, no row", async ({
+    name,
+    extra,
+    serving,
+  }) => {
+    const ctx: AuthContext = { userId: await makeUserId(), keyId: `key-${randomUUID()}` };
+    await seedPurchase(ctx.userId, 300);
+    const ghostProjectId = randomUUID();
+
+    const tool = serving({
+      loadProject: async () => ({
+        id: ghostProjectId,
+        domain: "ghost.example.com",
+        archivedAt: null,
+      }),
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(tool.run(ctx, { project_id: ghostProjectId, ...extra })).rejects.toThrow(
+        /domain_lookup_runs write failed/i,
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    const kinds = await ledgerKinds(ctx.userId);
+    expect(kinds).toEqual(["purchase", "spend_reserve", "spend_release"]);
+    expect(await runRows(ctx.userId)).toEqual([]);
+
+    // …and the released reserve was the SIGNED price, so the balance is whole again.
+    const { data } = await service
+      .from("credit_ledger")
+      .select("delta")
+      .eq("user_id", ctx.userId)
+      .order("id", { ascending: true });
+    expect(data?.[1]?.delta).toBe(-TOOL_COSTS[name]);
+    expect((data ?? []).reduce((sum, row) => sum + row.delta, 0)).toBe(300);
+  });
+});
+
