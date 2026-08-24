@@ -317,6 +317,33 @@ export function creditCostFor(tool: ToolName, units?: number): number {
  *                     one-target comparison priced at 90 passed a floor the operator signed at 180.
  *   - ABOVE  max    — pricing a call the vendor would refuse anyway.
  *   - NON-INTEGER   — half a unit is not a count.
+ *   - A RULE THAT IS NOT A PRICE — see {@link assertPriceRuleIsWellFormed} directly below, and read
+ *                     the paragraph after this list for what that does and does NOT buy.
+ *
+ * WHAT THIS FUNCTION GUARANTEES ABOUT ITS ARGUMENTS, AND WHAT IT CANNOT.
+ *
+ * It GUARANTEES, for every call, that the four numbers it multiplies and adds are numbers a price
+ * could be made of: `base` and `unitCredits` are non-negative whole credits, `min_units` is a whole
+ * count of at least 1, and `max_units` is a whole count no lower than `min_units` (the checks below,
+ * pinned by their own specs). What follows from that alone is worth naming, because it is exactly
+ * what the arithmetic would otherwise take on trust: the returned amount is a non-negative integer,
+ * it never DECREASES as the count rises, and no in-range count can price a call below the floor
+ * `min_units` was signed at.
+ *
+ * It does NOT — and CANNOT — guarantee that the rule it was handed is a rule anybody SIGNED. The
+ * `rule` and `unitCredits` arrive as parameters rather than being looked up from CREDIT_UNITS and
+ * TOOL_COSTS by name, deliberately (see the paragraph above about proving a price as arithmetic
+ * before its tool exists, which the specs in costs.test.ts rely on), and that is a hole with a
+ * shape: nothing here can tell `serp_snapshot`'s signed `base: 5` from a `base: 4` a future handler
+ * invented, because both are well-formed. Well-formed is not approved.
+ *
+ * What holds THAT line is one level up, and is unaffected by these checks: {@link creditCostFor}
+ * reads both numbers out of the human-approved tables by tool name and is the only path a real
+ * charge takes (guard.ts calls it; no handler calls this function to bill), and both tables are
+ * pinned byte-for-byte in costs.test.ts, so an edited price fails there before it can be charged.
+ * The checks below therefore protect the DIRECT caller — the arithmetic-before-the-tool path, and
+ * any future rule on its way into the table — not today's two signed rules, which cannot hold a
+ * malformed value without failing the byte-pins first.
  */
 export function creditsForUnits(
   label: string,
@@ -325,6 +352,7 @@ export function creditsForUnits(
   units: number | undefined,
 ): number {
   const base = rule.base ?? 0;
+  assertPriceRuleIsWellFormed(label, rule, base, unitCredits);
   if (units === undefined) {
     throw new Error(
       `"${label}" is priced per ${rule.unit}, so the call must say how many it buys. Charging it ` +
@@ -339,4 +367,66 @@ export function creditsForUnits(
     );
   }
   return base + unitCredits * units;
+}
+
+/**
+ * THE RULE ITSELF, CHECKED — the preconditions `base + unit x count` was silently taking on trust.
+ *
+ * {@link creditsForUnits} refused everything about the COUNT and nothing about the PRICE it counted
+ * against: `rule.base ?? 0` accepted a negative base, `unitCredits` accepted any number at all, and
+ * a floor of 0 or a ceiling below its own floor were simply arithmetic. Each of those computes a
+ * number and returns it, which is the shape that mis-charges a tenant while every gate stays green.
+ *
+ * A NEGATIVE BASE IS NOT CAUGHT BY THE RANGE PIN ABOVE IT, measured rather than assumed: the loop in
+ * costs.test.ts that prices every rule at both ends asserts the floor is `> 0`, and on the signed
+ * `serp_snapshot` rule (unit 8, min_units 1) a base of -5 gives a floor of 3 — greater than zero,
+ * with the gap and the base-counted-once assertions both still satisfied, because a negative base is
+ * as consistent with `base + unit x N` as a positive one. What catches it on the TABLE is the
+ * byte-for-byte `toEqual` pin of CREDIT_UNITS, which no direct caller passes through.
+ *
+ * So these refusals are for the DIRECT caller: the path costs.ts's own header describes, where a
+ * price is proven as arithmetic against a hand-made rule before its tool exists, and where a future
+ * rule is shaped before it reaches the signed table. They are LOUD and they are internal errors —
+ * every one of them means a caller inside this codebase built a rule that is not a price.
+ *
+ * Each bound is chosen to be UNREACHABLE by anything currently signed, checked against both tables
+ * before it was written: `unitCredits >= 0` admits every TOOL_COSTS value including the zero rows
+ * (costs.test.ts pins the whole table as non-negative integers, so this can never reject a signed
+ * price), `base >= 0` admits the one base that exists (5) and the absent-means-0 shape, `min_units
+ * >= 1` admits 2 and 1, and `max_units >= min_units` admits both 10s. A guard that rejected a signed
+ * value would be an outage, not a safeguard.
+ */
+function assertPriceRuleIsWellFormed(
+  label: string,
+  rule: PerUnitPriceRule,
+  base: number,
+  unitCredits: number,
+): void {
+  // `Number.isInteger` is false for NaN and for both infinities, so "finite" needs no second check.
+  const isCreditAmount = (value: number): boolean => Number.isInteger(value) && value >= 0;
+
+  if (!isCreditAmount(base)) {
+    throw new Error(
+      `"${label}" carries a base of ${base}, which is not a price: the fixed part of a call is ` +
+        `charged once per call and must be a whole number of credits, zero or more.`,
+    );
+  }
+  if (!isCreditAmount(unitCredits)) {
+    throw new Error(
+      `"${label}" is priced at ${unitCredits} per ${rule.unit}, which is not a price: a unit ` +
+        `price must be a whole number of credits, zero or more.`,
+    );
+  }
+  if (!Number.isInteger(rule.min_units) || rule.min_units < 1) {
+    throw new Error(
+      `"${label}" claims a floor of ${rule.min_units} ${rule.unit}s: a priced call buys at least ` +
+        `one, so the floor must be a whole number of 1 or more.`,
+    );
+  }
+  if (!Number.isInteger(rule.max_units) || rule.max_units < rule.min_units) {
+    throw new Error(
+      `"${label}" claims a ceiling of ${rule.max_units} ${rule.unit}s against a floor of ` +
+        `${rule.min_units}: the ceiling must be a whole number no lower than the floor.`,
+    );
+  }
 }

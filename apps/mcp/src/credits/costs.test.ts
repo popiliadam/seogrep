@@ -170,6 +170,52 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
     expect(() => creditCostFor("ai_visibility", 2)).toThrow(/priced per call/i);
   });
 
+  /**
+   * THE OTHER SIDE OF 1 — the half the spec above cannot see, and the reason that refusal was
+   * unpinned rather than pinned.
+   *
+   * The check reads `units !== undefined && units !== 1`: not "more than one", but "anything that is
+   * not exactly one". Every count the spec above passes is above 1, so RELAXING the condition to
+   * `units > 1` left the ENTIRE suite green (MEASURED) while 0, a negative count, a fraction and a
+   * NaN all started returning the flat table price in silence. Silence is the whole failure mode:
+   * the number returned is not a report, it is the amount guard.ts reserves and commits against a
+   * tenant's ledger.
+   *
+   * 0 is the value that matters most, because `spec.units?.(input)` is a FUNCTION over caller input
+   * (registry.ts) — a count that comes out 0 is what an empty list or a filtered-to-nothing
+   * selection produces, i.e. a shape a refactor reaches, not one a human types. On a tool that has
+   * no per-unit price at all it must be an error, never a charge.
+   *
+   * Asserted on more than one tool on purpose: `whats_next` costs 0, so a relaxation would return a
+   * harmless-looking 0 there and a full 40 next door — the same bug wearing two faces.
+   */
+  it("refuses ANY unit count that is not exactly 1 on a per-call tool — 0 included", () => {
+    expect(() => creditCostFor("discover_keywords", 0)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("discover_keywords", 0)).toThrow(
+      /cannot be charged for 0 units/,
+    );
+    expect(() => creditCostFor("discover_keywords", -1)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("discover_keywords", 0.5)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("discover_keywords", Number.NaN)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("whats_next", 0)).toThrow(/priced per call/i);
+    expect(() => creditCostFor("crawl_site", 0)).toThrow(/priced per call/i);
+  });
+
+  /**
+   * …and the same sweep over the WHOLE per-call surface, so a tool added later inherits the refusal
+   * instead of needing a line of its own. The sibling loop BELOW ("still charges a per-call tool
+   * with no units argument") proves 34 tools still price at their table value; this one proves the
+   * same 34 refuse to be priced for a count of zero.
+   */
+  it("refuses a zero count on EVERY per-call tool, not just the ones named above", () => {
+    for (const tool of Object.keys(TOOL_COSTS) as ToolName[]) {
+      if (isPerUnitTool(tool)) continue;
+      expect(() => creditCostFor(tool, 0), `${tool}: a zero count was priced, not refused`).toThrow(
+        /priced per call/i,
+      );
+    }
+  });
+
   it("refuses a unit count outside the signed range, rather than reserving for it", () => {
     expect(() => creditCostFor("ai_visibility_compare", 0)).toThrow(/outside that range/i);
     expect(() => creditCostFor("ai_visibility_compare", 11)).toThrow(/outside that range/i);
@@ -207,7 +253,7 @@ describe("creditCostFor — the one place a per-unit price is multiplied", () =>
   /**
    * The other side of that coin, and the one that must NOT have moved: every per-call tool is
    * charged with no `units` argument at all. Making omission an error for the per-unit tool while
-   * breaking this path would break all 32 other tools at once.
+   * breaking this path would break all 34 per-call tools at once.
    */
   it("still charges a per-call tool with no units argument — the common path is untouched", () => {
     expect(creditCostFor("ai_visibility")).toBe(90);
@@ -363,6 +409,155 @@ describe("creditsForUnits — base + unit x count", () => {
     expect(() => serpSnapshotCredits(undefined)).toThrow(/must say how many it buys/i);
     // 13, not 8: the sentence has to name what the wrong path would really have charged.
     expect(() => serpSnapshotCredits(undefined)).toThrow(/flat 13 for up to 10 keywords/);
+  });
+});
+
+/**
+ * THE RULE ITSELF — everything above refuses a bad COUNT against a price assumed to be sound.
+ *
+ * `creditsForUnits` takes its price as PARAMETERS (`rule`, `unitCredits`) rather than reading the
+ * signed tables by name, deliberately: that is what lets a price be proven as arithmetic before its
+ * tool exists, which the `serp_snapshot` block above is built on. The cost of that shape is that a
+ * DIRECT caller can hand it numbers no table holds — and until these specs, it computed with all of
+ * them and returned a number. None of it is reachable from today's two rules (the byte-pins below
+ * catch a table edit first), which is exactly why nothing measured it.
+ *
+ * These are internal errors, phrased for the author of a future call site, and every bound was
+ * checked against BOTH signed tables before it was written — see the accepts-what-is-signed spec at
+ * the end, which is the half that would go red if a guard were ever tightened onto a real price.
+ */
+describe("creditsForUnits — the rule itself, refused when it is not a price", () => {
+  /**
+   * WHY THE NEIGHBOURING FLOOR CHECK DOES NOT ALREADY COVER THIS — measured, not argued.
+   *
+   * "pins the rule table, and prices every rule at both ends" asserts the floor is `> 0`, that the
+   * gap between the two ends is `unit x (max - min)`, and that what remains at the floor is the
+   * base. A NEGATIVE base satisfies all three on the signed serp_snapshot shape: -5 + 8 x 1 = 3 is
+   * greater than zero; the gap is untouched, because a per-call term cancels out of a difference;
+   * and the leftover at the floor IS the -5 the rule claims. The three assertions check that the
+   * arithmetic is CONSISTENT, which a negative base is. This spec is the line between consistent
+   * and priced — and the reason the guard is not redundant with the loop next door.
+   */
+  it("would have priced a negative base as a perfectly consistent rule", () => {
+    const negative: PerUnitPriceRule = { unit: "keyword", base: -5, min_units: 1, max_units: 10 };
+    const unitCredits = 8;
+
+    // Everything the neighbouring loop checks is still true of this rule…
+    const floor = (negative.base ?? 0) + unitCredits * negative.min_units;
+    const ceiling = (negative.base ?? 0) + unitCredits * negative.max_units;
+    expect(Number.isInteger(floor)).toBe(true);
+    expect(floor).toBeGreaterThan(0);
+    expect(ceiling).toBeGreaterThanOrEqual(floor);
+    expect(ceiling - floor).toBe(unitCredits * (negative.max_units - negative.min_units));
+    expect(floor - unitCredits * negative.min_units).toBe(negative.base);
+
+    // …and it is still not a price. Without the guard this returned 3 for a one-keyword call whose
+    // signed price is 13 — a 10-credit gift on every call, arriving through a green suite.
+    expect(() => creditsForUnits("t", negative, unitCredits, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", negative, unitCredits, 1)).toThrow(/base of -5/);
+  });
+
+  it("refuses a base that is not a whole number of credits, in either direction", () => {
+    const withBase = (base: number): PerUnitPriceRule => ({
+      unit: "keyword",
+      base,
+      min_units: 1,
+      max_units: 10,
+    });
+    expect(() => creditsForUnits("t", withBase(-1), 8, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", withBase(2.5), 8, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", withBase(Number.NaN), 8, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", withBase(Number.POSITIVE_INFINITY), 8, 1)).toThrow(
+      /not a price/i,
+    );
+    // A base of 0 and an absent base are the SAME price and both stay legal — the guard must not
+    // have quietly outlawed the shape `ai_visibility_compare` ships (asserted again here so a
+    // tightening to `> 0` fails on this line rather than in production).
+    expect(creditsForUnits("t", withBase(0), 8, 1)).toBe(8);
+    expect(creditsForUnits("t", { unit: "keyword", min_units: 1, max_units: 10 }, 8, 1)).toBe(8);
+  });
+
+  it("refuses a unit price that is not a whole number of credits", () => {
+    const rule: PerUnitPriceRule = { unit: "keyword", base: 5, min_units: 1, max_units: 10 };
+    expect(() => creditsForUnits("t", rule, -8, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", rule, 8.5, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", rule, Number.NaN, 1)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", rule, -8, 1)).toThrow(/priced at -8 per keyword/);
+  });
+
+  /**
+   * A floor of 0 prices a call that buys NOTHING at the bare base — the exact shape costs.ts's own
+   * header calls out for `serp_snapshot` ("a zero-keyword call would otherwise be priced at the
+   * bare base"). Stored min_units used to be the only thing standing between that and a charge;
+   * now the floor cannot BE zero.
+   */
+  it("refuses a floor below one unit, or a floor that is not a whole count", () => {
+    const withFloor = (min_units: number): PerUnitPriceRule => ({
+      unit: "keyword",
+      base: 5,
+      min_units,
+      max_units: 10,
+    });
+    expect(() => creditsForUnits("t", withFloor(0), 8, 0)).toThrow(/floor of 0 keywords/);
+    expect(() => creditsForUnits("t", withFloor(0), 8, 4)).toThrow(/at least/i);
+    expect(() => creditsForUnits("t", withFloor(-2), 8, 4)).toThrow(/at least/i);
+    expect(() => creditsForUnits("t", withFloor(1.5), 8, 4)).toThrow(/at least/i);
+    expect(() => creditsForUnits("t", withFloor(Number.NaN), 8, 4)).toThrow(/at least/i);
+    expect(creditsForUnits("t", withFloor(1), 8, 1)).toBe(13);
+  });
+
+  /**
+   * An inverted pair is a rule with NO legal count at all: every integer is either below the floor
+   * or above the ceiling, so the old code answered every call with a range error naming a range
+   * that cannot exist ("charges for 9 to 3 of them"). That is a bug report pointing at the caller
+   * instead of at the rule.
+   */
+  it("refuses a ceiling below its own floor, or a ceiling that is not a whole count", () => {
+    const inverted: PerUnitPriceRule = { unit: "keyword", base: 5, min_units: 9, max_units: 3 };
+    expect(() => creditsForUnits("t", inverted, 8, 5)).toThrow(/ceiling of 3 keywords/);
+    expect(() => creditsForUnits("t", inverted, 8, 5)).toThrow(/no lower than the floor/);
+    const fractional: PerUnitPriceRule = { unit: "keyword", min_units: 1, max_units: 4.5 };
+    expect(() => creditsForUnits("t", fractional, 8, 4)).toThrow(/no lower than the floor/);
+    // min === max is a legitimate rule: exactly one legal count, priced.
+    const exactlyThree: PerUnitPriceRule = { unit: "keyword", base: 5, min_units: 3, max_units: 3 };
+    expect(creditsForUnits("t", exactlyThree, 8, 3)).toBe(29);
+  });
+
+  /**
+   * THE RULE IS CHECKED BEFORE THE COUNT, and the reason is in the omission message: it interpolates
+   * `base + unitCredits`, so a malformed base used to produce the sentence "would bill one call's
+   * flat NaN" — a refusal that names the wrong culprit and an amount that does not exist.
+   */
+  it("names the malformed rule even when the count is missing too — never 'a flat NaN'", () => {
+    const nanBase: PerUnitPriceRule = { unit: "x", base: Number.NaN, min_units: 1, max_units: 4 };
+    expect(() => creditsForUnits("t", nanBase, 7, undefined)).toThrow(/not a price/i);
+    expect(() => creditsForUnits("t", nanBase, 7, undefined)).not.toThrow(/flat NaN/);
+  });
+
+  /**
+   * THE OTHER HALF, and the one that would catch a guard tightened onto a real price: every rule the
+   * operator has actually signed still prices at both ends. A guard is only free while it is
+   * unreachable — one that rejected a signed value would be an outage, not a safeguard (NEVER #6:
+   * this file may not move a price, and a refusal is a way of moving one to "unchargeable").
+   */
+  it("accepts every rule the operator has actually signed, at both ends", () => {
+    const rules = Object.entries(CREDIT_UNITS) as [ToolName, PerUnitPriceRule][];
+    expect(rules.length).toBeGreaterThan(0); // an empty table must not vacuously pass the loop
+
+    for (const [tool, rule] of rules) {
+      expect(() =>
+        creditsForUnits(tool, rule, TOOL_COSTS[tool], rule.min_units),
+      ).not.toThrow();
+      expect(() =>
+        creditsForUnits(tool, rule, TOOL_COSTS[tool], rule.max_units),
+      ).not.toThrow();
+    }
+
+    // A unit price of ZERO is admitted on purpose. Ten signed TOOL_COSTS rows are 0 today and the
+    // pin above allows any of them, so a guard demanding a POSITIVE unit price would refuse to
+    // price a free tool the day one of them is counted per unit.
+    const free: PerUnitPriceRule = { unit: "x", min_units: 1, max_units: 3 };
+    expect(creditsForUnits("t", free, 0, 3)).toBe(0);
   });
 });
 
