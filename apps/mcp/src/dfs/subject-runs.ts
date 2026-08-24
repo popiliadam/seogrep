@@ -444,11 +444,25 @@ export interface SubjectLookupRunTarget {
   readonly identity: SubjectIdentity;
 }
 
-/** The write itself — injectable so a spec can make it fail without breaking a database. */
-export type SubjectLookupRunWriter = (
-  target: SubjectLookupRunTarget,
-  report: SubjectLookupReport,
-) => Promise<void>;
+/** ONE row waiting to be written: what it is keyed by, and the report that belongs to it. */
+export interface SubjectLookupRunDraft {
+  readonly target: SubjectLookupRunTarget;
+  readonly report: SubjectLookupReport;
+}
+
+/**
+ * The write itself — injectable so a spec can make it fail without breaking a database.
+ *
+ * PLURAL, and there is deliberately no singular variant beside it. The two tools that write ONE
+ * row pass an array of one, which costs them nothing: PostgREST treats `[row]` and `row`
+ * identically. What a second, singular writer WOULD cost is the property this signature exists to
+ * carry — atomicity would become a fact about which function a call site happened to pick, and the
+ * next tool to write here could pick the wrong one and re-open the partial write below. One
+ * writer, one insert, one transaction, for every caller. (0026's rule in the shape it takes for
+ * functions: a second function differing only in cardinality is a cardinality flag spelled as a
+ * name.)
+ */
+export type SubjectLookupRunWriter = (rows: readonly SubjectLookupRunDraft[]) => Promise<void>;
 
 type SubjectLookupRunInsert = Database["public"]["Tables"]["subject_lookup_runs"]["Insert"];
 
@@ -468,25 +482,9 @@ export function subjectLookupReportToJson(report: SubjectLookupReport): Json {
   return JSON.parse(JSON.stringify(report)) as Json;
 }
 
-/**
- * Record one measured subject.
- *
- * FAIL-CLOSED, and that is the whole contract (0024/0025/0026/0027/0029's rule): a PostgREST error
- * is re-thrown, never logged and swallowed. The caller runs inside `withCredits`, which COMMITS a
- * handler that returns and RELEASES one that throws — so throwing means the tenant pays NOTHING
- * for a run whose record was lost. Swallowing would produce the opposite and worse shape: a
- * charged tenant, a delivered table, and a panel that will forever say the lookup never ran.
- *
- * AT UP TO 900 CREDITS A CALL this is the most expensive place in the product to get that
- * backwards, and ai_visibility_compare makes the stakes sharper in a second way: the tool writes
- * one row per compared target, so a swallowed error would leave a comparison PARTLY recorded —
- * some targets on the panel and some not, from a call that was charged in full.
- */
-export async function writeSubjectLookupRun(
-  target: SubjectLookupRunTarget,
-  report: SubjectLookupReport,
-): Promise<void> {
-  const row: SubjectLookupRunInsert = {
+/** One draft as the insert row PostgREST is handed. */
+function insertRow({ target, report }: SubjectLookupRunDraft): SubjectLookupRunInsert {
+  return {
     user_id: target.userId,
     project_id: target.projectId,
     tool: target.tool,
@@ -494,8 +492,54 @@ export async function writeSubjectLookupRun(
     subject: [...target.identity.subject],
     report: subjectLookupReportToJson(report),
   };
-  const { error } = await getServiceClient().from("subject_lookup_runs").insert(row);
+}
+
+/**
+ * Record every measured subject of ONE call.
+ *
+ * ONE INSERT FOR THE WHOLE CALL, not one per row, and the reason is the FAILURE SHAPE rather than
+ * the round-trip count — `serp-snapshot-store.ts`'s argument, which is the repo's own precedent for
+ * exactly this shape (migration 0030, the same migration whose key-choice argument 0032 imports).
+ * PostgREST sends an array as a SINGLE statement, so the whole batch commits or none of it does.
+ *
+ * WHAT ROW-AT-A-TIME COST, MEASURED rather than reasoned about: with a `for` loop of single
+ * inserts, making the SECOND row of a two-target comparison fail left the FIRST row stored while
+ * `withCredits` released the entire reserve — a row on the panel for a lookup that was never
+ * delivered and never charged, with a duplicate landing beside it on every retry. That breaks the
+ * one property this table exists for (a row means a delivered, paid lookup) and it breaks 0032's
+ * own second reason for keying a comparison by the subject: that the panel's row count for this
+ * tool is auditable against `credit_ledger`.
+ *
+ * A SINGLE STATEMENT ALSO CO-STAMPS THE ROWS. `created_at` defaults to `now()`, which is the
+ * TRANSACTION clock and is therefore identical for every row of one statement — so a comparison's
+ * 2-10 rows share `created_at` exactly and list as one adjacent block under the panel's
+ * `created_at desc, id desc` order. Row-at-a-time writes are N transactions and N distinct stamps,
+ * which would let a concurrent run interleave with them. The panel comments that state this are
+ * true because of this function, and the claim is pinned by a spec rather than by this paragraph.
+ *
+ * FAIL-CLOSED, the family contract (0024/0025/0026/0027/0029): a PostgREST error is re-thrown,
+ * never logged and swallowed. The caller runs inside `withCredits`, which COMMITS a handler that
+ * returns and RELEASES one that throws — so throwing means the tenant pays NOTHING for a call
+ * whose record was lost. Swallowing would produce the opposite and worse shape: a charged tenant,
+ * a delivered table, and a panel that will forever say the lookup never ran. At up to 900 credits
+ * a call this is the most expensive place in the product to get that backwards.
+ *
+ * AN EMPTY BATCH THROWS rather than returning quietly, and this is where it DIVERGES from
+ * `serp-snapshot-store.ts`, which returns: there an empty snapshot is a legitimate outcome (a
+ * measurement may find nothing). Here it is not reachable from any delivered call — the two
+ * single-row tools always have their one subject and a comparison is 2-10 by schema — so a
+ * silently skipped write would mean a charged call recording nothing at all.
+ */
+export async function writeSubjectLookupRuns(rows: readonly SubjectLookupRunDraft[]): Promise<void> {
+  const first = rows[0];
+  if (first === undefined) {
+    throw new Error("subject_lookup_runs write called with no rows — a delivered lookup has a subject");
+  }
+  // Every row of one call comes from one tool, so the message names it without scanning.
+  const { error } = await getServiceClient()
+    .from("subject_lookup_runs")
+    .insert(rows.map(insertRow));
   if (error) {
-    throw new Error(`${target.tool}: subject_lookup_runs write failed (${error.message})`);
+    throw new Error(`${first.target.tool}: subject_lookup_runs write failed (${error.message})`);
   }
 }

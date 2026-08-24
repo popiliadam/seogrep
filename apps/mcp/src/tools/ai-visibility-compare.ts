@@ -29,7 +29,7 @@ import {
 } from "./ai-visibility-shared.ts";
 import {
   aiVisibilityCompareRunRows,
-  writeSubjectLookupRun,
+  writeSubjectLookupRuns,
   type SubjectLookupRunWriter,
 } from "../dfs/subject-runs.ts";
 import {
@@ -327,7 +327,7 @@ export interface AiVisibilityCompareDeps {
 }
 
 export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}): RegisteredTool {
-  const writeRun = deps.writeRun ?? writeSubjectLookupRun;
+  const writeRun = deps.writeRun ?? writeSubjectLookupRuns;
   return defineTool<AiVisibilityCompareInput>({
     name: "ai_visibility_compare",
     description: DESCRIPTION,
@@ -388,24 +388,31 @@ export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}):
           // THROWS, so an error escaping here costs the tenant nothing; swallowed, at up to 900
           // credits a call it would leave a comparison PARTLY on the panel, charged in full.
           //
+          // ONE INSERT FOR THE WHOLE COMPARISON, never a loop of them. A row-at-a-time write is N
+          // transactions: measured, making the SECOND row fail left the FIRST stored while the
+          // reserve was released in full — a row on the panel for a lookup that was never
+          // delivered and never charged. The batch commits or rejects as one, and its rows share
+          // `created_at` because a single statement has a single transaction clock, which is what
+          // makes a comparison list as one adjacent block. dfs/subject-runs.ts holds the argument.
+          //
           // The rows go out in the caller's order and each carries its own resolved project — the
           // fan-out itself, including the match on the vendor's echoed key and the row for a
           // target the vendor answered nothing for, is dfs/subject-runs.ts's and is unit-tested
           // there.
-          for (const row of aiVisibilityCompareRunRows(
-            result,
-            resolved.map((target) => target.project?.id ?? null),
-          )) {
-            await writeRun(
-              {
+          await writeRun(
+            aiVisibilityCompareRunRows(
+              result,
+              resolved.map((target) => target.project?.id ?? null),
+            ).map((row) => ({
+              target: {
                 userId: ctx.userId,
                 projectId: row.projectId,
-                tool: "ai_visibility_compare",
+                tool: "ai_visibility_compare" as const,
                 identity: row.identity,
               },
-              row.report,
-            );
-          }
+              report: row.report,
+            })),
+          );
           return textResult(text);
         },
       );

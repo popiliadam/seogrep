@@ -12,7 +12,7 @@ import {
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
 } from "../dfs/llm-mentions.ts";
-import { writeSubjectLookupRun, type SubjectLookupRunWriter } from "../dfs/subject-runs.ts";
+import { writeSubjectLookupRuns, type SubjectLookupRunWriter } from "../dfs/subject-runs.ts";
 import { makeDiscoverKeywordsTool } from "./discover-keywords.ts";
 import { makeAiVisibilityTool } from "./ai-visibility.ts";
 import { makeAiVisibilityCompareTool } from "./ai-visibility-compare.ts";
@@ -134,12 +134,25 @@ async function seedProject(userId: string): Promise<{ id: string; domain: string
 
 type SubjectRunRow = Database["public"]["Tables"]["subject_lookup_runs"]["Row"];
 
+/**
+ * ORDERED BY `created_at` AND THEN BY `id`, because after the writer was batched `created_at`
+ * ALONE stopped being a total order on this table: one comparison's rows now share the transaction
+ * clock exactly, and Postgres leaves tied rows in an UNDEFINED order. The tiebreaker is what makes
+ * these reads repeatable.
+ *
+ * It does NOT recover the caller's order, and nothing here claims it does: `id` is
+ * `gen_random_uuid()` and carries no relation to insertion order. A comparison's rows are one
+ * adjacent BLOCK whose internal order is arbitrary — which is why the assertions below compare
+ * SETS of (kind, subject) pairs rather than sequences. Each row is self-describing
+ * (`aggregation_key`, `compared_with`), and the panel makes no ranking claim about their order.
+ */
 async function runRows(userId: string): Promise<SubjectRunRow[]> {
   const { data, error } = await service
     .from("subject_lookup_runs")
     .select("*")
     .eq("user_id", userId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
   if (error || !data) {
     throw new Error(`subject_lookup_runs read failed: ${error?.message ?? "no rows"}`);
   }
@@ -171,9 +184,30 @@ const COMPARE_TARGETS = [
   { label: "rival-one", keyword: "SEO Tools" },
 ];
 
-/** Hands the REAL writer an empty subject: 0032's non-empty CHECK is what refuses it. */
-const emptySubjectWriter: SubjectLookupRunWriter = (target, report) =>
-  writeSubjectLookupRun({ ...target, identity: { ...target.identity, subject: [] } }, report);
+/**
+ * Corrupts the row at `index` to an EMPTY subject and hands the whole batch to the REAL writer;
+ * 0032's `subject_lookup_runs_subject_not_empty` CHECK is what refuses it. Nothing on the write
+ * path is stubbed — PostgREST answers, and this is the error a production insert would raise.
+ *
+ * THE INDEX IS THE AXIS (signed lesson 14). Failing on the FIRST row proves the reserve is
+ * released; failing on a LATER one proves the write is ATOMIC, and only that second variant can
+ * see a partial comparison. With a row-at-a-time writer the first variant passed trivially
+ * (`runRows` was empty because nothing had been written yet) while the second left the earlier
+ * rows stored — measured, and the reason the writer batches.
+ */
+function failingWriter(index: number): SubjectLookupRunWriter {
+  return (rows) =>
+    writeSubjectLookupRuns(
+      rows.map((row, at) =>
+        at === index
+          ? { ...row, target: { ...row.target, identity: { ...row.target.identity, subject: [] } } }
+          : row,
+      ),
+    );
+}
+
+/** The single-row tools' case: their one row IS row 0. */
+const emptySubjectWriter = failingWriter(0);
 
 beforeAll(async () => {
   const { error } = await service.from("subject_lookup_runs").select("id").limit(1);
@@ -266,13 +300,23 @@ describe("1. THE ROW — a delivered lookup leaves one, carrying its own discrim
       "ai_visibility_compare",
       "ai_visibility_compare",
     ]);
-    expect(rows.map((row) => [row.subject_kind, row.subject])).toEqual([
-      ["domain", ["example.com"]],
-      ["keyword", ["seo tools"]],
-    ]);
+    // AS A SET. Both rows share `created_at` to the microsecond (asserted below), and `id` is a
+    // random uuid, so their relative order is arbitrary — the CONTENT is the claim: exactly these
+    // two subjects, each with its own kind, one row apiece.
+    expect(
+      rows.map((row) => `${row.subject_kind}:${row.subject.join(",")}`).sort(),
+    ).toEqual(["domain:example.com", "keyword:seo tools"]);
     // ONE reserve + ONE commit for the whole call — the row count is targets, the ledger's is
     // still one chain, and the amount is the per-target price times two.
     expect(await ledgerKinds(ctx.userId)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
+
+    // …AND THE ROWS SHARE `created_at` EXACTLY. `now()` is the TRANSACTION clock, so one
+    // PostgREST statement stamps every row it inserts identically — which is what makes a
+    // comparison list as ONE ADJACENT BLOCK under the panel's `created_at desc, id desc` order
+    // instead of interleaving with a concurrent run. Two separate inserts would be two
+    // transactions and two stamps, and this is the assertion that says so out loud rather than
+    // leaving it to a comment (read-subject-runs.ts and subject-run-list.tsx both state it).
+    expect(new Set(rows.map((row) => row.created_at)).size).toBe(1);
   });
 
   /**
@@ -465,6 +509,46 @@ describe("3. FAIL-CLOSED — a run that cannot be recorded is not charged for", 
     ]);
     expect(data?.[1]?.delta).toBe(-creditCostFor("ai_visibility_compare", COMPARE_TARGETS.length));
   });
+
+  /**
+   * THE OTHER AXIS, and the one that matters — signed lesson 14, which is exactly how this defect
+   * survived the first round. The case ABOVE fails on the FIRST row, so `runRows` is empty because
+   * nothing had been written yet: it passes trivially under a writer that inserts row by row, and
+   * it says nothing at all about atomicity. This one fails on the SECOND row of a two-target
+   * comparison, which is the only shape that can leave a PARTIAL comparison behind.
+   *
+   * MEASURED against the row-at-a-time writer this replaced: the first row survived
+   * (`[{"subject_kind":"domain","subject":["example.com"]}]`) while the ledger read
+   * `purchase, spend_reserve, spend_release` — a row on the panel for a lookup that was never
+   * delivered and never charged, with a duplicate landing beside it on every retry. Both cases are
+   * kept: together they are the both-directions proof.
+   */
+  it("leaves NO row when the SECOND row of a comparison is the one that fails", async () => {
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 500);
+    const tool = makeAiVisibilityCompareTool({
+      port: visibilityPort(),
+      writeRun: failingWriter(1),
+    });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(
+        tool.run(ctx, { targets: COMPARE_TARGETS, platform: "chat_gpt" }),
+      ).rejects.toThrow(/subject_lookup_runs write failed/i);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    // NOT ONE ROW, not "the failing one is missing": a single PostgREST statement commits or
+    // rejects whole, so the row BEFORE the bad one must not have survived either.
+    expect(await runRows(ctx.userId)).toEqual([]);
+    expect(await ledgerKinds(ctx.userId)).toEqual([
+      "purchase",
+      "spend_reserve",
+      "spend_release",
+    ]);
+  });
 });
 
 describe("4. THE STORED REPORT IS STRUCTURAL, and readable one field at a time", () => {
@@ -546,7 +630,11 @@ describe("4. THE STORED REPORT IS STRUCTURAL, and readable one field at a time",
       // target, and a reader would take it for this one's.
       expect("total" in report).toBe(false);
     }
-    expect(reports.map((report) => report.compared_with)).toEqual([["rival-one"], ["our-brand"]]);
+    // Each row lists the OTHERS and never itself — asserted as a set, for the ordering reason the
+    // `runRows` helper documents.
+    expect(reports.map((report) => JSON.stringify(report.compared_with)).sort()).toEqual(
+      [JSON.stringify(["our-brand"]), JSON.stringify(["rival-one"])].sort(),
+    );
   });
 });
 

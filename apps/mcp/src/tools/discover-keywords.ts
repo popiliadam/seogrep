@@ -23,7 +23,7 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
-  writeSubjectLookupRun,
+  writeSubjectLookupRuns,
   type SubjectLookupRunWriter,
 } from "../dfs/subject-runs.ts";
 import {
@@ -611,7 +611,7 @@ export interface DiscoverKeywordsDeps {
 }
 
 export function makeDiscoverKeywordsTool(deps: DiscoverKeywordsDeps = {}): RegisteredTool {
-  const writeRun = deps.writeRun ?? writeSubjectLookupRun;
+  const writeRun = deps.writeRun ?? writeSubjectLookupRuns;
   return defineTool<DiscoverKeywordsInput>({
     name: "discover_keywords",
     description: DESCRIPTION,
@@ -654,18 +654,23 @@ export function makeDiscoverKeywordsTool(deps: DiscoverKeywordsDeps = {}): Regis
         // clamps the seed list and the depth, so reading the caller's arguments would record a
         // question that was not the one the vendor answered. `projectId` is null on all three seed
         // modes — they name no domain at all — and on a bare-target `for_site` call.
-        await writeRun(
+        // AN ARRAY OF ONE. There is no singular writer to reach for — see its own header:
+        // one insert path means atomicity is a property of the writer rather than of which
+        // function a call site picked, and this tool writes exactly one row.
+        await writeRun([
           {
-            userId: ctx.userId,
-            projectId: project?.id ?? null,
-            tool: "discover_keywords",
-            identity: discoverSubjectIdentity(result.subject),
+            target: {
+              userId: ctx.userId,
+              projectId: project?.id ?? null,
+              tool: "discover_keywords",
+              identity: discoverSubjectIdentity(result.subject),
+            },
+            report: discoverKeywordsRunReport(result, {
+              language_code: input.language_code,
+              location_code: input.location_code,
+            }),
           },
-          discoverKeywordsRunReport(result, {
-            language_code: input.language_code,
-            location_code: input.location_code,
-          }),
-        );
+        ]);
         return textResult(text);
       });
     },

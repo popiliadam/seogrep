@@ -26,7 +26,7 @@ import {
 import {
   aiVisibilityRunReport,
   mentionSubjectIdentity,
-  writeSubjectLookupRun,
+  writeSubjectLookupRuns,
   type SubjectLookupRunWriter,
 } from "../dfs/subject-runs.ts";
 import {
@@ -287,7 +287,7 @@ export interface AiVisibilityDeps {
 }
 
 export function makeAiVisibilityTool(deps: AiVisibilityDeps = {}): RegisteredTool {
-  const writeRun = deps.writeRun ?? writeSubjectLookupRun;
+  const writeRun = deps.writeRun ?? writeSubjectLookupRuns;
   return defineTool<AiVisibilityInput>({
     name: "ai_visibility",
     description: DESCRIPTION,
@@ -328,15 +328,20 @@ export function makeAiVisibilityTool(deps: AiVisibilityDeps = {}): RegisteredToo
         // uses for each of its targets too, so this domain measured alone and the same domain
         // measured inside a comparison land on the SAME identity — which is the whole reason 0032
         // keys a comparison by the subject rather than by the call.
-        await writeRun(
+        // AN ARRAY OF ONE. There is no singular writer to reach for — see its own header:
+        // one insert path means atomicity is a property of the writer rather than of which
+        // function a call site picked, and this tool writes exactly one row.
+        await writeRun([
           {
-            userId: ctx.userId,
-            projectId: project?.id ?? null,
-            tool: "ai_visibility",
-            identity: mentionSubjectIdentity(result.subject, "ai_visibility"),
+            target: {
+              userId: ctx.userId,
+              projectId: project?.id ?? null,
+              tool: "ai_visibility",
+              identity: mentionSubjectIdentity(result.subject, "ai_visibility"),
+            },
+            report: aiVisibilityRunReport(result),
           },
-          aiVisibilityRunReport(result),
-        );
+        ]);
         return textResult(text);
       });
     },
