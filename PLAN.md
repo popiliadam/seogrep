@@ -19,13 +19,31 @@
 **Her iki PR'ın gövdesinde SQL tek blok hâlinde var.** Sıra: SQL → şef **tabloya bakarak** doğrular (sinyale değil) → merge. Bedel her iki PR'da yazılı; özet: `apps/mcp` SQL'siz çıkarsa ilgili tool vendor'a **para öder**, eksik tabloda düşer, kiracıya iade eder.
 
 #### 🔢 OPERATÖRDE BEKLEYEN — İKİ SAYI, İKİSİ DE İMZASIZ
+> **Karar dosyası hazır:** `docs/plans/2026-08-24-serp-kapak-ve-cron-butcesi.md` — iki soru,
+> seçenekleri, aritmetiği ve imza satırları. Onay tek kelime.
 
 1. **`serp_snapshot`'ın kelime kapağı.** İmzada **5 + kelime başına 8** ve en kötü marj **5,3×** yazıyor, ama **kapağın sayısı yazmıyor**. Marj N ile düşüyor (taban amortize oluyor): 1'de 8,06× · **10'da 5,27×** · 20'de 5,12× · asimptot 4,96×. **5,3× yalnız N ≤ 10'da doğru.** `MAX_SERP_KEYWORDS = 10` bugün spec'te pinli, sessizce kayamaz — ama **karşı-imza gerekiyor**, ve daha geniş bir tracker isteniyorsa **fiyat oynar** (NEVER#6).
 2. **Cron alt-bütçesi.** MADDE 5 kiracı kotasını kaldırdı; MADDE 5.3 **gözetimsiz** (cron'lu) harcamanın kendi alt-bütçesini istemesini ayakta bıraktı. Rank tracker'ın otomatik tazeleyicisi tam olarak o — **sayı imzasız**. Filo tavanı $3/gün. **Tazeleyici bu sayı olmadan yazılmayacak.**
 
-#### ⚠️ İMZALI BELGEDE İÇ TUTARSIZLIK — ölçüldü, uydurulmadı
+#### ✅ SÖZDE "İMZA TUTARSIZLIĞI" — YOKTU, ŞEF HATASI, KAPANDI
 
-`docs/plans/2026-08-17-dfs-genisleme-imza-paketi.md` **kendi içinde çelişiyor**: H3 bölümü SERP Live'ı **"$0,002/SERP"** derken imzalı MADDE 1 satırı **"$0,02/kelime"** diyor — **on kat fark**. Sevk edilen kod `$0,02`'yi uyguluyor (imzalı satırla uyumlu, muhafazakâr yön). `$0,002` doğruysa marj on kat daha iyi ve kapak çok daha geniş olabilir. **`serp_snapshot` tool'u inerken uzlaştırılmalı.**
+Bir önceki handoff sürümü imza paketinin **kendi içinde çeliştiğini** iddia ediyordu: bir yerde
+`$0,002/SERP`, bir yerde `$0,02/kelime` — on kat fark. **Bu iddia yanlıştı.** İmza paketi satır 25'in
+tamamı şöyle:
+
+> `SERP Google Organic Live | **$0,002/SERP**, her 10 sonuç için çarpan`
+
+Pinli derinlik **100**'dür, yani 10 × $0,002 = **$0,02/kelime**. MADDE 1'in yazdığı şeyin ta kendisi.
+İki rakam **aynı fiyatın iki derinlikteki hâli**. Belgenin kendi kapasite satırı da doğruluyor
+(satır 206: *"$3 ≈ 1500 SERP"* → 3 ÷ 0,002 = 1500).
+
+**Ders (imzasız, ve bu oturumun kendi hatası):** şef bir çelişki *raporladı* ve onu doğrulamadan
+iş emrine ve hakem promptuna yazdı; hakem şefin çerçevesini tekrarladı. **Bir çelişki iddiası da bir
+iddiadır ve ölçülmeden taşınmaz** — üstelik bu, oturumun başında düzeltilen "bayat handoff" hatasının
+aynısıydı, bu kez taze bir cümleyle. Etkisi: sonraki oturum var olmayan bir şeyi kovalayacaktı.
+
+**Sonuç kapağı ZAYIFLATMIYOR, GÜÇLENDİRİYOR:** `$0,02/kelime` artık belgenin kendi formülüyle
+teyitli, yani 5,3× marj ve 10-kelime kapağı türetmesi daha sağlam zeminde duruyor.
 
 #### 🎯 BU OTURUMDA NE OLDU — 12 PR canlıda, 2 parkta
 
