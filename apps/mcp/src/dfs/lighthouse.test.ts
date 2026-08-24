@@ -390,17 +390,29 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     const costless = structuredClone(fixtureResponse) as { cost?: number; tasks: { cost?: number }[] };
     delete costless.cost;
     for (const task of costless.tasks) delete task.cost;
+    // The PRICED half reports a cost the list price cannot produce, and that is the whole point
+    // of this spec rather than a detail of it. The fixture's own cost is $0.005 — the SAME number
+    // as LIGHTHOUSE_PAGE_USD — so a mixed sum built on the fixture is 0.01 whether the code prices
+    // each half correctly, prices BOTH at the fallback, or prices BOTH at the vendor cost. Against
+    // equal halves the sum cannot tell them apart, so the assertion could not fail for the reason
+    // it exists (measured 2026-08-24: both mutations left the fixture-based version GREEN).
+    const VENDOR_COST_USD = 0.007;
+    expect(VENDOR_COST_USD).not.toBe(LIGHTHOUSE_PAGE_USD); // the discrimination this spec rests on
+    const priced = structuredClone(fixtureResponse) as { cost: number; tasks: { cost: number }[] };
+    priced.cost = VENDOR_COST_USD;
+    for (const task of priced.tasks) task.cost = VENDOR_COST_USD;
     const transport: DfsTimedTransport = async (_url, init) => ({
       ok: true,
       status: 200,
-      json: async () => (init.body.includes("/pricing") ? costless : fixtureResponse),
+      json: async () => (init.body.includes("/pricing") ? costless : priced),
     });
     const port = createLiveSpeedClient({ login: "u", password: "p", transport, ledger });
     await port.fetchPageSpeed([URL_UNDER_TEST, "https://slowshop.org/pricing"]);
 
-    // The priced page at its real 0.005 + the unpriced page at LIGHTHOUSE_PAGE_USD — never at 0.
-    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.005 + LIGHTHOUSE_PAGE_USD, 10);
-    expect(await todaySpendUsd(ledger)).toBeGreaterThan(0.005);
+    // The priced page at its real cost + the unpriced page at LIGHTHOUSE_PAGE_USD — never at 0,
+    // and reachable by NO other pairing: 2x the vendor cost is 0.014 and 2x the list price 0.010.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(VENDOR_COST_USD + LIGHTHOUSE_PAGE_USD, 10);
+    expect(await todaySpendUsd(ledger)).toBeGreaterThan(VENDOR_COST_USD);
 
     // …and with BOTH pages unpriced, both are still booked.
     const bothLedger = createMemorySpendLedger();
