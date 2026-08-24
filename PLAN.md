@@ -5,7 +5,83 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-20 (4. oturum, GÜNCEL) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-24 (4. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`a9a670c` · açık PR **0** · worktree **temiz** · migration **0030**'a kadar uygulanmış
+(prod'da okunarak doğrulandı) · canlı yüzey **36 tool** · `make goals` deploy sonrası koşuda
+**16/16 PASS (1 skip)** — tek SKIP `dfs-budget-guard` (env yok).
+
+#### ✅ İMZALI KATALOG KAPANDI — bir kalem hariç
+
+İmzalı 14 tool'un **13'ü canlıda**. Kalan tek kalem **`keyword_trends`** ve o bir **karar değil, ZAMAN**:
+imzada 25 kredi ama vendor maliyeti **hiç ölçülmedi**, yani pinlenecek marj tabanı **yok**. MADDE 6 onu
+v2'nin **tek zorunlu kalibrasyon kalemi** yapmış. **Bir hafta gerçek `dfs_spend` verisi** gerekiyor;
+o veri gelince ölçülür, marjı pinlenir, sevk edilir.
+
+#### ⏳ OPERATÖRDE BEKLEYEN — üç kalem, hiçbiri kodu bloke etmiyor
+
+1. **CANLI SMOKE — en yüksek değerli iş, ve kod tarafında karşılığı YOK.** Bu oturumda sevk edilen
+   **sekiz tool'un hiçbiri gerçek bir vendor çağrısı yapmadı.** Fixture'lar vendor'ın *dokümantasyon*
+   örnekleri, ölçülmüş yanıt değil. Alan adları bugün farklıysa çağrı **patlamaz**, her alan `n/a`
+   basar — dürüst ama **değersiz** bir 13–90 kredilik cevap. **`serp_snapshot`'ta somutlaştı:** sevk
+   edilen SERP fixture'ı kısaltılmış bir yakalamaydı ve kendi manşet domain'i için **saklanabilir bir
+   satır bile üretemiyordu** (2 incelenmişte 3. sıra → 0030'un CHECK'i reddediyor).
+   Her tool'a **birer** çağrı, `$3/gün` tavanının çok altında. **Şef bunu yapamıyor: izin katmanı prod
+   POST'unu reddediyor** (denendi, `Blocked by classifier`). Ya operatör koşar ya `.claude/settings.json`'a
+   kural eklenir.
+2. **Cron alt-bütçesi (MADDE 5.3).** Karar dosyası hazır: `docs/plans/2026-08-24-serp-kapak-ve-cron-butcesi.md`.
+   Aritmetik: bir projenin tam tazelemesi **$2,00** — filo bütçesinin üçte ikisi. Cron'a $2,00 verilirse
+   10 hedefli AI karşılaştırması ($1,65) **o gün hiç koşamaz**. Şef önerisi: **$1,00/gün + haftalık**.
+   **Hiçbir şeyi bloke etmiyor** — cron yazılmadı, rank tracker onsuz tam çalışıyor (kullanıcı
+   `serp_snapshot`'ı elle koşar, `keyword_positions` saklanmışı okur).
+3. **ÜRÜN ADALETİ SORUSU — hakem bulgusu, politika kararı.** Vendor **tamamen** düşerse kiracı **tam
+   ödüyor**: canlı istemci her istek-başı arızayı bir `not_measured` satırına indirgeyip **dönüyor**,
+   yani `withCredits` **commit** ediyor. 10 vendor 502'si = **85 kredi**, karşılığında on tane
+   "position UNKNOWN". Çıktı ve depolama **dürüst** (hiçbir şey uydurulmuyor) ve vendor faturası
+   gerçekten oluşmuş olabilir. Ama "ölçülemeyen cevap için tam fiyat" bir politika kararı ve bugünkü
+   cevap **evet**. Alternatif iade — ama defterde iade yolu **yok**. `dfs/serp.ts:855-865`.
+
+#### 🎯 SIRADAKİ OTURUMUN İŞİ — sırayla
+
+1. **Chip dalgası.** Aşağıdaki AÇIK CHIP'LER bölümü; hepsi mutasyonla ölçülmüş ve talimatlı. Birbirinden
+   bağımsız, taze bağlam gerektirmiyor — bu yüzden taze oturuma bırakıldı.
+2. **Parça 2 (webapp) — en büyük açık eksen.** Bu oturumda **on yeni tool** sevk edildi ve
+   **hiçbirinin panelde yüzeyi yok**. `serp_snapshot`/`keyword_positions` sonuçları web'de görünmüyor;
+   `/app/lookups` yalnız üç alan aramasını + `research_keywords`'ü gösteriyor. Rank tracker'ın serisi
+   tam da panelde anlamlı olacak şey.
+3. **`keyword_trends`** — bir hafta veri sonrası.
+4. Cron — operatörün sayısı gelirse.
+
+#### 📌 BU OTURUMDA NE OLDU — 19 PR, yüzey 26 → 36
+
+`/app/lookups` · `backlink_changes` 35 · `backlink_details` 35 · `disavow_candidates` 40 ·
+`discover_keywords` 40 · `my_pages` 40 · para-yolu pinleri · settle sweep · `ai_visibility` 90 +
+`ai_visibility_compare` 90/hedef · **0029** `keyword_research_runs` · SERP portu + **taban+birim** fiyat
+uzantısı · `renderCostLine` taban desteği + SERP dürüstlük pinleri · **0030** rank tracker +
+`track_keywords` 0 + `keyword_positions` 10 · **`serp_snapshot` 5+8/kelime** · imza düzeltmesi ·
+flake kaydı · karar dosyası · üç handoff.
+
+**Prod'a iki migration uygulandı ve ikisi de TABLO OKUNARAK doğrulandı** (sinyale değil).
+**0028'in bulut daraltması üç yeni tabloda da tuttu:** `anon` **hiç DML almadı**, `authenticated`
+yalnız SELECT, `service_role` SELECT+INSERT (`tracked_keywords`'te ek UPDATE — `untracked_at` için
+kasten, DELETE yok). 0028'den önce bulutta yeni tablolar üç role de UPDATE+DELETE ile **doğuyordu**.
+
+#### 🚨 BU OTURUMDA YAKALANAN BEŞ ŞEY — hiçbiri kapı yeşilken görünmüyordu
+
+1. **İki oturumdur yanlış yerden başlatılıyordu.** İmza paketi 2026-08-17'den beri imzalıymış; handoff
+   "operatörü bekliyoruz" diyordu. Çelişki **aynı dosyanın içindeydi**. Darboğaz koddu.
+2. **Para yolunda gerçek kayıp.** `backlink_changes` karışık fiyatlı çiftte tek çağrıda **$0,036702**
+   vendor harcamasını deftere **hiç yazmıyordu**; aynı fail-open şekli **altı modülde** pinsizdi.
+3. **Yayınlanmış yanlış bir cümle beş yerde yaşıyordu** — ve onu kapatmak için şefin yazdığı pinin
+   **kendisi de delikti** (muafiyet satır bazlıydı), ölçerek yakalandı.
+4. **`min_units` saklanıyor, pinleniyor, dokümanda yazılıyor ama ZORLANMIYORDU** — çağrı başına
+   **810 imzalı kredi** hediye.
+5. **Şefin kendi uydurduğu bir "imza çelişkisi".** `$0,002` vs `$0,02` diye raporlandı, **yoktu**:
+   satır 25 *"her 10 sonuç için çarpan"* diyor ve pinli derinlik 100 → aynı sayı. Doğrulanmadan iş
+   emrine ve hakem promptuna taşındı; hakem şefin çerçevesini tekrarladı. **Bir çelişki iddiası da bir
+   iddiadır ve ölçülmeden taşınmaz.**
+
+### 📋 2026-08-20 (4. oturum, ESKİ SÜRÜM) — HANDOFF
 
 **Durum:** `main` @`ca645a9` · **2 PARK EDİLMİŞ PR** · yüzey **33 tool** canlı (park inince **35**) · imzalı 14 tool'un **10'u canlıda**.
 
