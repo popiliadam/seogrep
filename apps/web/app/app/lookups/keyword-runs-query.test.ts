@@ -113,6 +113,27 @@ describe("the keyword history reads every run the caller owns", () => {
   });
 
   /**
+   * …AND THAT ORDER IS TOTAL — the domain read's rule beside it, and on THIS table the tie is
+   * nearer the normal case than an edge one: one keyword set is commonly researched twice in a row
+   * for two locales. `created_at` is `timestamptz default now()` and `now()` is the TRANSACTION
+   * clock, so two runs can share a stamp to the microsecond, and `order by created_at desc` ALONE
+   * leaves their relative order UNDEFINED in Postgres. `buildKeywordRunHistory` WALKS that order to
+   * decide which run "since the previous run" names — its own sort is on `created_at` too and is
+   * stable, so tied rows keep the order PostgREST handed over — so an undefined order makes the
+   * IDENTITY of "previous" undefined and two identical page loads can print a different delta and a
+   * different date to the same tenant with nothing changed in the database.
+   *
+   * PINNED AS THE ORDERED PAIR: an `id` order written BEFORE the stamp is not a tiebreaker, it IS
+   * the sort, and the section would be ordered by a random uuid with every other pin here green.
+   * PINNED WITH ITS DIRECTION: an order that flips on a one-word edit still moves "previous".
+   */
+  it("breaks a created_at tie on the primary key, after the stamp and in the same direction", () => {
+    expect(READ).toMatch(/\.order\(\s*["']id["']\s*,\s*\{\s*ascending:\s*false\b/i);
+    const ordered = [...READ.matchAll(/\.order\(\s*["']([a-z_]+)["']/gi)].map((match) => match[1]);
+    expect(ordered).toEqual(["created_at", "id"]);
+  });
+
+  /**
    * BOUNDED BY THE SHARED CONSTANT, PLUS THE OVERFLOW PROBE. A literal here would drift from the
    * ceiling the section discloses (`windowFull`), and the disclosure would then be off by however
    * far the two drifted.
@@ -133,6 +154,28 @@ describe("the keyword history reads every run the caller owns", () => {
   /** A LIST, not a row: `.maybeSingle()` here would hand back one run and call it a history. */
   it("asks PostgREST for the whole list", () => {
     expect(singleRowTerminatorsOf(READ)).toEqual([]);
+  });
+
+  /**
+   * THE ROWS THE DATABASE RETURNED ARE THE ROWS THAT LEAVE — the other half of the probe pin above,
+   * and the half nothing measured. A `.slice(0, KEYWORD_RUN_HISTORY_LIMIT)` dropped in between the
+   * `.limit()` and the `return` passes every lane in this repo today: it typechecks, it leaves the
+   * `+ 1` untouched so the probe pin stays green, and every render spec renders from rows it never
+   * sees. What it does is throw the PROBE ROW away at the one point where its absence cannot be
+   * told from a short table — `windowFull` goes permanently false, the section stops disclosing its
+   * own ceiling, and the oldest rows' missing changes read as "first run of its kind" again. The
+   * builder is what cuts the list, AFTER sorting, and it is unit-tested doing so.
+   *
+   * BOTH DIRECTIONS: no trimmer on the way out, and the returned expression still derives straight
+   * from `data`. Either alone is escapable — a trim written as `data?.splice(...)`, or a return
+   * rebuilt out of a local, satisfies the other. `.filter(` is matched only where NOT followed by a
+   * quote, so PostgREST's legitimate `.filter("col", "eq", value)` longhand does not redden a pin
+   * meant for a JS array filter.
+   */
+  it("hands back what came back, and trims nothing on the way out", () => {
+    expect(READ).not.toMatch(/\.(slice|splice|pop|shift)\(/);
+    expect(READ).not.toMatch(/\.filter\(\s*(?!["'])/);
+    expect(READ).toMatch(/return\s*\(?\s*data\s*\?\?\s*\[\]/);
   });
 
   /**
@@ -214,6 +257,29 @@ describe("the rows the read fetched reach the page", () => {
   it("builds the keyword history from the rows the read returns", () => {
     expect(PAGE).toMatch(/buildKeywordRunHistory\(\s*await\s+listKeywordResearchRuns\(/);
     expect(PAGE).toMatch(/listKeywordResearchRuns\(\s*supabase\s*,\s*user\.id\s*\)/);
+  });
+
+  /**
+   * …AND UNDER THE BOUND THE READ WAS WRITTEN FOR. `buildKeywordRunHistory` takes an OPTIONAL
+   * second argument — `limit`, defaulting to `KEYWORD_RUN_HISTORY_LIMIT` — which exists so the
+   * builder's own specs can drive the ceiling with four rows instead of two hundred and one. The
+   * page has no business passing it, and until this pin nothing said so: `buildKeywordRunHistory(
+   * rows, 50)` matched the open-ended pin above word for word, typechecked, and passed the whole
+   * fast lane.
+   *
+   * WHAT THAT COSTS is a section listing 50 of the 201 runs it fetched and paid for, under a footer
+   * that goes on naming KEYWORD_RUN_HISTORY_LIMIT — the constant is what the sentence interpolates,
+   * not the bound that was applied — so 150 real runs vanish beneath a sentence claiming 200. The
+   * read's `.limit()` and the builder's cut are two halves of ONE ceiling, kept equal by there
+   * being exactly one number: the constant.
+   *
+   * MATCHED AS THE WHOLE CALL, closing paren included, because ARITY is the thing being pinned. A
+   * fragment ending at the read's own `(` cannot see what follows it — which is how it got in.
+   */
+  it("applies the module's own ceiling — no second bound of the page's own", () => {
+    expect(PAGE).toMatch(
+      /buildKeywordRunHistory\(\s*await\s+listKeywordResearchRuns\(\s*supabase\s*,\s*user\.id\s*\)\s*\)/,
+    );
   });
 
   /**
