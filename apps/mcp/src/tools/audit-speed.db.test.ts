@@ -48,9 +48,14 @@ requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const service = getServiceClient();
 
 /**
- * The pages under test. `.org`, deliberately: `example` is on the NON_PUBLIC_TLDS list in
- * @pseo/core (net/hostname), so an `example.com` URL is refused by the tool's own free gate and a
- * test built on one would prove the gate fires, not the ledger path.
+ * The pages under test. `.org`, deliberately — and the reason is stated precisely, because the
+ * version written here first was WRONG in a way that would mislead the next reader.
+ *
+ * `example` is on the NON_PUBLIC_TLDS list in @pseo/core (net/hostname), and
+ * `nonPublicHostnameReason` tests the LAST LABEL only. So a bare `something.example` is refused by
+ * the tool's own free gate — but `example.com` is NOT: its last label is `com`, which is public and
+ * accepted. A test built on a genuinely refused host would prove the gate fires, not the ledger
+ * path, which is what `.org` avoids.
  */
 const PAGE = "https://slowshop.org/";
 const SECOND_PAGE = "https://slowshop.org/pricing";
