@@ -47,6 +47,24 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
  * so this read can be (runs.ts says so), and `locale` is the two-field object that decides which
  * runs are comparable.
  *
+ * ORDERED BY `created_at` AND THEN BY `id`, and the second key is a correctness fix rather than
+ * tidiness. `created_at` is `timestamptz default now()` and `now()` is the TRANSACTION clock, so
+ * two runs written in one transaction carry the same stamp to the microsecond and any two runs can
+ * collide on it — and `order by created_at desc` ALONE leaves the relative order of a tie UNDEFINED
+ * in Postgres. That is not cosmetic here, because `buildDomainLookupHistory` WALKS this order to
+ * compute "change since the previous comparable run": its own sort is on `created_at` too and is
+ * stable, so tied rows keep whatever order PostgREST handed over. An undefined row order therefore
+ * makes the IDENTITY of "previous" undefined, and two identical page loads can subtract different
+ * runs and print a different delta and a different "since <date>" to the same tenant with nothing
+ * changed in the database. `id` is the PRIMARY KEY (0027), so it is unique per row and the order it
+ * completes is TOTAL.
+ *
+ * DESCENDING, matching the axis it breaks ties on. `id` is `gen_random_uuid()`, so its order
+ * carries no meaning of its own and the tiebreaker does not claim the winner of a tie is the newer
+ * run — only that the answer is the same every time it is asked. The direction is pinned anyway: an
+ * order deterministic per query but flippable by a one-word edit is a page whose "previous run" can
+ * still change under the reader.
+ *
  * BOUNDED AT `limit`, FETCHED AT `limit + 1`, and that one extra row is the whole point. A change
  * computed inside a truncated window can be missing a prior run that really is in the table, so
  * the page says out loud when older runs exist — and THAT SENTENCE HAS TO BE MEASURED. Asking for
@@ -72,6 +90,7 @@ export async function listDomainLookupRuns(
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(DOMAIN_LOOKUP_HISTORY_LIMIT + 1);
   if (error) {
     throw new Error(`domain_lookup_runs history lookup failed: ${error.message}`);

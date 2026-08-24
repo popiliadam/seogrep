@@ -63,7 +63,14 @@ biri için koşu ekseni (0027/0029 deseni).
 
 ---
 
-## 3. CHIP ENVANTERİ — 2026-08-24'te koda karşı DOĞRULANDI
+## 3. CHIP ENVANTERİ — 2026-08-24'te koda karşı DOĞRULANDI, 5. oturumda GÜNCELLENDİ
+
+> **5. oturumda KAPANAN ve listeden ÇIKARILANLAR:** `P4` `P5` `P6` (PR #163) · `W1` `W2` `W3` `W4`
+> (PR #165) · `D1` `D2` (PR #162). Dokuzu da hakemden geçti ve üç kapıdan da.
+>
+> **Ve chip'lerin kendi tarifleri üç yerde EKSİKTİ** — kapatırken ölçüldü:
+> `D1` bir bayat fiyat diyordu, **dokuz** çıktı · `D2` beş konum diyordu, **altı** çıktı ve biri
+> (`db.ts:446`) zaten **doğruydu**, düzeltilseydi bozulacaktı · `T1` bir dosya diyor, **dört**.
 
 > Kapananlar listeden **çıkarıldı**. Her kalem: nerede · ne ölçüldü · neyin kapatacağı.
 
@@ -74,9 +81,6 @@ biri için koşu ekseni (0027/0029 deseni).
 | P1 | **`withCredits` sıralaması per-birim tool'lara kör nokta bırakıyor** | Rezervasyon çağrı yerinden `units:` düşürmek **bütün hızlı şeride görünmez** (2589 spec yeşil); yalnız ona özel `*.reserve.test.ts` yakalıyor. Kapı **doğru** (bedava ret rezervasyon yapmamalı). **Ders adayı:** *bir per-birim tool'un DONE'ı kendi rezervasyon-pin spec'ini içerir.* Bugün iki tool'un ikisinde de var. |
 | P2 | **`withCredits` units'siz per-birim meta'yı reddetmiyor** | Guard seviyesinde bir try/catch'in düz tabloya düşmesi hızlı şeritte yeşil. Üretim arızası iki düzenlemenin **bileşimi**. Tek DB vakası kapatır. |
 | P3 | **`row_count` `dfs_spend`'e yazılırken iki şeritte pinsiz** | `research_keywords` ve `ranked_keywords` lane'leri; her çağrıyı 0 satırla settle etmek yeşil. **Kan kaybı yok:** `0014`'ün bütçe aritmetiği `sum(coalesce(actual_usd, estimated_usd))`, `row_count`'u **hiçbir şey okumuyor**. |
-| P4 | **Negatif taban iki kapıyı da geçiyor** — DOĞRULANDI, `costs.ts`'te `>= 0` assertion'ı **yok** | `base: -5` parite kapısını geçer (basılan == ücretlendirilen) ama renderer'ın `base > 0` koruması per-çağrı cümlesini düşürürken aralık **çıkarma** yapar → içinde tutarsız prose. İmzalı byte-pin değişmeden ulaşılamaz. Tek satır kapatır. |
-| P5 | **`units: 0` çağrı-başına yolda pinsiz** — DOĞRULANDI | Kod **doğru** (`costs.ts:286` `units !== undefined && units !== 1` throw ediyor), eksik olan **pin**: `!== 1`'i `> 1` yapmak 24 spec'i de geçiyor. |
-| P6 | **`creditsForUnits` fiyatı PARAMETRE olarak alıyor** | Gelecekteki bir handler onu tabloda olmayan literallerle çağırabilir; pricing spec'i ancak tablo satırı varsa ısırır. |
 
 ### 3.2 Kapı kapsamı
 
@@ -94,10 +98,6 @@ biri için koşu ekseni (0027/0029 deseni).
 
 | # | chip | ölçüm |
 |---|---|---|
-| W1 | **Sayfa→kurucu `limit` argümanı pinsiz** | `buildDomainLookupHistory(rows, 50)` bütün hızlı şeridi geçiyor; alt bilgi 50 satırın üstünde "most recent 200" demeye devam eder. |
-| W2 | **Okumanın dönüş sözleşmesi pinsiz** | `.limit()` ile `return` arasına `.slice(0, N)` koymak bütün şeritleri geçiyor. Sonucu: taşma probu sessizce ölür, truncation iddiası kaybolur. |
-| W3 | **Truncation cümlesindeki rakam assert edilmiyor** | Sabit yerine düz `50` yazmak her yerde yeşil. |
-| W4 | **`created_at` tiebreaker YOK** — DOĞRULANDI, iki okumada da | `read-lookup-runs.ts:69` ve `read-keyword-runs.ts:58` yalnız `created_at desc`. Aynı damgalı iki satırda sıra belirsiz, ve değişim zinciri o sırayı yürüyor. |
 | W5 | **`<<…>>` muafiyeti dosya geneli** | Render edilen bir JSX dizgisine `<<…>>` ile sarılmış yeni bir üstünlük iddiası 19/19 geçiyor (hafifletici: işaretler kullanıcıya görünür). |
 | W6 | **`codeOf` yalnız tam satırlık `//` yorumları siliyor** | Satır sonu yorumu pinin önünden kaçabiliyor; kardeş konvansiyondan miras. |
 
@@ -105,7 +105,7 @@ biri için koşu ekseni (0027/0029 deseni).
 
 | # | chip | ölçüm |
 |---|---|---|
-| T1 | **`backlink-details.db.test.ts` (f) yalnız RET kanıtlıyor** | Her `project_id`'yi — sahibininki dahil — reddeden bir handler o testi geçiyor. Kardeşlerde sahip-tarafı eklenerek kapatıldı; bu dosyada kapatılmadı. |
+| T1 | **Tek yönlü kiracı testi — DÖRT dosyada, chip bir tane diyordu** | `backlink-details` · `backlink-changes` · `disavow-candidates` · `my-pages` `.db.test.ts`'lerinin (f) testi yalnız RET kanıtlıyor: **herkesi — sahibini dahil — reddeden** bir handler dördünü de geçer. Yalnız `discover-keywords` (g) çift yönlü ve kendi yorumunda deliği ÖLÇTÜĞÜNÜ yazıyor. Şablon hazır: 5. oturumun `ranking-history.db.test.ts`'i bu şekli çift yönlü kurdu ve mutasyonla kanıtladı (sahte-sahip mutasyonu 7 testin 6'sını kırmızıya düşürdü). |
 | T2 | **`lighthouse.test.ts:402` karışık pini kendi kendine yetmiyor** | Fixture maliyeti (0,005) liste fiyatına **eşit**, hangi yarının fiyatlandığını ayırt edemiyor. |
 | T3 | **`location_name`/`language_code` normalize edilmiyor** | "United States" vs "united states" = iki abonelik, iki seri. Kelime katlaması gürültülü şekilde belgeliyken bu sessiz. |
 | T4 | **Arşivlenmiş proje untrack edemiyor** | `track-keywords.ts:228` `archivedAt` kapısı action dalından önce. Zararsız, ürün kırışıklığı. |
@@ -118,9 +118,19 @@ biri için koşu ekseni (0027/0029 deseni).
 
 | # | chip | ölçüm |
 |---|---|---|
-| D1 | **Gap map `:252` hâlâ `disavow_candidates: 55` diyor** — DOĞRULANDI | İmza **40** ve sonrakidir. |
-| D2 | **Beş dosya rank-tracking şemasını "migration 0029" diye anıyor** — DOĞRULANDI | Doğrusu **0030** (0029 `keyword_research_runs`). `keyword-positions.ts:45` · `-store.ts:19,114` · `-format.ts:169` · `keyword-positions.test.ts:257` · `db.ts:446`. Ayrıca `keyword-positions.ts:45` **"four CHECK constraints"** diyor; **yedi** tane. |
 | D3 | **AST pinleri — REVISE kararı** | "Matris dışında okuma yok" ve "döndürülen alan o ifadenin ürettiği değeri taşıyor" metinle kapanmıyor; üç hakem üç FARKLI eksende deldi. Yerine TypeScript AST. Chip yedi kaçağın listesini taşıyor. |
+
+### 3.6 5. OTURUMDA BULUNAN YENİ CHIP'LER — hepsi ölçüldü
+
+| # | chip | ölçüm |
+|---|---|---|
+| N1 | **DB spec'lerinde SABİT id fixture'ı = ikinci koşuda sahte kırmızı** | `ranking-history.db.test.ts` sabit UUID'lerle yazılmıştı; `db reset` olmadan **ikinci** koşuda `duplicate key ... _pkey` ile ölüyordu — gerçek bir kusur gibi okunan, olmayan bir kırmızı. `verify-db.sh` her koşudan önce `db reset` yaptığı için **kapı bunu hiç göstermedi**; örtmüyordu, bakmıyordu. Kür (koşu-başı ön ek) üç dosyada uygulandı. **Taranmadı: kalan `*.db.test.ts`'lerde başka sabit id var mı.** |
+| N2 | **0030:52'nin "bind every other column to it" ifadesi gevşek** | Yedi CHECK'in **beşi** `status`'u anıyor, ikisi kolonları birbirine bağlıyor; ve yedisi tablonun **21** kolonundan **6**'sına dokunuyor. Hakem bulgusu. Sıkılaştırılırsa 0030:52 · `serp-snapshot-store.ts:19` · `db.ts:517` · `keyword-positions.ts:45` **tek nefeste** değişmeli. |
+| N3 | **İki panel farklı şey açıklıyor** | `/app/rankings` **uygulanan** sınırı (`history.limit`), `/app/lookups` **sabiti** basıyor. Birleştirmek `keyword-run-list.test.tsx:159`'daki mevcut assertion'ı düzenlemeyi gerektirir (NEVER#8). Bugün **latent**: W1 pini sayfanın kendi sınırını geçirmemesini zorluyor, yani uygulanan ≡ sabit. Operatör kararı. |
+| N4 | **Merge kuyruğu SERİ — paralellik işçilerde gerçek, merge'de değil** | Branch protection "head base ile güncel olmalı" istiyor; çakışmayan dosyalardaki dört PR'da bile her merge sıradakini bayatlattı ve **üç ekstra `merge origin/main` + CI turu** ödendi. Dilim planlarken hesaba katılmalı. |
+| N5 | **`git commit -m` + backtick = commit mesajına kabuk çıktısı enjekte olur** | Bu oturumda oldu: `` `id` `` komut ikamesi olarak çalıştı ve mesaja `uid=501(...)` + tüm yerel grup listesi girdi. Dal push edilmemişti, sızmadı. **Kural: mesaj `-F dosya` ya da tırnaklı heredoc ile geçer.** `NUL karakteri kullanma` dersinin kardeşi. |
+| N6 | **`git diff main...HEAD` bayat yerel `main` ref'ine karşı ölçüm DEĞİLDİR** | Şef bir dilimi "12 silme" diye raporladı; gerçek tabanına karşı **0 silme**ydi. `origin/main`'i fetch etmeden dal karşılaştırması yapılmaz. |
+
 
 ---
 

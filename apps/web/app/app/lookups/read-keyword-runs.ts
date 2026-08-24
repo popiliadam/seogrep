@@ -32,6 +32,23 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
  * (dfs/keyword-runs.ts says so). `keyword_set` is the exception that proves it: it is a real
  * column, it IS the row's subject, and the page prints it.
  *
+ * ORDERED BY `created_at` AND THEN BY `id` — the domain read's rule, and on THIS table the tie is
+ * closer to the normal case than to an edge one: one `research_keywords` call can be re-run for a
+ * second locale straight away, and `created_at` is `timestamptz default now()` where `now()` is the
+ * TRANSACTION clock, so two runs written in one transaction share the stamp to the microsecond.
+ * `order by created_at desc` ALONE leaves a tie's relative order UNDEFINED in Postgres, and
+ * `buildKeywordRunHistory` WALKS this order to decide which run "since the previous run" names —
+ * its own sort is on `created_at` too and is stable, so tied rows keep the order PostgREST handed
+ * over. Undefined row order therefore means an undefined "previous", and two identical page loads
+ * can print a different delta and a different date to the same tenant with nothing changed in the
+ * database. `id` is the PRIMARY KEY (0029), so it is unique per row and the order it completes is
+ * TOTAL.
+ *
+ * DESCENDING, matching the axis it breaks ties on. `id` is `gen_random_uuid()` and carries no order
+ * of its own, so the tiebreaker claims only that the answer is the same every time it is asked —
+ * and the direction is pinned all the same, because an order that flips on a one-word edit is a
+ * page whose "previous run" can still move under the reader.
+ *
  * BOUNDED AT `limit`, FETCHED AT `limit + 1`, and that one extra row is the whole point. A change
  * computed inside a truncated window can be missing a prior run that really is in the table, so
  * the page says out loud when older runs exist — and THAT SENTENCE HAS TO BE MEASURED. Asking for
@@ -56,6 +73,7 @@ export async function listKeywordResearchRuns(
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(KEYWORD_RUN_HISTORY_LIMIT + 1);
   if (error) {
     throw new Error(`keyword_research_runs history lookup failed: ${error.message}`);

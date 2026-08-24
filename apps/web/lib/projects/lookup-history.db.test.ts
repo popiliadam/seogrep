@@ -109,8 +109,11 @@ async function seedRun(params: {
   target: string;
   report: Record<string, unknown>;
   createdAt: string;
+  /** Only the tie-breaking spec sets this; everything else lets the column default. */
+  id?: string;
 }): Promise<void> {
   const { error } = await service.from("domain_lookup_runs").insert({
+    ...(params.id === undefined ? {} : { id: params.id }),
     user_id: params.userId,
     project_id: params.projectId,
     tool: params.tool,
@@ -302,5 +305,58 @@ describe("the lookups page's read against a real PostgREST", () => {
     expect(await runsFor(strangerClient, stranger.id)).toEqual([]);
     // …and asking for the OWNER's id explicitly is refused by the policy, not merely by the filter.
     expect(await runsFor(strangerClient, owner.id)).toEqual([]);
+  });
+
+  /**
+   * THE ORDER IS TOTAL, AT THE DATABASE — the executed half of W4.
+   *
+   * `created_at` is `timestamptz default now()` and `now()` is the TRANSACTION clock, so two runs
+   * written in one transaction share it to the microsecond. `order by created_at desc` ALONE
+   * leaves their relative order undefined in Postgres, and that is not untidiness: `buildDomainLookupHistory` walks
+   * the ordered list to decide which run is the "previous" one a change is measured against, so an
+   * undefined order makes the IDENTITY of "previous" undefined — and the subtraction printed to
+   * the tenant can differ between two identical page loads.
+   *
+   * The source pin in the query spec proves the ORDER BY is written; only this proves the database
+   * honours it. Three rows are seeded in an order that is neither the id order nor its reverse, so
+   * the assertion cannot be satisfied by insertion order alone.
+   *
+   * The ids carry a PER-RUN PREFIX rather than being fixed constants. This table has no per-test
+   * cleanup, and a sibling spec was MEASURED failing with "duplicate key value violates unique
+   * constraint" on its second run for exactly that reason — a red that reads like a real defect
+   * and is not one. A shared random prefix keeps the ordering decided by the final component
+   * (uuid compares bytewise) while making each run unique.
+   */
+  it("breaks a created_at tie on the primary key, at the database", async () => {
+    const user = await makeUser();
+    const runPrefix = randomUUID().slice(0, 8);
+    const ids = [
+      `${runPrefix}-0000-4000-8000-000000000001`,
+      `${runPrefix}-0000-4000-8000-000000000002`,
+      `${runPrefix}-0000-4000-8000-000000000003`,
+    ] as const;
+    const sameMoment = "2026-08-18T09:00:00.000Z";
+
+    // The ASSERTION RUNS THROUGH `target`, not through `id`, and that is forced rather than
+    // stylistic: `id` is deliberately NOT in this read's projection (the spec above pins the
+    // returned key set exactly, so adding `id` to prove this would have turned that gate red —
+    // and editing it to suit a new test is the one thing forbidden outright). Each row's target
+    // is tied to its id's rank instead, so the returned target sequence IS the id ordering.
+    const targetOf = (rank: number) => `t${rank}-${runPrefix}.example.com`;
+    for (const index of [1, 0, 2]) {
+      await seedRun({
+        id: ids[index],
+        userId: user.id,
+        projectId: null,
+        tool: "ranked_keywords",
+        target: targetOf(index),
+        report: { limit: 100, total: 10, top: null },
+        createdAt: sameMoment,
+      });
+    }
+
+    const rows = await runsFor(await clientForUser(user), user.id);
+
+    expect(rows.map((row) => row.target)).toEqual([targetOf(2), targetOf(1), targetOf(0)]);
   });
 });
