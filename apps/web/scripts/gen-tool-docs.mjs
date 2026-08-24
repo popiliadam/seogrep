@@ -88,13 +88,31 @@ export function frontmatterDescription(pageText) {
  * given, the line renders the unit price AND the range one call can really cost — because "90
  * credits" on the page of a tool no call of which ever costs 90 is a wrong number, not a short one.
  * Omitted for every other tool, which keeps the flat line byte-identical to what it always was.
+ *
+ * A rule may also carry a `base`: credits charged ONCE per call whatever the count (costs.ts
+ * PerUnitPriceRule). `serp_snapshot` is signed at 5 + 8 per keyword over 1-10 keywords, and with the
+ * base ignored this line published "8 to 80 credits" for a call that really costs 13 to 85 —
+ * understating its own signed price at every count (MEASURED before this branch existed).
+ *
+ * BOTH halves are rendered, and neither alone is enough for the reader the page is for. The range
+ * alone (13 to 85) is true but leaves a caller who wants three keywords doing arithmetic against a
+ * formula the page never gave them; the formula alone (5 + 8 per keyword) makes every reader compute
+ * the number they actually came for. So the line names the fixed part, the per-unit part, the count
+ * range, and the credits those bounds really cost — every number DERIVED from the rule, none typed
+ * into prose.
+ *
+ * An absent base and a base of 0 mean the same thing and render identically: the per-call clause is
+ * dropped entirely, which is what keeps `ai_visibility_compare`'s line byte-identical to what it was
+ * before the base term existed.
  */
 export function renderCostLine(cost, unitRule) {
   if (unitRule) {
     const { unit, min_units: min, max_units: max } = unitRule;
+    const base = unitRule.base ?? 0;
+    const perCall = base > 0 ? `${base} credits per call plus ` : "";
     return (
-      `**Cost:** ${cost} credits per ${unit} — ${min} to ${max} ${unit}s per call, ` +
-      `so ${cost * min} to ${cost * max} credits.`
+      `**Cost:** ${perCall}${cost} credits per ${unit} — ${min} to ${max} ${unit}s per call, ` +
+      `so ${base + cost * min} to ${base + cost * max} credits.`
     );
   }
   if (cost === 0) return "**Cost:** Free (0 credits).";

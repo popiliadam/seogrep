@@ -651,10 +651,76 @@ describe("found vs searched-and-not-found vs not-measured", () => {
     }
   });
 
-  /** A "no result object" response is NOT MEASURED, not "absent" — nothing was examined. */
-  it("treats an empty task result as not-measured rather than as an absence", async () => {
-    const row = await rowFor({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] });
-    expect(row.outcome.status).toBe("not_measured");
+  /**
+   * A "no result object" response is NOT MEASURED, not "absent" — nothing was examined.
+   *
+   * MEASURED HOLE (this slice): with `buildSerpRow`'s `result === null || result === undefined`
+   * branch DELETED, all 49 specs in this file stayed GREEN. The status assertion alone survived BY
+   * ACCIDENT and by a DIFFERENT MECHANISM: without the branch, `outcomeFor(null)` throws a schema
+   * error inside the live client's own try/catch, which turns it into a `not_measured` row carrying
+   * a completely different reason — a parse failure, where the truth is a successful request that
+   * returned nothing to read. So the REASON is what this spec pins, not merely the status: the
+   * accidental survival is precisely that a loose assertion was satisfied by the wrong sentence.
+   *
+   * The three shapes below vary the AXIS on which the result goes missing — an empty array, an
+   * explicit null, and the key absent altogether — because `?.[0] ?? null` collapses all three and a
+   * spec that only ever sends one of them says nothing about the other two.
+   */
+  it("treats an empty task result as not-measured rather than as an absence, and says why", async () => {
+    for (const result of [[] as unknown[], null, undefined]) {
+      const task: Record<string, unknown> = { status_code: 20000 };
+      if (result !== undefined) task.result = result;
+      const row = await rowFor({ status_code: 20000, tasks: [task] });
+
+      expect(row.outcome.status).toBe("not_measured");
+      if (row.outcome.status !== "not_measured") throw new Error("unreachable");
+      // THE REASON, and it is the request-returned-nothing one — never a parse failure's.
+      expect(row.outcome.reason).toMatch(/no result object/i);
+      expect(row.outcome.reason).not.toMatch(/expected shape/i);
+      expect(row.outcome.reason).not.toMatch(/no task/i);
+      expect(row.outcome.means).toMatch(/UNKNOWN/);
+      expect(row.outcome).not.toHaveProperty("organic_items_examined");
+      expect(row.outcome).not.toHaveProperty("placements");
+    }
+  });
+
+  /**
+   * AN ENVELOPE WITH NO TASK AT ALL — 20000 at the top and an empty `tasks` array under it.
+   *
+   * MEASURED HOLE (this slice): with `unwrapFirstResult`'s `if (!task) throw` replaced by
+   * `return null`, all 49 specs in this file stayed GREEN — no spec anywhere sent this envelope. The
+   * honesty invariant survived only by luck (a missing task fell into the missing-RESULT branch and
+   * still came out `not_measured`), and what was lost was the REASON: a whole missing task reported
+   * as "returned no result object for this keyword" tells an operator the request succeeded and came
+   * back empty, when in fact the vendor answered with nothing to attribute to any keyword at all.
+   *
+   * Again three shapes on the same axis: an empty array, an explicit null, and no `tasks` key.
+   */
+  it("an envelope carrying NO TASK is not-measured for a reason of its own, not a missing result", async () => {
+    for (const tasks of [[] as unknown[], null, undefined]) {
+      const envelope: Record<string, unknown> = { status_code: 20000 };
+      if (tasks !== undefined) envelope.tasks = tasks;
+      const row = await rowFor(envelope);
+
+      expect(row.outcome.status).toBe("not_measured");
+      if (row.outcome.status !== "not_measured") throw new Error("unreachable");
+      expect(row.outcome.reason).toMatch(/no task/i);
+      // …and NOT the sentence a task that merely returned nothing would have carried. This is the
+      // assertion the `return null` regression fails: it makes the two indistinguishable.
+      expect(row.outcome.reason).not.toMatch(/no result object/i);
+      expect(row.outcome.means).toMatch(/UNKNOWN/);
+      expect(row.outcome).not.toHaveProperty("organic_items_examined");
+    }
+  });
+
+  /** The two sentences must differ, or "distinct reason" is a claim nobody checked. */
+  it("says something DIFFERENT for a missing task than for a missing result", async () => {
+    const noResult = await rowFor({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] });
+    const noTask = await rowFor({ status_code: 20000, tasks: [] });
+    if (noResult.outcome.status !== "not_measured" || noTask.outcome.status !== "not_measured") {
+      throw new Error("unreachable");
+    }
+    expect(noResult.outcome.reason).not.toBe(noTask.outcome.reason);
   });
 
   /**
@@ -900,5 +966,45 @@ describe("the mock port", () => {
     const result = await port.fetchSerpSnapshot(query());
     expect(result.cost.vendor_cost_usd_source).toBe("our_estimate");
     expect(result.cost.vendor_cost_usd).toBeCloseTo(ESTIMATED_SERP_REQUEST_USD, 10);
+  });
+
+  /**
+   * THE DOUBLE'S BOUNDARY, pinned rather than left to accident (signed lesson 12).
+   *
+   * The live client wraps every `buildSerpRow` in a try/catch, so ANY throw becomes a `not_measured`
+   * row — deliberately: the other keywords in the snapshot were paid for and must survive one bad
+   * response. This double has no such catch, so it is STRICTER than production, not laxer, and it
+   * stays that way: a fixture the port cannot read is a defect in the SPEC's own input, and a double
+   * that absorbed it the way production absorbs a vendor's bad day would hide exactly that. Lesson 12
+   * is about a double being MORE permissive than the runtime; a stricter double cannot manufacture a
+   * false green, only a loud red.
+   *
+   * That makes WHERE the line falls a real property, and these two specs are what fix it — the first
+   * goes red if `buildSerpRow` stops handling a missing result itself, the second if the envelope
+   * check stops throwing.
+   */
+  it("serves a RESULTLESS response as a not-measured ROW — buildSerpRow handles it, no catch needed", async () => {
+    const port = createMockSerpSnapshotPort(
+      { status_code: 20000, tasks: [{ status_code: 20000, result: [] }] },
+      () => FIXED_CLOCK,
+    );
+    const result = await port.fetchSerpSnapshot(query({ keywords: ["a", "b"] }));
+    expect(result.rows).toHaveLength(2);
+    for (const row of result.rows) {
+      expect(row.outcome.status).toBe("not_measured");
+      if (row.outcome.status !== "not_measured") throw new Error("unreachable");
+      expect(row.outcome.reason).toMatch(/no result object/i);
+    }
+  });
+
+  it("does NOT absorb an unreadable ENVELOPE — it fails loudly instead of inventing a row", async () => {
+    for (const envelope of [
+      { status_code: 20000, tasks: [] },
+      { status_code: 20000, tasks: [{ status_code: 40501, status_message: "Invalid Field" }] },
+      { status_code: 40000, status_message: "nope", tasks: [] },
+    ]) {
+      const port = createMockSerpSnapshotPort(envelope, () => FIXED_CLOCK);
+      await expect(port.fetchSerpSnapshot(query())).rejects.toThrow();
+    }
   });
 });
