@@ -443,6 +443,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      // One row per research_keywords call that delivered, migration 0029 — the run axis 0027
+      // deliberately left out because a keyword LIST has no domain to put in `target`.
+      //
+      // `keyword_set` is the run's SUBJECT and its whole identity: the normalized, de-duplicated,
+      // sorted keyword set (dfs/keyword-runs.ts owns the derivation), never the caller's literal
+      // argument. There is no project column — the tool takes no project — so `user_id` is the
+      // only tenant column and the auth.users FK is the only parent this table has.
+      //
+      // Update is `never`, matching the migration's grants (SELECT + INSERT only): a run records
+      // what the vendor said at that moment, so re-running writes a NEW row.
+      keyword_research_runs: {
+        Row: {
+          id: string;
+          user_id: string;
+          keyword_set: string[];
+          report: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          keyword_set: string[];
+          report: Json;
+          created_at?: string;
+        };
+        Update: {
+          [_ in never]: never;
+        };
+        Relationships: [];
+      };
       // One row per crawled page (and per skipped URL) of a crawl_site run, migration 0023 —
       // the row axis beside the single `jobs.result` jsonb, written by the queue handler's
       // dual write (queue/handlers/crawl-pages.ts) and read by nothing yet, on purpose.

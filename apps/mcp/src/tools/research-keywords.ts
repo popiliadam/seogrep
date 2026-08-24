@@ -7,6 +7,12 @@ import {
   type KeywordOverviewRow,
   type KeywordResearchPort,
 } from "../dfs/client.ts";
+import {
+  keywordResearchRunReport,
+  normalizeKeywordSet,
+  writeKeywordResearchRun,
+  type KeywordResearchRunWriter,
+} from "../dfs/keyword-runs.ts";
 import { STALE_PULL_DAYS } from "../gsc-data/load.ts";
 import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResult } from "./registry.ts";
 
@@ -38,6 +44,19 @@ import { defineTool, errorResult, textResult, type RegisteredTool, type ToolResu
 
 /** United States — the DataForSEO default location_code. */
 const DEFAULT_LOCATION_CODE = 2840;
+
+/**
+ * The all-blank rejection — free, BEFORE the reserve, exactly like NOT_ENABLED_MESSAGE.
+ *
+ * `z.string().min(1)` accepts "   ", so a caller can pass a schema-valid list that names no
+ * keyword at all. Such a call has no subject: 0029's identity column would be the empty array and
+ * its CHECK would refuse the row — AFTER the vendor had been paid and the caller served. Refusing
+ * here costs nothing and keeps that CHECK what it should be, a database invariant rather than an
+ * app error path.
+ */
+const NO_KEYWORDS_MESSAGE =
+  "No keywords were given. Every keyword in the list was empty or whitespace, so there is " +
+  "nothing to look up — you were not charged.";
 
 const NOT_ENABLED_MESSAGE =
   "Keyword research is not yet enabled on this deployment. Live search-volume data " +
@@ -206,9 +225,16 @@ export interface ResearchKeywordsDeps {
    * mock (to exercise the priced path) or a disabled port (to prove the honesty gate).
    */
   readonly port?: KeywordResearchPort;
+  /**
+   * The run recorder (default: the real `writeKeywordResearchRun`). A PORT for the reason every
+   * other writer in this family is one: a spec can make it FAIL without breaking a database, which
+   * is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: KeywordResearchRunWriter;
 }
 
 export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeKeywordResearchRun;
   return defineTool<ResearchKeywordsInput>({
     name: "research_keywords",
     description: DESCRIPTION,
@@ -221,6 +247,13 @@ export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): Regis
         // Pre-reserve honesty gate: refuse rather than reserve credits or serve mock data.
         return errorResult(NOT_ENABLED_MESSAGE);
       }
+      // The SUBJECT of the run (migration 0029), resolved before the reserve because a call with
+      // no subject is refused free of charge. The vendor still receives the caller's RAW list —
+      // normalization decides what the row is ABOUT, it does not rewrite the request.
+      const keywordSet = normalizeKeywordSet(input.keywords);
+      if (keywordSet.length === 0) {
+        return errorResult(NO_KEYWORDS_MESSAGE);
+      }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge).
       return withCredits({ userId: ctx.userId }, { tool: "research_keywords" }, async () => {
@@ -229,7 +262,23 @@ export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): Regis
           language_code: input.language_code,
           location_code: input.location_code,
         });
-        return textResult(formatKeywordOverview(rows, input));
+        const text = formatKeywordOverview(rows, input);
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0029; dfs/keyword-runs.ts states the same contract from the other side).
+        // withCredits commits a handler that RETURNS and releases one that THROWS, so an error
+        // escaping here costs the tenant nothing. Caught and logged instead, the shape would be
+        // the house's worst: a charged caller, a delivered table, and a panel that says forever
+        // that the lookup never ran.
+        await writeRun(
+          { userId: ctx.userId, keywordSet },
+          keywordResearchRunReport(rows, {
+            keywords: input.keywords,
+            keywordSet,
+            language_code: input.language_code,
+            location_code: input.location_code,
+          }),
+        );
+        return textResult(text);
       });
     },
   });
