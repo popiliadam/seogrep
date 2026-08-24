@@ -33,8 +33,9 @@ import targetPagesFixture from "../dfs/fixtures/backlinks-domain-pages-summary.j
  *       other backlinks endpoint this repo also calls, and that the ROW CAPS the signed price
  *       rests on are what actually goes out on the wire;
  *   (e) an empty window is a DELIVERED analysis and IS charged;
- *   (f) TENANT ISOLATION: another tenant's project_id is refused with the not-found sentence and
- *       ZERO ledger rows.
+ *   (f) TENANT ISOLATION, BOTH DIRECTIONS: another tenant's project_id is refused with the
+ *       not-found sentence and ZERO ledger rows, AND the OWNER's own project resolves, is named
+ *       in the heading, and is charged.
  * No real DataForSEO call happens here (NEVER #5).
  */
 
@@ -266,14 +267,15 @@ describe("backlink_details credit path against the local stack", () => {
     expect(balanceOf(rows)).toBe(300 - TOOL_COSTS.backlink_details);
   });
 
-  it("(f) another tenant's project_id is refused with the not-found sentence and ZERO rows", async () => {
+  it("(f) a stranger is refused with ZERO rows; the OWNER's own project resolves and is charged", async () => {
     const owner = await makeCtx();
     const stranger = await makeCtx();
     await seedPurchase(stranger.userId, 300);
 
+    const domain = `bldetails-${randomUUID().slice(0, 8)}.com`;
     const { data, error } = await service
       .from("projects")
-      .insert({ user_id: owner.userId, domain: `bldetails-${randomUUID().slice(0, 8)}.com` })
+      .insert({ user_id: owner.userId, domain })
       .select("id")
       .single();
     if (error || !data) throw new Error(`project insert failed: ${error?.message ?? "no row"}`);
@@ -286,5 +288,29 @@ describe("backlink_details credit path against the local stack", () => {
     const rows = await ledgerRows(stranger.userId);
     expect(rows.map((r) => r.kind)).toEqual(["purchase"]);
     expect(balanceOf(rows)).toBe(300);
+
+    /**
+     * THE OTHER DIRECTION, and it is measured rather than decorative: with only the refusal above,
+     * this spec stayed GREEN when the handler's project lookup was scoped to a hard-coded foreign
+     * uuid — a tool that refuses EVERY project_id, its owner's included, satisfies a refusal-only
+     * assertion perfectly. So the owner running their OWN project must resolve, NAME THAT PROJECT
+     * IN THE HEADING, and be charged. The heading is the half a refusal can never counterfeit:
+     * projectNotFoundMessage() carries no domain, and `your project "<domain>"` is only reachable
+     * once resolveTarget returned a ProjectRef for THIS tenant.
+     *
+     * The delivered `domain_lookup_runs` row (migration 0031) is NOT re-asserted here: the
+     * dedicated spec domain-lookup-runs-0031.db.test.ts already pins it for all four tools, in
+     * both the delivered and the refused direction.
+     */
+    await seedPurchase(owner.userId, 300);
+    const mine = await tool.run(owner, { project_id: data.id });
+    expect(mine.isError).toBeUndefined();
+    expect(mine.content[0]?.text).toContain(`Backlinks for your project "${domain}"`);
+    expect(mine.content[0]?.text).toContain("2 backlinks in this window");
+    const ownerRows = await ledgerRows(owner.userId);
+    expect(ownerRows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_commit"]);
+    expect(ownerRows[1]?.delta).toBe(-TOOL_COSTS.backlink_details);
+    expect(ownerRows[1]?.tool).toBe("backlink_details");
+    expect(balanceOf(ownerRows)).toBe(300 - TOOL_COSTS.backlink_details);
   });
 });
