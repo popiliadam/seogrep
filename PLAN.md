@@ -5,7 +5,53 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-24 (5. oturum) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-24 (5. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+
+**Durum:** `main` @`6e1c7e1` (+ #168 kuyrukta) · **7 PR merge** · migration **0031 prod'da
+UYGULANDI ve TABLO OKUNARAK doğrulandı** · canlı yüzey **36 tool** · MCP deploy başarılı ·
+worktree temiz.
+
+> **AYRINTILI HANDOFF:** `docs/plans/2026-08-24-oturum5-kapanis-handoff.md` — prod doğrulaması,
+> şefin ÜÇ ölçüm hatası, güncel chip listesi, üç eskalasyon ve bu oturumun eklediği disiplin.
+
+#### ✅ KAPANAN
+
+**Parça 2'de iki büyük kalem:** `/app/rankings` rank tracker paneli (#164) · **0031** — dört
+tool'un koşu ekseni + `/app/lookups` yüzeyi (#167). Ayrıca W1–W4 okuma pinleri (#165, **W4 gerçek
+kusurdu**), para yolu P4/P5/P6 (#163), doküman sapmaları (#162), T1 çift yönlü kiracı testi (#168).
+
+#### 🎯 SIRADAKİ İŞ
+
+1. **PARÇA 2'NİN KALANI.** `discover_keywords` · `ai_visibility` · `ai_visibility_compare` 0027'ye
+   **GİRMEZ** (ölçüldü: 4 mode/3'ünde domain yok · konu domain VEYA keyword · manşet konu YOK).
+   Bunlara **konusu ayrımlı** bir tablo gerekir — `mode`/`subject_kind` SAKLANIR ki null'ın anlamı
+   satırdan satıra değişmesin (0030'un `status` discriminant'ı çalışan örnek).
+   ✅ **Yeni tablo = eklemeli SQL = ŞEF UYGULAYABİLİR** (0031'den farklı).
+2. **Chip dalgası** — kapanan çıkarıldı, **dört yeni chip** eklendi (N7–N10).
+3. **`keyword_trends`** — bir hafta `dfs_spend` verisi.
+
+#### ⚠️ ÜÇ ESKALASYON — yazıldı
+
+**K5 DECOMPOSE** (42 hata/21 dosya + `packages/*` de dışlıyor) · **T3 REVISE** (locale hem abonelik
+kimliği hem vendor değeri; dört modül birlikte değişmeli) · **N7 DEFER** (`/status` probe sınırı).
+
+#### 🚨 ŞEFİN ÜÇ ÖLÇÜM HATASI — taze oturum miras almasın
+
+1. **"dosyaya karşı okundu" — okumamıştı.** Üç tool kaçtı, `link_gap` hakkında iki yarısı da yanlış
+   bir cümle yayınlandı. Hakem çürüttü.
+2. **"beş CHECK"** — yanlış sayıyı başka yanlış sayıyla değiştirdi; repo'nun kendi kelimesi **yedi**.
+3. **T1'de test ADLARINI grep'ledi, gövdeleri değil.** Chip "1 dosya" diyordu, şef "4" diye
+   düzeltti, **gerçek 2** — sahip-tarafı yarısı aynı testin GÖVDESİNDEYDİ. İşçi ölçüp uymadı.
+
+> **Ders (imzasız):** *Bir chip'in TARİFİ de bir iddiadır ve ölçülmeden iş emrine taşınmaz.* Bu
+> oturumda dört chip tarifi yanlış çıktı; ikisini chip yanlış söyledi, **ikisini şef yanlış düzeltti.**
+
+#### ⏳ OPERATÖRDE — hiçbiri kodu bloke etmiyor
+
+**Canlı smoke** (şef yapamıyor, izin katmanı reddediyor) · **cron alt-bütçesi** · **ürün adaleti** ·
+**N3** (iki panelin farklı sınır açıklaması, bugün latent).
+
+### 📋 2026-08-24 (5. oturum, ARA SÜRÜM)
 
 **Durum:** `main` @`e2ceddd` · **5 PR merge edildi** (#162 #163 #164 #165, dört dilim) · worktree temiz ·
 migration **0030** prod'da · canlı yüzey **36 tool** (bu oturum tool EKLEMEDİ — panel ve pin işiydi).

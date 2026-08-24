@@ -65,6 +65,13 @@ biri için koşu ekseni (0027/0029 deseni).
 
 ## 3. CHIP ENVANTERİ — 2026-08-24'te koda karşı DOĞRULANDI, 5. oturumda GÜNCELLENDİ
 
+> **KAPANIŞ NOTU:** bu dosya 5. oturumun ORTASINDA güncellendi. Kapanış tablosu ve dört yeni chip
+> (N7-N10) için `docs/plans/2026-08-24-oturum5-kapanis-handoff.md`. **`T1` de kapandı (#168) ve
+> listeden çıkarıldı — ve tarifi HEM chip'te HEM şefin düzeltmesinde yanlıştı: chip "bir dosya",
+> şef "dört" dedi, gerçek İKİ. `disavow_candidates` ve `my_pages` sahip-tarafı yarısını zaten
+> taşıyordu, aynı testin GÖVDESİNDE. `N1` de tamamen kapandı: repo genelinde sabit uuid literal'i
+> SIFIR.**
+>
 > **5. oturumda KAPANAN ve listeden ÇIKARILANLAR:** `P4` `P5` `P6` (PR #163) · `W1` `W2` `W3` `W4`
 > (PR #165) · `D1` `D2` (PR #162). Dokuzu da hakemden geçti ve üç kapıdan da.
 >
@@ -105,7 +112,6 @@ biri için koşu ekseni (0027/0029 deseni).
 
 | # | chip | ölçüm |
 |---|---|---|
-| T1 | **Tek yönlü kiracı testi — DÖRT dosyada, chip bir tane diyordu** | `backlink-details` · `backlink-changes` · `disavow-candidates` · `my-pages` `.db.test.ts`'lerinin (f) testi yalnız RET kanıtlıyor: **herkesi — sahibini dahil — reddeden** bir handler dördünü de geçer. Yalnız `discover-keywords` (g) çift yönlü ve kendi yorumunda deliği ÖLÇTÜĞÜNÜ yazıyor. Şablon hazır: 5. oturumun `ranking-history.db.test.ts`'i bu şekli çift yönlü kurdu ve mutasyonla kanıtladı (sahte-sahip mutasyonu 7 testin 6'sını kırmızıya düşürdü). |
 | T2 | **`lighthouse.test.ts:402` karışık pini kendi kendine yetmiyor** | Fixture maliyeti (0,005) liste fiyatına **eşit**, hangi yarının fiyatlandığını ayırt edemiyor. |
 | T3 | **`location_name`/`language_code` normalize edilmiyor** | "United States" vs "united states" = iki abonelik, iki seri. Kelime katlaması gürültülü şekilde belgeliyken bu sessiz. |
 | T4 | **Arşivlenmiş proje untrack edemiyor** | `track-keywords.ts:228` `archivedAt` kapısı action dalından önce. Zararsız, ürün kırışıklığı. |
