@@ -287,10 +287,18 @@ describe("the rankings page's reads against a real PostgREST", () => {
   it("breaks a fetched_at tie on the primary key, at the database", async () => {
     const user = await makeUser();
     const projectId = await makeProject(user.id);
+    // The three ids must have a KNOWN relative order for the assertion to mean anything, but they
+    // must not be global constants: this table has no per-test cleanup, so a fixed id collides
+    // with its own row from a previous run and the spec dies on a primary-key violation instead
+    // of measuring the tie. MEASURED — running this file twice without `supabase db reset` failed
+    // here with "duplicate key value violates unique constraint ..._pkey", which reads exactly
+    // like a real defect and is not one. A per-run prefix shared by all three keeps the ordering
+    // decided by the final component (uuid compares bytewise) while making the run unique.
+    const runPrefix = randomUUID().slice(0, 8);
     const ids = [
-      "aaaaaaaa-0000-4000-8000-000000000001",
-      "aaaaaaaa-0000-4000-8000-000000000002",
-      "aaaaaaaa-0000-4000-8000-000000000003",
+      `${runPrefix}-0000-4000-8000-000000000001`,
+      `${runPrefix}-0000-4000-8000-000000000002`,
+      `${runPrefix}-0000-4000-8000-000000000003`,
     ] as const;
     const sameMoment = "2026-08-10T09:00:00.000Z";
     await seedMeasurements([
