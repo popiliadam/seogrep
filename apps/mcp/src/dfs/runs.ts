@@ -16,6 +16,11 @@ import type {
   BacklinkProfilePoint,
 } from "./backlink-changes.ts";
 import type {
+  BacklinkDetailRow,
+  BacklinkDetails,
+  TargetPageRow,
+} from "./backlink-details.ts";
+import type {
   RankedKeywordRow,
   RankedKeywordsResult,
   RankedKeywordsSort,
@@ -263,12 +268,57 @@ export interface BacklinkChangesRunReport {
   readonly profile: readonly BacklinkProfilePoint[];
 }
 
-/** The four reports — the only four things `domain_lookup_runs.report` ever holds. */
+/**
+ * backlink_details' report.
+ *
+ * NO `locale` KEY, for BacklinksRunReport's reason: these endpoints have none.
+ *
+ * WHAT `total` IS: the vendor's `total_count` for the LINK set — its count of the whole live
+ * backlink set for this target, which the fetched window is only a slice of. It does NOT move with
+ * `limit` or `offset`, and the four parameters that WOULD move it (`mode`, `status_type`,
+ * `include_subdomains`, the rank scale) are pinned constants in the adapter rather than caller
+ * input, which is what makes two runs of this tool against the same target comparable at all.
+ * Null stays null: "the vendor did not say" is not "there are none" (NEVER #7).
+ */
+export interface BacklinkDetailsRunReport {
+  /** The link-window row cap the caller asked for. */
+  readonly limit: number;
+  /** Where the link window starts. Load-bearing for reading `top` — see below. */
+  readonly offset: number;
+  /** The target-pages row cap the caller asked for. */
+  readonly page_limit: number;
+  /** DFS `total_count` for the LINK set, before offset/limit. Null = the vendor did not say. */
+  readonly total: number | null;
+  /** Link rows RECEIVED in the window, before MAX_RUN_ROWS. */
+  readonly shown: number;
+  /**
+   * The FIRST ROW OF THE LINK WINDOW, under the adapter's pinned `rank,desc` ordering.
+   *
+   * HONESTY ŞERH, CompetitorsRunReport.top's rule applied to a paginated set: at `offset` 0 this
+   * really is the highest-ranked live backlink the vendor holds for the target, but at any other
+   * offset it is merely where the caller's window begins. `offset` sits beside it precisely so a
+   * reader can tell those two apart, and nothing here may be labelled "the best link" without
+   * checking it.
+   */
+  readonly top: {
+    readonly domain: string;
+    readonly url_to: string | null;
+    readonly rank: number | null;
+    readonly dofollow: boolean | null;
+  } | null;
+  /** The link window: the vendor's whole-set count, what arrived, and the capped rows. */
+  readonly links: CappedList<BacklinkDetailRow>;
+  /** The TARGET'S OWN pages, ordered `backlinks,desc` by the adapter. Same three fields. */
+  readonly target_pages: CappedList<TargetPageRow>;
+}
+
+/** The five reports — the only five things `domain_lookup_runs.report` ever holds. */
 export type DomainLookupReport =
   | RankedKeywordsRunReport
   | BacklinksRunReport
   | CompetitorsRunReport
-  | BacklinkChangesRunReport;
+  | BacklinkChangesRunReport
+  | BacklinkDetailsRunReport;
 
 /**
  * Build ranked_keywords' report from the result the FORMATTER is about to render (pure).
@@ -353,6 +403,18 @@ export function competitorsRunReport(
   };
 }
 
+/** A VendorWindow as a CappedList: the vendor's whole-set count, what ARRIVED, the capped rows. */
+function cappedWindow<Row>(window: {
+  readonly vendor_total_count: number | null;
+  readonly rows: readonly Row[];
+}): CappedList<Row> {
+  return {
+    total_count: window.vendor_total_count,
+    shown: window.rows.length,
+    rows: capRows(window.rows),
+  };
+}
+
 /**
  * The profile bucket with the greatest PARSEABLE date, or null when no bucket has one.
  *
@@ -399,6 +461,36 @@ export function backlinkChangesRunReport(
   };
 }
 
+/** Build backlink_details' report from the details the formatter is about to render (pure). */
+export function backlinkDetailsRunReport(
+  details: BacklinkDetails,
+  query: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly page_limit: number;
+  },
+): BacklinkDetailsRunReport {
+  const best = details.links.rows[0];
+  return {
+    limit: query.limit,
+    offset: query.offset,
+    page_limit: query.page_limit,
+    total: details.links.vendor_total_count,
+    shown: details.links.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            domain: best.domain_from,
+            url_to: best.url_to,
+            rank: best.rank,
+            dofollow: best.dofollow,
+          },
+    links: cappedWindow(details.links),
+    target_pages: cappedWindow(details.target_pages),
+  };
+}
+
 /** Everything one `domain_lookup_runs` row is keyed by. */
 export interface DomainLookupRunTarget {
   readonly userId: string;
@@ -425,7 +517,8 @@ export type DomainLookupTool =
   | "ranked_keywords"
   | "analyze_backlinks"
   | "compare_competitors"
-  | "backlink_changes";
+  | "backlink_changes"
+  | "backlink_details";
 
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type DomainLookupRunWriter = (
