@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   CREDIT_UNITS,
@@ -711,5 +713,51 @@ describe("the D17 confirmation gate weighs the base", () => {
       .requiresConfirmation).toBe(true);
     expect(evaluateConfirmation(creditCostFor("ai_visibility_compare", 2), false)
       .requiresConfirmation).toBe(false);
+  });
+});
+
+/**
+ * EVERY PER-UNIT TOOL CARRIES ITS OWN RESERVATION PIN — the rule turned into a gate.
+ *
+ * WHY THIS IS A SPEC AND NOT A SENTENCE IN A DOC. Dropping `units:` from a per-unit tool's
+ * reservation call site is INVISIBLE to the whole fast lane: the tool still answers, the ledger
+ * still balances, and the only thing that changes is the number of credits reserved. It was
+ * MEASURED — the suite stays green — and the single thing that catches it is a spec written for
+ * that one tool, by convention named `<tool>.reserve.test.ts`.
+ *
+ * A convention nobody enforces is a convention that survives exactly as long as the person who
+ * remembers it. Both of today's per-unit tools happen to have their pin; this asserts that the
+ * NEXT one cannot ship without it. `CREDIT_UNITS` is the register of per-unit pricing (NEVER #6),
+ * so it is the right thing to iterate: adding a row there is precisely the moment the obligation
+ * begins.
+ *
+ * It reads the DIRECTORY rather than importing the specs, because importing them would run them
+ * and prove nothing about their existence; a missing file must be a missing file, not a failed
+ * import inside somebody else's test.
+ *
+ * Deliberately NOT asserted here: what the pin CONTAINS. A spec that dictated the assertions of
+ * another spec would be a gate on wording rather than on coverage, and would go stale the first
+ * time a tool priced its units differently. This pins the obligation; the pin itself is reviewed
+ * like any other spec.
+ */
+describe("the per-unit reservation pin is an obligation, not a convention", () => {
+  it("gives every tool in CREDIT_UNITS its own *.reserve.test.ts", () => {
+    const toolsDir = fileURLToPath(new URL("../tools/", import.meta.url));
+    const present = readdirSync(toolsDir).filter((name) => name.endsWith(".reserve.test.ts"));
+
+    // The spec file is named from the tool with underscores as dashes — the repo-wide convention
+    // for every tool module, asserted rather than assumed so a rename cannot silently orphan a pin.
+    const missing = (Object.keys(CREDIT_UNITS) as ToolName[]).filter(
+      (tool) => !present.includes(`${tool.replaceAll("_", "-")}.reserve.test.ts`),
+    );
+
+    expect(
+      missing,
+      `per-unit tool(s) with no reservation pin: ${missing.join(", ") || "(none)"} — a call site ` +
+        "that drops `units:` reserves the flat price and no other spec would notice",
+    ).toEqual([]);
+
+    // …and the register is not empty, so the loop above cannot pass vacuously.
+    expect(Object.keys(CREDIT_UNITS).length).toBeGreaterThan(0);
   });
 });
