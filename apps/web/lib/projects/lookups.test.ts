@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DOMAIN_LOOKUP_ROW_TOOLS,
   DOMAIN_LOOKUP_TOOLS,
   buildDomainLookupLines,
+  summarizeDomainLookupRun,
   type DomainLookupRunRow,
 } from "./lookups";
 
@@ -305,5 +307,132 @@ describe("buildDomainLookupLines — the headline clause is dropped, never faked
         }),
       ])[0]?.run?.summary,
     ).toBe("1420 ranked keywords");
+  });
+});
+
+describe("the four tools migration 0031 added to the table", () => {
+  /**
+   * THE TABLE'S VOCABULARY AND THE CARD'S ARE DIFFERENT LISTS, and the difference is deliberate:
+   * the card fans out ONE query per tool per project, so it stays at three, while `/app/lookups`
+   * reads the table once and shows all seven. Both are pinned here so neither can drift into the
+   * other by accident.
+   */
+  it("names all seven in DOMAIN_LOOKUP_ROW_TOOLS, and leaves the card's three alone", () => {
+    expect([...DOMAIN_LOOKUP_ROW_TOOLS]).toEqual([
+      "ranked_keywords",
+      "analyze_backlinks",
+      "compare_competitors",
+      "backlink_changes",
+      "backlink_details",
+      "disavow_candidates",
+      "my_pages",
+    ]);
+    expect(DOMAIN_LOOKUP_TOOLS).toHaveLength(3);
+  });
+
+  /**
+   * THE NOUN NAMES WHAT THE NUMBER COUNTS, per tool, because these four `total`s count four
+   * different things. backlink_changes' is a count of BUCKETS in one of its two series — printing
+   * it as backlinks beside a backlink_details row would read as a profile size.
+   */
+  it("counts each tool's own quantity under its own noun", () => {
+    expect(summarizeDomainLookupRun("backlink_changes", { total: 12, top: null })).toBe(
+      "12 history buckets",
+    );
+    expect(summarizeDomainLookupRun("backlink_details", { total: 41245, top: null })).toBe(
+      "41245 backlinks",
+    );
+    expect(summarizeDomainLookupRun("disavow_candidates", { total: 1, top: null })).toBe(
+      "1 candidate domain",
+    );
+    expect(summarizeDomainLookupRun("my_pages", { total: 812, top: null })).toBe(
+      "812 pages reported by DataForSEO",
+    );
+  });
+
+  it("reads each tool's own `top` shape into its own headline clause", () => {
+    expect(
+      summarizeDomainLookupRun("backlink_changes", {
+        total: 3,
+        top: { date: "2022-02-28 00:00:00 +00:00", backlinks: 1594, referring_domains: 528 },
+      }),
+    ).toBe("3 history buckets · latest bucket 2022-02-28 00:00:00 +00:00: 1594 backlinks");
+    expect(
+      summarizeDomainLookupRun("backlink_details", {
+        total: 900,
+        top: { domain: "news.example", url_to: null, rank: 412, dofollow: true },
+      }),
+    ).toBe("900 backlinks · first link in the window: news.example (rank 412)");
+    expect(
+      summarizeDomainLookupRun("disavow_candidates", {
+        total: 2,
+        top: { domain: "spammy.example", spam_score: null, window_link_count: 14 },
+      }),
+    ).toBe("2 candidate domains · first candidate: spammy.example (14 links in this window)");
+    expect(
+      summarizeDomainLookupRun("my_pages", {
+        total: 812,
+        top: { page: "https://example.com/a", organic_count: 44, organic_etv: 910 },
+      }),
+    ).toBe(
+      "812 pages reported by DataForSEO · first page in the window: https://example.com/a " +
+        "(44 organic SERPs)",
+    );
+  });
+
+  /**
+   * "FIRST IN THE WINDOW", never "top" or "best". `BacklinkDetailsRunReport.top` and
+   * `MyPagesRunReport.top` both carry the offset ŞERH `CompetitorsRunReport.top` carries: at a
+   * non-zero offset the first row is merely where the caller's window began, and this panel does
+   * not read the offset, so it must not make the claim that would need it.
+   */
+  it("never labels a window's first row as the best one", () => {
+    const details = summarizeDomainLookupRun("backlink_details", {
+      total: 900,
+      top: { domain: "news.example", url_to: null, rank: 412, dofollow: true },
+    });
+    const pages = summarizeDomainLookupRun("my_pages", {
+      total: 812,
+      top: { page: "https://example.com/a", organic_count: 44, organic_etv: 910 },
+    });
+    for (const line of [details, pages]) {
+      expect(line).toMatch(/first .* in the window/i);
+      expect(line).not.toMatch(/\b(best|top|strongest|closest)\b/i);
+    }
+  });
+
+  /** A real finding of "nothing" gets its own sentence per tool, never a bare "0". */
+  it("says what was not found, per tool", () => {
+    expect(summarizeDomainLookupRun("backlink_changes", { total: 0, top: null })).toBe(
+      "No backlink history found",
+    );
+    expect(summarizeDomainLookupRun("disavow_candidates", { total: 0, top: null })).toBe(
+      "No candidate domains found",
+    );
+    // NOT "this domain has no ranking pages": the count is the vendor's, over the item types and
+    // filters that run asked for.
+    expect(summarizeDomainLookupRun("my_pages", { total: 0, top: null })).toBe(
+      "No pages reported by DataForSEO",
+    );
+  });
+
+  /**
+   * A NULL TOTAL IS NEVER A ZERO, on the new tools too: `BacklinkDetailsRunReport.total` and
+   * `MyPagesRunReport.total` are `number | null` because the vendor can decline to say.
+   */
+  it("shows no numbers at all when the total is null", () => {
+    for (const tool of DOMAIN_LOOKUP_ROW_TOOLS) {
+      expect(summarizeDomainLookupRun(tool, { total: null, top: null })).toBeNull();
+    }
+  });
+
+  /** An unreadable `top` costs the headline and NOT the count — the half the reader came for. */
+  it("drops an unreadable headline without dropping the count", () => {
+    expect(summarizeDomainLookupRun("my_pages", { total: 812, top: { page: 5 } })).toBe(
+      "812 pages reported by DataForSEO",
+    );
+    expect(
+      summarizeDomainLookupRun("backlink_details", { total: 900, top: { domain: "x", rank: null } }),
+    ).toBe("900 backlinks");
   });
 });

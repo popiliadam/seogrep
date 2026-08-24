@@ -16,6 +16,11 @@ import {
   type BacklinkProfilePoint,
 } from "../dfs/backlink-changes.ts";
 import {
+  backlinkChangesRunReport,
+  writeDomainLookupRun,
+  type DomainLookupRunWriter,
+} from "../dfs/runs.ts";
+import {
   loadOwnProject,
   projectIdField,
   resolveTarget,
@@ -221,9 +226,16 @@ export interface BacklinkChangesDeps {
   readonly port?: BacklinkChangesPort;
   /** The tenant-scoped project loader (default: the real one). Injected so tests run DB-less. */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The run recorder (default: the real `writeDomainLookupRun`, migration 0031). A PORT for the
+   * reason every other writer in this family is one: a spec can make it FAIL without breaking a
+   * database, which is the only way to observe the fail-closed contract from the fast lane.
+   */
+  readonly writeRun?: DomainLookupRunWriter;
 }
 
 export function makeBacklinkChangesTool(deps: BacklinkChangesDeps = {}): RegisteredTool {
+  const writeRun = deps.writeRun ?? writeDomainLookupRun;
   return defineTool<BacklinkChangesInput>({
     name: "backlink_changes",
     description: DESCRIPTION,
@@ -250,7 +262,27 @@ export function makeBacklinkChangesTool(deps: BacklinkChangesDeps = {}): Registe
           group_range: input.group_range,
           periods: input.periods,
         });
-        return textResult(formatBacklinkChanges(changes, subject.project));
+        const text = formatBacklinkChanges(changes, subject.project);
+        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
+        // (migration 0031; dfs/runs.ts states the same contract from the other side). withCredits
+        // COMMITS a handler that returns and RELEASES one that throws, so an error escaping here
+        // costs the tenant nothing. Caught and logged instead, the shape would be the house's
+        // worst: a charged caller, a delivered table, and a panel that says forever that the
+        // lookup never ran.
+        //
+        // `projectId` is null on a bare-target call. `target` is the RESOLVED domain, never the
+        // caller's raw input: it is what was actually looked up, and for a project run it is what
+        // the project's domain was AT THE TIME.
+        await writeRun(
+          {
+            userId: ctx.userId,
+            projectId: subject.project?.id ?? null,
+            tool: "backlink_changes",
+            target: subject.domain,
+          },
+          backlinkChangesRunReport(changes, { periods: input.periods }),
+        );
+        return textResult(text);
       });
     },
   });

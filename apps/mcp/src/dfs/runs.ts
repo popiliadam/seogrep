@@ -11,19 +11,48 @@ import type {
   DomainOrganicMetrics,
 } from "./competitors.ts";
 import type {
+  BacklinkChangePoint,
+  BacklinkChangesResult,
+  BacklinkProfilePoint,
+} from "./backlink-changes.ts";
+import type {
+  BacklinkDetailRow,
+  BacklinkDetails,
+  TargetPageRow,
+} from "./backlink-details.ts";
+import type {
+  DisavowCandidate,
+  DisavowCandidates,
+  DisavowCriteria,
+  ReferringNetworkRow,
+} from "./disavow-candidates.ts";
+import type {
   RankedKeywordRow,
   RankedKeywordsResult,
   RankedKeywordsSort,
 } from "./ranked-keywords.ts";
+import type {
+  RelevantPageItemType,
+  RelevantPageRow,
+  RelevantPagesResult,
+} from "./relevant-pages.ts";
 
 /**
  * The DOMAIN LOOKUP RUN LEDGER (migration 0027): one row per DFS domain lookup that delivered.
  *
  * The fourth sibling of `audit/runs.ts` (0024, crawl audits), `gsc-data/runs.ts` (0025, pull
  * analyses) and `tools/audit-content-runs.ts` (0026), and the first for tools that read NO stored
- * measurement at all: ranked_keywords (65), analyze_backlinks (70) and compare_competitors (90)
- * call DataForSEO inside the request, print a table and vanish. The tenant pays 65-90 credits and,
- * an hour later, has nothing to look at — the panel cannot show that the lookup ever happened.
+ * measurement at all: they call DataForSEO inside the request, print a table and vanish. The
+ * tenant pays and, an hour later, has nothing to look at — the panel cannot show that the lookup
+ * ever happened.
+ *
+ * SEVEN TOOLS write here, not three. 0027 opened the table for ranked_keywords (65),
+ * analyze_backlinks (70) and compare_competitors (90); migration 0031 widened its `tool` CHECK to
+ * cover backlink_changes (35), backlink_details (35), disavow_candidates (40) and my_pages (40),
+ * which shipped afterwards with the identical input shape and the identical amnesia. 0031's header
+ * records the test a tool must pass to belong here and names the three DFS tools that still fail
+ * it (discover_keywords, ai_visibility, ai_visibility_compare — each of which would have to put a
+ * non-domain in `target` on some of its rows).
  *
  * WHY THIS MODULE LIVES UNDER `dfs/` rather than `tools/`. It is the write half of the DFS family
  * and it sits beside `dfs/budget.ts`, the other DB-backed module in this directory, under the
@@ -179,11 +208,242 @@ export interface CompetitorsRunReport {
   readonly rows: readonly ComparisonRow[];
 }
 
-/** The three reports — the only three things `domain_lookup_runs.report` ever holds. */
+
+// =================================================================================================
+// THE FOUR TOOLS MIGRATION 0031 ADDED — backlink_changes (35), backlink_details (35),
+// disavow_candidates (40), my_pages (40).
+//
+// They shipped after 0027 and shipped the same way the first three did: synchronous,
+// charge:"handler", a table printed inside the request and no trace afterwards. 0031's header
+// records the test they had to pass to share this table (`target` is genuinely the normalized
+// domain the lookup ran against) and which tools still fail it. What follows is the half 0031
+// cannot enforce: WHAT each report's headline counters mean, and the cap on every list.
+//
+// EVERY ONE OF THESE FOUR REPORTS OBEYS THE SAME TWO RULES AS THE FIRST THREE.
+//   1. `total` and `top` sit at the TOP level, O(1), because PostgREST navigates into jsonb but
+//      cannot count an array or take its first element — a counter reachable only through a row
+//      list costs the panel a whole vendor payload per card per render.
+//   2. Every list is capRows'd. That matters MORE here than it did for the first three:
+//      backlink_details asks the vendor for up to 700 link rows plus 200 page rows per call, and
+//      disavow_candidates for up to 300 links plus 50 networks.
+//
+// WHAT IS DELIBERATELY NOT STORED: disavow_candidates' `disavow_txt`. It is the rendered BODY of a
+// Google-format file — prose with a comment header, produced for a human to paste — and 0027's
+// rule is that this column holds the structural result and never the rendered text. Everything
+// that file is derived FROM is stored (the criteria and the candidate rows), so it can be rebuilt;
+// storing the rendering itself would put a formatting decision beyond the reach of a re-render.
+// =================================================================================================
+
+/**
+ * backlink_changes' report.
+ *
+ * NO `locale` KEY — the two Backlinks time-series endpoints take no locale parameter, the same
+ * absence BacklinksRunReport records for the same family of endpoints.
+ *
+ * WHAT `total` IS, and it is the one counter in this file that is neither a vendor number nor a
+ * count of a single fetched list by accident. It is OUR count of the NEW/LOST series' buckets, and
+ * the PROFILE series' bucket count is carried SEPARATELY as `profile_buckets` rather than added to
+ * it. The tool refuses to derive any third number from its two series (SERIES_DO_NOT_RECONCILE_NOTE,
+ * tools/backlink-changes.ts) because DataForSEO's own published examples for the two endpoints
+ * disagree on the same target and window; a stored `total` that summed them would be exactly the
+ * reconciliation the tool declines to print, sitting in a column a panel reads without the note.
+ */
+export interface BacklinkChangesRunReport {
+  /** The bucket size the answer is grouped by, as the RESULT reports it (vendor-echoed). */
+  readonly group_range: string;
+  /** How many periods back the CALLER asked for. Not how many buckets came back. */
+  readonly periods: number;
+  /** The window the VENDOR says it answered for; null when it did not name the dates. */
+  readonly date_from: string | null;
+  readonly date_to: string | null;
+  /** OUR count of the NEW/LOST series' buckets, pre-cap. Never a sum across the two series. */
+  readonly total: number;
+  /** OUR count of the PROFILE series' buckets, pre-cap. Kept apart from `total` on purpose. */
+  readonly profile_buckets: number;
+  /**
+   * The LATEST profile bucket — the newest snapshot of the target's own totals in this answer.
+   *
+   * MEASURED, not positional: the buckets are stored in the vendor's order and nothing here
+   * re-sorts them, so "the last element" would be a claim about an ordering DataForSEO documents
+   * nowhere. This is the bucket with the greatest parseable `date`; on a tie the earlier one wins,
+   * and a series in which no bucket carries a parseable date yields null rather than a guess.
+   */
+  readonly top: {
+    readonly date: string;
+    readonly backlinks: number | null;
+    readonly referring_domains: number | null;
+  } | null;
+  /** The first MAX_RUN_ROWS new/lost buckets. `total` above is the pre-cap count. */
+  readonly changes: readonly BacklinkChangePoint[];
+  /** The first MAX_RUN_ROWS profile buckets. `profile_buckets` above is the pre-cap count. */
+  readonly profile: readonly BacklinkProfilePoint[];
+}
+
+/**
+ * backlink_details' report.
+ *
+ * NO `locale` KEY, for BacklinksRunReport's reason: these endpoints have none.
+ *
+ * WHAT `total` IS: the vendor's `total_count` for the LINK set — its count of the whole live
+ * backlink set for this target, which the fetched window is only a slice of. It does NOT move with
+ * `limit` or `offset`, and the four parameters that WOULD move it (`mode`, `status_type`,
+ * `include_subdomains`, the rank scale) are pinned constants in the adapter rather than caller
+ * input, which is what makes two runs of this tool against the same target comparable at all.
+ * Null stays null: "the vendor did not say" is not "there are none" (NEVER #7).
+ */
+export interface BacklinkDetailsRunReport {
+  /** The link-window row cap the caller asked for. */
+  readonly limit: number;
+  /** Where the link window starts. Load-bearing for reading `top` — see below. */
+  readonly offset: number;
+  /** The target-pages row cap the caller asked for. */
+  readonly page_limit: number;
+  /** DFS `total_count` for the LINK set, before offset/limit. Null = the vendor did not say. */
+  readonly total: number | null;
+  /** Link rows RECEIVED in the window, before MAX_RUN_ROWS. */
+  readonly shown: number;
+  /**
+   * The FIRST ROW OF THE LINK WINDOW, under the adapter's pinned `rank,desc` ordering.
+   *
+   * HONESTY ŞERH, CompetitorsRunReport.top's rule applied to a paginated set: at `offset` 0 this
+   * really is the highest-ranked live backlink the vendor holds for the target, but at any other
+   * offset it is merely where the caller's window begins. `offset` sits beside it precisely so a
+   * reader can tell those two apart, and nothing here may be labelled "the best link" without
+   * checking it.
+   */
+  readonly top: {
+    readonly domain: string;
+    readonly url_to: string | null;
+    readonly rank: number | null;
+    readonly dofollow: boolean | null;
+  } | null;
+  /** The link window: the vendor's whole-set count, what arrived, and the capped rows. */
+  readonly links: CappedList<BacklinkDetailRow>;
+  /** The TARGET'S OWN pages, ordered `backlinks,desc` by the adapter. Same three fields. */
+  readonly target_pages: CappedList<TargetPageRow>;
+}
+
+/**
+ * disavow_candidates' report.
+ *
+ * NO `locale` KEY, for BacklinksRunReport's reason.
+ *
+ * WHAT `total` IS: OUR count of the candidate DOMAINS this run produced — not a vendor number, and
+ * the report says so by carrying the vendor's own count under a different name
+ * (`matching_links_total`). The candidate list is DERIVED from a window of links the caller's own
+ * criteria filtered, so every counter here is a statement about THIS run's criteria; `criteria` is
+ * stored verbatim beside them so a later reader can see which question was asked.
+ */
+export interface DisavowCandidatesRunReport {
+  /** The thresholds and vendor orderings that produced the list, VERBATIM. */
+  readonly criteria: DisavowCriteria;
+  /** OUR count of the candidate domains in this run, pre-cap. */
+  readonly total: number;
+  /** Distinct domains the link window named BEFORE the candidate cap was applied. */
+  readonly distinct_domains: number;
+  /**
+   * DFS `total_count` for the FILTERED link set — the vendor's count of the links matching THIS
+   * run's criteria, never of the target's whole backlink profile. Null = the vendor did not say.
+   */
+  readonly matching_links_total: number | null;
+  /** Links RECEIVED in the filtered window, before MAX_RUN_ROWS. */
+  readonly matching_links_shown: number;
+  /**
+   * The first candidate, under the candidate ordering the port applies (vendor `spam_score` first;
+   * see compareCandidates). `spam_score` is DataForSEO's per-domain score and is null when the
+   * vendor returned none for that domain — which is not 0, and is never rendered as one.
+   */
+  readonly top: {
+    readonly domain: string;
+    readonly spam_score: number | null;
+    readonly window_link_count: number;
+  } | null;
+  /**
+   * The first MAX_RUN_ROWS candidates. A PLAIN capped array rather than a CappedList: a CappedList
+   * carries `total_count`, which on this list would have to be a permanent null standing for
+   * "there is no vendor number here at all" rather than for "the vendor did not say" — two
+   * different facts under one null is exactly what 0027's locale-column note refuses.
+   */
+  readonly candidates: readonly DisavowCandidate[];
+  /** The referring-network window: a real vendor set, so it keeps its vendor count. */
+  readonly referring_networks: CappedList<ReferringNetworkRow>;
+}
+
+/** The crawl side of a my_pages run, as a small O(1) card — never the crawl's page list. */
+export interface MyPagesCrawlView {
+  /**
+   * THREE STATES, kept apart exactly as `CrawlSide` keeps them (tools/my-pages-crawl.ts):
+   * "not_requested" = no project was named, so no crawl was looked for — NOT "there is no crawl";
+   * "none" = a project was named and has no succeeded crawl; "crawl" = one crawl was compared.
+   * Collapsing any two of them would store a claim nobody measured.
+   */
+  readonly kind: "not_requested" | "none" | "crawl";
+  /** The `jobs` row the pages came from — one crawl run. Null unless `kind` is "crawl". */
+  readonly job_id: string | null;
+  /** When that crawl ran (ISO). The comparison is as of THIS date, not as of the lookup. */
+  readonly ran_at: string | null;
+  /** How many crawled pages were compared. Null unless `kind` is "crawl". */
+  readonly pages_compared: number | null;
+  /** True when the crawl read hit its cap, i.e. the crawl may hold more pages than were compared. */
+  readonly truncated: boolean | null;
+  /** Vendor rows THIS crawl also fetched. Null unless `kind` is "crawl". */
+  readonly matched: number | null;
+  /** Vendor rows that crawl did not fetch — NOT "pages that do not exist". */
+  readonly vendor_only: number | null;
+  /** Crawled pages THIS WINDOW did not name — NOT "pages that do not rank". */
+  readonly crawl_only: number | null;
+}
+
+/**
+ * my_pages' report.
+ *
+ * WHAT `total` IS: the vendor's `total_count` for the relevant-pages set — its count of the pages
+ * matching THIS run's item types and THIS run's optional `min_organic_etv` / `min_organic_count`
+ * filters. Both of those are caller-chosen and both change WHAT IS COUNTED, so they are stored
+ * beside it (`item_types`, `vendor_filters_applied`) rather than left to be assumed. That is also
+ * why the history panel shows no change clause for this tool: two runs of the same domain in the
+ * same locale can still have counted different sets, and the panel's comparison key cannot see it.
+ */
+export interface MyPagesRunReport {
+  readonly locale: DomainLookupLocale;
+  /** The window row cap the caller asked for. */
+  readonly limit: number;
+  /** Where the window starts. Same ŞERH as backlink_details' `offset` — see `top` below. */
+  readonly offset: number;
+  /** The SERP item types actually sent on the wire — never "whatever the vendor defaults to". */
+  readonly item_types: readonly RelevantPageItemType[];
+  /** The vendor-grammar filters actually sent. Empty when the caller asked for none. */
+  readonly vendor_filters_applied: readonly unknown[];
+  /** DFS `total_count` for this run's matching set. Null = the vendor did not say. */
+  readonly total: number | null;
+  /** Page rows RECEIVED in the window, before MAX_RUN_ROWS. */
+  readonly shown: number;
+  /**
+   * The FIRST PAGE OF THE WINDOW, under the vendor's own `metrics.organic.count` ordering — the
+   * same offset ŞERH as backlink_details' `top`. The two figures are the ORGANIC block's, because
+   * that is the block the ordering is on; a run that asked for other item types still keeps them,
+   * in `pages` below.
+   */
+  readonly top: {
+    readonly page: string;
+    readonly organic_count: number | null;
+    readonly organic_etv: number | null;
+  } | null;
+  /** The first MAX_RUN_ROWS vendor pages, VERBATIM. `total`/`shown` above are the pre-cap numbers. */
+  readonly pages: readonly RelevantPageRow[];
+  /** What the join against the tenant's own crawl found — counts only, never the crawled URLs. */
+  readonly crawl: MyPagesCrawlView;
+}
+
+/** The seven reports — the only seven things `domain_lookup_runs.report` ever holds. */
 export type DomainLookupReport =
   | RankedKeywordsRunReport
   | BacklinksRunReport
-  | CompetitorsRunReport;
+  | CompetitorsRunReport
+  | BacklinkChangesRunReport
+  | BacklinkDetailsRunReport
+  | DisavowCandidatesRunReport
+  | MyPagesRunReport;
 
 /**
  * Build ranked_keywords' report from the result the FORMATTER is about to render (pure).
@@ -268,6 +528,158 @@ export function competitorsRunReport(
   };
 }
 
+/** A VendorWindow as a CappedList: the vendor's whole-set count, what ARRIVED, the capped rows. */
+function cappedWindow<Row>(window: {
+  readonly vendor_total_count: number | null;
+  readonly rows: readonly Row[];
+}): CappedList<Row> {
+  return {
+    total_count: window.vendor_total_count,
+    shown: window.rows.length,
+    rows: capRows(window.rows),
+  };
+}
+
+/**
+ * The profile bucket with the greatest PARSEABLE date, or null when no bucket has one.
+ *
+ * Measured rather than positional — see BacklinkChangesRunReport.top. A tie keeps the EARLIER
+ * element (strict `>`), so the answer is deterministic for a vendor that repeats a date.
+ */
+function latestProfilePoint(
+  points: readonly BacklinkProfilePoint[],
+): BacklinkProfilePoint | null {
+  let best: BacklinkProfilePoint | null = null;
+  let bestAt = Number.NEGATIVE_INFINITY;
+  for (const point of points) {
+    const at = Date.parse(point.date);
+    if (Number.isNaN(at) || at <= bestAt) continue;
+    best = point;
+    bestAt = at;
+  }
+  return best;
+}
+
+/** Build backlink_changes' report from the result the formatter is about to render (pure). */
+export function backlinkChangesRunReport(
+  changes: BacklinkChangesResult,
+  query: { readonly periods: number },
+): BacklinkChangesRunReport {
+  const latest = latestProfilePoint(changes.profile);
+  return {
+    group_range: changes.group_range,
+    periods: query.periods,
+    date_from: changes.date_from,
+    date_to: changes.date_to,
+    total: changes.changes.length,
+    profile_buckets: changes.profile.length,
+    top:
+      latest === null
+        ? null
+        : {
+            date: latest.date,
+            backlinks: latest.backlinks,
+            referring_domains: latest.referring_domains,
+          },
+    changes: capRows(changes.changes),
+    profile: capRows(changes.profile),
+  };
+}
+
+/** Build backlink_details' report from the details the formatter is about to render (pure). */
+export function backlinkDetailsRunReport(
+  details: BacklinkDetails,
+  query: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly page_limit: number;
+  },
+): BacklinkDetailsRunReport {
+  const best = details.links.rows[0];
+  return {
+    limit: query.limit,
+    offset: query.offset,
+    page_limit: query.page_limit,
+    total: details.links.vendor_total_count,
+    shown: details.links.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            domain: best.domain_from,
+            url_to: best.url_to,
+            rank: best.rank,
+            dofollow: best.dofollow,
+          },
+    links: cappedWindow(details.links),
+    target_pages: cappedWindow(details.target_pages),
+  };
+}
+
+/**
+ * Build disavow_candidates' report from the result the formatter is about to render (pure).
+ *
+ * It takes NO query argument, and that is not an omission: every parameter this tool accepts is
+ * already inside `result.criteria`, carried there by the port so the ANSWER states the question.
+ * Re-reading them off the input here would open the one gap that matters — a criterion the port
+ * clamped (clampLinkRows, clampSpamScore) would be recorded at the value the caller typed rather
+ * than the value the lookup ran under.
+ */
+export function disavowCandidatesRunReport(
+  result: DisavowCandidates,
+): DisavowCandidatesRunReport {
+  const best = result.candidates.rows[0];
+  return {
+    criteria: result.criteria,
+    total: result.candidates.window_candidate_count,
+    distinct_domains: result.candidates.window_distinct_domain_count,
+    matching_links_total: result.links.vendor_total_count,
+    matching_links_shown: result.links.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            domain: best.domain,
+            spam_score: best.spam_score,
+            window_link_count: best.window_link_count,
+          },
+    candidates: capRows(result.candidates.rows),
+    referring_networks: cappedWindow(result.referring_networks),
+  };
+}
+
+/** Build my_pages' report from the window the formatter is about to render (pure). */
+export function myPagesRunReport(
+  result: RelevantPagesResult,
+  crawl: MyPagesCrawlView,
+  query: { readonly limit: number; readonly offset: number } & DomainLookupLocale,
+): MyPagesRunReport {
+  const best = result.window.rows[0];
+  // The ORGANIC block specifically — it is the block `ordered_by_vendor_field` sorts on. An item
+  // type the vendor reported nothing for is ABSENT from `metrics` rather than present-and-zeroed,
+  // so this is `?? null` and never `?? 0` (NEVER #7).
+  const organic = best?.metrics.organic;
+  return {
+    locale: { language_code: query.language_code, location_code: query.location_code },
+    limit: query.limit,
+    offset: query.offset,
+    item_types: result.item_types_requested,
+    vendor_filters_applied: result.vendor_filters_applied,
+    total: result.window.vendor_total_count,
+    shown: result.window.rows.length,
+    top:
+      best === undefined
+        ? null
+        : {
+            page: best.page_address,
+            organic_count: organic?.count ?? null,
+            organic_etv: organic?.etv ?? null,
+          },
+    pages: capRows(result.window.rows),
+    crawl,
+  };
+}
+
 /** Everything one `domain_lookup_runs` row is keyed by. */
 export interface DomainLookupRunTarget {
   readonly userId: string;
@@ -279,14 +691,25 @@ export interface DomainLookupRunTarget {
    * tenant guarantee on such a row, which is exactly what 0027's composite-FK note says out loud.
    */
   readonly projectId: string | null;
-  /** One of the three synchronous lookups — the CHECK constraint's vocabulary, typed. */
+  /** One of the seven synchronous lookups — the CHECK constraint's vocabulary, typed. */
   readonly tool: DomainLookupTool;
   /** The RESOLVED normalized domain the lookup ran against, never the caller's raw input. */
   readonly target: string;
 }
 
-/** The three tools 0027's CHECK constraint names. A fourth is a compile error before it is a 23514. */
-export type DomainLookupTool = "ranked_keywords" | "analyze_backlinks" | "compare_competitors";
+/**
+ * The SEVEN tools the CHECK constraint names, after migration 0031 widened it from 0027's three.
+ * An eighth is a compile error before it is a 23514 — which is the order those two failures should
+ * arrive in, because only the first of them is free.
+ */
+export type DomainLookupTool =
+  | "ranked_keywords"
+  | "analyze_backlinks"
+  | "compare_competitors"
+  | "backlink_changes"
+  | "backlink_details"
+  | "disavow_candidates"
+  | "my_pages";
 
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type DomainLookupRunWriter = (

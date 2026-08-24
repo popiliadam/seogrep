@@ -29,7 +29,7 @@
  * document, one size class up. The page therefore selects individual sub-fields, and both are O(1)
  * in the size of the lookup:
  *
- *   - `report->total` — a number, in all three reports: what the tool's own first sentence counts;
+ *   - `report->total` — a number, in every one of the seven reports: what that tool counts;
  *   - `report->top`   — a small object naming the single headline row.
  *
  * Those two sit at the TOP of every report precisely so this read can be O(1) (runs.ts says so in
@@ -38,14 +38,39 @@
  * download per card per render.
  */
 
-/** The three synchronous domain lookups, in the order a card lists them (priced 65 / 70 / 90). */
+/**
+ * The three lookups A PROJECT CARD lists, in the order it lists them (priced 65 / 70 / 90).
+ *
+ * DELIBERATELY NOT ALL SEVEN. `domain_lookup_runs` holds seven tools since migration 0031, but the
+ * card fans out ONE query per tool per project (`projects/page.tsx`'s `latestDomainLookupRun`), so
+ * widening this list would turn three round-trips per card into seven — a real cost, paid on every
+ * render of a page whose subject is the project rather than the spend. The card keeps the three it
+ * was designed around; `/app/lookups` is the surface that shows all seven, and it reads the table
+ * ONCE.
+ */
 export const DOMAIN_LOOKUP_TOOLS = [
   "ranked_keywords",
   "analyze_backlinks",
   "compare_competitors",
 ] as const;
 
-export type DomainLookupTool = (typeof DOMAIN_LOOKUP_TOOLS)[number];
+/**
+ * EVERY tool that may appear in `domain_lookup_runs.tool` — the CHECK constraint's vocabulary as
+ * migration 0031 widened it, in the order the history page's copy names them.
+ *
+ * This is what `DomainLookupTool` is derived from, so `NOTHING_FOUND` below is a
+ * `Record<DomainLookupTool, string>` over all seven and a tool added to the table without a panel
+ * sentence is a TYPE ERROR rather than a blank cell.
+ */
+export const DOMAIN_LOOKUP_ROW_TOOLS = [
+  ...DOMAIN_LOOKUP_TOOLS,
+  "backlink_changes",
+  "backlink_details",
+  "disavow_candidates",
+  "my_pages",
+] as const;
+
+export type DomainLookupTool = (typeof DOMAIN_LOOKUP_ROW_TOOLS)[number];
 
 /**
  * One `domain_lookup_runs` row as the page reads it: the two real columns, plus the report
@@ -121,6 +146,49 @@ function headline(tool: DomainLookupTool, top: unknown): string {
     return ` · top referrer: ${domain} (${plural(backlinks, "link", "links")})`;
   }
 
+  if (tool === "backlink_changes") {
+    // The LATEST profile bucket, printed under the vendor's own date string — the same label the
+    // tool prints on its own bucket lines. `total` beside it counts the OTHER series' buckets, so
+    // this clause deliberately quotes a figure from the series it names and no other: the tool
+    // refuses to reconcile its two series and so does this line.
+    const date = asText(record.date);
+    const backlinks = asFiniteNumber(record.backlinks);
+    if (date === null || backlinks === null) return "";
+    return ` · latest bucket ${date}: ${plural(backlinks, "backlink", "backlinks")}`;
+  }
+
+  if (tool === "backlink_details") {
+    // "FIRST LINK IN THE WINDOW", never "top link" — `BacklinkDetailsRunReport.top` carries the
+    // same ŞERH `CompetitorsRunReport.top` does, one axis over: the rows are ordered `rank,desc`,
+    // so at offset 0 this really is the highest-ranked backlink, and at any other offset it is
+    // merely where the caller's window began. The panel does not read the offset, so it does not
+    // make the claim that would need it.
+    const domain = asText(record.domain);
+    const rank = asFiniteNumber(record.rank);
+    if (domain === null || rank === null) return "";
+    return ` · first link in the window: ${domain} (rank ${rank})`;
+  }
+
+  if (tool === "disavow_candidates") {
+    // The candidate's WINDOW LINK COUNT, not its spam score. The score is legitimately null when
+    // DataForSEO returned none for that domain, and a headline that vanished on that null would
+    // hide the candidate itself; the link count is ours and is always a number.
+    const domain = asText(record.domain);
+    const links = asFiniteNumber(record.window_link_count);
+    if (domain === null || links === null) return "";
+    return ` · first candidate: ${domain} (${plural(links, "link", "links")} in this window)`;
+  }
+
+  if (tool === "my_pages") {
+    // Same window ŞERH as backlink_details: ordered by the vendor's `metrics.organic.count`, so
+    // "first page in the window" is the whole claim. `count` counts SERPs containing the page, and
+    // is worded exactly as ranked_keywords' health card words the same vendor field.
+    const page = asText(record.page);
+    const count = asFiniteNumber(record.organic_count);
+    if (page === null || count === null) return "";
+    return ` · first page in the window: ${page} (${plural(count, "organic SERP", "organic SERPs")})`;
+  }
+
   // compare_competitors. "FIRST RIVAL", not "closest" — and the word is load-bearing rather than
   // stylistic. `CompetitorsRunReport.top` carries an explicit honesty sherh (apps/mcp/src/dfs/
   // runs.ts): it is the first NON-TARGET row, which on a discovery call is DataForSEO's own
@@ -139,12 +207,28 @@ const NOTHING_FOUND: Record<DomainLookupTool, string> = {
   ranked_keywords: "No ranked keywords found",
   analyze_backlinks: "No backlinks found",
   compare_competitors: "No domains compared",
+  backlink_changes: "No backlink history found",
+  backlink_details: "No backlinks found",
+  disavow_candidates: "No candidate domains found",
+  // Not "this domain has no ranking pages": the count is DataForSEO's, over the item types and
+  // filters THAT RUN asked for, and the tool's own empty answer says exactly the same thing.
+  my_pages: "No pages reported by DataForSEO",
 };
 
 /** The counted answer per tool — the same noun the tool's own first sentence uses. */
 function counted(tool: DomainLookupTool, total: number): string {
   if (tool === "ranked_keywords") return plural(total, "ranked keyword", "ranked keywords");
   if (tool === "analyze_backlinks") return plural(total, "backlink", "backlinks");
+  // backlink_details' `total` is the vendor's count of the WHOLE live backlink set for the target,
+  // the same quantity analyze_backlinks counts from a different endpoint — so it gets the same
+  // noun rather than a second name for one thing.
+  if (tool === "backlink_details") return plural(total, "backlink", "backlinks");
+  // ...and this one is NOT a backlink count at all: it is how many BUCKETS the new/lost series
+  // came back with. `BacklinkChangesRunReport.total` says so, and the noun has to, or the row
+  // would read as a profile size next to the row above it.
+  if (tool === "backlink_changes") return plural(total, "history bucket", "history buckets");
+  if (tool === "disavow_candidates") return plural(total, "candidate domain", "candidate domains");
+  if (tool === "my_pages") return `${plural(total, "page", "pages")} reported by DataForSEO`;
   return `compared ${plural(total, "domain", "domains")}`;
 }
 

@@ -10,12 +10,16 @@ import { listDomainLookupRuns } from "./read-lookup-runs";
  * /app/lookups — every lookup this account has run, newest first, in TWO sections.
  *
  * THE HOLE IT CLOSES. The DataForSEO lookups each write a run row and, until each of those tables
- * existed, printed a table inside the request and vanished. The three DOMAIN lookups
- * (ranked_keywords 65, analyze_backlinks 70, compare_competitors 90) got migration 0027, and the
- * project card reads it filtered on `project_id` — so this page was built for the bare-target runs
- * that card can never show. research_keywords (25) is the fourth DFS tool and 0027 deliberately
- * excluded it, because a keyword LIST has no domain; migration 0029 gives it its own table and the
- * second section below is its first and only reader.
+ * existed, printed a table inside the request and vanished. The DOMAIN lookups got migration 0027
+ * (ranked_keywords 65, analyze_backlinks 70, compare_competitors 90) and then migration 0031,
+ * which widened the same table's `tool` CHECK to cover the four that shipped afterwards with the
+ * identical input shape and the identical amnesia — backlink_changes 35, backlink_details 35,
+ * disavow_candidates 40, my_pages 40. The project card reads that table filtered on `project_id`
+ * (and only for the first three), so this page was built for the bare-target runs that card can
+ * never show, and it now shows all SEVEN tools without a new section: they are one shape, keyed by
+ * a domain. research_keywords (25) is a DFS tool 0027 deliberately excluded, because a keyword LIST
+ * has no domain; migration 0029 gives it its own table and the second section below is its first
+ * and only reader.
  *
  * TWO TABLES RATHER THAN ONE, and that is a decision rather than laziness. A keyword-set run has
  * no domain and no project, so the domain table's `Domain` and `Ran for` columns would be blank on

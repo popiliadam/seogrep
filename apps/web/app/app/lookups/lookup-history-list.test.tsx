@@ -7,6 +7,7 @@ import {
   buildDomainLookupHistory,
   type DomainLookupHistoryRow,
 } from "../../../lib/projects/lookup-history";
+import { DOMAIN_LOOKUP_ROW_TOOLS } from "../../../lib/projects/lookups";
 import { LookupHistoryList } from "./lookup-history-list";
 
 /**
@@ -287,5 +288,78 @@ describe("the disclosed ceiling is derived from the constant, not retyped", () =
     expect(COMPONENT).toMatch(
       /import\s*\{[^}]*\bDOMAIN_LOOKUP_HISTORY_LIMIT\b[^}]*\}\s*from\s*["'][^"']*lookup-history["']/,
     );
+  });
+});
+
+describe("the four tools migration 0031 added render in the SAME section", () => {
+  /**
+   * THE EMPTY STATE NAMES ALL SEVEN, derived from the table's own vocabulary rather than from a
+   * list typed here — a hand-written list would go stale the moment an eighth tool lands, which is
+   * exactly the failure this assertion exists to prevent. A tenant who ran my_pages and reads
+   * "ask for ranked_keywords, analyze_backlinks or compare_competitors" is being told their run
+   * belongs on some other page.
+   */
+  it("names every tool that can write here, not just the first three", () => {
+    const text = listOf([]).textContent ?? "";
+    for (const tool of DOMAIN_LOOKUP_ROW_TOOLS) {
+      expect(text, tool).toContain(tool);
+    }
+  });
+
+  /**
+   * NO NEW SECTION AND NO NEW TABLE: the four are the same shape as the three, so they land in the
+   * SAME tbody, in the same five columns, sorted with them by date. A run of a new tool appearing
+   * anywhere else would be a second surface for one question.
+   */
+  it("lists a new tool's run in the one table, interleaved by date with an old tool's", () => {
+    const container = listOf([
+      row({ tool: "ranked_keywords", created_at: "2026-08-16T09:00:00.000Z", total: 1420, locale: EN_US }),
+      row({ tool: "my_pages", created_at: "2026-08-17T09:00:00.000Z", total: 812, locale: EN_US }),
+      row({ tool: "disavow_candidates", created_at: "2026-08-15T09:00:00.000Z", total: 37 }),
+    ]);
+    expect(container.querySelectorAll("table")).toHaveLength(1);
+
+    const rows = bodyRows(container);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]?.textContent).toMatch(/my_pages/);
+    expect(rows[0]?.textContent).toMatch(/812 pages reported by dataforseo/i);
+    expect(rows[1]?.textContent).toMatch(/ranked_keywords/);
+    expect(rows[2]?.textContent).toMatch(/disavow_candidates/);
+    expect(rows[2]?.textContent).toMatch(/37 candidate domains/i);
+  });
+
+  /**
+   * THE LOCALE CELL FOLLOWS THE REPORT, not the tool. Three of the four read Backlinks endpoints
+   * that take no locale, so their reports carry none and the row must simply not show one —
+   * rather than showing a default that would claim a search market nobody asked about.
+   */
+  it("shows a locale only for the run whose report carries one", () => {
+    const rows = bodyRows(
+      listOf([
+        row({ tool: "my_pages", created_at: "2026-08-17T09:00:00.000Z", total: 812, locale: EN_US }),
+        row({ tool: "backlink_changes", created_at: "2026-08-16T09:00:00.000Z", total: 12 }),
+      ]),
+    );
+    expect(within(rows[0] as HTMLElement).getByText(/2840/)).toBeTruthy();
+    expect(rows[1]?.textContent).not.toMatch(/2840/);
+  });
+
+  /** The change clause reaches the markup for the one new tool that earns it, and no other. */
+  it("prints a change for backlink_details and none for the other three", () => {
+    const withChange = bodyRows(
+      listOf([
+        row({ tool: "backlink_details", created_at: "2026-08-16T09:00:00.000Z", total: 41_245 }),
+        row({ tool: "backlink_details", created_at: "2026-07-16T09:00:00.000Z", total: 40_000 }),
+      ]),
+    );
+    expect(withChange[0]?.textContent).toMatch(/\+1,245 since/i);
+
+    const withoutChange = bodyRows(
+      listOf([
+        row({ tool: "my_pages", created_at: "2026-08-16T09:00:00.000Z", total: 812, locale: EN_US }),
+        row({ tool: "my_pages", created_at: "2026-07-16T09:00:00.000Z", total: 640, locale: EN_US }),
+      ]),
+    );
+    expect(withoutChange[0]?.textContent).not.toMatch(/since/i);
   });
 });

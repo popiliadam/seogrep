@@ -25,9 +25,14 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
  * Every domain lookup the CALLER owns, newest first — the project ones AND the bare-target ones.
  *
  * NO `project_id` FILTER, and its absence is the feature. 0027's `project_id` is nullable and its
- * header records that the bare-target call is the commonest paid call these three tools serve, so
- * the project card's `.eq("project_id", …)` — right for a card about one site — leaves the most
- * typical 65-90 credit call in the product with no reader anywhere. This is that reader.
+ * header records that the bare-target call is the commonest paid call these tools serve, so the
+ * project card's `.eq("project_id", …)` — right for a card about one site — leaves the most
+ * typical 35-90 credit call in the product with no reader anywhere. This is that reader.
+ *
+ * NO `tool` FILTER EITHER, which is why this read needed no change when migration 0031 widened the
+ * table from three tools to seven: it asks for every row the caller owns, so the four tools that
+ * joined the table appear here the moment they write. The vocabulary lives in ONE place
+ * (`DOMAIN_LOOKUP_ROW_TOOLS`) and this query is not a second copy of it.
  *
  * `.eq("user_id", userId)` EXPLICITLY, beside RLS `domain_lookup_runs_select_own` (NEVER #4). On
  * this table that is more than defence in depth: a `project_id`-null row has no parent in `public`
