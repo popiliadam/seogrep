@@ -451,3 +451,123 @@ describe("a change reads as one English clause", () => {
     expect(describeLookupChange({ delta: 0, ...since })).toBe("no change since 2026-07-01 (1,000)");
   });
 });
+
+describe("the four tools migration 0031 added — one comparable, three refused", () => {
+  /**
+   * BACKLINK_DETAILS IS COMPARABLE ON THE TARGET ALONE, and it joins analyze_backlinks in
+   * LOCALE_FREE_TOOLS for a reason about the ENDPOINT rather than about convenience: its `total`
+   * is the vendor's `total_count` for the whole live-backlink set, the Backlinks endpoints take no
+   * locale parameter, and the four request fields that WOULD move the count (mode, status_type,
+   * include_subdomains, the rank scale) are pinned constants in the adapter rather than caller
+   * input. The two runs below carry no locale at all — which is the state a real row is in.
+   */
+  it("compares two backlink_details runs of the same domain, with no locale on either", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "backlink_details", created_at: "2026-08-01T00:00:00.000Z", total: 41_245 }),
+      row({ tool: "backlink_details", created_at: "2026-07-01T00:00:00.000Z", total: 40_000 }),
+    ]);
+    expect(history.entries[0]?.change?.delta).toBe(1245);
+    expect(history.entries[0]?.change?.previousTotal).toBe(40_000);
+  });
+
+  it("still refuses to compare two backlink_details runs of different domains", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "backlink_details", created_at: "2026-08-01T00:00:00.000Z", total: 41_245 }),
+      row({
+        tool: "backlink_details",
+        created_at: "2026-07-01T00:00:00.000Z",
+        total: 40_000,
+        target: "rival.example",
+      }),
+    ]);
+    expect(history.entries[0]?.change).toBeNull();
+  });
+
+  /**
+   * …AND NEVER ACROSS THE TWO BACKLINK TOOLS. Both count backlinks for the same target and both
+   * are locale-free, so their group keys differ ONLY by the tool name — which is precisely the
+   * collision this rule has to survive. They are different endpoints answering different
+   * questions, and 41,245 minus 40,000 across them would be a measurement nobody made.
+   */
+  it("never subtracts a backlink_details total from an analyze_backlinks one", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "backlink_details", created_at: "2026-08-01T00:00:00.000Z", total: 41_245 }),
+      backlinks("2026-07-01T00:00:00.000Z", 40_000),
+    ]);
+    expect(history.entries[0]?.change).toBeNull();
+    expect(history.entries[1]?.change).toBeNull();
+  });
+
+  /**
+   * BACKLINK_CHANGES IS REFUSED. Its `total` counts the BUCKETS of one of its two series — a
+   * property of the window the caller chose (group_range x periods), not of the domain. The two
+   * runs below are otherwise perfectly comparable, so this fails the moment the refusal is dropped.
+   */
+  it("never shows a change for backlink_changes", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "backlink_changes", created_at: "2026-08-01T00:00:00.000Z", total: 12 }),
+      row({ tool: "backlink_changes", created_at: "2026-07-01T00:00:00.000Z", total: 3 }),
+    ]);
+    expect(history.entries[0]?.change).toBeNull();
+    expect(history.entries[1]?.change).toBeNull();
+    // …and the numbers themselves are still shown; only the subtraction is refused.
+    expect(history.entries[0]?.summary).toMatch(/12 history buckets/i);
+  });
+
+  /**
+   * DISAVOW_CANDIDATES IS REFUSED. Its `total` counts candidates produced under the CALLER'S OWN
+   * criteria (min_backlink_spam_score, dofollow_only) and then capped; two runs at different
+   * thresholds count different sets, and this page's comparison key cannot see the criteria at all.
+   */
+  it("never shows a change for disavow_candidates", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "disavow_candidates", created_at: "2026-08-01T00:00:00.000Z", total: 37 }),
+      row({ tool: "disavow_candidates", created_at: "2026-07-01T00:00:00.000Z", total: 12 }),
+    ]);
+    expect(history.entries[0]?.change).toBeNull();
+    expect(history.entries[0]?.summary).toMatch(/37 candidate domains/i);
+  });
+
+  /**
+   * MY_PAGES IS REFUSED, and it is the subtlest of the three: its `total` IS a vendor count, so
+   * two runs LOOK comparable — same tool, same target, same readable locale, which is exactly the
+   * group key this module builds. What the key cannot see is that each run counted the pages
+   * matching ITS OWN item_types and vendor filters. The rows below share everything the key reads.
+   */
+  it("never shows a change for my_pages, even when the whole comparison key matches", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "my_pages", created_at: "2026-08-01T00:00:00.000Z", total: 812, locale: EN_US }),
+      row({ tool: "my_pages", created_at: "2026-07-01T00:00:00.000Z", total: 640, locale: EN_US }),
+    ]);
+    expect(history.entries[0]?.change).toBeNull();
+    expect(history.entries[1]?.change).toBeNull();
+    expect(history.entries[0]?.summary).toMatch(/812 pages reported by dataforseo/i);
+  });
+
+  /** All four are SUMMARISED, refusal or not: the count is what the reader paid for. */
+  it("summarises all four of them, and labels their scope", () => {
+    const history = buildDomainLookupHistory([
+      row({ tool: "backlink_changes", created_at: "2026-08-04T00:00:00.000Z", total: 12 }),
+      row({
+        tool: "backlink_details",
+        created_at: "2026-08-03T00:00:00.000Z",
+        total: 41_245,
+        project_id: "p-1",
+      }),
+      row({ tool: "disavow_candidates", created_at: "2026-08-02T00:00:00.000Z", total: 37 }),
+      row({ tool: "my_pages", created_at: "2026-08-01T00:00:00.000Z", total: 812, locale: EN_US }),
+    ]);
+    expect(history.entries.map((entry) => entry.summary)).toEqual([
+      "12 history buckets",
+      "41245 backlinks",
+      "37 candidate domains",
+      "812 pages reported by DataForSEO",
+    ]);
+    expect(history.entries.map((entry) => entry.scope)).toEqual([
+      "bare-target",
+      "project",
+      "bare-target",
+      "bare-target",
+    ]);
+  });
+});
