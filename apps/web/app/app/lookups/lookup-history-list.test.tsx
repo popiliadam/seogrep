@@ -288,6 +288,8 @@ describe("the disclosed ceiling is derived from the constant, not retyped", () =
     expect(COMPONENT).toMatch(
       /import\s*\{[^}]*\bDOMAIN_LOOKUP_HISTORY_LIMIT\b[^}]*\}\s*from\s*["'][^"']*lookup-history["']/,
     );
+  });
+});
 
 describe("the four tools migration 0031 added render in the SAME section", () => {
   /**
