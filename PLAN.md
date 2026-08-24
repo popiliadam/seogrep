@@ -41,6 +41,10 @@ o veri gelince ölçülür, marjı pinlenir, sevk edilir.
    gerçekten oluşmuş olabilir. Ama "ölçülemeyen cevap için tam fiyat" bir politika kararı ve bugünkü
    cevap **evet**. Alternatif iade — ama defterde iade yolu **yok**. `dfs/serp.ts:855-865`.
 
+> **AYRINTILI HANDOFF:** `docs/plans/2026-08-24-taze-oturum-handoff.md` — doğrulanmış chip envanteri
+> (kapananlar çıkarıldı, tarifi yanlış olanlar düzeltildi), parça 2'nin iş kırılımı, çalışma disiplini,
+> flake kürleri ve fiyat mekanizmasının bugünkü hâli.
+
 #### 🎯 SIRADAKİ OTURUMUN İŞİ — sırayla
 
 1. **Chip dalgası.** Aşağıdaki AÇIK CHIP'LER bölümü; hepsi mutasyonla ölçülmüş ve talimatlı. Birbirinden
