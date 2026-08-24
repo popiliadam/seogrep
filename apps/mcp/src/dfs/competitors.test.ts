@@ -77,6 +77,16 @@ beforeEach(() => {
   ledger = createMemorySpendLedger();
 });
 
+/**
+ * DOMAIN NAMES IN THIS FILE. Every name standing in for something a CALLER supplies — the
+ * looked-up target, a user-typed competitor — is a `.org`, deliberately. `example` is on
+ * NON_PUBLIC_TLDS (@pseo/core, net/hostname), and every tool that reaches this port resolves its
+ * subject through `normalizeDomain` FIRST, so a `*.example` target is refused before the port is
+ * touched: a fixture built on one is a double whose input the runtime would have rejected (signed
+ * lesson 12). Names the VENDOR returns are left alone — nothing normalizes those, and they are the
+ * one place a fixture may legitimately carry a name our own gate would never have let through.
+ */
+
 describe("parseCompetitorsDomainResponse", () => {
   it("projects items to {domain, intersections, avg_position} and carries total_count", () => {
     const list = parseCompetitorsDomainResponse(competitorsFixture);
@@ -352,17 +362,17 @@ describe("estimateComparisonUsd", () => {
   });
 
   it("charges the SUPPLIED flow one rank overview per compared domain, and no discovery", () => {
-    expect(estimateComparisonUsd(["a.example"], 10)).toBeCloseTo(
+    expect(estimateComparisonUsd(["a.org"], 10)).toBeCloseTo(
       2 * ESTIMATED_RANK_OVERVIEW_REQUEST_USD,
       9,
     );
-    expect(estimateComparisonUsd(["a.example", "b.example", "c.example"], 10)).toBeCloseTo(
+    expect(estimateComparisonUsd(["a.org", "b.org", "c.org"], 10)).toBeCloseTo(
       MAX_COMPARED_DOMAINS * ESTIMATED_RANK_OVERVIEW_REQUEST_USD,
       9,
     );
     // `limit` is a discovery parameter, so it must not move the supplied flow's estimate at all.
-    expect(estimateComparisonUsd(["a.example"], 1000)).toBeCloseTo(
-      estimateComparisonUsd(["a.example"], 1),
+    expect(estimateComparisonUsd(["a.org"], 1000)).toBeCloseTo(
+      estimateComparisonUsd(["a.org"], 1),
       9,
     );
     expect(MAX_COMPARED_DOMAINS).toBe(MAX_COMPETITORS + 1);
@@ -377,7 +387,7 @@ describe("estimateComparisonUsd", () => {
       expect(estimateComparisonUsd([], limit)).toBeLessThanOrEqual(
         ESTIMATED_COMPETITOR_COMPARISON_CALL_USD,
       );
-      expect(estimateComparisonUsd(["a.example", "b.example", "c.example"], limit)).toBeLessThanOrEqual(
+      expect(estimateComparisonUsd(["a.org", "b.org", "c.org"], limit)).toBeLessThanOrEqual(
         ESTIMATED_COMPETITOR_COMPARISON_CALL_USD,
       );
     }
@@ -419,15 +429,15 @@ describe("createMockCompetitorsPort", () => {
     const port = createMockCompetitorsPort(FIXTURES);
     const comparison = await port.fetchCompetitorComparison({
       ...QUERY,
-      competitors: ["chosen.example", "other.example"],
+      competitors: ["chosen.org", "other.org"],
     });
     expect(comparison.discovered).toBe(false);
     // Discovery was skipped, so there is no rival pool count to report.
     expect(comparison.discovered_total_count).toBeNull();
     expect(comparison.rows.map((row) => [row.domain, row.source])).toEqual([
       ["example.com", "target"],
-      ["chosen.example", "supplied"],
-      ["other.example", "supplied"],
+      ["chosen.org", "supplied"],
+      ["other.org", "supplied"],
     ]);
     // intersections / avg_position are DISCOVERY facts — a supplied rival has none, and neither
     // is there a shared-keyword scope for a domain no discovery request was made about.
@@ -462,11 +472,11 @@ describe("createMockCompetitorsPort", () => {
     const quiet = { status_code: 20000, tasks: [{ status_code: 20000, result: [] }] };
     const port = createMockCompetitorsPort({
       competitorsDomain: competitorsFixture,
-      rankOverviews: { default: rankOverviewFixture, "chosen.example": quiet },
+      rankOverviews: { default: rankOverviewFixture, "chosen.org": quiet },
     });
     const comparison = await port.fetchCompetitorComparison({
       ...QUERY,
-      competitors: ["chosen.example", "other.example"],
+      competitors: ["chosen.org", "other.org"],
     });
     expect(comparison.rows[0]?.metrics.count).toBe(1788);
     expect(comparison.rows[1]?.metrics.count).toBeNull();
@@ -649,7 +659,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     const transport = fixtureTransport();
     const comparison = await liveClient(transport, ledger).fetchCompetitorComparison({
       ...QUERY,
-      competitors: ["chosen.example", "other.example"],
+      competitors: ["chosen.org", "other.org"],
     });
 
     // Only the three rank overviews (target + two supplied rivals) — no discovery call at all.
@@ -659,7 +669,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     }
     expect(
       transport.mock.calls.map((call) => JSON.parse(call?.[1]?.body ?? "[]")[0]?.target as string),
-    ).toEqual(["example.com", "chosen.example", "other.example"]);
+    ).toEqual(["example.com", "chosen.org", "other.org"]);
     expect(comparison.discovered).toBe(false);
     expect(comparison.discovered_total_count).toBeNull();
     // Only the three rank-overview costs are on the books — no discovery spend.
@@ -722,7 +732,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
         ? { ok: false, status: 500, json: async () => ({}) }
         : { ok: true, status: 200, json: async () => rankOverviewFixture };
     });
-    const competitors = ["chosen.example", "other.example"];
+    const competitors = ["chosen.org", "other.org"];
     await expect(
       liveClient(transport, ledger).fetchCompetitorComparison({ ...QUERY, competitors }),
     ).rejects.toThrow(/HTTP 500/);
@@ -774,7 +784,7 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
    * expensive one's estimate.
    */
   it("sizes the gate per flow — the SUPPLIED flow is now the expensive one", async () => {
-    const named = ["a.example", "b.example", "c.example"];
+    const named = ["a.org", "b.org", "c.org"];
     expect(estimateComparisonUsd(named, DEFAULT_COMPETITORS_DISCOVERY_LIMIT)).toBeGreaterThan(
       estimateComparisonUsd([], DEFAULT_COMPETITORS_DISCOVERY_LIMIT),
     );

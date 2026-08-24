@@ -63,6 +63,16 @@ describe("in-worker stuck-job reaper", () => {
     orphanAlreadySettled: 0,
     queuedScanned: 0,
     queuedFailed: 0,
+    // The DFS observation lane, ZERO because these specs are about the TIMER, not that lane.
+    // Zero is the only value that leaves the tick's two stale-DFS channels silent
+    // (formatStaleDfsWarning / formatStaleDfsWake both return null at `<= 0` reserves), so the
+    // sweeps driven by this helper stay exactly as loud as they were. They were also the only
+    // two fields missing: omitted, `staleDfsReserves <= 0` is `undefined <= 0` — FALSE — and the
+    // tick then threw a TypeError on `undefined.toFixed(4)` INSIDE its own try/catch, after the
+    // heartbeat had already been written. Every spec here stayed green on a tick that ended in a
+    // swallowed exception. tsconfig.json excludes `src/**/*.test.ts`, so no gate said so.
+    staleDfsReserves: 0,
+    staleDfsEstimatedUsd: 0,
   });
 
   /** The reaper heartbeat lines a console.warn spy saw, in call order (other warns ignored). */
@@ -188,6 +198,10 @@ describe("in-worker stuck-job reaper", () => {
       // Same for the M-01 queued lane: its own `stuck queued sweep:` line, no money involved.
       queuedScanned: 0,
       queuedFailed: 0,
+      // …and the DFS lane, which writes `stale dfs reserves:` from the tick. Zero keeps it silent,
+      // so the "exactly one heartbeat line" shape this spec asserts is about the format string.
+      staleDfsReserves: 0,
+      staleDfsEstimatedUsd: 0,
     };
     startReaperTimer({ reaperIntervalMs: 1_000, reconcile: async () => sweep });
 
