@@ -46,8 +46,6 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = new URL("../../../", import.meta.url);
 const DB_WORKDIR = "packages/db";
 
-/** The three roles a Supabase client key can ever authenticate as. */
-const APP_ROLES = ["anon", "authenticated", "service_role"] as const;
 
 /**
  * The supabase CLI to use: the pinned repo devDependency bin (deterministic,
@@ -121,88 +119,6 @@ function queryRows(sql: string): Record<string, unknown>[] {
     );
   }
   return normalizeRows(parsed, stdout);
-}
-
-/**
- * Run a statement that returns no rows (DDL, or DML without RETURNING). Kept separate from
- * `queryRows` because the CLI answers those with a command tag ("CREATE TABLE", "DELETE 1")
- * rather than JSON, and parsing that as JSON fails in a way that reads like a database problem.
- */
-function execStatement(sql: string): void {
-  try {
-    runQuery(sql, false);
-  } catch (error) {
-    throw new Error(
-      "Could not run this statement against the local Supabase stack — run these tests via " +
-        `guardrails/verify-db.sh. (${sql}) (${String(error)})`,
-    );
-  }
-}
-
-/**
- * Run a statement that MUST fail, and return the database's error text.
- *
- * Used for the behavioural TRUNCATE probes below, which are deliberately written to raise no
- * matter which way they go: either the privilege check refuses them ("permission denied for
- * table …"), or the TRUNCATE lands and the block raises "ARMOR BREACH" itself. Both outcomes
- * abort the statement's implicit transaction, so a probe that finds the armor broken still
- * cannot leave the table it just emptied emptied.
- */
-function queryExpectingError(sql: string): string {
-  try {
-    runQuery(sql, false);
-  } catch (error) {
-    const shaped = error as { stderr?: string; stdout?: string };
-    return `${shaped.stdout ?? ""}${shaped.stderr ?? ""}` || String(error);
-  }
-  throw new Error(`Expected this statement to fail, but it succeeded: ${sql}`);
-}
-
-/** Every base/partitioned table in `public` — the enumeration this whole spec rests on. */
-function publicTables(): string[] {
-  const rows = queryRows(
-    `select c.relname as name from pg_class c
-       join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'public' and c.relkind in ('r', 'p')
-      order by c.relname`,
-  );
-  return rows.map((r) => String(r.name));
-}
-
-/** `has_table_privilege(role, table, priv)` for every table x role pair, keyed "table.role". */
-function truncateMatrix(tables: string[]): Record<string, boolean> {
-  const pairs = tables
-    .flatMap((table) => APP_ROLES.map((role) => ({ table, role })))
-    .map(({ table, role }) => `select '${table}' as t, '${role}' as r`)
-    .join(" union all ");
-  const rows = queryRows(
-    `select p.t, p.r, has_table_privilege(p.r, 'public.' || p.t, 'TRUNCATE') as granted from (${pairs}) p`,
-  );
-  return Object.fromEntries(rows.map((row) => [`${row.t}.${row.r}`, row.granted as boolean]));
-}
-
-/** A single `has_table_privilege` answer. */
-function hasPrivilege(role: string, table: string, privilege: string): boolean {
-  const rows = queryRows(
-    `select has_table_privilege('${role}', '${table}', '${privilege}') as granted`,
-  );
-  return rows[0]?.granted as boolean;
-}
-
-/**
- * A statement that attempts TRUNCATE as `service_role` and ALWAYS aborts.
- *
- * `set local role` is what makes the privilege check meaningful: the CLI connects as `postgres`,
- * which owns every one of these tables and would truncate them all day. service_role is the role
- * the application actually runs as, and it is not the owner, so it is subject to the table's ACL.
- */
-function serviceRoleTruncateProbe(table: string): string {
-  return `do $$ begin
-      set local role service_role;
-      truncate ${table};
-      reset role;
-      raise exception 'ARMOR BREACH: service_role TRUNCATE on ${table} succeeded';
-    end $$;`;
 }
 
 
