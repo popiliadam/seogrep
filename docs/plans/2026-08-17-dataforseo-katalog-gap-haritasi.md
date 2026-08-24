@@ -4,6 +4,44 @@
 > **çağrılmadı** (0 vendor harcaması). Bizim yüzeyimiz kaynak koddan okundu.
 > Kardeş dosya: `docs/plans/2026-08-17-dfs-rapor-derinlestirme.md` (dilimler + imza kuyruğu).
 
+> ## ⚠️ BU DOSYANIN KREDİ RAKAMLARI **ÖNERİ**, FİYAT DEĞİL — ve dokuzu imzada değişti
+>
+> Bu bir **2026-08-17 tarihli ölçüm ve öneri** dosyasıdır. "önerilen kredi" rakamları o günkü
+> teklifi taşır ve **kasten değiştirilmemiştir**: neyin önerildiği, neyin imzalandığından ayrı bir
+> olgudur ve önerinin üstüne imzayı yazmak, teklifin yanlış olduğu bilgisini siler.
+>
+> **Yürürlükteki tek fiyat kaynağı `apps/mcp/src/credits/costs.ts`'tir** (NEVER#6). 2026-08-24'te
+> dosyadaki **her** öneri tek tek o tabloya karşı okundu; **dokuzu imzada başka bir yere oturdu**:
+>
+> | tool | bölüm | bu dosyadaki öneri | İMZALI ve canlı |
+> |---|---|---|---|
+> | `serp_snapshot` | §B2 | 20 + kelime başına 8 | **5** + kelime başına 8 |
+> | `backlink_changes` | §B3 | 45 | **35** |
+> | `link_gap` | §B3 | 60 | **45** |
+> | `disavow_candidates` | §B3 | 55 | **40** |
+> | `keyword_gap` | §B4 | 60 | **45** |
+> | `my_pages` | §B4 | 35 | **40** |
+> | `ai_visibility` | §B5 | 50 | **90** |
+> | `ai_visibility_compare` | §B5 | 70 | **90 / hedef** (2-10 hedef → 180-900) |
+> | `audit_speed` | §B6 | 35 | **15** |
+>
+> AI ailesindeki 50→90 ve 70→90 bir pazarlık değil **düzeltme**: vendor fiyatları sonradan
+> ÖLÇÜLDÜ ve 50 kredi zarar ediyordu. `serp_snapshot`'ın tabanı 20→5 düştü çünkü taban N ile
+> amortize oluyor.
+>
+> **Öneri = imza olanlar:** `discover_keywords` 40 (§B1) · `track_keywords` 0 (§B2) ·
+> `keyword_positions` 10 (§B2) · `backlink_details` 35 (§B3). §B1'in `discover_keywords` için
+> önerdiği **ikinci kademe** (`limit>500` → 65) **v2'de DÜŞTÜ**: tek fiyat var, ve imzalı en kötü
+> vakayı ayakta tutan şey artık fiyat değil **satır kapağı** (`MAX_DISCOVER_ROWS` = 1.000, lookup
+> başına tek istek) — bunlar yumuşak sınır değil, imzalı fiyatın parçası (`costs.ts:22-31`).
+>
+> **Hiç sevk edilmemiş olanlar** (`TOOL_COSTS`'ta yoklar): `keyword_trends` 25 (§B7-B9) — imzalı,
+> ama vendor maliyeti hâlâ ölçülmedi · `score_keywords` 30 (§B1) · `brand_mentions` 40 (§B7-B9).
+> Bunların rakamı **öneri olarak kalır**; sevkten önce ölçülür ve imzalanır.
+>
+> Satır numarası KASTEN verilmiyor: bu notun kendisi dosyayı kaydırıyor ve bir önceki sürümü tam
+> olarak bu yüzden altı yanlış satıra atıf yapıyordu. Bölüm başlıkları kaymıyor.
+
 ## 0. Bugünkü yüzeyimiz — ölçüm
 
 ### 0.1 Çağırdığımız yedi uç, dört tool

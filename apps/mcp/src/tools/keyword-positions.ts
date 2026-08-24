@@ -42,9 +42,9 @@ import { defineTool, errorResult, textResult, type RegisteredTool } from "./regi
  *      span, an interval over a day says so in words, and nothing in the output claims a direction
  *      of travel (keyword-positions-format.ts owns those sentences).
  *   2. "NOT FOUND" AND "NOT MEASURED" STAY APART, all the way from the SERP port through storage
- *      (migration 0029's `status` column and its four CHECK constraints) to the three different
- *      sentences printed here. A position is never compared across a reading that does not have
- *      one.
+ *      (migration 0030's `status` column, plus the seven CHECK constraints that bind every other
+ *      column to it) to the three different sentences printed here. A position is never compared
+ *      across a reading that does not have one.
  *   3. NOTHING STORED IS A FREE ANSWER. Charging 10 credits to be told that a store is empty would
  *      be charging for nothing at all, so the count runs BEFORE the reserve and an empty result
  *      refuses with zero ledger rows — the same pre-reserve honesty gate the DataForSEO tools use

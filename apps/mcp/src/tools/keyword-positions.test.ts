@@ -254,7 +254,7 @@ describe("the three outcomes stay three, all the way to the page", () => {
 
   /**
    * THE TWO VENDOR SCALES ARE NOT ONE FACT. `rank_group` (organic-only) and `rank_absolute` (all
-   * SERP elements) are independent vendor fields and either may be absent — migration 0029 says in
+   * SERP elements) are independent vendor fields and either may be absent — migration 0030 says in
    * its own words why no CHECK can refuse the pair (group null, absolute set) and why the honesty
    * of that row is therefore the RENDERER's duty. Before this branch existed, this row printed
    * "DataForSEO reported no rank for the placement" over a rank DataForSEO had in fact reported.
