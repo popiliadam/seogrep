@@ -5,51 +5,62 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-24 (5. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
+### 📋 2026-08-25 (5. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
-**Durum:** `main` @`6e1c7e1` (+ #168 kuyrukta) · **7 PR merge** · migration **0031 prod'da
-UYGULANDI ve TABLO OKUNARAK doğrulandı** · canlı yüzey **36 tool** · MCP deploy başarılı ·
-worktree temiz.
+**Durum:** `main` @`9eed09c` · **11 PR merge** · açık PR **0** · worktree temiz ·
+migration **0032**'ye kadar prod'da (**0031 operatör, 0032 şef** — ikisi de TABLO OKUNARAK
+doğrulandı) · canlı yüzey **36 tool** · MCP deploy başarılı.
 
-> **AYRINTILI HANDOFF:** `docs/plans/2026-08-24-oturum5-kapanis-handoff.md` — prod doğrulaması,
-> şefin ÜÇ ölçüm hatası, güncel chip listesi, üç eskalasyon ve bu oturumun eklediği disiplin.
+> **AYRINTILI HANDOFF:** `docs/plans/2026-08-24-oturum5-kapanis-handoff.md` — prod doğrulamaları,
+> şefin **ALTI** ölçüm hatası, güncel chip listesi, üç eskalasyon ve iki hakem-FAIL'in anatomisi.
 
-#### ✅ KAPANAN
+#### ✅ PARÇA 2 TAMAMEN KAPANDI
 
-**Parça 2'de iki büyük kalem:** `/app/rankings` rank tracker paneli (#164) · **0031** — dört
-tool'un koşu ekseni + `/app/lookups` yüzeyi (#167). Ayrıca W1–W4 okuma pinleri (#165, **W4 gerçek
-kusurdu**), para yolu P4/P5/P6 (#163), doküman sapmaları (#162), T1 çift yönlü kiracı testi (#168).
+**On tool'un onunun da panelde yüzeyi var.** İki panel, beş tablo:
+`/app/rankings` → `keyword_position_measurements` + `tracked_keywords` ·
+`/app/lookups` → `domain_lookup_runs` + `keyword_research_runs` + **`subject_lookup_runs`** (0032).
+
+Bu oturumda inen: `/app/rankings` paneli (#164) · **0031** dört tool'un koşu ekseni (#167) ·
+**0032** son üç tool (#173) · W1–W4 okuma pinleri (#165, **W4 gerçek kusurdu**) · para yolu
+P4/P5/P6 (#163) · **P1** kuraldan kapıya (#170) · **T1** çift yönlü kiracı (#168) ·
+**T2/T6/T7** (#171) · **K7** index zırhı (#172) · doküman sapmaları (#162) · iki handoff.
 
 #### 🎯 SIRADAKİ İŞ
 
-1. **PARÇA 2'NİN KALANI.** `discover_keywords` · `ai_visibility` · `ai_visibility_compare` 0027'ye
-   **GİRMEZ** (ölçüldü: 4 mode/3'ünde domain yok · konu domain VEYA keyword · manşet konu YOK).
-   Bunlara **konusu ayrımlı** bir tablo gerekir — `mode`/`subject_kind` SAKLANIR ki null'ın anlamı
-   satırdan satıra değişmesin (0030'un `status` discriminant'ı çalışan örnek).
-   ✅ **Yeni tablo = eklemeli SQL = ŞEF UYGULAYABİLİR** (0031'den farklı).
-2. **Chip dalgası** — kapanan çıkarıldı, **dört yeni chip** eklendi (N7–N10).
-3. **`keyword_trends`** — bir hafta `dfs_spend` verisi.
+1. **Chip dalgası** — `K1`–`K6` · `P2` `P3` · `T3` `T4` `T5` `T8` · `D3` · `W5` `W6` · `N2`–`N13`.
+2. **`keyword_trends`** — bir hafta `dfs_spend` verisi (karar değil ZAMAN).
+3. **Migration yetkisi iş emrine yazılır (N13):** **eklemeli** SQL (`CREATE TABLE/INDEX/POLICY/
+   GRANT/REVOKE`) şefte; **herhangi bir `DROP`** operatörde. 0031 operatöre gitti, 0032 gitmedi.
 
-#### ⚠️ ÜÇ ESKALASYON — yazıldı
+#### ⚠️ ÜÇ ESKALASYON
 
-**K5 DECOMPOSE** (42 hata/21 dosya + `packages/*` de dışlıyor) · **T3 REVISE** (locale hem abonelik
-kimliği hem vendor değeri; dört modül birlikte değişmeli) · **N7 DEFER** (`/status` probe sınırı).
+**K5 DECOMPOSE** (42 hata/21 dosya + `packages/*`) · **T3 REVISE** (locale dört modülde birlikte) ·
+**N7 DEFER** (`/status` probe sınırı — şema HAZIR ama sinyal ölü).
 
-#### 🚨 ŞEFİN ÜÇ ÖLÇÜM HATASI — taze oturum miras almasın
+#### 🚨 ŞEFİN ALTI ÖLÇÜM HATASI — hepsi aynı sınıf
 
-1. **"dosyaya karşı okundu" — okumamıştı.** Üç tool kaçtı, `link_gap` hakkında iki yarısı da yanlış
-   bir cümle yayınlandı. Hakem çürüttü.
-2. **"beş CHECK"** — yanlış sayıyı başka yanlış sayıyla değiştirdi; repo'nun kendi kelimesi **yedi**.
-3. **T1'de test ADLARINI grep'ledi, gövdeleri değil.** Chip "1 dosya" diyordu, şef "4" diye
-   düzeltti, **gerçek 2** — sahip-tarafı yarısı aynı testin GÖVDESİNDEYDİ. İşçi ölçüp uymadı.
+Bir iddiayı, onu **doğrulayan eksenden başka** bir eksende kontrol etmek: "okundu" derken
+grep'lemek · `link_gap` hakkında iki yarısı da yanlış cümle · "four"u **"beş"** ile düzeltmek
+(doğrusu yedi) · test **adlarını** grep'lemek (chip 1, şef 4, gerçek **2**) · `\b` sınırının
+`example.com` içindeki `.example`'ı yakalaması (7 yerine **5**) · `grep -c "create index"`in
+`create unique index`'i kaçırması (12 yerine **14**).
 
-> **Ders (imzasız):** *Bir chip'in TARİFİ de bir iddiadır ve ölçülmeden iş emrine taşınmaz.* Bu
-> oturumda dört chip tarifi yanlış çıktı; ikisini chip yanlış söyledi, **ikisini şef yanlış düzeltti.**
+**Altısı da hakem/işçi tarafından yakalandı; hiçbirini kapı yakalayamazdı.**
 
-#### ⏳ OPERATÖRDE — hiçbiri kodu bloke etmiyor
+> **Ders (imzasız):** *Bir chip'in TARİFİ de bir iddiadır ve ölçülmeden iş emrine taşınmaz.*
+> Dört chip tarifi yanlış çıktı; ikisini chip yanlış söyledi, **ikisini şef yanlış "düzeltti".**
 
-**Canlı smoke** (şef yapamıyor, izin katmanı reddediyor) · **cron alt-bütçesi** · **ürün adaleti** ·
-**N3** (iki panelin farklı sınır açıklaması, bugün latent).
+#### 🔬 İKİ HAKEM-FAIL — ikisi de üç kapı YEŞİLKEN
+
+1. **0032'nin karşılaştırma yazımı atomik değildi.** Döngü ortası arıza → **ücretlendirilmemiş
+   satırlar** + tekrar denemede kopyalar. İki yorum yanlış bir üretim özelliği iddia ediyordu, ve
+   o özelliği adlandıran spec yazıcıyı **ilk** çağrıda düşürdüğü için **totolojik** geçiyordu.
+   Düzeltmenin deseni **kardeş migration'ın deposunda zaten vardı**.
+2. **P1'in gerekçesi yanlıştı** — ve anlattığı davranışı **şef iki dilim önce kendisi eklemişti**.
+
+#### ⏳ OPERATÖRDE
+
+**CANLI SMOKE (en kritik, ve kod tarafında karşılığı YOK)** · cron alt-bütçesi · ürün adaleti · N3.
 
 ### 📋 2026-08-24 (5. oturum, ARA SÜRÜM)
 
