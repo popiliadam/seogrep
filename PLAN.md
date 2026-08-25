@@ -5,6 +5,52 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 📋 2026-08-25 — SIRADAKİ OTURUM: TOOL REVİZYONU (36 tool, tek tek)
+
+**Bu oturumun işi kod yazmak DEĞİL.** 36 tool'un her biri **müşterinin yolundan** — taze oturum,
+bağlı MCP, düz prompt — gezilir; görülen her eksik/hata/gelişim alanı deftere **yazılır**.
+**Hiçbir bulgu bu oturumda düzeltilmez.**
+
+> **DEFTER:** `docs/plans/2026-08-25-tool-revizyon-defteri.md` — bulgu satırının şekli, altı sınıf,
+> kapsama izleme tablosu ve oturum sonu üç ölçümü orada.
+>
+> **RUNBOOK (görsel):** prompt'lar, hangi tool'un seçilmesi gerektiği ve neye bakılacağı.
+
+#### Nasıl koşulur
+
+`seogrep` bu proje dizinine **zaten MCP sunucusu olarak kayıtlı** (`type: http`). Taze oturumda
+tool'lar `mcp__…__*` olarak gelir. **Onay gerekmiyor** — izin kapısının kapsadığı tek MCP tool'u
+`mcp__gsc__submit_sitemap`; diğerleri kapıya hiç uğramaz. `/pseo-bind` · `/pseo-approve` **BU İŞLE
+İLGİSİZ** (onlar Bash kapısıydı, curl içindi).
+
+#### Sıra — ücretsizden pahalıya, ve sebebi var
+
+**11 ücretsiz → 6 ucuz → 7 orta → 12 pahalı.** Ücretsizler önce, çünkü `SEÇİM` ve `ARGÜMAN`
+kusurları orada da görünür ve **hiç para harcamaz**. Pahalıya geçtiğinde tool açıklamalarının
+nasıl okunduğunu zaten öğrenmiş olursun.
+
+#### Pazarlıksız üç kural
+
+1. **İlk denemede tool adını SÖYLEME.** Doğal cümleyle sor ve **hangi tool'un seçildiğine** bak —
+   müşterinin yaşadığı şey bu. Yanlış seçim = kusur **açıklamada**, ve başka hiçbir yolla görünmez.
+2. **Bir bulgu ölçülmeden yazılmaz.** "Kötü" ölçüm değil; "üç alandan üçü de `n/a` döndü" ölçüm.
+   Prompt ve çıktının ilgili kısmı deftere girer. *(5. oturumda altı yanlış iddia bu yüzden çıktı.)*
+3. **Düzeltme yok.** Aklına gelen düzeltmeyi yapmak, kalan 35 tool'un inceleme bütçesini yer.
+
+#### Para
+
+Günlük tavan **$3,00**, fail-closed. Tavana yaklaşırsan **dur ve yaz**, ertesi gün devam.
+**İlk ücretli çağrıda `DFS_LIVE`'ı doğrula:** kapalıysa her tool "not enabled" döner — 0 kredi,
+0 defter satırı, ve inceleme **hiçbir şey ölçmemiş** olur.
+
+#### Bu oturumdan çıkacak şey
+
+Bulgular sınıfa ve **sahibine** göre gruplanır: `[kod]` → chip envanteri · `[operatör]` → imza
+kuyruğu (fiyat NEVER#6) · `[açık]` → sonraki oturumun karar listesi. Optimizasyon/revizyon
+**ondan sonra**, ayrı dilimler hâlinde.
+
+---
+
 ### 📋 2026-08-25 (5. oturum KAPANIŞ) — HANDOFF: TAZE OTURUM BURADAN BAŞLAR
 
 **Durum:** `main` @`9eed09c` · **11 PR merge** · açık PR **0** · worktree temiz ·
