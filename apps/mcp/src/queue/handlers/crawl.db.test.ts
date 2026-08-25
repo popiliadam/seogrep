@@ -227,7 +227,7 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     const projectId = await makeProject(userId, "scoped.example.com");
     const jobId = await makeQueuedCrawlJob(userId, projectId);
 
-    let seenOpts: { maxUrls?: number; includePaths?: string[] } | null = null;
+    let seenOpts: { maxUrls?: number; includePaths?: string[]; onProgress?: unknown } | null = null;
     registerToolHandler(
       "crawl_site",
       createCrawlHandler({
@@ -249,7 +249,16 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     });
 
     // The snake_case payload is bridged to the crawler's camelCase opts (clampIncludePaths).
-    expect(seenOpts).toEqual({ maxUrls: 25, includePaths: ["/blog"] });
+    // `onProgress` is asserted here on purpose rather than loosened away. The progress write is
+    // swallow-and-disable by design, so a handler that stopped passing the callback would leave
+    // the running-job counter permanently dead WITHOUT reddening any lane in any environment —
+    // the referee named that as this feature's residual risk. This is the one assertion in the
+    // repo that runs the REAL handler and can see the callback arrive, so it pins it.
+    expect(seenOpts).toEqual({
+      maxUrls: 25,
+      includePaths: ["/blog"],
+      onProgress: expect.any(Function),
+    });
     expect((await getJobRow(jobId)).status).toBe("succeeded");
   });
 
