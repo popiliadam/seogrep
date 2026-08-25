@@ -7,6 +7,7 @@ import {
   computeIssues,
   crawlSite,
   estimateSiteSize,
+  isInfrastructurePath,
   PRE_DISCOVERY_BUDGET_MS,
   matchesIncludePaths,
   normalizeIncludePaths,
@@ -1982,6 +1983,129 @@ describe("crawlSite — contentHash reads the script-stripped view", () => {
       // And the fingerprint still SEPARATES real differences — without this the spec would
       // also pass on a hash that returned a constant.
       expect(hashOf("/c")).not.toBe(hashOf("/a"));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / finding 1 — INFRASTRUCTURE NOISE, one row, four PAID surfaces.
+ *
+ * Measured 2026-08-25: `crawl_pages` held exactly ONE `/cdn-cgi/` row, and that row was
+ * audit_schema's only action item, audit_tech's 25/25 broken links, the shared report's
+ * broken-link section, and audit_onpage's first finding. Cloudflare rewrites `mailto:` links
+ * into `/cdn-cgi/l/email-protection#…`, so every page carrying an email address links to one
+ * endpoint that answers 4xx to a plain GET.
+ *
+ * These specs pin the CRAWLER half (the audit half is pinned in audit/infra-paths.test.ts,
+ * where the same crawl is fed to the three rule engines).
+ */
+describe("crawlSite — reserved infrastructure paths are not the site", () => {
+  const ORIGIN = "http://infra.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** Pathnames the fake origin was actually asked for — a fetch never made is the point. */
+  const serveInfraSite = (opts: { sitemap: string[] }) => {
+    const requested: string[] = [];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = opts.sitemap.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // Cloudflare's endpoint answers 4xx to a plain GET — the 404 that became "broken links".
+      if (path.startsWith("/cdn-cgi/") || path.startsWith("/.well-known/")) {
+        return new Response("<html><body>nope</body></html>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response(
+        `<html><head><title>${path}</title><meta name="description" content="d"></head><body>` +
+          `<h1>${path}</h1><p>words words words</p>` +
+          `<a href="/cdn-cgi/l/email-protection#a1b2">email</a>` +
+          `<a href="/.well-known/security.txt">security</a>` +
+          `<a href="/about">about</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return { impl, requested };
+  };
+
+  it("classifies exactly the reserved prefixes, and nothing that merely looks like them", () => {
+    expect(isInfrastructurePath("/cdn-cgi/l/email-protection")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi/trace")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi")).toBe(true); // the bare prefix is the same tree
+    expect(isInfrastructurePath("/CDN-CGI/TRACE")).toBe(true); // case is not a bypass
+    expect(isInfrastructurePath("/.well-known/security.txt")).toBe(true);
+    // NEGATIVE — a site's own content must never be silently withheld from the tenant.
+    expect(isInfrastructurePath("/")).toBe(false);
+    expect(isInfrastructurePath("/cdn-cgi-news")).toBe(false);
+    expect(isInfrastructurePath("/blog/cdn-cgi/post")).toBe(false); // prefix, not substring
+    expect(isInfrastructurePath("/well-known")).toBe(false);
+  });
+
+  it("never fetches, stores, or even SKIPS a linked /cdn-cgi/ or /.well-known/ URL", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(result.pages.length).toBeGreaterThan(0); // the crawl really ran
+      expect(result.pages.some((p) => /\/cdn-cgi\//.test(p.url))).toBe(false);
+      expect(result.pages.some((p) => /\/\.well-known\//.test(p.url))).toBe(false);
+      // Not recorded as a skip either: a skip is an account of a URL OF THE SITE that we did
+      // not read, and these are not URLs of the site — listing them would move the same noise
+      // into the skip report every audit also prints.
+      expect(result.skipped.some((s) => /cdn-cgi|well-known/.test(s.url))).toBe(false);
+      // And no request was ever made — the exclusion is free, not merely filtered afterwards.
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      expect(site.requested.some((p) => p.startsWith("/.well-known/"))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("drops a reserved path advertised in the SITEMAP from both the seeds and sitemapUrls", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/cdn-cgi/l/email-protection", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      // Absent from the STORED sitemap list too: audit_tech diffs that list against the crawl,
+      // so a URL kept there but deliberately never crawled reads as a coverage gap.
+      expect(result.sitemapUrls?.some((u) => u.includes("/cdn-cgi/"))).toBe(false);
+      expect(result.sitemapUrls?.some((u) => u.endsWith("/about"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not COUNT reserved paths in the free pre-discovery estimate either", async () => {
+    // No sitemap -> the homepage-link floor, the branch that quoted "~28" for a 222-page site.
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/sitemap.xml") return new Response("", { status: 404 });
+      return new Response(
+        `<html><body><a href="/a">a</a><a href="/b">b</a>` +
+          `<a href="/cdn-cgi/l/email-protection#x">email</a>` +
+          `<a href="/.well-known/security.txt">sec</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const sized = await estimateSiteSize(ORIGIN, { lookup });
+      expect(sized.source).toBe("homepage");
+      // /a and /b only — a quote must never include pages the crawl is guaranteed to refuse.
+      expect(sized.pages).toBe(2);
     } finally {
       fetchSpy.mockRestore();
     }
