@@ -82,10 +82,17 @@ export const KNOWN_LOCATIONS: readonly KnownLocation[] = [
  * WHICH PLACE they mean: accents and case. `Türkiye`, `TÜRKİYE` and `turkiye` all fold to the same
  * key as `Turkiye`, so one canonical row covers every casing and every accented variant of it.
  *
- * Decompose FIRST, then strip the combining marks, then lower-case: `İ` decomposes to `I` plus a
- * combining dot, so it survives as `i`, where lower-casing it first would have left the dot behind
- * as its own character. Anything that is not an ASCII letter or digit is dropped, which also folds
- * spacing and punctuation differences.
+ * Decompose, strip the combining marks, then lower-case. Anything that is not an ASCII letter or
+ * digit is dropped, which also folds spacing and punctuation differences.
+ *
+ * ON THE ORDER, corrected 2026-08-25 after a referee measured it: an earlier version of this
+ * comment claimed decompose-before-lower-case was load-bearing for `İ` — that lower-casing first
+ * would strand its dot. It is NOT. `"İ".toLowerCase()` yields `i` plus U+0307 COMBINING DOT ABOVE,
+ * which is a `\p{M}` and is removed by the very next step whichever order runs first. The referee
+ * ran it: swapping the two produced an EQUIVALENT MUTANT, green on all 15 cases. The order is kept
+ * because decompose-first is the conventional Unicode folding sequence and is robust to marks that
+ * case-folding does NOT produce — not because `İ` needs it. A rationale nobody measured is how a
+ * comment starts drifting from the code it explains.
  */
 export function foldKey(value: string): string {
   return value
