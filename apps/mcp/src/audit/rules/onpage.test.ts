@@ -188,6 +188,11 @@ describe("auditOnpage — stray markup at a title/description edge", () => {
 
   const clean: [string, string][] = [
     ["quotes around a word", 'The "Best" Dentist in Izmir'],
+    // BOTH EDGES are quotes here, which is the shape a naive "strip the punctuation" rule
+    // flags first — and it is a perfectly ordinary title.
+    ["a title wrapped in straight quotes", '"The Best Dentist in Izmir"'],
+    ["a title wrapped in curly quotes", "“The Best Dentist in Izmir”"],
+    ["a title wrapped in parentheses", "(Updated for 2026) Teeth Whitening"],
     ["curly quotes", "The “Best” Dentist in Izmir"],
     ["a leading digit", "10 Ways to Whiten Teeth"],
     ["leading brackets", "[2026] Guide to Dental Implants"],
