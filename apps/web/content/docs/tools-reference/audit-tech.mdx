@@ -14,9 +14,16 @@ Summarizes the crawl from a technical angle:
 - **HTTP status spread** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx page URLs listed.
 - **Redirects** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and redirects onto an already-crawled URL).
 - **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by `robots.txt`, timed out, non-HTML, and so on).
-- **Robots conflicts** — pages marked `noindex` that are still linked internally.
+- **Robots conflicts** — pages marked `noindex` that are still linked internally, and pages whose `X-Robots-Tag` header says `noindex` while the page's own meta tag does not.
+- **Slow pages** and **heavy pages** — fetches over a few seconds, and HTML documents over a megabyte and a half.
+- **Redirect chains** — two or more hops to reach the destination, printed as the whole trail.
+- **Deep pages** and **orphan signals** — pages several clicks from a crawl seed, and pages the crawl found no internal link to at all.
+- **Sitemap versus crawl** — what is in the sitemap and was never crawled, and what was crawled and is absent from the sitemap.
+- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx from.
 
-Because the crawler follows a successful redirect and records the destination page, redirects appear here through the crawler's skip reasons rather than as duplicate pages.
+Redirects appear twice, on purpose and in two shapes. The crawler follows a successful redirect and records the destination, so a redirect surfaces as a **skip reason** rather than a duplicate page; separately, a page's own hop trail is read back as a **chain** when it took more than one hop.
+
+Every section prints only when it has rows — with one exception. The sitemap comparison prints even at zero and zero, because a diff that exists means the sitemap **was read**, and a measured agreement is worth stating where an empty list elsewhere would only mean an unmeasured axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only linking page was never fetched lands there too.
 
 ## Example
 
@@ -32,4 +39,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-The status distribution, the redirect and skipped-URL breakdowns, and any noindex-but-linked conflicts.
+The status distribution, the redirect and skipped-URL breakdowns, the noindex-but-linked and `X-Robots-Tag` conflicts, and each of the sections above that had rows. Every list is capped, and past the cap says how many more there were.

@@ -16,8 +16,15 @@ Runs a rule engine over every crawled page and reports, per page, issues such as
 - **Headings** — a missing `h1`, or more than one `h1`.
 - **Canonicals** — missing, or pointing to a different URL than the page itself.
 - **Thin content** — pages under ~200 words.
+- **Images with no alt text** — how many of the images on the page have none.
+- **A title that merely repeats the h1** — the search snippet spent on words the visitor is about to read anyway. Only checked when the page has exactly one `h1`.
+- **No OpenGraph title or description** — the page has no share preview at all. Both missing is one finding; declaring one and not the other is a style choice, not a gap.
+- **A missing `html lang`** attribute.
+- **A heading hierarchy gap** — `h3`s under an `h1` with no `h2` between them.
 
-Thresholds are conservative "worth a look" signals, not hard rules.
+Thresholds are conservative "worth a look" signals, not hard rules. A rule whose input an older crawl never recorded produces **no finding** for those pages rather than a false one — not-measured and not-present are kept apart.
+
+Alongside the per-page findings it reports **duplicate content**: groups of pages that share one text fingerprint. That is a site-level finding, so it is deliberately not part of the per-page issue counts and cannot be inferred from them.
 
 ## Example
 
@@ -33,4 +40,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A summary of issue counts followed by a per-page list of findings. Pages with no issues are counted but not listed.
+A summary of issue counts, then the duplicate-content groups with their member URLs, then a per-page list of findings. Pages with no issues are counted but not listed. The per-page list is capped, and past the cap the reply says how many further pages had findings — a short list never reads as a short audit.

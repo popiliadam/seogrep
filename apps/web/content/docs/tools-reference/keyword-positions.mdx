@@ -9,7 +9,7 @@ description: "Read the SERP positions already measured and stored for a domain's
 
 ## What it does
 
-Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest first, grouped into one series per keyword, location, language and device. Narrow it with `keyword`, `location_name`, `language_code` or `device`, and bound the answer with `limit` — the reply always states how many readings match your filter in total, separately from how many are in the window.
+Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest first, grouped into series. A series is everything a reading was taken **under** — not just the keyword, location, language and device you chose, but the search engine, the depth that was requested, and the rule used to decide a result was yours. Those last three fork a series too, and must: "not found in the 10 results examined" and "not found in the 100 results examined" answer different questions, and putting them on one line would turn a change of depth into an apparent movement. Narrow it with `keyword`, `location_name`, `language_code` or `device`, and bound the answer with `limit` — the reply always states how many readings match your filter in total, separately from how many are in the window.
 
 ## A gap is not a decline
 
@@ -19,7 +19,9 @@ Two readings a month apart are two observations, not a trend, and SeoGrep will n
 
 A reading that searched and found nothing reports the absence **and how many results were examined** — it is not position 0, and it says nothing about results beyond those examined. A reading that never happened says so instead: the position is unknown, and nothing was examined at all.
 
-A position is never compared across either of them, because there is no second position to compare with. A reading where the domain was found but the vendor reported no rank is a third case, and it says that too.
+A position is never compared across either of them, because there is no second position to compare with.
+
+A reading where the domain was **found** but the vendor reported no rank is a third case, and it is really two, kept apart. DataForSEO has two rank scales — the organic-only one and the one counting every element on the page — and it may withhold either. A row with neither says so; a row where it gave the all-elements rank and withheld the organic one says exactly that, and prints the number it did send. One sentence for both would have printed "DataForSEO reported no rank" over a row on which DataForSEO had reported one.
 
 ## If nothing has been measured yet
 
@@ -45,4 +47,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-One block per keyword, location, language and device — with what each reading was measured under (search engine, depth, and how a domain was matched), each reading's own date, and the elapsed time between them. Ranks are DataForSEO's own `rank_group` and `rank_absolute`; SeoGrep adds no score of its own.
+One block per series — keyword, location, language, device, search engine, depth requested and domain-match rule — with what each reading was measured under, each reading's own date, and the elapsed time between them. Ranks are DataForSEO's own `rank_group` and `rank_absolute`; SeoGrep adds no score of its own.

@@ -97,6 +97,8 @@ Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was look
 
 That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
 
-**The crawl side is one crawl.** The comparison uses your project's most recent completed `crawl_site` run and only the pages that run actually fetched — URLs it skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's half and a sentence saying so; a bare `target` gets no comparison at all, because there is no project to compare it against.
+**The crawl side is one crawl, and a bounded read of it.** The comparison uses your project's most recent completed `crawl_site` run and only the pages that run actually fetched — URLs it skipped are not counted as crawled. It also reads only the first pages of that crawl, up to a fixed ceiling; past it the answer says the crawl side was truncated and the list may be incomplete. So "reported by DataForSEO, not found in that crawl" is bounded twice over — by what the crawl fetched, and by how much of it was read.
+
+A project with no completed crawl gets DataForSEO's half and a sentence saying so; a bare `target` gets no comparison at all, because there is no project to compare it against.
 
 **Clickstream data is not bought.** DataForSEO offers a clickstream option on this endpoint that doubles the cost of the request; SeoGrep does not enable it, and every answer states that rather than leaving you to wonder why no clickstream figures appear.

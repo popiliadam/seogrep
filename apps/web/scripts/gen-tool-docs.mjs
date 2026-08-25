@@ -768,13 +768,27 @@ export const DOC_PROSE = {
       "- **Meta descriptions** — missing, too long (over ~160 characters), too short, or duplicated.\n" +
       "- **Headings** — a missing `h1`, or more than one `h1`.\n" +
       "- **Canonicals** — missing, or pointing to a different URL than the page itself.\n" +
-      "- **Thin content** — pages under ~200 words.\n\n" +
-      "Thresholds are conservative \"worth a look\" signals, not hard rules.",
+      "- **Thin content** — pages under ~200 words.\n"  +
+      "- **Images with no alt text** — how many of the images on the page have none.\n" +
+      "- **A title that merely repeats the h1** — the search snippet spent on words the visitor " +
+      "is about to read anyway. Only checked when the page has exactly one `h1`.\n" +
+      "- **No OpenGraph title or description** — the page has no share preview at all. Both " +
+      "missing is one finding; declaring one and not the other is a style choice, not a gap.\n" +
+      "- **A missing `html lang`** attribute.\n" +
+      "- **A heading hierarchy gap** — `h3`s under an `h1` with no `h2` between them.\n\n" +
+      "Thresholds are conservative \"worth a look\" signals, not hard rules. A rule whose input " +
+      "an older crawl never recorded produces **no finding** for those pages rather than a " +
+      "false one — not-measured and not-present are kept apart.\n\n" +
+      "Alongside the per-page findings it reports **duplicate content**: groups of pages that " +
+      "share one text fingerprint. That is a site-level finding, so it is deliberately not part " +
+      "of the per-page issue counts and cannot be inferred from them.",
     example:
       "Ask your MCP client in plain language:\n\n> Run an on-page audit for my example.com project.",
     returns:
-      "A summary of issue counts followed by a per-page list of findings. Pages with no issues are " +
-      "counted but not listed.",
+      "A summary of issue counts, then the duplicate-content groups with their member URLs, then " +
+      "a per-page list of findings. Pages with no issues are counted but not listed. The per-page " +
+      "list is capped, and past the cap the reply says how many further pages had findings — a " +
+      "short list never reads as a short audit.",
   },
 
   audit_tech: {
@@ -791,14 +805,33 @@ export const DOC_PROSE = {
       "redirects onto an already-crawled URL).\n" +
       "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by " +
       "`robots.txt`, timed out, non-HTML, and so on).\n" +
-      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n\n" +
-      "Because the crawler follows a successful redirect and records the destination page, redirects " +
-      "appear here through the crawler's skip reasons rather than as duplicate pages.",
+      "- **Robots conflicts** — pages marked `noindex` that are still linked internally, and " +
+      "pages whose `X-Robots-Tag` header says `noindex` while the page's own meta tag does not.\n" +
+      "- **Slow pages** and **heavy pages** — fetches over a few seconds, and HTML documents over " +
+      "a megabyte and a half.\n" +
+      "- **Redirect chains** — two or more hops to reach the destination, printed as the whole " +
+      "trail.\n" +
+      "- **Deep pages** and **orphan signals** — pages several clicks from a crawl seed, and " +
+      "pages the crawl found no internal link to at all.\n" +
+      "- **Sitemap versus crawl** — what is in the sitemap and was never crawled, and what was " +
+      "crawled and is absent from the sitemap.\n" +
+      "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
+      "from.\n\n" +
+      "Redirects appear twice, on purpose and in two shapes. The crawler follows a successful " +
+      "redirect and records the destination, so a redirect surfaces as a **skip reason** rather " +
+      "than a duplicate page; separately, a page's own hop trail is read back as a **chain** " +
+      "when it took more than one hop.\n\n" +
+      "Every section prints only when it has rows — with one exception. The sitemap comparison " +
+      "prints even at zero and zero, because a diff that exists means the sitemap **was read**, " +
+      "and a measured agreement is worth stating where an empty list elsewhere would only mean " +
+      "an unmeasured axis. The orphan list carries its own caveat: the crawl is bounded, so a " +
+      "page whose only linking page was never fetched lands there too.",
     example:
       "Ask your MCP client in plain language:\n\n> Run a technical audit for my example.com project.",
     returns:
-      "The status distribution, the redirect and skipped-URL breakdowns, and any noindex-but-linked " +
-      "conflicts.",
+      "The status distribution, the redirect and skipped-URL breakdowns, the noindex-but-linked " +
+      "and `X-Robots-Tag` conflicts, and each of the sections above that had rows. Every list is " +
+      "capped, and past the cap says how many more there were.",
   },
 
   audit_schema: {
@@ -1359,11 +1392,16 @@ export const DOC_PROSE = {
           "That record is history, not a live surface. No call here reads a previous run, nothing " +
           "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
           "picture, run it again.\n\n" +
-          "**The crawl side is one crawl.** The comparison uses your project's most recent " +
-          "completed `crawl_site` run and only the pages that run actually fetched — URLs it " +
-          "skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's " +
-          "half and a sentence saying so; a bare `target` gets no comparison at all, because there " +
-          "is no project to compare it against.\n\n" +
+          "**The crawl side is one crawl, and a bounded read of it.** The comparison uses your " +
+          "project's most recent completed `crawl_site` run and only the pages that run actually " +
+          "fetched — URLs it skipped are not counted as crawled. It also reads only the first " +
+          "pages of that crawl, up to a fixed ceiling; past it the answer says the crawl side " +
+          "was truncated and the list may be incomplete. So \"reported by DataForSEO, not found " +
+          "in that crawl\" is bounded twice over — by what the crawl fetched, and by how much " +
+          "of it was read.\n\n" +
+          "A project with no completed crawl gets DataForSEO's half and a sentence saying so; a " +
+          "bare `target` gets no comparison at all, because there is no project to compare it " +
+          "against.\n\n" +
           "**Clickstream data is not bought.** DataForSEO offers a clickstream option on this " +
           "endpoint that doubles the cost of the request; SeoGrep does not enable it, and every " +
           "answer states that rather than leaving you to wonder why no clickstream figures appear.",
@@ -2730,13 +2768,31 @@ export const DOC_PROSE = {
       "answer you asked for.",
     preExampleSections: [
       {
+        heading: "Who can run it",
+        body:
+          "`serp_snapshot` needs a **paid credit balance**. Each keyword is a separate live " +
+          "search bought from a paid third-party provider, so it is not available on trial " +
+          "credits, however many are left; the refusal arrives before anything is reserved and " +
+          "says outright that you were not charged. Buy any credit pack and it unlocks straight " +
+          "away — your existing credits are untouched and keep working for crawls, audits, " +
+          "reports and Search Console tools.\n\n" +
+          "This is the one part of the rank tracker that is gated. " +
+          "[`track_keywords`](/docs/tools-reference/track-keywords) and " +
+          "[`keyword_positions`](/docs/tools-reference/keyword-positions) are free and run on " +
+          "any account, because neither contacts a search engine.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool says so and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder positions as if a search engine had really returned them.",
+      },
+      {
         heading: "Three answers, and none of them is a number you can misread",
         body:
           "A keyword comes back as exactly one of three things, and they are never collapsed:\n\n" +
           "- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and " +
           "`rank_absolute` (its rank among every element on the page, including featured snippets " +
-          "and ad blocks). Both are reported, because they disagree whenever a SERP feature sits " +
-          "above the result, and that gap is itself the finding.\n" +
+          "and ad blocks). Both are reported where the vendor sent them, because they disagree " +
+          "whenever a SERP feature sits above the result and that gap is itself the finding; " +
+          "either one the vendor left out is stated as not reported rather than filled in.\n" +
           "- **Searched for and not found** — together with **how many organic results were " +
           "actually examined**. That is the scope of the claim: it is not position 0, and it says " +
           "nothing about results beyond the ones counted.\n" +
@@ -2786,7 +2842,12 @@ export const DOC_PROSE = {
       "**measures nothing** — no search engine is contacted and no new position is read.",
     whatItDoes:
       "Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest " +
-      "first, grouped into one series per keyword, location, language and device. Narrow it with " +
+      "first, grouped into series. A series is everything a reading was taken **under** — not " +
+      "just the keyword, location, language and device you chose, but the search engine, the " +
+      "depth that was requested, and the rule used to decide a result was yours. Those last " +
+      "three fork a series too, and must: \"not found in the 10 results examined\" and \"not " +
+      "found in the 100 results examined\" answer different questions, and putting them on one " +
+      "line would turn a change of depth into an apparent movement. Narrow it with " +
       "`keyword`, `location_name`, `language_code` or `device`, and bound the answer with " +
       "`limit` — the reply always states how many readings match your filter in total, " +
       "separately from how many are in the window.",
@@ -2807,9 +2868,14 @@ export const DOC_PROSE = {
           "were examined** — it is not position 0, and it says nothing about results beyond " +
           "those examined. A reading that never happened says so instead: the position is " +
           "unknown, and nothing was examined at all.\n\nA position is never compared across " +
-          "either of them, because there is no second position to compare with. A reading where " +
-          "the domain was found but the vendor reported no rank is a third case, and it says " +
-          "that too.",
+          "either of them, because there is no second position to compare with.\n\nA reading " +
+          "where the domain was **found** but the vendor reported no rank is a third case, and " +
+          "it is really two, kept apart. DataForSEO has two rank scales — the organic-only one " +
+          "and the one counting every element on the page — and it may withhold either. A row " +
+          "with neither says so; a row where it gave the all-elements rank and withheld the " +
+          "organic one says exactly that, and prints the number it did send. One sentence for " +
+          "both would have printed \"DataForSEO reported no rank\" over a row on which " +
+          "DataForSEO had reported one.",
       },
       {
         heading: "If nothing has been measured yet",
@@ -2824,8 +2890,9 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Show me the stored positions for \"seo tools\" " +
       "on my example.com project.",
     returns:
-      "One block per keyword, location, language and device — with what each reading was measured " +
-      "under (search engine, depth, and how a domain was matched), each reading's own date, and " +
+      "One block per series — keyword, location, language, device, search engine, depth " +
+      "requested and domain-match rule — with what each reading was measured under, each " +
+      "reading's own date, and " +
       "the elapsed time between them. Ranks are DataForSEO's own `rank_group` and " +
       "`rank_absolute`; SeoGrep adds no score of its own.",
   },
