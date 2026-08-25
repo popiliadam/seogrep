@@ -29,6 +29,7 @@ import { makeAuditSpeedTool } from "../tools/audit-speed.ts";
 import { makeRankedKeywordsTool } from "../tools/ranked-keywords.ts";
 import { makeCompareCompetitorsTool } from "../tools/compare-competitors.ts";
 import { makeKeywordGapTool } from "../tools/keyword-gap.ts";
+import { makeLinkGapTool } from "../tools/link-gap.ts";
 import { untrackProjectTool } from "../tools/untrack-project.ts";
 import { NOT_CHARGED_SENTENCE, statesNoCharge, withNoChargeNote } from "./free-refusal.ts";
 
@@ -272,6 +273,17 @@ describe("free refusals that RETURN rather than throw", () => {
 
   it("keyword_gap (45 credits): an unusable competitor domain — free, and it says so", async () => {
     const tool = makeKeywordGapTool({ port: { enabled: true, fetchKeywordGap: forbiddenPort } });
+    const result = await tool.run(CTX, { target: "shop.example.com", competitor: "localhost" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/valid domain/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("link_gap (45 credits): an unusable competitor domain — free, and it says so", async () => {
+    // Its own pin, not keyword_gap's: the two tools carry SEPARATE copies of this gate, so a
+    // single spec would leave whichever tool it did not name free to go silent again.
+    const tool = makeLinkGapTool({ port: { enabled: true, fetchLinkGap: forbiddenPort } });
     const result = await tool.run(CTX, { target: "shop.example.com", competitor: "localhost" });
 
     expect(result.isError).toBe(true);
