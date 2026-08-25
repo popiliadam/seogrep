@@ -330,11 +330,32 @@ export const DOC_PROSE = {
       "**idempotent** — running it again for the same domain (in any URL or host form) returns the " +
       "existing project instead of creating a duplicate.",
     whatItDoes:
-      "Normalizes the input to a canonical domain, then creates the project under your account — or " +
-      "returns the existing one if you already track that site.",
+      "Normalizes the input to a canonical domain — a leading `www.` label is dropped, so " +
+      "`www.example.com` and `example.com` are the same site and never open two projects — then " +
+      "creates the project under your account, or returns the existing one if you already track " +
+      "that site.",
+    preExampleSections: [
+      {
+        heading: "A domain that does not resolve is registered anyway",
+        body:
+          "After the project is written, SeoGrep asks DNS whether the name exists. If DNS answers " +
+          "**no such name**, the reply still confirms the project and adds a warning saying a " +
+          "crawl would have nothing to fetch until the domain is live. It does **not** refuse: a " +
+          "site registered before launch is a legitimate project, and blocking it would be wrong " +
+          "more often than right.\n\n" +
+          "The warning is raised only on that positive finding. A lookup that times out or whose " +
+          "resolver could not be reached is **not** a missing domain and says nothing — telling a " +
+          "customer their domain does not exist because of a DNS blip is a worse answer than " +
+          "silence. The check runs after the write and is capped, so a slow resolver can delay " +
+          "the reply and can never delay or prevent the registration.",
+      },
+    ],
     example: "Ask your MCP client in plain language:\n\n> Set up example.com as a project.",
     returns:
-      "The `project_id`, the canonical `domain`, and `created` (whether it was newly created).",
+      "The `project_id`, the canonical `domain`, and `created` — in one of **three** wordings, " +
+      "not two: the project was created, it already existed, or it was **restored from your " +
+      "archive** and is tracked again on its original id. The resolution warning above follows " +
+      "when DNS says the name does not exist.",
   },
 
   connect_gsc: {
@@ -344,11 +365,37 @@ export const DOC_PROSE = {
       "**optional**: your first crawl and audit work without it, so connecting is the **second step, " +
       "never the first barrier**.",
     whatItDoes:
-      "Given one of your projects, it returns a secure Google sign-in link. Opening the link takes you " +
-      "to Google's consent screen, where SeoGrep requests **read-only** Search Console access — it " +
-      "never asks for write access to your property. After you approve, SeoGrep stores an encrypted " +
-      "token and matches your project's domain to a verified Search Console property.",
+      "Given one of your projects, it returns a secure Google sign-in link. Opening the link takes " +
+      "you to Google's consent screen, where SeoGrep requests **read-only** Search Console access " +
+      "— it never asks for write access to your property. Approving stores an encrypted token for " +
+      "the **Google account**; which property the project reads is a separate, later choice.",
     preExampleSections: [
+      {
+        heading: "Approving connects an account, not a property",
+        body:
+          "The consent screen grants SeoGrep access to a Google account and nothing more. It does " +
+          "not decide which of that account's Search Console properties your project reads — you " +
+          "pick that afterwards, on the **Connection page** in your dashboard, or in one call " +
+          "with [`track_gsc_property`](/docs/tools-reference/track-gsc-property).\n\n" +
+          "This is worth stating plainly because the obvious repair is the wrong one: **approving " +
+          "again does not change which property a project reads.** A fresh consent re-grants the " +
+          "account, which is the right move only when access was withdrawn on Google's side. If " +
+          "the project is reading the wrong property — or none — the consent round trip cannot " +
+          "fix it, and the answers this tool gives say which route can.",
+      },
+      {
+        heading: "What it says on a project that is already connected",
+        body:
+          "It does not hand out a fresh consent link and pretend nothing happened. A project that " +
+          "already reads a property is told which one, and pointed at " +
+          "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n\n" +
+          "A project whose account connected but whose domain matched **no** verified property is " +
+          "the case that used to look identical to success. It now says outright that nothing was " +
+          "stored and that the Search Console tools cannot run yet, then names what to verify in " +
+          "Search Console — a URL-prefix property or a domain property for that domain. A domain " +
+          "property named for a **parent** domain is not used: SeoGrep drops a leading `www.` " +
+          "label and no other subdomain label, because a subdomain can belong to someone else.",
+      },
       {
         heading: "How it stays safe",
         body:
@@ -361,19 +408,32 @@ export const DOC_PROSE = {
     example:
       "Ask your MCP client in plain language:\n\n> Connect Search Console for my example.com project.\n\n" +
       "The tool replies with a link. Open it, approve read-only access, and you land back on your " +
-      "dashboard with the connection in place.",
+      "dashboard with the Google account connected — then choose the property for this project on " +
+      "the Connection page, or with " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property).",
     returns:
-      "A Google sign-in link for the project, plus a reminder that the connection is optional and " +
-      "read-only. If your account has no property matching the project's domain, the connection is " +
-      "still saved — just without a matched property; you can reconnect to retry matching once the " +
-      "property is verified in Search Console.",
+      "For a project with no connection yet: a Google sign-in link, plus a reminder that the " +
+      "connection is optional and read-only. For a project that is already connected: the " +
+      "property it reads (or a plain statement that none matched), where to change it, and the " +
+      "re-approval link for the one case that needs it. An archived project is refused rather " +
+      "than handed a link, and a `project_id` that is not yours is reported exactly like an id " +
+      "that does not exist.",
   },
 
   list_projects: {
     lead:
       "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`. " +
       "If you have none yet, it points you to `setup_project`.",
-    whatItDoes: "Reads your projects, scoped to your account, and returns them as a simple list.",
+    whatItDoes:
+      "Reads your projects, scoped to your account, and returns them as a simple list.\n\n" +
+      "**Archived projects are not in it.** They are hidden here rather than refused: this " +
+      "question is \"what am I tracking?\", and a project you stopped tracking is not part of " +
+      "that answer. The tools you call with a specific `project_id` do refuse an archived " +
+      "project by name, because there you asked about that one and deserve to know why it will " +
+      "not answer. Nothing is lost either way — " +
+      "[`setup_project`](/docs/tools-reference/setup-project) or " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) on the same site brings " +
+      "the row back on its original id.",
     example: "Ask your MCP client in plain language:\n\n> Which sites am I tracking?",
     returns:
       "One line per project (`domain` and `project_id`), or guidance to create your first project " +
@@ -384,10 +444,28 @@ export const DOC_PROSE = {
     lead:
       "`get_credit_balance` reports your available credits — the running total of your credit ledger.",
     whatItDoes:
-      "Sums your credit ledger, scoped to your account, and returns the available balance. Paid tools " +
-      "debit credits when they run; a balance of 0 blocks paid tools until you top up.",
+      "Sums your credit ledger, scoped to your account, and returns the available balance. Paid " +
+      "tools debit credits when they run, and a balance of 0 blocks them until you top up.",
+    preExampleSections: [
+      {
+        heading: "Having credits is not always enough",
+        body:
+          "The tools that read live data from a paid third-party SEO provider need a **paid** " +
+          "balance: they are refused on an account that has never bought anything, however many " +
+          "trial credits are left. The reply says so, because the balance alone reads as " +
+          "permission — a trial account seeing a healthy number concluded \"mine is not zero, so " +
+          "it works\", and it did not.\n\n" +
+          "Buying any credit pack clears it. The reply states the rule but does **not** say " +
+          "whether your own account has paid: that would be a second ledger read on a free tool, " +
+          "and the sentence exists to make the rule knowable before it fires, not to pre-answer " +
+          "it. Which tools are gated is on each tool's own page and in " +
+          "[Billing & Credits](/docs/billing-and-credits).",
+      },
+    ],
     example: "Ask your MCP client in plain language:\n\n> How many credits do I have left?",
-    returns: "Your available credit balance.",
+    returns:
+      "Your available credit balance, followed by the paid-balance rule above — stated every " +
+      "time, whether or not it currently applies to you.",
   },
 
   crawl_site: {
@@ -430,16 +508,37 @@ export const DOC_PROSE = {
       "[`crawl_site`](/docs/tools-reference/crawl-site) run — by its `job_id`. It is how you follow an " +
       "async tool from `queued` to `succeeded` (or `failed`).",
     whatItDoes:
-      "Looks up the job under your account and returns its current status, its lifecycle timestamps, " +
-      "and — once it succeeds — a short summary of the result. A job that does not belong to you is " +
-      "reported as not found, the same as an unknown id.",
+      "Looks up the job under your account and returns its current status, its lifecycle " +
+      "timestamps, how long it has taken, and — once it succeeds — a short summary of the result. " +
+      "A job that does not belong to you is reported as not found, the same as an unknown id. It " +
+      "is not crawl-only: a [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) job is " +
+      "summarized here too, and which summary you get is decided by the **shape of the stored " +
+      "result**, not by the tool's name.",
+    preExampleSections: [
+      {
+        heading: "A running job says how far it has got",
+        body:
+          "While a crawl is running, each poll reports the pages crawled and skipped **so far**, " +
+          "with the moment that count was taken. Before this, every poll of a 90-second job " +
+          "returned the same string, so a job that was working and a job that was stuck looked " +
+          "exactly alike — and the only way to tell them apart was to wait and find out.\n\n" +
+          "Every status line also carries a duration. When a job's stored timestamps contradict " +
+          "each other, the line says **timing unavailable** rather than printing a figure; a " +
+          "negative or impossible duration is not a measurement, and rows written before that was " +
+          "fixed still exist.",
+      },
+    ],
     example:
       "After `crawl_site` gives you a `job_id`, ask your MCP client:\n\n> What's the status of job " +
       "`<job_id>`?\n\nRepeat until the status is `succeeded`. A finished crawl summarizes how many " +
       "pages were crawled, how many were skipped, and how many issues were found.",
     returns:
       "The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / " +
-      "finished timestamps, and — on success — a result summary, or the error message on failure.",
+      "finished timestamps and elapsed time, a live page count while a crawl runs, and — on " +
+      "success — a result summary, or the error message on failure. A crawl summary also names " +
+      "the **dominant reason** pages were skipped, and says outright when the **homepage** was " +
+      "among them: \"0 issues found\" must not be readable as \"clean\" while the homepage never " +
+      "got fetched.",
   },
 
   pull_gsc_data: {
@@ -455,8 +554,20 @@ export const DOC_PROSE = {
       "runs `searchAnalytics.query` for both windows, broken down by **query and page**. The two " +
       "windows are equal length and adjacent, so the discovery tools can compare \"now\" against " +
       "\"before\". The result is stored against your project; the discovery tools read the most recent " +
-      "pull.\n\nOnly a completed pull is charged: if the project has no Search Console connection, no " +
-      "stored token, or no matched property — or if the Google call fails — you are **not** charged.",
+      "pull.\n\nOnly a completed pull is charged, and every refusal below happens before anything " +
+      "is spent — you are **not** charged, and each one says so:\n\n" +
+      "- the project is **archived**;\n" +
+      "- the project has **no Search Console connection** — no Google account is attached yet;\n" +
+      "- the connection has **no matched property**, so there is nothing to query;\n" +
+      "- Google **refuses the property** (403). The answer names the property and the two things " +
+      "that clear it: have an owner grant this account access, or connect an account that " +
+      "already has it;\n" +
+      "- the Google **credential is dead** (access revoked or expired). The answer names the " +
+      "account and hands you the re-approval link — and SeoGrep also records that the account " +
+      "needs reconnecting, which is why " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) and " +
+      "[`whats_next`](/docs/tools-reference/whats-next) start saying so straight afterwards;\n" +
+      "- the Google call fails for any other reason.",
     example:
       "Ask your MCP client in plain language:\n\n> Pull the last 90 days of Search Console data for my " +
       "example.com project.\n\nThen run a discovery tool over it:\n\n> Find quick wins for example.com.",
@@ -2159,31 +2270,69 @@ export const DOC_PROSE = {
       "data — and tells you the **single best next step**, a short reason, and the two or three steps " +
       "that come after.",
     whatItDoes:
-      "It reads the project's current state through the same tenant-scoped data the tools use (your " +
-      "latest [`crawl_site`](/docs/tools-reference/crawl-site) and " +
-      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, plus your Search Console " +
-      "connection) and walks a simple ladder:\n\n" +
+      "Pass a `project_id` to route that project; omit it and it routes your **only** project, or " +
+      "lists them and asks which one if you track several. It reads the project's state through " +
+      "the same tenant-scoped data the tools use — your latest " +
+      "[`crawl_site`](/docs/tools-reference/crawl-site) and " +
+      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, whether Search Console is " +
+      "connected, **whether that connection is still alive**, and whether the domain resolves — " +
+      "then walks a ladder, taking the first rung that applies:\n\n" +
       "- **No project yet** → run [`setup_project`](/docs/tools-reference/setup-project).\n" +
-      "- **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without Search " +
-      "Console).\n" +
-      "- **Crawl ready** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage), " +
+      "- **The domain does not resolve** → nothing to measure yet. This rung names no paid tool " +
+      "at all, because every recommendation below it would be work against a host that is not " +
+      "there.\n" +
+      "- **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without " +
+      "Search Console).\n" +
+      "- **Crawl ready, Search Console never used** → run the audits: " +
+      "[`audit_onpage`](/docs/tools-reference/audit-onpage), " +
       "[`audit_tech`](/docs/tools-reference/audit-tech), " +
       "[`audit_schema`](/docs/tools-reference/audit-schema). Connecting Search Console with " +
       "[`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional** and never a barrier.\n" +
-      "- **Search Console connected, no data pulled** → run " +
+      "- **Old Search Console data but no live connection** → " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc), which is free. Frozen rows cannot be " +
+      "refreshed, so nothing that reads them is offered.\n" +
+      "- **Connected, but the credential is dead** → " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are " +
+      "deliberately withheld: they read a pull this project cannot take.\n" +
+      "- **Connected, nothing pulled** → run " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
-      "- **Data pulled** → run the discovery tools: " +
-      "[`find_quick_wins`](/docs/tools-reference/find-quick-wins), " +
-      "[`detect_cannibalization`](/docs/tools-reference/detect-cannibalization), " +
-      "[`analyze_content_decay`](/docs/tools-reference/analyze-content-decay).\n" +
+      "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +
+      "the site as it is now.\n" +
       "- **Everything fresh** → you're all set: " +
       "[`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the " +
       "`monthly-routine` prompt to keep it up to date.",
+    preExampleSections: [
+      {
+        heading: "\"Rows were pulled once\" is not \"the link is live\"",
+        body:
+          "The two used to be the same signal, and the difference is what the middle of that " +
+          "ladder is for. A succeeded pull is a fact about the past: it outlives a disconnect, an " +
+          "unmapped property and a deleted Google account. A project holding one such pull and no " +
+          "connection was told it was **all set** and pointed at a paid report — while the free " +
+          "reconnection that was the real next step went unmentioned.\n\n" +
+          "So liveness is now read separately, and a project that cannot refresh its Search " +
+          "Console data is never called all set, however fresh the frozen rows look.",
+      },
+      {
+        heading: "Every step says what it costs",
+        body:
+          "The primary step and each line of what follows carry their own price — free, or the " +
+          "credits that tool charges. This tool is for the reader who does not already know the " +
+          "price list, and a list that named a free step and a paid one in the same breath left " +
+          "them nothing to choose with.\n\n" +
+          "The figures are read from the same signed cost table the tools charge from, never " +
+          "restated here, and a tool priced per unit shows the **range** a call can really cost " +
+          "rather than a unit price no call ever pays. A step that is not a priced tool — a " +
+          "prompt, or a note about coming back later — shows no price rather than a guessed one.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> What should I do next with my example.com project?",
     returns:
-      "One clear next step for the project, a short reason, and the next two or three steps — all in " +
-      "plain language, naming the exact tools to run.",
+      "One clear next step for the project, a short reason, and the next two or three steps — all " +
+      "in plain language, naming the exact tools to run and what each one costs. An archived " +
+      "project is refused rather than routed, and a `project_id` that is not yours is reported " +
+      "exactly like an id that does not exist.",
   },
 
   list_gsc_properties: {
@@ -2198,6 +2347,21 @@ export const DOC_PROSE = {
       "listed**, marked `NOT QUERYABLE` with its permission level, so a property is never silently " +
       "missing. Nothing is cached: the list is read live, every time.",
     preExampleSections: [
+      {
+        heading: "It names the project a property plainly belongs to",
+        body:
+          "A property no project reads is not left as a bare \"not used by any project\". If one " +
+          "of your projects names the **same site** and reads no property yet, the line names " +
+          "that project and tells you to run " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) to link them. Both " +
+          "sides used to be printed with nothing to say they belonged together, which left one " +
+          "free call undone for as long as nobody noticed.\n\n" +
+          "The match ignores a leading `www.` on either side and **nothing else**. A subdomain is " +
+          "a different site and is never offered: `blog.example.com` is not `example.com`. And " +
+          "only a project that reads **no** property qualifies — a project already bound to a " +
+          "different property is in a deliberate state, and offering to link it would really be " +
+          "offering to repoint it.",
+      },
       {
         heading: "When an account cannot be read",
         body:
@@ -2224,13 +2388,36 @@ export const DOC_PROSE = {
       "back from your archive — and links the property to it, ready for " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).",
     whatItDoes:
-      "Pass a property exactly as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
-      "prints it. SeoGrep re-reads your Google accounts live and only accepts a property one of " +
-      "them actually lists — what you type is never taken as proof it exists. If you already have " +
-      "a project for that domain, it is reused rather than duplicated, so running this twice is " +
-      "safe. If the same property sits on two of your connected accounts, SeoGrep asks which one " +
-      "to read it through instead of guessing, and you re-run with `account_id`.",
+      "Pass a property as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
+      "prints it — or just the site's host, `example.com`. SeoGrep re-reads your Google accounts " +
+      "live and only accepts a property one of them actually lists; what you type is never taken " +
+      "as proof it exists. If you already have a project for that site, it is reused rather than " +
+      "duplicated — running this twice with the **same** property changes nothing. If the same " +
+      "property sits on two of your connected accounts, SeoGrep asks which one to read it " +
+      "through instead of guessing, and you re-run with `account_id`.\n\n" +
+      "Running it with a **different** property for a site you already track is not a no-op: it " +
+      "**repoints** the project at the new property, and the old link is gone. That is a " +
+      "supported call, not an accident, but it is a change of data source rather than a repeat " +
+      "of the last one.",
     preExampleSections: [
+      {
+        heading: "A bare host is resolved — unless it is ambiguous",
+        body:
+          "`example.com` is the form people type from memory; `sc-domain:example.com` and " +
+          "`https://example.com/` are the forms Search Console prints. A bare host is matched " +
+          "against the properties your accounts really list, ignoring a leading `www.` on either " +
+          "side, and is accepted when **exactly one** property names that site.\n\n" +
+          "When more than one does, the tool **offers the choice and stops**. " +
+          "`sc-domain:example.com` and `https://example.com/` are two different properties with " +
+          "different data and different permissions, so the answer lists the candidates and asks " +
+          "you to re-run with the one you want, spelled as it is printed. Picking one for you " +
+          "would bind the project to a source you did not choose, and a wrong binding only shows " +
+          "up much later, when the data stops making sense.\n\n" +
+          "The same `www.` blindness applies to the project side: a property for " +
+          "`example.com` finds a project stored as `www.example.com` rather than opening a " +
+          "second project beside it. Only the leading `www.` label is ignored — a subdomain is a " +
+          "different site.",
+      },
       {
         heading: "When it refuses",
         body:
@@ -2256,8 +2443,9 @@ export const DOC_PROSE = {
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Track sc-domain:example.com in SeoGrep." +
-      "\n\nRun [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) first if you are " +
-      "not sure how a property is spelled.",
+      "\n\nOr just name the site — > Track example.com in SeoGrep. — and run " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) if the answer comes " +
+      "back asking which of several properties you meant.",
     returns:
       "The project the property was attached to — its domain and `project_id`, whether it was " +
       "created, already tracked or restored from your archive, which Google account it now reads " +
@@ -2461,7 +2649,11 @@ export const DOC_PROSE = {
     returns:
       "Confirmation that the project was archived — its domain and `project_id` — together with " +
       "how to bring it back. A project that is already archived says so and nothing changes. A " +
-      "`project_id` that is not yours is reported exactly like an id that does not exist.",
+      "`project_id` that is not yours is reported exactly like an id that does not exist.\n\n" +
+      "There is a fourth answer, and it is the one that must not be silent: if the archive write " +
+      "matches no row — the project changed while the call was running — you are told **nothing " +
+      "was changed** and that the project is still tracked. Reporting \"stopped tracking\" for a " +
+      "write that changed nothing would be the worst of the four.",
   },
 };
 

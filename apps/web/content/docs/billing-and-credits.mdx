@@ -18,15 +18,24 @@ credits stay in your balance and don't expire.
 
 ## What trial credits cover
 
-Trial credits run the crawler, all three audits, reports, the quick-win
-finders, and the Search Console tools — the whole workflow, end to end.
+Trial credits run the crawler, the audits that read what the crawl already
+stored (`audit_onpage`, `audit_tech`, `audit_schema`, `audit_content`),
+reports, the quick-win finders, the Search Console tools, and the two free
+halves of the rank tracker (`track_keywords` and `keyword_positions`).
 
-Four tools are the exception: `research_keywords`, `ranked_keywords`,
-`analyze_backlinks`, and `compare_competitors` read live data from a paid
-third-party provider, so they need a **paid credit balance**. On a trial
-account they refuse and charge you nothing. Any purchase — a plan or a
+The exception is every tool that spends money with a third-party data
+provider on your behalf: the keyword research and gap tools, the SERP
+snapshot, the backlink tools, the AI-visibility tools, and `audit_speed` —
+which despite the family name buys a page-speed run per URL rather than
+reading stored measurements. Those need a **paid credit balance**. On a
+trial account they refuse *before* anything is reserved, so the call spends
+no credits and writes no ledger entry at all. Any purchase — a plan or a
 top-up — unlocks them, and your trial credits are untouched and stay
 spendable on everything else.
+
+Each tool's own page in the [Tools Reference](/docs/tools-reference) states
+whether it needs a paid balance; that is the list to trust, because it is
+generated from the same code the gate runs.
 
 ## Payment provider
 

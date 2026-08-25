@@ -9,14 +9,29 @@ description: "Not sure what to do next? whats_next looks at where your project s
 
 ## What it does
 
-It reads the project's current state through the same tenant-scoped data the tools use (your latest [`crawl_site`](/docs/tools-reference/crawl-site) and [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, plus your Search Console connection) and walks a simple ladder:
+Pass a `project_id` to route that project; omit it and it routes your **only** project, or lists them and asks which one if you track several. It reads the project's state through the same tenant-scoped data the tools use — your latest [`crawl_site`](/docs/tools-reference/crawl-site) and [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, whether Search Console is connected, **whether that connection is still alive**, and whether the domain resolves — then walks a ladder, taking the first rung that applies:
 
 - **No project yet** → run [`setup_project`](/docs/tools-reference/setup-project).
+- **The domain does not resolve** → nothing to measure yet. This rung names no paid tool at all, because every recommendation below it would be work against a host that is not there.
 - **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without Search Console).
-- **Crawl ready** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage), [`audit_tech`](/docs/tools-reference/audit-tech), [`audit_schema`](/docs/tools-reference/audit-schema). Connecting Search Console with [`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional** and never a barrier.
-- **Search Console connected, no data pulled** → run [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
-- **Data pulled** → run the discovery tools: [`find_quick_wins`](/docs/tools-reference/find-quick-wins), [`detect_cannibalization`](/docs/tools-reference/detect-cannibalization), [`analyze_content_decay`](/docs/tools-reference/analyze-content-decay).
+- **Crawl ready, Search Console never used** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage), [`audit_tech`](/docs/tools-reference/audit-tech), [`audit_schema`](/docs/tools-reference/audit-schema). Connecting Search Console with [`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional** and never a barrier.
+- **Old Search Console data but no live connection** → [`connect_gsc`](/docs/tools-reference/connect-gsc), which is free. Frozen rows cannot be refreshed, so nothing that reads them is offered.
+- **Connected, but the credential is dead** → [`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are deliberately withheld: they read a pull this project cannot take.
+- **Connected, nothing pulled** → run [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
+- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe the site as it is now.
 - **Everything fresh** → you're all set: [`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the `monthly-routine` prompt to keep it up to date.
+
+## "Rows were pulled once" is not "the link is live"
+
+The two used to be the same signal, and the difference is what the middle of that ladder is for. A succeeded pull is a fact about the past: it outlives a disconnect, an unmapped property and a deleted Google account. A project holding one such pull and no connection was told it was **all set** and pointed at a paid report — while the free reconnection that was the real next step went unmentioned.
+
+So liveness is now read separately, and a project that cannot refresh its Search Console data is never called all set, however fresh the frozen rows look.
+
+## Every step says what it costs
+
+The primary step and each line of what follows carry their own price — free, or the credits that tool charges. This tool is for the reader who does not already know the price list, and a list that named a free step and a paid one in the same breath left them nothing to choose with.
+
+The figures are read from the same signed cost table the tools charge from, never restated here, and a tool priced per unit shows the **range** a call can really cost rather than a unit price no call ever pays. A step that is not a priced tool — a prompt, or a note about coming back later — shows no price rather than a guessed one.
 
 ## Example
 
@@ -32,4 +47,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-One clear next step for the project, a short reason, and the next two or three steps — all in plain language, naming the exact tools to run.
+One clear next step for the project, a short reason, and the next two or three steps — all in plain language, naming the exact tools to run and what each one costs. An archived project is refused rather than routed, and a `project_id` that is not yours is reported exactly like an id that does not exist.

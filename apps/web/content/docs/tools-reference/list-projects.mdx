@@ -11,6 +11,8 @@ description: "List the website domains you are tracking (oldest first)."
 
 Reads your projects, scoped to your account, and returns them as a simple list.
 
+**Archived projects are not in it.** They are hidden here rather than refused: this question is "what am I tracking?", and a project you stopped tracking is not part of that answer. The tools you call with a specific `project_id` do refuse an archived project by name, because there you asked about that one and deserve to know why it will not answer. Nothing is lost either way — [`setup_project`](/docs/tools-reference/setup-project) or [`track_gsc_property`](/docs/tools-reference/track-gsc-property) on the same site brings the row back on its original id.
+
 ## Example
 
 Ask your MCP client in plain language:
