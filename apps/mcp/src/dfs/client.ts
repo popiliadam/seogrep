@@ -208,10 +208,42 @@ const dfsResponseSchema = z.object({
   tasks: z.array(dfsTaskSchema).nullish(),
 });
 
-/** True when the vendor returned at least one real metric for this keyword. */
-function hasMetrics(info: z.infer<typeof keywordInfoSchema> | null | undefined): boolean {
-  if (!info) return false;
-  return info.search_volume != null || info.cpc != null || info.competition_level != null;
+/**
+ * True when the vendor returned at least one real metric for this keyword — read across the
+ * WHOLE item, not just `keyword_info`.
+ *
+ * WHY THE WIDER READ (2026-08-25). This predicate used to look at three fields of `keyword_info`
+ * alone: search_volume, cpc, competition_level. All three are Google-Ads-sourced, and Labs leaves
+ * them out for a keyword the Ads side has no figures for — which is a routine outcome outside the
+ * US market (the operator measured `keywords_data/google_ads/search_volume` returning items
+ * carrying ONLY `keyword` and `location_code` for Turkish keywords). Labs' OWN metrics —
+ * `keyword_properties.keyword_difficulty`, `search_intent_info.main_intent`,
+ * `keyword_info.competition`, `keyword_info.search_volume_trend` — sit in different objects and
+ * can be populated on exactly those rows.
+ *
+ * The narrow read therefore stamped `has_data: false` on rows the vendor HAD answered, and the
+ * renderer prints one sentence for such a row — "no data returned for this keyword" — DISCARDING
+ * the difficulty and the intent the caller paid 25 credits for. That is the product's core promise
+ * inverted: instead of an invented zero, an invented absence.
+ *
+ * `has_data` still means exactly what its type comment says — the vendor holds SOMETHING for this
+ * keyword — and a row with no metric anywhere is still false, so "no data" and "volume 0" stay the
+ * two different sentences they have always been.
+ */
+function hasMetrics(item: z.infer<typeof overviewItemSchema>): boolean {
+  const info = item.keyword_info;
+  const trend = info?.search_volume_trend;
+  return (
+    info?.search_volume != null ||
+    info?.cpc != null ||
+    info?.competition_level != null ||
+    info?.competition != null ||
+    item.keyword_properties?.keyword_difficulty != null ||
+    item.search_intent_info?.main_intent != null ||
+    trend?.monthly != null ||
+    trend?.quarterly != null ||
+    trend?.yearly != null
+  );
 }
 
 /**
@@ -242,6 +274,11 @@ export function parseKeywordOverviewResponse(raw: unknown): KeywordOverviewRow[]
   }
   const items = task.result?.[0]?.items ?? [];
   return items
+    // A row with no keyword identifies nothing, so it cannot be projected — but DROPPING IT IS
+    // NOT THE END OF THE STORY. The caller asked about a named list, and a dropped item (or an
+    // item the vendor never sent at all) used to leave that keyword out of the answer with no
+    // sentence anywhere saying so. The reconciliation that puts it back lives at the surface,
+    // where the caller's own list is in hand: tools/research-keywords.ts missingKeywords().
     .filter((item) => item.keyword != null)
     .map((item) => {
       const info = item.keyword_info;
@@ -263,7 +300,7 @@ export function parseKeywordOverviewResponse(raw: unknown): KeywordOverviewRow[]
             }
           : null,
         last_updated_time: info?.last_updated_time ?? null,
-        has_data: hasMetrics(info),
+        has_data: hasMetrics(item),
       };
     });
 }
