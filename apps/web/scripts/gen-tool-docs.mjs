@@ -812,7 +812,15 @@ export const DOC_PROSE = {
           "If live keyword data is unavailable on this deployment, the tool returns a clear " +
           "_\"keyword research is not yet enabled on this deployment\"_ message and **charges you " +
           "nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
-          "placeholder figures dressed up as real data.",
+          "placeholder figures dressed up as real data.\n\n" +
+          "**You are also not charged for a lookup that comes back completely empty.** If the " +
+          "provider returns no figure for a single one of your keywords, there is no table to hand " +
+          "you, so the tool refuses the lookup with a message saying so and the credits are " +
+          "returned to your balance. This tends to happen with keywords outside the provider's " +
+          "Google Ads coverage — often non-English markets, or very rare terms — and the message " +
+          "suggests trying a broader or more common phrasing for the same market. As soon as " +
+          "**one** keyword in the batch comes back with something, the lookup is served and " +
+          "charged normally.",
       },
       {
         heading: "No data is not zero",
@@ -822,7 +830,24 @@ export const DOC_PROSE = {
           "printed as `volume 0`, and it never contributes a silent zero to the batch total — " +
           "\"nobody has a figure for this\" and \"nobody searches this\" are different facts that " +
           "lead to different decisions. A genuine zero, when the provider does report one, is still " +
-          "printed as `volume 0`.",
+          "printed as `volume 0`.\n\n" +
+          "The same rule applies **field by field**, not just row by row. A keyword can come back " +
+          "with a difficulty and an intent but no search volume — common in markets the provider's " +
+          "advertising data covers thinly — and you get the figures it does hold, with the missing " +
+          "ones marked `n/a` rather than the whole row being written off as empty.",
+      },
+      {
+        heading: "Every keyword you asked about is answered for",
+        body:
+          "Your keyword list is accounted for in full. Alongside the two cases above there is a " +
+          "third, and it gets its own sentence because it is a different fact:\n\n" +
+          "- _\"no data returned for this keyword\"_ — the provider **sent a row** for it, and that " +
+          "row holds no metrics.\n" +
+          "- _\"DataForSEO returned no row for this keyword\"_ — **no row arrived at all**. That is " +
+          "all we can honestly tell you: it is not a claim that nobody searches the term, nor that " +
+          "the provider holds nothing on it.\n\n" +
+          "Either way the keyword is named in the output and counted in the header's tally, so a " +
+          "keyword can never quietly vanish between what you asked and what you read.",
       },
       {
         heading: "How fresh the CPC is",
@@ -841,10 +866,13 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> What's the search volume for \"seo software\" and " +
       "\"rank tracker\"?",
     returns:
-      "A table with one row per keyword — search volume, CPC, competition, and (when the provider " +
-      "returns them) keyword difficulty, search intent and volume trend — plus a total-volume " +
-      "summary line and the date the CPC figures were last refreshed. While live data is off, it " +
-      "returns the \"not yet enabled\" message instead and charges nothing.",
+      "A table with one line per keyword you asked about — search volume, CPC, competition, and " +
+      "(when the provider returns them) keyword difficulty, search intent and volume trend — plus " +
+      "a total-volume summary line and the date the CPC figures were last refreshed. Keywords the " +
+      "provider answered with nothing, and keywords it sent no row for, are named on their own " +
+      "lines and counted in the summary. While live data is off, it returns the \"not yet " +
+      "enabled\" message instead and charges nothing; a lookup that comes back with no figures at " +
+      "all is likewise refused and not charged.",
   },
 
   discover_keywords: {
