@@ -2286,12 +2286,21 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
    * every page's markup, so a spec can put an off-site host in front of the crawler and prove
    * it was never asked for. `redirectPaths` maps a path on the canonical host to an off-site
    * Location, which is how the `off-origin-redirect` outcome is still reached.
+   *
+   * `sitemapIndex` turns /sitemap.xml into a <sitemapindex> whose <loc>s are those absolute
+   * URLs, and `childSitemaps` serves a urlset at each child's path — the shape needed to reach
+   * the child-sitemap guard, which is a DIFFERENT call site from the loc filter and has to be
+   * exercised through a real index or it is not measured at all.
    */
   const makeTwinSite = (opts: {
     canonicalHost: string;
     sitemapLocs: readonly string[];
     pageLinks?: readonly string[];
     redirectPaths?: Readonly<Record<string, string>>;
+    sitemapIndex?: readonly string[];
+    childSitemaps?: Readonly<Record<string, readonly string[]>>;
+    /** 404 /sitemap.xml, forcing the homepage-link branch of estimateSiteSize. */
+    sitemap404?: boolean;
   }): TwinSite => {
     const requested: string[] = [];
     const impl = async (input: RequestInfo | URL): Promise<Response> => {
@@ -2314,13 +2323,25 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
           headers: { "content-type": "text/plain" },
         });
       }
+      const urlset = (locs: readonly string[]): Response =>
+        new Response(
+          `<?xml version="1.0"?><urlset>` +
+            `${locs.map((loc) => `<url><loc>${loc}</loc></url>`).join("")}</urlset>`,
+          { status: 200, headers: { "content-type": "application/xml" } },
+        );
       if (url.pathname === "/sitemap.xml") {
-        const locs = opts.sitemapLocs.map((loc) => `<url><loc>${loc}</loc></url>`).join("");
-        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+        if (opts.sitemap404 === true) return new Response("no", { status: 404 });
+        if (opts.sitemapIndex === undefined) return urlset(opts.sitemapLocs);
+        const children = opts.sitemapIndex
+          .map((loc) => `<sitemap><loc>${loc}</loc></sitemap>`)
+          .join("");
+        return new Response(`<?xml version="1.0"?><sitemapindex>${children}</sitemapindex>`, {
           status: 200,
           headers: { "content-type": "application/xml" },
         });
       }
+      const child = opts.childSitemaps?.[url.pathname];
+      if (child !== undefined) return urlset(child);
       const links = (opts.pageLinks ?? []).map((href) => `<a href="${href}">l</a>`).join("");
       return new Response(
         `<html><head><title>${url.pathname}</title>` +
@@ -2339,9 +2360,13 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
     const site = makeTwinSite({
       canonicalHost,
       sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
-      // Discovered only by LINK, and written on the APEX host — so this URL also pins that an
-      // extracted twin link is enqueued rather than dropped.
-      pageLinks: ["http://twin.example.com/only-linked"],
+      // Discovered only by LINK, and written on the host that is NOT the crawl origin — which
+      // is the only way the BFS enqueue's twin branch is exercised at all. An earlier draft put
+      // it on the origin's own host, where plain host equality admits it and the page is then
+      // reached through the redirect call site; a judge measured that reverting the enqueue line
+      // alone left the suite fully green. A www-canonical site links its pages with www hrefs,
+      // so this call site carries every crawl past the sitemap seeds.
+      pageLinks: [`http://${canonicalHost}/only-linked`],
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
     try {
@@ -2366,7 +2391,8 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
     const site = makeTwinSite({
       canonicalHost,
       sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
-      pageLinks: ["http://www.legacy.example.com/only-linked"],
+      // On the APEX host here — again the host that is not the crawl origin (see above).
+      pageLinks: [`http://${canonicalHost}/only-linked`],
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
     try {
@@ -2383,6 +2409,67 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
     }
   });
 
+  it("consumes a child sitemap listed on the twin host, and still refuses an off-site child", async () => {
+    // The child-sitemap guard is a SEPARATE call site from the loc filter and is only reachable
+    // through a real <sitemapindex> — with no such fixture, reverting it alone left the whole
+    // suite green while the docstring claimed that path was part of the zero-seeds failure.
+    // A www-canonical Yoast index lists www children, so this is the ordinary production shape.
+    const canonicalHost = "www.index.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [],
+      sitemapIndex: [
+        `http://${canonicalHost}/sitemap-child.xml`,
+        // An off-site child in the SAME index: the guard has to admit the twin while still
+        // refusing this one, so the spec cannot be satisfied by dropping the check altogether.
+        "http://blog.index.example.com/sitemap-evil.xml",
+      ],
+      childSitemaps: { "/sitemap-child.xml": [`http://${canonicalHost}/from-child`] },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://index.example.com", { lookup });
+      // /from-child exists ONLY inside the twin-hosted child sitemap: nothing links to it and
+      // the root index carries no urls of its own, so it is proof the child was consumed.
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/from-child`,
+      ]);
+      expect(site.requested.filter((u) => new URL(u).hostname === "blog.index.example.com"))
+        .toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("counts twin-host homepage links in the free pre-crawl estimate", async () => {
+    // estimateSiteSize shares countInScopeLinks, a FIFTH scope call site the crawl specs above
+    // never reach — found by varying the call-site axis rather than the host axis, and it was
+    // the one that stayed green. The quote the customer reads before paying 20 credits would
+    // otherwise read "unknown" for every www-canonical site with no usable sitemap.
+    const canonicalHost = "www.est.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [],
+      sitemap404: true,
+      pageLinks: [
+        `http://${canonicalHost}/x1`,
+        `http://${canonicalHost}/x2`,
+        // Still refused by the same count, so this spec cannot pass by counting everything.
+        "http://blog.est.example.com/y",
+      ],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      expect(await estimateSiteSize("http://est.example.com", { lookup })).toEqual({
+        pages: 2,
+        source: "homepage",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   // The over-widening axis. Each of these is one label away from the crawl origin and must
   // still be off-site; a crawler that accepts any of them crawls the internet on the tenant's
   // 20 credits. Kept as a named table so a widened rule fails with the shape that broke.
@@ -2392,6 +2479,7 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
     ["a prefix lookalike", "http://notscope.example.com/x"],
     ["a `www.`-prefixed lookalike", "http://www.scope.example.com.evil.test/x"],
     ["a scheme change", "https://scope.example.com/x"],
+    ["a port change", "http://scope.example.com:8080/x"],
   ];
 
   it.each(OFF_SITE)("never fetches %s advertised in the sitemap or linked from a page", async (

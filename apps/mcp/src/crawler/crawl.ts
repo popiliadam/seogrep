@@ -762,9 +762,15 @@ function sameOrigin(a: URL, b: URL): boolean {
  *
  * THE RULE IS THE PAIR AND NOTHING WIDER. Scheme must match, port must match, and the two
  * hostnames must be equal once ONE leading `www.` label is dropped from each. So
- * `blog.example.com`, `example.org`, `notexample.com`, `www.example.com.evil.test` and an
- * http->https hop are all still off-site, and `off-origin-redirect` remains a reachable
- * outcome with its reason string — this narrows WHEN it fires, it does not remove it.
+ * `blog.example.com`, `example.org`, `notexample.com`, `www.example.com.evil.test`, a port
+ * change and an http->https hop are all still off-site, and `off-origin-redirect` remains a
+ * reachable outcome with its reason string — this narrows WHEN it fires, it does not remove it.
+ *
+ * ONE equivalence beyond the pair comes in with `stripWwwLabel`, and is named rather than
+ * glossed: it strips a trailing dot, so the FQDN form `example.com.` compares equal to
+ * `example.com`. Those are the same name in DNS and resolve to the same addresses, so this is
+ * not a widening anyone can steer — but "the pair and nothing wider" would be false without
+ * saying so.
  *
  * IP LITERALS ARE EXCLUDED, as defence in depth rather than a reachable branch. `www.` is a
  * DNS label, so a literal has no twin — and MEASURED, no parseable URL can reach the twin
