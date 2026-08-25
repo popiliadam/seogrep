@@ -12,6 +12,7 @@ import {
   MODE_MEANS,
   createMockDiscoverKeywordsPort,
   disabledDiscoverKeywordsPort,
+  parseDiscoverResponse,
   type DiscoverKeywordRow,
   type DiscoverKeywordsPort,
   type DiscoverKeywordsResult,
@@ -710,3 +711,109 @@ function sampleFor(field: (typeof MODE_SPECIFIC_FIELDS)[number]): unknown {
       return true;
   }
 }
+
+// =============================================================================================
+// S1 — ABSENT IS NOT ZERO, PROVEN FROM THE VENDOR BODY AND NOT FROM A HAND-BUILT ROW.
+//
+// The specs above pin the RENDERER: given a row whose field is already null, it prints words.
+// That leaves the half of the path where a zero could actually be invented — the zod projection —
+// unpinned, and a hand-built row is exactly the test double that is kinder than the runtime
+// (signed lesson 12). These two run the REAL parser over a body shaped like the one measured on
+// 2026-08-25 (Labs keyword_suggestions, "diş beyazlatma", tr/Türkiye), where `keyword_properties`
+// carried four keys and `keyword_difficulty` was NOT among them, and `search_volume_trend` carried
+// `yearly` alone.
+//
+// The pair is the point: the SAME body with the SAME keys present-as-0 must print 0. A parser that
+// collapses absence to zero passes neither, and a parser that collapses zero to absence passes
+// neither. Absent and zero have to be distinguishable in the output, or the closing line this tool
+// family prints ("a field DataForSEO did not report is shown as unreported, never as a zero") is
+// a claim about nothing.
+// =============================================================================================
+
+/** The measured item shape, minus the two keys under test. `core_keyword` is the vendor's own. */
+function suggestionItem(overrides: {
+  readonly keyword_properties: Record<string, unknown>;
+  readonly search_volume_trend: Record<string, unknown>;
+}): unknown {
+  return {
+    keyword: "diş beyazlatma",
+    se_type: "google",
+    location_code: 2792,
+    language_code: "tr",
+    keyword_info: {
+      se_type: "google",
+      last_updated_time: "2026-08-01 00:00:00 +00:00",
+      competition: 0.14,
+      competition_level: "LOW",
+      cpc: 0.35,
+      search_volume: 2400,
+      search_volume_trend: overrides.search_volume_trend,
+    },
+    keyword_properties: overrides.keyword_properties,
+    search_intent_info: { se_type: "google", main_intent: "informational" },
+  };
+}
+
+/** Parse ONE suggestions body through the real parser and render its first row. */
+function renderedSuggestionRow(item: unknown): string {
+  const window = parseDiscoverResponse(envelopeOf({ total_count: 1, items: [item] }), "suggestions", {
+    offset: 0,
+    limit: 10,
+  });
+  const row = window.rows[0];
+  if (row === undefined) throw new Error("the parser dropped the row under test");
+  return renderKeywordRow(row);
+}
+
+/** The DFS envelope, local to these specs so they state the whole body they are about. */
+function envelopeOf(result: unknown): unknown {
+  return { status_code: 20000, tasks: [{ status_code: 20000, result: [result] }] };
+}
+
+describe("S1 — a field absent from the vendor body never becomes a 0", () => {
+  it("prints keyword_difficulty and the silent trend legs as words when the keys are ABSENT", () => {
+    const row = renderedSuggestionRow(
+      suggestionItem({
+        // The four keys the vendor actually sent. `keyword_difficulty` is not one of them — the
+        // key is ABSENT, which is the case under test; `keyword_difficulty: null` would be a
+        // different (and weaker) claim about what DataForSEO returned.
+        keyword_properties: {
+          se_type: "google",
+          synonym_clustering_algorithm: "text_processing",
+          detected_language: "tr",
+          words_count: 2,
+          core_keyword: "diş beyazlatma",
+        },
+        search_volume_trend: { yearly: -45 },
+      }),
+    );
+    expect(row).toContain("keyword_difficulty not reported by DataForSEO");
+    expect(row).toContain("search_volume_trend monthly not reported, quarterly not reported, yearly -45%");
+    expect(row).not.toMatch(/keyword_difficulty 0\b/);
+    expect(row).not.toMatch(/monthly 0%/);
+    expect(row).not.toMatch(/quarterly 0%/);
+    // The fields the vendor DID send are untouched by the rule — this is not a blanket silence.
+    expect(row).toContain("search_volume 2,400");
+    expect(row).toContain("competition_level LOW");
+  });
+
+  it("prints the very same fields as 0 when the vendor reports them AS 0", () => {
+    const row = renderedSuggestionRow(
+      suggestionItem({
+        keyword_properties: {
+          se_type: "google",
+          synonym_clustering_algorithm: "text_processing",
+          detected_language: "tr",
+          words_count: 2,
+          core_keyword: "diş beyazlatma",
+          keyword_difficulty: 0,
+        },
+        search_volume_trend: { monthly: 0, quarterly: 0, yearly: -45 },
+      }),
+    );
+    expect(row).toContain("keyword_difficulty 0");
+    expect(row).toContain("search_volume_trend monthly 0%, quarterly 0%, yearly -45%");
+    expect(row).not.toContain("keyword_difficulty not reported");
+    expect(row).not.toContain("monthly not reported");
+  });
+});
