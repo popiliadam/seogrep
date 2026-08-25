@@ -1,6 +1,12 @@
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+/**
+ * The FINISH SENTENCE the customer reads, imported from its single home in core — the crawler's
+ * skip reasons are quoted into it verbatim, so pinning the field without the sentence would
+ * prove only half of what these specs claim.
+ */
+import { summarizeCrawlResult, type Json } from "@pseo/core";
 import {
   attachInLinkCounts,
   boundCrawlResult,
@@ -2106,6 +2112,141 @@ describe("crawlSite — reserved infrastructure paths are not the site", () => {
       expect(sized.source).toBe("homepage");
       // /a and /b only — a quote must never include pages the crawl is guaranteed to refuse.
       expect(sized.pages).toBe(2);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / findings 3 + 4 — WHY the crawl stopped, and that it is still moving while it runs.
+ *
+ * Coverage varies at a FIXED price and the crawl never said so: measured on one site at
+ * identical settings, 2026-08-09 stopped at 26 pages ("time budget exhausted") while
+ * 2026-08-25 reached 100 in 78 s. Same 20 credits, 14%-45% coverage. The reason string is what
+ * get_job_status quotes back ("… (mostly: <reason>)"), so it is where the difference between
+ * "you got everything you paid for" and "we ran out of time" has to be stated.
+ *
+ * The `summarizeCrawlResult` assertions are the END-TO-END half: they read the sentence the
+ * customer actually gets, not the field it is built from.
+ */
+describe("crawlSite — the two terminal states say WHICH ceiling stopped the crawl", () => {
+  const ORIGIN = "http://terminal.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** A closed 8-page site: every page links to every other, so the frontier is deterministic. */
+  const impl = async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    const paths = ["/", ...Array.from({ length: 7 }, (_, i) => `/p-${i}`)];
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+    }
+    if (path === "/sitemap.xml") {
+      const locs = paths.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+      return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+        status: 200,
+        headers: { "content-type": "application/xml" },
+      });
+    }
+    const links = paths.map((p) => `<a href="${p}">${p}</a>`).join("");
+    return new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>word word${links}</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+  };
+
+  it("PAGE LIMIT: names the limit, the elapsed time, and that the time budget was NOT the bound", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 3, timeBudgetMs: 90_000 });
+      expect(result.pages).toHaveLength(3);
+      const drained = result.skipped.filter((s) => /max url limit reached/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/the 3-page limit was reached after \d+s/);
+      expect(reason).toMatch(/inside the 90s time budget/);
+      // The customer's own sentence, not the field behind it.
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: max URL limit reached/);
+      expect(line).toMatch(/time budget/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("TIME BUDGET: says it stopped on TIME, before the page limit, and that coverage varies", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      // A budget already spent when the first loop turn is taken: the page limit is untouched.
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 100, timeBudgetMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      const drained = result.skipped.filter((s) => /time budget exhausted/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/stopped on TIME, not at the 100-page limit/);
+      expect(reason).toMatch(/coverage varies between runs at the same price/);
+      expect(reason).toMatch(/include_paths/);
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: time budget exhausted/);
+      expect(line).toMatch(/coverage varies between runs/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the audit vocabulary: both reasons still bucket as a LIMIT, not as a site fault", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const capped = await crawlSite(ORIGIN, { lookup, maxUrls: 3 });
+      const timed = await crawlSite(ORIGIN, { lookup, timeBudgetMs: 0 });
+      for (const reason of [...capped.skipped, ...timed.skipped].map((s) => s.reason)) {
+        // categorizeSkip tests these FIRST; a limit that matched one of them would be filed as
+        // a fault of the customer's site.
+        expect(reason).not.toMatch(/robots|redirect|timeout|non-html|parse failed|fetch failed/i);
+      }
+      expect(capped.skipped.every((s) => /max url/i.test(s.reason))).toBe(true);
+      expect(timed.skipped.every((s) => /time budget/i.test(s.reason))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reports PROGRESS while it runs: consecutive ticks differ and only ever move forward", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const ticks: { pagesCrawled: number; urlsSkipped: number }[] = [];
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 8,
+        onProgress: (p) => ticks.push({ ...p }),
+      });
+      expect(result.pages).toHaveLength(8);
+      expect(ticks.length).toBeGreaterThan(1);
+      // TWO CONSECUTIVE READS AT DIFFERENT PROGRESS STATES DIFFER — the whole point: while the
+      // job ran, get_job_status returned a byte-identical line on every poll.
+      expect(ticks[0]!.pagesCrawled).toBeLessThan(ticks[ticks.length - 1]!.pagesCrawled);
+      for (let i = 1; i < ticks.length; i++) {
+        expect(ticks[i]!.pagesCrawled).toBeGreaterThanOrEqual(ticks[i - 1]!.pagesCrawled);
+      }
+      // The last tick is the finished truth, never a number the result contradicts.
+      expect(ticks[ticks.length - 1]!.pagesCrawled).toBe(result.pages.length);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("a THROWING progress listener never fails the crawl (cosmetic signal, charged run)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 4,
+        onProgress: () => {
+          throw new Error("progress store is down");
+        },
+      });
+      expect(result.pages).toHaveLength(4);
     } finally {
       fetchSpy.mockRestore();
     }
