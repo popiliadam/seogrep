@@ -3,6 +3,7 @@ import type { AuthContext } from "../auth.ts";
 import {
   createMockBacklinksPort,
   disabledBacklinksPort,
+  parseBacklinksSummaryResponse,
   parseReferringDomainsResponse,
   type BacklinkProfile,
 } from "../dfs/backlinks.ts";
@@ -319,5 +320,56 @@ describe("S1 — a referring domain's absent rank never becomes a 0", () => {
     const text = renderedReferringDomains([{ domain: "poliste.com", backlinks: 1, rank: 0 }]);
     expect(text).toContain("• poliste.com — 1 backlinks, rank 0");
     expect(text).not.toContain("poliste.com — 1 backlinks, rank n/a");
+  });
+});
+
+// =============================================================================================
+// S1 (follow-up) — the PROFILE-LEVEL rank, the more prominent of this tool's two `rank` fields.
+//
+// The specs above pin the per-referring-domain rank, which is one line among ten. This one is the
+// HEADLINE: "• Domain rank: n/a of 1,000" sits in the summary block at the top of every report,
+// and a 0 there is a manufactured claim that the whole domain has no authority at all — from a
+// response that said nothing about it. It comes through a DIFFERENT parser
+// (parseBacklinksSummaryResponse, /backlinks/summary/live) than the list rows do, so the list
+// specs could not and did not cover it: `rank: result.rank ?? 0` at dfs/backlinks.ts:243 left the
+// entire 2,666-test suite green.
+// =============================================================================================
+
+/** A /backlinks/summary/live envelope carrying the result object verbatim. */
+function summaryEnvelope(result: Record<string, unknown>): unknown {
+  return { status_code: 20000, tasks: [{ status_code: 20000, result: [result] }] };
+}
+
+/** The measured summary shape, minus the one key each spec is about. */
+const SUMMARY_WITHOUT_RANK = {
+  target: "dentnotion.com",
+  backlinks: 4182,
+  backlinks_spam_score: 11,
+  referring_domains: 134,
+  referring_domains_nofollow: 22,
+  referring_main_domains: 121,
+  broken_backlinks: 9,
+};
+
+/** Parse a summary body through the real parser and render the report it produces. */
+function renderedSummary(result: Record<string, unknown>): string {
+  const parsed = parseBacklinksSummaryResponse(summaryEnvelope(result));
+  return formatBacklinkProfile({ ...FULL_PROFILE, target: parsed.target, summary: parsed.summary });
+}
+
+describe("S1 — the profile's absent domain rank never becomes a 0", () => {
+  it("prints 'Domain rank: n/a' when the summary carries no rank key", () => {
+    const text = renderedSummary(SUMMARY_WITHOUT_RANK);
+    expect(text).toContain("• Domain rank: n/a of 1,000");
+    expect(text).not.toContain("• Domain rank: 0 of 1,000");
+    // …while every sibling metric the vendor DID send is untouched.
+    expect(text).toContain("• Backlinks: 4,182");
+    expect(text).toContain("• Backlink spam score: 11");
+  });
+
+  it("prints 'Domain rank: 0' when DataForSEO reports the rank AS 0", () => {
+    const text = renderedSummary({ ...SUMMARY_WITHOUT_RANK, rank: 0 });
+    expect(text).toContain("• Domain rank: 0 of 1,000");
+    expect(text).not.toContain("• Domain rank: n/a of 1,000");
   });
 });
