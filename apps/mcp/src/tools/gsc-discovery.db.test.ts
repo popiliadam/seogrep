@@ -17,6 +17,20 @@ import { makeDetectCannibalizationTool } from "./detect-cannibalization.ts";
 import { makeAnalyzeContentDecayTool } from "./analyze-content-decay.ts";
 
 /**
+ * An ORDERED run bracket for the pull fixtures below. recordSucceededPull writes a row for work
+ * that already happened, so it takes the run's own start and end rather than stamping the insert
+ * — and `created_at` follows the START, which is what makes the stored row internally coherent.
+ *
+ * RELATIVE TO NOW, not a fixed date, and that is load-bearing rather than lazy: `created_at` used
+ * to come from the DDL's `default now()`, and the discovery tools READ it (renderPullProvenance's
+ * age line, whats_next's freshness window). Pinning these fixtures to a calendar date would age
+ * them past STALE_PULL_DAYS and change what the specs below are reading. A few seconds of span
+ * keeps the prior behaviour exactly while still being ordered.
+ */
+const FIXTURE_RUN_STARTED_AT = new Date(Date.now() - 7_500);
+const FIXTURE_RUN_FINISHED_AT = new Date();
+
+/**
  * DB-integration proof for the three discovery tools (each 10 credits, SYNC) against a LOCAL
  * Supabase stack. A single seeded pull (SAMPLE_PULL) feeds all three; the reader + ledger are
  * REAL. Two guarantees per tool:
@@ -173,6 +187,9 @@ describe("discovery tools sync charge against the local stack", () => {
     await recordSucceededPull(service, {
       userId: ctx.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
 
@@ -215,6 +232,9 @@ describe("discovery tools state the window and the row cap of the pull they anal
     await recordSucceededPull(service, {
       userId: ctx.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
 
@@ -235,6 +255,9 @@ describe("discovery tools state the window and the row cap of the pull they anal
     await recordSucceededPull(service, {
       userId: ctx.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       // The PREVIOUS window, deliberately: it is the baseline every decay number is measured
       // against, and it is the leg a `pull.current.capped` shortcut would silently drop.
       result: pullResultToJson({
@@ -326,6 +349,9 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
     await recordSucceededPull(service, {
       userId: other.userId,
       projectId: otherProjectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
     const ownProjectId = await makeProject(ctx.userId, `own-${randomUUID()}.example.com`);
@@ -361,6 +387,9 @@ describe("discovery tools over a DEAD connection — what the CLIENT receives", 
     await recordSucceededPull(service, {
       userId: ctx.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
 
@@ -388,6 +417,9 @@ describe("discovery tools over a DEAD connection — what the CLIENT receives", 
     await recordSucceededPull(service, {
       userId: ctx.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
 
@@ -434,6 +466,9 @@ describe("discovery tools over a DEAD connection — what the CLIENT receives", 
     await recordSucceededPull(service, {
       userId: intruder.userId,
       projectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
 
@@ -470,6 +505,9 @@ describe("discovery tools over an ARCHIVED project — what the CLIENT receives"
         await recordSucceededPull(service, {
           userId: ctx.userId,
           projectId,
+          // Fixture run bracket: these specs read the stored pull, not its clock.
+          startedAt: FIXTURE_RUN_STARTED_AT,
+          finishedAt: FIXTURE_RUN_FINISHED_AT,
           result: pullResultToJson(SAMPLE_PULL),
         });
         await archiveProject(projectId);
@@ -518,6 +556,9 @@ describe("discovery tools over an ARCHIVED project — what the CLIENT receives"
     await recordSucceededPull(service, {
       userId: other.userId,
       projectId: otherProjectId,
+      // Fixture run bracket: these specs read the stored pull, not its clock.
+      startedAt: FIXTURE_RUN_STARTED_AT,
+      finishedAt: FIXTURE_RUN_FINISHED_AT,
       result: pullResultToJson(SAMPLE_PULL),
     });
     await archiveProject(otherProjectId);

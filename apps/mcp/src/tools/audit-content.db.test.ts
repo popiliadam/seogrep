@@ -11,6 +11,20 @@ import { gscRow, pullData } from "../gsc-data/fixtures.ts";
 import { auditContentTool, makeAuditContentTool } from "./audit-content.ts";
 
 /**
+ * An ORDERED run bracket for the pull fixtures below. recordSucceededPull writes a row for work
+ * that already happened, so it takes the run's own start and end rather than stamping the insert
+ * — and `created_at` follows the START, which is what makes the stored row internally coherent.
+ *
+ * RELATIVE TO NOW, not a fixed date, and that is load-bearing rather than lazy: `created_at` used
+ * to come from the DDL's `default now()`, and the discovery tools READ it (renderPullProvenance's
+ * age line, whats_next's freshness window). Pinning these fixtures to a calendar date would age
+ * them past STALE_PULL_DAYS and change what the specs below are reading. A few seconds of span
+ * keeps the prior behaviour exactly while still being ordered.
+ */
+const FIXTURE_RUN_STARTED_AT = new Date(Date.now() - 7_500);
+const FIXTURE_RUN_FINISHED_AT = new Date();
+
+/**
  * audit_content against a LOCAL Supabase stack — the half the fast lane cannot measure, and the
  * armor matrix for migration 0026. Five questions, and they are different questions:
  *
@@ -136,6 +150,9 @@ async function seedSucceededPull(userId: string, projectId: string): Promise<str
   const { jobId } = await recordSucceededPull(service, {
     userId,
     projectId,
+    // Fixture run bracket: these specs read the stored pull, not its clock.
+    startedAt: FIXTURE_RUN_STARTED_AT,
+    finishedAt: FIXTURE_RUN_FINISHED_AT,
     result: pullResultToJson(PULL),
   });
   return jobId;
