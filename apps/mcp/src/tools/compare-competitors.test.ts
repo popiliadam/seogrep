@@ -4,6 +4,8 @@ import {
   createMockCompetitorsPort,
   disabledCompetitorsPort,
   EMPTY_ORGANIC_METRICS,
+  parseCompetitorsDomainResponse,
+  parseDomainRankOverviewResponse,
   type CompetitorComparison,
   type DomainOrganicMetrics,
 } from "../dfs/competitors.ts";
@@ -554,6 +556,112 @@ describe("compare_competitors free pre-reserve gates (no credit machinery)", () 
     // against the real stack in compare-competitors.db.test.ts.
     await expect(withProjects().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(
       /environment configuration/i,
+    );
+  });
+});
+
+// =============================================================================================
+// S1 — ABSENT IS NOT ZERO, PROVEN FROM THE VENDOR BODY, AND WHERE THE TARGET'S NUMBERS COME FROM.
+//
+// Every spec above builds a DomainOrganicMetrics directly, so `projectOrganic` in
+// dfs/competitors.ts — the one place a zero could be invented — was never under test from this
+// side (signed lesson 12).
+//
+// The second spec pair matters for a separate reason. On 2026-08-25 this tool and ranked_keywords
+// printed DIFFERENT `no longer found` figures for the same domain minutes apart, and the review
+// attributed this tool's figure to domain_rank_overview. In the DISCOVERY flow it does not come
+// from there: the live client finds the target in its OWN competitor list and reads
+// `full_domain_metrics.organic` off that competitors_domain row, sending no rank-overview request
+// at all (dfs/competitors.ts — findTargetRow / buildDiscoveredRows). Those are two different
+// vendor blocks from two different endpoints, each with its own is_lost; the spec below pins WHICH
+// block the printed number is, so a future disagreement is attributable instead of mysterious.
+// =============================================================================================
+
+/** A domain_rank_overview envelope carrying one organic block verbatim. */
+function rankOverviewEnvelope(organic: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [{ status_code: 20000, result: [{ items: [{ metrics: { organic } }] }] }],
+  };
+}
+
+/** A competitors_domain envelope whose first item IS the target — the discovery flow's own path. */
+function competitorsDomainEnvelope(fullDomainOrganic: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [
+      {
+        status_code: 20000,
+        result: [
+          {
+            total_count: 1,
+            items: [
+              {
+                domain: "dentnotion.com",
+                avg_position: 12,
+                intersections: 480,
+                full_domain_metrics: { organic: fullDomainOrganic },
+                metrics: { organic: { count: 480, is_lost: 7 } },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** The three movement counters that WERE reported, minus the one key each spec is about. */
+const MOVEMENT_WITHOUT_IS_LOST = { count: 6, is_new: 89, is_up: 57, is_down: 41 };
+
+/** Render a one-row comparison whose target metrics came out of the given parser call. */
+function renderedTargetRow(metrics: DomainOrganicMetrics): string {
+  return formatCompetitorComparison(
+    {
+      target: "dentnotion.com",
+      discovered: false,
+      discovered_total_count: null,
+      rows: [
+        { domain: "dentnotion.com", source: "target", intersections: null, avg_position: null, metrics, shared: null },
+      ],
+    },
+    { language_code: "tr", location_code: 2792 },
+  );
+}
+
+describe("S1 — a movement counter absent from the vendor body never becomes a 0", () => {
+  it("prints 'no longer found: n/a' when the organic block carries no is_lost key", () => {
+    const text = renderedTargetRow(
+      parseDomainRankOverviewResponse(rankOverviewEnvelope(MOVEMENT_WITHOUT_IS_LOST)),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: n/a",
+    );
+  });
+
+  it("prints 'no longer found: 0' when DataForSEO reports is_lost AS 0", () => {
+    const text = renderedTargetRow(
+      parseDomainRankOverviewResponse(
+        rankOverviewEnvelope({ ...MOVEMENT_WITHOUT_IS_LOST, is_lost: 0 }),
+      ),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: 0",
+    );
+  });
+
+  it("reads the DISCOVERED target's figures from full_domain_metrics, not from a rank overview", () => {
+    const discovery = parseCompetitorsDomainResponse(
+      competitorsDomainEnvelope({ ...MOVEMENT_WITHOUT_IS_LOST, is_lost: 104 }),
+    );
+    const target = discovery.rows.find((candidate) => candidate.domain === "dentnotion.com");
+    // 104 is the WHOLE-DOMAIN block's own number; the shared-keyword scope beside it says 7, and a
+    // rank-overview request would be a third figure again. Naming the source is the only way a
+    // disagreement with another tool can be diagnosed rather than assumed to be a bug here.
+    expect(target?.full.is_lost).toBe(104);
+    expect(target?.shared.is_lost).toBe(7);
+    expect(renderedTargetRow(target?.full ?? EMPTY_ORGANIC_METRICS)).toContain(
+      "no longer found: 104",
     );
   });
 });
