@@ -146,3 +146,89 @@ describe("auditOnpage — every threshold finding states its threshold", () => {
     expect(text, "the threshold the value broke is missing").toMatch(new RegExp(String.raw`\b${bound}\b`));
   });
 });
+
+/**
+ * STRAY EDGE CHARACTERS — and the false-positive side carries MORE specs than the true-positive
+ * side, deliberately. A rule that flagged `10 Ways to Whiten Teeth` would be worse than the gap it
+ * closes, so the clean cases below are real title shapes: quotes, a leading digit, brackets,
+ * parentheses, an em dash, an ellipsis, a trailing `?`, a hashtag, an emoji, and Turkish, Greek,
+ * Arabic and CJK text — the measured page was Turkish, so ASCII is never the test.
+ */
+describe("auditOnpage — stray markup at a title/description edge", () => {
+  /** The MEASURED page: a code-fence backtick survived into a live title, and nothing flagged it. */
+  const MEASURED = "`İzmirde Diş Beyazlatma Merkezleri 2026";
+
+  it("flags the measured backtick title, and names the character it found", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", title: MEASURED })]));
+    expect(typesFor(report, "https://e/a")).toContain("title_stray_chars");
+    const text = textFor(report, "https://e/a", "title_stray_chars");
+    expect(text).toMatch(/title/i);
+    expect(text).toContain("`");
+    expect(text).toMatch(/start/i);
+  });
+
+  const dirty: [string, string][] = [
+    ["a trailing dangling separator", "Diş Beyazlatma Fiyatları |"],
+    ["a trailing dangling dash", "Teeth Whitening in Izmir -"],
+    ["a trailing em dash", "Teeth Whitening in Izmir —"],
+    ["a leaked opening HTML tag", "<p>Teeth Whitening in Izmir"],
+    ["a leaked closing HTML tag", "Teeth Whitening in Izmir</p>"],
+    ["an unrendered template placeholder", "{{page_title}} Dental Clinic"],
+    ["a Markdown heading marker", "## Teeth Whitening in Izmir"],
+    ["a Markdown list bullet", "- Teeth Whitening in Izmir"],
+    ["a Markdown emphasis marker", "*Teeth Whitening in Izmir*"],
+    ["a dangling ampersand", "Teeth Whitening in Izmir &"],
+    ["a leading comma", ", Teeth Whitening in Izmir"],
+  ];
+  it.each(dirty)("flags %s", (_why, title) => {
+    expect(typesFor(auditOnpage(crawl([page({ url: "https://e/a", title })])), "https://e/a")).toContain(
+      "title_stray_chars",
+    );
+  });
+
+  const clean: [string, string][] = [
+    ["quotes around a word", 'The "Best" Dentist in Izmir'],
+    ["curly quotes", "The “Best” Dentist in Izmir"],
+    ["a leading digit", "10 Ways to Whiten Teeth"],
+    ["leading brackets", "[2026] Guide to Dental Implants"],
+    ["trailing parentheses", "Teeth Whitening Costs (2026)"],
+    ["an em dash between clauses", "Diş Beyazlatma — Fiyatlar ve Süreç"],
+    ["a trailing question mark", "Is Teeth Whitening Safe?"],
+    ["a trailing exclamation", "Whiten Your Teeth Today!"],
+    ["a trailing ellipsis", "What Nobody Tells You About Whitening…"],
+    ["a hashtag, which is not a Markdown heading", "#DisBeyazlatma Hakkinda Her Sey"],
+    ["an ampersand and a colon between words", "Zahnärzte in München: Preise & Ablauf"],
+    ["a slash between words", "Dentist 24/7 Emergency Care in Izmir"],
+    ["a leading emoji", "😀 Smile Brighter Every Single Day"],
+    ["Greek text", "Παιδοδοντίατρος στην Αθήνα σήμερα"],
+    ["Arabic text", "العناية بالأسنان في دبي اليوم"],
+    ["CJK text", "牙齿美白指南与价格以及注意事项"],
+    ["a trailing percent", "Whitening Results Improved 40%"],
+    ["an apostrophe", "Izmir's Most Trusted Dental Clinic"],
+  ];
+  it.each(clean)("leaves %s alone", (_why, title) => {
+    expect(typesFor(auditOnpage(crawl([page({ url: "https://e/a", title })])), "https://e/a")).not.toContain(
+      "title_stray_chars",
+    );
+  });
+
+  it("applies to the meta description too, and a clean description stays clean", () => {
+    const bad = auditOnpage(
+      crawl([page({ url: "https://e/a", metaDescription: "`A meta description long enough to clear the fifty character floor." })]),
+    );
+    expect(typesFor(bad, "https://e/a")).toContain("meta_stray_chars");
+    expect(textFor(bad, "https://e/a", "meta_stray_chars")).toMatch(/meta description/i);
+
+    const good = auditOnpage(
+      crawl([page({ url: "https://e/b", metaDescription: "İzmir'de diş beyazlatma: fiyatlar, süreç ve sık sorulan sorular (2026)." })]),
+    );
+    expect(typesFor(good, "https://e/b")).not.toContain("meta_stray_chars");
+  });
+
+  it("a title that is one stray character reports one problem, not two", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", title: "`" })]));
+    const text = textFor(report, "https://e/a", "title_stray_chars");
+    expect(text).toMatch(/start/i);
+    expect(text).not.toMatch(/end/i);
+  });
+});

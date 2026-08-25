@@ -73,6 +73,65 @@ export interface OnpageReport {
   readonly duplicateGroups: DuplicateContentGroup[];
 }
 
+/**
+ * STRAY EDGE CHARACTERS — the rule that catches a title nobody wrote.
+ *
+ * The case it exists for was measured on a live page: the title
+ * `` `İzmirde Diş Beyazlatma Merkezleri 2026… `` opens with a BACKTICK — the remains of a code
+ * fence the author pasted through — and every length, duplicate and absence rule called that page
+ * clean. What is broken about it is not its length; it is that a character of MARKUP SYNTAX
+ * survived into the words a searcher sees.
+ *
+ * THE FALSE-POSITIVE SIDE IS THE WHOLE RISK, and it is why this is an explicit list of code
+ * points rather than a "punctuation" character class. Real titles open and close with punctuation
+ * constantly — `The "Best" Dentist in Izmir`, `10 Ways to Whiten Teeth`, `[2026] Guide`,
+ * `Teeth Whitening (2026)`, an em dash, an ellipsis, a trailing `?` or `!`, `%`, an emoji. A rule
+ * that flagged those would put noise into a 30-credit report, which is worse than the gap it
+ * closes. So NONE of `" ' “ ” ‘ ’ ( ) [ ] . … ? ! : % » →` appears below, and neither does any
+ * letter or digit in any script: the test is per-CODE-POINT membership in these sets, never
+ * "is this ASCII", so a Turkish, Greek, Arabic or CJK title is judged exactly like an English one.
+ *
+ * Three sets, each with a reason:
+ *
+ * 1. STRAY_EDGE — syntax in Markdown, HTML or a template engine, and never how a human opens or
+ *    closes a title. `<` and `>` belong here because a correct CMS escapes them inside `<title>`;
+ *    a bare one at an edge means raw markup leaked.
+ * 2. STRAY_TRAILING_ONLY — the dashes. A title may OPEN with a dash for effect; one that ENDS
+ *    with a dash is a separator whose second half never arrived (`Dentist in Izmir -`).
+ * 3. LEADING_MARKER — a list or heading marker, which only counts as one when a space follows.
+ *    `#DisBeyazlatma` is a hashtag and stays clean; `# Dis Beyazlatma` is a Markdown heading.
+ *    Same for `- ` and `• ` against a leading hyphen inside a word.
+ */
+const STRAY_EDGE = new Set([...'`*_~|\\{}<>^,;&+/=']);
+const STRAY_TRAILING_ONLY = new Set([..."-–—"]);
+const LEADING_MARKER = /^(?:#{2,}|#[ \t]|[-•][ \t])/u;
+
+/** The offending first / last CODE POINT of `value`, or null when that edge is clean. */
+function strayEdges(value: string): { lead: string | null; tail: string | null } {
+  const points = [...value];
+  const first = points[0] ?? "";
+  const last = points.at(-1) ?? "";
+  const lead = STRAY_EDGE.has(first) || LEADING_MARKER.test(value) ? first : null;
+  // A one-code-point value is ONE problem, reported at the leading edge, not two.
+  if (points.length < 2) return { lead, tail: null };
+  const tail = STRAY_EDGE.has(last) || STRAY_TRAILING_ONLY.has(last) ? last : null;
+  return { lead, tail };
+}
+
+/** `field` is the customer-facing noun ("title" / "meta description"); `type` the finding key. */
+function strayFinding(field: string, type: string, value: string): OnpageFinding | null {
+  const { lead, tail } = strayEdges(value);
+  if (lead === null && tail === null) return null;
+  const where =
+    lead !== null && tail !== null
+      ? `starts with "${lead}" and ends with "${tail}"`
+      : lead !== null
+        ? `starts with "${lead}"`
+        : `ends with "${tail}"`;
+  const noun = lead !== null && tail !== null ? "characters" : "character";
+  return { type, text: `${field} ${where} — stray markup or template ${noun}, not part of the text` };
+}
+
 /** Compare two URLs ignoring a trailing slash and fragment (self-canonical tolerance). */
 function sameUrl(a: string, b: string): boolean {
   const norm = (raw: string): string => {
@@ -115,6 +174,8 @@ function findingsFor(
     if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long ${overLimit(title.length, "chars", TITLE_MAX)}` });
     else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short ${underMinimum(title.length, "chars", TITLE_MIN)}` });
     if (dupTitles.has(title)) out.push({ type: "duplicate_title", text: "duplicate title (shared with another page)" });
+    const stray = strayFinding("title", "title_stray_chars", title);
+    if (stray) out.push(stray);
   }
 
   if (!meta) out.push({ type: "missing_meta", text: "missing meta description" });
@@ -122,6 +183,8 @@ function findingsFor(
     if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long ${overLimit(meta.length, "chars", META_MAX)}` });
     else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short ${underMinimum(meta.length, "chars", META_MIN)}` });
     if (dupMetas.has(meta)) out.push({ type: "duplicate_meta", text: "duplicate meta description (shared with another page)" });
+    const stray = strayFinding("meta description", "meta_stray_chars", meta);
+    if (stray) out.push(stray);
   }
 
   if (page.h1s.length === 0) out.push({ type: "missing_h1", text: "missing h1" });
