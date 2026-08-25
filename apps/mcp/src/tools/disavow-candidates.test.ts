@@ -285,6 +285,24 @@ describe("NEVER #7 — the vendor's three scores, under the vendor's three names
     expect(row).not.toMatch(/spam_score not reported/);
   });
 
+  /**
+   * THE DEFECT THIS ROW WAS ALREADY IMMUNE TO, pinned so it stays that way. A domain the vendor
+   * scored 0 whose worst LINK the vendor scored 60 must show BOTH, each under its own vendor field
+   * name — the 0 alone reads as "clean" beside a domain the tool is proposing you disavow
+   * (measured 2026-08-25, tool review card 27; the FILE half is pinned in the port's spec).
+   */
+  it("shows the per-domain 0 and the per-link 60 together, and blends them into nothing", () => {
+    const row = renderCandidateRow({
+      ...SCORED,
+      spam_score: 0,
+      window_max_backlink_spam_score: 60,
+    });
+    expect(row).toMatch(/(?<!backlink_)\bspam_score 0\b/);
+    expect(row).toMatch(/worst backlink_spam_score 60 in this window/);
+    // No composite: the mean of the two would be 30, and no third number is invented.
+    expect(row).not.toMatch(/\b30\b/);
+  });
+
   /** Same rule on the network axis, whose fixture row carries nothing but an address. */
   it("prints a network the vendor said nothing about without inventing zeros", () => {
     const row = renderNetworkRow({

@@ -764,6 +764,22 @@ function entryBlock(text: string, domain: string): string {
   }
   return block.join("\n");
 }
+
+/** A whole lookup out of raw vendor envelopes: real parsers, real assembly, real formatter. */
+async function fileFrom(
+  links: readonly unknown[],
+  scores: readonly unknown[],
+  query: Partial<DisavowCandidatesQuery> = {},
+): Promise<string> {
+  const port = createMockDisavowCandidatesPort({
+    backlinks: envelope({ items: links }),
+    bulkSpamScore: envelope({ items: scores }),
+    referringNetworks: envelope({ items: [] }),
+  });
+  const result = await port.fetchDisavowCandidates({ ...QUERY, ...query });
+  return result.disavow_txt;
+}
+
 describe("buildDisavowTxt", () => {
   it("renders the exact Google-format body, header lines and all", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates(QUERY);
@@ -832,6 +848,106 @@ describe("buildDisavowTxt", () => {
     expect(text).toContain("dofollow only: yes.");
     expect(text).not.toContain("domain:");
     expect(text.endsWith("\n")).toBe(true);
+  });
+});
+
+// =============================================================================================
+// EVERY ENTRY CARRIES BOTH LEVELS OF SCORE — the 2026-08-25 defect (tool review, card 27).
+//
+// The window is selected on the per-LINK `backlink_spam_score`; the file labelled each row with
+// the per-DOMAIN `spam_score`. Two rows of a real file read `# spam_score 0` and `# spam_score 1`
+// beside domains whose worst LINK score was 60. The number printed was not wrong — it was the
+// wrong number for the decision on the line, and nothing told the reader which level it was.
+//
+// Every case below is driven from RAW VENDOR ENVELOPES through the real parsers, the real
+// candidate assembly and the real formatter (signed lesson 12): a hand-built DisavowCandidate
+// handed straight to buildDisavowTxt would prove the renderer and skip everything that fills it.
+// =============================================================================================
+describe("both score levels on every disavow entry", () => {
+  /** The measured shape: the vendor scored the DOMAIN 0 and its worst LINK 60. */
+  const CLEAN_DOMAIN_SPAMMY_LINKS = [
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/a", dofollow: true, backlink_spam_score: 60 },
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/b", dofollow: true, backlink_spam_score: 12 },
+  ];
+
+  it("prints the worst LINK score of 60 beside a DOMAIN score of 0, hiding neither", async () => {
+    const block = entryBlock(
+      await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [{ target: "booksreadr.org", spam_score: 0 }]),
+      "booksreadr.org",
+    );
+    // The DOMAIN number, on a line that says which level it describes...
+    expect(block).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    // ...and the LINK number the single-score line dropped entirely. `60`, not the row's `12`:
+    // the max over the window, so a domain is judged by its worst link and not its last one.
+    expect(block).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*60\b/i);
+    expect(block).not.toMatch(/\b12\b/);
+  });
+
+  /**
+   * ...and the two labels must not collapse into one caption. "spam_score 0 · spam_score 60" would
+   * satisfy "both numbers appear" while telling the reader that one measurement contradicts itself.
+   */
+  it("labels the two numbers with DIFFERENT levels, so neither can be read as the other", async () => {
+    const block = entryBlock(
+      await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [{ target: "booksreadr.org", spam_score: 0 }]),
+      "booksreadr.org",
+    );
+    const [domainSide, linkSide] = block.split("·");
+    expect(domainSide).toMatch(/domain/i);
+    expect(domainSide).not.toMatch(/\blink\b/i);
+    expect(linkSide).toMatch(/link/i);
+    expect(linkSide).toMatch(/this window/i);
+  });
+
+  /**
+   * THE VENDOR'S SILENCE vs THE VENDOR'S ZERO, at BOTH levels — all four combinations, because a
+   * shared `?? 0` or a shared `?? null` fallback shows up only in the MIXED ones. `0` is an
+   * answer; a silence is not, and the file may never turn the second into the first.
+   */
+  it("keeps a vendor ZERO and a vendor SILENCE apart at BOTH levels, in all four combinations", async () => {
+    const text = await fileFrom(
+      [
+        { domain_from: "zz.example", url_from: "https://zz.example/a", dofollow: true, backlink_spam_score: 0 },
+        { domain_from: "zu.example", url_from: "https://zu.example/a", dofollow: true },
+        { domain_from: "uz.example", url_from: "https://uz.example/a", dofollow: true, backlink_spam_score: 0 },
+        { domain_from: "uu.example", url_from: "https://uu.example/a", dofollow: true },
+      ],
+      // uz and uu are ANSWERED with no score — present in the response, absent as a number.
+      [
+        { target: "zz.example", spam_score: 0 },
+        { target: "zu.example", spam_score: 0 },
+        { target: "uz.example" },
+        { target: "uu.example" },
+      ],
+    );
+    const zz = entryBlock(text, "zz.example");
+    expect(zz).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    expect(zz).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*0\b/i);
+    expect(zz).not.toMatch(/not reported/i);
+
+    const zu = entryBlock(text, "zu.example");
+    expect(zu).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    expect(zu).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*not reported/i);
+
+    const uz = entryBlock(text, "uz.example");
+    expect(uz).toMatch(/domain[^\n]*\bspam_score\b[^\n]*not reported/i);
+    expect(uz).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*0\b/i);
+
+    const uu = entryBlock(text, "uu.example");
+    expect(uu).not.toMatch(/\d/);
+    expect(uu.match(/not reported/gi)).toHaveLength(2);
+  });
+
+  /** The two levels stay two numbers: nothing here averages, blends or ranks them (NEVER #7). */
+  it("does not blend the two scores into a composite of SeoGrep's own", async () => {
+    const text = await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [
+      { target: "booksreadr.org", spam_score: 0 },
+    ]);
+    for (const invented of [/toxic/i, /\brisk\b/i, /\bcomposite\b/i, /\boverall\b/i, /\baverage\b/i]) {
+      expect(text).not.toMatch(invented);
+    }
+    // The mean of 0 and 60 would be 30, and it appears nowhere.
+    expect(entryBlock(text, "booksreadr.org")).not.toMatch(/\b30\b/);
   });
 });
 
