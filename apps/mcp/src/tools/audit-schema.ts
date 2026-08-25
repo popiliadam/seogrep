@@ -25,11 +25,12 @@ import type { RegisteredTool } from "./registry.ts";
  * not built here; the description must not imply this one is it.
  */
 const DESCRIPTION =
-  "Report JSON-LD COVERAGE across a project's latest crawl: which pages carry structured data, " +
-  "which carry none, and how often each schema.org @type name appears site-wide. Only the @type " +
-  "names are read — never the JSON-LD body — so this measures where structured data is present, " +
-  "and does not validate it or detect missing or malformed fields. Costs 5 credits. Run " +
-  "crawl_site first.";
+  "Report structured-data coverage AND required-field validation for a project's latest crawl: " +
+  "which pages carry JSON-LD, which carry none, how often each schema.org @type name appears " +
+  "site-wide, which blocks fail to parse, and — on pages whose crawl stored the JSON-LD bodies — " +
+  "which known types are missing required fields. Detection is JSON-LD only; microdata and RDFa " +
+  "are not read, unknown @type names are never judged, and a crawl made before bodies were stored " +
+  "counts for coverage but is not validated. Costs 5 credits. Run crawl_site first.";
 
 /** One engine run, two consumers — the recorded report and the returned text (audit-onpage.ts). */
 export function renderSchemaAudit(crawl: AuditCrawl): AuditRendering {
