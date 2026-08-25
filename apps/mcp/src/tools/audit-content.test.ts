@@ -283,7 +283,98 @@ describe("the delivered report", () => {
         CRAWL.pages.map((p) => ({ url: p.url, title: p.title, h1s: p.h1s })),
       ),
     );
-    expect((await textOf()).startsWith(`${expected}\n\n`)).toBe(true);
+    // The block sits between the coverage disclosure and the provenance footer now (the operator
+    // signed the move 2026-08-25), so its POSITION is pinned by the test below and its CONTENT
+    // here. Anchored on both sides so a rendering that merely contains the words somewhere
+    // cannot pass.
+    expect(await textOf()).toContain(`\n\n${expected}\n\n`);
+  });
+
+  /**
+   * THE COVERAGE DISCLOSURE LEADS (operator-approved 2026-08-25, price unchanged at 12 credits).
+   *
+   * Measured on dentnotion.com the same day: the honest sentence — 1,065 of 6,972 pairs checked,
+   * 5,907 unreachable because the page drawing them was not crawled — was the LAST line, under
+   * fifty rows. A ratio that changes how the whole list should be read has to arrive before the
+   * list, not after it. The sentence itself is unchanged; only where it sits.
+   */
+  it("LEADS with the coverage disclosure, before any finding", async () => {
+    const text = await textOf();
+    expect(text.startsWith("Checked 3 of 4 query/page pairs")).toBe(true);
+    expect(text.indexOf("could not be checked")).toBeLessThan(text.indexOf("Current title:"));
+  });
+});
+
+/**
+ * THE BRAND, measured live on dentnotion.com 2026-08-25. The tool reported, verbatim:
+ *   `"dent notion" -> https://dentnotion.com/seferihisar-dis-klinigi — 137 impressions;
+ *    missing "dent", "notion" (0/2 words present)`
+ * The firm's own name, handed back to the firm as a keyword its page fails to mention. It had no
+ * brand notion at all; the rule now comes from the shared matcher over the project's domain root.
+ */
+describe("the customer's own brand is never a missing word", () => {
+  const brandedTools = (
+    query: string,
+    title: string,
+    host = "dentnotion.com",
+  ): Promise<string> => {
+    const page = `https://${host}/seferihisar-dis-klinigi`;
+    return textOf([], {
+      pull: {
+        ok: true,
+        pull: pullData(
+          [gscRow({ query, page, impressions: 137, clicks: 1, position: 8 })],
+          [],
+          90,
+          `sc-domain:${host}`,
+        ),
+        pulledAt: PULLED_AT,
+        jobId: PULL_JOB_ID,
+      },
+      crawl: {
+        ok: true,
+        crawl: { ...CRAWL, pages: [crawlPage({ url: page, title })] },
+        jobId: CRAWL_JOB_ID,
+      },
+    });
+  };
+
+  it("drops the measured row: the brand alone is not a finding", async () => {
+    const text = await brandedTools("dent notion", "Seferihisar Diş Kliniği");
+    expect(text).toContain("No title/h1 mismatches found");
+    expect(text).not.toContain('missing "dent"');
+  });
+
+  it("says how many it excluded and why, rather than dropping them silently", async () => {
+    const text = await brandedTools("dent notion", "Seferihisar Diş Kliniği");
+    expect(text).toContain("Excluded 1 query whose only missing words were your own brand name");
+  });
+
+  it("drops a misspelling of the brand too", async () => {
+    const text = await brandedTools("dentmotion", "Seferihisar Diş Kliniği");
+    expect(text).toContain("No title/h1 mismatches found");
+  });
+
+  /**
+   * The other half, and the one that keeps this from becoming a suppression machine: only the
+   * BRAND words go. Everything the customer could actually act on is still reported, with the
+   * counts corrected rather than left describing the pre-filter list.
+   */
+  it("keeps the non-brand words of a branded query and re-counts what is present", async () => {
+    const text = await brandedTools("dent notion implant fiyatlari", "Seferihisar Diş Kliniği");
+    expect(text).toContain('missing "implant", "fiyatlari"');
+    expect(text).not.toContain('"dent"');
+    expect(text).toContain("(2/4 words present)");
+  });
+
+  it("does not swallow a common-word domain's real finding", async () => {
+    const text = await brandedTools("dental implants", "Our winter range", "dental.com");
+    expect(text).toContain('missing "implants"');
+    expect(text).toContain("1 query whose words are missing");
+  });
+
+  it("prints no exclusion note when the brand excluded nothing", async () => {
+    expect(await textOf()).not.toContain("Excluded");
   });
 });
 
