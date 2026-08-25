@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { CREDIT_UNITS, TOOL_COSTS, creditCostFor } from "../credits/costs.ts";
+import type { CreditContext, CreditMeta } from "../credits/guard.ts";
 import { CONFIRMATION_THRESHOLD_CREDITS } from "./registry.ts";
 import {
   DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
@@ -486,5 +487,59 @@ describe("the compare tool explains a vendor refusal against its OWN endpoint", 
     expect(text).not.toMatch(/failed unexpectedly/i);
     expect(text).toMatch(/not charged any credits/i);
     expect(text).not.toContain("operator-only detail");
+  });
+});
+
+// =============================================================================================
+// THE WIRING, NOT THE HELPER — the sibling's hole, in this tool.
+//
+// The spec above proves `catchVendorFailure` produces the right sentence for THIS endpoint. It
+// does not prove the compare HANDLER is wrapped in it, and a judge deleted the wrap
+// (`return catchVendorFailure("ai_visibility_compare", lookup)` -> `return lookup()`) with the
+// full suite still green. See the sibling file for the argument and for why the guard is
+// substituted; the double is the one ai-visibility-compare.reserve.test.ts already established,
+// and it propagates the body's rejection exactly as the real guard does after releasing.
+// =============================================================================================
+describe("the ai_visibility_compare HANDLER is wired to the vendor-failure branch", () => {
+  it("answers a vendor refusal through the REAL handler, at the per-target price", async () => {
+    const priced: number[] = [];
+    vi.resetModules();
+    vi.doMock("../credits/guard.ts", () => ({
+      withCredits: async <T>(_ctx: CreditContext, meta: CreditMeta, fn: () => Promise<T>) => {
+        priced.push(creditCostFor(meta.tool, meta.units));
+        return fn();
+      },
+      isReserveCommitFailed: () => false,
+    }));
+    const mentions = await import("../dfs/llm-mentions.ts");
+    const { makeAiVisibilityCompareTool: freshTool } = await import("./ai-visibility-compare.ts");
+    const failure = new mentions.LlmMentionsVendorError(
+      mentions.DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+      "vendor_status",
+      40501,
+      "Invalid Field: 'internal_list_limit'.",
+      "operator-only detail that must never reach a user",
+    );
+    const tool = freshTool({
+      port: {
+        enabled: true,
+        fetchAiVisibility: () => Promise.reject(failure),
+        fetchAiVisibilityCompare: () => Promise.reject(failure),
+      },
+      writeRun: async () => undefined,
+    });
+    const result = await tool.run(CTX, {
+      targets: [{ domain: "dentnotion.com" }, { domain: "citydentistanbul.com" }],
+      platform: "chat_gpt",
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toContain("cross_aggregated_metrics");
+    expect(text).toContain("40501");
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).not.toContain("operator-only detail that must never reach a user");
+    // Two targets really did reach the guard as the per-target charge — the PRICED path.
+    expect(priced).toEqual([TOOL_COSTS.ai_visibility_compare * 2]);
   });
 });

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { TOOL_COSTS } from "../credits/costs.ts";
+import { TOOL_COSTS, creditCostFor } from "../credits/costs.ts";
+import type { CreditContext, CreditMeta } from "../credits/guard.ts";
 import {
   DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
   LlmMentionsVendorError,
@@ -642,5 +643,90 @@ describe("a vendor refusal is explained, not filed as a crash", () => {
       content: [{ type: "text" as const, text: "fine" }],
     }));
     expect(ok.content[0]?.text).toBe("fine");
+  });
+});
+
+// =============================================================================================
+// THE WIRING, NOT THE HELPER — the hole a fresh-context judge found in the first attempt.
+//
+// Every spec above tests `catchVendorFailure` by CALLING IT. That leaves the thing production
+// actually depends on untested: that the ai_visibility HANDLER is wrapped in it. The judge
+// deleted the wrap — `return catchVendorFailure("ai_visibility", lookup)` -> `return lookup()` —
+// and the whole suite stayed GREEN at 2674/2674. The exact production regression this task exists
+// to prevent could be reintroduced with every test in every lane passing. Signed lesson 12's
+// shape, one layer up: the helper was proven, the CALL SITE was not.
+//
+// WHY THE GUARD IS SUBSTITUTED. withCredits runs the paid-balance gate and then the reserve
+// before it ever calls the handler body, and this lane has no database — so with the real guard
+// the injected port is never reached and the vendor error never happens. The sibling
+// ai-visibility-compare.reserve.test.ts established this exact substitution for the same reason;
+// this reuses it.
+//
+// THE DOUBLE IS NOT MORE PERMISSIVE THAN THE RUNTIME on the axis under test: the real guard
+// releases the reserve and RETHROWS the body's error, and this one propagates the rejection
+// unchanged. It also prices the call through the REAL creditCostFor, so a handler that stopped
+// handing the guard a usable CreditMeta throws here exactly as it would in production.
+// =============================================================================================
+describe("the ai_visibility HANDLER is wired to the vendor-failure branch", () => {
+  /**
+   * Drive the REAL tool with a port that fails the way DataForSEO failed on 2026-08-25.
+   * The error is built from the DYNAMICALLY imported module so its identity is the one the
+   * handler's own `instanceof` sees — production's case, not the duplicated-copy case.
+   */
+  async function runAgainstFailingVendor(
+    kind: "vendor_status" | "transport",
+  ): Promise<{ isError?: boolean; text: string; priced: number[] }> {
+    const priced: number[] = [];
+    vi.resetModules();
+    vi.doMock("../credits/guard.ts", () => ({
+      withCredits: async <T>(_ctx: CreditContext, meta: CreditMeta, fn: () => Promise<T>) => {
+        priced.push(creditCostFor(meta.tool, meta.units));
+        return fn();
+      },
+      isReserveCommitFailed: () => false,
+    }));
+    const mentions = await import("../dfs/llm-mentions.ts");
+    const { makeAiVisibilityTool: freshTool } = await import("./ai-visibility.ts");
+    const failure = new mentions.LlmMentionsVendorError(
+      mentions.DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+      kind,
+      kind === "vendor_status" ? 40501 : null,
+      kind === "vendor_status" ? "Invalid Field: 'internal_list_limit'." : null,
+      "operator-only detail that must never reach a user",
+    );
+    const tool = freshTool({
+      port: {
+        enabled: true,
+        fetchAiVisibility: () => Promise.reject(failure),
+        fetchAiVisibilityCompare: () => Promise.reject(failure),
+      },
+      writeRun: async () => undefined,
+    });
+    const result = await tool.run(CTX, {
+      subject: "keyword",
+      keyword: "teeth whitening",
+      platform: "chat_gpt",
+    });
+    return { isError: result.isError, text: result.content[0]?.text ?? "", priced };
+  }
+
+  it("answers a vendor refusal through the REAL handler, explained and never as a crash", async () => {
+    const { isError, text, priced } = await runAgainstFailingVendor("vendor_status");
+    expect(isError).toBe(true);
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toContain("40501");
+    expect(text).toContain("Invalid Field: 'internal_list_limit'.");
+    expect(text).toMatch(/not charged any credits/i);
+    // The operator-only detail stays operator-only, even on the real path.
+    expect(text).not.toContain("operator-only detail that must never reach a user");
+    // ...and the guard really was entered at the signed price, so this is the PRICED path.
+    expect(priced).toEqual([TOOL_COSTS.ai_visibility]);
+  });
+
+  it("does the same when the vendor gave no status at all (transport)", async () => {
+    const { isError, text } = await runAgainstFailingVendor("transport");
+    expect(isError).toBe(true);
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toMatch(/did not return a readable answer/i);
   });
 });
