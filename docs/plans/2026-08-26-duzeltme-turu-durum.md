@@ -288,3 +288,258 @@ Yani S3'ün çürüttüğü premis **dokümantasyonda da yayınlanmıştı**. Y�
 > **O port bu makinedeki BAŞKA bir projenin (`skala`) Kong'u.** SeoGrep'inki **55321**.
 > Doğru portta `auth:200 rest:200`. Yanlış yığından okunan bir sağlık kodu üzerine teşhis
 > kurmaya başlamıştım. `docker port <container>` ile sahibi doğrulanmadan port yoklanmaz.
+
+### S21 — crawler apex↔`www` · hakem **FAIL** (deneme 1/3) — güvenlikten DEĞİL, kapsamdan
+
+`sameSite(a,b)` predikatı `sameOrigin`'in yanına eklendi ve yalnız **kapsam** noktalarında
+kullanıldı; `sameOrigin` byte olarak dokunulmadı ve `fetchText`'in yönlendirme korumasındaki
+görevini sürdürüyor.
+
+**Hakem predikatı KIRAMADI — sıfır fazla-kabul.** Denenen tablo: `www.example.com.evil.test` ·
+`wwwexample.com` · `www-example.com` · `blog.www.example.com` · `www.www.example.com` ·
+IDN/punycode (`www.exämple.com`) · IPv6 · userinfo · yüzde-kodlu host · port varyantları ·
+`www.com` · IP literalleri. **İki operanda birden `www.` soymanın** iki yabancı alan adını tek
+hosta çökertme riski **gerçekleşmiyor** (yalnız tek bir baştaki `www.` ve/veya sondaki noktalar
+farkıyla çakışabiliyorlar; sondaki nokta aynı DNS kimliği).
+
+**FAIL'in sebebi — iki çağrı noktası kanıtlanabilir biçimde pinsiz:**
+- **M10:** BFS `enqueue` satırı **tek başına** `sameOrigin`'e geri alındığında **139/139 YEŞİL**.
+  Spec'in kendi yorumu *"extracted twin link'in enqueue edildiğini de pinliyor"* diyordu —
+  **ölçümle yanlış**: her iki e2e spec'te de yalnız-bağlantıyla-bulunan URL **origin'in KENDİ
+  host'unda** yazılı, yani `enqueue` onu düz host eşitliğiyle kabul ediyor ve sayfaya
+  **yönlendirme** çağrı noktasından ulaşılıyor. Üretimde `www`-kanonik bir sitenin sayfaları
+  `www` host'lu bağlantı taşır → **bu satır her crawl için yük taşıyor** ve bir gün geri alınırsa
+  **yeşil giderdi**.
+- **M11:** alt-sitemap-indeksi koruması geri alındığında da **yeşil** — ikizde çocuk sitemap taşıyan
+  hiçbir fixture yok, ama docstring o yolun sıfır-tohum arızasına katkısını iddia ediyor.
+
+İkisi de **imzalı ders 12**: ölçmediği bir iddiayı öne süren yeşil test — ve bu kez
+**güvenliğe duyarlı bir predikatın çağrı noktalarında**.
+
+**Hakemin bağımsız doğruladığı:** işçinin sildiği IP-literal spec'i gerçekten totolojiydi
+(`www.127.0.0.1` biçimlerinin hepsi WHATWG URL'de **throw** ediyor), silmek doğruydu.
+
+#### S21 düzeltmesi — hakemin iki bulgusu + işçinin bulduğu ÜÇÜNCÜ
+
+İşçi iki bulguyu kapattı ve **aynı ekseni sistematik varyantlayarak** hakemin de kaçırdığı
+**beşinci kapsam çağrı noktasını** buldu: `countInScopeLinks` (`estimateSiteSize` içinde) hâlâ
+tam-host'tu. Bu, müşterinin **20 krediyi harcamaya karar vermeden ÖNCE okuduğu ücretsiz sayfa
+tahmini** — ve kullanılabilir sitemap'i olmayan her `www`-kanonik site için `unknown` dönüyordu.
+
+**Beş kapsam çağrı noktasının beşi de artık tek tek geri alındığında kırmızı veriyor:**
+`enqueue` (2 kırmızı) · alt-sitemap indeksi (1) · yönlendirme (3) · sitemap-loc (3) · tahmin (1).
+Toplam **11 mutasyon, 11 kırmızı**. Kapı: 118 dosya / **2823** test.
+
+Bu, **imzalı ders 14**'ün tam istediği şey: "delik kalmadı" demeden önce **hangi ekseni
+varyantladığını** yaz — işçi çağrı-noktası eksenini varyantladı ve bir tane daha çıktı.
+
+### S21 — hakem **PASS**, BİRLEŞTİ
+
+Hakem beş `sameSite` çağrı noktasını **saydı** (993 yönlendirme · 1287 loc claim · 1348 çocuk
+guard · 1560 enqueue · 1937 tahmin) ve **beşini tek tek geri aldı**: R1 3 kırmızı · R2 3 · R3 1 ·
+R4 2 · R5 1. **Altıncı yok.** `fetchText`'teki tek katı `sameOrigin` (1133) yerinde.
+Predikat gövdesi ~48 düşmanca çiftle temizlendiği hâlinden **byte olarak aynı**.
+
+Birleşme sonrası repo-geneli kapı: `@pseo/mcp` **118 dosya / 2823 test** · 16/16 task ·
+`gen-tool-docs` 36 sayfa senkron · **`VERIFY: PASS`**.
+
+### S13 — yer adı · işçi OBVIOUS ÇÖZÜMÜ REDDETTİ (doğru kararla)
+
+İki liste-tabanlı seçeneği de gerekçeyle reddetti:
+- **Kayıt anında vendor listesini çekmek**, `track_keywords`'ün kendi vaadini ("hiçbir arama
+  motoruna temas edilmedi, ücret alınmadı") bitirir, ücretsiz bir yazmaya vendor gecikmesi ekler
+  ve önüne üçüncü-taraf kesintisi koyar.
+- **~250 ülkelik allowlist paketlemek**, ~248 vendor dizgisini **hafızadan uydurmak** demektir
+  (NEVER#9). Ve şu cümle kaydedilmeye değer: *"yanlış bir allowlist, allowlist olmamasından
+  kötüdür, çünkü ona güvenilir"* — yanlış hatırlanan tek yazım, vendor'ın **kabul edeceği** bir adı
+  **reddetmeye** dönüşür.
+
+Ne yaptı: **yalnız yerine koyacağı adı söyleyebildiğinde** reddeden bir tablo. Üç kural, ikisi
+listesiz (boş; virgüller arası boş segment; ölçülmüş kanoniğe katlanan ülke segmenti).
+Katlama `NFD` → `\p{M}` at → küçült → `[a-z0-9]` dışını at; **küçültmeden ÖNCE ayrıştırıyor**,
+böylece `İ` → `i`. `Türkiye` için **literal satır yok** — aksan/büyük-küçük genel olarak çözülüyor,
+yani kanonikten sapamaz.
+
+**Kalan deliği açıkça yazdı** ve iki satırı bir allowlist'e çevirmesinler diye
+`United Kingdom` · `France` · `Kuala Lumpur,Malaysia` kabul testiyle **yönü pinledi**.
+
+### S16 — hakem **PASS**, BİRLEŞTİ
+
+Hakem üç NEVER#8 değişikliğini tek tek yargıladı: golden gövde **aynı güçte** yeniden kesilmiş
+(tam `toBe`), sessizlik spec'i **kesinlikle güçlenmiş** (eski `not.toContain("spam_score 0\n")`
+her yeniden yazımda tatmin olurdu; yenisi "girdi bloğunda **hiç rakam yok**" diyor, yani uydurulmuş
+bir sıfırı **her ifade altında** yakalıyor), üçüncüsü tek seviyeden iki seviyeye çıkmış.
+
+**Hakemin kendi eklediği iki eksen** (işçinin varyantlamadığı): **POZİSYON** — iki değeri
+etiketlerin altında yer değiştir → 3 kırmızı; **worst → last link** → 4 kırmızı.
+İmzalı ders 14'ün istediği şey birebir bu.
+
+Birleşme sonrası: **118 dosya / 2835 test** (2823 + 12).
+
+### S8 — 17 ücretsiz-ret dalı, **16'sı sessizdi**
+
+Tek noktadan çözüldü (registry'nin `isPreconditionNotMet` yakalayıcısı), 14 ayrı düzenleme yerine —
+aksi hâlde bir sonraki dal yine delik olurdu.
+
+> **KAPI BÜTÜNLÜĞÜ BULGUSU — `dist/` hayaleti artık bir KAPININ içinde.**
+> `gen-tool-docs --check`, açıklama gerçekten değiştikten **sonra** "36 sayfa senkron" dedi —
+> çünkü `apps/mcp/dist`'i okuyor ve dist bayattı. Ancak `turbo run build`'den sonra gerçek sapmayı
+> bildirdi. `verify.sh` şanslı: kontrolü `build`'den **sonra** koşuyor. Ama bu kontrolü tek başına
+> koşan herkes **anlamsız bir yeşil** alıyor.
+
+### S8 — hakem **FAIL** (deneme 1/3) · turun en değerli kararı
+
+Hakem **istenmediği hâlde `verify-db.sh` koştu** ve dal o şeridin **tip kapısını kırmızıya
+düşürüyor** — üstelik Supabase hiç boot etmeden, ilk adımda:
+```
+src/tools/audit-onpage.db.test.ts(300,12): error TS2532: Object is possibly 'undefined'.
+src/tools/gsc-discovery.db.test.ts(367,12): error TS2532: Object is possibly 'undefined'.
+VERIFY-DB-EXIT=1
+```
+`texts[0]` o şeritte `noUncheckedIndexedAccess` altında `string | undefined`; eski
+`expect(texts[0]).toBe(...)` bunu tolere ediyordu, `.startsWith` etmiyor.
+**`.github/workflows/ci.yml:118` bu script'i her PR'da koşuyor → dal CI'da kırmızı.**
+
+Ve asıl sonuç: **tip kapısı şeridin İLK adımı olduğu için, düzenlenen 12 db pini gerçek bir
+yığına karşı HİÇ koşmadı — hiç kimse tarafından.** İşçi onları "doğrulanmadı" diye raporlamıştı;
+gerçek durum daha kötü: **ölçülebilir biçimde bozuk.** **İmzalı ders 15 birebir.**
+
+**Sayım hataları:** 9 değil **12** pin dönüştürülmüş (bir NEVER#8 denetiminde eksik sayım, denetimin
+kendi kusuru). İkisi (`stranger` vakaları) **karşılıksız gevşetme** — `startsWith` var, ücret regex'i
+yok. Ve daha güçlü bir biçim mevcuttu, kullanılmamış:
+`toBe(\`${MSG} ${NOT_CHARGED_SENTENCE}\`)` — sabiti import ederek, byte-tam, literal kopyalamadan.
+
+**Kaçırılan sessiz dallar — en pahalı tool'larda:** `resolveTarget`'ın döndürdüğü
+`ARCHIVED_PROJECT_MESSAGE` (`project-target.ts:152`) her `charge:"handler"` DFS tool'unda
+`withCredits`ten **ÖNCE** `errorResult` ile dönüyor, yani registry yakalayıcısını **tamamen
+atlıyor**: ranked_keywords (65) · compare_competitors (90) · ai_visibility (90) · ve 10 tanesi daha.
+Bir projeyi arşivle, `ranked_keywords`i onun id'siyle çağır → **ücretsiz ret, sessiz, en pahalı
+tool'larda.** Kart 12'nin tam sınıfı.
+
+**Üç dal her şeritte mutasyon-görünmez:** `crawl-site.ts:283` ve `audit-speed.ts:301`'den
+`withNoChargeNote` kaldırılınca **hiçbir şey kırmızıya dönmüyor**.
+
+> **STALE-DIST TUZAĞI ÜRETİLDİ.** Hakem kaynağa `TRAP-CANARY` cümlesi yazıp **derlemeden**
+> `gen-tool-docs --check` koştu → `36 tool pages in sync`, exit 0. **Kontrol `dist`i doğruluyor,
+> `src`i değil.** Bu dalın borcu değil; **duran bir repo sorunu** olarak kaydedildi.
+
+### S19 — hakem **PASS**, bulgu YOK, BİRLEŞTİ (119 dosya / **2875** test)
+
+Pin doğrulandı: `dfs/competitors.test.ts`teki canlı-istemci spec'leri kaynağı **transport çağrı
+günlüğüne karşı** iddia ediyor — keşif yolunda `/domain_rank_overview/live` çağrısının **hiç
+olmadığı** ve ardından her satırın `competitors_domain` dediği. **Bir satır, hiç istenmemiş bir ucu
+iddia edemiyor.**
+
+Hakemin eklediği eksen (**M6**): iki sağlayıcı etiketini **aynı dizgiye** çevir → 5 kırmızı,
+başını `"her ölçüme KENDİ adını verir — iki blok aynı kelimeleri basamaz"` çekiyor.
+
+### S12 — hakem **FAIL**, tek dar gerekçe: doküman sapması
+
+Hakem işçinin **premis reddini onayladı** (`client.ts:49` Labs, `3c1aad5` main'in atası) ve
+**yerine koyduğu teşhisi gerçek ayrıştırıcıya karşı doğruladı**: dar `hasMetrics()` geri
+konduğunda **9 kırmızı**, içinde `keyword_difficulty: 38` + `main_intent` taşıyan ama Ads yarısı
+boş olan satırın `has_data: false` damgalanıp *"no data returned"* bastığı uçtan uca spec.
+**Ölçülen semptomun ta kendisi.**
+
+**Hakem, işçinin yapamadığını yaptı:** yerel yığınla `research-keywords.db.test.ts` → **3/3 PASS**
+(yeni (c) vakası dahil, gerçek ledger'a karşı: `purchase, spend_reserve, spend_release`,
+**`spend_commit` yok**, bakiye geri geldi) ve `keyword-research-runs.db.test.ts` → **7/7 PASS**.
+Artık iddia değil **ölçüm**.
+
+FAIL sebebi: `research-keywords.mdx` **satır 33 artık YANLIŞ** — "sağlayıcının hiçbir şey tutmadığı
+kelime *'no data returned for this keyword'* olarak döner" diyor, ama artık **hiçbir** kelime metrik
+döndürmezse çağrı komple reddediliyor ve satır hiç basılmıyor. Sayfa ayrıca yeni **ücretsiz ret**
+davranışını hiç anlatmıyor. İşçiye gönderildi (yalnız doküman).
+
+> ### 💰 OPERATÖRE — SAYISALLAŞTIRILMIŞ BÜTÇE AÇIĞI
+> Vendor çağrısı **retten ÖNCE** ödeniyor (`reserveSpend → POST → settleSpend`, sonra
+> `isUnansweredLookup` fırlatıyor). $0,012 + $0,00012/kelime tarifesiyle **1 kelimelik boş çağrı
+> $0,01212** kapanıyor →
+> ### **~247 boş çağrı $3,00'lık FİLO tavanını doldurur.**
+> (248.'nin 1,5× rezervasyonu tavanda reddedilir; 100 kelime/çağrıda ~227.)
+> **Kiracı başına hız sınırı YOK.** Yani günde birkaç yüz **sıfır gelirli** çağrı, **bütün
+> kiracılar için bütün ücretli DFS tool'larını** durdurur. Bu bir dilim işi değil — imza/karar.
+
+## DB ŞERİDİ — SON AĞAÇTA **ÖLÇÜLEMEDİ** (kod değil, ORTAM)
+
+Birleşik ağaçta `verify-db.sh` altı kez koşuldu, **her seferinde farklı bir alt küme** kırmızı
+verdi ve skip sayısı büyüdü. Tipik hata **iddia değil**: `cannot reach local Supabase`,
+`GET /rest/v1/ failed: 400`, `container is not ready`.
+
+**KONTROL DENEYİ — belirleyici.** Aynı şerit, **birleştirilmemiş `main` kodu** üzerinde koşuldu
+(`git diff --stat main -- apps packages` **boş**):
+
+| ne | sonuç |
+|---|---|
+| bugün erken, `main` baseline | **PASS** — 21/165 · 49/463 · 7/48 |
+| aynı `main` kodu, şimdi | **20/21 dosya FAIL, 154 skip** |
+
+→ **Arıza ortamda, birleştirmede değil.** Sebep ölçüldü: makinede **iki Supabase yığını**
+(`seogrep` **55321**, `skala` **54321**), Docker'da **53,2 GB imaj + 37,3 GB build cache**, ve
+şef + üç hakem arasında ~10 tam `supabase start`/`db reset` döngüsü. Yığın kademeli bozuldu;
+`supabase stop` + yeniden başlatma da düzeltmedi.
+
+### Yine de ÖLÇÜLMÜŞ olanlar — bunlar iddia değil
+
+1. **Tip kapıları son birleşik ağaçta YEŞİL:** `21/21` · `49/49` · `7/7` `*.db.test.ts`
+   programda. (S8'in TS2532'leri **birleşmedi**; o dal hâlâ düzeltmede.)
+2. **Hakemler hedefli koştu ve yeşil aldı:**
+   - S12 hakemi: `research-keywords.db.test.ts` **3/3** (yeni (c) dahil, gerçek ledger:
+     `purchase, spend_reserve, spend_release`, **`spend_commit` YOK**) · `keyword-research-runs.db.test.ts` **7/7**
+   - C4 hakemi: `whats-next.db.test.ts` **12/12** · `setup-project.db.test.ts` **10/10**
+     (gerçek yazma üzerinde: satır var **ve** uyarı bir arada)
+3. **Ara birleşimde tam şerit PASS almıştı** (7 dilim merge'liyken): 21/165 · 49/463 · 7/48.
+
+### Kalan risk, dürüstçe
+
+**Son birleşik ağaçta tam şeridin tek bir yeşil koşusu YOK.** Bunu "yeşil" diye raporlamıyorum.
+Ölçüm yeri **CI**: `.github/workflows/ci.yml:118` `verify-db.sh`i **her PR'da** koşuyor, temiz bir
+runner'da. Merge öncesi orada ölçülecek.
+
+> **Şef notu:** `verify-db.sh` başlığı Kong yanlış-alarmının **iki ayrı oturuma birer soruşturma**
+> mal olduğunu yazıyor. Bu tur üçüncüsü olabilirdi; **kontrol koşusu** (aynı şeridi `main` üzerinde
+> koşmak) onu 5 dakikada kapattı. **Bir kırmızıyı koda yazmadan önce, aynı kırmızının temiz
+> temelde de çıkıp çıkmadığına bak.**
+
+## ✅ SON BİRLEŞİK AĞAÇ — ÜÇ KAPI DA ÖLÇÜLDÜ (15/15 dilim merge'li)
+
+`integration/duzeltme-dalga-ab`, `main @8668ff2` üzerine 15 dilim.
+
+| kapı | sonuç | NE ÖLÇMEDİĞİ |
+|---|---|---|
+| `guardrails/verify.sh` | **PASS** · 16/16 task · `@pseo/mcp` **124 dosya / 2984 test** · `@pseo/core` 17/316 · `@pseo/db` 3/12 · `@pseo/web` 117/1644 · `gen-tool-docs` 36 sayfa senkron | **secret taramaz** · `*.db.test.ts` koşmaz · **MCP test dosyalarını typecheck etmez** |
+| `guardrails/verify-db.sh` | **PASS** · `@pseo/db` 21/**165** · `@pseo/mcp` 49/**468** · `@pseo/web` 7/**48** | canlı uçlar · secret |
+| `make goals` | **16/16 PASS — 5 SKIP** | SKIP: `dfs-budget-guard` · `landing-live` · `mcp-alive` · `purchase-flow-live` · `trial-flow-e2e` (hepsi canlı uç, env yok). **`no-secrets` SKIP DEĞİL — gerçekten geçti.** |
+
+Baseline karşılaştırması: `main` 118 dosya/2807 (unit) ve 21/165 · 49/463 · 7/48 (db)
+→ birleşik **124/2984** ve 21/165 · **49/468** · 7/48. **Hiçbir baseline testi kaybolmadı.**
+
+### DB şeridi sonunda NEDEN yeşil verdi
+
+Önceki altı kırmızı koşu **eşzamanlılıktı**: şef + üç hakem aynı tek yığında `supabase db reset`
+koşuyordu. Bütün agent'lar bitince, **tek başına**, ilk denemede `VERIFY-DB: PASS`.
+Kontrol deneyi (aynı şeridi `main` üzerinde koşmak → o da 20/21 FAIL) bunu zaten kanıtlamıştı:
+**arıza ortamdaydı, kodda değil.**
+
+> **Ders adayı:** paylaşılan tek yerel yığında **iki tam kapı aynı anda koşmaz**. İmzalı ders 8
+> paralel işçileri aynı çalışma ağacından men ediyor; bu vaka aynı kuralın **DB yığını** hâli.
+
+### S8 — hakem **PASS** (FAIL → düzeltme → doğrulama)
+
+Hakem 28/24 sayımını **bağımsız yaptı** ve doğruladı; ayrıca ücretli tool'lardaki **kalan bütün
+`errorResult(` çağrılarını taradı** — 13 `NOT_ENABLED` sabiti, `SELF_COMPETITOR`, `NO_KEYWORDS`,
+`nothingStoredMessage`, `vendorFailureMessage` ve serp/ai doğrulayıcı kapıları zaten ücreti kendi
+kelimeleriyle söylüyor (bir yanlış alarm: `analyze-backlinks`'in ifadesi satır bölünmüş,
+`"not " + "charged"` — var). **Kaçan sessiz site yok.**
+
+İşçinin altı mutasyonunun altısı da kırmızı; **#9 artık 3 kırmızı** (2 değil) → `link_gap` pini
+gerçek ve yük taşıyor.
+
+> **HAKEMİN EKLEDİĞİ EKSEN — turun en keskin testi.**
+> `NOT_CHARGED_SENTENCE` sabiti `"You were charged."` diye **tersine çevrildi** → **13 kırmızı**.
+> Kritik olan şu: **15 byte-tam DB pini de bu sabiti import ediyor**, yani hepsi **totolojik olarak
+> geçerdi**. Yalanı yakalayan tek şey unit şeridindeki **anlam-üzerinden-regex** pinleriydi.
+> **İmzalı ders 11 canlı gösterildi:** kaynak literaline karşı iddia eden test hiçbir şey kanıtlamaz —
+> ve burada iki üslup tek atışta birbirine karşı ölçüldü.
+
+**Kapı:** `@pseo/mcp` 121 dosya / 2840 test (dalda), birleşik ağaçta **124 / 2984**.
