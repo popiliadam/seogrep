@@ -62,6 +62,21 @@ describe("normalizeDomain", () => {
     }
   });
 
+  /**
+   * S4. The canonical form drops a leading `www.` — the difference between one project per site
+   * and two. Measured live 2026-08-25: `https://www.seogrep.com/pricing?utm_source=…` opened a
+   * SECOND project beside `seogrep.com`, while the tool's own description promised idempotency.
+   */
+  it("drops a leading `www.` so one site canonicalizes to ONE domain", () => {
+    for (const raw of ["www.example.com", "https://www.example.com/x?y=1", "WWW.Example.com"]) {
+      expect(normalizeDomain(raw)).toEqual({ ok: true, domain: "example.com" });
+    }
+  });
+
+  it("drops ONLY `www.` — a subdomain is a different site and stays one", () => {
+    expect(normalizeDomain("blog.example.com")).toEqual({ ok: true, domain: "blog.example.com" });
+  });
+
   it("still accepts a normal public domain", () => {
     expect(normalizeDomain("example.com")).toEqual({ ok: true, domain: "example.com" });
   });

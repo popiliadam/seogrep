@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { normalizeDomain } from "@pseo/core";
+import { normalizeDomain, sameSiteDomains } from "@pseo/core";
 import type { Database } from "./types.js";
 
 /**
@@ -30,6 +30,11 @@ import type { Database } from "./types.js";
  * Idempotency covers the ARCHIVE too: a domain the tenant had archived comes back on its
  * original id (archived_at cleared) instead of being registered a second time — see
  * resolveExisting.
+ *
+ * …and it covers `www.` (2026-08-25). `normalizeDomain` now drops a leading `www.` label, so
+ * every spelling of one site canonicalizes to one string; the lookup additionally probes the
+ * `www.` twin, because the rows already in the table were written before that rule existed and
+ * this fix does not rewrite them. See findSameSiteProject.
  *
  * Every read and every write carries an explicit user_id filter: these clients are service-role
  * and bypass RLS, so that filter is the tenant boundary (constitution NEVER #4). Nothing here
@@ -74,9 +79,9 @@ export async function openTrackedProject(
   }
   const { domain } = normalized;
 
-  const existing = await readProject(client, userId, domain);
+  const existing = await findSameSiteProject(client, userId, domain);
   if (existing) {
-    return await resolveExisting(client, userId, domain, existing);
+    return await resolveExisting(client, userId, existing);
   }
 
   // Race-safe insert: ON CONFLICT (user_id, domain) DO NOTHING (ignoreDuplicates). A row is
@@ -98,15 +103,54 @@ export async function openTrackedProject(
     return { ok: true, project: { id: insertedId, domain, outcome: "created" } };
   }
 
-  const winner = await readProject(client, userId, domain);
+  const winner = await findSameSiteProject(client, userId, domain);
   if (!winner) {
     throw new Error("projects upsert reported a conflict but no existing row was found");
   }
-  return await resolveExisting(client, userId, domain, winner);
+  return await resolveExisting(client, userId, winner);
 }
 
-/** An existing project row as this module needs it: its id and whether it sits in the archive. */
-type ProjectRow = { readonly id: string; readonly archived_at: string | null };
+/**
+ * An existing project row as this module needs it: its id, the domain AS STORED, and whether it
+ * sits in the archive.
+ *
+ * The stored domain is carried rather than assumed equal to the normalized one, because since
+ * the `www.` strip they can differ: a row registered as `www.noraninsaat.com` is now reached by
+ * the canonical `noraninsaat.com`, and every sentence about it must name the domain the tenant
+ * will actually see in `list_projects`.
+ */
+type ProjectRow = {
+  readonly id: string;
+  readonly domain: string;
+  readonly archived_at: string | null;
+};
+
+/**
+ * The tenant's project for this SITE — canonical host first, then its `www.` twin.
+ *
+ * WHY TWO READS AND NOT ONE `.in(...)`. Both are equally correct against PostgREST; the pair of
+ * `.eq()` reads is chosen because the second one only ever runs when the canonical row is
+ * absent, and because the preference between the two forms is then expressed by CONTROL FLOW
+ * rather than by sorting a result set — a tenant who holds BOTH rows (measured live: `seogrep.com`
+ * and `www.seogrep.com`) lands on the canonical one on every call, with nothing to get the order
+ * of.
+ *
+ * The `www.` probe is what keeps the SIX pre-existing `www.` projects reachable. This fix is
+ * forward-only: it does not rewrite those rows, so without this second read `setup_project`
+ * would answer a `www.` project by opening a seventh one beside it — the exact duplication the
+ * change is here to end.
+ */
+async function findSameSiteProject(
+  client: ProjectsClient,
+  userId: string,
+  domain: string,
+): Promise<ProjectRow | null> {
+  for (const stored of sameSiteDomains(domain)) {
+    const row = await readProject(client, userId, stored);
+    if (row) return row;
+  }
+  return null;
+}
 
 /**
  * Tenant-scoped read of a project by (user_id, domain); null when absent. Deliberately
@@ -121,7 +165,7 @@ async function readProject(
 ): Promise<ProjectRow | null> {
   const { data, error } = await client
     .from("projects")
-    .select("id, archived_at")
+    .select("id, domain, archived_at")
     .eq("user_id", userId)
     .eq("domain", domain)
     .maybeSingle();
@@ -132,25 +176,28 @@ async function readProject(
 }
 
 /**
- * Report the row that already holds this domain — restoring it first when the tenant had
+ * Report the row that already holds this site — restoring it first when the tenant had
  * archived it. Restoring is the only correct answer there: a second row is impossible
  * (unique (user_id, domain), migration 0010), and would in any case orphan the crawls,
  * reports and Search Console link that hang off the original id. So setting a domain up
  * again picks the same project back up rather than starting an empty one.
+ *
+ * It reports `row.domain` — the STORED spelling — not the normalized input. On a legacy `www.`
+ * row the two differ, and the caller is told the name that project actually answers to
+ * everywhere else (list_projects, the panel, every project_id-taking tool).
  */
 async function resolveExisting(
   client: ProjectsClient,
   userId: string,
-  domain: string,
   row: ProjectRow,
 ): Promise<ProjectResolution> {
   if (row.archived_at === null) {
-    return { ok: true, project: { id: row.id, domain, outcome: "existing" } };
+    return { ok: true, project: { id: row.id, domain: row.domain, outcome: "existing" } };
   }
   if (!(await restoreOwnProject(client, userId, row.id))) {
-    return { ok: false, error: notRestoredMessage(domain, row.id) };
+    return { ok: false, error: notRestoredMessage(row.domain, row.id) };
   }
-  return { ok: true, project: { id: row.id, domain, outcome: "restored" } };
+  return { ok: true, project: { id: row.id, domain: row.domain, outcome: "restored" } };
 }
 
 /**

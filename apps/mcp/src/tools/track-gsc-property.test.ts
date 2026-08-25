@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GscSite } from "@pseo/core";
+import { openTrackedProject, type ProjectsClient } from "@pseo/db/projects";
 import type { AuthContext } from "../auth.ts";
 import type { GscAccountSummary } from "./list-gsc-properties.ts";
 import type { ProjectResolution } from "./setup-project.ts";
@@ -370,6 +371,161 @@ describe("track_gsc_property", () => {
     expect(run.text).not.toMatch(/did you mean/i);
   });
 
+  /**
+   * The property's host travels to the project route AS GOOGLE NAMES IT, `www.` and all. The
+   * canonicalization is the route's job and happens inside it (see the `www.` describe block at
+   * the bottom of this file, which drives the REAL route); `propertyToDomain` deliberately does
+   * not pre-empt it, because it answers "what host does this property name", not "what is this
+   * site called".
+   */
+  it("hands the project route the host the property actually names", async () => {
+    const wwwSite: GscSite = {
+      siteUrl: "sc-domain:www.noraninsaat.com",
+      permissionLevel: "siteOwner",
+    };
+    const run = await callTool({ property: wwwSite.siteUrl }, { sites: [wwwSite] });
+
+    expect(run.isError).toBe(false);
+    expect(run.recorder.opened).toEqual([{ userId: USER, domain: "www.noraninsaat.com" }]);
+    // The MAPPING carries Google's own spelling — that string is what sites.list returns and
+    // what searchAnalytics.query has to be asked for.
+    expect(run.recorder.mapped[0]?.property).toBe("sc-domain:www.noraninsaat.com");
+  });
+
+  /**
+   * B-S4 — the bare host a customer speaks. Measured live: `track_gsc_property("dentnotion.com")`
+   * was refused as "not listed on any Google account you have connected" while
+   * `https://dentnotion.com/` sat in the SAME listing as the only candidate.
+   */
+  it("resolves a bare host to the ONE listed property that names it", async () => {
+    const listed: GscSite = { siteUrl: "https://katrenur.com/", permissionLevel: "siteOwner" };
+    const run = await callTool({ property: "katrenur.com" }, { sites: [listed] });
+
+    expect(run.isError).toBe(false);
+    expect(run.recorder.opened).toEqual([{ userId: USER, domain: "katrenur.com" }]);
+    // Bound to Google's spelling of the property, never to the host the caller typed.
+    expect(run.recorder.mapped[0]?.property).toBe("https://katrenur.com/");
+    expect(run.text).toContain("https://katrenur.com/");
+  });
+
+  it("resolves a bare host across a `www.` difference in the property", async () => {
+    const listed: GscSite = {
+      siteUrl: "sc-domain:www.katrenur.com",
+      permissionLevel: "siteFullUser",
+    };
+    const run = await callTool({ property: "katrenur.com" }, { sites: [listed] });
+
+    expect(run.isError).toBe(false);
+    expect(run.recorder.mapped[0]?.property).toBe("sc-domain:www.katrenur.com");
+  });
+
+  /**
+   * …and it must NOT choose for the caller. `sc-domain:x` and `https://x/` are two different
+   * properties with different data; picking one binds a project to a source, and the wrong bind
+   * is only discovered when the numbers stop making sense.
+   */
+  it("OFFERS THE CHOICE when a bare host matches more than one property, and binds nothing", async () => {
+    const run = await callTool(
+      { property: "katrenur.com" },
+      {
+        sites: [
+          TRACKED,
+          { siteUrl: "https://katrenur.com/", permissionLevel: "siteOwner" },
+        ],
+      },
+    );
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toMatch(/more than one/i);
+    expect(run.text).toContain("sc-domain:katrenur.com");
+    expect(run.text).toContain("https://katrenur.com/");
+    expect(run.recorder.opened).toEqual([]);
+    expect(run.recorder.mapped).toEqual([]);
+  });
+
+  it("names the candidates in the same order however the listing arrives", async () => {
+    const urlPrefix: GscSite = { siteUrl: "https://katrenur.com/", permissionLevel: "siteOwner" };
+    const forward = await callTool({ property: "katrenur.com" }, { sites: [TRACKED, urlPrefix] });
+    const reversed = await callTool({ property: "katrenur.com" }, { sites: [urlPrefix, TRACKED] });
+
+    expect(forward.text).toBe(reversed.text);
+  });
+
+  it("does not read a bare host as a SUBDOMAIN's property, or the reverse", async () => {
+    // Only `www.` is cosmetic. A blog on its own property is a different site.
+    const blog: GscSite = { siteUrl: "sc-domain:blog.katrenur.com", permissionLevel: "siteOwner" };
+    const run = await callTool({ property: "katrenur.com" }, { sites: [blog] });
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toMatch(/not listed/i);
+    expect(run.recorder.opened).toEqual([]);
+  });
+
+  it("does not resolve a host that no listed property names", async () => {
+    const run = await callTool({ property: "zephyrbrook.com" }, { sites: [TRACKED] });
+
+    expect(run.isError).toBe(true);
+    expect(run.text).toMatch(/not listed/i);
+    expect(run.recorder.opened).toEqual([]);
+  });
+
+  it("leaves an EXACT property match alone — host resolution never reinterprets it", async () => {
+    // `sc-domain:katrenur.com` is listed and so is the URL-prefix property for the same site.
+    // The caller spelled one of them correctly, so the choice message must NOT appear.
+    const run = await callTool(
+      { property: TRACKED.siteUrl },
+      { sites: [TRACKED, { siteUrl: "https://katrenur.com/", permissionLevel: "siteOwner" }] },
+    );
+
+    expect(run.isError).toBe(false);
+    expect(run.recorder.mapped[0]?.property).toBe("sc-domain:katrenur.com");
+  });
+
+  /**
+   * The already-tracked sentence used to shift subject halfway through: `Project "x" was already
+   * tracked (project_id: …) and set it to read <property> through <email>` — "Project x … set
+   * it" has no grammatical subject for the second clause. Product language is English and this
+   * string is customer-visible.
+   */
+  it("says the already-tracked outcome in ONE grammatical sentence", async () => {
+    const run = await callTool({ property: TRACKED.siteUrl }, { sites: [TRACKED] }, () =>
+      Promise.resolve({
+        ok: true,
+        project: {
+          id: "3d4e5f6a-7b8c-4d9e-8f01-2a3b4c5d6e7f",
+          domain: "katrenur.com",
+          outcome: "existing",
+        },
+      }),
+    );
+
+    expect(run.isError).toBe(false);
+    expect(run.text).toContain(
+      'Project "katrenur.com" was already tracked (project_id: ' +
+        "3d4e5f6a-7b8c-4d9e-8f01-2a3b4c5d6e7f); it now reads sc-domain:katrenur.com through " +
+        `${ACCOUNT_EMAIL}.`,
+    );
+    // The broken clause, pinned by its shape so a rewording cannot bring it back unnoticed.
+    expect(run.text).not.toMatch(/was already tracked[^.]*and set it to/i);
+  });
+
+  it("keeps the created and restored sentences reading as one clause each", async () => {
+    const created = await callTool({ property: TRACKED.siteUrl }, { sites: [TRACKED] });
+    expect(created.text).toMatch(/^Created project "katrenur\.com" \(project_id: .+\) and set it to read sc-domain:katrenur\.com through /);
+
+    const restored = await callTool({ property: TRACKED.siteUrl }, { sites: [TRACKED] }, () =>
+      Promise.resolve({
+        ok: true,
+        project: {
+          id: "3d4e5f6a-7b8c-4d9e-8f01-2a3b4c5d6e7f",
+          domain: "katrenur.com",
+          outcome: "restored",
+        },
+      }),
+    );
+    expect(restored.text).toMatch(/^Restored "katrenur\.com" from your archive \(project_id: .+\) and set it to read /);
+  });
+
   it("is a 0-credit tool that takes a property and an optional account_id", () => {
     const tool = toolFor({}, { opened: [], mapped: [] });
     expect(tool.name).toBe("track_gsc_property");
@@ -554,5 +710,210 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
     expect(text).toContain("alpha@mail.invalid");
     expect(text).toContain("zeta@mail.invalid");
     expect(text).not.toContain("mid@mail.invalid");
+  });
+});
+
+/**
+ * S4 — THE `www.` SPLIT, END TO END, over the REAL project route.
+ *
+ * Measured live 2026-08-25: `track_gsc_property("sc-domain:noraninsaat.com")` created a SECOND
+ * project although `www.noraninsaat.com` already existed. Crawl history then lived on one
+ * project and Search Console data on the other, and every tool that joins the two
+ * (find_quick_wins, analyze_content_decay, detect_cannibalization) read half the data whichever
+ * project it was called from.
+ *
+ * The injected `openProject` used by every spec above CANNOT measure this — it is a recorder,
+ * and a recorder agrees with whatever it is handed. So these specs compose the tool with
+ * `openTrackedProject` from @pseo/db itself, over a strict stand-in for the `projects` table
+ * (the same discipline as setup-project.route.test.ts: every `.eq()` is APPLIED, the selected
+ * columns are PROJECTED, and `ignoreDuplicates` is honoured on the (user_id, domain) conflict).
+ * Still zero network and zero database.
+ */
+describe("track_gsc_property over the real project route (`www.`)", () => {
+  interface ProjectRow {
+    id: string;
+    user_id: string;
+    domain: string;
+    archived_at: string | null;
+  }
+
+  function makeProjectsStore(initial: readonly ProjectRow[] = []) {
+    const rows: ProjectRow[] = initial.map((row) => ({ ...row }));
+    const inserted: { user_id: string; domain: string }[] = [];
+    let nextId = 1;
+
+    const project = (row: ProjectRow, columns: string): Record<string, unknown> =>
+      Object.fromEntries(
+        columns
+          .split(",")
+          .map((column) => column.trim())
+          .map((column) => [column, row[column as keyof ProjectRow]]),
+      );
+
+    const matching = (filters: readonly [string, unknown][]): ProjectRow[] =>
+      rows.filter((row) =>
+        filters.every(([column, value]) => row[column as keyof ProjectRow] === value),
+      );
+
+    function selectChain(columns: string) {
+      const filters: [string, unknown][] = [];
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters.push([column, value]);
+          return chain;
+        },
+        maybeSingle() {
+          const hit = matching(filters)[0];
+          return Promise.resolve({ data: hit ? project(hit, columns) : null, error: null });
+        },
+      };
+      return chain;
+    }
+
+    function updateChain(patch: Partial<ProjectRow>) {
+      const filters: [string, unknown][] = [];
+      const chain = {
+        eq(column: string, value: unknown) {
+          filters.push([column, value]);
+          return chain;
+        },
+        select(columns: string) {
+          return {
+            maybeSingle() {
+              const hits = matching(filters);
+              hits.forEach((hit) => Object.assign(hit, patch));
+              const hit = hits[0];
+              return Promise.resolve({ data: hit ? project(hit, columns) : null, error: null });
+            },
+          };
+        },
+      };
+      return chain;
+    }
+
+    const client = {
+      from(table: string) {
+        if (table !== "projects") {
+          throw new Error(`the project route must not touch "${table}"`);
+        }
+        return {
+          select: selectChain,
+          update: updateChain,
+          upsert(
+            values: { user_id: string; domain: string },
+            options: { onConflict: string; ignoreDuplicates: boolean },
+          ) {
+            return {
+              select(columns: string) {
+                const clash = rows.find(
+                  (row) => row.user_id === values.user_id && row.domain === values.domain,
+                );
+                if (clash) {
+                  return options.ignoreDuplicates
+                    ? Promise.resolve({ data: [], error: null })
+                    : Promise.resolve({ data: null, error: { message: "duplicate key" } });
+                }
+                const row: ProjectRow = {
+                  id: `new-${nextId++}`,
+                  user_id: values.user_id,
+                  domain: values.domain,
+                  archived_at: null,
+                };
+                rows.push(row);
+                inserted.push({ user_id: values.user_id, domain: values.domain });
+                return Promise.resolve({ data: [project(row, columns)], error: null });
+              },
+            };
+          },
+        };
+      },
+    };
+
+    return { client, rows, inserted };
+  }
+
+  /** The tool, wired to the REAL route over `store`, and to a recorder for the mapping. */
+  function toolOverStore(
+    store: ReturnType<typeof makeProjectsStore>,
+    sites: readonly GscSite[],
+    mapped: { projectId: string; property: string }[],
+  ) {
+    return makeTrackGscPropertyTool({
+      loadAccounts: () => Promise.resolve([{ id: ACCOUNT_ID, email: ACCOUNT_EMAIL }]),
+      listAccountSites: () => Promise.resolve([...sites]),
+      openProject: (userId, domain) =>
+        openTrackedProject(store.client as unknown as ProjectsClient, userId, domain),
+      mapProperty: ({ projectId, property }) => {
+        mapped.push({ projectId, property });
+        return Promise.resolve();
+      },
+    });
+  }
+
+  async function track(
+    store: ReturnType<typeof makeProjectsStore>,
+    property: string,
+    sites: readonly GscSite[],
+  ): Promise<{ text: string; isError: boolean; mapped: { projectId: string; property: string }[] }> {
+    const mapped: { projectId: string; property: string }[] = [];
+    const result = await toolOverStore(store, sites, mapped).run(CTX, { property });
+    return {
+      text: result.content.map((part) => part.text).join("\n"),
+      isError: result.isError === true,
+      mapped,
+    };
+  }
+
+  /** THE MEASURED PAIR. */
+  it("links `sc-domain:noraninsaat.com` to the EXISTING www. project, opening none", async () => {
+    const store = makeProjectsStore([
+      { id: "dcad126a", user_id: USER, domain: "www.noraninsaat.com", archived_at: null },
+    ]);
+    const site: GscSite = {
+      siteUrl: "sc-domain:noraninsaat.com",
+      permissionLevel: "siteOwner",
+    };
+
+    const run = await track(store, site.siteUrl, [site]);
+
+    expect(run.isError).toBe(false);
+    // No seventh project: the table still holds exactly the row that was already there.
+    expect(store.inserted).toEqual([]);
+    expect(store.rows).toHaveLength(1);
+    // …and the property was mapped ONTO that project, which is the point of the call.
+    expect(run.mapped).toEqual([
+      { projectId: "dcad126a", property: "sc-domain:noraninsaat.com" },
+    ]);
+    expect(run.text).toMatch(/already tracked/i);
+  });
+
+  it("still opens a project for a site the tenant does not have yet", async () => {
+    // The negative control: if the lookup matched anything at all, this would report "already
+    // tracked" and insert nothing, and the spec above would pass for the wrong reason.
+    const store = makeProjectsStore([
+      { id: "dcad126a", user_id: USER, domain: "www.noraninsaat.com", archived_at: null },
+    ]);
+    const site: GscSite = { siteUrl: "sc-domain:katrenur.com", permissionLevel: "siteOwner" };
+
+    const run = await track(store, site.siteUrl, [site]);
+
+    expect(run.isError).toBe(false);
+    expect(store.inserted).toEqual([{ user_id: USER, domain: "katrenur.com" }]);
+  });
+
+  it("does not fold a SUBDOMAIN property into the apex project", async () => {
+    const store = makeProjectsStore([
+      { id: "p-apex", user_id: USER, domain: "katrenur.com", archived_at: null },
+    ]);
+    const site: GscSite = {
+      siteUrl: "sc-domain:blog.katrenur.com",
+      permissionLevel: "siteOwner",
+    };
+
+    const run = await track(store, site.siteUrl, [site]);
+
+    expect(run.isError).toBe(false);
+    expect(store.inserted).toEqual([{ user_id: USER, domain: "blog.katrenur.com" }]);
+    expect(run.mapped[0]?.projectId).not.toBe("p-apex");
   });
 });
