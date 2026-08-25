@@ -46,7 +46,7 @@ Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the
 | `target` | string | No | The domain to measure SERP positions for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
 | `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
 | `keywords` | string[] | Yes | The keywords to measure (1-10). EACH ONE IS A SEPARATE PAID SEARCH, so this list is what the call costs. Duplicates are refused rather than de-duplicated — you would be billed twice for one answer — and the list is never trimmed to fit, because a shorter answer to a longer question is not the answer you asked for. |
-| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). Results differ by country, so this is part of what the measurement means. |
+| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). Results differ by country, so this is part of what the measurement means. The vendor matches this name exactly and its spelling is sometimes not the usual English one (it calls Turkey "Turkiye"); a name it is known not to use is refused before the reserve is opened, with the right one named, and costs nothing. |
 | `language_code` | string | No | The search language (default "en"). |
 | `device` | string | No | Which SERP to measure (default "desktop"). Google returns different results and a different layout on each, so a desktop reading says nothing about a mobile one. |
 

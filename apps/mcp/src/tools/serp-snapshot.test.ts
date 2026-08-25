@@ -15,6 +15,7 @@ import {
   type SerpSnapshotResult,
 } from "../dfs/serp.ts";
 import fixture from "../dfs/fixtures/serp-organic-live-advanced.json";
+import { checkLocationName } from "../dfs/locations.ts";
 import { CONFIRMATION_THRESHOLD_CREDITS, evaluateConfirmation } from "./registry.ts";
 import {
   NOT_ENABLED_MESSAGE,
@@ -217,6 +218,30 @@ describe("serp_snapshot — the free pre-reserve gates", () => {
     const result = await tool.run(CTX, { target: "example.com", keywords: ["   "] });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/cannot measure an empty keyword/i);
+  });
+
+  /**
+   * THE 13-CREDIT TYPO, refused before the money. `track_keywords` catches this at registration,
+   * but this tool takes a location directly and can be called without registering anything, so the
+   * gate has to exist on the side holding the reserve too. It must land BEFORE the live-access
+   * gate — asserted by the message NOT being that gate's — since a refusal arriving later would
+   * tell the caller their deployment is off when what is actually wrong is the name they typed.
+   */
+  it("refuses a location name DataForSEO does not know, free of charge", async () => {
+    const typed = "Türkiye";
+    const suggestion = checkLocationName(typed)?.suggestion ?? "";
+    expect(suggestion).not.toBe("");
+    expect(suggestion).not.toBe(typed);
+    const result = await tool.run(CTX, {
+      target: "example.com",
+      keywords: ["seo tools"],
+      location_name: typed,
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/you were not charged/i);
+    expect(text).toContain(suggestion);
+    expect(text).not.toBe(NOT_ENABLED_MESSAGE);
   });
 
   it("refuses when live access is unavailable, and never serves the fixture as real data", async () => {

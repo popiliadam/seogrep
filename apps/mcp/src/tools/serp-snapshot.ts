@@ -10,6 +10,7 @@ import {
   type SerpSnapshotPort,
   type SerpSnapshotQuery,
 } from "../dfs/serp.ts";
+import { checkLocationName, locationRefusalMessage } from "../dfs/locations.ts";
 import { SERP_DEVICES, type TrackedDevice } from "./serp-devices.ts";
 import {
   DEFAULT_DEVICE,
@@ -127,7 +128,10 @@ const inputSchema = z.object({
     .default(DEFAULT_LOCATION_NAME)
     .describe(
       `Where the search is measured, as DataForSEO names it (default "${DEFAULT_LOCATION_NAME}"). ` +
-        "Results differ by country, so this is part of what the measurement means.",
+        "Results differ by country, so this is part of what the measurement means. The vendor " +
+        "matches this name exactly and its spelling is sometimes not the usual English one (it " +
+        'calls Turkey "Turkiye"); a name it is known not to use is refused before the reserve is ' +
+        "opened, with the right one named, and costs nothing.",
     ),
   language_code: z
     .string()
@@ -210,8 +214,17 @@ export function makeSerpSnapshotTool(deps: SerpSnapshotDeps = {}): RegisteredToo
           `${error instanceof Error ? error.message : String(error)} You were not charged.`,
         );
       }
+      // Free pre-reserve gate 3 — the location name. `track_keywords` refuses the same names at
+      // registration, but this tool can be called without ever registering anything, and it is the
+      // one holding the money: a name the vendor does not know comes back `40501 Invalid Field:
+      // 'location_name'` AFTER the search is paid for, which is how one typo cost 13 credits and
+      // $0.03 on 2026-08-25. Checked here it costs a string comparison and charges nothing.
+      const badLocation = checkLocationName(input.location_name);
+      if (badLocation !== null) {
+        return errorResult(`${locationRefusalMessage(badLocation)} You were not charged.`);
+      }
       const port = deps.port ?? resolveDefaultSerpSnapshotPort();
-      // Free pre-reserve gate 3 — refuse rather than reserve credits or serve fixture positions.
+      // Free pre-reserve gate 4 — refuse rather than reserve credits or serve fixture positions.
       if (!port.enabled) {
         return errorResult(NOT_ENABLED_MESSAGE);
       }

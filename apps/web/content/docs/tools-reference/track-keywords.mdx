@@ -40,7 +40,7 @@ Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the
 | `project_id` | string (uuid) | Yes | The project these keywords belong to (from list_projects). Tracking is per project: the domain whose ranking is being watched is the project's. |
 | `keywords` | string[] | Yes | The keywords to track (or untrack), up to 100 — the same number one project may track in total. They are stored trimmed and lower-cased, so two spellings differing only in case or spacing are ONE tracked keyword. |
 | `action` | string | No | "track" (default) starts watching these keywords; "untrack" stops. Untracking archives the keyword rather than deleting it — tracking it again brings back the same record, and no stored measurement is ever removed by either. |
-| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). It is part of what is tracked: the same keyword in two locations is two tracked keywords. |
+| `location_name` | string | No | Where the search is measured, as DataForSEO names it (default "United States"). It is part of what is tracked: the same keyword in two locations is two tracked keywords. The vendor matches this name exactly and its spelling is sometimes not the usual English one (it calls Turkey "Turkiye"); a name it is known not to use is refused here, with the right one named, rather than at the end of a paid SERP snapshot. |
 | `language_code` | string | No | The search language (default "en"). Part of what is tracked, like the location. |
 | `device` | string | No | Which SERP to watch (default "desktop"). Google returns different results and a different layout on each, so a desktop ranking says nothing about a mobile one — the device is part of what is tracked. |
 
