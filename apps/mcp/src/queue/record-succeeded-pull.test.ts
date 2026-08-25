@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { recordSucceededPull } from "./boss.ts";
-import type { Json, JobStatus, ServiceClient } from "../db.ts";
+import { formatJobStatus } from "../tools/get-job-status.ts";
+import type { Json, JobRow, JobStatus, ServiceClient } from "../db.ts";
 
 /**
  * B10 — `recordSucceededPull` writes ONE row, already terminal.
@@ -27,6 +28,8 @@ interface StoredRow {
   project_id: string | null;
   tool: string;
   status: JobStatus;
+  created_at: string;
+  started_at: string | null;
   finished_at: string | null;
   result: Json | null;
 }
@@ -46,7 +49,7 @@ interface FakeJobs {
  * the table in its INTERMEDIATE state and the statement meant to finish it does not land. A
  * dropped connection, a PostgREST 5xx and a process kill all look like this from here.
  */
-function fakeJobs({ updateFails = false } = {}): FakeJobs {
+function fakeJobs({ updateFails = false, insertClock = INSERT_CLOCK } = {}): FakeJobs {
   const rows: StoredRow[] = [];
   const statements: string[] = [];
   let nextId = 1;
@@ -64,6 +67,13 @@ function fakeJobs({ updateFails = false } = {}): FakeJobs {
             // The DDL's default, applied here rather than assumed away: an insert that does
             // not name `status` produces a QUEUED row, which is the whole hazard.
             status: (values.status as JobStatus | undefined) ?? "queued",
+            // `created_at timestamptz not null default now()` — and `now()` here is the
+            // INSERT's instant, which for this recorder is AFTER the work. An insert that does
+            // not name the column therefore lands the production bug (see INSERT_CLOCK).
+            created_at: (values.created_at as string | undefined) ?? insertClock.toISOString(),
+            // No default in the DDL: an insert that does not name it stores NULL, exactly as
+            // the four live pull_gsc_data rows do.
+            started_at: (values.started_at as string | null | undefined) ?? null,
             finished_at: (values.finished_at as string | null | undefined) ?? null,
             result: (values.result as Json | undefined) ?? null,
           };
@@ -95,24 +105,46 @@ function fakeJobs({ updateFails = false } = {}): FakeJobs {
 
 const PULL: Json = { days: 90, current: { rows: [] }, previous: { rows: [] } };
 
+/**
+ * One run, and the instant its row is INSERTED — modelled on the live shape, not invented.
+ *
+ * The measured production line was `created 2026-08-25T15:42:59.928Z · finished
+ * 2026-08-25T15:42:46.054Z`: a job that finished 13.874 seconds before it was created. That is
+ * what a row written AFTER its work looks like when `created_at` is left to `default now()`,
+ * so the fake's insert clock sits exactly that far past the finish. Any write here that omits
+ * `created_at` reproduces the bug rather than being quietly rescued by a permissive double.
+ */
+const RUN_STARTED_AT = new Date("2026-08-25T15:42:32.180Z");
+const RUN_FINISHED_AT = new Date("2026-08-25T15:42:46.054Z");
+const INSERT_CLOCK = new Date("2026-08-25T15:42:59.928Z");
+
+/** The recorder's arguments for one ordinary, ordered run. */
+const RUN = {
+  userId: "user-1",
+  projectId: "proj-1",
+  result: PULL,
+  startedAt: RUN_STARTED_AT,
+  finishedAt: RUN_FINISHED_AT,
+};
+
+/**
+ * Promote a stored row to a full JobRow. Only the two columns this recorder never writes are
+ * supplied here; every stamp under test comes from the row the REAL writer produced.
+ */
+function asJobRow(row: StoredRow): JobRow {
+  return { ...row, error: null, reserve_id: null };
+}
+
 describe("recordSucceededPull", () => {
   it("writes the finished row in ONE statement", async () => {
     const jobs = fakeJobs();
-    await recordSucceededPull(jobs.client, {
-      userId: "user-1",
-      projectId: "proj-1",
-      result: PULL,
-    });
+    await recordSucceededPull(jobs.client, RUN);
     expect(jobs.statements).toEqual(["insert"]);
   });
 
   it("keeps the stored row shape: succeeded, finished, carrying the pull, no reserve", async () => {
     const jobs = fakeJobs();
-    const { jobId } = await recordSucceededPull(jobs.client, {
-      userId: "user-1",
-      projectId: "proj-1",
-      result: PULL,
-    });
+    const { jobId } = await recordSucceededPull(jobs.client, RUN);
     expect(jobs.rows).toHaveLength(1);
     const row = jobs.rows[0];
     expect(jobId).toBe(row?.id);
@@ -136,7 +168,7 @@ describe("recordSucceededPull", () => {
   it("leaves no queued ghost row when the table refuses every UPDATE", async () => {
     const jobs = fakeJobs({ updateFails: true });
     await expect(
-      recordSucceededPull(jobs.client, { userId: "user-1", projectId: "proj-1", result: PULL }),
+      recordSucceededPull(jobs.client, RUN),
     ).resolves.toEqual({ jobId: expect.any(String) });
     expect(jobs.rows.map((row) => row.status)).toEqual(["succeeded"]);
     expect(jobs.rows.filter((row) => row.status === "queued")).toEqual([]);
@@ -153,7 +185,89 @@ describe("recordSucceededPull", () => {
       }),
     } as unknown as ServiceClient;
     await expect(
-      recordSucceededPull(client, { userId: "user-1", projectId: "proj-1", result: PULL }),
+      recordSucceededPull(client, RUN),
     ).rejects.toThrow(/recordSucceededPull.*permission denied/);
+  });
+});
+
+/**
+ * S11 — THE LIFECYCLE STAMPS, asserted where they are actually decided.
+ *
+ * WHICH LEVEL CONSTRAINS THE VALUE, and why it is this one. A spec that built a jobs row by hand
+ * and checked its own three fields would prove only that the test author can write ordered
+ * strings. The value is decided by the INSERT statement `recordSucceededPull` issues, against a
+ * table whose DDL fills in what the statement omits — so the assertions below run over the row
+ * the REAL exported writer produced, through a fake that reproduces both DDL defaults that made
+ * the bug (`created_at default now()` at insert time, `started_at` with no default at all).
+ * Remove either stamp from the writer and the fake supplies exactly what Postgres supplies,
+ * which is what makes these go red instead of green.
+ *
+ * What this lane still cannot show: that PostgREST accepts `created_at` / `started_at` on an
+ * INSERT at all. That is the SQL's business — both columns are plain nullable/defaulted columns
+ * with no trigger (migrations 0001 + 0009) and the service role has full table grants — and it
+ * is the DB lane's to measure. It is NOT measured here and was NOT run for this change.
+ */
+describe("recordSucceededPull lifecycle stamps", () => {
+  it("stamps the RUN's own bracket, not the instant of the insert", async () => {
+    const jobs = fakeJobs();
+    await recordSucceededPull(jobs.client, RUN);
+    const row = jobs.rows[0];
+    expect(row?.started_at).toBe(RUN_STARTED_AT.toISOString());
+    expect(row?.finished_at).toBe(RUN_FINISHED_AT.toISOString());
+    // The point of the whole slice: created_at is the run's start, NOT INSERT_CLOCK.
+    expect(row?.created_at).toBe(RUN_STARTED_AT.toISOString());
+    expect(row?.created_at).not.toBe(INSERT_CLOCK.toISOString());
+  });
+
+  it("holds finished_at >= started_at >= created_at on the row it actually writes", async () => {
+    const jobs = fakeJobs();
+    await recordSucceededPull(jobs.client, RUN);
+    const row = jobs.rows[0];
+    expect(row?.started_at).not.toBeNull();
+    const created = Date.parse(row?.created_at ?? "");
+    const started = Date.parse(row?.started_at ?? "");
+    const finished = Date.parse(row?.finished_at ?? "");
+    expect(started).toBeGreaterThanOrEqual(created);
+    expect(finished).toBeGreaterThanOrEqual(started);
+  });
+
+  /**
+   * THE WALL CLOCK MOVING BACKWARDS. An NTP correction between the two reads the handler takes
+   * is the ordinary cause; the stored pair would then describe a run that ended before it began,
+   * and every reader from here to the panel would have to defend against it forever.
+   *
+   * It must NOT throw: this runs on the success path of a charged tool, so a throw would send
+   * withCredits down its release path and turn a clock correction into a failed, delivered pull.
+   */
+  it("never stores an inverted pair when the clock steps backwards mid-run", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const jobs = fakeJobs();
+    await recordSucceededPull(jobs.client, {
+      ...RUN,
+      finishedAt: new Date(RUN_STARTED_AT.getTime() - 13_874),
+    });
+    const row = jobs.rows[0];
+    expect(Date.parse(row?.finished_at ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(row?.started_at ?? ""),
+    );
+    expect(logged).toHaveBeenCalledWith(expect.stringMatching(/moved backwards/));
+    logged.mockRestore();
+  });
+
+  /**
+   * END TO END ACROSS THE TWO HALVES, with no hand-built row in between: the writer's OWN output
+   * is handed to the reader that printed the nonsense. This is the line a customer sees.
+   */
+  it("renders as an ordered line with a duration once read back by get_job_status", async () => {
+    const jobs = fakeJobs();
+    await recordSucceededPull(jobs.client, RUN);
+    const line = formatJobStatus(asJobRow(jobs.rows[0] as StoredRow));
+    expect(line).toContain(`created ${RUN_STARTED_AT.toISOString()}`);
+    expect(line).toContain(`started ${RUN_STARTED_AT.toISOString()}`);
+    expect(line).toContain(`finished ${RUN_FINISHED_AT.toISOString()}`);
+    expect(line).toContain("took 13.9s");
+    expect(line).not.toMatch(/out of order/);
+    // No minus sign anywhere: a negative duration must be unrepresentable, not merely unlikely.
+    expect(line).not.toMatch(/took -/);
   });
 });
