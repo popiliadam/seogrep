@@ -19,6 +19,7 @@ import type { BacklinkDetailRow, VendorWindow } from "../dfs/backlink-details.ts
 import {
   DISAVOW_FILE_CAPTION,
   NO_SUBMISSION_NOTICE,
+  NOFOLLOW_ONLY_MARKER,
   VENDOR_JUDGEMENT_NOTE,
   formatDisavowCandidates,
   makeDisavowCandidatesTool,
@@ -301,6 +302,27 @@ describe("NEVER #7 — the vendor's three scores, under the vendor's three names
     expect(row).toMatch(/worst backlink_spam_score 60 in this window/);
     // No composite: the mean of the two would be 30, and no third number is invented.
     expect(row).not.toMatch(/\b30\b/);
+  });
+
+  /**
+   * NOFOLLOW-ONLY IS MARKED, NEVER REMOVED (operator decision). Google does not count a nofollowed
+   * link, so a candidate whose whole window carries none the vendor marked dofollow may be a
+   * `domain:` entry that accomplishes nothing — 21 of 46 candidates were in that state on the
+   * 2026-08-25 run. The row keeps its place in the list and gains a sentence; it does not vanish.
+   */
+  it("marks a candidate whose window has NO vendor-marked dofollow link, and still renders it", () => {
+    const row = renderCandidateRow({ ...SCORED, window_dofollow_link_count: 0 });
+    expect(row).toContain(SCORED.domain);
+    expect(row).toContain(NOFOLLOW_ONLY_MARKER);
+    expect(row).toMatch(/google does not count nofollowed links/i);
+    // The marking states what was measured, not what the links are.
+    expect(row).toMatch(/none of these links is marked dofollow/i);
+    expect(row).not.toMatch(/\bare nofollow/i);
+  });
+
+  it("does not mark a candidate that HAS a vendor-marked dofollow link in the window", () => {
+    expect(renderCandidateRow(SCORED)).not.toContain(NOFOLLOW_ONLY_MARKER);
+    expect(renderCandidateRow(SCORED)).not.toMatch(/google does not count/i);
   });
 
   /** Same rule on the network axis, whose fixture row carries nothing but an address. */

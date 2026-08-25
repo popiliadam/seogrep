@@ -952,6 +952,76 @@ describe("both score levels on every disavow entry", () => {
 });
 
 // =============================================================================================
+// NOFOLLOW-ONLY CANDIDATES ARE MARKED — AND NEVER REMOVED (operator decision).
+// Measured on the same run: 21 of 46 candidates carried `0 marked dofollow`. Google does not
+// count a nofollowed link, so those entries may accomplish nothing — and the file said nothing.
+// =============================================================================================
+describe("nofollow-only candidates", () => {
+  const MIXED_FOLLOW = [
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/a", dofollow: false, backlink_spam_score: 60 },
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/b", dofollow: false, backlink_spam_score: 41 },
+    { domain_from: "followed.example", url_from: "https://followed.example/a", dofollow: true, backlink_spam_score: 44 },
+  ];
+  const MIXED_SCORES = [
+    { target: "booksreadr.org", spam_score: 0 },
+    { target: "followed.example", spam_score: 9 },
+  ];
+
+  /** THE OPERATOR DECISION, pinned on the axis that would break it: presence, not wording. */
+  it("STILL LISTS a nofollow-only domain — it is marked, never filtered out", async () => {
+    const text = await fileFrom(MIXED_FOLLOW, MIXED_SCORES);
+    expect(text.split("\n")).toContain("domain:booksreadr.org");
+    // ...and the header's own count agrees, so the entry is not a leftover the summary disowns.
+    expect(text).toContain("Candidates listed: 2.");
+  });
+
+  it("marks it, and says why the entry may accomplish nothing", async () => {
+    const block = entryBlock(await fileFrom(MIXED_FOLLOW, MIXED_SCORES), "booksreadr.org");
+    expect(block).toMatch(/none of the 2 links in this window is marked dofollow/i);
+    expect(block).toMatch(/google does not count nofollowed links/i);
+    expect(block).toMatch(/may change nothing/i);
+  });
+
+  it("does not mark a domain that HAS a vendor-marked dofollow link in the window", async () => {
+    const block = entryBlock(await fileFrom(MIXED_FOLLOW, MIXED_SCORES), "followed.example");
+    expect(block).not.toMatch(/nofollow/i);
+    expect(block).not.toMatch(/may change nothing/i);
+  });
+
+  /**
+   * The marking states what was MEASURED. A link the vendor marked NEITHER way is not a link the
+   * vendor called nofollow, so the note says "none is marked dofollow" and never "these are
+   * nofollow links" — otherwise a vendor silence would leave this module as a vendor statement.
+   */
+  it("claims only 'none is marked dofollow', never that the vendor called them nofollow", async () => {
+    const block = entryBlock(
+      await fileFrom(
+        [{ domain_from: "unmarked.example", url_from: "https://unmarked.example/a", backlink_spam_score: 50 }],
+        [{ target: "unmarked.example", spam_score: 3 }],
+      ),
+      "unmarked.example",
+    );
+    expect(block).toMatch(/none of the 1 link in this window is marked dofollow/i);
+    // Never a claim ABOUT the links themselves — only about what the vendor marked.
+    expect(block).not.toMatch(/\bare nofollow/i);
+    expect(block).not.toMatch(/\bthese (are|links are) nofollow/i);
+  });
+
+  /** The singular/plural of the count is the vendor's own row count, not a fixed word. */
+  it("counts the links it is talking about", async () => {
+    const one = entryBlock(
+      await fileFrom(
+        [{ domain_from: "solo.example", url_from: "https://solo.example/a", dofollow: false }],
+        [{ target: "solo.example", spam_score: 5 }],
+      ),
+      "solo.example",
+    );
+    expect(one).toMatch(/none of the 1 link in this window/i);
+    expect(one).not.toMatch(/1 links/);
+  });
+});
+
+// =============================================================================================
 // Ports.
 // =============================================================================================
 describe("createMockDisavowCandidatesPort", () => {
