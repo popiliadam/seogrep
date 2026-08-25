@@ -211,6 +211,110 @@ describe("setup_project opens projects through the shared route", () => {
   });
 
   /**
+   * S4 — THE `www.` SPLIT, measured 6 times in one live account on 2026-08-25.
+   *
+   * `setup_project`'s own description promises "calling it again for the same domain returns the
+   * existing project". For the form a customer pastes out of the address bar that promise was
+   * FALSE: scheme, path and query were stripped, `www.` was not, and `https://www.seogrep.com/…`
+   * opened a second project beside `seogrep.com`.
+   *
+   * All four spellings are driven against ONE store, so the assertion is not merely "each call
+   * answered something" — the table ends with a single row.
+   */
+  it("lands every spelling of one site on ONE project, `www.` included", async () => {
+    const store = makeProjectsStore();
+    getServiceClient.mockReturnValue(store.client);
+
+    const first = await run("example.com");
+    expect(first.text).toMatch(/created: true/i);
+
+    for (const spelling of ["www.example.com", "https://www.example.com/x?y=1", "EXAMPLE.COM"]) {
+      const again = await run(spelling);
+      expect(again.isError).toBe(false);
+      expect(again.text).toMatch(/already exists/i);
+      expect(again.text).toContain("new-1");
+    }
+    expect(store.rows).toHaveLength(1);
+    expect(store.inserted).toEqual([{ user_id: "user-1", domain: "example.com" }]);
+  });
+
+  /**
+   * THE SIX ROWS THAT ALREADY EXIST. This fix is forward-only — no migration rewrites
+   * `www.noraninsaat.com` — so a stored `www.` domain has to stay REACHABLE from the canonical
+   * host, or the first call after the deploy opens a seventh project next to it.
+   *
+   * The sentence names the domain AS STORED, because that is what list_projects shows.
+   */
+  it("finds a legacy `www.` project from the canonical host, and opens nothing", async () => {
+    const store = makeProjectsStore([
+      { id: "p-legacy", user_id: "user-1", domain: "www.noraninsaat.com", archived_at: null },
+    ]);
+    getServiceClient.mockReturnValue(store.client);
+
+    const { text, isError } = await run("noraninsaat.com");
+
+    expect(isError).toBe(false);
+    expect(text).toMatch(/already exists/i);
+    expect(text).toContain("p-legacy");
+    expect(text).toContain("www.noraninsaat.com");
+    expect(store.inserted).toEqual([]);
+    expect(store.rows).toHaveLength(1);
+  });
+
+  it("restores a legacy `www.` project from the archive instead of opening a second one", async () => {
+    const store = makeProjectsStore([
+      { id: "p-legacy", user_id: "user-1", domain: "www.eykom.com", archived_at: ARCHIVED_AT },
+    ]);
+    getServiceClient.mockReturnValue(store.client);
+
+    const { text, isError } = await run("https://eykom.com/");
+
+    expect(isError).toBe(false);
+    expect(text).toMatch(/restored/i);
+    expect(text).toContain("p-legacy");
+    expect(store.inserted).toEqual([]);
+    expect(store.rows[0]?.archived_at).toBeNull();
+  });
+
+  /**
+   * BOTH rows exist — the live account holds `seogrep.com` AND `www.seogrep.com`. Neither is
+   * merged here (that is a separate, measured decision), but the answer must not depend on which
+   * row a query happened to return first: every call lands on the CANONICAL one.
+   */
+  it("prefers the canonical row over its `www.` twin, on every call and both ways round", async () => {
+    const store = makeProjectsStore([
+      { id: "p-www", user_id: "user-1", domain: "www.seogrep.com", archived_at: null },
+      { id: "p-bare", user_id: "user-1", domain: "seogrep.com", archived_at: null },
+    ]);
+    getServiceClient.mockReturnValue(store.client);
+
+    for (const spelling of ["seogrep.com", "www.seogrep.com"]) {
+      const { text } = await run(spelling);
+      expect(text).toContain("p-bare");
+      expect(text).not.toContain("p-www");
+    }
+    expect(store.inserted).toEqual([]);
+  });
+
+  /**
+   * THE TRAP. `www.` is the ONLY label that may be dropped. A subdomain is a different website
+   * with different content, and folding it into the apex would merge two customers' sites — a
+   * far worse failure than the duplication being fixed.
+   */
+  it("keeps a subdomain distinct from the apex — only `www.` is cosmetic", async () => {
+    const store = makeProjectsStore([
+      { id: "p-apex", user_id: "user-1", domain: "example.com", archived_at: null },
+    ]);
+    getServiceClient.mockReturnValue(store.client);
+
+    const { text } = await run("blog.example.com");
+
+    expect(text).toMatch(/created: true/i);
+    expect(text).not.toContain("p-apex");
+    expect(store.inserted).toEqual([{ user_id: "user-1", domain: "blog.example.com" }]);
+  });
+
+  /**
    * NEVER #4: this client is service-role and bypasses RLS, so the `user_id` filter is the only
    * tenant boundary. Another tenant's archived row for the same domain must be invisible.
    */
