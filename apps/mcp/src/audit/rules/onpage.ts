@@ -20,6 +20,20 @@ const META_MIN = 50;
 // Pages under ~200 words seldom carry enough substance to rank or satisfy intent.
 const THIN_CONTENT_WORDS = 200;
 
+/**
+ * EVERY THRESHOLD FINDING CARRIES ITS THRESHOLD. "title too long (62 chars)" tells the reader they
+ * broke a rule but not which one, so they cannot tell 2 over from 30 over — and in a 30-credit
+ * report that is the difference between "trim two words" and "rewrite it". The measured value and
+ * the bound it broke are therefore rendered together, from the constants above, so the two can
+ * never drift apart in the prose.
+ */
+function overLimit(measured: number, unit: string, limit: number): string {
+  return `(${measured} ${unit}, limit ${limit})`;
+}
+function underMinimum(measured: number, unit: string, minimum: number): string {
+  return `(${measured} ${unit}, minimum ${minimum})`;
+}
+
 export interface OnpageFinding {
   readonly type: string;
   readonly text: string;
@@ -98,15 +112,15 @@ function findingsFor(
 
   if (!title) out.push({ type: "missing_title", text: "missing title" });
   else {
-    if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long (${title.length} chars)` });
-    else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short (${title.length} chars)` });
+    if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long ${overLimit(title.length, "chars", TITLE_MAX)}` });
+    else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short ${underMinimum(title.length, "chars", TITLE_MIN)}` });
     if (dupTitles.has(title)) out.push({ type: "duplicate_title", text: "duplicate title (shared with another page)" });
   }
 
   if (!meta) out.push({ type: "missing_meta", text: "missing meta description" });
   else {
-    if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long (${meta.length} chars)` });
-    else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short (${meta.length} chars)` });
+    if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long ${overLimit(meta.length, "chars", META_MAX)}` });
+    else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short ${underMinimum(meta.length, "chars", META_MIN)}` });
     if (dupMetas.has(meta)) out.push({ type: "duplicate_meta", text: "duplicate meta description (shared with another page)" });
   }
 
@@ -119,7 +133,10 @@ function findingsFor(
   }
 
   if (page.wordCount < THIN_CONTENT_WORDS) {
-    out.push({ type: "thin_content", text: `thin content (${page.wordCount} words)` });
+    out.push({
+      type: "thin_content",
+      text: `thin content ${underMinimum(page.wordCount, "words", THIN_CONTENT_WORDS)}`,
+    });
   }
 
   // --- rules over the newer page signals ------------------------------------------

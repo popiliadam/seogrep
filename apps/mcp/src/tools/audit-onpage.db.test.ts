@@ -162,7 +162,11 @@ describe("audit_onpage sync charge against the local stack", () => {
     const result = await auditOnpageTool.run(ctx, { project_id: projectId });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain("missing meta description");
-    expect(result.content[0]?.text).toContain("thin content (50 words)");
+    // S10e: the thin-content finding now names the floor it broke as well as the count it
+    // measured. Kept as the FULL phrase rather than loosened to "thin content" — this assertion
+    // is what proves the reply the customer is charged 30 credits for reached them intact, and a
+    // prefix match would pass on a message that had lost its numbers entirely.
+    expect(result.content[0]?.text).toContain("thin content (50 words, minimum 200)");
 
     // ONE reserve+commit chain on the ledger, net -30.
     const rows = await ledgerRows(ctx.userId);

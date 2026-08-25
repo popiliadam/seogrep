@@ -109,3 +109,40 @@ describe("auditOnpage — heading, canonical, thin-content rules", () => {
     expect(typesFor(auditOnpage(crawl([page({ url: "https://e/b", wordCount: 200 })])), "https://e/b")).not.toContain("thin_content");
   });
 });
+
+/** The text of the finding of `type` on `url` — "" when the rule did not fire at all. */
+function textFor(report: ReturnType<typeof auditOnpage>, url: string, type: string): string {
+  return report.pages.find((p) => p.url === url)?.findings.find((f) => f.type === type)?.text ?? "";
+}
+
+/**
+ * EVERY THRESHOLD-BASED FINDING NAMES ITS THRESHOLD.
+ *
+ * The measured complaint: `title too long (62 chars)` told a customer they broke a rule without
+ * saying which, so 2-over and 30-over read identically. Each row below therefore asserts TWO
+ * numbers on one finding — what was measured, and the bound it broke — as regexes over the prose
+ * rather than by comparing the whole string to a source literal, which would pass no matter what
+ * the sentence said. Deleting the bound from any one message turns that row red on its second
+ * expectation, and only that one.
+ *
+ * The bounds are LITERALS here on purpose: 60/10/160/50/200 are the product's numbers, not the
+ * module's, so importing them back out of the module under test would let a silent change to a
+ * constant carry its own test along with it.
+ */
+describe("auditOnpage — every threshold finding states its threshold", () => {
+  const cases: { rule: string; type: string; measured: number; bound: number; fields: Partial<AuditPage> }[] = [
+    { rule: "title too long", type: "title_too_long", measured: 62, bound: 60, fields: { title: "x".repeat(62) } },
+    { rule: "title too short", type: "title_too_short", measured: 7, bound: 10, fields: { title: "Dentist" } },
+    { rule: "meta too long", type: "meta_too_long", measured: 161, bound: 160, fields: { metaDescription: "y".repeat(161) } },
+    { rule: "meta too short", type: "meta_too_short", measured: 9, bound: 50, fields: { metaDescription: "too short" } },
+    { rule: "thin content", type: "thin_content", measured: 42, bound: 200, fields: { wordCount: 42 } },
+  ];
+
+  it.each(cases)("$rule reports the measured value AND the bound it broke", ({ type, measured, bound, fields }) => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", ...fields })]));
+    const text = textFor(report, "https://e/a", type);
+    expect(text, `${type} did not fire`).not.toBe("");
+    expect(text, "the measured value is missing").toMatch(new RegExp(String.raw`\b${measured}\b`));
+    expect(text, "the threshold the value broke is missing").toMatch(new RegExp(String.raw`\b${bound}\b`));
+  });
+});

@@ -104,9 +104,20 @@ const LEGACY_RESULT: Json = {
  * The MEASUREMENT, not a guess: sha256 (hex) and byte length of each rendered report, produced by
  * running the renderers at `main` (f954d3d, the commit this branch forked from) over the fixture
  * above. Any change to any of the three outputs on old-shaped data turns this red.
+ *
+ * RE-CUT ONCE, DELIBERATELY (S10e — thresholds in the finding text). Every threshold finding now
+ * renders the bound it broke alongside the value it measured: `title too long (65 chars, limit
+ * 60)` where it used to say `(65 chars)`. That is a wording change to the on-page report, so this
+ * digest HAD to move; the pin did its job by refusing the change silently.
+ *
+ * THE ARITHMETIC IS THE PROOF THAT NOTHING ELSE MOVED. On-page grew 1031 -> 1091 bytes, and +60
+ * is exactly the five suffixes this fixture earns and nothing more: `, minimum 200` twice (2x13)
+ * + `, limit 60` (10) + `, minimum 50` (12) + `, minimum 10` (12). No new line, no new section,
+ * and no finding from the new stray-edge rule — this fixture's titles are all clean prose.
+ * `tech` and `schema` are untouched, which is the other half of the same statement.
  */
 const __baseline__ = {
-  onpage: { bytes: 1031, sha256: "8d41a3380736fe8e52b02a996ff64a7f875a0c3e1c2cbde716db6ad9b714c986" },
+  onpage: { bytes: 1091, sha256: "71b222a583638607904f1cc1cc1bfad390206c1fd99a6c35a487a53ebc06a2fb" },
   tech: { bytes: 748, sha256: "0cbf727daedc2157ffaef46da55b2c908246ca466d627784abd0c88847e0111a" },
   schema: { bytes: 442, sha256: "109001323c5f9de8760be8921f3a3bc406b22b43100a1062182090c759071f59" },
 } as const;
