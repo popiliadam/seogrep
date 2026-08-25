@@ -1,13 +1,16 @@
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { TOOL_COSTS } from "../credits/costs.ts";
+import { TOOL_COSTS, creditCostFor } from "../credits/costs.ts";
+import type { CreditContext, CreditMeta } from "../credits/guard.ts";
 import {
-  DEFAULT_INTERNAL_LIST_ROWS,
+  DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+  LlmMentionsVendorError,
   MAX_INTERNAL_LIST_ROWS,
   PLATFORM_MEANS,
   ROW_ORDER,
   ROW_ORDER_MEANS,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityResult,
@@ -22,7 +25,7 @@ import {
   formatAiVisibility,
   makeAiVisibilityTool,
 } from "./ai-visibility.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE } from "./ai-visibility-shared.ts";
+import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -235,23 +238,31 @@ describe("THE SUBJECT DISCRIMINATION — two subjects, two inputs, nothing borro
   });
 });
 
-describe("the price control — the schema's maximum IS the port's row cap", () => {
+describe("the schema's maximum IS the vendor's published ceiling", () => {
   const tool = makeAiVisibilityTool();
 
   /**
-   * THE ROW CAP IS THE PRICE. The 2026-08-17 signature makes `internal_list_limit <= 100`
-   * MANDATORY and measured the margin AT that cap (5.58x); uncapped at 1,000 rows the same 90
-   * credits buy $1.10 of vendor cost against $1.116 of revenue. The maximum is asserted AGAINST
-   * the port's constant rather than restated, so a surface that accepted more than the port clamps
-   * to would turn this red instead of quietly erasing the margin (NEVER #6).
+   * WAS "the price control — the schema's maximum IS the port's row cap", asserting 100. The
+   * PREMISE was falsified on 2026-08-25: DataForSEO publishes "maximum value: `20`" for this
+   * endpoint's `internal_list_limit`, so the surface was advertising — and the port was sending —
+   * a value the vendor rejects at the TASK. That is the whole outage, and this is its surface half.
+   *
+   * The maximum is still asserted AGAINST a port constant rather than restated; the constant it
+   * asserts against is now the VENDOR's ceiling for THIS endpoint rather than the pricing basis.
    */
-  it("caps internal_list_limit at exactly the port's constant, and defaults to it", () => {
+  it("caps internal_list_limit at exactly the vendor's ceiling, and defaults to it", () => {
     const schema = tool.inputJsonSchema as {
       properties: Record<string, { default?: number; maximum?: number; minimum?: number }>;
     };
-    expect(schema.properties.internal_list_limit?.maximum).toBe(MAX_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.maximum).toBe(
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    );
     expect(schema.properties.internal_list_limit?.minimum).toBe(1);
-    expect(schema.properties.internal_list_limit?.default).toBe(DEFAULT_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.default).toBe(
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    );
+    // The surface must never again advertise the PRICING basis as a vendor-accepted value.
+    expect(schema.properties.internal_list_limit?.maximum).not.toBe(MAX_INTERNAL_LIST_ROWS);
   });
 
   it("rejects a row count past the cap before any work", async () => {
@@ -259,7 +270,7 @@ describe("the price control — the schema's maximum IS the port's row cap", () 
       subject: "keyword",
       keyword: "x",
       platform: "chat_gpt",
-      internal_list_limit: MAX_INTERNAL_LIST_ROWS + 1,
+      internal_list_limit: VENDOR_MAX_INTERNAL_LIST_AGGREGATED + 1,
     });
     expect(wide.isError).toBe(true);
     expect(wide.content[0]?.text).toMatch(/invalid input/i);
@@ -427,7 +438,11 @@ describe("the output says WHAT was asked and over WHAT set", () => {
 
   it("captions the rows with our cap and the vendor's whole-set count, kept apart", async () => {
     const text = await fixtureAnswer();
-    expect(text).toContain(`3 rows came back under an internal_list_limit of ${MAX_INTERNAL_LIST_ROWS}`);
+    // The caption prints the limit that was actually SENT — the vendor's ceiling, not the pricing
+    // basis. Printing 100 here would caption the answer with a number the vendor never accepted.
+    expect(text).toContain(
+      `3 rows came back under an internal_list_limit of ${VENDOR_MAX_INTERNAL_LIST_AGGREGATED}`,
+    );
     expect(text).toContain("DataForSEO counts 412 matching this lookup in total");
   });
 
@@ -536,5 +551,182 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
     await expect(
       tool.run(CTX, { subject: "keyword", keyword: "seo software", platform: "chat_gpt" }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// WHAT THE USER IS TOLD WHEN THE VENDOR REFUSES — the other half of the 2026-08-25 damage.
+//
+// Measured in production, three times out of three:
+//
+//     Tool "ai_visibility" failed unexpectedly. The server logged the details under
+//     reference e383191d — quote it if you report this. You were not charged.
+//
+// Three things wrong with that sentence, and one spec each below: it called a vendor refusal an
+// unexpected crash; it withheld what DataForSEO had already said; and "You were not charged" was
+// half true — the credits really were released, but the attempt really did spend SeoGrep's own
+// third-party-data allowance, which is why ten of them took the paid surface down.
+// =============================================================================================
+describe("a vendor refusal is explained, not filed as a crash", () => {
+  const refusal = (code: number | null, message: string | null) =>
+    new LlmMentionsVendorError(
+      DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+      code === null ? "transport" : "vendor_status",
+      code,
+      message,
+      "internal detail the user must never see",
+    );
+
+  const answerTo = async (error: unknown): Promise<string> => {
+    const result = await catchVendorFailure("ai_visibility", () => Promise.reject(error));
+    expect(result.isError).toBe(true);
+    return result.content[0]?.text ?? "";
+  };
+
+  it("never answers a vendor refusal with the generic crash sentence", async () => {
+    const text = await answerTo(refusal(40501, "Invalid Field: 'internal_list_limit'."));
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).not.toMatch(/quote it if you report this/i);
+    expect(text).not.toMatch(/reference/i);
+  });
+
+  it("quotes DataForSEO's OWN status and words, which the old sentence withheld", async () => {
+    const text = await answerTo(refusal(40501, "Invalid Field: 'internal_list_limit'."));
+    expect(text).toContain("40501");
+    expect(text).toContain("Invalid Field: 'internal_list_limit'.");
+    expect(text).toContain("aggregated_metrics");
+  });
+
+  /**
+   * NEVER #7 AT THE FAILURE EDGE. A tool named "AI visibility" answering with an error is read as
+   * "we looked and found little". No measurement happened at all, and the answer has to say so.
+   */
+  it("says the failure implies NOTHING about the subject", async () => {
+    const text = await answerTo(refusal(40501, "x"));
+    expect(text).toMatch(/says nothing about the subject/i);
+    expect(text).toMatch(/no measurement was made at all/i);
+  });
+
+  /**
+   * THE HALF-TRUTH, CLOSED. The credit claim stays (it is true and it was verified in production:
+   * net delta 0, reservation + refund). What is added is the half that was missing, and it is
+   * added WITHOUT a dollar figure — our vendor spend is our margin (dfs/budget-error.ts).
+   */
+  it("tells the truth about cost: credits released, AND our own allowance spent, in no dollars", async () => {
+    const text = await answerTo(refusal(40501, "x"));
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).toMatch(/daily third-party-data allowance/i);
+    expect(text).toMatch(/our cost, not yours/i);
+    expect(text).not.toMatch(/\$\d/);
+    // The bare claim that used to stand alone must not stand alone any more.
+    expect(text).not.toMatch(/You were not charged\.\s*$/);
+  });
+
+  it("says so plainly when the vendor gave no status of its own to quote", async () => {
+    const text = await answerTo(refusal(null, null));
+    expect(text).toMatch(/did not return a readable answer/i);
+    expect(text).toMatch(/gave no status of its own/i);
+  });
+
+  /**
+   * THE CATCH IS NARROW ON PURPOSE. A genuine crash — a broken run-ledger write, a renderer bug —
+   * must keep reaching the registry's generic branch. Dressing one as "the vendor had a problem"
+   * is the disguise the 2026-08-09 campaign found twelve real failures wearing.
+   */
+  it("rethrows anything that is NOT a vendor failure", async () => {
+    const boom = new Error("subject_lookup_runs write failed");
+    await expect(catchVendorFailure("ai_visibility", () => Promise.reject(boom))).rejects.toBe(boom);
+  });
+
+  it("passes a successful lookup straight through", async () => {
+    const ok = await catchVendorFailure("ai_visibility", async () => ({
+      content: [{ type: "text" as const, text: "fine" }],
+    }));
+    expect(ok.content[0]?.text).toBe("fine");
+  });
+});
+
+// =============================================================================================
+// THE WIRING, NOT THE HELPER — the hole a fresh-context judge found in the first attempt.
+//
+// Every spec above tests `catchVendorFailure` by CALLING IT. That leaves the thing production
+// actually depends on untested: that the ai_visibility HANDLER is wrapped in it. The judge
+// deleted the wrap — `return catchVendorFailure("ai_visibility", lookup)` -> `return lookup()` —
+// and the whole suite stayed GREEN at 2674/2674. The exact production regression this task exists
+// to prevent could be reintroduced with every test in every lane passing. Signed lesson 12's
+// shape, one layer up: the helper was proven, the CALL SITE was not.
+//
+// WHY THE GUARD IS SUBSTITUTED. withCredits runs the paid-balance gate and then the reserve
+// before it ever calls the handler body, and this lane has no database — so with the real guard
+// the injected port is never reached and the vendor error never happens. The sibling
+// ai-visibility-compare.reserve.test.ts established this exact substitution for the same reason;
+// this reuses it.
+//
+// THE DOUBLE IS NOT MORE PERMISSIVE THAN THE RUNTIME on the axis under test: the real guard
+// releases the reserve and RETHROWS the body's error, and this one propagates the rejection
+// unchanged. It also prices the call through the REAL creditCostFor, so a handler that stopped
+// handing the guard a usable CreditMeta throws here exactly as it would in production.
+// =============================================================================================
+describe("the ai_visibility HANDLER is wired to the vendor-failure branch", () => {
+  /**
+   * Drive the REAL tool with a port that fails the way DataForSEO failed on 2026-08-25.
+   * The error is built from the DYNAMICALLY imported module so its identity is the one the
+   * handler's own `instanceof` sees — production's case, not the duplicated-copy case.
+   */
+  async function runAgainstFailingVendor(
+    kind: "vendor_status" | "transport",
+  ): Promise<{ isError?: boolean; text: string; priced: number[] }> {
+    const priced: number[] = [];
+    vi.resetModules();
+    vi.doMock("../credits/guard.ts", () => ({
+      withCredits: async <T>(_ctx: CreditContext, meta: CreditMeta, fn: () => Promise<T>) => {
+        priced.push(creditCostFor(meta.tool, meta.units));
+        return fn();
+      },
+      isReserveCommitFailed: () => false,
+    }));
+    const mentions = await import("../dfs/llm-mentions.ts");
+    const { makeAiVisibilityTool: freshTool } = await import("./ai-visibility.ts");
+    const failure = new mentions.LlmMentionsVendorError(
+      mentions.DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+      kind,
+      kind === "vendor_status" ? 40501 : null,
+      kind === "vendor_status" ? "Invalid Field: 'internal_list_limit'." : null,
+      "operator-only detail that must never reach a user",
+    );
+    const tool = freshTool({
+      port: {
+        enabled: true,
+        fetchAiVisibility: () => Promise.reject(failure),
+        fetchAiVisibilityCompare: () => Promise.reject(failure),
+      },
+      writeRun: async () => undefined,
+    });
+    const result = await tool.run(CTX, {
+      subject: "keyword",
+      keyword: "teeth whitening",
+      platform: "chat_gpt",
+    });
+    return { isError: result.isError, text: result.content[0]?.text ?? "", priced };
+  }
+
+  it("answers a vendor refusal through the REAL handler, explained and never as a crash", async () => {
+    const { isError, text, priced } = await runAgainstFailingVendor("vendor_status");
+    expect(isError).toBe(true);
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toContain("40501");
+    expect(text).toContain("Invalid Field: 'internal_list_limit'.");
+    expect(text).toMatch(/not charged any credits/i);
+    // The operator-only detail stays operator-only, even on the real path.
+    expect(text).not.toContain("operator-only detail that must never reach a user");
+    // ...and the guard really was entered at the signed price, so this is the PRICED path.
+    expect(priced).toEqual([TOOL_COSTS.ai_visibility]);
+  });
+
+  it("does the same when the vendor gave no status at all (transport)", async () => {
+    const { isError, text } = await runAgainstFailingVendor("transport");
+    expect(isError).toBe(true);
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toMatch(/did not return a readable answer/i);
   });
 });

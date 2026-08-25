@@ -1,15 +1,19 @@
 import { readFileSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { CREDIT_UNITS, TOOL_COSTS, creditCostFor } from "../credits/costs.ts";
+import type { CreditContext, CreditMeta } from "../credits/guard.ts";
 import { CONFIRMATION_THRESHOLD_CREDITS } from "./registry.ts";
 import {
+  DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+  LlmMentionsVendorError,
   MAX_COMPARE_TARGETS,
   MAX_INTERNAL_LIST_ROWS,
   MIN_COMPARE_TARGETS,
   PLATFORM_MEANS,
   ROW_ORDER,
   ROW_ORDER_MEANS,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityCompareResult,
@@ -23,7 +27,7 @@ import {
   makeAiVisibilityCompareTool,
   type ResolvedTarget,
 } from "./ai-visibility-compare.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE } from "./ai-visibility-shared.ts";
+import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -229,11 +233,18 @@ describe("THE PER-TARGET PRICE — 90 per compared target, and the confirmation 
     expect(tooMany.isError).toBe(true);
   });
 
-  it("caps internal_list_limit at the port's constant — the same price control as its sibling", () => {
+  /**
+   * WAS asserting the port's 100. This endpoint's PUBLISHED ceiling is 10 — lower still than its
+   * sibling's 20 — which is why one shared constant could never have been right for both, and why
+   * the shared field became a factory. See dfs/llm-mentions.ts for the vendor's quoted wording.
+   */
+  it("caps internal_list_limit at THIS endpoint's vendor ceiling, which is not its sibling's", () => {
     const schema = tool.inputJsonSchema as {
       properties: Record<string, { maximum?: number; default?: number }>;
     };
-    expect(schema.properties.internal_list_limit?.maximum).toBe(MAX_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.maximum).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    expect(schema.properties.internal_list_limit?.default).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    expect(schema.properties.internal_list_limit?.maximum).not.toBe(MAX_INTERNAL_LIST_ROWS);
   });
 
   it("advertises its name, the per-target cost and both endpoints of the range", () => {
@@ -445,5 +456,90 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
         platform: "chat_gpt",
       }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+/**
+ * THE SIBLING'S HALF OF THE SAME OUTAGE. `ai_visibility_compare` failed identically in production
+ * (reference a6f143eb) against a DIFFERENT vendor endpoint, which is what proved the fault was in
+ * the shared layer. Its refusal has to name ITS endpoint, and the per-target charge — up to 900
+ * credits — makes the "you were not charged any credits" clause carry more weight here than
+ * anywhere else on the surface.
+ */
+describe("the compare tool explains a vendor refusal against its OWN endpoint", () => {
+  it("names cross_aggregated_metrics, quotes the vendor, and claims no crash", async () => {
+    const result = await catchVendorFailure("ai_visibility_compare", () =>
+      Promise.reject(
+        new LlmMentionsVendorError(
+          DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+          "vendor_status",
+          40501,
+          "Invalid Field: 'internal_list_limit'.",
+          "operator-only detail",
+        ),
+      ),
+    );
+    const text = result.content[0]?.text ?? "";
+    expect(result.isError).toBe(true);
+    expect(text).toContain("cross_aggregated_metrics");
+    expect(text).not.toContain("aggregated_metrics.");
+    expect(text).toContain("40501");
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).not.toContain("operator-only detail");
+  });
+});
+
+// =============================================================================================
+// THE WIRING, NOT THE HELPER — the sibling's hole, in this tool.
+//
+// The spec above proves `catchVendorFailure` produces the right sentence for THIS endpoint. It
+// does not prove the compare HANDLER is wrapped in it, and a judge deleted the wrap
+// (`return catchVendorFailure("ai_visibility_compare", lookup)` -> `return lookup()`) with the
+// full suite still green. See the sibling file for the argument and for why the guard is
+// substituted; the double is the one ai-visibility-compare.reserve.test.ts already established,
+// and it propagates the body's rejection exactly as the real guard does after releasing.
+// =============================================================================================
+describe("the ai_visibility_compare HANDLER is wired to the vendor-failure branch", () => {
+  it("answers a vendor refusal through the REAL handler, at the per-target price", async () => {
+    const priced: number[] = [];
+    vi.resetModules();
+    vi.doMock("../credits/guard.ts", () => ({
+      withCredits: async <T>(_ctx: CreditContext, meta: CreditMeta, fn: () => Promise<T>) => {
+        priced.push(creditCostFor(meta.tool, meta.units));
+        return fn();
+      },
+      isReserveCommitFailed: () => false,
+    }));
+    const mentions = await import("../dfs/llm-mentions.ts");
+    const { makeAiVisibilityCompareTool: freshTool } = await import("./ai-visibility-compare.ts");
+    const failure = new mentions.LlmMentionsVendorError(
+      mentions.DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+      "vendor_status",
+      40501,
+      "Invalid Field: 'internal_list_limit'.",
+      "operator-only detail that must never reach a user",
+    );
+    const tool = freshTool({
+      port: {
+        enabled: true,
+        fetchAiVisibility: () => Promise.reject(failure),
+        fetchAiVisibilityCompare: () => Promise.reject(failure),
+      },
+      writeRun: async () => undefined,
+    });
+    const result = await tool.run(CTX, {
+      targets: [{ domain: "dentnotion.com" }, { domain: "citydentistanbul.com" }],
+      platform: "chat_gpt",
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toContain("cross_aggregated_metrics");
+    expect(text).toContain("40501");
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).not.toContain("operator-only detail that must never reach a user");
+    // Two targets really did reach the guard as the per-target charge — the PRICED path.
+    expect(priced).toEqual([TOOL_COSTS.ai_visibility_compare * 2]);
   });
 });
