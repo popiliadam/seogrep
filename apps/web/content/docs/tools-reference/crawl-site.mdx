@@ -5,17 +5,25 @@ description: "Crawl a project's website (async). Returns a job_id immediately; p
 
 **Cost:** 20 credits.
 
-`crawl_site` crawls the website behind one of your projects — following its sitemap and same-origin links, respecting `robots.txt` — and records the pages for later audits. It is **asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to finish, so the MCP request never times out on a large site. The crawl is charged only when it runs — a crawl that reaches no pages is not charged.
+`crawl_site` crawls the website behind one of your projects — following its sitemap and its own links, respecting `robots.txt` — and records the pages for later audits. It is **asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to finish, so the MCP request never times out on a large site. The crawl is charged only when it runs — a crawl that reaches no pages is not charged.
 
 ## What it does
 
 Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the crawl and stores the result; you check progress with [`get_job_status`](/docs/tools-reference/get-job-status).
 
-## Large sites
+## What counts as the site
+
+A site's apex and its `www.` twin are **one scope**, not two. `example.com` and `www.example.com` are the same site to the crawler, in the sitemap and in every link it follows. Strict same-origin was the old rule, and on a www-canonical site it produced a crawl of **zero pages**: the seed redirected off-origin on the first hop. Only the leading `www.` label is folded — `blog.example.com` is a different site and is not crawled.
+
+Infrastructure paths are left out: `/cdn-cgi/` and `/.well-known/` are the CDN's and the protocol's plumbing, not the customer's pages, and counting them would inflate both the crawl and the page count quoted before it. They are excluded from the sitemap, from link following, and from the free size check alike.
+
+## Large sites, and why the page count is a floor
 
 Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with `include_paths` — for example `["/blog"]` — and run one focused crawl per section; this keeps every crawl within the cap and spends predictably.
 
-Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, it first returns a **confirmation** — nothing is charged — that states this run's flat cost and, kept separate, an **informational projection** of what crawling the whole site would take at the current rate. The projection is never what you are charged; it just means a big site can't silently run up cost. Re-run with `"confirm": true` to proceed, or narrow the scope with `include_paths`.
+Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it quotes is a **lower bound** — "at least N pages", never "~N". Both ways of sizing a site are floors by construction: reading the sitemap is bounded by how much of it is read, and the fallback counts only the links on your homepage. On one measured site the check said 28 and the crawl's own queue found at least 222. A "~" reads as "approximately", i.e. as likely-high as likely-low, and it never is — so the wording says which direction it can be wrong in. Where the floor came from is named too, and the homepage-only case says outright that the real site is very likely larger.
+
+If your site is large, the call first returns a **confirmation** — nothing is charged — stating this run's flat cost and, kept separate, an **informational projection** of what crawling the whole site would take at the current rate. The projection is never what you are charged; it just means a big site can't silently run up cost. Re-run with `"confirm": true` to proceed, or narrow the scope with `include_paths`.
 
 ## Example
 
@@ -37,4 +45,4 @@ The tool replies with a `job_id`. Poll it until the job is done:
 
 ### Returns
 
-A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost. Feed the `job_id` to `get_job_status` to watch it finish and read the summary.
+A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — plus, when the free size check sized the site, how many pages it found **at least** and how many of them this one crawl covers. Feed the `job_id` to [`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports the pages crawled and skipped so far, so a job that is working and a job that is stuck no longer look alike, and when it finishes it carries the summary.

@@ -471,7 +471,7 @@ export const DOC_PROSE = {
   crawl_site: {
     lead:
       "`crawl_site` crawls the website behind one of your projects — following its sitemap and " +
-      "same-origin links, respecting `robots.txt` — and records the pages for later audits. It is " +
+      "its own links, respecting `robots.txt` — and records the pages for later audits. It is " +
       "**asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to " +
       "finish, so the MCP request never times out on a large site. The crawl is charged only when it " +
       "runs — a crawl that reaches no pages is not charged.",
@@ -481,25 +481,51 @@ export const DOC_PROSE = {
       "[`get_job_status`](/docs/tools-reference/get-job-status).",
     preExampleSections: [
       {
-        heading: "Large sites",
+        heading: "What counts as the site",
+        body:
+          "A site's apex and its `www.` twin are **one scope**, not two. `example.com` and " +
+          "`www.example.com` are the same site to the crawler, in the sitemap and in every link " +
+          "it follows. Strict same-origin was the old rule, and on a www-canonical site it " +
+          "produced a crawl of **zero pages**: the seed redirected off-origin on the first hop. " +
+          "Only the leading `www.` label is folded — `blog.example.com` is a different site and " +
+          "is not crawled.\n\n" +
+          "Infrastructure paths are left out: `/cdn-cgi/` and `/.well-known/` are the CDN's and " +
+          "the protocol's plumbing, not the customer's pages, and counting them would inflate " +
+          "both the crawl and the page count quoted before it. They are excluded from the " +
+          "sitemap, from link following, and from the free size check alike.",
+      },
+      {
+        heading: "Large sites, and why the page count is a floor",
         body:
           "Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with " +
           "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; this " +
           "keeps every crawl within the cap and spends predictably.\n\n" +
-          "Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, " +
-          "it first returns a **confirmation** — nothing is charged — that states this run's flat cost " +
-          "and, kept separate, an **informational projection** of what crawling the whole site would " +
-          "take at the current rate. The projection is never what you are charged; it just means a big " +
-          "site can't silently run up cost. Re-run with `\"confirm\": true` to proceed, or narrow the " +
-          "scope with `include_paths`.",
+          "Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it " +
+          "quotes is a **lower bound** — \"at least N pages\", never \"~N\". Both ways of sizing " +
+          "a site are floors by construction: reading the sitemap is bounded by how much of it " +
+          "is read, and the fallback counts only the links on your homepage. On one measured " +
+          "site the check said 28 and the crawl's own queue found at least 222. A \"~\" reads as " +
+          "\"approximately\", i.e. as likely-high as likely-low, and it never is — so the " +
+          "wording says which direction it can be wrong in. Where the floor came from is named " +
+          "too, and the homepage-only case says outright that the real site is very likely " +
+          "larger.\n\n" +
+          "If your site is large, the call first returns a **confirmation** — nothing is charged " +
+          "— stating this run's flat cost and, kept separate, an **informational projection** of " +
+          "what crawling the whole site would take at the current rate. The projection is never " +
+          "what you are charged; it just means a big site can't silently run up cost. Re-run " +
+          "with `\"confirm\": true` to proceed, or narrow the scope with `include_paths`.",
       },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +
       "with a `job_id`. Poll it until the job is done:\n\n> What's the status of job `<job_id>`?",
     returns:
-      "A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost. Feed the " +
-      "`job_id` to `get_job_status` to watch it finish and read the summary.",
+      "A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — " +
+      "plus, when the free size check sized the site, how many pages it found **at least** and " +
+      "how many of them this one crawl covers. Feed the `job_id` to " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports " +
+      "the pages crawled and skipped so far, so a job that is working and a job that is stuck no " +
+      "longer look alike, and when it finishes it carries the summary.",
   },
 
   get_job_status: {
@@ -609,14 +635,24 @@ export const DOC_PROSE = {
     whatItDoes:
       "From the pull's current window, it selects queries where your page ranks in **positions 8–20** " +
       "with **at least 20 impressions**, then prioritizes them by impressions (biggest opportunity " +
-      "first). Already-winning queries (position under 8) and near-zero-demand long-tail queries are " +
-      "left out, so the list stays a focused shortlist rather than a dump.",
+      "first, ties broken by the better position). Already-winning queries (position under 8) and " +
+      "near-zero-demand long-tail queries are left out, so the list stays a focused shortlist " +
+      "rather than a dump.\n\n" +
+      "A \"page\" here is a **document**: rows that differ only by a `#fragment` are added " +
+      "together before the bands are read. That changes outcomes in both directions — two " +
+      "anchor rows below the impression floor can clear it as one page, and no `#anchor` URL is " +
+      "ever printed as the page to go and fix.",
     example:
       "Ask your MCP client in plain language:\n\n> What are the quick wins for my example.com project?",
     returns:
       "A prioritized list of quick-win opportunities — each with its query, page, average position, " +
-      "impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so " +
-      "(and you are still charged for the delivered analysis).",
+      "impressions, clicks, and CTR — best opportunity first. The list is capped; past the cap the " +
+      "reply says how many more pairs cleared the bands, so a shortlist is never mistaken for the " +
+      "whole set. If nothing clears the bands, it says so (and you are still charged for the " +
+      "delivered analysis).\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
+      "plus a sentence once that is old, and — when your Search Console credential has stopped " +
+      "working — a warning to reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -639,13 +675,36 @@ export const DOC_PROSE = {
       "From the pull's current window, it groups rows by query and flags a query when **two or more of " +
       "its pages** each clear both floors: at least **10 impressions** and at least a **10% share** of " +
       "that query's impressions. A dominant page plus a negligible straggler is not flagged — only " +
-      "genuine competition. Groups are ordered by total impressions, biggest query first.",
+      "genuine competition. Groups are ordered by total impressions, biggest query first.\n\n" +
+      "Rows for the same page that differ only by a `#fragment` are folded into one page " +
+      "**before** any of that is read, so a page competing with its own section anchors is not " +
+      "a group.",
+    preExampleSections: [
+      {
+        heading: "Queries for your own brand are excluded, and counted",
+        body:
+          "Several of your pages ranking for your own brand name is **normal** — it is what " +
+          "Google's sitelinks look like in this data — and consolidating those pages would be " +
+          "self-harm. So branded queries are taken out of the list.\n\n" +
+          "They are not taken out silently. The reply names how many were excluded and which " +
+          "queries they were, because your biggest query disappearing without explanation is " +
+          "its own problem. **This matters most when the list ends up empty**: \"no " +
+          "cannibalization found\" can mean nothing was contested, or that everything contested " +
+          "was branded — the exclusion line under it is what tells you which, so read it before " +
+          "concluding the site is clean.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Do I have any keyword cannibalization on example.com?",
     returns:
       "A list of cannibalized queries, each with its competing pages and their impressions, clicks, and " +
-      "average position (main contender first). If no query is contested, it says so (and you are still " +
-      "charged for the delivered analysis).",
+      "average position (main contender first), followed by the branded-query exclusion line when " +
+      "there was one. If no query is contested, it says so (and you are still charged for the " +
+      "delivered analysis).\n\nEvery reply ends with the same four-line footer the other two " +
+      "discovery tools carry: the window that was analyzed against the one before it, a caveat " +
+      "when either window hit the row cap, when the pull was taken plus a sentence once that is " +
+      "old, and — when your Search Console credential has stopped working — a warning to " +
+      "reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -669,13 +728,22 @@ export const DOC_PROSE = {
       "It sums each page's clicks across both windows (a page can rank for many queries) and flags a " +
       "page when it lost **at least 5 clicks** AND **at least 30%** of its previous clicks. Both " +
       "thresholds must be met, so a tiny wobble or a large-but-proportionally-small dip is left out. " +
-      "Results are ordered by clicks lost, biggest bleed first.",
+      "Results are ordered by clicks lost, biggest bleed first.\n\n" +
+      "Two rules sit alongside those thresholds. A page with **no clicks at all** in the previous " +
+      "window is skipped outright — with no baseline there is nothing that could have decayed, " +
+      "whatever the arithmetic says. And a \"page\" is a **document**: rows differing only by a " +
+      "`#fragment` are summed together in **both** windows first, because Google routinely moves " +
+      "an article's clicks between its bare URL and its anchors, and reading those as two pages " +
+      "manufactures a decay on one and a rise on the other.",
     example:
       "Ask your MCP client in plain language:\n\n> Which pages on example.com are losing traffic?",
     returns:
       "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
-      "drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still " +
-      "charged for the delivered analysis).",
+      "drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so " +
+      "(and you are still charged for the delivered analysis).\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
+      "plus a sentence once that is old, and — when your Search Console credential has stopped " +
+      "working — a warning to reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -745,15 +813,44 @@ export const DOC_PROSE = {
       "- **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, " +
       "`WebSite`, `Article`, `Product`, and so on).\n" +
       "- **Gaps** — the URLs of pages with no structured data at all.\n\n" +
-      "**Detection is JSON-LD only** — microdata and RDFa are not read — and only the `@type` names " +
-      "are analyzed. The crawler never stores the JSON-LD body, so this is a coverage and type-spread " +
-      "report, not per-field validation.",
+      "**Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked " +
+      "up that way counts here as having no structured data.\n\n" +
+      "Coverage is what this tool is for, and coverage is what it always reports. On a crawl " +
+      "that stored the JSON-LD **bodies**, it additionally checks the required fields of the " +
+      "types it knows — see below. On an older crawl that stored only the type names, it checks " +
+      "nothing of the sort and says so. **The closing note of every reply tells you which of the " +
+      "two you just got**, and names how many pages were checked; a reader should trust that " +
+      "line over any general statement, here or in the tool list.",
+    preExampleSections: [
+      {
+        heading: "What it checks in a stored JSON-LD body",
+        body:
+          "For a short, fixed list of schema.org types it checks that the fields without which " +
+          "the markup says nothing are declared — a `Product` with no `offers`, an `Article` " +
+          "with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no " +
+          "address. A type **not** on that list is **not judged at all**: schema.org has " +
+          "hundreds of types, and inventing requirements for the ones nobody considered would " +
+          "produce findings you could not trust.\n\n" +
+          "A block that is not valid JSON is **reported, not skipped**. A parser that cannot " +
+          "read it is a stand-in for a search engine that cannot read it either, and it is " +
+          "invisible in the rendered page — nobody finds it by looking.\n\n" +
+          "**This is not full structured-data validation.** It is a required-field check over a " +
+          "handful of types, on the blocks that were stored. Only the first few blocks of a " +
+          "page are kept, and each is kept only up to a length cap, so a page whose markup was " +
+          "partly stored is listed as such and the reply says the fields were checked on the " +
+          "stored blocks only. Absence of a finding is not a clean bill of health.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Run a structured-data audit for my example.com " +
       "project.",
     returns:
       "The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with no " +
-      "structured data.",
+      "structured data. Where bodies were stored, it also lists the pages missing a required " +
+      "field (naming the type and the fields), the pages whose JSON-LD could not be parsed, and " +
+      "the pages whose blocks were only partly stored. Each of those three sections is printed " +
+      "only when it has rows, so a crawl carrying no bodies returns exactly the coverage report " +
+      "it always did — an absent section is never a clean result.",
   },
 
   audit_speed: {
@@ -846,7 +943,13 @@ export const DOC_PROSE = {
       "accent-insensitively, and anywhere inside a word (so \"shoe\" is found in \"shoes\").\n\n" +
       "A short bilingual list of filler words (`the`, `and`, `for`, `ve`, `ile`, `bir`, and a " +
       "few more) is ignored — their presence in a title says nothing about whether the page " +
-      "covers the query. Everything else has to be there.\n\n" +
+      "covers the query.\n\n" +
+      "**Your own brand words are ignored too.** A query whose only missing words are your " +
+      "site's own name is dropped from the list entirely, and a query missing your brand *and* " +
+      "something else keeps only the something else. The reply says how many were dropped that " +
+      "way. This is not a courtesy: reporting a firm to itself for not repeating its own name " +
+      "in its titles is a finding nobody can act on, and a list of those crowds out the ones " +
+      "you can. Everything else has to be there.\n\n" +
       "Both the title **and** the h1s are read, deliberately. A title trimmed to fit the search " +
       "result routinely drops a qualifier the heading keeps, and reading the title alone would " +
       "report every such page as a problem — a list of findings you cannot act on is worse than " +
@@ -869,12 +972,15 @@ export const DOC_PROSE = {
       "their titles don't mention?\n\nThen hand a finding straight back to your assistant:\n\n" +
       "> Rewrite that page's title so it covers the missing words.",
     returns:
-      "One line per mismatching query — the query, the page ranking for it, its impressions and " +
-      "clicks, the words that are missing, how many of the query's words the page does carry, " +
-      "and the page's current title — biggest opportunity first. Then the coverage line, the " +
-      "window the Search Console figures cover, when that data was pulled, and when the crawl " +
-      "was taken. If nothing mismatches, it says so (and you are still charged for the " +
-      "delivered analysis).",
+      "**The coverage line comes first**, above the findings, together with the window the " +
+      "Search Console figures cover, when that data was pulled, when the crawl was taken, and " +
+      "how many queries were dropped as brand-only. A ratio that changes how you read the list " +
+      "has to arrive before the list, not under it.\n\n" +
+      "Then one line per mismatching query — the query, the page ranking for it, its " +
+      "impressions and clicks, the words that are missing, how many of the query's words the " +
+      "page does carry, and the page's current title — biggest opportunity first. The list is " +
+      "capped; past the cap the reply says how many more pairs mismatch. If nothing mismatches, " +
+      "it says so (and you are still charged for the delivered analysis).",
     postReturnsSections: [
       {
         heading: "Inherited limits",
