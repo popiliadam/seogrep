@@ -103,7 +103,12 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
       const result = await callTool(tool, "whats_next");
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(NO_CRAWL_MESSAGE);
+      // The loader's sentence still arrives WHOLE — `startsWith`, not a substring anywhere, so
+      // it cannot be rewritten or reordered — with the fee sentence appended after it (2026-08-25,
+      // review card 12). It is no longer byte-equal, and that is the change: a refusal that costs
+      // nothing has to say so.
+      expect(result.content[0]?.text.startsWith(NO_CRAWL_MESSAGE)).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(result.content[0]?.text).not.toMatch(/[0-9a-f]{8}/);
@@ -124,7 +129,8 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
       const result = await callTool(tool, "get_job_status");
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(NO_PULL_MESSAGE);
+      expect(result.content[0]?.text.startsWith(NO_PULL_MESSAGE)).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(result.content[0]?.text).not.toMatch(/[0-9a-f]{8}/);
@@ -217,7 +223,8 @@ describe("registry catch — typed refusal vs crash", () => {
       });
       const result = await wire(tool)({ params: { name: "whats_next", arguments: {} } });
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe("sentence written by the loader");
+      expect(result.content[0]?.text.startsWith("sentence written by the loader")).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();

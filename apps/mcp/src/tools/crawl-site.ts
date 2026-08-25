@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
 import { enqueueJob } from "../queue/boss.ts";
 import {
@@ -264,8 +265,14 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       // than enqueue a job that could never run. Missing or another tenant's project both -> null.
       const project = await resolveProject(ctx, project_id);
       if (!project) {
+        // Free, and it says so: both refusals below return BEFORE the enqueue, so no jobs row
+        // exists and the worker's 20-credit reserve is never opened. The registry's refundAssurance
+        // cannot make that promise for a charge:"worker" tool — it cannot see whether a job was
+        // created — but this branch can, because it is the code that decided not to create one.
         return errorResult(
-          `No project found with id ${project_id}. Create one with setup_project first.`,
+          withNoChargeNote(
+            `No project found with id ${project_id}. Create one with setup_project first.`,
+          ),
         );
       }
       // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
@@ -273,7 +280,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       // before enqueue — is also what makes it free: crawl_site's only charge belongs to the
       // worker, and no job is created.
       if (project.archivedAt !== null) {
-        return errorResult(ARCHIVED_PROJECT_MESSAGE);
+        return errorResult(withNoChargeNote(ARCHIVED_PROJECT_MESSAGE));
       }
 
       // Empty/absent include_paths = whole-site (no scope); only a non-empty array scopes.
