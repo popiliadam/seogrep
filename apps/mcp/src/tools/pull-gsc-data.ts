@@ -106,11 +106,20 @@ export type LoadAccountTokenFn = (
   userId: string,
 ) => Promise<GscAccountTokenRow | null>;
 
-/** The jobs writer port (default: recordSucceededPull over the service client). */
+/**
+ * The jobs writer port (default: recordSucceededPull over the service client).
+ *
+ * `startedAt` / `finishedAt` bracket the RUN, not the write. This tool is SYNCHRONOUS, so its
+ * jobs row is created once the work is already over and nothing the recorder can read tells it
+ * when the run began — the handler captures both stamps itself and hands them down. See
+ * boss.ts's recordSucceededPull for what they become in the stored row.
+ */
 export type RecordPullFn = (params: {
   userId: string;
   projectId: string;
   result: Json;
+  startedAt: Date;
+  finishedAt: Date;
 }) => Promise<{ jobId: string }>;
 
 export interface PullGscDataDeps {
@@ -230,6 +239,19 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
     handler: async (ctx: AuthContext, { project_id, days }) => {
+      // WHEN THE WORK BEGINS. Captured here, first statement, because everything below —
+      // the archive gate, the connection read, the token unseal, the two Google calls — is
+      // the run. The async lane's equivalent is markJobRunning's stamp, taken at the claim
+      // just before the handler is entered; this is the same instant on the sync lane.
+      //
+      // Deliberately NOT `deps.now`. That clock is DOMAIN data (which days of Search Console
+      // to fetch) and the specs pin it to a fixed reference so the windows are deterministic;
+      // reusing it here would make a run's lifecycle stamps travel to whatever date a test
+      // pinned, and would be compared against a `created_at` the DATABASE stamps from the real
+      // clock. Lifecycle stamps are wall-clock facts about this process and stay on the wall
+      // clock — the specs assert their ORDER, which is the only property that has to hold.
+      const startedAt = new Date();
+
       // THE ARCHIVE GATE, first — before the connection read, because an archived project has
       // nothing to pull whatever its connection says, and "run connect_gsc" would be the wrong
       // instruction for a site the tenant removed.
@@ -374,12 +396,19 @@ export function makePullGscDataTool(deps: PullGscDataDeps = {}): RegisteredTool 
         throw new PreconditionNotMetError(forbiddenPropertyMessage(property));
       });
 
+      // THE REAL END OF THE WORK: runPull has resolved, both Google windows are in hand.
+      // Taken HERE and not inside the recorder, so the stored duration measures the pull
+      // rather than the pull plus however long the jobs INSERT happened to take.
+      const finishedAt = new Date();
+
       // Store the pull as a succeeded jobs row (data carrier; reserve_id stays null), then
       // RETURN -> withCredits COMMITS the 5-credit spend.
       const { jobId } = await recordPull({
         userId: ctx.userId,
         projectId: project_id,
         result: pullResultToJson(pull),
+        startedAt,
+        finishedAt,
       });
       return textResult(`${formatPullSummary(pull)}\njob_id: ${jobId}`);
     },

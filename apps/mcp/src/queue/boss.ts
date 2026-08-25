@@ -252,11 +252,59 @@ export async function getLatestSucceededPull(
   return getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" });
 }
 
+/** One completed sync run, as its recorder needs it: who, what, and WHEN it actually ran. */
+export interface SucceededPullRun {
+  readonly userId: string;
+  readonly projectId: string;
+  readonly result: Json;
+  /** When the run actually began — captured by the caller BEFORE it did any work. */
+  readonly startedAt: Date;
+  /** When the work actually ended — captured by the caller when the pull returned. */
+  readonly finishedAt: Date;
+}
+
+/**
+ * The finish stamp, never earlier than the start stamp.
+ *
+ * A wall clock can step BACKWARDS (an NTP correction mid-run is the ordinary case), and the two
+ * stamps this recorder is handed are two independent reads of it. Storing the pair as measured
+ * would persist a negative-length run that every later reader has to defend against forever, so
+ * an inverted pair collapses to a zero-length one and is LOGGED — the measurement is wrong
+ * either way, and zero is the wrong answer that cannot be rendered as nonsense.
+ *
+ * It does NOT throw. This sits on the success path of a CHARGED tool: a throw would send
+ * withCredits down its release path and hand the user a failure for a pull that completed, so a
+ * clock correction would eat delivered work.
+ */
+export function orderedFinishIso(startedAt: Date, finishedAt: Date): string {
+  if (finishedAt.getTime() >= startedAt.getTime()) return finishedAt.toISOString();
+  console.error(
+    `recordSucceededPull: finish stamp ${finishedAt.toISOString()} precedes start stamp ` +
+      `${startedAt.toISOString()} (the wall clock moved backwards mid-run); recording a ` +
+      "zero-length run rather than a negative one",
+  );
+  return startedAt.toISOString();
+}
+
 /**
  * Record a completed pull_gsc_data run as a SUCCEEDED jobs row carrying the PullData in
  * `result`. pull_gsc_data is a SYNC (surface-charged) tool, so this row is purely a data
  * carrier: the credit reserve/commit lives on the ledger (keyed to a traceability uuid),
  * and reserve_id is deliberately LEFT NULL here — there is no worker reserve on this path.
+ *
+ * ALL THREE LIFECYCLE STAMPS COME FROM THE CALLER'S ONE CLOCK. This row is written AFTER the
+ * run it describes, which is exactly what made its stamps incoherent: `created_at` defaulted to
+ * `now()` at INSERT time — later than the work it supposedly created — and `started_at` was
+ * never written at all, because the hand-written Insert type forbade it. `get_job_status` then
+ * printed `created …15:42:59.928 · finished …15:42:46.054` to a customer: a job that finished
+ * 13.9 seconds before it was created. So `created_at` is stamped with the run's START rather
+ * than the insert's instant, and `started_at` with the same value — for a synchronous tool the
+ * row IS the run, and there is no queue wait to separate the two.
+ *
+ * The ASYNC lane keeps the opposite (correct) arrangement and is untouched: enqueueJob lets
+ * `created_at` default and leaves `started_at` NULL because the work genuinely has not begun,
+ * and markJobRunning stamps `started_at` at the claim. There the gap between the two is real
+ * queue wait, and collapsing it would destroy information.
  *
  * ONE STATEMENT, and that is the point. This used to insert a `queued` row and then update it
  * to `succeeded`, because the hand-written jobs.Insert type in db.ts listed no `result` column
@@ -274,8 +322,9 @@ export async function getLatestSucceededPull(
  */
 export async function recordSucceededPull(
   client: ServiceClient,
-  params: { userId: string; projectId: string; result: Json },
+  params: SucceededPullRun,
 ): Promise<{ jobId: string }> {
+  const startedIso = params.startedAt.toISOString();
   const { data, error } = await client
     .from("jobs")
     .insert({
@@ -283,7 +332,9 @@ export async function recordSucceededPull(
       project_id: params.projectId,
       tool: "pull_gsc_data",
       status: "succeeded",
-      finished_at: new Date().toISOString(),
+      created_at: startedIso,
+      started_at: startedIso,
+      finished_at: orderedFinishIso(params.startedAt, params.finishedAt),
       result: params.result,
     })
     .select("id")
