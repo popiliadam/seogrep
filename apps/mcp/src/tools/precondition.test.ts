@@ -6,6 +6,7 @@ import type { AuthContext } from "../auth.ts";
 import type { ToolName } from "../credits/costs.ts";
 import { NO_CRAWL_MESSAGE } from "../audit/load.ts";
 import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
+import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { defineTool, registerAll, textResult, type RegisteredTool } from "./registry.ts";
 import { makeAuditTool } from "./audit-shared.ts";
 import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
@@ -103,12 +104,10 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
       const result = await callTool(tool, "whats_next");
 
       expect(result.isError).toBe(true);
-      // The loader's sentence still arrives WHOLE — `startsWith`, not a substring anywhere, so
-      // it cannot be rewritten or reordered — with the fee sentence appended after it (2026-08-25,
-      // review card 12). It is no longer byte-equal, and that is the change: a refusal that costs
-      // nothing has to say so.
-      expect(result.content[0]?.text.startsWith(NO_CRAWL_MESSAGE)).toBe(true);
-      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
+      // Still BYTE-EXACT, against a longer expected string: the loader's sentence, one space,
+      // and the fee sentence the registry appends (2026-08-25, review card 12). The fee sentence
+      // is the imported constant, never a copy of it.
+      expect(result.content[0]?.text).toBe(`${NO_CRAWL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(result.content[0]?.text).not.toMatch(/[0-9a-f]{8}/);
@@ -129,8 +128,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
       const result = await callTool(tool, "get_job_status");
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text.startsWith(NO_PULL_MESSAGE)).toBe(true);
-      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
+      expect(result.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(result.content[0]?.text).not.toMatch(/[0-9a-f]{8}/);
@@ -223,8 +221,7 @@ describe("registry catch — typed refusal vs crash", () => {
       });
       const result = await wire(tool)({ params: { name: "whats_next", arguments: {} } });
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text.startsWith("sentence written by the loader")).toBe(true);
-      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
+      expect(result.content[0]?.text).toBe(`sentence written by the loader ${NOT_CHARGED_SENTENCE}`);
       expect(errorSpy).not.toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();

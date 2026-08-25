@@ -4,6 +4,7 @@ import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { encryptToken, toByteaHex } from "@pseo/core";
 import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
+import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { getServiceClient } from "../db.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
@@ -318,8 +319,8 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
         const result = await callThroughRegistry(ctx, make(), projectId);
 
         expect(result.isError).toBe(true);
-        expect(result.content[0]?.text.startsWith(NO_PULL_MESSAGE)).toBe(true);
-        expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
+        // BYTE-EXACT, with the fee sentence imported rather than copied (2026-08-25, card 12).
+        expect(result.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
         expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
         expect(result.content[0]?.text).not.toMatch(/reference/i);
         expect(errorSpy).not.toHaveBeenCalled();
@@ -364,8 +365,7 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
       texts.push(result.content[0]?.text ?? "");
     }
 
-    expect(texts[0].startsWith(NO_PULL_MESSAGE)).toBe(true);
-    expect(texts[0]).toMatch(/\bnot\s+charged\b/i);
+    expect(texts[0]).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(texts[1]).toBe(texts[0]);
     expect(texts[2]).toBe(texts[0]);
     // …and the other tenant's pull was genuinely there to be leaked.
@@ -517,8 +517,7 @@ describe("discovery tools over an ARCHIVED project — what the CLIENT receives"
         const result = await callThroughRegistry(ctx, make(), projectId);
 
         expect(result.isError).toBe(true);
-        expect(result.content[0]?.text.startsWith(ARCHIVED_PROJECT_MESSAGE)).toBe(true);
-        expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
+        expect(result.content[0]?.text).toBe(`${ARCHIVED_PROJECT_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
         // The constant is shared with generate_report / crawl_site / connect_gsc / the audits;
         // this pins that what arrives is the ARCHIVE sentence and not some other shared string.
         expect(result.content[0]?.text).toMatch(/archiv/i);
@@ -569,7 +568,7 @@ describe("discovery tools over an ARCHIVED project — what the CLIENT receives"
     const stranger = await callThroughRegistry(ctx, makeFindQuickWinsTool(), otherProjectId);
     const nowhere = await callThroughRegistry(ctx, makeFindQuickWinsTool(), randomUUID());
 
-    expect(stranger.content[0]?.text?.startsWith(NO_PULL_MESSAGE)).toBe(true);
+    expect(stranger.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(nowhere.content[0]?.text).toBe(stranger.content[0]?.text);
     expect(stranger.content[0]?.text).not.toMatch(/archiv/i);
   });
