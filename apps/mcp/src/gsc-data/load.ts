@@ -1,3 +1,4 @@
+import { DATA_FRESHNESS_DAYS, dataAgeInDays, describeDataAge, isStaleAge } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
 import { getLatestSucceededPull } from "../queue/boss.ts";
 import { renderReconnectInstruction } from "./reauth-error.ts";
@@ -124,8 +125,15 @@ export async function loadGscTokenStatus(
  *
  * A named export rather than a literal buried in the sentence, so a test can pin the number a
  * user actually gets (the MAX_HREFLANGS pattern), and so this file states the threshold once.
+ *
+ * AN ALIAS SINCE 2026-08-25. The value now lives in @pseo/core's `guide/freshness`, alongside
+ * `FRESHNESS_WINDOW_DAYS` (the whats_next router) and `STALE_CRAWL_DAYS` (the report). All three
+ * were separate literal 30s in three packages, each with a comment explaining that it was
+ * deliberately the same as the others — which is the shape a drift takes, not a defence against
+ * one. The NAME stays because it is what this surface calls the threshold and because specs pin
+ * it by name; only the number moved.
  */
-export const STALE_PULL_DAYS = 30;
+export const STALE_PULL_DAYS = DATA_FRESHNESS_DAYS;
 
 /**
  * The provenance line every discovery tool appends. ONE renderer, because three tools
@@ -142,14 +150,15 @@ export const STALE_PULL_DAYS = 30;
  * before it died. Both lines can print, and when they do they say different things.
  */
 export function renderPullProvenance(pulledAt: string, now: Date = new Date()): string {
-  const days = Math.floor((now.getTime() - Date.parse(pulledAt)) / 86_400_000);
+  // The age arithmetic and the age WORDING both come from @pseo/core now, so this line and the
+  // report's own age line cannot describe one pull two ways. Behaviour is unchanged: the same
+  // floor-to-whole-days and the same today / 1 day ago / N days ago vocabulary, in one copy.
+  const days = dataAgeInDays(pulledAt, now);
   const day = pulledAt.slice(0, 10);
-  const age = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
-  const staleness =
-    days >= STALE_PULL_DAYS
-      ? " This data is stale — run pull_gsc_data again for current numbers."
-      : "";
-  return `Search Console data pulled ${day} (${age}).${staleness}`;
+  const staleness = isStaleAge(days)
+    ? " This data is stale — run pull_gsc_data again for current numbers."
+    : "";
+  return `Search Console data pulled ${day} (${describeDataAge(days)}).${staleness}`;
 }
 
 /**

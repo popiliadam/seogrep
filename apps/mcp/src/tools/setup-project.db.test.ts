@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { restoreOwnProject, setupProjectTool } from "./setup-project.ts";
+import type { DomainReachability } from "./domain-reachability.ts";
+import { makeSetupProjectTool, restoreOwnProject } from "./setup-project.ts";
 
 /**
  * DB-integration proofs for setup_project against a LOCAL Supabase stack (test:db
@@ -10,7 +11,22 @@ import { restoreOwnProject, setupProjectTool } from "./setup-project.ts";
  * calls are idempotent by (user_id, domain) — INCLUDING across URL/host forms that
  * normalize to the same domain — one tenant never sees another's projects, and a domain the
  * tenant had archived comes BACK on the same id instead of being registered a second time.
+ *
+ * THE DNS PORT IS INJECTED IN EVERY CASE, and that is a correctness requirement rather than
+ * tidiness: the fixtures here register invented `.com` names, which really do not resolve, so a
+ * tool wired to the live resolver would append a "does not resolve" warning to most of this file
+ * AND make one uncapped DNS query per fixture — including eight at once in the race case. Every
+ * spec below therefore runs `setupProject("unknown")`, the "nobody found out" answer, which is
+ * byte-identical to the pre-check behaviour. The two cases that care about the check state their
+ * own answer, and the WARNING itself is proven over a real write at the end of this file.
  */
+
+/** setup_project with a stated DNS answer. "unknown" reproduces the pre-check output exactly. */
+function setupProject(reachability: DomainReachability) {
+  return makeSetupProjectTool({ checkDomain: async () => reachability });
+}
+
+const setupProjectTool = setupProject("unknown");
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -223,5 +239,39 @@ describe("restoreOwnProject against the local stack", () => {
     // A project id that exists for nobody. PostgREST returns error === null for this UPDATE,
     // so anything that reads `error` alone would call it a success.
     expect(await restoreOwnProject(owner.userId, randomUUID())).toBe(false);
+  });
+});
+
+/**
+ * THE REACHABILITY WARNING OVER A REAL WRITE (S17). The fast lane proves the wording and the
+ * fail-open rule with both ports faked; what only this lane can show is that the WARNING and the
+ * ROW coexist — the operator signed WARN, not block, so a domain that does not resolve has to end
+ * up in `projects` exactly like any other, with the same id in the reply.
+ */
+describe("setup_project's domain warning against the local stack", () => {
+  it("registers the row AND warns when the domain does not resolve", async () => {
+    const ctx = await makeCtx();
+    const domain = `bu-domain-kesinlikle-yok-${randomUUID()}.com`;
+    const result = await setupProject("no_such_domain").run(ctx, { domain });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/does not resolve/i);
+
+    // The half a warning could quietly have cost: the project is really there, on the id the
+    // reply hands back, and is not archived.
+    const rows = await projectRows(ctx.userId);
+    expect(rows.map((r) => r.domain)).toEqual([domain]);
+    expect(text).toContain(rows[0]!.id);
+    expect(await archivedAt(rows[0]!.id)).toBeNull();
+  });
+
+  it("writes the same row, without the warning, when the domain resolves", async () => {
+    const ctx = await makeCtx();
+    const domain = `live-site-${randomUUID()}.com`;
+    const text = (await setupProject("resolves").run(ctx, { domain })).content[0]?.text ?? "";
+    expect(text).toMatch(/created: true/);
+    expect(text).not.toMatch(/does not resolve/i);
+    expect((await projectRows(ctx.userId)).map((r) => r.domain)).toEqual([domain]);
   });
 });

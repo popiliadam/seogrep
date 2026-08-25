@@ -1,3 +1,4 @@
+import { DATA_FRESHNESS_DAYS, dataAgeInDays } from "@pseo/core";
 import type {
   AuditCrawl,
   BrokenInternalLink,
@@ -108,10 +109,13 @@ export interface IssueCount {
  * opinion: past a month a crawl describes a site that has since been edited, redeployed or
  * restructured, which is the same "different period, not an older version of the same one"
  * argument the pull threshold is built on. Exported so a test can pin the number a user is given.
+ *
+ * AN ALIAS SINCE 2026-08-25. "Deliberately the same number" was true and was still a second
+ * literal: three packages each wrote 30 and each explained that it matched the others. The value
+ * now lives once in @pseo/core's `guide/freshness`; the name stays because it is what this
+ * surface calls the threshold.
  */
-export const STALE_CRAWL_DAYS = 30;
-
-const DAY_MS = 86_400_000;
+export const STALE_CRAWL_DAYS = DATA_FRESHNESS_DAYS;
 
 /**
  * Whole days between an ISO timestamp and the report's OWN generatedAt.
@@ -120,13 +124,13 @@ const DAY_MS = 86_400_000;
  * measured against the moment the report claims to have been made, not against whenever the
  * renderer happens to run. Null when either value will not parse, and a null age prints no
  * staleness claim at all: not knowing how old the data is is not evidence that it is fresh.
+ *
+ * A thin wrapper over @pseo/core's `dataAgeInDays` rather than a fourth copy of the arithmetic:
+ * this signature says `generatedAt` out loud, which is the property the paragraph above is
+ * about, while the floor-to-whole-days rule lives with the threshold it is compared against.
  */
 function ageInDays(iso: string | null, generatedAt: string): number | null {
-  if (iso === null) return null;
-  const at = Date.parse(iso);
-  const now = Date.parse(generatedAt);
-  if (Number.isNaN(at) || Number.isNaN(now)) return null;
-  return Math.floor((now - at) / DAY_MS);
+  return dataAgeInDays(iso, generatedAt);
 }
 
 /**

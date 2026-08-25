@@ -32,6 +32,9 @@ export * from "./gsc/property.js";
 // The "where does this project stand" half of the guide, promoted from apps/mcp so apps/web can
 // show the SAME next step and the SAME crawl summary the MCP tools return. Both are PURE — the
 // tenant-scoped reads and the tool definitions stay in apps/mcp, which re-exports what moved.
+// The ONE freshness window + the age vocabulary every guide surface quotes. Listed ahead of the
+// ladder because the ladder's FRESHNESS_WINDOW_DAYS is now an alias of the value defined there.
+export * from "./guide/freshness.js";
 export * from "./guide/next-step.js";
 export * from "./guide/crawl-summary.js";
 // The pull half of the same story. Separate module, same discipline: a stored jobs.result is

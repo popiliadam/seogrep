@@ -1,3 +1,4 @@
+import { describeDataAge } from "@pseo/core";
 import {
   DEEP_PAGE_DEPTH,
   HEAVY_PAGE_BYTES,
@@ -166,12 +167,6 @@ function urlText(url: string): string {
   return `<span class="u">${escapeHtml(url)}</span>`;
 }
 
-/** "today" / "1 day ago" / "N days ago" — the age wording renderPullProvenance uses. */
-function agePhrase(ageDays: number): string {
-  if (ageDays <= 0) return "today";
-  return ageDays === 1 ? "1 day ago" : `${fmtNum(ageDays)} days ago`;
-}
-
 /**
  * A staleness banner for one dated section, or "" when there is nothing to warn about.
  *
@@ -190,7 +185,7 @@ function staleBanner(stale: boolean, ageDays: number | null, tool: string): stri
 function crawlSection(crawl: CrawlSummary): string {
   const provenance = crawl.fetchedAt
     ? `Crawl from ${escapeHtml(isoDate(crawl.fetchedAt))}${
-        crawl.ageDays === null ? "" : ` (${agePhrase(crawl.ageDays)})`
+        crawl.ageDays === null ? "" : ` (${describeDataAge(crawl.ageDays)})`
       }.`
     : "Crawl timestamp unavailable.";
   return `<section class="rpt">
@@ -415,7 +410,7 @@ function gscSection(gsc: GscSummary): string {
     gsc.pulledAt === null
       ? ""
       : `<p class="muted">Pulled ${escapeHtml(isoDate(gsc.pulledAt))}${
-          gsc.ageDays === null ? "" : ` (${agePhrase(gsc.ageDays)})`
+          gsc.ageDays === null ? "" : ` (${describeDataAge(gsc.ageDays)})`
         }.</p>`;
   return `<section class="rpt">
     <h2>Search performance</h2>
