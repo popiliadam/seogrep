@@ -10,6 +10,7 @@ import {
   PLATFORM_MEANS,
   ROW_ORDER,
   ROW_ORDER_MEANS,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityCompareResult,
@@ -229,11 +230,18 @@ describe("THE PER-TARGET PRICE — 90 per compared target, and the confirmation 
     expect(tooMany.isError).toBe(true);
   });
 
-  it("caps internal_list_limit at the port's constant — the same price control as its sibling", () => {
+  /**
+   * WAS asserting the port's 100. This endpoint's PUBLISHED ceiling is 10 — lower still than its
+   * sibling's 20 — which is why one shared constant could never have been right for both, and why
+   * the shared field became a factory. See dfs/llm-mentions.ts for the vendor's quoted wording.
+   */
+  it("caps internal_list_limit at THIS endpoint's vendor ceiling, which is not its sibling's", () => {
     const schema = tool.inputJsonSchema as {
       properties: Record<string, { maximum?: number; default?: number }>;
     };
-    expect(schema.properties.internal_list_limit?.maximum).toBe(MAX_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.maximum).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    expect(schema.properties.internal_list_limit?.default).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    expect(schema.properties.internal_list_limit?.maximum).not.toBe(MAX_INTERNAL_LIST_ROWS);
   });
 
   it("advertises its name, the per-target cost and both endpoints of the range", () => {

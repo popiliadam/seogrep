@@ -6,6 +6,7 @@ import {
   DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
   MAX_COMPARE_TARGETS,
   MIN_COMPARE_TARGETS,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   resolveDefaultAiVisibilityPort,
   validateCompareGroups,
   type AiVisibilityCompareQuery,
@@ -157,7 +158,7 @@ const inputSchema = z.object({
         "confirm before it runs.",
     ),
   platform: platformField,
-  internal_list_limit: internalListLimitField,
+  internal_list_limit: internalListLimitField(VENDOR_MAX_INTERNAL_LIST_CROSS),
   location_name: locationNameField,
   language_code: languageCodeField,
 });

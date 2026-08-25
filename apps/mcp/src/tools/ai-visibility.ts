@@ -4,6 +4,7 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
   resolveDefaultAiVisibilityPort,
   type AiVisibilityPort,
   type AiVisibilityQuery,
@@ -134,7 +135,7 @@ const inputSchema = z
           "takes one at a time, not a list — run the tool again for another.",
       ),
     platform: platformField,
-    internal_list_limit: internalListLimitField,
+    internal_list_limit: internalListLimitField(VENDOR_MAX_INTERNAL_LIST_AGGREGATED),
     location_name: locationNameField,
     language_code: languageCodeField,
   })

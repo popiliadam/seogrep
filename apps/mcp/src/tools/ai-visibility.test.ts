@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
-  DEFAULT_INTERNAL_LIST_ROWS,
   MAX_INTERNAL_LIST_ROWS,
   PLATFORM_MEANS,
   ROW_ORDER,
   ROW_ORDER_MEANS,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityResult,
@@ -235,23 +235,31 @@ describe("THE SUBJECT DISCRIMINATION — two subjects, two inputs, nothing borro
   });
 });
 
-describe("the price control — the schema's maximum IS the port's row cap", () => {
+describe("the schema's maximum IS the vendor's published ceiling", () => {
   const tool = makeAiVisibilityTool();
 
   /**
-   * THE ROW CAP IS THE PRICE. The 2026-08-17 signature makes `internal_list_limit <= 100`
-   * MANDATORY and measured the margin AT that cap (5.58x); uncapped at 1,000 rows the same 90
-   * credits buy $1.10 of vendor cost against $1.116 of revenue. The maximum is asserted AGAINST
-   * the port's constant rather than restated, so a surface that accepted more than the port clamps
-   * to would turn this red instead of quietly erasing the margin (NEVER #6).
+   * WAS "the price control — the schema's maximum IS the port's row cap", asserting 100. The
+   * PREMISE was falsified on 2026-08-25: DataForSEO publishes "maximum value: `20`" for this
+   * endpoint's `internal_list_limit`, so the surface was advertising — and the port was sending —
+   * a value the vendor rejects at the TASK. That is the whole outage, and this is its surface half.
+   *
+   * The maximum is still asserted AGAINST a port constant rather than restated; the constant it
+   * asserts against is now the VENDOR's ceiling for THIS endpoint rather than the pricing basis.
    */
-  it("caps internal_list_limit at exactly the port's constant, and defaults to it", () => {
+  it("caps internal_list_limit at exactly the vendor's ceiling, and defaults to it", () => {
     const schema = tool.inputJsonSchema as {
       properties: Record<string, { default?: number; maximum?: number; minimum?: number }>;
     };
-    expect(schema.properties.internal_list_limit?.maximum).toBe(MAX_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.maximum).toBe(
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    );
     expect(schema.properties.internal_list_limit?.minimum).toBe(1);
-    expect(schema.properties.internal_list_limit?.default).toBe(DEFAULT_INTERNAL_LIST_ROWS);
+    expect(schema.properties.internal_list_limit?.default).toBe(
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    );
+    // The surface must never again advertise the PRICING basis as a vendor-accepted value.
+    expect(schema.properties.internal_list_limit?.maximum).not.toBe(MAX_INTERNAL_LIST_ROWS);
   });
 
   it("rejects a row count past the cap before any work", async () => {
@@ -259,7 +267,7 @@ describe("the price control — the schema's maximum IS the port's row cap", () 
       subject: "keyword",
       keyword: "x",
       platform: "chat_gpt",
-      internal_list_limit: MAX_INTERNAL_LIST_ROWS + 1,
+      internal_list_limit: VENDOR_MAX_INTERNAL_LIST_AGGREGATED + 1,
     });
     expect(wide.isError).toBe(true);
     expect(wide.content[0]?.text).toMatch(/invalid input/i);
@@ -427,7 +435,11 @@ describe("the output says WHAT was asked and over WHAT set", () => {
 
   it("captions the rows with our cap and the vendor's whole-set count, kept apart", async () => {
     const text = await fixtureAnswer();
-    expect(text).toContain(`3 rows came back under an internal_list_limit of ${MAX_INTERNAL_LIST_ROWS}`);
+    // The caption prints the limit that was actually SENT — the vendor's ceiling, not the pricing
+    // basis. Printing 100 here would caption the answer with a number the vendor never accepted.
+    expect(text).toContain(
+      `3 rows came back under an internal_list_limit of ${VENDOR_MAX_INTERNAL_LIST_AGGREGATED}`,
+    );
     expect(text).toContain("DataForSEO counts 412 matching this lookup in total");
   });
 

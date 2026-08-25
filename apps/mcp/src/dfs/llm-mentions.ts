@@ -159,6 +159,52 @@ export const MAX_INTERNAL_LIST_ROWS = 100;
 /** The default is the cap: the signed price point, and the only row count the margin was signed at. */
 export const DEFAULT_INTERNAL_LIST_ROWS = MAX_INTERNAL_LIST_ROWS;
 
+/**
+ * =====================================================================================
+ * THE VENDOR'S OWN CEILING FOR `internal_list_limit` — AND WHAT THE FIELD ACTUALLY DOES
+ * =====================================================================================
+ * MEASURED from DataForSEO's published request documentation on 2026-08-25 (signed lesson 11: the
+ * number is read from the vendor, never derived from a sibling family). The two endpoints this
+ * port calls publish DIFFERENT ceilings for the same field name, and neither of them is 100:
+ *
+ *   aggregated_metrics/live        "minimum value: `1`  maximum value: `20`  default value: `10`"
+ *   cross_aggregated_metrics/live  "minimum value: `1`  maximum value: `10`  default value: `5`"
+ *
+ * AND THE FIELD IS NOT A ROW CAP. The vendor's own words: "maximum number of elements within
+ * internal arrays — you can use this field to limit the number of elements within the following
+ * arrays: `sources_domain`, `search_results_domain`". It caps two nested arrays INSIDE the vendor's
+ * aggregate; it does not cap the rows returned and it does not cap the rows billed.
+ *
+ * THIS IS THE 2026-08-25 OUTAGE. {@link MAX_INTERNAL_LIST_ROWS} went on the wire on every call. 100
+ * is above BOTH ceilings, so DataForSEO rejected the TASK, {@link unwrapFirstResult} threw, and the
+ * throw escaped both tools as "failed unexpectedly … reference <id>" — three production calls,
+ * three hard failures, zero output, with the budget reservation left open at its full estimate.
+ *
+ * WHAT THIS DOES NOT TOUCH: THE PRICE. {@link MAX_INTERNAL_LIST_ROWS} stays exactly where the
+ * 2026-08-17 signature put it and remains the basis every reservation and every margin figure is
+ * computed from, so the reservation is unchanged at $0.30 / $0.45 and still errs HIGH — the one
+ * direction it must never get wrong. What changed is only the number the vendor was never going to
+ * accept.
+ *
+ * THE PRICING DOCTRINE ABOVE IS NOW UNPROVEN AND NEEDS A HUMAN (NEVER #6). The signature's MADDE 2
+ * — "`internal_list_limit <= 100` ZORUNLU" — and the 5.58x margin arithmetic both read this field
+ * as the row cap that holds the vendor bill down. It is not, and it never was: nothing this port
+ * sends controls how many rows the vendor bills for. No credit price is moved here; the finding is
+ * reported for signature instead.
+ */
+export const VENDOR_MAX_INTERNAL_LIST_AGGREGATED = 20;
+export const VENDOR_MAX_INTERNAL_LIST_CROSS = 10;
+
+/**
+ * The value that may go ON THE WIRE for one endpoint: the caller's request, clamped into the range
+ * THAT endpoint publishes. Deliberately separate from {@link clampInternalListLimit}, which clamps
+ * into the PRICING basis — conflating the two is what sent 100 to a vendor whose ceiling is 20.
+ */
+export function vendorInternalListLimit(rows: number, vendorMax: number): number {
+  if (!Number.isFinite(rows)) return vendorMax;
+  return Math.min(vendorMax, Math.max(1, Math.trunc(rows)));
+}
+
 /** The vendor's own documented bound on `cross_aggregated_metrics.targets`: "up to 10, but not less
  * than 2". Also, exactly, the signed 2-10 range. */
 export const MIN_COMPARE_TARGETS = 2;
@@ -426,7 +472,10 @@ export function buildAiVisibilityRequestBody(query: AiVisibilityQuery): Record<s
   return {
     target: [toVendorTarget(query.target)],
     platform: query.platform,
-    internal_list_limit: clampInternalListLimit(query.internal_list_limit),
+    internal_list_limit: vendorInternalListLimit(
+      query.internal_list_limit,
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    ),
     ...localeKeys(query),
   };
 }
@@ -486,7 +535,10 @@ export function buildAiVisibilityCompareRequestBody(
       target: [toVendorTarget(group.target)],
     })),
     platform: query.platform,
-    internal_list_limit: clampInternalListLimit(query.internal_list_limit),
+    internal_list_limit: vendorInternalListLimit(
+      query.internal_list_limit,
+      VENDOR_MAX_INTERNAL_LIST_CROSS,
+    ),
     ...localeKeys(query),
   };
 }
@@ -861,8 +913,11 @@ export function createMockAiVisibilityPort(fixtures: AiVisibilityFixtures): AiVi
   return {
     enabled: true,
     fetchAiVisibility: async (query) => {
-      const limit = clampInternalListLimit(query.internal_list_limit);
-      const estimate = estimateLlmMentionsUsd(1, limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+      );
+      const estimate = estimateLlmMentionsUsd(1, MAX_INTERNAL_LIST_ROWS);
       return assembleVisibility(
         query,
         fixtures.aggregated,
@@ -872,8 +927,11 @@ export function createMockAiVisibilityPort(fixtures: AiVisibilityFixtures): AiVi
     },
     fetchAiVisibilityCompare: async (query) => {
       const groups = validateCompareGroups(query.groups);
-      const limit = clampInternalListLimit(query.internal_list_limit);
-      const estimate = estimateLlmMentionsUsd(groups.length, limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_CROSS,
+      );
+      const estimate = estimateLlmMentionsUsd(groups.length, MAX_INTERNAL_LIST_ROWS);
       return assembleCompare(
         query,
         fixtures.crossAggregated,
@@ -937,9 +995,15 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
   return {
     enabled: true,
     async fetchAiVisibility(query) {
-      const limit = clampInternalListLimit(query.internal_list_limit);
+      // THE WIRE VALUE and THE PRICING BASIS are two different numbers, and the outage was sending
+      // the second one as the first. The reservation keeps the signed basis (unchanged, errs high);
+      // the request keeps the vendor's published ceiling for THIS endpoint.
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+      );
       const endpoint = DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT;
-      const estimate = estimateLlmMentionsUsd(1, limit);
+      const estimate = estimateLlmMentionsUsd(1, MAX_INTERNAL_LIST_ROWS);
       const reservation = await reserveSpend(estimate, endpoint, ledger);
       const raw = await post(endpoint, buildAiVisibilityRequestBody(query));
       const resultSet = parseAiVisibilityResponse(raw, limit);
@@ -950,9 +1014,12 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
     async fetchAiVisibilityCompare(query) {
       // Validated BEFORE the reservation: a comparison the vendor would reject must not book money.
       const groups = validateCompareGroups(query.groups);
-      const limit = clampInternalListLimit(query.internal_list_limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_CROSS,
+      );
       const endpoint = DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT;
-      const estimate = estimateLlmMentionsUsd(groups.length, limit);
+      const estimate = estimateLlmMentionsUsd(groups.length, MAX_INTERNAL_LIST_ROWS);
       const reservation = await reserveSpend(estimate, endpoint, ledger);
       const raw = await post(endpoint, buildAiVisibilityCompareRequestBody(query));
       const parsed = parseAiVisibilityCompareResponse(

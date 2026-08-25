@@ -1,7 +1,5 @@
 import { z } from "zod";
 import {
-  DEFAULT_INTERNAL_LIST_ROWS,
-  MAX_INTERNAL_LIST_ROWS,
   PLATFORM_MEANS,
   type AiVisibilityRow,
   type LlmPlatform,
@@ -56,22 +54,33 @@ export const platformField = z
   );
 
 /**
- * THE ROW CAP IS THE PRICE. The maximum is the port's own constant, never a number typed here: the
- * 2026-08-17 signature makes `internal_list_limit <= 100` MANDATORY, and at that cap one lookup
- * bills $0.20 of vendor cost against the signed credits. Widening it is a price change (NEVER #6).
+ * THE CEILING IS THE VENDOR'S, AND IT IS DIFFERENT ON THE TWO ENDPOINTS — 20 on
+ * `aggregated_metrics`, 10 on `cross_aggregated_metrics` (Part A holds the published quotes). So
+ * this is a FACTORY rather than one shared field: a single schema could only have advertised one
+ * of the two, and the version that advertised 100 advertised a value the vendor rejects outright —
+ * the 2026-08-25 outage.
+ *
+ * IT IS NOT A PRICE CONTROL. The vendor's own words are "maximum number of elements within internal
+ * arrays … `sources_domain` `search_results_domain`" — it caps two nested arrays inside the
+ * aggregate, not the rows returned and not the rows billed. The old description called it "the
+ * price control"; that claim is withdrawn here rather than restated, and the honest half of the old
+ * wording ("Asking for fewer rows costs the same") is kept verbatim because it was always true.
  */
-export const internalListLimitField = z
-  .number()
-  .int()
-  .min(1)
-  .max(MAX_INTERNAL_LIST_ROWS)
-  .default(DEFAULT_INTERNAL_LIST_ROWS)
-  .describe(
-    `How many rows DataForSEO may return per compared target (1-${MAX_INTERNAL_LIST_ROWS}, ` +
-      `default ${DEFAULT_INTERNAL_LIST_ROWS}). DataForSEO bills per returned row on this family, ` +
-      "so this is the price control rather than a display preference — the signed price was " +
-      "measured at the ceiling. Asking for fewer rows costs the same; asking for more is refused.",
-  );
+export function internalListLimitField(vendorMax: number) {
+  return z
+    .number()
+    .int()
+    .min(1)
+    .max(vendorMax)
+    .default(vendorMax)
+    .describe(
+      `How many entries DataForSEO may put inside its internal \`sources_domain\` and ` +
+        `\`search_results_domain\` arrays (1-${vendorMax}, default ${vendorMax}) — the vendor's ` +
+        `own \`internal_list_limit\`, whose published ceiling is ${vendorMax} on this endpoint. ` +
+        "It controls how much supporting detail comes back, NOT what the lookup costs you. " +
+        "Asking for fewer rows costs the same; asking for more is refused.",
+    );
+}
 
 /**
  * `location_name` is a STRING on this family — not the `location_code` NUMBER every other

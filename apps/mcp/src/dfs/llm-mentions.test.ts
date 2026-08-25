@@ -16,6 +16,8 @@ import {
   MIN_COMPARE_TARGETS,
   PLATFORM_MEANS,
   ROW_ORDER,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   VENDOR_TIME_FIELD_CANDIDATES,
   buildAiVisibilityCompareRequestBody,
   buildAiVisibilityRequestBody,
@@ -35,6 +37,7 @@ import {
   sumSettledCostUsd,
   toVendorTarget,
   validateCompareGroups,
+  vendorInternalListLimit,
   type AiVisibilityCompareQuery,
   type AiVisibilityQuery,
   type CompareGroup,
@@ -317,7 +320,11 @@ describe("the request body for aggregated_metrics (ai_visibility)", () => {
    */
   it("sends the parameters this endpoint publishes, and NOT the ones siblings use", () => {
     const body = buildAiVisibilityRequestBody(visibilityQuery());
-    expect(body.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // WAS `MAX_INTERNAL_LIST_ROWS` (100) until 2026-08-25. The PREMISE was false, not the
+    // assertion style: DataForSEO publishes "maximum value: `20`" for this endpoint's
+    // `internal_list_limit`, so 100 was rejected at the TASK and this tool never worked in
+    // production. The pricing basis keeps its own constant; the wire keeps the vendor's.
+    expect(body.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
     expect(body.platform).toBe("chat_gpt");
     expect(body.location_name).toBe("United States");
     expect(body.language_code).toBe("en");
@@ -364,7 +371,10 @@ describe("the request body for cross_aggregated_metrics (ai_visibility_compare)"
       { aggregation_key: "rival-one", target: [{ domain: "rival-one-fixture.test" }] },
       { aggregation_key: "rival-two", target: [{ domain: "rival-two-fixture.test" }] },
     ]);
-    expect(body.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // WAS `MAX_INTERNAL_LIST_ROWS` (100). This endpoint's published ceiling is LOWER STILL than
+    // its sibling's — "maximum value: `10`" — which is exactly why one shared constant could not
+    // be right for both.
+    expect(body.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
     expect(body).not.toHaveProperty("filters");
     expect(body).not.toHaveProperty("order_by");
   });
@@ -430,8 +440,10 @@ describe("the row cap", () => {
     const client = liveClient(transport, createMemorySpendLedger());
     await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: 5000 }));
     await client.fetchAiVisibilityCompare(compareQuery({ internal_list_limit: 5000 }));
-    expect(sentBody(transport, 0).internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
-    expect(sentBody(transport, 1).internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // The cap on the wire is the VENDOR's, per endpoint — see "the vendor's own
+    // internal_list_limit ceiling" below for the measurement and for why this used to say 100.
+    expect(sentBody(transport, 0).internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
+    expect(sentBody(transport, 1).internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
   });
 
   it("enforces the cap IN THE ESTIMATE — asking for more rows cannot under-reserve", () => {
@@ -911,5 +923,71 @@ describe("the mock port", () => {
     await expect(
       port.fetchAiVisibilityCompare(compareQuery({ groups: [group("one", "a-fixture.test")] })),
     ).rejects.toThrow(/2 and 10/);
+  });
+});
+
+// =============================================================================================
+// THE VENDOR'S OWN `internal_list_limit` CEILING — the 2026-08-25 production outage.
+//
+// MEASURED, not derived (signed lesson 11). DataForSEO's published request documentation for the
+// two endpoints this port calls states DIFFERENT ceilings for the same field name, and neither is
+// 100:
+//
+//   aggregated_metrics/live       "minimum value: 1  maximum value: 20  default value: 10"
+//   cross_aggregated_metrics/live "minimum value: 1  maximum value: 10  default value: 5"
+//
+// and the field is NOT a row cap at all — the vendor's own words are "maximum number of elements
+// within internal arrays ... `sources_domain` `search_results_domain`". This port sent 100 on every
+// call, the vendor rejected the TASK, unwrapFirstResult threw, and the throw escaped both tools as
+// "failed unexpectedly … reference <id>" while the reservation stayed open at its full estimate.
+//
+// These two specs are the whole outage, in the two places it has to be stopped: the number on the
+// wire, and the number the surface schema advertises.
+// =============================================================================================
+describe("the vendor's own internal_list_limit ceiling", () => {
+  it("never sends a value above the ceiling DataForSEO publishes for EACH endpoint", async () => {
+    const transport = endpointTransport();
+    const client = liveClient(transport, createMemorySpendLedger());
+    await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: 5000 }));
+    await client.fetchAiVisibilityCompare(compareQuery({ internal_list_limit: 5000 }));
+    expect(sentBody(transport, 0).internal_list_limit).toBeLessThanOrEqual(20);
+    expect(sentBody(transport, 1).internal_list_limit).toBeLessThanOrEqual(10);
+  });
+
+  it("pins BOTH published ceilings, and pins that they are NOT the same number", () => {
+    expect(VENDOR_MAX_INTERNAL_LIST_AGGREGATED).toBe(20);
+    expect(VENDOR_MAX_INTERNAL_LIST_CROSS).toBe(10);
+    expect(VENDOR_MAX_INTERNAL_LIST_AGGREGATED).not.toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    // ...and that neither of them is the PRICING basis, which is what got sent for a year.
+    expect(MAX_INTERNAL_LIST_ROWS).toBeGreaterThan(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
+  });
+
+  it("still lets a caller ask for FEWER than the ceiling, and never for zero or a fraction", () => {
+    expect(vendorInternalListLimit(5, VENDOR_MAX_INTERNAL_LIST_AGGREGATED)).toBe(5);
+    expect(vendorInternalListLimit(0, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(1);
+    expect(vendorInternalListLimit(-3, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(1);
+    expect(vendorInternalListLimit(7.9, VENDOR_MAX_INTERNAL_LIST_AGGREGATED)).toBe(7);
+    expect(vendorInternalListLimit(Number.NaN, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(
+      VENDOR_MAX_INTERNAL_LIST_CROSS,
+    );
+  });
+
+  /**
+   * THE RESERVATION DID NOT MOVE. The wire number changed; the money did not (NEVER #6). A lookup
+   * still books the signed basis, and still books it BEFORE any HTTP.
+   */
+  it("books the SAME estimate as before the ceiling fix — the price basis is untouched", async () => {
+    const spend = createMemorySpendLedger();
+    const transport = endpointTransport();
+    await liveClient(transport, spend).fetchAiVisibility(visibilityQuery());
+    expect(spend.rows()[0]?.estimatedUsd).toBeCloseTo(0.3, 10);
+    expect(spend.rows()[0]?.estimatedUsd).toBe(ESTIMATED_AI_VISIBILITY_CALL_USD);
+  });
+
+  it("sends the vendor's ceiling even when the caller asks for the signed pricing basis", async () => {
+    const transport = endpointTransport();
+    const client = liveClient(transport, createMemorySpendLedger());
+    await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: MAX_INTERNAL_LIST_ROWS }));
+    expect(sentBody(transport, 0).internal_list_limit).toBeLessThanOrEqual(20);
   });
 });
