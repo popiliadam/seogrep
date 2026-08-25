@@ -299,7 +299,32 @@ kapı da yakalayamazdı.** Yeşil bir `verify.sh`, yanlış bir yorumun ya da ya
 
 | iş | kim | neden |
 |---|---|---|
-| **CANLI SMOKE** | **OPERATÖR** | Şef yapamıyor: izin katmanı prod POST'unu reddediyor. Ve bu **en kritik** açık: fixture'lar DFS **dokümantasyon** örnekleri, ölçülmüş yanıt değil. Alan adları değiştiyse çağrı **patlamaz**, sessizce `n/a` basar — hiçbir kapı bunu göremez |
+| **CANLI SMOKE** | **OPERATÖR ya da onaylı bir oturum** | **En kritik açık.** Fixture'ların **21/25'i** DFS **dokümantasyon** örneği (id'leri `…fixture0007` diye biter; gerçek yakalamanın DFS uuid'si var). Alan adları değiştiyse çağrı **patlamaz**, sessizce `n/a` basar — hiçbir kapı göremez. **Runbook + script:** `scripts/testing/live-smoke.sh` |
+
+### ⚠️ ÖNCEKİ HANDOFF'UN BU SATIRI YANLIŞTI — düzeltildi
+
+Şef *"ya operatör koşar ya `.claude/settings.json`'a kural eklenir"* yazmıştı. **Mekanizma o değil.**
+Ölçüldü (`outward_action_gate.py`):
+
+- `net_post` sınıfı, dışa dönük bir `curl`/`wget` **POST**'unu (yani `-d`/`--data`/`-F` taşıyan) yakalar.
+  Loopback (`127.0.0.1`/`localhost`/`::1`) **muaf**.
+- Ret, **kopyalanacak onay komutunu** basar: `/pseo-approve sess-<ilk8> net_post "<hedef>"`.
+- Onay **aynı oturuma** ve **o oturumun BAĞLI PROJESİNE** yazılır
+  (`projects/<slug>/_state/consent.jsonl`, append-only + hash-chained).
+
+**İki tuzak, ikisi de ölçüldü:**
+
+1. **`/pseo-bind <slug>` ilk komut olmalı.** Bağlanmamış oturum `eykom`'u varsayar ve onay **yanlış
+   projenin defterine** düşer — defter append-only, **geri alınamaz** (2026-08-14 vakası).
+2. **Onay hedefi, komutta URL yoksa KOMUT DİZGİSİNİN TAMAMIDIR.** `_first_url` yalnız
+   `http(s)://` ile başlayan token'ı arar; komut `"$MCP_SMOKE_URL"` kullandığı için (kabuk
+   genişletmesi hook'tan SONRA olur) URL token'ı yoktur ve hedef `segment.strip()`'e düşer.
+   **İyi haber: sır sızmaz.** Kötü haber: her farklı komut **ayrı bir onay** demektir.
+
+**Sonuç:** ~13 çağrı = ~13 onay turu. Bunları tek bir script'in içine saklayıp kapıyı atlatmak
+**teknik olarak mümkün** ama önerilmez: kapının işi her dışa dönük aksiyonu **görünür ve onaylı**
+kılmak; 13 görünür onayı 0'a indirmek onu tasarım gereği boşa çıkarır. Operatör kendi terminalinde
+koşarsa kapı zaten devrede değildir — **tercih edilen yol budur.**
 | **`keyword_trends`** | **ZAMAN** | bir hafta gerçek `dfs_spend` verisi → vendor maliyeti ölçülür → marj pinlenir → sevk edilir |
 | **cron alt-bütçesi** · **ürün adaleti** · **N3** | **OPERATÖR** | imzasız sayılar ve bir politika kararı |
 | kalan chip'ler | **KOD** | `K1`–`K6` · `P2` `P3` · `T3` `T4` `T5` `T8` · `D3` · `W5` `W6` · `N2`–`N13` |
