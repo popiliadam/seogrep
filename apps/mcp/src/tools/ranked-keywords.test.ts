@@ -10,7 +10,11 @@ import {
   type RankedKeywordsQuery,
   type RankedKeywordsResult,
 } from "../dfs/ranked-keywords.ts";
-import { EMPTY_ORGANIC_METRICS, type DomainOrganicMetrics } from "../dfs/competitors.ts";
+import {
+  EMPTY_ORGANIC_METRICS,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
+  type DomainOrganicMetrics,
+} from "../dfs/competitors.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import {
   fetchAndRenderRankedKeywords,
@@ -1198,5 +1202,98 @@ describe("S1 — a field absent from the vendor body never becomes a 0", () => {
     expect(text).toContain(
       "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: 0",
     );
+  });
+});
+
+// =============================================================================================
+// S19 — WHICH DataForSEO MEASUREMENT THE HEALTH CARD IS.
+//
+// The card is this tool's own `result.metrics.organic`, arriving in the SAME paid response as the
+// rows. compare_competitors prints the identical nineteen fields under identical labels from
+// competitors_domain or domain_rank_overview — separate DataForSEO measurements of the same
+// domain, which disagree (this fixture's `is_lost` is 96; competitors-domain.json says 319 and
+// domain-rank-overview.json says 547 for the same domain). Under one unnamed heading that read as
+// the product contradicting itself. Forcing the numbers to agree would fabricate one of them, so
+// the heading names the measurement instead.
+//
+// Both specs drive the REAL parser into the REAL renderer: asserting against a metrics object
+// built in the test would prove nothing about which vendor key was read (lesson 12).
+// =============================================================================================
+
+/** A ranked_keywords envelope carrying a whole `metrics` block — organic plus any siblings. */
+function rankedEnvelopeWithMetrics(metricsBlock: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [
+      {
+        status_code: 20000,
+        result: [
+          {
+            target: "dentnotion.com",
+            total_count: 1,
+            items_count: 1,
+            metrics: metricsBlock,
+            items: [rankedItem({ keyword_properties: { se_type: "google" } })],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe("S19 — the health card names the DataForSEO measurement it came from", () => {
+  it("names ranked keywords — and neither of the endpoints compare_competitors reads", () => {
+    const text = formatRankedKeywords(parseRankedKeywordsResponse(fixtureResponse), RENDER_INPUT);
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's ranked-keywords data:\n" +
+        "- Organic SERPs containing the domain: 5,312",
+    );
+    // 96 is THIS response's figure. The other two measurements of the same domain say 319 and 547
+    // in this repo's own fixtures; claiming either name here would misattribute a real number.
+    expect(text).toContain("no longer found: 96");
+    expect(text).not.toContain("DataForSEO's competitor-discovery data");
+    expect(text).not.toContain("DataForSEO's domain-overview data");
+  });
+
+  /**
+   * The card is `metrics.organic` specifically, not "whichever block `metrics` happens to hold".
+   * The sibling below is modelled on domain-rank-overview.json, which carries a `metrics.paid`
+   * beside its organic one; whether ranked_keywords returns one is NOT claimed here — the spec is
+   * about which key OUR parser reads when more than one is present.
+   *
+   * Mutation proof: re-point projectOrganicMetrics at `metrics.paid` and the card prints 4,242
+   * lost rankings under a heading that says ranked keywords.
+   */
+  it("reads the ORGANIC block, never a sibling block sitting beside it", () => {
+    const text = formatRankedKeywords(
+      parseRankedKeywordsResponse(
+        rankedEnvelopeWithMetrics({
+          organic: { count: 5312, is_new: 128, is_up: 402, is_down: 517, is_lost: 96 },
+          paid: { count: 11, is_new: 2, is_up: 11, is_down: 3, is_lost: 4242 },
+        }),
+      ),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("- Organic SERPs containing the domain: 5,312");
+    expect(text).toContain("no longer found: 96");
+    expect(text).not.toContain("4,242");
+    expect(text).not.toContain("- Organic SERPs containing the domain: 11");
+  });
+
+  it("prints the measurement note ONCE, below the figures the card just stated", () => {
+    const text = formatRankedKeywords(parseRankedKeywordsResponse(fixtureResponse), RENDER_INPUT);
+    expect(text.split(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toHaveLength(2);
+    expect(text.indexOf(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toBeGreaterThan(
+      text.indexOf("Organic SERPs containing the domain"),
+    );
+  });
+
+  it("carries no note when the vendor sent no metrics block — nothing to attribute", () => {
+    const text = formatRankedKeywords(
+      parseRankedKeywordsResponse(rankedEnvelope(rankedItem({ keyword_properties: {} }))),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("Across the whole domain");
+    expect(text).not.toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
   });
 });
