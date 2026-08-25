@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   DEFAULT_KEYWORD_GAP_LIMIT,
   KEYWORD_GAP_MAX_LIMIT,
@@ -234,7 +235,9 @@ export function makeKeywordGapTool(deps: KeywordGapDeps = {}): RegisteredTool {
       // rejected exactly as it is on the bare-target path.
       const competitor = normalizeDomain(input.competitor);
       if (!competitor.ok) {
-        return errorResult(competitor.error);
+        // Free and pre-reserve like every gate around it, so it says so. normalizeDomain's
+        // wording is shared with 0-credit tools and is not edited at its source in packages/core.
+        return errorResult(withNoChargeNote(competitor.error));
       }
       if (competitor.domain === subject.domain) {
         return errorResult(SELF_COMPETITOR_MESSAGE);

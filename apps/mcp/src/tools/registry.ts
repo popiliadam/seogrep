@@ -13,7 +13,7 @@ import { NOT_CHARGED_SENTENCE, withNoChargeNote } from "../credits/free-refusal.
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
-import { creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
+import { TOOL_COSTS, creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
 
 /**
  * Zod-based tool registry — the foundation the docs automation (D11) builds on: a
@@ -330,7 +330,13 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     async run(ctx, rawInput) {
       const parsed = spec.inputSchema.safeParse(rawInput ?? {});
       if (!parsed.success) {
-        return errorResult(`Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`);
+        // Free by construction — this returns before ANY charge mode runs, so the guard, the
+        // handler and the enqueue are all unreached and the ledger is never touched. Said out
+        // loud only for a PRICED tool: on a 0-credit tool "you were not charged" is noise about
+        // a charge that could never have happened, and the table is read directly rather than
+        // through creditCostFor, which throws for a per-unit tool when it is handed no count.
+        const refusal = `Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`;
+        return errorResult(TOOL_COSTS[spec.name] > 0 ? withNoChargeNote(refusal) : refusal);
       }
       // D17 confirmation threshold — the ONE cross-cutting credit concern, applied to every charge
       // mode BEFORE dispatch: a call whose estimate exceeds the threshold and did not set

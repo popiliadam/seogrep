@@ -24,6 +24,12 @@ import { registerAll, type RegisteredTool } from "../tools/registry.ts";
 import { makeAuditSchemaTool } from "../tools/audit-schema.ts";
 import { makeAuditContentTool } from "../tools/audit-content.ts";
 import { makeFindQuickWinsTool } from "../tools/find-quick-wins.ts";
+import { makeCrawlSiteTool } from "../tools/crawl-site.ts";
+import { makeAuditSpeedTool } from "../tools/audit-speed.ts";
+import { makeRankedKeywordsTool } from "../tools/ranked-keywords.ts";
+import { makeCompareCompetitorsTool } from "../tools/compare-competitors.ts";
+import { makeKeywordGapTool } from "../tools/keyword-gap.ts";
+import { untrackProjectTool } from "../tools/untrack-project.ts";
 import { NOT_CHARGED_SENTENCE, statesNoCharge, withNoChargeNote } from "./free-refusal.ts";
 
 /**
@@ -48,6 +54,11 @@ const ARCHIVED = {
 const NO_CHARGE = /\b(?:not|never)\s+charged\b|\bcharge[sd]?\s+nothing\b|\bno\s+credits\s+were\s+charged\b/i;
 
 type CallFn = (request: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>;
+
+/** The reply's text, never `undefined` — this lane's tsconfig uses noUncheckedIndexedAccess. */
+function text(result: { content: { text: string }[] }): string {
+  return result.content[0]?.text ?? "";
+}
 
 /** Wire ONE tool behind registerAll — the real dispatch path, catch included. */
 function call(tool: RegisteredTool, name: ToolName): Promise<{ content: { text: string }[]; isError?: boolean }> {
@@ -117,7 +128,7 @@ describe("every free refusal states the fee — one helper, three priced tools",
     const result = await call(tool, "audit_schema");
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text.startsWith(NO_CRAWL_MESSAGE)).toBe(true);
+    expect(text(result).startsWith(NO_CRAWL_MESSAGE)).toBe(true);
     expect(result.content[0]?.text).toMatch(NO_CHARGE);
     expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
   });
@@ -131,7 +142,7 @@ describe("every free refusal states the fee — one helper, three priced tools",
     const result = await call(tool, "audit_content");
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text.startsWith(ARCHIVED_PROJECT_MESSAGE)).toBe(true);
+    expect(text(result).startsWith(ARCHIVED_PROJECT_MESSAGE)).toBe(true);
     expect(result.content[0]?.text).toMatch(NO_CHARGE);
   });
 
@@ -143,7 +154,7 @@ describe("every free refusal states the fee — one helper, three priced tools",
     const result = await call(tool, "find_quick_wins");
 
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text.startsWith(NO_PULL_MESSAGE)).toBe(true);
+    expect(text(result).startsWith(NO_PULL_MESSAGE)).toBe(true);
     expect(result.content[0]?.text).toMatch(NO_CHARGE);
   });
 
@@ -155,5 +166,131 @@ describe("every free refusal states the fee — one helper, three priced tools",
 
   it("the sentence has ONE source", () => {
     expect(withNoChargeNote("x")).toBe(`x ${NOT_CHARGED_SENTENCE}`);
+  });
+});
+
+/**
+ * THE OTHER HALF OF THE SURFACE: free refusals that RETURN an errorResult instead of throwing.
+ *
+ * These never reach the registry's typed-refusal catch, so the single-point fix above does not
+ * touch them and each one is its own coverage question. Every case below was SILENT until
+ * 2026-08-25, and three of them sit on the most expensive tools in the product.
+ *
+ * Every tool here is built from its REAL factory with a port that must never be consulted — the
+ * assertion is worthless if the refusal came from anywhere but the gate under test, so each spec
+ * also proves the expensive path was not entered.
+ */
+
+const ARCHIVED_REF = {
+  id: PROJECT_ID,
+  // No form of "archive" anywhere in the fixture: a domain like "archived.example" would let the
+  // refusal echo its own input back and pass against unmodified source.
+  domain: "retired-shop.com",
+  archivedAt: "2026-08-01T00:00:00.000Z",
+};
+
+/** A port whose every method fails the test if the refusal did not happen first. */
+function forbiddenPort(): never {
+  throw new Error("the paid port was consulted — the free gate did not refuse first");
+}
+
+describe("free refusals that RETURN rather than throw", () => {
+  it("crawl_site (20 credits, worker): unknown project — free, and it says so", async () => {
+    const tool = makeCrawlSiteTool({
+      resolveProject: async () => null,
+      enqueue: forbiddenPort,
+      estimate: forbiddenPort,
+    });
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+    expect(TOOL_COSTS.crawl_site).toBeGreaterThan(0);
+  });
+
+  it("crawl_site (20 credits, worker): archived project — free, and it says so", async () => {
+    const tool = makeCrawlSiteTool({
+      resolveProject: async () => ARCHIVED_REF,
+      enqueue: forbiddenPort,
+      estimate: forbiddenPort,
+    });
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/archiv/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("audit_speed (15 credits): a rejected URL — free, and it says so", async () => {
+    const tool = makeAuditSpeedTool({ port: { enabled: true, fetchPageSpeed: forbiddenPort } });
+    const result = await tool.run(CTX, { urls: ["javascript:alert(1)"] });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/http and https/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("ranked_keywords (65 credits): archived project — free, and it says so", async () => {
+    // resolveTarget's refusal, returned pre-reserve by all FOURTEEN tools that use it. This was
+    // the widest hole: archive a project, call the 65-credit tool with its id, get a silent
+    // free refusal.
+    const tool = makeRankedKeywordsTool({
+      loadProject: async () => ARCHIVED_REF,
+      port: { enabled: true, fetchRankedKeywords: forbiddenPort },
+    });
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/archiv/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+    expect(TOOL_COSTS.ranked_keywords).toBeGreaterThan(0);
+  });
+
+  it("ranked_keywords (65 credits): an unusable domain — free, and it says so", async () => {
+    // normalizeDomain's wording lives in packages/core and is shared with 0-credit tools, so the
+    // note has to be added at THIS call site, not at the source of the sentence.
+    const tool = makeRankedKeywordsTool({ port: { enabled: true, fetchRankedKeywords: forbiddenPort } });
+    const result = await tool.run(CTX, { target: "localhost" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/valid domain/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("compare_competitors (90 credits): a competitor list with nothing in it — free, and it says so", async () => {
+    const tool = makeCompareCompetitorsTool({ port: { enabled: true, fetchCompetitorComparison: forbiddenPort } });
+    // The only entry IS the target, so the list normalizes to empty.
+    const result = await tool.run(CTX, {
+      target: "shop.example.com",
+      competitors: ["shop.example.com"],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/no domain to compare against/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("keyword_gap (45 credits): an unusable competitor domain — free, and it says so", async () => {
+    const tool = makeKeywordGapTool({ port: { enabled: true, fetchKeywordGap: forbiddenPort } });
+    const result = await tool.run(CTX, { target: "shop.example.com", competitor: "localhost" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/valid domain/i);
+    expect(result.content[0]?.text).toMatch(NO_CHARGE);
+  });
+
+  it("invalid input on a PRICED tool says the fee — and on a FREE tool says nothing about it", async () => {
+    // The registry's zod refusal, before any charge mode runs. On a 0-credit tool the sentence
+    // would be noise about a charge that could never have happened, so the split is asserted in
+    // BOTH directions: a one-sided pin would pass a version that simply never adds it.
+    const priced = await makeAuditSchemaTool().run(CTX, { project_id: "not-a-uuid" });
+    const free = await untrackProjectTool.run(CTX, { project_id: "not-a-uuid" });
+
+    expect(priced.content[0]?.text).toMatch(/^Invalid input for "audit_schema"/);
+    expect(priced.content[0]?.text).toMatch(NO_CHARGE);
+
+    expect(free.content[0]?.text).toMatch(/^Invalid input for "untrack_project"/);
+    expect(free.content[0]?.text).not.toMatch(NO_CHARGE);
+    expect(TOOL_COSTS.untrack_project).toBe(0);
   });
 });

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   COMPETITORS_DISCOVERY_MAX_LIMIT,
   DEFAULT_COMPETITORS_DISCOVERY_LIMIT,
@@ -323,16 +324,21 @@ export function normalizeCompetitors(
   let competitors: readonly string[] = [];
   for (const entry of raw) {
     const normalized = normalizeDomain(entry);
-    if (!normalized.ok) return { ok: false, error: normalized.error };
+    // Both exits below state the fee. They are returned with errorResult BEFORE withCredits, so
+    // like resolveTarget's they never reach the registry's typed-refusal catch — and this is a
+    // 90-credit tool, where "was I charged for that?" is the caller's first question.
+    // normalizeDomain's own wording is shared with 0-credit tools and is not edited at its source.
+    if (!normalized.ok) return { ok: false, error: withNoChargeNote(normalized.error) };
     if (normalized.domain === target || competitors.includes(normalized.domain)) continue;
     competitors = [...competitors, normalized.domain];
   }
   if (competitors.length === 0) {
     return {
       ok: false,
-      error:
+      error: withNoChargeNote(
         'The "competitors" list contains no domain to compare against — it must name at least ' +
-        "one domain other than the target. Omit it to let DataForSEO pick competitors for you.",
+          "one domain other than the target. Omit it to let DataForSEO pick competitors for you.",
+      ),
     };
   }
   return { ok: true, competitors };
