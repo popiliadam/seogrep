@@ -13,6 +13,7 @@ import {
 } from "../dfs/llm-mentions.ts";
 import {
   AI_VISIBILITY_JUDGEMENT_NOTE,
+  catchVendorFailure,
   internalListLimitField,
   languageCodeField,
   locationNameField,
@@ -316,35 +317,44 @@ export function makeAiVisibilityTool(deps: AiVisibilityDeps = {}): RegisteredToo
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch -> commit
       // as one chain. The vendor request failing throws, so withCredits releases.
-      return withCredits({ userId: ctx.userId }, { tool: "ai_visibility" }, async () => {
-        const result = await port.fetchAiVisibility(query);
-        const text = formatAiVisibility(result, project);
-        // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, unguarded — migration 0032, and
-        // dfs/subject-runs.ts states the contract from the other side. withCredits commits a
-        // handler that RETURNS and releases one that THROWS, so an error escaping here costs the
-        // tenant nothing; swallowed, it would charge 90 credits for a lookup the panel will
-        // forever say never ran.
-        //
-        // THE IDENTITY IS THE SHARED ONE. `mentionSubjectIdentity` is what ai_visibility_compare
-        // uses for each of its targets too, so this domain measured alone and the same domain
-        // measured inside a comparison land on the SAME identity — which is the whole reason 0032
-        // keys a comparison by the subject rather than by the call.
-        // AN ARRAY OF ONE. There is no singular writer to reach for — see its own header:
-        // one insert path means atomicity is a property of the writer rather than of which
-        // function a call site picked, and this tool writes exactly one row.
-        await writeRun([
-          {
-            target: {
-              userId: ctx.userId,
-              projectId: project?.id ?? null,
-              tool: "ai_visibility",
-              identity: mentionSubjectIdentity(result.subject, "ai_visibility"),
+      //
+      // THE CATCH IS OUTSIDE withCredits, and that placement is the whole design. Catching INSIDE
+      // it and returning a result would COMMIT — 90 credits for a lookup that measured nothing.
+      // The throw has to escape the guarded region to release the reserve; by the time it lands
+      // here the release has happened, so an explanatory refusal can be returned for free.
+      // Without this branch the throw reaches the registry's generic catch and a vendor refusal
+      // DataForSEO explained in words is answered with "failed unexpectedly … quote reference".
+      const lookup = (): Promise<ToolResult> =>
+        withCredits({ userId: ctx.userId }, { tool: "ai_visibility" }, async () => {
+          const result = await port.fetchAiVisibility(query);
+          const text = formatAiVisibility(result, project);
+          // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, unguarded — migration 0032, and
+          // dfs/subject-runs.ts states the contract from the other side. withCredits commits a
+          // handler that RETURNS and releases one that THROWS, so an error escaping here costs the
+          // tenant nothing; swallowed, it would charge 90 credits for a lookup the panel will
+          // forever say never ran.
+          //
+          // THE IDENTITY IS THE SHARED ONE. `mentionSubjectIdentity` is what ai_visibility_compare
+          // uses for each of its targets too, so this domain measured alone and the same domain
+          // measured inside a comparison land on the SAME identity — which is the whole reason 0032
+          // keys a comparison by the subject rather than by the call.
+          // AN ARRAY OF ONE. There is no singular writer to reach for — see its own header:
+          // one insert path means atomicity is a property of the writer rather than of which
+          // function a call site picked, and this tool writes exactly one row.
+          await writeRun([
+            {
+              target: {
+                userId: ctx.userId,
+                projectId: project?.id ?? null,
+                tool: "ai_visibility",
+                identity: mentionSubjectIdentity(result.subject, "ai_visibility"),
+              },
+              report: aiVisibilityRunReport(result),
             },
-            report: aiVisibilityRunReport(result),
-          },
-        ]);
-        return textResult(text);
-      });
+          ]);
+          return textResult(text);
+        });
+      return catchVendorFailure("ai_visibility", lookup);
     },
   });
 }

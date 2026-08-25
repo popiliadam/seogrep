@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { errorResult, type ToolResult } from "./registry.ts";
 import {
+  isLlmMentionsVendorError,
   PLATFORM_MEANS,
   type AiVisibilityRow,
   type LlmPlatform,
@@ -129,6 +131,79 @@ export function notEnabledMessage(tool: string): string {
     "them. This tool will start returning data once live DataForSEO access is switched on — you " +
     "were not charged."
   );
+}
+
+/**
+ * THE VENDOR-FAILURE REFUSAL, worded once for both tools — the sentence that replaces
+ * `Tool "ai_visibility" failed unexpectedly … quote reference e383191d`.
+ *
+ * Four things the old sentence did not say and this one does:
+ *
+ *   WHAT FAILED   — the vendor, not the tool, and which vendor function the attempt was made at.
+ *   WHAT IT SAID  — DataForSEO's OWN status code and message when it gave one. On 2026-08-25 the
+ *                   vendor had already diagnosed the problem; nobody was shown it.
+ *   WHAT IT MEANS — nothing about the subject. A failed measurement is not a low one, and this is
+ *                   a 90-credit question about whether a brand is mentioned at all (NEVER #7).
+ *   WHAT IT COST  — "You were not charged" was HALF true and read as the whole truth. The credits
+ *                   really are released; the ATTEMPT really did use SeoGrep's own daily
+ *                   third-party-data allowance. Both are said, and neither in dollars: our vendor
+ *                   spend is our margin (budget-error.ts), and no credit figure is quoted here
+ *                   because this file must not carry a price (NEVER #6).
+ */
+export function vendorFailureMessage(
+  tool: string,
+  endpoint: string,
+  vendorStatusCode: number | null,
+  vendorStatusMessage: string | null,
+): string {
+  const said =
+    vendorStatusCode === null
+      ? "DataForSEO did not return a readable answer, and gave no status of its own to quote."
+      : `DataForSEO refused the request with status ${vendorStatusCode}` +
+        (vendorStatusMessage === null ? "." : `: "${vendorStatusMessage}".`);
+  return (
+    `${tool} could not measure anything this time: the attempt to DataForSEO LLM Mentions ` +
+    `${vendorFunctionOf(endpoint)} did not produce an answer. ${said}\n\n` +
+    "This says nothing about the subject you asked about. A lookup that failed is not a lookup " +
+    "that found nothing — no measurement was made at all, so no conclusion about mentions, or " +
+    "the absence of them, can be drawn from it.\n\n" +
+    "You were not charged any credits: the credits reserved for this lookup were released, and " +
+    "the balance is unchanged. The attempt itself did go out to DataForSEO and used part of " +
+    "SeoGrep's own daily third-party-data allowance — that is our cost, not yours, and it is " +
+    "named here rather than left out so that \"you were not charged\" is not read as \"this cost " +
+    "nobody anything\"."
+  );
+}
+
+/**
+ * Run one priced lookup and turn a VENDOR failure into an explanatory refusal.
+ *
+ * THE CATCH IS OUTSIDE withCredits, and that placement is the whole design. Catching INSIDE the
+ * guarded region and returning a result would COMMIT — full price for a lookup that measured
+ * nothing. The throw has to escape it to make the guard RELEASE; by the time it lands here the
+ * release has already happened, so the refusal below is free (credits/guard.ts).
+ *
+ * Only the TYPED vendor failure is caught. Anything else is rethrown into the registry's generic
+ * branch on purpose: a wider catch here would dress a genuine crash — a broken run-ledger write, a
+ * bug in the renderer — as "the vendor had a problem", which is the disguise the 2026-08-09
+ * campaign found twelve real failures wearing.
+ *
+ * The operator's log line is written HERE because this bypasses the registry catch that used to
+ * write it.
+ */
+export async function catchVendorFailure(
+  tool: string,
+  run: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isLlmMentionsVendorError(error)) throw error;
+    console.error(`Tool "${tool}" refused — DataForSEO LLM Mentions: ${error.message}`);
+    return errorResult(
+      vendorFailureMessage(tool, error.endpoint, error.vendorStatusCode, error.vendorStatusMessage),
+    );
+  }
 }
 
 /** One vendor scalar, printed as the vendor sent it. `null` is a SILENCE and is printed in words. */

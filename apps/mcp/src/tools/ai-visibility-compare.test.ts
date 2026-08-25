@@ -4,6 +4,8 @@ import type { AuthContext } from "../auth.ts";
 import { CREDIT_UNITS, TOOL_COSTS, creditCostFor } from "../credits/costs.ts";
 import { CONFIRMATION_THRESHOLD_CREDITS } from "./registry.ts";
 import {
+  DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+  LlmMentionsVendorError,
   MAX_COMPARE_TARGETS,
   MAX_INTERNAL_LIST_ROWS,
   MIN_COMPARE_TARGETS,
@@ -24,7 +26,7 @@ import {
   makeAiVisibilityCompareTool,
   type ResolvedTarget,
 } from "./ai-visibility-compare.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE } from "./ai-visibility-shared.ts";
+import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -453,5 +455,36 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
         platform: "chat_gpt",
       }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+/**
+ * THE SIBLING'S HALF OF THE SAME OUTAGE. `ai_visibility_compare` failed identically in production
+ * (reference a6f143eb) against a DIFFERENT vendor endpoint, which is what proved the fault was in
+ * the shared layer. Its refusal has to name ITS endpoint, and the per-target charge — up to 900
+ * credits — makes the "you were not charged any credits" clause carry more weight here than
+ * anywhere else on the surface.
+ */
+describe("the compare tool explains a vendor refusal against its OWN endpoint", () => {
+  it("names cross_aggregated_metrics, quotes the vendor, and claims no crash", async () => {
+    const result = await catchVendorFailure("ai_visibility_compare", () =>
+      Promise.reject(
+        new LlmMentionsVendorError(
+          DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
+          "vendor_status",
+          40501,
+          "Invalid Field: 'internal_list_limit'.",
+          "operator-only detail",
+        ),
+      ),
+    );
+    const text = result.content[0]?.text ?? "";
+    expect(result.isError).toBe(true);
+    expect(text).toContain("cross_aggregated_metrics");
+    expect(text).not.toContain("aggregated_metrics.");
+    expect(text).toContain("40501");
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).not.toContain("operator-only detail");
   });
 });

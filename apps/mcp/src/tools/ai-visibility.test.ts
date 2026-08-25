@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+  LlmMentionsVendorError,
   MAX_INTERNAL_LIST_ROWS,
   PLATFORM_MEANS,
   ROW_ORDER,
@@ -22,7 +24,7 @@ import {
   formatAiVisibility,
   makeAiVisibilityTool,
 } from "./ai-visibility.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE } from "./ai-visibility-shared.ts";
+import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -548,5 +550,97 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
     await expect(
       tool.run(CTX, { subject: "keyword", keyword: "seo software", platform: "chat_gpt" }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// WHAT THE USER IS TOLD WHEN THE VENDOR REFUSES — the other half of the 2026-08-25 damage.
+//
+// Measured in production, three times out of three:
+//
+//     Tool "ai_visibility" failed unexpectedly. The server logged the details under
+//     reference e383191d — quote it if you report this. You were not charged.
+//
+// Three things wrong with that sentence, and one spec each below: it called a vendor refusal an
+// unexpected crash; it withheld what DataForSEO had already said; and "You were not charged" was
+// half true — the credits really were released, but the attempt really did spend SeoGrep's own
+// third-party-data allowance, which is why ten of them took the paid surface down.
+// =============================================================================================
+describe("a vendor refusal is explained, not filed as a crash", () => {
+  const refusal = (code: number | null, message: string | null) =>
+    new LlmMentionsVendorError(
+      DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
+      code === null ? "transport" : "vendor_status",
+      code,
+      message,
+      "internal detail the user must never see",
+    );
+
+  const answerTo = async (error: unknown): Promise<string> => {
+    const result = await catchVendorFailure("ai_visibility", () => Promise.reject(error));
+    expect(result.isError).toBe(true);
+    return result.content[0]?.text ?? "";
+  };
+
+  it("never answers a vendor refusal with the generic crash sentence", async () => {
+    const text = await answerTo(refusal(40501, "Invalid Field: 'internal_list_limit'."));
+    expect(text).not.toMatch(/failed unexpectedly/i);
+    expect(text).not.toMatch(/quote it if you report this/i);
+    expect(text).not.toMatch(/reference/i);
+  });
+
+  it("quotes DataForSEO's OWN status and words, which the old sentence withheld", async () => {
+    const text = await answerTo(refusal(40501, "Invalid Field: 'internal_list_limit'."));
+    expect(text).toContain("40501");
+    expect(text).toContain("Invalid Field: 'internal_list_limit'.");
+    expect(text).toContain("aggregated_metrics");
+  });
+
+  /**
+   * NEVER #7 AT THE FAILURE EDGE. A tool named "AI visibility" answering with an error is read as
+   * "we looked and found little". No measurement happened at all, and the answer has to say so.
+   */
+  it("says the failure implies NOTHING about the subject", async () => {
+    const text = await answerTo(refusal(40501, "x"));
+    expect(text).toMatch(/says nothing about the subject/i);
+    expect(text).toMatch(/no measurement was made at all/i);
+  });
+
+  /**
+   * THE HALF-TRUTH, CLOSED. The credit claim stays (it is true and it was verified in production:
+   * net delta 0, reservation + refund). What is added is the half that was missing, and it is
+   * added WITHOUT a dollar figure — our vendor spend is our margin (dfs/budget-error.ts).
+   */
+  it("tells the truth about cost: credits released, AND our own allowance spent, in no dollars", async () => {
+    const text = await answerTo(refusal(40501, "x"));
+    expect(text).toMatch(/not charged any credits/i);
+    expect(text).toMatch(/daily third-party-data allowance/i);
+    expect(text).toMatch(/our cost, not yours/i);
+    expect(text).not.toMatch(/\$\d/);
+    // The bare claim that used to stand alone must not stand alone any more.
+    expect(text).not.toMatch(/You were not charged\.\s*$/);
+  });
+
+  it("says so plainly when the vendor gave no status of its own to quote", async () => {
+    const text = await answerTo(refusal(null, null));
+    expect(text).toMatch(/did not return a readable answer/i);
+    expect(text).toMatch(/gave no status of its own/i);
+  });
+
+  /**
+   * THE CATCH IS NARROW ON PURPOSE. A genuine crash — a broken run-ledger write, a renderer bug —
+   * must keep reaching the registry's generic branch. Dressing one as "the vendor had a problem"
+   * is the disguise the 2026-08-09 campaign found twelve real failures wearing.
+   */
+  it("rethrows anything that is NOT a vendor failure", async () => {
+    const boom = new Error("subject_lookup_runs write failed");
+    await expect(catchVendorFailure("ai_visibility", () => Promise.reject(boom))).rejects.toBe(boom);
+  });
+
+  it("passes a successful lookup straight through", async () => {
+    const ok = await catchVendorFailure("ai_visibility", async () => ({
+      content: [{ type: "text" as const, text: "fine" }],
+    }));
+    expect(ok.content[0]?.text).toBe("fine");
   });
 });
