@@ -900,7 +900,9 @@ export const DOC_PROSE = {
       "Speed Index, Total Blocking Time, Cumulative Layout Shift, and Time to Interactive, each " +
       "printed with Lighthouse's own formatting.\n" +
       "- **The biggest opportunities** — the improvements Lighthouse estimates the largest " +
-      "load-time saving for, largest first, with the estimated milliseconds saved.\n\n" +
+      "load-time saving for, largest first, with the estimated milliseconds saved. A short " +
+      "list, not the full audit: only the handful with the largest savings are printed, and an " +
+      "audit Lighthouse estimates no saving for is dropped rather than listed at zero.\n\n" +
       "**These are lab measurements.** Lighthouse loads the page once, on the vendor's machine, " +
       "under simulated throttling. That is a repeatable diagnostic, not a record of what your " +
       "visitors experienced — the field metrics Google reports from real Chrome users (including " +
@@ -919,7 +921,8 @@ export const DOC_PROSE = {
         body:
           "`audit_speed` needs a **paid credit balance**. Despite sitting in the audit family it " +
           "reads live data from a paid third-party provider — one real browser run per page — so " +
-          "it is not available on trial credits. Buy any credit pack and it unlocks straight " +
+          "it is not available on trial credits — the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight " +
           "away; your existing credits keep working for crawls, the other audits, reports and " +
           "Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1060,7 +1063,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`research_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live keyword data is unavailable on this deployment, the tool returns a clear " +
@@ -1227,7 +1231,8 @@ export const DOC_PROSE = {
           "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
           "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
           "`discover_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away; your existing credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
           "The `limit` ceiling is **part of the price** rather than a display preference: " +
@@ -1370,7 +1375,8 @@ export const DOC_PROSE = {
           "request. If it fails, the whole call fails and **you are not charged**. Reading your own " +
           "crawl costs nothing extra — it is data you have already paid for.\n\n" +
           "`my_pages` needs a **paid credit balance**. It reads live data from a paid third-party " +
-          "provider, so it is not available on trial credits. Buy any credit pack and it unlocks " +
+          "provider, so it is not available on trial credits; the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks " +
           "straight away; your existing credits are untouched and keep working for crawls, audits, " +
           "reports and Search Console tools.\n\n" +
           "The `limit` ceiling is **part of the price** rather than a display preference: " +
@@ -1470,7 +1476,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`ranked_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1552,7 +1559,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`analyze_backlinks` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1651,7 +1659,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`compare_competitors` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1736,7 +1745,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`keyword_gap` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack " +
           "and it unlocks straight away. Your trial credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1823,7 +1833,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`link_gap` needs a **paid credit balance**. It reads live data from a paid third-party " +
-          "provider, so it is not available on trial credits — buy any credit pack and it unlocks " +
+          "provider, so it is not available on trial credits; the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks " +
           "straight away. Your trial credits are untouched and keep working for crawls, audits, " +
           "reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1915,7 +1926,8 @@ export const DOC_PROSE = {
         body:
           "`backlink_changes` needs a **paid credit balance**. It reads live data from a paid " +
           "third-party provider — two requests per call — so it is not available on trial " +
-          "credits. Buy any credit pack and it unlocks straight away; your existing credits are " +
+          "credits; the refusal arrives before anything is reserved and says outright that you " +
+          "were not charged. Buy any credit pack and it unlocks straight away; your existing credits are " +
           "untouched and keep working for crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
           "_\"backlink change history is not yet enabled on this deployment\"_ message and " +
@@ -2032,7 +2044,8 @@ export const DOC_PROSE = {
         body:
           "`backlink_details` needs a **paid credit balance**. It reads live data from a paid " +
           "third-party provider — two requests per call — so it is not available on trial " +
-          "credits. Buy any credit pack and it unlocks straight away; your existing credits are " +
+          "credits; the refusal arrives before anything is reserved and says outright that you " +
+          "were not charged. Buy any credit pack and it unlocks straight away; your existing credits are " +
           "untouched and keep working for crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
           "_\"backlink details are not yet enabled on this deployment\"_ message and **charges " +
@@ -2329,7 +2342,8 @@ export const DOC_PROSE = {
           "data allowance. That is our cost, not yours, and saying only the first half read as " +
           "the whole truth.\n\n" +
           "`ai_visibility` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away; your existing credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
           "**`internal_list_limit` is not a price control.** It is the vendor's own field, and " +
@@ -2442,7 +2456,8 @@ export const DOC_PROSE = {
           "out: the attempt did go out to DataForSEO and used part of SeoGrep's own daily " +
           "third-party data allowance. That is our cost, not yours.\n\n" +
           "`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a " +
-          "paid third-party provider, so it is not available on trial credits. Buy any credit " +
+          "paid third-party provider, so it is not available on trial credits; the refusal arrives " +
+          "before anything is reserved and says outright that you were not charged. Buy any credit " +
           "pack and it unlocks straight away; your existing credits are untouched and keep " +
           "working for crawls, audits, reports and Search Console tools.\n\n" +
           "**`internal_list_limit` is not a price control** here either. The vendor's own words " +

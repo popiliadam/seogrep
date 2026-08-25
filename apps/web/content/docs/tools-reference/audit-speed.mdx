@@ -13,7 +13,7 @@ Pass between one and five page URLs. Each is measured on its own, and each page 
 
 - **Performance score** — Lighthouse's own 0–100 score for the page.
 - **Lab Core Web Vitals and friends** — First Contentful Paint, Largest Contentful Paint, Speed Index, Total Blocking Time, Cumulative Layout Shift, and Time to Interactive, each printed with Lighthouse's own formatting.
-- **The biggest opportunities** — the improvements Lighthouse estimates the largest load-time saving for, largest first, with the estimated milliseconds saved.
+- **The biggest opportunities** — the improvements Lighthouse estimates the largest load-time saving for, largest first, with the estimated milliseconds saved. A short list, not the full audit: only the handful with the largest savings are printed, and an audit Lighthouse estimates no saving for is dropped rather than listed at zero.
 
 **These are lab measurements.** Lighthouse loads the page once, on the vendor's machine, under simulated throttling. That is a repeatable diagnostic, not a record of what your visitors experienced — the field metrics Google reports from real Chrome users (including Interaction to Next Paint) are a different measurement, and this tool does not claim them.
 
@@ -23,7 +23,7 @@ URLs are canonicalized before anything is charged. A bare domain is read as its 
 
 ## Who can run it
 
-`audit_speed` needs a **paid credit balance**. Despite sitting in the audit family it reads live data from a paid third-party provider — one real browser run per page — so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits keep working for crawls, the other audits, reports and Search Console tools.
+`audit_speed` needs a **paid credit balance**. Despite sitting in the audit family it reads live data from a paid third-party provider — one real browser run per page — so it is not available on trial credits — the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits keep working for crawls, the other audits, reports and Search Console tools.
 
 If live DataForSEO access is unavailable on this deployment, the tool returns a clear _"page speed measurements are not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as a real measurement.
 
