@@ -184,6 +184,25 @@ export interface CrawlOptions {
    * only the homepage; if the homepage itself is out of scope, nothing in scope is reachable.
    */
   includePaths?: string[];
+  /**
+   * Called after every committed batch with the counts SO FAR — the crawl's only live signal.
+   *
+   * WHY IT EXISTS: a crawl_site run takes up to 90 s, and while it ran `get_job_status`
+   * returned a byte-identical line on every poll (measured: two consecutive reads, same string),
+   * so a customer could not tell a working crawl from a stuck one. The counts are already in
+   * hand at each commit; the queue handler turns them into something a poll can read.
+   *
+   * CONTRACT: fire-and-forget and NON-FATAL. It is called synchronously, its return value is
+   * ignored, and a throw from it is swallowed — a cosmetic progress signal must never fail a
+   * crawl the tenant is being charged for.
+   */
+  onProgress?: (progress: CrawlProgress) => void;
+}
+
+/** Counts of a crawl IN FLIGHT — what has been committed so far, never a final result. */
+export interface CrawlProgress {
+  readonly pagesCrawled: number;
+  readonly urlsSkipped: number;
 }
 
 /** Parsed page signals, before url/status/issues are attached. */
@@ -499,6 +518,44 @@ export function matchesIncludePaths(pathname: string, prefixes: readonly string[
 }
 
 /**
+ * RESERVED INFRASTRUCTURE PATH PREFIXES — never crawled, never seeded, never counted.
+ *
+ * The bar for an entry here is deliberately high, because everything excluded is a page the
+ * tenant can never be told about: a prefix qualifies only when a SPEC OR A PLATFORM reserves it
+ * for machine endpoints, so no URL under it can belong to the site's own content tree. A path
+ * that is merely "usually boring" (/cart, /login, /wp-admin) does NOT qualify — those are the
+ * site author's own URLs, and refusing them would be us deciding what their site is.
+ *
+ *  - `/cdn-cgi/` — Cloudflare's reserved prefix (email-protection, /trace, rum, challenges).
+ *    MEASURED, and the reason this list exists: Cloudflare rewrites every `mailto:` on a
+ *    protected page into `<a href="/cdn-cgi/l/email-protection#…">`, so ONE endpoint that
+ *    answers 4xx to a plain GET was linked from 25 crawled pages. That single stored row
+ *    surfaced as audit_tech's 25/25 broken links, audit_schema's ONLY action item, the shared
+ *    report's broken-link section, and audit_onpage's first finding — four PAID surfaces
+ *    reporting the CDN's own plumbing as a defect of the customer's site.
+ *  - `/.well-known/` — reserved by RFC 8615 for machine-readable metadata (security.txt,
+ *    apple-app-site-association, acme-challenge). Same shape: not content, not indexable, and
+ *    a 4xx there says nothing about the site's SEO.
+ *
+ * Nothing else is on this list. A future entry carries its own reason or does not go in.
+ */
+export const INFRASTRUCTURE_PATH_PREFIXES: readonly string[] = ["/cdn-cgi/", "/.well-known/"];
+
+/**
+ * True when `pathname` belongs to a reserved infrastructure prefix (see the list above).
+ * Matched case-insensitively, and the bare prefix without its trailing slash counts too
+ * (`/cdn-cgi` is the same endpoint tree as `/cdn-cgi/`). Pure — the ONE predicate the BFS
+ * enqueue, the sitemap claim and the free pre-discovery estimate all share, so a URL cannot
+ * be excluded from the crawl and still inflate the size the customer is quoted.
+ */
+export function isInfrastructurePath(pathname: string): boolean {
+  const path = pathname.toLowerCase();
+  return INFRASTRUCTURE_PATH_PREFIXES.some(
+    (prefix) => path.startsWith(prefix) || path === prefix.slice(0, -1),
+  );
+}
+
+/**
  * Page-level issue flags. Deliberately shallow — the four cheap on-page signals the
  * crawler owns; deep on-page/tech/schema analysis is T8's job, not this module's.
  */
@@ -626,6 +683,30 @@ const skipOverflowReason = (dropped: number): string =>
 const RESULT_BUDGET_REASON =
   `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); this URL was not ` +
   "included — narrow the crawl with include_paths or a lower max_urls to cover it";
+
+/**
+ * THE TWO WAYS A CRAWL STOPS SHORT, in the words the tenant actually reads.
+ *
+ * They matter because get_job_status's finish line quotes the DOMINANT skip reason verbatim
+ * (`… (mostly: <reason>)`), and until now both states said only which ceiling was hit — never
+ * WHICH ONE, in a form that separates "you got everything you paid for" from "we ran out of
+ * time". Measured on one site at identical settings: 2026-08-09 stopped at 26 pages on the time
+ * budget, 2026-08-25 reached 100 in 78 s. Same 20 credits, 14%-45% coverage, and the crawl's own
+ * output never said so — the customer could only learn it by buying the 15-credit audit_tech.
+ *
+ * VOCABULARY IS LOAD-BEARING, not decoration: audit_tech's categorizeSkip buckets on the
+ * substrings "max url" and "time budget", so both keep them. Neither may contain "robots",
+ * "redirect", "timeout", "non-html", "parse failed" or "fetch failed" — each of those is
+ * checked FIRST there and would silently re-file a limit as a fault of the site.
+ */
+const pageLimitReason = (maxUrls: number, elapsedMs: number, timeBudgetMs: number): string =>
+  `max URL limit reached — the ${maxUrls}-page limit was reached after ${Math.round(elapsedMs / 1_000)}s, ` +
+  `inside the ${Math.round(timeBudgetMs / 1_000)}s time budget (this run covered every page it paid for)`;
+
+const timeBudgetReason = (maxUrls: number, pagesCrawled: number, elapsedMs: number): string =>
+  `time budget exhausted after ${Math.round(elapsedMs / 1_000)}s — the crawl stopped on TIME, not at the ` +
+  `${maxUrls}-page limit (${pagesCrawled} page(s) crawled); coverage varies between runs at the same ` +
+  "price, so re-run, or narrow the crawl with include_paths to cover a section fully";
 
 /** The bound's one-line summary when it had to DROP already-crawled pages to fit the budget. */
 const resultBudgetDropReason = (dropped: number): string =>
@@ -1147,6 +1228,11 @@ async function loadSitemapSeeds(
     }
     if (!sameOrigin(u, origin)) return null;
     if (!matchesIncludePaths(u.pathname, prefixes)) return null;
+    // A sitemap that advertises a reserved infrastructure path is refused HERE, at the one
+    // place a loc is claimed, so the URL is absent from BOTH uses of this list: it is not
+    // seeded, and it is not stored in `sitemapUrls` either — otherwise audit_tech's
+    // sitemap↔crawl diff would report the URL we deliberately skipped as a coverage gap.
+    if (isInfrastructurePath(u.pathname)) return null;
     const norm = normalizeUrl(u.toString());
     if (seen.has(norm)) return null;
     seen.add(norm);
@@ -1374,6 +1460,20 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   // T8: what the accumulated pages have cost so far, in the unit they will be PERSISTED in.
   let resultBytes = 0;
 
+  /**
+   * The progress tick, guarded once here rather than at each call site: a cosmetic signal
+   * may not fail a charged crawl (CrawlOptions.onProgress), and a crawl with no listener
+   * pays nothing for it.
+   */
+  const reportProgress = (progress: CrawlProgress): void => {
+    if (opts.onProgress === undefined) return;
+    try {
+      opts.onProgress(progress);
+    } catch {
+      // Deliberately swallowed — see the contract on CrawlOptions.onProgress.
+    }
+  };
+
   /** Record a skip, bounded: past the listing ceiling only the DROP COUNT is kept. */
   const addSkip = (url: string, reason: string): void => {
     if (skipped.length >= MAX_SKIPPED_LISTED) {
@@ -1399,6 +1499,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     if (!sameOrigin(u, originUrl)) return;
     // Out-of-scope links are skipped, not fetched (with no prefixes this is a no-op).
     if (!matchesIncludePaths(u.pathname, prefixes)) return;
+    // Reserved infrastructure endpoints are not the site (see INFRASTRUCTURE_PATH_PREFIXES).
+    // Dropped SILENTLY rather than recorded as a skip: a skip entry is an account of a URL of
+    // the SITE that we did not read, and these are not URLs of the site — listing them would
+    // move the same noise from the findings into the skip report the audits also print.
+    if (isInfrastructurePath(u.pathname)) return;
     const norm = normalizeUrl(link);
     if (!visited.has(norm) && !enqueued.has(norm)) {
       enqueued.add(norm);
@@ -1417,11 +1522,15 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
   while (queue.length > 0 && !stopped) {
     if (pages.length >= maxUrls) {
-      for (const item of queue.splice(0)) addSkip(item.url, "max URL limit reached");
+      // Built ONCE per drain, not per URL: the sentence is the same for every URL the ceiling
+      // dropped, and it is a statement about the RUN, not about the individual URL.
+      const reason = pageLimitReason(maxUrls, Date.now() - started, timeBudgetMs);
+      for (const item of queue.splice(0)) addSkip(item.url, reason);
       break;
     }
     if (Date.now() - started >= timeBudgetMs) {
-      for (const item of queue.splice(0)) addSkip(item.url, "time budget exhausted");
+      const reason = timeBudgetReason(maxUrls, pages.length, Date.now() - started);
+      for (const item of queue.splice(0)) addSkip(item.url, reason);
       break;
     }
 
@@ -1593,6 +1702,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       if (parsed.linksTruncated) linkFloodedPages++;
       for (const link of parsed.links) enqueue(link, slot.depth + 1);
     }
+
+    // One progress tick per COMMITTED batch — after the batch, never inside it, so a reader
+    // never sees a half-applied wave. Swallowed on throw: see CrawlOptions.onProgress. The
+    // counts are already in hand; this costs no request and no measurement of its own.
+    reportProgress({ pagesCrawled: pages.length, urlsSkipped: skipped.length });
   }
 
   // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
@@ -1761,6 +1875,9 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
     }
     if (!sameOrigin(u, originUrl)) continue;
     if (!matchesIncludePaths(u.pathname, prefixes)) continue;
+    // Counted with the SAME filter the crawl applies, or the estimate would quote the customer
+    // pages the crawl is guaranteed never to fetch.
+    if (isInfrastructurePath(u.pathname)) continue;
     seen.add(normalizeUrl(link));
   }
   return seen.size;
