@@ -239,6 +239,27 @@ describe("setup_project opens projects through the shared route", () => {
   });
 
   /**
+   * WHICH FORM IS WRITTEN, not merely that one row results. Measured under mutation: with the
+   * `www.` strip removed from the normalizer, the spec above STAYS GREEN — the route's `www.`
+   * probe finds the canonical row that the first call happened to create, so the duplication is
+   * hidden as long as the bare form is registered first. A customer who pastes the address-bar
+   * form FIRST is the case that then goes wrong, and this is the spec that sees it.
+   */
+  it("stores the CANONICAL host even when the `www.` form is registered first", async () => {
+    const store = makeProjectsStore();
+    getServiceClient.mockReturnValue(store.client);
+
+    const { text, isError } = await run("https://www.example.com/pricing?utm_source=chatgpt");
+
+    expect(isError).toBe(false);
+    expect(text).toMatch(/created: true/i);
+    expect(store.inserted).toEqual([{ user_id: "user-1", domain: "example.com" }]);
+    // …and the bare form then lands on it rather than opening its own row.
+    expect((await run("example.com")).text).toMatch(/already exists/i);
+    expect(store.rows).toHaveLength(1);
+  });
+
+  /**
    * THE SIX ROWS THAT ALREADY EXIST. This fix is forward-only — no migration rewrites
    * `www.noraninsaat.com` — so a stored `www.` domain has to stay REACHABLE from the canonical
    * host, or the first call after the deploy opens a seventh project next to it.
