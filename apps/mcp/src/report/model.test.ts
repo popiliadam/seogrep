@@ -577,6 +577,53 @@ describe("buildReportModel — Opportunities (R1-b)", () => {
     expect(model.opportunities?.brandedExcluded).toBe(1);
   });
 
+  /**
+   * THE HIGHEST-VISIBILITY SURFACE THERE IS: the report is a link the customer sends to other
+   * people. Measured 2026-08-25 on dentnotion.com, the cannibalization section's first three rows
+   * were the customer's own brand, with "Excluded 2 branded queries" sitting directly beneath
+   * them.
+   *
+   * The fixture deliberately gives the branded rows UNPINNED positions — no sitelink block — and
+   * a MISSPELLING, because those are the two shapes that reached the shared report unfiltered. If
+   * the shared matcher stops calling them decisive, this section fills with the brand again.
+   */
+  it("EXCLUDES branded rows the sitelink shape cannot see: brand+word, and a misspelling", () => {
+    const brandedPull: PullData = {
+      days: 28,
+      property: "sc-domain:dentnotion.com",
+      current: {
+        start_date: "2026-06-22",
+        end_date: "2026-07-19",
+        rows: [
+          // The live number-one row: the brand plus a place name, nothing pinned.
+          { query: "dent notion menderes", page: "https://dentnotion.com/", clicks: 40, impressions: 700, ctr: 0.05, position: 2.9 },
+          { query: "dent notion menderes", page: "https://dentnotion.com/iletisim", clicks: 5, impressions: 430, ctr: 0.01, position: 4.4 },
+          // A misspelling of the brand, likewise unpinned.
+          { query: "dentmotion", page: "https://dentnotion.com/", clicks: 6, impressions: 40, ctr: 0.15, position: 3.2 },
+          { query: "dentmotion", page: "https://dentnotion.com/doktorlarimiz", clicks: 1, impressions: 33, ctr: 0.03, position: 5.1 },
+          // A genuine finding on the same site, which must SURVIVE.
+          { query: "izmir dis beyazlatma", page: "https://dentnotion.com/beyazlatma", clicks: 9, impressions: 300, ctr: 0.03, position: 6.2 },
+          { query: "izmir dis beyazlatma", page: "https://dentnotion.com/blog/beyazlatma", clicks: 2, impressions: 260, ctr: 0.01, position: 8.4 },
+        ],
+      },
+      previous: { start_date: "2026-05-25", end_date: "2026-06-21", rows: [] },
+    };
+    // The fixture is only meaningful if NOTHING in it looks like a sitelink block.
+    expect(brandedPull.current.rows.filter((r) => r.position <= 1.5)).toHaveLength(0);
+
+    const built = buildReportModel({
+      domain: "dentnotion.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: null,
+      pull: brandedPull,
+    });
+    expect(built.opportunities?.cannibalization.items.map((g) => g.query)).toEqual([
+      "izmir dis beyazlatma",
+    ]);
+    expect(built.opportunities?.brandedExcluded).toBe(2);
+  });
+
   it("keeps the engine's PRE-CAP quick-win total when its own cap already cut the list", () => {
     // findQuickWinsResult caps at MAX_QUICK_WINS (50) and hands back the pre-cap count beside it.
     // Taking items.length as the total would re-declare 50 as the whole answer for a site with
