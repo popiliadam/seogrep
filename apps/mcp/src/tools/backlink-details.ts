@@ -98,8 +98,10 @@ const inputSchema = z.object({
     .default(DEFAULT_BACKLINK_DETAIL_ROWS)
     .describe(
       `How many individual backlinks to return (1-${MAX_BACKLINK_DETAIL_ROWS}, default ` +
-        `${DEFAULT_BACKLINK_DETAIL_ROWS}). DataForSEO bills per returned row, so this is the ` +
-        "price control, not a display preference.",
+        `${DEFAULT_BACKLINK_DETAIL_ROWS}). A display control, NOT a price control: this call ` +
+        `costs ${TOOL_COSTS.backlink_details} credits whatever you ask for, and asking for fewer ` +
+        "rows costs the same. DataForSEO's own bill is nearly all a flat per-request fee — " +
+        "measured on one profile, 19x the rows cost 13% more.",
     ),
   offset: z
     .number()
@@ -120,8 +122,8 @@ const inputSchema = z.object({
     .default(DEFAULT_TARGET_PAGE_ROWS)
     .describe(
       `How many of the target's OWN pages to return, most-linked first (1-` +
-        `${MAX_TARGET_PAGE_ROWS}, default ${DEFAULT_TARGET_PAGE_ROWS}). Billed per row on the ` +
-        "same tariff as the backlink list.",
+        `${MAX_TARGET_PAGE_ROWS}, default ${DEFAULT_TARGET_PAGE_ROWS}). Same rule as limit: a ` +
+        "display control, and asking for fewer rows costs the same.",
     ),
 });
 

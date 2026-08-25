@@ -516,3 +516,48 @@ describe("backlink_details free pre-reserve gates (no credit machinery)", () => 
     await expect(serving().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/SUPABASE/i);
   });
 });
+
+// =============================================================================================
+// S14 item 1 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// The schema used to say "DataForSEO bills per returned row, so this is the price control, not a
+// display preference". MEASURED 2026-08-25 on one profile: `limit 10` cost the vendor $0.04854
+// and `limit 200` (187 rows back) cost $0.05506 — NINETEEN times the rows for THIRTEEN percent
+// more money, because the Backlinks tariff is a flat per-request fee plus $0.000036 a row. The
+// credit price was 35 both times. So a customer who narrows the window to save money pays the
+// same and receives less, on the strength of a sentence this product wrote.
+//
+// These specs read the description off the PUBLISHED JSON schema (what the customer's client is
+// handed), and assert on the CLAIM with regexes rather than on a copy of the source string —
+// signed lesson 11: a literal-for-literal grep proves the file, not the promise.
+// =============================================================================================
+
+describe("S14 — the limit description states measured billing behaviour", () => {
+  const schema = makeBacklinkDetailsTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+  const pageLimit = schema.properties.page_limit?.description ?? "";
+
+  it("no longer calls the row count a price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+    expect(pageLimit).not.toMatch(/billed per row/i);
+  });
+
+  it("says a narrower window is not a cheaper one, on BOTH row arguments", () => {
+    expect(limit).toMatch(/\bnot a price control\b/i);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+    expect(pageLimit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  it("names the flat credit price the caller actually pays, whatever they ask for", () => {
+    expect(limit).toMatch(/35 credits/);
+    expect(limit).toMatch(/whatever you ask for/i);
+  });
+
+  it("attributes the near-flat vendor cost to the vendor, as a measurement", () => {
+    expect(limit).toMatch(/flat per-request fee/i);
+    expect(limit).toMatch(/measured/i);
+  });
+});
