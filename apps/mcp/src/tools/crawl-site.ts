@@ -113,9 +113,19 @@ const defaultResolveProject: ProjectResolver = (ctx, projectId) =>
  * (TOOL_COSTS.crawl_site). null when pre-discovery could not size the site.
  */
 interface FullCrawlProjection {
+  /**
+   * A LOWER BOUND on the site's page count — never an estimate of it. Both discovery branches
+   * are floors by construction: the sitemap count is bounded (5 000 locs, 5 child sitemaps, an
+   * 8-second total budget), and the homepage branch counts only the links ON the homepage.
+   * MEASURED 2026-08-25: pre-discovery said 28 and the crawl's own queue found at least 222 —
+   * the number the customer approved 20 credits against was ~8x low, and was printed with a
+   * "~", which reads as "approximately", i.e. as likely-high as likely-low. It never is.
+   */
   readonly pages: number;
   readonly runs: number;
   readonly credits: number;
+  /** Where the floor came from — the sitemap, or homepage links. Changes what we can claim. */
+  readonly source: SiteSizeEstimate["source"];
 }
 
 /**
@@ -137,7 +147,20 @@ async function projectFullCrawl(
   const pages = sized.pages;
   if (pages === null || !Number.isFinite(pages) || pages <= 0) return null;
   const runs = Math.ceil(pages / PAGE_CAP);
-  return { pages, runs, credits: runs * TOOL_COSTS.crawl_site };
+  return { pages, runs, credits: runs * TOOL_COSTS.crawl_site, source: sized.source };
+}
+
+/**
+ * How the floor was reached, in one clause the customer can weigh. The homepage branch gets the
+ * stronger warning on purpose: it is the branch that measured 28 against a site of 222+, and it
+ * fires exactly when there is no sitemap to read — the case where a floor is furthest from the
+ * truth.
+ */
+function sourceClause(source: SiteSizeEstimate["source"]): string {
+  if (source === "sitemap") return "counted from your sitemap";
+  if (source === "homepage")
+    return "counted from links on the homepage only (no usable sitemap was found), so the real site is very likely larger";
+  return "from a partial discovery";
 }
 
 /** Group an integer with commas (12345 -> "12,345"). Pure, locale-independent (no ICU needed). */
@@ -163,7 +186,8 @@ function confirmationResult(
   const runsText = groupThousands(projection.runs);
   const scopeClause = scopedPaths ? " in the paths you scoped to" : "";
   const message =
-    `Your site looks large — about ${pagesText} pages found${scopeClause}. ` +
+    `Your site looks large — at least ${pagesText} pages found${scopeClause} ` +
+    `(a lower bound, ${sourceClause(projection.source)}). ` +
     `This one crawl of ${domain} costs a flat ${runCost} credits (one crawl covers up to ${PAGE_CAP} pages) — ` +
     `that ${runCost} credits is the only charge. ` +
     `Crawling the WHOLE site at the current rate (${runCost} credits per ${PAGE_CAP} pages) would take about ` +
@@ -177,7 +201,11 @@ function confirmationResult(
       requires_confirmation: true,
       run_cost_credits: runCost,
       pages_per_crawl: PAGE_CAP,
+      // The key is unchanged (clients read it), but the two fields beside it say what it IS:
+      // a floor from a bounded, best-effort discovery — never a two-sided estimate.
       site_pages_estimate: projection.pages,
+      site_pages_is_lower_bound: true,
+      site_pages_source: projection.source,
       full_site_projection: {
         credits: projection.credits,
         runs: projection.runs,
@@ -201,8 +229,11 @@ function queuedResult(
     `estimated_credits: ${TOOL_COSTS.crawl_site}. ` +
     `Track it with get_job_status { "job_id": "${jobId}" }.`;
   if (!projection) return textResult(base);
+  // "at least N", never "~N". The number is a floor (see FullCrawlProjection.pages), and "~"
+  // told the customer it could fall either way while they approved the spend.
   return textResult(
-    `${base} ~${groupThousands(projection.pages)} pages discovered; this crawl covers up to ` +
+    `${base} At least ${groupThousands(projection.pages)} pages discovered ` +
+      `(${sourceClause(projection.source)}); this crawl covers up to ` +
       `${maxUrls} of them (${TOOL_COSTS.crawl_site} credits).`,
   );
 }

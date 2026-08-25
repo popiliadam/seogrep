@@ -106,6 +106,8 @@ interface ConfirmationBody {
   run_cost_credits: number;
   pages_per_crawl: number;
   site_pages_estimate: number;
+  site_pages_is_lower_bound: boolean;
+  site_pages_source: string;
   full_site_projection: { credits: number; runs: number; note: string };
   message: string;
 }
@@ -127,6 +129,12 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(body.full_site_projection).toMatchObject({ credits: 300, runs: 15 });
     expect(body.message).toMatch(/"confirm": true/);
     expect(body.message).toMatch(/include_paths/);
+    // The figure is a FLOOR, in the prose and in the structured body — a client reading the
+    // number must be able to learn that without parsing English.
+    expect(body.message).toMatch(/at least 1,500 pages/i);
+    expect(body.message).not.toMatch(/about 1,500 pages/i);
+    expect(body.site_pages_is_lower_bound).toBe(true);
+    expect(body.site_pages_source).toBe("sitemap");
   });
 
   it("HONESTY: states the real 20-credit charge and never presents the projection as the charge", async () => {
@@ -222,8 +230,36 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(calls).toHaveLength(1);
     const text = result.content[0]!.text;
     expect(text).toContain("estimated_credits: 20");
-    expect(text).toMatch(/~30 pages discovered/);
+    // A LOWER BOUND, said as one. Pre-discovery said "~28" for a site whose own crawl queue
+    // found 222+ (measured 2026-08-25): a "~" in front of a number that can only be too low
+    // tells the customer it might be too high, while they approve the spend.
+    expect(text).toMatch(/at least 30 pages discovered/i);
+    expect(text).not.toMatch(/~30/);
     expect(text).not.toMatch(/requires_confirmation/);
+  });
+
+  it("names the DISCOVERY SOURCE, and warns that a homepage-only count is far from the truth", async () => {
+    const { fn: enqueue } = captureEnqueue();
+    const homepageOnly: EstimateFn = async () => ({ pages: 28, source: "homepage" });
+    const fromSitemap: EstimateFn = async () => ({ pages: 28, source: "sitemap" });
+
+    const viaHome = (
+      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
+        project_id: PID,
+      })
+    ).content[0]!.text;
+    expect(viaHome).toMatch(/at least 28 pages discovered/i);
+    expect(viaHome).toMatch(/links on the homepage only/i);
+    expect(viaHome).toMatch(/very likely larger/i);
+
+    const viaSitemap = (
+      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
+        project_id: PID,
+      })
+    ).content[0]!.text;
+    expect(viaSitemap).toMatch(/counted from your sitemap/i);
+    // The two branches must not read alike: only the weaker one carries the warning.
+    expect(viaSitemap).not.toMatch(/very likely larger/i);
   });
 
   it("degrades to a normal enqueue (no one-liner) when pre-discovery returns null", async () => {

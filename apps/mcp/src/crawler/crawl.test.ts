@@ -1,12 +1,19 @@
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+/**
+ * The FINISH SENTENCE the customer reads, imported from its single home in core — the crawler's
+ * skip reasons are quoted into it verbatim, so pinning the field without the sentence would
+ * prove only half of what these specs claim.
+ */
+import { summarizeCrawlResult, type Json } from "@pseo/core";
 import {
   attachInLinkCounts,
   boundCrawlResult,
   computeIssues,
   crawlSite,
   estimateSiteSize,
+  isInfrastructurePath,
   PRE_DISCOVERY_BUDGET_MS,
   matchesIncludePaths,
   normalizeIncludePaths,
@@ -1982,6 +1989,264 @@ describe("crawlSite — contentHash reads the script-stripped view", () => {
       // And the fingerprint still SEPARATES real differences — without this the spec would
       // also pass on a hash that returned a constant.
       expect(hashOf("/c")).not.toBe(hashOf("/a"));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / finding 1 — INFRASTRUCTURE NOISE, one row, four PAID surfaces.
+ *
+ * Measured 2026-08-25: `crawl_pages` held exactly ONE `/cdn-cgi/` row, and that row was
+ * audit_schema's only action item, audit_tech's 25/25 broken links, the shared report's
+ * broken-link section, and audit_onpage's first finding. Cloudflare rewrites `mailto:` links
+ * into `/cdn-cgi/l/email-protection#…`, so every page carrying an email address links to one
+ * endpoint that answers 4xx to a plain GET.
+ *
+ * These specs pin the CRAWLER half (the audit half is pinned in audit/infra-paths.test.ts,
+ * where the same crawl is fed to the three rule engines).
+ */
+describe("crawlSite — reserved infrastructure paths are not the site", () => {
+  const ORIGIN = "http://infra.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** Pathnames the fake origin was actually asked for — a fetch never made is the point. */
+  const serveInfraSite = (opts: { sitemap: string[] }) => {
+    const requested: string[] = [];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = opts.sitemap.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // Cloudflare's endpoint answers 4xx to a plain GET — the 404 that became "broken links".
+      if (path.startsWith("/cdn-cgi/") || path.startsWith("/.well-known/")) {
+        return new Response("<html><body>nope</body></html>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response(
+        `<html><head><title>${path}</title><meta name="description" content="d"></head><body>` +
+          `<h1>${path}</h1><p>words words words</p>` +
+          `<a href="/cdn-cgi/l/email-protection#a1b2">email</a>` +
+          `<a href="/.well-known/security.txt">security</a>` +
+          `<a href="/about">about</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return { impl, requested };
+  };
+
+  it("classifies exactly the reserved prefixes, and nothing that merely looks like them", () => {
+    expect(isInfrastructurePath("/cdn-cgi/l/email-protection")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi/trace")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi")).toBe(true); // the bare prefix is the same tree
+    expect(isInfrastructurePath("/CDN-CGI/TRACE")).toBe(true); // case is not a bypass
+    expect(isInfrastructurePath("/.well-known/security.txt")).toBe(true);
+    // NEGATIVE — a site's own content must never be silently withheld from the tenant.
+    expect(isInfrastructurePath("/")).toBe(false);
+    expect(isInfrastructurePath("/cdn-cgi-news")).toBe(false);
+    expect(isInfrastructurePath("/blog/cdn-cgi/post")).toBe(false); // prefix, not substring
+    expect(isInfrastructurePath("/well-known")).toBe(false);
+  });
+
+  it("never fetches, stores, or even SKIPS a linked /cdn-cgi/ or /.well-known/ URL", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(result.pages.length).toBeGreaterThan(0); // the crawl really ran
+      expect(result.pages.some((p) => /\/cdn-cgi\//.test(p.url))).toBe(false);
+      expect(result.pages.some((p) => /\/\.well-known\//.test(p.url))).toBe(false);
+      // Not recorded as a skip either: a skip is an account of a URL OF THE SITE that we did
+      // not read, and these are not URLs of the site — listing them would move the same noise
+      // into the skip report every audit also prints.
+      expect(result.skipped.some((s) => /cdn-cgi|well-known/.test(s.url))).toBe(false);
+      // And no request was ever made — the exclusion is free, not merely filtered afterwards.
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      expect(site.requested.some((p) => p.startsWith("/.well-known/"))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("drops a reserved path advertised in the SITEMAP from both the seeds and sitemapUrls", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/cdn-cgi/l/email-protection", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      // Absent from the STORED sitemap list too: audit_tech diffs that list against the crawl,
+      // so a URL kept there but deliberately never crawled reads as a coverage gap.
+      expect(result.sitemapUrls?.some((u) => u.includes("/cdn-cgi/"))).toBe(false);
+      expect(result.sitemapUrls?.some((u) => u.endsWith("/about"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not COUNT reserved paths in the free pre-discovery estimate either", async () => {
+    // No sitemap -> the homepage-link floor, the branch that quoted "~28" for a 222-page site.
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/sitemap.xml") return new Response("", { status: 404 });
+      return new Response(
+        `<html><body><a href="/a">a</a><a href="/b">b</a>` +
+          `<a href="/cdn-cgi/l/email-protection#x">email</a>` +
+          `<a href="/.well-known/security.txt">sec</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const sized = await estimateSiteSize(ORIGIN, { lookup });
+      expect(sized.source).toBe("homepage");
+      // /a and /b only — a quote must never include pages the crawl is guaranteed to refuse.
+      expect(sized.pages).toBe(2);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / findings 3 + 4 — WHY the crawl stopped, and that it is still moving while it runs.
+ *
+ * Coverage varies at a FIXED price and the crawl never said so: measured on one site at
+ * identical settings, 2026-08-09 stopped at 26 pages ("time budget exhausted") while
+ * 2026-08-25 reached 100 in 78 s. Same 20 credits, 14%-45% coverage. The reason string is what
+ * get_job_status quotes back ("… (mostly: <reason>)"), so it is where the difference between
+ * "you got everything you paid for" and "we ran out of time" has to be stated.
+ *
+ * The `summarizeCrawlResult` assertions are the END-TO-END half: they read the sentence the
+ * customer actually gets, not the field it is built from.
+ */
+describe("crawlSite — the two terminal states say WHICH ceiling stopped the crawl", () => {
+  const ORIGIN = "http://terminal.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** A closed 8-page site: every page links to every other, so the frontier is deterministic. */
+  const impl = async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    const paths = ["/", ...Array.from({ length: 7 }, (_, i) => `/p-${i}`)];
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+    }
+    if (path === "/sitemap.xml") {
+      const locs = paths.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+      return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+        status: 200,
+        headers: { "content-type": "application/xml" },
+      });
+    }
+    const links = paths.map((p) => `<a href="${p}">${p}</a>`).join("");
+    return new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>word word${links}</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+  };
+
+  it("PAGE LIMIT: names the limit, the elapsed time, and that the time budget was NOT the bound", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 3, timeBudgetMs: 90_000 });
+      expect(result.pages).toHaveLength(3);
+      const drained = result.skipped.filter((s) => /max url limit reached/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/the 3-page limit was reached after \d+s/);
+      expect(reason).toMatch(/inside the 90s time budget/);
+      // The customer's own sentence, not the field behind it.
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: max URL limit reached/);
+      expect(line).toMatch(/time budget/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("TIME BUDGET: says it stopped on TIME, before the page limit, and that coverage varies", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      // A budget already spent when the first loop turn is taken: the page limit is untouched.
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 100, timeBudgetMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      const drained = result.skipped.filter((s) => /time budget exhausted/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/stopped on TIME, not at the 100-page limit/);
+      expect(reason).toMatch(/coverage varies between runs at the same price/);
+      expect(reason).toMatch(/include_paths/);
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: time budget exhausted/);
+      expect(line).toMatch(/coverage varies between runs/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the audit vocabulary: both reasons still bucket as a LIMIT, not as a site fault", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const capped = await crawlSite(ORIGIN, { lookup, maxUrls: 3 });
+      const timed = await crawlSite(ORIGIN, { lookup, timeBudgetMs: 0 });
+      for (const reason of [...capped.skipped, ...timed.skipped].map((s) => s.reason)) {
+        // categorizeSkip tests these FIRST; a limit that matched one of them would be filed as
+        // a fault of the customer's site.
+        expect(reason).not.toMatch(/robots|redirect|timeout|non-html|parse failed|fetch failed/i);
+      }
+      expect(capped.skipped.every((s) => /max url/i.test(s.reason))).toBe(true);
+      expect(timed.skipped.every((s) => /time budget/i.test(s.reason))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reports PROGRESS while it runs: consecutive ticks differ and only ever move forward", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const ticks: { pagesCrawled: number; urlsSkipped: number }[] = [];
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 8,
+        onProgress: (p) => ticks.push({ ...p }),
+      });
+      expect(result.pages).toHaveLength(8);
+      expect(ticks.length).toBeGreaterThan(1);
+      // TWO CONSECUTIVE READS AT DIFFERENT PROGRESS STATES DIFFER — the whole point: while the
+      // job ran, get_job_status returned a byte-identical line on every poll.
+      expect(ticks[0]!.pagesCrawled).toBeLessThan(ticks[ticks.length - 1]!.pagesCrawled);
+      for (let i = 1; i < ticks.length; i++) {
+        expect(ticks[i]!.pagesCrawled).toBeGreaterThanOrEqual(ticks[i - 1]!.pagesCrawled);
+      }
+      // The last tick is the finished truth, never a number the result contradicts.
+      expect(ticks[ticks.length - 1]!.pagesCrawled).toBe(result.pages.length);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("a THROWING progress listener never fails the crawl (cosmetic signal, charged run)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 4,
+        onProgress: () => {
+          throw new Error("progress store is down");
+        },
+      });
+      expect(result.pages).toHaveLength(4);
     } finally {
       fetchSpy.mockRestore();
     }

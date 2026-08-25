@@ -2,6 +2,12 @@ import { z } from "zod";
 import { summarizeCrawlResult, summarizePullResult } from "@pseo/core";
 import { getServiceClient, type JobRow } from "../db.ts";
 import { getJobForUser } from "../queue/boss.ts";
+/**
+ * The progress reader lives with the WRITER (the crawl queue handler), not here: one module
+ * owns the shape a running crawl stores in jobs.result, so the renderer cannot drift from what
+ * is written. Same reason summarizeCrawlResult has exactly one home.
+ */
+import { readCrawlProgress } from "../queue/handlers/crawl.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
@@ -135,8 +141,20 @@ export function formatJobStatus(job: JobRow): string {
   switch (job.status) {
     case "queued":
       return `${head} is queued. ${stamps}.`;
-    case "running":
-      return `${head} is running. ${stamps}.`;
+    case "running": {
+      // A running crawl stores its counts in jobs.result (readCrawlProgress). Without them every
+      // poll of a 90-second job returned the SAME string — measured: two consecutive
+      // get_job_status calls, byte-identical — so "working" and "stuck" looked alike. A job that
+      // stores no progress (another tool, or a crawl that has not committed a batch yet) prints
+      // exactly the line it always did.
+      const progress = readCrawlProgress(job.result);
+      if (!progress) return `${head} is running. ${stamps}.`;
+      return (
+        `${head} is running. ${stamps}. ` +
+        `${progress.pagesCrawled} page(s) crawled, ${progress.urlsSkipped} skipped so far ` +
+        `(as of ${progress.updatedAt}).`
+      );
+    }
     case "succeeded": {
       const summary = summarizeJobResult(job.result);
       return `${head} succeeded. ${stamps}.${summary ? ` ${summary}.` : ""}`;

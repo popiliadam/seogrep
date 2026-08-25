@@ -358,3 +358,57 @@ describe("formatJobStatus timing clause", () => {
     expect(line).not.toMatch(/out of order/);
   });
 });
+
+/**
+ * S5 / finding 4 — a running crawl must not look frozen.
+ *
+ * Measured 2026-08-25: while a crawl_site job ran, get_job_status was called twice and returned
+ * a BYTE-IDENTICAL line both times ("is running. created … started …"). A customer cannot tell
+ * a working 90-second crawl from a stuck one, and the crawl_site docs tell them to poll.
+ */
+describe("formatJobStatus — a running crawl reports its progress", () => {
+  /** The shape the crawl handler stores in jobs.result while status = "running". */
+  const progress = (pages: number, skipped: number, at: string): JobRow["result"] => ({
+    crawl_progress: { pages_crawled: pages, urls_skipped: skipped, updated_at: at },
+  });
+
+  it("TWO CONSECUTIVE READS AT DIFFERENT PROGRESS STATES DIFFER", () => {
+    const base = { status: "running" as const, started_at: "2026-07-19T00:01:00.000Z" };
+    const first = formatJobStatus(job({ ...base, result: progress(12, 3, "2026-07-19T00:01:20.000Z") }));
+    const second = formatJobStatus(job({ ...base, result: progress(37, 9, "2026-07-19T00:01:40.000Z") }));
+
+    expect(first).not.toBe(second);
+    expect(first).toContain("12 page(s) crawled, 3 skipped so far");
+    expect(second).toContain("37 page(s) crawled, 9 skipped so far");
+    // The timestamp moves too — the half that separates "still working" from "stuck at 37".
+    expect(first).toContain("as of 2026-07-19T00:01:20.000Z");
+    expect(second).toContain("as of 2026-07-19T00:01:40.000Z");
+    // The line every other status assertion pins is unchanged, not replaced.
+    expect(second).toMatch(/is running/);
+    expect(second).toContain("started 2026-07-19T00:01:00.000Z");
+  });
+
+  it("a running job with NO stored progress prints exactly the line it always did", () => {
+    const line = formatJobStatus(job({ status: "running", started_at: "2026-07-19T00:01:00.000Z" }));
+    expect(line).toBe(
+      "Job 11111111-1111-4111-8111-111111111111 (crawl_site) is running. " +
+        "created 2026-07-19T00:00:00.000Z · started 2026-07-19T00:01:00.000Z.",
+    );
+  });
+
+  it("ignores a malformed or foreign result rather than printing half a number", () => {
+    const cases: JobRow["result"][] = [
+      { crawl_progress: { pages_crawled: "12", urls_skipped: 3, updated_at: "t" } },
+      { crawl_progress: { pages_crawled: 12, urls_skipped: 3 } },
+      { crawl_progress: null },
+      { pages: [], skipped: [] }, // a finished crawl result, not a progress snapshot
+      [1, 2, 3],
+      "nonsense",
+    ];
+    for (const result of cases) {
+      const line = formatJobStatus(job({ status: "running", result }));
+      expect(line).not.toMatch(/crawled, /);
+      expect(line).toMatch(/is running/);
+    }
+  });
+});
