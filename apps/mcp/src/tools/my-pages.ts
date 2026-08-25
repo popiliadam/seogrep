@@ -14,6 +14,12 @@ import {
   type RelevantPagesResult,
 } from "../dfs/relevant-pages.ts";
 import {
+  estimatedMonthlyCostUsd,
+  estimatedVisitsPerMonth,
+  exactCount,
+} from "../format/quantities.ts";
+import {
+  CRAWL_PAGE_READ_CAP,
   joinPages,
   loadCrawlSide,
   type CrawlSide,
@@ -171,16 +177,37 @@ const DESCRIPTION =
   "balance: it is not available on trial credits. If live DataForSEO access is unavailable on " +
   "this deployment, the tool says so and charges nothing.";
 
-/** Group digits with commas without depending on ICU/locale data (deterministic). */
-function thousands(value: number): string {
-  return Math.round(value)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+/**
+ * A COUNTED vendor field under the vendor's OWN name, with a silence spelled out in WORDS, never
+ * as 0. Its digits are grouped and nothing else is done to them: `count` and the four `is_*`
+ * fields are things DataForSEO counted, so every digit is real (format/quantities.ts, class 1).
+ */
+function vendorValue(field: string, value: number | null): string {
+  return value === null
+    ? `${field} not reported by DataForSEO`
+    : `${field} ${exactCount(value)}`;
 }
 
-/** A vendor field under the vendor's OWN name, with a silence spelled out in WORDS, never as 0. */
-function vendorValue(field: string, value: number | null): string {
-  return value === null ? `${field} not reported by DataForSEO` : `${field} ${value}`;
+/**
+ * An ESTIMATED vendor field, printed under a CUSTOMER WORD with the vendor's field name beside it.
+ *
+ * Both halves are load-bearing. The customer word is what the reader is actually asking about
+ * ("est. traffic"), and `etv` answers that question for nobody who has not read DataForSEO's
+ * docs. The vendor key stays because this whole file's promise is that every figure is traceable
+ * to a named vendor field — dropping it would leave a number the reader cannot check.
+ *
+ * `render` carries the precision rule (format/quantities.ts states it per quantity); this
+ * function chooses no rounding of its own.
+ */
+function vendorEstimate(
+  label: string,
+  field: string,
+  value: number | null,
+  render: (value: number) => string,
+): string {
+  return value === null
+    ? `${label} not reported by DataForSEO (${field})`
+    : `${label} ${render(value)} (DataForSEO ${field})`;
 }
 
 /** The twelve position buckets, in the vendor's own order. */
@@ -207,24 +234,37 @@ const POSITION_BUCKETS = [
  * the vendor sent as 0 is an answer and prints as 0.
  */
 export function renderPositions(metrics: RelevantPageMetrics): string {
-  const reported = POSITION_BUCKETS.filter((bucket) => metrics[bucket] !== null);
-  const missing = POSITION_BUCKETS.length - reported.length;
-  if (reported.length === 0) {
+  const legs = POSITION_BUCKETS.flatMap((bucket) => {
+    const occupancy = metrics[bucket];
+    return occupancy === null ? [] : [`${bucket} ${exactCount(occupancy)}`];
+  });
+  const missing = POSITION_BUCKETS.length - legs.length;
+  if (legs.length === 0) {
     return `positions: none of the ${POSITION_BUCKETS.length} position buckets were reported by DataForSEO`;
   }
-  const legs = reported.map((bucket) => `${bucket} ${metrics[bucket]}`).join(", ");
   const tail =
     missing === 0
       ? ""
       : ` (${missing} of the ${POSITION_BUCKETS.length} position buckets were not reported by DataForSEO)`;
-  return `positions: ${legs}${tail}`;
+  return `positions: ${legs.join(", ")}${tail}`;
 }
 
-/** One item type's figures for one page, every field under DataForSEO's own name. */
+/**
+ * One item type's figures for one page. Every field carries DataForSEO's own name; the two that
+ * are MODEL OUTPUT rather than counts also carry a customer word and are rounded to the unit they
+ * actually resolve to — a whole visit and a whole dollar (format/quantities.ts, classes 2 and 3).
+ * Printing `etv` at its raw float width claimed a precision the vendor's model does not have.
+ */
 export function renderItemType(type: RelevantPageItemType, metrics: RelevantPageMetrics): string {
   return (
-    `  ${type}: ${vendorValue("count", metrics.count)} · ${vendorValue("etv", metrics.etv)} · ` +
-    `${vendorValue("estimated_paid_traffic_cost", metrics.estimated_paid_traffic_cost)} · ` +
+    `  ${type}: ${vendorValue("count", metrics.count)} · ` +
+    `${vendorEstimate("est. traffic", "etv", metrics.etv, estimatedVisitsPerMonth)} · ` +
+    `${vendorEstimate(
+      "est. cost to buy that traffic",
+      "estimated_paid_traffic_cost",
+      metrics.estimated_paid_traffic_cost,
+      estimatedMonthlyCostUsd,
+    )} · ` +
     `${vendorValue("is_new", metrics.is_new)} · ${vendorValue("is_up", metrics.is_up)} · ` +
     `${vendorValue("is_down", metrics.is_down)} · ${vendorValue("is_lost", metrics.is_lost)}\n` +
     `  ${type} ${renderPositions(metrics)}`
@@ -315,14 +355,14 @@ export interface LookupLocale {
 export function renderWindowCaption(result: RelevantPagesResult): string {
   const { window_row_count: rows, window_offset: offset, window_limit: limit } = result.window;
   const shown =
-    `${thousands(rows)} ${rows === 1 ? "page" : "pages"} in this window (offset ` +
-    `${thousands(offset)}, limit ${thousands(limit)})`;
+    `${exactCount(rows)} ${rows === 1 ? "page" : "pages"} in this window (offset ` +
+    `${exactCount(offset)}, limit ${exactCount(limit)})`;
   // `null` is the vendor DECLINING TO SAY. It is not 0 and it is not rows.length: either
   // substitution would publish a measurement of the whole set that nobody made.
   const whole =
     result.window.vendor_total_count === null
       ? "DataForSEO did not say how many pages this lookup matches in total"
-      : `DataForSEO counts ${thousands(result.window.vendor_total_count)} pages matching this ` +
+      : `DataForSEO counts ${exactCount(result.window.vendor_total_count)} pages matching this ` +
         "lookup in total";
   return `${shown}. ${whole} — this window is a slice of that set, not a count of it.`;
 }
@@ -332,11 +372,15 @@ export function renderWindowCaption(result: RelevantPagesResult): string {
  * pages it fetched, so an absence cannot be read as a fact about the site.
  */
 function crawlLimitsNote(crawl: Extract<CrawlSide, { kind: "crawl" }>): string {
+  // A THRESHOLD IS PRINTED WITH ITS VALUE. "Only the first pages were compared" names a limit
+  // without saying where it falls, which leaves the reader unable to tell a crawl that was barely
+  // clipped from one that was mostly discarded — the number is the whole content of the warning.
   const truncation = crawl.truncated
-    ? " Only the first pages of that crawl were compared, so this list may be incomplete."
+    ? ` Only the first ${exactCount(CRAWL_PAGE_READ_CAP)} pages of that crawl were compared, so ` +
+      "this list may be incomplete."
     : "";
   return (
-    `That crawl fetched ${thousands(crawl.pages.length)} ` +
+    `That crawl fetched ${exactCount(crawl.pages.length)} ` +
     `${crawl.pages.length === 1 ? "page" : "pages"} on ${crawl.ranAt.slice(0, 10)}, following ` +
     "links from the site's own start URL under its depth, page-count and robots limits. " +
     '"Not found in that crawl" therefore means exactly that — it is not a statement that the ' +
@@ -347,7 +391,7 @@ function crawlLimitsNote(crawl: Extract<CrawlSide, { kind: "crawl" }>): string {
 /** THE SENTENCE THAT BOUNDS "the vendor did not name it" — the window's own bounds and scope. */
 function windowLimitsNote(result: RelevantPagesResult): string {
   const { window_offset: offset, window_row_count: rows } = result.window;
-  const span = rows === 0 ? "no rows" : `rows ${thousands(offset + 1)}-${thousands(offset + rows)}`;
+  const span = rows === 0 ? "no rows" : `rows ${exactCount(offset + 1)}-${exactCount(offset + rows)}`;
   return (
     `This window covered ${span} of DataForSEO's list for result types ` +
     `${result.item_types_requested.join(", ")}. A page missing from it is a page DataForSEO did ` +
@@ -359,7 +403,7 @@ function windowLimitsNote(result: RelevantPagesResult): string {
 /** One titled section, or nothing when the population is empty. */
 function section(title: string, count: number, body: string[], note: string): string | null {
   if (count === 0) return null;
-  return [`${title} (${thousands(count)}):`, body.join("\n"), note].filter(Boolean).join("\n\n");
+  return [`${title} (${exactCount(count)}):`, body.join("\n"), note].filter(Boolean).join("\n\n");
 }
 
 /**
@@ -371,8 +415,8 @@ function section(title: string, count: number, body: string[], note: string): st
 export function renderMatchCount(join: PageJoin, crawl: Extract<CrawlSide, { kind: "crawl" }>): string {
   const keyed = join.matched.length + join.vendorOnly.length;
   return (
-    `Of the ${thousands(keyed)} ${keyed === 1 ? "page" : "pages"} in this window whose address ` +
-    `could be keyed, ${thousands(join.matched.length)} also appear in the crawl recorded ` +
+    `Of the ${exactCount(keyed)} ${keyed === 1 ? "page" : "pages"} in this window whose address ` +
+    `could be keyed, ${exactCount(join.matched.length)} also appear in the crawl recorded ` +
     `${crawl.ranAt.slice(0, 10)}. That is a count of THIS window against THAT crawl — not a ` +
     "measure of how much of your site ranks, and not a score of any kind."
   );
@@ -432,10 +476,12 @@ export function renderComparison(result: RelevantPagesResult, crawl: CrawlSide):
  * Whose numbers these are, and what this tool does NOT claim. Printed on every answer (NEVER #7).
  */
 export const VENDOR_JUDGEMENT_NOTE =
-  "Every figure above is a DataForSEO field, printed under DataForSEO's own name. `etv` and " +
-  "`estimated_paid_traffic_cost` are DataForSEO's OWN ESTIMATES of monthly traffic and of what " +
-  "that traffic would cost to buy — they are not measurements of your traffic, and SeoGrep does " +
-  "not predict traffic, revenue or ranking success. The position buckets are a histogram of how " +
+  "Every figure above is a DataForSEO field, with DataForSEO's own name for it printed alongside. " +
+  "`etv` and `estimated_paid_traffic_cost` are DataForSEO's OWN ESTIMATES of monthly traffic and " +
+  "of what that traffic would cost to buy — they are not measurements of your traffic, and " +
+  "SeoGrep does not predict traffic, revenue or ranking success. Both are shown to the nearest " +
+  "whole visit and whole dollar: they come out of a model, and the further decimal places that " +
+  "model emits are not precision it has. The position buckets are a histogram of how " +
   "many results of that type hold the page at each position band; they are not averaged into a " +
   '"position", because DataForSEO did not send one. A field DataForSEO did not report is shown ' +
   "as unreported, never as a zero. Pages are matched to your crawl by a normalised URL that " +
@@ -455,8 +501,8 @@ function renderNoPages(
     WHAT_THE_VENDOR_RETURNS,
     renderCriteria(result, input),
     `DataForSEO returned no page for this lookup in the window that was asked for (offset ` +
-      `${thousands(result.window.window_offset)}, limit ` +
-      `${thousands(result.window.window_limit)}). That is an answer about this window, these ` +
+      `${exactCount(result.window.window_offset)}, limit ` +
+      `${exactCount(result.window.window_limit)}). That is an answer about this window, these ` +
       "result types and these filters — it is not a statement that the domain has no ranking " +
       "pages.",
     renderComparison(result, crawl),

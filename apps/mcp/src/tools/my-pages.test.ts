@@ -37,6 +37,7 @@ import {
   type LoadProjectFn,
   type ProjectRef,
 } from "./project-target.ts";
+import { exactCount } from "../format/quantities.ts";
 import fixture from "../dfs/fixtures/labs-relevant-pages.json";
 
 /**
@@ -354,7 +355,17 @@ describe("the three populations are legible, and neither absence reads as a find
     expect(text).not.toMatch(/not found in that crawl/i);
   });
 
-  it("names the truncation when the crawl side hit its read cap", async () => {
+  /**
+   * A THRESHOLD IS PRINTED WITH ITS VALUE. The sentence used to read "Only the first pages of that
+   * crawl were compared", which names a limit without saying where it falls: a reader cannot tell
+   * a crawl that was clipped by one page from one that was mostly discarded, and the number is the
+   * entire content of the warning.
+   *
+   * The expected figure is DERIVED from the constant rather than typed in, so the spec follows the
+   * cap if the cap ever moves; the negative pin below is what actually catches the sentence going
+   * back to naming no number at all.
+   */
+  it("names the read cap BY VALUE when the crawl side hit it", async () => {
     const crawl: CrawlSide = {
       kind: "crawl",
       jobId: "job-1",
@@ -362,8 +373,27 @@ describe("the three populations are legible, and neither absence reads as a find
       truncated: true,
       pages: [toCrawledPage("https://example.com/about", 200)],
     };
-    expect(await answer(crawl)).toMatch(/only the first pages of that crawl were compared/i);
+    const text = await answer(crawl);
     expect(CRAWL_PAGE_READ_CAP).toBeGreaterThan(0);
+    expect(text).toMatch(
+      new RegExp(
+        `only the first ${exactCount(CRAWL_PAGE_READ_CAP)} pages of that crawl were compared`,
+        "i",
+      ),
+    );
+    expect(text).not.toMatch(/only the first pages of that crawl/i);
+  });
+
+  /** ...and a crawl that was NOT truncated makes no claim about a cap at all. */
+  it("says nothing about a read cap when the crawl side did not hit it", async () => {
+    const crawl: CrawlSide = {
+      kind: "crawl",
+      jobId: "job-1",
+      ranAt: "2026-08-18T09:00:00.000Z",
+      truncated: false,
+      pages: [toCrawledPage("https://example.com/about", 200)],
+    };
+    expect(await answer(crawl)).not.toMatch(/only the first/i);
   });
 
   it("holds unkeyable addresses in their own group, named as uncomparable rather than missed", () => {
@@ -389,12 +419,79 @@ describe("every printed figure is a named vendor field, and a silence is not a z
       our_join_key: "example.com/posts?page=2",
       metrics: { organic: THIN_METRICS },
     });
-    expect(rendered).toContain("etv not reported by DataForSEO");
-    expect(rendered).toContain("estimated_paid_traffic_cost not reported by DataForSEO");
+    // The two ESTIMATES are silent under their customer word AND their vendor key — the silence
+    // must survive the relabelling, or a reader could take "est. traffic" for a missing zero.
+    expect(rendered).toMatch(/est\. traffic not reported by DataForSEO \(etv\)/i);
+    expect(rendered).toMatch(
+      /est\. cost to buy that traffic not reported by DataForSEO \(estimated_paid_traffic_cost\)/i,
+    );
     expect(rendered).toContain("is_new not reported by DataForSEO");
     // ...and a vendor ZERO is an answer, printed as 0.
     expect(rendered).toContain("pos_81_90 0");
     expect(rendered).not.toMatch(/etv 0\b/);
+    expect(rendered).not.toMatch(/est\. traffic 0\b/);
+  });
+
+  /**
+   * THE MEASURED DEFECT (2026-08-25): live output read `etv 86.03599891066551`. Fourteen decimal
+   * places of a MODEL's opinion about one page's monthly traffic is a precision claim nobody can
+   * support, and it was printed under a vendor key no reader outside DataForSEO's docs can decode.
+   *
+   * Driven through the REAL renderer on a row shaped like the live one — a spec asserting against
+   * a string it assembled itself would prove nothing about what the tool prints.
+   */
+  it("prints a modelled estimate to a whole unit, not at raw float width", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: {
+        organic: {
+          ...THIN_METRICS,
+          etv: 86.03599891066551,
+          estimated_paid_traffic_cost: 5120.75,
+        },
+      },
+    });
+    // Not one decimal fraction survives anywhere in the row.
+    expect(rendered).not.toMatch(/\d\.\d/);
+    expect(rendered).toMatch(/est\. traffic 86\/mo \(DataForSEO etv\)/);
+    expect(rendered).toMatch(
+      /est\. cost to buy that traffic \$5,121\/mo \(DataForSEO estimated_paid_traffic_cost\)/,
+    );
+  });
+
+  /**
+   * THE REFERENCE this rounding was written against: `ranked_keywords` renders the vendor's `etv`
+   * of 116.64 as "est. traffic 117/mo" and is correct. One product, one answer for one quantity.
+   */
+  it("rounds an estimate the way ranked_keywords already rounds it: 116.64 becomes 117", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: { organic: { ...THIN_METRICS, etv: 116.64 } },
+    });
+    expect(rendered).toMatch(/est\. traffic 117\/mo/);
+  });
+
+  /**
+   * A COUNT LOSES NOTHING. `count` is SERPs DataForSEO counted, so every digit is real and the
+   * only transformation is grouping — the opposite decision from the two estimates above, made
+   * deliberately and pinned so a later sweep cannot round it "for consistency".
+   */
+  it("groups a counted field's digits and drops none of them", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: { organic: { ...THIN_METRICS, count: 5312, pos_11_20: 1204 } },
+    });
+    expect(rendered).toContain("organic: count 5,312");
+    expect(rendered).toContain("pos_11_20 1,204");
+  });
+
+  /** The precision rule is not only in the module: the answer itself says what was rounded away. */
+  it("tells the reader that the estimates are shown to a whole unit, and why", () => {
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/nearest whole visit and whole dollar/i);
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/not precision it has/i);
   });
 
   it("counts the unreported position buckets instead of dropping or zeroing them", () => {
@@ -700,3 +797,4 @@ describe("the crawl card stored on the run row (migration 0031)", () => {
     expect(JSON.stringify(card)).not.toContain("http");
   });
 });
+
