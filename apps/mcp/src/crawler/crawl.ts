@@ -12,6 +12,7 @@
  */
 
 import type { Dispatcher } from "undici";
+import { stripWwwLabel } from "@pseo/core";
 import {
   clampField,
   contentHash,
@@ -132,7 +133,7 @@ export interface CrawlResult {
   /** ISO-8601 timestamp of when the crawl started. */
   readonly fetchedAt: string;
   /**
-   * The same-origin, in-scope URLs the crawl READ OUT OF /sitemap.xml, capped at
+   * The same-site, in-scope URLs the crawl READ OUT OF /sitemap.xml, capped at
    * MAX_SITEMAP_URLS_STORED. `[]` means the crawl found no usable sitemap (absent, non-200,
    * empty, or every loc filtered out) — it never means "the sitemap was not looked at", because
    * a crawl that got as far as seeding always looked.
@@ -734,8 +735,55 @@ function jsonByteSize(value: unknown): number {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Same ORIGIN in the strict sense: identical scheme and identical host (URL.host carries the
+ * port). This is the SECURITY predicate — it is what tells `fetchText` that a redirect hop
+ * needs no fresh SSRF validation — and it must stay exactly this narrow. Scope questions ask
+ * {@link sameSite} instead.
+ */
 function sameOrigin(a: URL, b: URL): boolean {
   return a.protocol === b.protocol && a.host === b.host;
+}
+
+/**
+ * The crawl's SCOPE predicate: is `a` part of the same SITE as the crawl origin `b`? Strict
+ * same-origin, plus the one pair the web treats as a single site — an apex and its `www.`
+ * twin.
+ *
+ * WHY IT EXISTS. Project domains lost their leading `www.` label on 2026-08-25
+ * (`stripWwwLabel`), and the crawl queue seeds `https://<project.domain>` — the apex. For a
+ * site canonical at `www.` that combination CRAWLED NOTHING, in four places at once: every
+ * sitemap loc was `www.` and was filtered off-origin, every extracted link likewise, and the
+ * one remaining seed — the apex homepage — 301'd to `www.` and came back
+ * `off-origin-redirect`. Zero pages makes the queue handler throw, so the job settled
+ * `failed`; the tenant was not charged, but no spelling of the domain could produce a crawl
+ * any more, since every spelling now normalizes to the apex. The reverse direction is just as
+ * real: six live rows still STORE `www.` for sites canonical at the apex.
+ *
+ * THE RULE IS THE PAIR AND NOTHING WIDER. Scheme must match, port must match, and the two
+ * hostnames must be equal once ONE leading `www.` label is dropped from each. So
+ * `blog.example.com`, `example.org`, `notexample.com`, `www.example.com.evil.test` and an
+ * http->https hop are all still off-site, and `off-origin-redirect` remains a reachable
+ * outcome with its reason string — this narrows WHEN it fires, it does not remove it.
+ *
+ * IP LITERALS ARE EXCLUDED, as defence in depth rather than a reachable branch. `www.` is a
+ * DNS label, so a literal has no twin — and MEASURED, no parseable URL can reach the twin
+ * branch with one anyway: WHATWG URL refuses `http://www.127.0.0.1/` outright (a trailing
+ * numeric label sends the host through the IPv4 parser), so the only host that strips to a
+ * literal IS that literal, which the `a.host === b.host` line already answered. No spec pins
+ * this line, because a spec could only pin Node's URL parser; it stays because a fail-closed
+ * line costs nothing and the reasoning above is about a parser we do not own.
+ *
+ * NOT AN SSRF DECISION. Every hop this admits is still resolved and vetted by
+ * `pinnedDispatcherFor` before a socket opens, and `fetchText`'s redirect guard keeps asking
+ * strict {@link sameOrigin}, so a twin hop there still goes the long way through
+ * `validateRedirectTarget`.
+ */
+function sameSite(a: URL, b: URL): boolean {
+  if (a.protocol !== b.protocol || a.port !== b.port) return false;
+  if (a.host === b.host) return true;
+  if (isIpLiteralHost(a.hostname) || isIpLiteralHost(b.hostname)) return false;
+  return stripWwwLabel(a.hostname) === stripWwwLabel(b.hostname);
 }
 
 /**
@@ -864,16 +912,18 @@ async function readCappedText(res: Response, maxBytes: number): Promise<CappedBo
 }
 
 /**
- * Fetch one page, following up to MAX_REDIRECTS same-origin redirects manually so
- * the whole chain shares a single timeout and off-origin hops can be rejected. Only
+ * Fetch one page, following up to MAX_REDIRECTS same-SITE redirects manually so
+ * the whole chain shares a single timeout and off-site hops can be rejected. Only
  * text/html bodies are read; other content types return with an empty body for the
  * caller to skip. AbortController bounds the entire chain to `timeoutMs`.
  *
  * Every hop — the first request included — is re-validated and PINNED to the address
- * that validation just approved (pinnedDispatcherFor). The chain is same-origin, so the
- * hostname never changes, but a hostile low-TTL answer can still flip that one name to an
- * internal address between hops; the origin gate validated once and cannot see that. A
- * refused hop emits NO request and reports through the existing fetch-failure path.
+ * that validation just approved (pinnedDispatcherFor). The chain stays on one site but the
+ * hostname CAN change once, between an apex and its `www.` twin (see {@link sameSite}), and a
+ * hostile low-TTL answer can flip either name to an internal address between hops; the origin
+ * gate validated once and cannot see that. Because the pin re-runs checkPublicHost per hop,
+ * both the twin hop and the rebind are covered by the same mechanism. A refused hop emits NO
+ * request and reports through the existing fetch-failure path.
  */
 async function fetchPage(
   url: string,
@@ -932,7 +982,9 @@ async function fetchPage(
         } catch {
           return { kind: "error", message: "invalid redirect location" };
         }
-        if (!sameOrigin(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
+        // sameSite, not sameOrigin: an apex->www hop (or the reverse) stays on the site. Every
+        // hop is still pinned and SSRF-vetted above, so this widens SCOPE only.
+        if (!sameSite(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
         // The hop we are LEAVING is what belongs in the chain; the URL finally served is the
         // record's own `url` and would be a duplicate here.
         redirectChain.push(clampField(current));
@@ -1190,7 +1242,7 @@ function hopTimeout(deadline: Deadline, timeoutMs: number): number {
 
 /**
  * Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. When
- * `prefixes` is non-empty, only same-origin locs whose pathname is in scope are kept — an
+ * `prefixes` is non-empty, only same-site locs whose pathname is in scope are kept — an
  * empty `prefixes` (the default) filters nothing, so the crawl's existing behavior is
  * byte-identical. The guarded fetchText path (incl. its cross-origin redirect checks) is
  * unchanged; scoping is a pure post-fetch filter.
@@ -1226,7 +1278,7 @@ async function loadSitemapSeeds(
     } catch {
       return null;
     }
-    if (!sameOrigin(u, origin)) return null;
+    if (!sameSite(u, origin)) return null;
     if (!matchesIncludePaths(u.pathname, prefixes)) return null;
     // A sitemap that advertises a reserved infrastructure path is refused HERE, at the one
     // place a loc is claimed, so the URL is absent from BOTH uses of this list: it is not
@@ -1277,15 +1329,17 @@ async function loadSitemapSeeds(
     const childTimeout = hopTimeout(deadline, timeoutMs);
     if (childTimeout <= 0) break;
     // SSRF guard: child-sitemap locs are tenant-controlled input on a hosted
-    // service — never let them point our fetcher off the crawl origin (e.g. at
-    // cloud metadata endpoints). Off-origin or unparsable children are skipped.
+    // service — never let them point our fetcher off the crawl SITE (e.g. at
+    // cloud metadata endpoints). Off-site or unparsable children are skipped. The apex/www
+    // twin is on the site (sameSite): a `www.` index routinely lists `www.` children, and
+    // refusing them is how the www-canonical crawl reached zero seeds.
     let childUrl: URL;
     try {
       childUrl = new URL(child);
     } catch {
       continue;
     }
-    if (!sameOrigin(childUrl, origin)) continue;
+    if (!sameSite(childUrl, origin)) continue;
     const res = await fetchText(child, childTimeout, lookup, MAX_SITEMAP_BYTES);
     if (!res || res.status !== 200) continue;
     // FILTER first, then cap: the cap must bound usable URLs, not raw locs (see `claim`).
@@ -1301,7 +1355,7 @@ async function loadSitemapSeeds(
   // Round-robin: one URL from each child in turn. Semantic-free — nothing here guesses which
   // child matters — but under any budget every child is represented in proportion, so the
   // pages a site sells from cannot be starved by the size of its blog archive. Every URL here
-  // has already passed the same-origin, scope and dedupe filters, so which URLs are ELIGIBLE is
+  // has already passed the same-site, scope and dedupe filters, so which URLs are ELIGIBLE is
   // unchanged from before — what changes is which of them a short budget spends itself on.
   const longest = childLists.reduce((max, list) => Math.max(max, list.length), 0);
   for (let index = 0; index < longest && seeds.length < limit; index++) {
@@ -1347,8 +1401,9 @@ function blockedOrigin(origin: URL, reason: string, fetchedAt: string): CrawlRes
 /**
  * Crawl a site starting from `origin`, robots-respectfully and bounded by maxUrls
  * and a wall-clock budget. Seeds come from /sitemap.xml when present, otherwise from
- * same-origin link-following (BFS). Produces the PageRecords audits (T8) consume; it
- * touches no DB/queue/credits and follows only same-origin http(s) links.
+ * same-site link-following (BFS). Produces the PageRecords audits (T8) consume; it
+ * touches no DB/queue/credits and follows only same-site http(s) links (see {@link sameSite}:
+ * the crawl origin's apex/`www.` twin counts as the same site, nothing wider).
  */
 export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promise<CrawlResult> {
   const started = Date.now();
@@ -1496,7 +1551,7 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     } catch {
       return;
     }
-    if (!sameOrigin(u, originUrl)) return;
+    if (!sameSite(u, originUrl)) return;
     // Out-of-scope links are skipped, not fetched (with no prefixes this is a no-op).
     if (!matchesIncludePaths(u.pathname, prefixes)) return;
     // Reserved infrastructure endpoints are not the site (see INFRASTRUCTURE_PATH_PREFIXES).
@@ -1862,7 +1917,7 @@ const DEFAULT_ESTIMATE_TIMEOUT_MS = 5_000;
  */
 export const PRE_DISCOVERY_BUDGET_MS = 8_000;
 
-/** Count distinct same-origin, in-scope links in `html` (a homepage-size floor). Pure. */
+/** Count distinct same-site, in-scope links in `html` (a homepage-size floor). Pure. */
 function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly string[]): number {
   const { links } = parseHtml(html, normalizeUrl(originUrl.toString()));
   const seen = new Set<string>();
@@ -1873,7 +1928,7 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
     } catch {
       continue;
     }
-    if (!sameOrigin(u, originUrl)) continue;
+    if (!sameSite(u, originUrl)) continue;
     if (!matchesIncludePaths(u.pathname, prefixes)) continue;
     // Counted with the SAME filter the crawl applies, or the estimate would quote the customer
     // pages the crawl is guaranteed never to fetch.
@@ -1892,9 +1947,9 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
  * (loadSitemapSeeds) — so there is ONE guarded fetcher, not a second with different rules.
  *
  *  - a blocked / non-public / invalid origin returns null WITHOUT any fetch;
- *  - /sitemap.xml (one bounded level of index expansion) -> count same-origin, in-scope
+ *  - /sitemap.xml (one bounded level of index expansion) -> count same-site, in-scope
  *    `<loc>`s -> source "sitemap";
- *  - otherwise the homepage's same-origin, in-scope links as a rough floor -> source "homepage";
+ *  - otherwise the homepage's same-site, in-scope links as a rough floor -> source "homepage";
  *  - `includePaths` scopes the count exactly as it scopes the crawl.
  *
  * It is also BOUNDED IN TOTAL by `budgetMs` (default PRE_DISCOVERY_BUDGET_MS) — see that
@@ -1947,7 +2002,7 @@ export async function estimateSiteSize(
       return { pages: sitemapSeeds.length, source: "sitemap" };
     }
 
-    // No usable sitemap -> the homepage's in-scope same-origin links as a rough floor.
+    // No usable sitemap -> the homepage's in-scope same-site links as a rough floor.
     // The homepage is HTML, so it gets the page ceiling. A body at the ceiling yields a
     // link count from the bounded prefix — which is exactly what this estimate claims to
     // be (a floor), so truncation never overstates the site's size.
