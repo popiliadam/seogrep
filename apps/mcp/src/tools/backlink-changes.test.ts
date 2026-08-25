@@ -97,11 +97,43 @@ describe("formatBacklinkChanges", () => {
   it("prints both series with their own bullets and groups digits", () => {
     const text = formatBacklinkChanges(history([CHANGE], [PROFILE]));
     expect(text).toContain(
-      "• 2021-12-31 00:00:00 +00:00 — 1,248 new / 173 lost backlinks · 121 new / 31 lost referring domains",
+      "• 2021-12-31 — 1,248 new / 173 lost backlinks · 121 new / 31 lost referring domains",
     );
-    expect(text).toContain(
-      "• 2021-12-31 00:00:00 +00:00 — 1,334 backlinks · 422 referring domains · rank 293 of 1,000",
+    expect(text).toContain("• 2021-12-31 — 1,334 backlinks · 422 referring domains · rank 293 of 1,000");
+  });
+
+  /**
+   * THE MEASURED DEFECT (2026-08-25): a default lookup printed "00:00:00 +00:00" TWENTY-SIX times
+   * in one answer. The clock is identical on every row of both series — it is the vendor's storage
+   * convention, not a measurement — and it buried the dates the reader came for.
+   *
+   * Both series are driven through the real formatter, and the assertion is on ABSENCE across the
+   * whole answer rather than on one bullet: a rule applied to one series and forgotten on the
+   * other is exactly the shape a per-bullet spec would let through.
+   */
+  it("labels month buckets with their date, with no zero clock anywhere in the answer", () => {
+    const text = formatBacklinkChanges(
+      history(
+        [CHANGE, { ...CHANGE, date: "2022-01-31 00:00:00 +00:00" }],
+        [PROFILE, { ...PROFILE, date: "2022-01-31 00:00:00 +00:00" }],
+      ),
     );
+    expect(text).not.toMatch(/00:00:00/);
+    expect(text).not.toMatch(/\+00:00/);
+    expect(text).toMatch(/• 2021-12-31 — /);
+    expect(text).toMatch(/• 2022-01-31 — /);
+  });
+
+  /**
+   * ...AND ONLY A ZERO CLOCK IS DROPPED. A bucket carrying a real time of day is carrying
+   * information; the tool keeps the vendor's label verbatim rather than deciding for the reader
+   * that the time did not matter.
+   */
+  it("keeps a bucket label that carries a real time of day", () => {
+    const text = formatBacklinkChanges(
+      history([{ ...CHANGE, date: "2021-12-31 13:05:00 +00:00" }], []),
+    );
+    expect(text).toContain("• 2021-12-31 13:05:00 +00:00 — ");
   });
 
   /**
@@ -318,3 +350,4 @@ describe("backlink_changes free pre-reserve gates (no credit machinery)", () => 
     await expect(serving().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/SUPABASE/i);
   });
 });
+

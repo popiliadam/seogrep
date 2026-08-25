@@ -20,6 +20,7 @@ import {
   writeDomainLookupRun,
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
+import { bucketDateLabel, exactCount } from "../format/quantities.ts";
 import {
   loadOwnProject,
   projectIdField,
@@ -90,15 +91,12 @@ const DESCRIPTION =
   "Needs a paid credit balance: it is not available on trial credits. If live DataForSEO access " +
   "is unavailable on this deployment, the tool says so and charges nothing.";
 
-/** Group digits with commas without depending on ICU/locale data (deterministic). */
-function thousands(value: number): string {
-  return Math.round(value)
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
 /**
  * A metric value: a grouped number, or an honest "n/a" when DataForSEO had none.
+ *
+ * EVERY FIGURE THIS TOOL PRINTS IS A COUNT — backlinks, referring domains, and a rank on a fixed
+ * integer scale. None of them is a model estimate, so none of them is rounded to a coarser unit:
+ * `exactCount` groups the digits and drops nothing (format/quantities.ts, class 1).
  *
  * ZERO IS NOT ABSENCE HERE, in either direction. DataForSEO documents that it returns 0 for a
  * bucket it has no data for, so a printed 0 is the vendor's own answer and is printed as 0; a
@@ -106,7 +104,7 @@ function thousands(value: number): string {
  * case as 0 would turn "we don't know" into "nothing happened" (NEVER #7).
  */
 function metric(value: number | null): string {
-  return value === null ? "n/a" : thousands(value);
+  return value === null ? "n/a" : exactCount(value);
 }
 
 /** The window the VENDOR says it answered for, or an honest admission that it did not say. */
@@ -142,25 +140,33 @@ export function renderBacklinkChangesHeader(
 
 /** A section heading that owns its OWN bucket count, because the two series can disagree. */
 export function sectionHeading(label: string, count: number, groupRange: string): string {
-  return `${label} — ${thousands(count)} ${groupRange} bucket${count === 1 ? "" : "s"}`;
+  return `${label} — ${exactCount(count)} ${groupRange} bucket${count === 1 ? "" : "s"}`;
 }
 
-/** One bucket of the new/lost series. */
+/**
+ * One bucket of the new/lost series.
+ *
+ * THE BUCKET LABEL IS THE VENDOR'S STORED DATE WITH A ZERO CLOCK DROPPED. DataForSEO labels every
+ * bucket "2025-08-31 00:00:00 +00:00", and a default lookup printed those eleven identical,
+ * information-free characters 26 times in one answer, pushing the dates a reader came for into the
+ * noise. Only a provably-zero UTC clock is dropped and nothing is re-labelled — see
+ * {@link bucketDateLabel} for the narrow condition and for why a real time of day survives.
+ */
 export function renderChangePoint(point: BacklinkChangePoint): string {
   return (
-    `• ${point.date} — ${metric(point.new_backlinks)} new / ` +
+    `• ${bucketDateLabel(point.date)} — ${metric(point.new_backlinks)} new / ` +
     `${metric(point.lost_backlinks)} lost backlinks · ` +
     `${metric(point.new_referring_domains)} new / ` +
     `${metric(point.lost_referring_domains)} lost referring domains`
   );
 }
 
-/** One bucket of the profile series. */
+/** One bucket of the profile series, labelled by the same rule as the new/lost series. */
 export function renderProfilePoint(point: BacklinkProfilePoint): string {
   return (
-    `• ${point.date} — ${metric(point.backlinks)} backlinks · ` +
+    `• ${bucketDateLabel(point.date)} — ${metric(point.backlinks)} backlinks · ` +
     `${metric(point.referring_domains)} referring domains · ` +
-    `rank ${metric(point.rank)} of ${thousands(BACKLINK_CHANGES_RANK_MAX)}`
+    `rank ${metric(point.rank)} of ${exactCount(BACKLINK_CHANGES_RANK_MAX)}`
   );
 }
 
