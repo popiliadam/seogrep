@@ -51,8 +51,8 @@ const FULL_PROFILE: BacklinkProfile = {
   top_referring_domains: {
     total_count: 12372,
     rows: [
-      { domain: "seoblog.example", backlinks: 9864, rank: 302 },
-      { domain: "news.example", backlinks: 1204, rank: 218 },
+      { domain: "seoblog.example", backlinks: 9864, rank: 302, backlinks_spam_score: 6 },
+      { domain: "news.example", backlinks: 1204, rank: 218, backlinks_spam_score: 11 },
     ],
   },
   top_anchors: {
@@ -72,8 +72,8 @@ describe("formatBacklinkProfile", () => {
         "• Backlink spam score: 8\n" +
         "• Domain rank: 371 of 1,000\n\n" +
         "Top referring domains (2 of 12,372):\n" +
-        "• seoblog.example — 9,864 backlinks, rank 302\n" +
-        "• news.example — 1,204 backlinks, rank 218\n\n" +
+        "• seoblog.example — 9,864 backlinks, rank 302, backlinks_spam_score 6\n" +
+        "• news.example — 1,204 backlinks, rank 218, backlinks_spam_score 11\n\n" +
         "Top anchors (1 of 83,736):\n" +
         '• "example" — 4,186 backlinks',
     );
@@ -102,13 +102,18 @@ describe("formatBacklinkProfile", () => {
         referring_main_domains: null,
         broken_backlinks: null,
       },
-      top_referring_domains: { total_count: null, rows: [{ domain: "a.example", backlinks: null, rank: null }] },
+      top_referring_domains: {
+        total_count: null,
+        rows: [{ domain: "a.example", backlinks: null, rank: null, backlinks_spam_score: null }],
+      },
       top_anchors: { total_count: null, rows: [] },
     });
     expect(text).toContain("• Backlinks: n/a");
     expect(text).toContain("• Referring domains: n/a");
     expect(text).toContain("• Domain rank: n/a of 1,000");
-    expect(text).toContain("• a.example — n/a backlinks, rank n/a");
+    expect(text).toContain(
+      "• a.example — n/a backlinks, rank n/a, backlinks_spam_score not reported by DataForSEO",
+    );
   });
 
   it("drops the dofollow clause when the nofollow count is missing (no invented ratio)", () => {
@@ -371,5 +376,67 @@ describe("S1 — the profile's absent domain rank never becomes a 0", () => {
     const text = renderedSummary({ ...SUMMARY_WITHOUT_RANK, rank: 0 });
     expect(text).toContain("• Domain rank: 0 of 1,000");
     expect(text).not.toContain("• Domain rank: n/a of 1,000");
+  });
+});
+
+// =============================================================================================
+// S14 item 4 — THE SPAM SCORE THE VENDOR ALREADY SENT, AND THE TWO WAYS IT CAN BE WRONG.
+//
+// MEASURED 2026-08-25 on dentnotion.com: the /backlinks/referring_domains/live body carried
+// `backlinks_spam_score` for every domain (poliste.com 26, izmirdebugun.com 7,
+// sondakikaizmir.com 3) and the 70-credit report printed none of them — so the reader could not
+// see WHICH source was suspicious in the one view that lists their sources. Nothing extra is
+// bought to fix it: the field rides in the same response as the counts already printed.
+//
+// Both specs go through the REAL parser and the REAL renderer (renderedReferringDomains), because
+// a hand-built ReferringDomainRow whose score is already null cannot fail the way the projection
+// can: `?? 0` in dfs/backlinks.ts would leave a hand-built spec green (signed lesson 12).
+// =============================================================================================
+
+describe("S14 — a referring domain's spam score is printed, and its absence never becomes a 0", () => {
+  it("prints the vendor's score for every domain that has one", () => {
+    const text = renderedReferringDomains([
+      { domain: "poliste.com", backlinks: 3, rank: 0, backlinks_spam_score: 26 },
+      { domain: "izmirdebugun.com", backlinks: 4, backlinks_spam_score: 7 },
+      { domain: "sondakikaizmir.com", backlinks: 2, rank: 12, backlinks_spam_score: 3 },
+    ]);
+    expect(text).toMatch(/poliste\.com .*backlinks_spam_score 26/);
+    expect(text).toMatch(/izmirdebugun\.com .*backlinks_spam_score 7/);
+    expect(text).toMatch(/sondakikaizmir\.com .*backlinks_spam_score 3/);
+  });
+
+  /**
+   * THE VENDOR SILENCE. The key is ABSENT, exactly as an unscored domain arrives — not
+   * `backlinks_spam_score: null`, which would be a weaker claim about what DataForSEO returned.
+   * Printed as 0 it would read as the CLEANEST domain in the list, from a body that said nothing.
+   */
+  it("prints an unscored domain as unreported, never as 0", () => {
+    const text = renderedReferringDomains([
+      { domain: "scored.example", backlinks: 9, rank: 40, backlinks_spam_score: 26 },
+      { domain: "unscored.example", backlinks: 4, rank: 12 },
+    ]);
+    expect(text).toMatch(/unscored\.example .*backlinks_spam_score not reported by DataForSEO/i);
+    expect(text).not.toMatch(/unscored\.example[^\n]*backlinks_spam_score 0\b/);
+    // ...and the silence of one row does not blank out the score of the row beside it.
+    expect(text).toMatch(/scored\.example .*backlinks_spam_score 26/);
+  });
+
+  /** The other half of the same rule: a vendor ZERO is the vendor's own answer and prints as 0. */
+  it("prints a vendor zero as 0 — that is an answer, not a silence", () => {
+    const text = renderedReferringDomains([
+      { domain: "clean.example", backlinks: 9, rank: 40, backlinks_spam_score: 0 },
+    ]);
+    expect(text).toMatch(/clean\.example .*backlinks_spam_score 0\b/);
+    expect(text).not.toMatch(/clean\.example[^\n]*not reported/i);
+  });
+
+  /** No verdict is derived from the number — it is the vendor's field under the vendor's name. */
+  it("adds no link-quality judgement of SeoGrep's own to the score", () => {
+    const text = renderedReferringDomains([
+      { domain: "poliste.com", backlinks: 3, rank: 0, backlinks_spam_score: 26 },
+    ]);
+    expect(text).not.toMatch(/\btoxic\b/i);
+    expect(text).not.toMatch(/(should|recommend|consider) disavow/i);
+    expect(text).not.toMatch(/(low|high|poor) quality/i);
   });
 });

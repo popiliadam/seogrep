@@ -141,10 +141,37 @@ function renderSummary(profile: BacklinkProfile, project: ProjectRef | null | un
   ].join("\n");
 }
 
+/**
+ * A vendor SPAM SCORE, always under the vendor's own field name, and a silence always in WORDS —
+ * the same shape disavow_candidates prints, and for the same two reasons.
+ *
+ * The NAME, because this report already prints a `backlinks_spam_score` for the WHOLE target in
+ * its summary block; the per-domain one is the same vendor spelling on a different object, so the
+ * row says which field it is rather than offering a second bare "spam score".
+ *
+ * The WORDS, because a missing score rendered as 0 would publish "DataForSEO scored this domain
+ * clean" out of a response that said nothing at all — and 0 reads like the BEST possible answer
+ * on exactly the axis a reader scans this list for (signed lesson 12).
+ */
+function vendorSpamScore(value: number | null): string {
+  return value === null
+    ? "backlinks_spam_score not reported by DataForSEO"
+    : `backlinks_spam_score ${value}`;
+}
+
+/**
+ * The top referring domains. The spam score rides along because DataForSEO returns it in the SAME
+ * /backlinks/referring_domains/live body as the counts (measured 2026-08-25: poliste.com 26 in a
+ * body whose rendered row showed only backlinks and rank) — so the reader of a 70-credit profile
+ * can see WHICH source is suspicious without buying a second lookup. SeoGrep still adds no verdict
+ * of its own: the number is printed under the vendor's field name and nothing is derived from it.
+ */
 function renderReferringDomains(list: BacklinkList<ReferringDomainRow>): string {
   if (list.rows.length === 0) return "Top referring domains: none on record.";
   const lines = list.rows.map(
-    (row) => `• ${row.domain} — ${metric(row.backlinks)} backlinks, rank ${metric(row.rank)}`,
+    (row) =>
+      `• ${row.domain} — ${metric(row.backlinks)} backlinks, rank ${metric(row.rank)}, ` +
+      vendorSpamScore(row.backlinks_spam_score),
   );
   return `${listHeader("Top referring domains", list)}\n${lines.join("\n")}`;
 }

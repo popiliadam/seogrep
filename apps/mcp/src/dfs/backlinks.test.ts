@@ -103,14 +103,14 @@ describe("parseBacklinksSummaryResponse", () => {
 });
 
 describe("parseReferringDomainsResponse", () => {
-  it("projects items to {domain, backlinks, rank} and carries total_count", () => {
+  it("projects items to {domain, backlinks, rank, backlinks_spam_score} and carries total_count", () => {
     expect(parseReferringDomainsResponse(referringDomainsFixture)).toEqual({
       total_count: 12372,
       rows: [
-        { domain: "seoblog.example", backlinks: 9864, rank: 302 },
-        { domain: "news.example", backlinks: 1204, rank: 218 },
+        { domain: "seoblog.example", backlinks: 9864, rank: 302, backlinks_spam_score: 6 },
+        { domain: "news.example", backlinks: 1204, rank: 218, backlinks_spam_score: 11 },
         // A null rank and an ABSENT backlinks field both degrade to null — the row stays.
-        { domain: "forum.example", backlinks: null, rank: null },
+        { domain: "forum.example", backlinks: null, rank: null, backlinks_spam_score: 44 },
       ],
     });
   });
@@ -146,7 +146,11 @@ describe("parseReferringDomainsResponse", () => {
           },
         ],
       }),
-    ).toEqual({ total_count: 2, rows: [{ domain: "news.example", backlinks: 5, rank: 10 }] });
+    ).toEqual({
+      total_count: 2,
+      // The surviving row keeps the vendor's silence on the spam score as null, not as a 0.
+      rows: [{ domain: "news.example", backlinks: 5, rank: 10, backlinks_spam_score: null }],
+    });
   });
 });
 

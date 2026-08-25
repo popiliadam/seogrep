@@ -100,6 +100,16 @@ export interface ReferringDomainRow {
   readonly domain: string;
   readonly backlinks: number | null;
   readonly rank: number | null;
+  /**
+   * DataForSEO's `backlinks_spam_score` FOR THIS REFERRING DOMAIN — the vendor's own average spam
+   * score of the links this domain points at the target. It arrives in the SAME
+   * /backlinks/referring_domains/live body the counts above come from, so carrying it costs
+   * nothing extra; it was simply thrown away before (measured 2026-08-25: the body held
+   * poliste.com 26, izmirdebugun.com 7, sondakikaizmir.com 3, and the report printed none of
+   * them). Nullish -> null, never 0: a domain the vendor did not score must not be published as
+   * a domain the vendor scored clean (signed lesson 12).
+   */
+  readonly backlinks_spam_score: number | null;
 }
 
 /** One anchor text. An empty `anchor` is legitimate (image links carry no anchor text). */
@@ -211,7 +221,14 @@ const summaryResultSchema = z.object({
 const referringDomainsResultSchema = z.object({
   total_count: z.number().nullish(),
   items: z
-    .array(z.object({ domain: z.string().nullish(), rank: z.number().nullish(), backlinks: z.number().nullish() }))
+    .array(
+      z.object({
+        domain: z.string().nullish(),
+        rank: z.number().nullish(),
+        backlinks: z.number().nullish(),
+        backlinks_spam_score: z.number().nullish(),
+      }),
+    )
     .nullish(),
 });
 
@@ -264,6 +281,7 @@ export function parseReferringDomainsResponse(raw: unknown): BacklinkList<Referr
         domain: item.domain as string,
         backlinks: item.backlinks ?? null,
         rank: item.rank ?? null,
+        backlinks_spam_score: item.backlinks_spam_score ?? null,
       })),
   };
 }

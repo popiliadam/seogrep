@@ -142,6 +142,38 @@ export function renderLinkGapRow(row: LinkGapRow, competitor: string): string {
   return lines.join("\n");
 }
 
+/**
+ * =====================================================================================
+ * THE MISSING EXAMPLE URL — said out loud, because it cannot be supplied
+ * =====================================================================================
+ * The 2026-08-25 review asked for "one example source URL per candidate, the sibling tools
+ * already have it". The sibling tools have it because they read a DIFFERENT endpoint:
+ * disavow_candidates and backlink_details both go through /backlinks/backlinks, whose rows are
+ * individual LINKS and carry `url_from` / `url_to`. This tool's one paid request is
+ * /backlinks/domain_intersection, whose entry carries `target`, `rank`, `backlinks`,
+ * `first_seen`, `lost_date`, `backlinks_spam_score`, the broken/referring counters and the
+ * `referring_links_*` breakdowns — and NO page URL of any kind. Checked against the vendor's
+ * documented field list and against the parser in dfs/link-gap.ts, which throws nothing away.
+ *
+ * So there are exactly three ways to put a URL on a row, and two of them are forbidden:
+ *   • synthesise one from the domain ("https://<domain>") — a claim about a page nobody fetched,
+ *     which is the fabricated-measurement rule this product exists to keep (NEVER #7);
+ *   • buy a second vendor request per lookup — that moves what the signed 45 credits pay for,
+ *     which is a human's decision, not a renderer's (NEVER #6);
+ *   • say plainly that the endpoint does not name pages, and name the tool that does.
+ * The third is what the footer below does. It is not the example URL that was asked for, and it
+ * does not pretend to be one.
+ */
+export function renderNoExampleUrlNote(competitor: string): string {
+  return (
+    "No example linking page is shown above: the DataForSEO endpoint behind this tool " +
+    "(domain_intersection) reports these prospects at DOMAIN level and names no page URL at all, " +
+    "so any URL here would be one SeoGrep made up. To see which pages of these domains link to " +
+    `${competitor}, with the anchor text and the page linked to, run backlink_details on ` +
+    `${competitor} — a separate ${TOOL_COSTS.backlink_details}-credit lookup.`
+  );
+}
+
 /** The "nothing found" answer — a real result, not an error, and still charged for. */
 function renderNoLinkGap(gap: LinkGapResult, project?: ProjectRef | null): string {
   const subject = subjectLabel(gap.target, project);
@@ -159,6 +191,7 @@ export function formatLinkGap(gap: LinkGapResult, project?: ProjectRef | null): 
   return [
     renderLinkGapHeader(gap, project),
     ...gap.rows.map((row) => renderLinkGapRow(row, gap.competitor)),
+    renderNoExampleUrlNote(gap.competitor),
   ].join("\n\n");
 }
 
