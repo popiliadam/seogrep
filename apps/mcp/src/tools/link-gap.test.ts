@@ -268,3 +268,43 @@ describe("link_gap free pre-reserve gates (no credit machinery)", () => {
     ).rejects.toThrow(/SUPABASE/i);
   });
 });
+
+// =============================================================================================
+// S14 item 3 — THE EXAMPLE URL THAT CANNOT BE SUPPLIED, SAID OUT LOUD.
+//
+// The review asked for one example source URL per candidate, "the sibling tools already have it".
+// They have it because they read /backlinks/backlinks, whose rows are individual LINKS carrying
+// `url_from` and `url_to`. This tool's ONE paid request is /backlinks/domain_intersection, whose
+// entry carries no page URL of any kind — checked against the vendor's documented field list and
+// against the parser in dfs/link-gap.ts, which throws nothing away. Inventing "https://<domain>"
+// would publish a page nobody fetched, and buying a second request would move what the signed 45
+// credits pay for. So the tool states the limit and names the tool that does have the URLs.
+// =============================================================================================
+
+describe("S14 — link_gap says why it shows no example URL, and never invents one", () => {
+  const text = formatLinkGap(gap([FULL_ROW, BARE_ROW], 612));
+
+  it("names the vendor endpoint and says it reports at domain level only", () => {
+    expect(text).toMatch(/no example linking page is shown/i);
+    expect(text).toMatch(/domain_intersection/);
+    expect(text).toMatch(/domain level/i);
+  });
+
+  it("does not fabricate a URL for any prospect domain", () => {
+    expect(text).not.toMatch(/https?:\/\/searchengineweekly\.test/);
+    expect(text).not.toMatch(/https?:\/\/marketingroundup\.test/);
+    // The only URL-shaped thing allowed on the page is nothing at all.
+    expect(text).not.toMatch(/https?:\/\//);
+  });
+
+  it("names the tool that DOES carry the linking pages, and that it is a separate paid lookup", () => {
+    expect(text).toMatch(/backlink_details/);
+    expect(text).toMatch(/rival\.com/);
+    expect(text).toMatch(/separate 35-credit lookup/i);
+  });
+
+  /** A "no gap" answer has no rows to caption, so the footer would be answering nothing. */
+  it("stays off the empty answer", () => {
+    expect(formatLinkGap(gap([]))).not.toMatch(/no example linking page/i);
+  });
+});
