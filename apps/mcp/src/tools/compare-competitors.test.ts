@@ -6,17 +6,21 @@ import {
   EMPTY_ORGANIC_METRICS,
   parseCompetitorsDomainResponse,
   parseDomainRankOverviewResponse,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
   type CompetitorComparison,
   type DomainOrganicMetrics,
 } from "../dfs/competitors.ts";
+import { parseRankedKeywordsResponse } from "../dfs/ranked-keywords.ts";
 import {
   formatCompetitorComparison,
   makeCompareCompetitorsTool,
   normalizeCompetitors,
 } from "./compare-competitors.ts";
+import { formatRankedKeywords } from "./ranked-keywords.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import competitorsFixture from "../dfs/fixtures/competitors-domain.json";
 import rankOverviewFixture from "../dfs/fixtures/domain-rank-overview.json";
+import rankedKeywordsFixture from "../dfs/fixtures/ranked-keywords.json";
 
 /**
  * Fast-lane (DB-less) proofs for compare_competitors. The credit LEDGER behaviour (mock ->
@@ -97,6 +101,11 @@ const RIVAL_SHARED_METRICS = metrics(
 
 const EMPTY_METRICS: DomainOrganicMetrics = EMPTY_ORGANIC_METRICS;
 
+/**
+ * The DISCOVERY flow's shape as the real ports build it: the target is found in its OWN competitor
+ * list, so both rows are read off the one competitors_domain response and both say so.
+ * dfs/competitors.test.ts pins that the ports really do set this — transport log and all.
+ */
 const DISCOVERED: CompetitorComparison = {
   target: "example.com",
   discovered: true,
@@ -108,6 +117,7 @@ const DISCOVERED: CompetitorComparison = {
       intersections: null,
       avg_position: null,
       metrics: TARGET_METRICS,
+      metrics_source: "competitors_domain",
       shared: null,
     },
     {
@@ -116,7 +126,31 @@ const DISCOVERED: CompetitorComparison = {
       intersections: 1840,
       avg_position: 14.2,
       metrics: RIVAL_METRICS,
+      metrics_source: "competitors_domain",
       shared: RIVAL_SHARED_METRICS,
+    },
+  ],
+};
+
+/**
+ * The SUPPLIED-rivals flow's shape as the real ports build it. No discovery request is sent on
+ * this path at all, so EVERY row — the target included — is a separate domain_rank_overview
+ * request: same table, same labels, a different DataForSEO measurement behind every number.
+ */
+const SUPPLIED: CompetitorComparison = {
+  target: "example.com",
+  discovered: false,
+  discovered_total_count: null,
+  rows: [
+    { ...DISCOVERED.rows[0]!, metrics_source: "domain_rank_overview" },
+    {
+      domain: "chosen.example",
+      source: "supplied",
+      intersections: null,
+      avg_position: null,
+      metrics: RIVAL_METRICS,
+      metrics_source: "domain_rank_overview",
+      shared: null,
     },
   ],
 };
@@ -128,7 +162,8 @@ describe("formatCompetitorComparison", () => {
         "the top 1 of 47 competitors DataForSEO found, ranked by how many organic SERPs each one " +
         "shares with the target:\n\n" +
         "• example.com (target)\n" +
-        "  Across the whole domain — every keyword it ranks for:\n" +
+        "  Across the whole domain — every keyword it ranks for, from DataForSEO's " +
+        "competitor-discovery data:\n" +
         "  - Organic SERPs containing the domain: 1,788\n" +
         "  - Organic SERPs by position, #1-20 — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
         "  - Organic SERPs by position, #21-100 — #21-30: 157 · #31-40: 174 · #41-50: 203 · " +
@@ -139,7 +174,8 @@ describe("formatCompetitorComparison", () => {
         "moved down: 418 · no longer found: 547\n\n" +
         "• rival-one.example (found by DataForSEO) — 1,840 intersecting keywords, average " +
         "position 14.2 on them\n" +
-        "  Across the whole domain — every keyword it ranks for:\n" +
+        "  Across the whole domain — every keyword it ranks for, from DataForSEO's " +
+        "competitor-discovery data:\n" +
         "  - Organic SERPs containing the domain: 9,024\n" +
         "  - Organic SERPs by position, #1-20 — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
         "  - Organic SERPs by position, #21-100 — #21-30: 1,110 · #31-40: 1,038 · #41-50: 984 · " +
@@ -156,7 +192,10 @@ describe("formatCompetitorComparison", () => {
         "  - Estimated monthly organic traffic (ETV): 6,120\n" +
         "  - Estimated monthly cost of the same traffic as paid ads: $18,221\n" +
         "  - Since DataForSEO's previous check — newly ranking: 148 · moved up: 203 · " +
-        "moved down: 139 · no longer found: 111",
+        "moved down: 139 · no longer found: 111\n\n" +
+        "Note: whole-domain totals name the DataForSEO data they were read from. DataForSEO " +
+        "measures these separately, so a different total in another SeoGrep tool is a second " +
+        "measurement, not a contradiction.",
     );
   });
 
@@ -168,10 +207,14 @@ describe("formatCompetitorComparison", () => {
    */
   it("labels the whole-domain and shared-keyword scopes so neither can pass for the other", () => {
     const text = formatCompetitorComparison(DISCOVERED, WHERE);
-    expect(text).toContain("  Across the whole domain — every keyword it ranks for:\n");
+    expect(text).toContain(
+      "  Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:\n",
+    );
     expect(text).toContain("  Across the keywords it shares with the target only:\n");
     // Both counts appear, each under its own heading, and they are not the same number.
-    const whole = text.indexOf("Across the whole domain — every keyword it ranks for:\n  - Organic SERPs containing the domain: 9,024");
+    const whole = text.indexOf(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:\n  - Organic SERPs containing the domain: 9,024",
+    );
     const shared = text.indexOf("Across the keywords it shares with the target only:\n  - Organic SERPs containing the domain: 1,840");
     expect(whole).toBeGreaterThan(-1);
     expect(shared).toBeGreaterThan(whole);
@@ -207,27 +250,11 @@ describe("formatCompetitorComparison", () => {
   });
 
   it("gives a SUPPLIED rival no shared-keyword section, because none was ever fetched", () => {
-    const text = formatCompetitorComparison(
-      {
-        ...DISCOVERED,
-        discovered: false,
-        discovered_total_count: null,
-        rows: [
-          DISCOVERED.rows[0]!,
-          {
-            domain: "chosen.example",
-            source: "supplied",
-            intersections: null,
-            avg_position: null,
-            metrics: RIVAL_METRICS,
-            shared: null,
-          },
-        ],
-      },
-      WHERE,
-    );
+    const text = formatCompetitorComparison(SUPPLIED, WHERE);
     expect(text).toContain("• chosen.example (supplied by you)\n");
-    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's domain-overview data:",
+    );
     expect(text).not.toContain("shares with the target only");
   });
 
@@ -236,31 +263,15 @@ describe("formatCompetitorComparison", () => {
       { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[1]!, shared: EMPTY_METRICS }] },
       WHERE,
     );
-    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:",
+    );
     // An all-null scope is dropped rather than printed as a block of n/a.
     expect(text).not.toContain("shares with the target only");
   });
 
   it("says plainly that a SUPPLIED rival came from the caller, with no discovery figures", () => {
-    const text = formatCompetitorComparison(
-      {
-        ...DISCOVERED,
-        discovered: false,
-        discovered_total_count: null,
-        rows: [
-          DISCOVERED.rows[0]!,
-          {
-            domain: "chosen.example",
-            source: "supplied",
-            intersections: null,
-            avg_position: null,
-            metrics: RIVAL_METRICS,
-            shared: null,
-          },
-        ],
-      },
-      WHERE,
-    );
+    const text = formatCompetitorComparison(SUPPLIED, WHERE);
     expect(text).toContain("the target against 1 competitor you supplied:");
     expect(text).toContain("• chosen.example (supplied by you)\n");
     // No overlap clause is invented for a rival DataForSEO was never asked about.
@@ -663,5 +674,180 @@ describe("S1 — a movement counter absent from the vendor body never becomes a 
     expect(renderedTargetRow(target?.full ?? EMPTY_ORGANIC_METRICS)).toContain(
       "no longer found: 104",
     );
+  });
+});
+
+// =============================================================================================
+// S19 — WHICH DataForSEO MEASUREMENT EACH WHOLE-DOMAIN FIGURE WAS READ FROM.
+//
+// S1 above pinned the BLOCK the parser reads. It did not pin what the CUSTOMER is told, and that
+// was the whole defect: this tool and ranked_keywords printed the identical heading "Across the
+// whole domain — every keyword it ranks for:" over numbers read from different DataForSEO
+// endpoints. The numbers are all correct and they legitimately disagree — the repo's own fixtures
+// put one domain's `is_lost` at 320, 319 and 547 — so a customer comparing two outputs concluded
+// the product contradicts itself. Making them agree was never an option: it would mean fabricating
+// one of them. Naming the measurement is the fix.
+//
+// Every spec below drives the REAL port (real vendor parsers, real fixtures) into the REAL
+// renderer. An expectation checked against a hand-built ComparisonRow would prove the renderer
+// prints whatever it is handed, and nothing at all about which vendor block was read (lesson 12).
+// =============================================================================================
+
+const DISCOVERY_LABEL = "from DataForSEO's competitor-discovery data";
+const RANK_OVERVIEW_LABEL = "from DataForSEO's domain-overview data";
+
+/** Parse + compare + render exactly as the handler does, with no network and no database. */
+async function renderedFromPort(
+  competitors: readonly string[],
+  target = "example.com",
+): Promise<string> {
+  const comparison = await createMockCompetitorsPort(FIXTURES).fetchCompetitorComparison({
+    target,
+    competitors,
+    limit: 10,
+    language_code: "en",
+    location_code: 2840,
+  });
+  return formatCompetitorComparison(comparison, WHERE);
+}
+
+/** The whole-domain heading of the FIRST block — the target's — with its first metric line. */
+function targetHeadingAndCount(text: string): string {
+  const from = text.indexOf("  Across the whole domain");
+  return text.slice(from, text.indexOf("\n", text.indexOf("\n", from) + 1));
+}
+
+describe("S19 — compare_competitors names the measurement behind every whole-domain figure", () => {
+  /**
+   * The DISCOVERY path. The target is found inside its own competitor list, so the entire table —
+   * target included — is read off the one competitors_domain response and NO rank overview is
+   * requested. 5,312 / 319 are that response's own numbers for example.com.
+   *
+   * Mutation proof: point buildDiscoveredRows' target at the rank-overview metrics and this goes
+   * red on both the label AND the numbers.
+   */
+  it("labels the discovery path's figures, and prints the discovery response's own numbers", async () => {
+    const text = await renderedFromPort([]);
+    expect(targetHeadingAndCount(text)).toBe(
+      `  Across the whole domain — every keyword it ranks for, ${DISCOVERY_LABEL}:\n` +
+        "  - Organic SERPs containing the domain: 5,312",
+    );
+    expect(text).toContain("no longer found: 319");
+    // The other endpoint's figures for the same domain are 1,788 / 547. Neither is present, and
+    // neither is its name: nothing on this path came from a rank overview.
+    expect(text).not.toContain(RANK_OVERVIEW_LABEL);
+    expect(text).not.toContain("1,788");
+    expect(text).not.toContain("no longer found: 547");
+  });
+
+  /**
+   * The SUPPLIED-rivals path — the SECOND internal flow, and a genuinely different measurement.
+   * A named rival is not a discovery result, so every row here is its own domain_rank_overview
+   * request. Same table, same labels, different vendor numbers for the very same target.
+   */
+  it("labels the supplied path's figures, and prints the rank overview's own numbers", async () => {
+    const text = await renderedFromPort(["chosen.org"]);
+    expect(targetHeadingAndCount(text)).toBe(
+      `  Across the whole domain — every keyword it ranks for, ${RANK_OVERVIEW_LABEL}:\n` +
+        "  - Organic SERPs containing the domain: 1,788",
+    );
+    expect(text).toContain("no longer found: 547");
+    expect(text).not.toContain(DISCOVERY_LABEL);
+    expect(text).not.toContain("5,312");
+    expect(text).not.toContain("no longer found: 319");
+  });
+
+  /**
+   * THE CUSTOMER-VISIBLE POINT. One domain, two of this tool's own paths, two different answers to
+   * "how many rankings did it lose" — and each output now says which measurement it is quoting.
+   */
+  it("gives the SAME domain two different totals across its two paths, each attributed", async () => {
+    const [discovery, supplied] = await Promise.all([
+      renderedFromPort([]),
+      renderedFromPort(["chosen.org"]),
+    ]);
+    expect(discovery).toContain("no longer found: 319");
+    expect(supplied).toContain("no longer found: 547");
+    expect(discovery).toContain(DISCOVERY_LABEL);
+    expect(supplied).toContain(RANK_OVERVIEW_LABEL);
+  });
+
+  /**
+   * The sub-case a single table-wide label would get WRONG. DataForSEO sometimes omits the target
+   * from its own competitor list; the target then costs one extra rank-overview request while the
+   * rivals beside it still come from the discovery response. TWO measurements in ONE table.
+   */
+  it("labels a fallback target and its discovered rivals SEPARATELY in one table", async () => {
+    const text = await renderedFromPort([], "absent-target.org");
+    expect(targetHeadingAndCount(text)).toBe(
+      `  Across the whole domain — every keyword it ranks for, ${RANK_OVERVIEW_LABEL}:\n` +
+        "  - Organic SERPs containing the domain: 1,788",
+    );
+    // …while the rivals below it keep the discovery response they actually came from.
+    expect(text).toContain(
+      `  Across the whole domain — every keyword it ranks for, ${DISCOVERY_LABEL}:\n` +
+        "  - Organic SERPs containing the domain: 5,312",
+    );
+  });
+
+  it("prints the measurement note ONCE, after the figures rather than in front of them", async () => {
+    const text = await renderedFromPort([]);
+    expect(text.split(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toHaveLength(2);
+    expect(text.indexOf(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toBeGreaterThan(
+      text.indexOf("Organic SERPs containing the domain"),
+    );
+  });
+
+  /**
+   * A row whose source is not stated says NOTHING about its source — it does not guess one. A
+   * wrong attribution is worse than a missing one; it is the exact failure being fixed.
+   */
+  it("prints no source clause and no note when the row does not state a measurement", () => {
+    const text = formatCompetitorComparison(
+      { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[0]!, metrics_source: undefined }] },
+      WHERE,
+    );
+    expect(text).toContain("  Across the whole domain — every keyword it ranks for:\n");
+    expect(text).not.toContain("DataForSEO's competitor-discovery data");
+    expect(text).not.toContain("DataForSEO's domain-overview data");
+    expect(text).not.toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
+  });
+
+  it("drops the note for a table with no whole-domain figures to explain", () => {
+    const text = formatCompetitorComparison(
+      { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[0]!, metrics: EMPTY_METRICS }] },
+      WHERE,
+    );
+    expect(text).toContain("No organic ranking data on record.");
+    expect(text).not.toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
+  });
+});
+
+/**
+ * THE REPORTED SYMPTOM, END TO END: the two paid tools, on one domain, minutes apart. Both print
+ * "5,312 organic SERPs" and then disagree on how many rankings were lost — because they read two
+ * different DataForSEO measurements. The spec pins that each output NAMES its own, so the reader
+ * sees two measurements instead of one product contradicting itself.
+ */
+describe("S19 — ranked_keywords and compare_competitors no longer claim the same source", () => {
+  it("names a DIFFERENT measurement in each tool for the same domain's whole-domain block", async () => {
+    const comparison = await renderedFromPort([]);
+    const ranked = formatRankedKeywords(parseRankedKeywordsResponse(rankedKeywordsFixture), WHERE);
+
+    // Same domain, same heading, same 5,312 — and two different `no longer found` figures.
+    expect(ranked).toContain("- Organic SERPs containing the domain: 5,312");
+    expect(comparison).toContain("- Organic SERPs containing the domain: 5,312");
+    expect(ranked).toContain("no longer found: 96");
+    expect(comparison).toContain("no longer found: 319");
+
+    // Each names its own measurement, and neither claims the other's.
+    expect(ranked).toContain("from DataForSEO's ranked-keywords data");
+    expect(ranked).not.toContain(DISCOVERY_LABEL);
+    expect(comparison).toContain(DISCOVERY_LABEL);
+    expect(comparison).not.toContain("from DataForSEO's ranked-keywords data");
+
+    // …and both tell the reader what to make of the difference.
+    expect(ranked).toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
+    expect(comparison).toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
   });
 });

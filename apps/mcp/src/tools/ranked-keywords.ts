@@ -4,6 +4,8 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   POSITION_BAND_KEYS,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
+  WHOLE_DOMAIN_SOURCE_LABEL,
   type DomainOrganicMetrics,
   type PositionBandKey,
 } from "../dfs/competitors.ts";
@@ -191,13 +193,21 @@ function hasNoMetrics(metrics: DomainOrganicMetrics): boolean {
  * domain" and some other phrasing are the same number. In particular `count` and the `pos_*`
  * bands count SERPs, NOT keywords, and `etv` / `estimated_paid_traffic_cost` are vendor
  * ESTIMATES, so they are labelled as such.
+ *
+ * The heading NAMES the measurement, and the identical wording is exactly why it has to. This
+ * card is `ranked_keywords`' own `result.metrics.organic`; compare_competitors prints the same
+ * nineteen fields under the same labels from competitors_domain or domain_rank_overview. Those
+ * are separate DataForSEO measurements of the same domain and they disagree — the repo's fixtures
+ * put one domain's `is_lost` at 320, 319 and 547 — so an unnamed source made two true numbers
+ * look like one broken one. The note below the card says what to make of a difference; it is one
+ * line, and it sits AFTER the figures so nothing is buried under it.
  */
 function renderHealthCard(metrics: DomainOrganicMetrics): string | null {
   if (hasNoMetrics(metrics)) return null;
   const top = POSITION_BAND_KEYS.slice(0, 4);
   const deeper = POSITION_BAND_KEYS.slice(4);
   return [
-    "Across the whole domain — every keyword it ranks for:",
+    `Across the whole domain — every keyword it ranks for, from ${WHOLE_DOMAIN_SOURCE_LABEL.ranked_keywords}:`,
     `- Organic SERPs containing the domain: ${metric(metrics.count)}`,
     `- Organic SERPs by position, #1-20 — ${renderBands(metrics, top)}`,
     `- Organic SERPs by position, #21-100 — ${renderBands(metrics, deeper)}`,
@@ -206,6 +216,7 @@ function renderHealthCard(metrics: DomainOrganicMetrics): string | null {
     `- Since DataForSEO's previous check — newly ranking: ${metric(metrics.is_new)}` +
       ` · moved up: ${metric(metrics.is_up)} · moved down: ${metric(metrics.is_down)}` +
       ` · no longer found: ${metric(metrics.is_lost)}`,
+    WHOLE_DOMAIN_MEASUREMENT_NOTE,
   ].join("\n");
 }
 

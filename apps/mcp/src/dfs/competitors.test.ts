@@ -9,6 +9,10 @@ import {
   ESTIMATED_RANK_OVERVIEW_REQUEST_USD,
   MAX_COMPARED_DOMAINS,
   MAX_COMPETITORS,
+  EMPTY_ORGANIC_METRICS,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
+  WHOLE_DOMAIN_SOURCE_LABEL,
+  buildDiscoveredRows,
   createLiveCompetitorsClient,
   createMockCompetitorsPort,
   disabledCompetitorsPort,
@@ -332,6 +336,70 @@ describe("findTargetRow", () => {
   });
 });
 
+/**
+ * S19 — the three whole-domain measurements must stay DISTINGUISHABLE in customer-facing words.
+ *
+ * The defect this closes was not a wrong number: it was two right numbers printed under one
+ * identical label, which reads as the product contradicting itself. That only stays fixed while
+ * the three labels remain three different strings, so that is pinned here rather than left to the
+ * two renderers to keep true separately.
+ */
+describe("WHOLE_DOMAIN_SOURCE_LABEL", () => {
+  it("gives every measurement its OWN name — no two blocks may print the same words", () => {
+    const labels = Object.values(WHOLE_DOMAIN_SOURCE_LABEL);
+    expect(labels).toHaveLength(3);
+    expect(new Set(labels).size).toBe(3);
+  });
+
+  it("names each measurement in customer English, never by DataForSEO's endpoint key", () => {
+    for (const [key, label] of Object.entries(WHOLE_DOMAIN_SOURCE_LABEL)) {
+      expect(label).toContain("DataForSEO");
+      // `ranked_keywords` / `competitors_domain` / `domain_rank_overview` are integrator names;
+      // a reader who has never seen the API must still be able to tell the three apart.
+      expect(label).not.toContain(key);
+      expect(label).not.toMatch(/_/);
+    }
+  });
+
+  it("states plainly that a disagreement between measurements is not a contradiction", () => {
+    expect(WHOLE_DOMAIN_MEASUREMENT_NOTE).toMatch(/not a contradiction/i);
+    // One sentence-ish, not a paragraph: it rides under every whole-domain block that prints.
+    expect(WHOLE_DOMAIN_MEASUREMENT_NOTE.length).toBeLessThan(260);
+  });
+});
+
+describe("buildDiscoveredRows", () => {
+  const rivals = parseCompetitorsDomainResponse(competitorsFixture).rows.filter(
+    (row) => row.domain !== "example.com",
+  );
+
+  it("labels a target read off its OWN discovery row as the discovery measurement", () => {
+    const target = findTargetRow("example.com", parseCompetitorsDomainResponse(competitorsFixture).rows);
+    const rows = buildDiscoveredRows(
+      "example.com",
+      { metrics: target?.full ?? EMPTY_ORGANIC_METRICS, source: "competitors_domain" },
+      rivals,
+    );
+    expect(rows[0]?.metrics.count).toBe(5312);
+    expect(rows[0]?.metrics_source).toBe("competitors_domain");
+  });
+
+  /**
+   * The sub-case a table-wide label would get WRONG: the target's numbers came from a second
+   * endpoint while every rival beside it came from the first.
+   */
+  it("carries the fallback target's rank-overview label WITHOUT relabelling the rivals", () => {
+    const rows = buildDiscoveredRows(
+      "absent-target.org",
+      { metrics: parseDomainRankOverviewResponse(rankOverviewFixture), source: "domain_rank_overview" },
+      rivals,
+    );
+    expect(rows[0]?.metrics.count).toBe(1788);
+    expect(rows[0]?.metrics_source).toBe("domain_rank_overview");
+    expect(rows.slice(1).every((row) => row.metrics_source === "competitors_domain")).toBe(true);
+  });
+});
+
 describe("estimateComparisonUsd", () => {
   /**
    * The gate is derived from DataForSEO Labs' PUBLISHED price shape ($0.012/request +
@@ -414,6 +482,7 @@ describe("createMockCompetitorsPort", () => {
     // mirrors the live client, which sends no rank overview on this path at all.
     expect(comparison.rows[0]?.metrics.count).toBe(5312);
     expect(comparison.rows[1]?.metrics.count).toBe(9024);
+    expect(comparison.rows.every((row) => row.metrics_source === "competitors_domain")).toBe(true);
   });
 
   it("carries the whole-domain and shared scopes separately on a discovered rival", async () => {
@@ -446,6 +515,7 @@ describe("createMockCompetitorsPort", () => {
     expect(comparison.rows[1]?.shared).toBeNull();
     // This flow DOES read the rank-overview fixtures — the whole point of keeping it as it was.
     expect(comparison.rows[1]?.metrics.count).toBe(1788);
+    expect(comparison.rows.every((row) => row.metrics_source === "domain_rank_overview")).toBe(true);
   });
 
   it("honours the requested discovery limit (a narrow request is not over-served)", async () => {
@@ -466,6 +536,9 @@ describe("createMockCompetitorsPort", () => {
     // holds no `absent-target.com` row.
     expect(comparison.rows[0]?.metrics.count).toBe(1788);
     expect(comparison.rows[0]?.domain).toBe("absent-target.com");
+    // The mock mirrors the live client's mixed table: fallback target, discovered rivals.
+    expect(comparison.rows[0]?.metrics_source).toBe("domain_rank_overview");
+    expect(comparison.rows[1]?.metrics_source).toBe("competitors_domain");
   });
 
   it("serves per-domain fixtures when they are given, falling back to `default`", async () => {
@@ -619,6 +692,12 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     expect(comparison.rows[0]?.metrics.count).toBe(5312);
     expect(comparison.rows[1]?.metrics.count).toBe(9024);
     expect(comparison.rows[1]?.shared?.count).toBe(1840);
+    // …and EVERY row SAYS so. The transport log above already proved no rank overview was sent,
+    // so a row claiming `domain_rank_overview` here would attribute its number to a request that
+    // never happened — precisely the mislabelling this field exists to prevent.
+    expect(comparison.rows.map((row) => row.metrics_source)).toEqual(
+      Array.from({ length: MAX_COMPARED_DOMAINS }, () => "competitors_domain"),
+    );
   });
 
   /**
@@ -653,6 +732,10 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     ]);
     expect(comparison.rows[0]?.metrics.count).toBe(1788); // from the fallback rank overview
     expect(comparison.rows[2]?.metrics.count).toBe(9024); // from the discovery response
+    // ONE table, TWO measurements — the case a single table-wide source label could not express.
+    // The transport log two assertions up names the same two endpoints in the same order.
+    expect(comparison.rows[0]?.metrics_source).toBe("domain_rank_overview");
+    expect(comparison.rows[2]?.metrics_source).toBe("competitors_domain");
   });
 
   it("SKIPS the discovery request entirely when competitors are supplied", async () => {
@@ -672,6 +755,13 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     ).toEqual(["example.com", "chosen.org", "other.org"]);
     expect(comparison.discovered).toBe(false);
     expect(comparison.discovered_total_count).toBeNull();
+    // Every row of THIS flow — the target included — is a rank overview, and each row says so.
+    // Same table shape as the discovery flow, different measurement behind every number.
+    expect(comparison.rows.map((row) => row.metrics_source)).toEqual([
+      "domain_rank_overview",
+      "domain_rank_overview",
+      "domain_rank_overview",
+    ]);
     // Only the three rank-overview costs are on the books — no discovery spend.
     expect(await todaySpendUsd(ledger)).toBeCloseTo(3 * RANK_OVERVIEW_FIXTURE_COST, 5);
   });
