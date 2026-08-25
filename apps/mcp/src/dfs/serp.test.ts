@@ -16,7 +16,7 @@ import {
   SERP_DEPTH,
   SERP_MAX_CRAWL_PAGES,
   SERP_REQUESTS_PER_KEYWORD,
-  SERP_RESULTS_PER_CRAWL_PAGE,
+  SERP_RESULTS_PER_VENDOR_PAGE,
   buildSerpRequestBody,
   createLiveSerpSnapshotClient,
   createMockSerpSnapshotPort,
@@ -315,15 +315,26 @@ describe("the request body", () => {
   });
 
   /**
-   * THE CRAWL-PAGE RULE — ONE CRAWL PAGE PER 100 REQUESTED RESULTS, ROUNDED UP, MINIMUM ONE.
+   * THE COVERAGE GUARD — the request must ask for enough pages to actually HOLD the depth it is
+   * paying for, at the rate the VENDOR documents: "you will be charged for each page crawled (10
+   * organic results per page)", and, on `depth`, "billed per each SERP containing up to 10 results".
    *
-   * This key used to be omitted, and the omission is what production paid for on 2026-08-25: two of
-   * three paid calls died as "The operation was aborted due to timeout" at the client's 30 s
-   * deadline and were charged in full, while the same query sent DIRECTLY to the vendor with
-   * `depth: 100` AND `max_crawl_pages: 1` returned the whole SERP quickly. The value is DERIVED
-   * from the depth rather than written beside it, so a re-signed depth cannot leave a stale page
-   * count behind (NEVER #6).
+   * The 10 below is written as a LITERAL, deliberately, and is NOT read from the module under test.
+   * A shortfall here is not cosmetic: the first version of this rule divided by 100 — Google's own
+   * page size, which is a fact about Google and not about how DataForSEO paginates and bills — and
+   * would have sent `max_crawl_pages: 1` beside `depth: 100`, buying a TENTH of the scrape the
+   * caller was charged for. Asserting against the module's own constant would have let exactly that
+   * mistake stay green, because the constant was the thing that was wrong.
    */
+  it("asks for enough crawl pages to COVER the pinned depth at the vendor's 10-per-page rate", () => {
+    const DOCUMENTED_RESULTS_PER_CRAWLED_PAGE = 10;
+    const body = buildSerpRequestBody(query(), "seo software");
+    const pages = body.max_crawl_pages as number;
+    expect(pages * DOCUMENTED_RESULTS_PER_CRAWLED_PAGE).toBeGreaterThanOrEqual(SERP_DEPTH);
+    // …and what goes on the wire is the derivation, not a number typed twice beside it.
+    expect(pages).toBe(serpMaxCrawlPages(body.depth as number));
+  });
+
   it("sends max_crawl_pages on EVERY request, derived from the depth", async () => {
     const transport = serpTransport();
     await liveClient(transport, ledger).fetchSerpSnapshot(query({ keywords: ["a", "b"] }));
@@ -335,19 +346,22 @@ describe("the request body", () => {
     }
   });
 
-  /** The rule at its boundaries — one page holds exactly 100, and the 101st result needs a second. */
-  it("rounds the crawl-page count UP at every 100-result boundary, never below one", () => {
-    expect(SERP_RESULTS_PER_CRAWL_PAGE).toBe(100);
+  /** The rule at its boundaries — a crawled page holds ten, so the 11th result needs a second one. */
+  it("rounds the crawl-page count UP at every 10-result boundary, never below one", () => {
+    expect(SERP_RESULTS_PER_VENDOR_PAGE).toBe(10);
     expect(serpMaxCrawlPages(1)).toBe(1);
-    expect(serpMaxCrawlPages(99)).toBe(1);
-    expect(serpMaxCrawlPages(100)).toBe(1);
-    expect(serpMaxCrawlPages(101)).toBe(2);
-    expect(serpMaxCrawlPages(200)).toBe(2);
-    expect(serpMaxCrawlPages(201)).toBe(3);
+    expect(serpMaxCrawlPages(9)).toBe(1);
+    expect(serpMaxCrawlPages(10)).toBe(1);
+    expect(serpMaxCrawlPages(11)).toBe(2);
+    expect(serpMaxCrawlPages(100)).toBe(10);
+    // The vendor's documented depth ceiling is 200 — twenty pages, well inside its own
+    // max_crawl_pages ceiling of 100, so this rule cannot ask for more pages than are allowed.
+    expect(serpMaxCrawlPages(200)).toBe(20);
+    expect(serpMaxCrawlPages(200)).toBeLessThanOrEqual(100);
     // A depth of zero or less is not a thing this port sends, but it must never ask for zero pages.
     expect(serpMaxCrawlPages(0)).toBe(1);
-    // …and the pinned depth resolves to exactly the one page the 2026-08-25 call proved sufficient.
-    expect(SERP_MAX_CRAWL_PAGES).toBe(1);
+    // …and the pinned depth of 100 resolves to the ten pages that depth is billed as.
+    expect(SERP_MAX_CRAWL_PAGES).toBe(10);
     expect(SERP_MAX_CRAWL_PAGES).toBe(serpMaxCrawlPages(SERP_DEPTH));
   });
 

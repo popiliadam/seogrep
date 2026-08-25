@@ -37,10 +37,12 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  *      no `search_engine` key is sent in the body.
  *   3. `depth` DEFAULTS TO 10, not 100. An unset depth buys a ten-result scrape, which cannot find
  *      your own position past #10 — and is a different price tier. See the depth pin below.
- *   4. `max_crawl_pages` DEFAULTS TO 1 on that wrapper — and this port sends it EXPLICITLY, at
- *      {@link SERP_MAX_CRAWL_PAGES}. It used to be omitted, on the written grounds that its
- *      interaction with `depth` was unmeasured. It is measured now; see {@link serpMaxCrawlPages}
- *      for what was measured and what still is not.
+ *   4. `max_crawl_pages` is published with a default of 1 on that WRAPPER — but the raw v3
+ *      reference publishes NO default for it, and bills per crawled page at 10 organic results
+ *      per page. This port therefore sends it EXPLICITLY, at {@link SERP_MAX_CRAWL_PAGES}, sized
+ *      to cover the pinned depth. Taking the wrapper's "1" at face value beside `depth: 100` would
+ *      ask for a tenth of the scrape the caller pays for. See {@link serpMaxCrawlPages} for what
+ *      is documented, what is only inferred, and what is still unmeasured.
  *
  * `people_also_ask_click_depth` is still never sent: it buys extra vendor work for a SERP feature
  * this measurement is not about.
@@ -120,49 +122,82 @@ export const SERP_REQUESTS_PER_KEYWORD = 1;
 export const SERP_DEPTH = 100;
 
 /**
- * How many organic results ONE Google results page can hold. Google's own page size tops out at
- * 100 (`num=100`), which is exactly why {@link SERP_DEPTH} is 100: the pinned depth is one page.
+ * THE VENDOR'S OWN PAGINATION AND BILLING UNIT: **10 organic results per crawled page.**
+ *
+ * This is DOCUMENTED, not inferred, and it is the vendor's number rather than Google's. The v3
+ * `serp/google/organic/live/advanced` reference states it twice, from both parameters:
+ *
+ *   - on `depth`: "Your account will be billed per each SERP containing up to 10 results"
+ *   - on `max_crawl_pages`: "you will be charged for each page crawled (10 organic results per
+ *     page)"
+ *
+ * It is deliberately NOT derived from Google's own `num=100` page size. How many results Google
+ * will put on one page is a statement about Google; how DataForSEO paginates and bills is a
+ * statement about DataForSEO, and only the second one governs what this request must ask for.
+ * Reading the first as the second is precisely the error this constant was corrected FROM: at 100
+ * results per page a depth-100 request asked for ONE page, which is a tenth of the scrape the
+ * caller pays for.
  */
-export const SERP_RESULTS_PER_CRAWL_PAGE = 100;
+export const SERP_RESULTS_PER_VENDOR_PAGE = 10;
 
 /**
- * THE RULE BETWEEN `depth` AND `max_crawl_pages`: **one crawl page per 100 requested results,
- * rounded up, never fewer than one.** At the pinned depth of 100 that is 1, and the value is
- * DERIVED from the depth rather than written beside it, so the two cannot drift apart if a human
- * ever re-signs the depth (NEVER #6).
+ * THE RULE BETWEEN `depth` AND `max_crawl_pages`: **enough crawl pages to COVER the requested
+ * depth at the vendor's documented 10 results per page, rounded up, never fewer than one.** At the
+ * pinned depth of 100 that is 10 pages. The value is DERIVED from the depth rather than written
+ * beside it, so the two cannot drift apart if a human ever re-signs the depth (NEVER #6).
  *
  * =====================================================================================
- * WHAT WAS MEASURED — 2026-08-25
+ * WHAT IS DOCUMENTED, AND WHAT IS ONLY INFERRED
  * =====================================================================================
- * Until this date the key was OMITTED, and the comment here gave the reason: its interaction with
- * `depth` was unmeasured, and a guess could truncate a paid scrape. That reason has been overtaken
- * by measurement, in both directions:
+ * DOCUMENTED by the vendor's own v3 reference:
  *
- *   - PRODUCTION, the body WITHOUT this key (`depth: 100`, no `max_crawl_pages`): three paid
- *     `serp_snapshot` calls, three failures, three full charges (-39 credits, +$0.09 vendor). One
- *     failed on the location name (`40501 Invalid Field: 'location_name'`); the other TWO — one
- *     `Turkiye`/`tr`, one the default `United States`/`en` with a different keyword — both died as
- *     `The operation was aborted due to timeout`, i.e. the 30 s deadline in client.ts. Every row
- *     `keyword_position_measurements` held afterwards was `status='not_measured'`, and they were
- *     the first rows ever written to that table.
- *   - DIRECT VENDOR CALL, the same query to `serp/google/organic/live/advanced` WITH `depth: 100`
- *     AND `max_crawl_pages: 1`: the full SERP came back FAST — local pack, 9 organic results,
- *     people-also-ask and related searches. Nothing was truncated at 1 crawl page; a 100-deep
- *     scrape fits in one page because a Google page holds 100.
+ *   - the 10-results-per-page unit quoted on {@link SERP_RESULTS_PER_VENDOR_PAGE};
+ *   - `max_crawl_pages` is the "number of search results pages to crawl", maximum 100. The
+ *     reference publishes NO default for it, so an omitted key is not documented to mean 1 — or
+ *     to mean anything else;
+ *   - "the `max_crawl_pages` and `depth` parameters complement each other". The reference does not
+ *     publish the formula that relates them; the ratio above is this port's reading of that
+ *     sentence against the billing unit, and it is an INFERENCE from the documented unit rather
+ *     than a measured interaction.
  *
- * WHAT IS STILL NOT MEASURED, said plainly so the next reader does not inherit a stronger claim
- * than the evidence: the two observations above are not a controlled pair. The slow side was
- * observed through this service (two samples), the fast side directly (one sample), and the
- * omitted-key body was never re-sent directly for comparison. So "omitting the key is what made it
- * slow" is the best available reading, not a proven cause. What IS certain is the failing shape:
- * the body we shipped timed out and charged, and the body with this key returned the whole SERP.
- * The live confirmation belongs to the deploy that follows this change.
+ * NOT MEASURED — and none of it should be read as settled:
+ *
+ *   - whether sending this key changes wire behaviour AT ALL compared with omitting it. Nothing
+ *     has been observed on the omitted-key path except failures, and no controlled pair exists.
+ *   - therefore whether this change fixes the 2026-08-25 timeouts. It is not claimed here that it
+ *     does. The one direct vendor call taken that day was sent with `max_crawl_pages: 1` and came
+ *     back with NINE organic results — one page. That is what a one-page crawl is supposed to
+ *     return, so it is equally consistent with "truncated" as with "healthy", and it is not
+ *     evidence that the missing key caused anything. Nobody counted the rows at the time.
+ *   - whether the raw v3 endpoint ACCEPTS `max_crawl_pages` beside `depth` on this path at all.
+ *     If it rejects the pair, {@link unwrapFirstResult} turns the task-level status into a throw
+ *     the same way the `40501 Invalid Field: 'location_name'` failure did, the row becomes
+ *     `not_measured`, and the caller is still charged — so a bad guess here moves the tool from
+ *     2-of-3 timeouts to 3-of-3 immediate rejection, at the same price.
+ *
+ * THEREFORE: THE FIRST CALL AFTER DEPLOY MUST BE A SINGLE KEYWORD, WATCHED. One keyword is one
+ * paid request and one row; the things to read off it are that the task status is 20000 (the key
+ * was accepted), that `organic_items_examined` is materially above 10 (the depth was really
+ * crawled, not one page), and what the response's own `cost` field says (below).
  */
 export function serpMaxCrawlPages(depth: number): number {
-  return Math.max(1, Math.ceil(depth / SERP_RESULTS_PER_CRAWL_PAGE));
+  return Math.max(1, Math.ceil(depth / SERP_RESULTS_PER_VENDOR_PAGE));
 }
 
-/** The value actually sent, at the pinned depth. Derived — see {@link serpMaxCrawlPages}. */
+/**
+ * The value actually sent, at the pinned depth — 10 pages for 100 results. Derived; see
+ * {@link serpMaxCrawlPages}.
+ *
+ * ON WHAT THIS COSTS: the vendor bills per crawled page, and a depth-100 request is ten 10-result
+ * SERPs whether or not this key names them, so asking for the ten pages the depth already implies
+ * is not understood to add a charge. That is an inference from the quoted billing sentences, NOT a
+ * measurement, and it is the reason the single watched call above must read the response's `cost`.
+ * The port does not have to trust it either way: settlement uses the vendor's OWN reported cost
+ * ({@link extractSerpCostUsd}), falling back to the estimate, so a real change shows up in
+ * `dfs_spend` rather than hiding. No price, credit cost or margin constant is touched here — if
+ * the observed cost per keyword moves off the signed $0.02, that is a NEVER #6 matter for the
+ * operator and not something this module may absorb.
+ */
 export const SERP_MAX_CRAWL_PAGES = serpMaxCrawlPages(SERP_DEPTH);
 
 /**
@@ -478,10 +513,10 @@ export function validateSerpKeywords(keywords: readonly string[]): readonly stri
  * The request body for ONE keyword.
  *
  * `depth` is PINNED and always present. `max_crawl_pages` is present too, DERIVED from that depth
- * by {@link serpMaxCrawlPages} — one crawl page per 100 results — which is where the 2026-08-25
- * measurement behind it is written down. `search_engine` is absent because it is a path segment,
- * and `people_also_ask_click_depth` is absent because it buys vendor work for a SERP feature this
- * measurement is not about.
+ * by {@link serpMaxCrawlPages} — enough pages to cover the depth at the vendor's documented 10
+ * results per crawled page — which is where the evidence, and the limits of it, are written down.
+ * `search_engine` is absent because it is a path segment, and `people_also_ask_click_depth` is
+ * absent because it buys vendor work for a SERP feature this measurement is not about.
  */
 export function buildSerpRequestBody(
   query: SerpSnapshotQuery,
