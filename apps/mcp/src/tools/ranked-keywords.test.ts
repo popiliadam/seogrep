@@ -4,6 +4,7 @@ import {
   DEFAULT_RANKED_KEYWORDS_LIMIT,
   createMockRankedKeywordsPort,
   disabledRankedKeywordsPort,
+  parseRankedKeywordsResponse,
   type RankedKeywordRow,
   type RankedKeywordsPort,
   type RankedKeywordsQuery,
@@ -1078,6 +1079,124 @@ describe("ranked_keywords free pre-reserve gates (no credit machinery)", () => {
     // proven against the real stack in ranked-keywords.db.test.ts.
     await expect(withProjects().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(
       /environment configuration/i,
+    );
+  });
+});
+
+// =============================================================================================
+// S1 — ABSENT IS NOT ZERO, PROVEN FROM THE VENDOR BODY AND NOT FROM A HAND-BUILT ROW.
+//
+// Every spec above builds a RankedKeywordRow directly, so the zod projection in
+// dfs/ranked-keywords.ts — the only place a zero could be invented — was never under test from
+// this side. These run the REAL parser over a body shaped like the one measured 2026-08-25
+// (dentnotion.com, tr/Türkiye), where `keyword_properties` carried `detected_language` alone and
+// `keyword_difficulty` was NOT among its keys.
+//
+// TWO fields, two conventions, both deliberate and both pinned here:
+//   - a ROW field (`keyword_difficulty`) is OMITTED when absent, exactly as `cpc` already is —
+//     the rule the "OMITS %s" specs above established, so a hundred rows are not padded with n/a;
+//   - a HEALTH-CARD field (`is_lost`) is a fixed line, so it prints the word "n/a".
+// Either way the output distinguishes "the vendor did not say" from "the vendor said zero", which
+// is the whole claim; a 0 in place of a silence is a number the reader will act on.
+// =============================================================================================
+
+/** The measured item shape, with the two keys under test supplied by each spec. */
+function rankedItem(overrides: {
+  readonly keyword_properties: Record<string, unknown>;
+}): unknown {
+  return {
+    keyword_data: {
+      keyword: "diş taşı temizliğinden sonra yemek yenir mi",
+      location_code: 2792,
+      language_code: "tr",
+      keyword_info: {
+        se_type: "google",
+        last_updated_time: "2026-08-01 00:00:00 +00:00",
+        competition_level: "LOW",
+        search_volume: 480,
+      },
+      keyword_properties: overrides.keyword_properties,
+    },
+    ranked_serp_element: {
+      serp_item: { type: "organic", rank_group: 3, rank_absolute: 4, url: "https://dentnotion.com/a" },
+    },
+  };
+}
+
+/** A ranked_keywords envelope carrying one item and, optionally, a metrics block. */
+function rankedEnvelope(item: unknown, organic?: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [
+      {
+        status_code: 20000,
+        result: [
+          {
+            target: "dentnotion.com",
+            total_count: 1,
+            items_count: 1,
+            ...(organic === undefined ? {} : { metrics: { organic } }),
+            items: [item],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Parse a whole body through the real parser and render it, exactly as the handler does. */
+function renderedFromBody(raw: unknown): string {
+  return formatRankedKeywords(parseRankedKeywordsResponse(raw), {
+    language_code: "tr",
+    location_code: 2792,
+  });
+}
+
+/** The four movement counters, minus the one key each spec is about. */
+const MOVEMENT_WITHOUT_IS_LOST = { count: 6, is_new: 89, is_up: 57, is_down: 41 };
+
+describe("S1 — a field absent from the vendor body never becomes a 0", () => {
+  it("omits difficulty when keyword_properties carries no keyword_difficulty key", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } })),
+    );
+    expect(text).not.toMatch(/difficulty/i);
+    // …while the row itself is intact: the omission is one field, not a degraded line.
+    expect(text).toContain("position #3 organic (#4 on the page), volume 480, competition LOW");
+  });
+
+  it("prints difficulty 0/100 when the vendor reports the difficulty AS 0", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({
+          keyword_properties: { se_type: "google", detected_language: "tr", keyword_difficulty: 0 },
+        }),
+      ),
+    );
+    expect(text).toContain("difficulty 0/100");
+  });
+
+  it("prints 'no longer found: n/a' when the metrics block carries no is_lost key", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } }),
+        MOVEMENT_WITHOUT_IS_LOST,
+      ),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: n/a",
+    );
+  });
+
+  it("prints 'no longer found: 0' when the vendor reports is_lost AS 0", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } }),
+        { ...MOVEMENT_WITHOUT_IS_LOST, is_lost: 0 },
+      ),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: 0",
     );
   });
 });
