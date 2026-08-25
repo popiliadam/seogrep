@@ -909,8 +909,12 @@ export const DOC_PROSE = {
       "navigational or transactional), plus any secondary intents it also carries.\n" +
       "- **Search-volume trend** — how the volume moved month-over-month, quarter-over-quarter and " +
       "year-over-year, as signed percentages.\n\n" +
-      "Every one of these is printed only when the provider actually returns it — a metric it did " +
-      "not send is left out rather than filled in with a placeholder.\n\n" +
+      "The first three are **always stated**, as `n/a` when the provider sent no figure: they are " +
+      "the line's spine, and a row that quietly lost its volume column would read as a shorter " +
+      "row rather than as a missing measurement. `n/a` there means \"nobody has a number for " +
+      "this\", never \"nobody searches this\". The last three — difficulty, intent and trend — " +
+      "are **left out** when the provider did not send them, so a row with nothing extra to say " +
+      "stays short.\n\n" +
       "It also prints a one-line summary with the total monthly search volume across the batch.",
     preExampleSections: [
       {
@@ -937,11 +941,13 @@ export const DOC_PROSE = {
         heading: "No data is not zero",
         body:
           "A keyword the provider holds **nothing** on comes back as _\"no data returned for this " +
-          "keyword\"_, and the header says how many of your keywords that happened to. It is never " +
-          "printed as `volume 0`, and it never contributes a silent zero to the batch total — " +
-          "\"nobody has a figure for this\" and \"nobody searches this\" are different facts that " +
-          "lead to different decisions. A genuine zero, when the provider does report one, is still " +
-          "printed as `volume 0`.\n\n" +
+          "keyword\"_. It is never printed as `volume 0` — \"nobody has a figure for this\" and " +
+          "\"nobody searches this\" are different facts that lead to different decisions — and a " +
+          "genuine zero, when the provider does report one, is still printed as `volume 0`.\n\n" +
+          "It adds **nothing** to the batch total, and it is worth being exact about how: no row " +
+          "is filtered out of the sum, a missing volume simply counts as nothing. The arithmetic " +
+          "is the same either way, but there is no filter to find if you go looking for one. " +
+          "What makes such a keyword visible is the count in the header, not the total.\n\n" +
           "The same rule applies **field by field**, not just row by row. A keyword can come back " +
           "with a difficulty and an intent but no search volume — common in markets the provider's " +
           "advertising data covers thinly — and you get the figures it does hold, with the missing " +
@@ -957,8 +963,12 @@ export const DOC_PROSE = {
           "- _\"DataForSEO returned no row for this keyword\"_ — **no row arrived at all**. That is " +
           "all we can honestly tell you: it is not a claim that nobody searches the term, nor that " +
           "the provider holds nothing on it.\n\n" +
-          "Either way the keyword is named in the output and counted in the header's tally, so a " +
-          "keyword can never quietly vanish between what you asked and what you read.",
+          "Either way the keyword is named in the output, so it can never quietly vanish between " +
+          "what you asked and what you read. The header's count covers **both** cases under one " +
+          "figure — it answers \"how many of my keywords came back without data\", not which of " +
+          "the two reasons applied; the lines themselves say that.\n\n" +
+          "A keyword list that is empty or all whitespace is refused before anything is " +
+          "reserved, and the refusal says you were not charged.",
       },
       {
         heading: "How fresh the CPC is",
@@ -1300,10 +1310,13 @@ export const DOC_PROSE = {
       "what sits between your result and the top of the page.\n" +
       "- **A verify link** — Google, at the exact locale DataForSEO measured. You cannot rebuild " +
       "it from the keyword alone, and the locale is usually what a surprising result turns on.\n\n" +
-      "Each of those fields is **omitted when DataForSEO did not send it**, rather than padded " +
-      "with `n/a`; a row with nothing extra to say stays a single line. A dated line under the " +
-      "table says when the vendor last refreshed the CPC and competition figures, and says so in " +
-      "a sentence once that is over a month old.\n\n" +
+      "**Position**, **search volume** and the **URL** are always stated, as `n/a` when the "  +
+      "vendor sent nothing — they are the row's spine, and a row that quietly lost its "  +
+      "position would read as a shorter row rather than as a missing measurement. Everything "  +
+      "else above is **omitted** when DataForSEO did not send it, so a row with nothing extra "  +
+      "to say stays a single line. A dated line under the table says when the vendor last "  +
+      "refreshed the CPC and competition figures, and says so in a sentence once that is over "  +
+      "a month old.\n\n" +
       "Only **organic** results are counted — paid placements are excluded. The header line says " +
       "how many rows you got, which ordering you got them in, and — when the domain ranks for " +
       "more than the `limit` you asked for — how many it ranks for in total, so a truncated list " +
@@ -1337,9 +1350,15 @@ export const DOC_PROSE = {
       "on-page position when a SERP feature outranks it), search volume, CPC, competition, " +
       "difficulty, intent, estimated traffic, the ranking URL and its SERP title, plus a second " +
       "line carrying how the ranking moved, which other element types share that SERP " +
-      "(`ai_overview` among them) and a link to check Google yourself. Fields DataForSEO did not " +
-      "send are left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
-      "keywords are shown, in which ordering, and out of how many in total; when you looked the " +
+      "(`ai_overview` among them) and a link to check Google yourself. Position, volume and the " +
+      "URL are stated as `n/a` when the vendor sent none; the added fields are left out.\n\n" +
+      "The whole-domain summary **names the DataForSEO measurement it was read from**, and " +
+      "carries a note saying that DataForSEO measures these separately — so a different total " +
+      "for the same domain in another SeoGrep tool is a second measurement, not a " +
+      "contradiction.\n\nThe header says how many of the domain's ranked " +
+      "keywords are shown, in which ordering, and out of how many in total — and how many " +
+      "returned rows carried no keyword at all and were dropped, so a short table is never " +
+      "mistaken for a complete one; when you looked the " +
       "site up by `project_id`, it names that project. A dated line under the table says when the " +
       "vendor last refreshed the CPC and competition figures. A domain with no organic rankings " +
       "on record is reported as such — with the summary still shown, because \"no rows came back\" " +
@@ -1375,8 +1394,10 @@ export const DOC_PROSE = {
       "- **Profile summary** — total backlinks, referring domains (with the share that link " +
       "**exclusively with dofollow** links), referring main domains, broken backlinks, the " +
       "aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
-      "- **Top referring domains** — the domains linking to the target, most backlinks first, each " +
-      "with its own rank.\n" +
+      "- **Top referring domains** — the domains linking to the target, most backlinks first, " +
+      "each with its own rank **and DataForSEO's spam score for that domain**. A domain the " +
+      "vendor did not score says so in words rather than showing a number, because an " +
+      "unscored domain and a domain scored clean are different findings.\n" +
       "- **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry " +
       "no anchor text (image links) are labelled as such rather than hidden.\n\n" +
       "Only **live** backlinks are counted — links that have since been lost are excluded. Each " +
@@ -1400,9 +1421,11 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Analyze the backlink profile of competitor.com." +
       "\n\nOr keep it short:\n\n> Show me the top 25 referring domains and anchors for example.com.",
     returns:
-      "The profile summary, then the top referring domains (domain, backlink count, rank), then " +
-      "the top anchors (anchor text, backlink count) — each list headed by how many of the total " +
-      "are shown. A metric DataForSEO has no value for is shown as `n/a` rather than as a zero. " +
+      "The profile summary, then the top referring domains (domain, backlink count, rank, spam " +
+      "score), then the top anchors (anchor text, backlink count) — each list headed by how " +
+      "many of the total are shown. A summary metric or a count DataForSEO has no value for is " +
+      "shown as `n/a` rather than as a zero; an unreported referring-domain spam score is " +
+      "stated in words instead, naming the vendor field it would have come from. " +
       "When you looked the site up by `project_id`, the heading names that project.\n\nAn input " +
       "that is not a public domain, a call naming neither `target` nor `project_id` (or both), " +
       "and a `project_id` that is not yours are all rejected before anything is charged; while " +
@@ -1463,9 +1486,17 @@ export const DOC_PROSE = {
       "printed under its own heading. The whole-domain block is how big the rival is everywhere; " +
       "the shared block is how it does on the ground you actually compete on. A large rival can " +
       "appear in tens of thousands of result pages while sharing only a few thousand of them with " +
-      "you. The side-by-side comparison is made on the whole-domain figures, because those are " +
-      "measured the same way for every row — the shared figures cover a different keyword set for " +
-      "each rival.\n\n" +
+      "you. The side-by-side comparison is made on the whole-domain figures, because the shared " +
+      "figures cover a different keyword set for each rival.\n\n" +
+      "**Read the whole-domain rows with their source in view.** Each block names the " +
+      "DataForSEO measurement it was read from, and in one table they are not always the same " +
+      "one: on the discovery flow, rivals DataForSEO found carry its competitor-discovery " +
+      "figures while your target may carry its domain-overview figures instead. The two " +
+      "disagree routinely — the same domain's lost-ranking count read 319 under one and 547 " +
+      "under the other. Neither is wrong; they are two measurements, and the source line on " +
+      "each block is what lets you see which you are comparing. Every answer also carries one " +
+      "note saying the same thing about SeoGrep's other tools: a different total elsewhere is " +
+      "a second measurement, not a contradiction.\n\n" +
       "A competitor **you supplied** carries neither, because no discovery request is made for " +
       "it.\n\n" +
       "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO has " +
@@ -1539,7 +1570,11 @@ export const DOC_PROSE = {
       "- **The ranking page** — the competitor URL that holds the position, and DataForSEO's " +
       "estimate of the monthly visits it earns.\n\n" +
       "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO " +
-      "has no value for is left out of the row rather than printed as a zero.",
+      "has no value for is left out of the row rather than printed as a zero — with **one " +
+      "exception**: search volume, the axis the list is ordered by, is always stated, and shows " +
+      "`n/a` when the vendor holds no figure. Dropping it would silently move a row up or down " +
+      "an ordering the reader is trusting, and \"nobody has a number for this\" is not \"nobody " +
+      "searches this\".",
     preExampleSections: [
       {
         heading: "There is no \"your position\" column, and there cannot be",
@@ -1614,6 +1649,11 @@ export const DOC_PROSE = {
       "- **Backlink spam score** — the average spam score of those links, so a prospect worth " +
       "avoiding is visible before you spend a morning on it.\n" +
       "- **First seen** — when DataForSEO's crawler first found a link from that domain.\n\n" +
+      "Rank is the only one of those that is always there. Each of the other four is printed " +
+      "**only when DataForSEO returned a value for it**, and left out entirely otherwise — so " +
+      "a row with no spam column is a domain the vendor did not score, not a domain it scored " +
+      "clean. That distinction is the whole reason the clause is dropped rather than zeroed, " +
+      "and it is worth reading rows accordingly.\n\n" +
       "Only **live** backlinks are counted — links that have since been lost are excluded.",
     preExampleSections: [
       {
@@ -1624,6 +1664,14 @@ export const DOC_PROSE = {
           "is a plausible place to be covered, but nothing here says it would link to you, and " +
           "the spam-score column is printed precisely because some of them are places you should " +
           "not want a link from.\n\n" +
+          "**It names no example linking page, and says so rather than inventing one.** The " +
+          "DataForSEO endpoint behind this tool reports these prospects at **domain level " +
+          "only** — it returns no page URL at all — so any URL printed here would be one " +
+          "SeoGrep made up. Every non-empty answer ends with that sentence and points at the " +
+          "tool that does have linking pages: run " +
+          "[`backlink_details`](/docs/tools-reference/backlink-details) on the competitor to " +
+          "see which of their pages carry the links, with the anchor text and the page linked " +
+          "to. That is a separate, separately-priced lookup.\n\n" +
           "One competitor per call, deliberately. Running it against each rival in turn gives you " +
           "the same picture and keeps every list traceable to the domain it came from.",
       },
@@ -1870,10 +1918,19 @@ export const DOC_PROSE = {
           "One call is one **flat price**, charged **once**. Behind it are **two** DataForSEO " +
           "requests — the backlink list and the site's own pages — and if either one fails the " +
           "whole call fails and **you are not charged**. A half-built list is never billed.\n\n" +
-          "The `limit` and `page_limit` ceilings are part of the price rather than stylistic " +
-          "limits: DataForSEO bills **per returned row**, so the two row caps together are what " +
-          "hold the flat price to the margin it was signed against. Asking for fewer rows costs " +
-          "the same; asking for more than the ceiling is refused before anything is charged.",
+          "**`limit` and `page_limit` are display controls, not price controls.** This call " +
+          "costs the same whatever you ask for, and asking for fewer rows saves you nothing: " +
+          "DataForSEO's own bill for this endpoint is nearly all a flat per-request fee — " +
+          "measured on one profile, nineteen times the rows cost thirteen per cent more. What " +
+          "the two **ceilings** do is hold the worst case inside the margin the flat price was " +
+          "signed against; asking for more than a ceiling is refused before anything is " +
+          "charged. Set them for the reply you want to read.\n\n" +
+          "**A reply can be bounded, and it says so when it is.** The two lists have their own " +
+          "size budgets, because one oversized answer is an answer a client will not display " +
+          "at all. When rows are cut, the reply prints how many were shown and how many more " +
+          "were fetched in the same window but not printed — and states plainly that those " +
+          "were charged for either way. Ask for a smaller `limit`, or page through with " +
+          "`offset`, to read them.",
       },
       {
         heading: "Limitations",

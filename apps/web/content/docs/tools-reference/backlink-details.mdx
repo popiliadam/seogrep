@@ -68,7 +68,9 @@ A target that is not a public domain, a call naming neither `target` nor `projec
 
 One call is one **flat price**, charged **once**. Behind it are **two** DataForSEO requests — the backlink list and the site's own pages — and if either one fails the whole call fails and **you are not charged**. A half-built list is never billed.
 
-The `limit` and `page_limit` ceilings are part of the price rather than stylistic limits: DataForSEO bills **per returned row**, so the two row caps together are what hold the flat price to the margin it was signed against. Asking for fewer rows costs the same; asking for more than the ceiling is refused before anything is charged.
+**`limit` and `page_limit` are display controls, not price controls.** This call costs the same whatever you ask for, and asking for fewer rows saves you nothing: DataForSEO's own bill for this endpoint is nearly all a flat per-request fee — measured on one profile, nineteen times the rows cost thirteen per cent more. What the two **ceilings** do is hold the worst case inside the margin the flat price was signed against; asking for more than a ceiling is refused before anything is charged. Set them for the reply you want to read.
+
+**A reply can be bounded, and it says so when it is.** The two lists have their own size budgets, because one oversized answer is an answer a client will not display at all. When rows are cut, the reply prints how many were shown and how many more were fetched in the same window but not printed — and states plainly that those were charged for either way. Ask for a smaller `limit`, or page through with `offset`, to read them.
 
 ### Limitations
 
