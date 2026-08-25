@@ -7,6 +7,7 @@ import {
   DEFAULT_LINK_ROWS,
   DEFAULT_NETWORK_ROWS,
   DISAVOW_TXT_PROPOSAL_NOTICE,
+  isNofollowOnlyInWindow,
   LINK_WINDOW_ORDER_VENDOR_FIELD,
   MAX_LINK_ROWS,
   MAX_NETWORK_ROWS,
@@ -213,9 +214,22 @@ export function renderFilteredLinkRow(row: BacklinkDetailRow): string {
 }
 
 /**
+ * The nofollow-only marking, in the ANSWER. The file carries its own copy (nofollowOnlyNote), for
+ * the reason the refusal is printed twice: the file leaves this conversation and the answer does
+ * not. It says only what was measured — none of these links is MARKED dofollow — because a link
+ * the vendor never marked either way is not a link the vendor called nofollow.
+ */
+export const NOFOLLOW_ONLY_MARKER =
+  "NONE of these links is marked dofollow by DataForSEO — Google does not count nofollowed " +
+  "links, so disavowing this domain may change nothing.";
+
+/**
  * ONE candidate domain. The vendor's per-domain `spam_score` leads, because that is the ONE field
  * the list is ordered by; the window counts that follow are explicitly OURS ("in this window"),
- * so a reader cannot mistake them for the domain's total link count.
+ * so a reader cannot mistake them for the domain's total link count. The per-LINK score sits
+ * beside it under its OWN vendor name — the two disagree routinely, and the level each one
+ * describes is the difference between reading a 0 as reassurance and reading it as one endpoint's
+ * answer to one question.
  */
 export function renderCandidateRow(candidate: DisavowCandidate): string {
   const links = candidate.window_link_count;
@@ -226,11 +240,12 @@ export function renderCandidateRow(candidate: DisavowCandidate): string {
     LINK_WINDOW_ORDER_VENDOR_FIELD,
     candidate.window_max_backlink_spam_score,
   )} in this window`;
+  const marking = isNofollowOnlyInWindow(candidate) ? `\n  ${NOFOLLOW_ONLY_MARKER}` : "";
   return (
     `• ${candidate.domain} — ${vendorScore(CANDIDATE_ORDER_VENDOR_FIELD, candidate.spam_score)}\n` +
     `  ${counts} · ${worst}\n` +
     `  example: ${urlOrUnnamed(candidate.window_example_url_from)} → ` +
-    `${urlOrUnnamed(candidate.window_example_url_to)}`
+    `${urlOrUnnamed(candidate.window_example_url_to)}${marking}`
   );
 }
 

@@ -9,7 +9,9 @@ import {
   DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT,
   DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT,
   DISAVOW_CANDIDATE_REQUESTS,
-  DISAVOW_TXT_NO_SCORE_NOTE,
+  DISAVOW_TXT_COMMENT_PREFIX,
+  DISAVOW_TXT_DOMAIN_PREFIX,
+  DISAVOW_TXT_NOT_REPORTED_NOTE,
   ESTIMATED_DISAVOW_CANDIDATES_CALL_USD,
   LINK_WINDOW_ORDER_VENDOR_FIELD,
   MAX_BILLED_ROWS,
@@ -743,6 +745,25 @@ describe("estimateDisavowCandidatesUsd", () => {
 // =============================================================================================
 // The disavow.txt BODY.
 // =============================================================================================
+/**
+ * The comment lines the file attached to ONE `domain:` entry — the block a reader reads as "what
+ * this line is". Bounded BELOW by the entry and ABOVE by whichever comes first: the previous
+ * entry, or the header's last line. Without that upper bound the FIRST candidate would silently
+ * absorb the six header comments, and an assertion about a candidate could pass on a header line.
+ */
+function entryBlock(text: string, domain: string): string {
+  const lines = text.split("\n");
+  const at = lines.indexOf(`${DISAVOW_TXT_DOMAIN_PREFIX}${domain}`);
+  expect(at, `no entry for ${domain}`).toBeGreaterThan(-1);
+  const block: string[] = [];
+  for (let index = at - 1; index >= 0; index -= 1) {
+    const line = lines[index] as string;
+    if (!line.startsWith(DISAVOW_TXT_COMMENT_PREFIX)) break;
+    if (/review every line/i.test(line)) break;
+    block.unshift(line);
+  }
+  return block.join("\n");
+}
 describe("buildDisavowTxt", () => {
   it("renders the exact Google-format body, header lines and all", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates(QUERY);
@@ -754,11 +775,12 @@ describe("buildDisavowTxt", () => {
         "# Window: 4 link rows, vendor filter backlink_spam_score >= 40, dofollow only: no.",
         "# Candidate cap: 200 domains. Candidates listed: 3.",
         "# No claim is made that these links harm your site. Review every line before you upload it.",
-        "# spam_score 84",
+        "# per-domain spam_score: 84 · worst per-link backlink_spam_score in this window: 71",
         "domain:SpamFarm.example",
-        "# spam_score 47",
+        "# per-domain spam_score: 47 · worst per-link backlink_spam_score in this window: 55",
         "domain:linkring.example",
-        `# ${DISAVOW_TXT_NO_SCORE_NOTE}`,
+        `# per-domain spam_score: ${DISAVOW_TXT_NOT_REPORTED_NOTE} · worst per-link ` +
+          `backlink_spam_score in this window: ${DISAVOW_TXT_NOT_REPORTED_NOTE}`,
         "domain:quiet.example",
         "",
       ].join("\n"),
@@ -771,8 +793,11 @@ describe("buildDisavowTxt", () => {
    */
   it("spells a vendor silence in WORDS, never as the digit 0", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates(QUERY);
-    expect(result.disavow_txt).toContain(`# ${DISAVOW_TXT_NO_SCORE_NOTE}\ndomain:quiet.example`);
-    expect(result.disavow_txt).not.toContain("spam_score 0\n");
+    const quiet = entryBlock(result.disavow_txt, "quiet.example");
+    // The vendor scored quiet.example at NEITHER level, so the block carries no digit at all —
+    // a stronger pin than "the string 'spam_score 0' is absent", which any reword would satisfy.
+    expect(quiet).not.toMatch(/\d/);
+    expect(quiet.match(new RegExp(DISAVOW_TXT_NOT_REPORTED_NOTE, "gi"))).toHaveLength(2);
   });
 
   it("emits only comments and domain: entries, and ends with a newline", async () => {

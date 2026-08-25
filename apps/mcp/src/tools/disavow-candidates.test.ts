@@ -380,9 +380,13 @@ describe("the output makes clear it is a PROPOSAL over a WINDOW", () => {
     expect(text).toContain("domain:SpamFarm.example");
     expect(text).toContain("domain:linkring.example");
     expect(text).toContain("domain:quiet.example");
-    // The unscored domain's line is a comment in WORDS, not a fabricated 0.
-    expect(text).toContain("# spam_score not reported by the vendor");
-    expect(text).not.toMatch(/# spam_score 0\b/);
+    // The unscored domain's line is a comment in WORDS, not a fabricated 0 — at BOTH levels,
+    // because quiet.example carries neither a per-domain score nor a per-link one.
+    expect(text).toMatch(/# per-domain spam_score: not reported by the vendor/);
+    expect(text).toMatch(
+      /worst per-link backlink_spam_score in this window: not reported by the vendor\ndomain:quiet\.example/,
+    );
+    expect(text).not.toMatch(/# per-domain spam_score: 0\b/);
     // No bare URL entries: this tool answers at the domain level and claims nothing about a page.
     expect(text).not.toMatch(/^https?:\/\/\S+$/m);
   });
