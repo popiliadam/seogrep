@@ -7,6 +7,8 @@ import {
   DEFAULT_COMPETITORS_DISCOVERY_LIMIT,
   MAX_COMPETITORS,
   resolveDefaultCompetitorsPort,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
+  WHOLE_DOMAIN_SOURCE_LABEL,
   type ComparedDomainSource,
   type ComparisonRow,
   type CompetitorComparison,
@@ -234,6 +236,22 @@ function renderMetricLines(metrics: DomainOrganicMetrics): readonly string[] {
 }
 
 /**
+ * The whole-domain heading, naming the DataForSEO measurement behind the numbers.
+ *
+ * The clause is SHORT and it is the whole fix: this tool's whole-domain figures come from
+ * competitors_domain on the discovery flow and from domain_rank_overview on the supplied-rivals
+ * flow, ranked_keywords' come from a third endpoint, and all three used to print the identical
+ * "Across the whole domain — every keyword it ranks for:". Two honest measurements under one name
+ * read as one measurement contradicting itself. A row whose source is unknown keeps the old
+ * heading rather than guessing (see ComparisonRow.metrics_source).
+ */
+function wholeDomainHeading(row: ComparisonRow): string {
+  const base = "  Across the whole domain — every keyword it ranks for";
+  if (row.metrics_source === undefined) return `${base}:`;
+  return `${base}, from ${WHOLE_DOMAIN_SOURCE_LABEL[row.metrics_source]}:`;
+}
+
+/**
  * A row's metric body: the whole-domain scope every row is compared on, plus — for a rival
  * DataForSEO discovered — the SAME rival restricted to the keywords it shares with the target.
  *
@@ -242,11 +260,15 @@ function renderMetricLines(metrics: DomainOrganicMetrics): readonly string[] {
  * "the keywords that the provided domain shares with the target domain", and the two differ by
  * an order of magnitude on a large rival. Printing either one unlabelled would state a number the
  * reader would reasonably take for the other.
+ *
+ * The shared-keyword heading names no source of ITS own: that scope exists only on the discovery
+ * flow and only on a discovered rival, whose whole-domain heading one line above already names
+ * the same competitors_domain response both scopes were read from.
  */
 function renderMetrics(row: ComparisonRow): string {
   const whole = isEmpty(row.metrics)
     ? ["  - No organic ranking data on record."]
-    : ["  Across the whole domain — every keyword it ranks for:", ...renderMetricLines(row.metrics)];
+    : [wholeDomainHeading(row), ...renderMetricLines(row.metrics)];
   if (!row.shared || isEmpty(row.shared)) {
     return whole.join("\n");
   }
@@ -293,7 +315,13 @@ export interface CompetitorComparisonRenderInput {
   readonly project?: ProjectRef | null;
 }
 
-/** Render the comparison as the plain-text tool output (pure — unit-tested directly). */
+/**
+ * Render the comparison as the plain-text tool output (pure — unit-tested directly).
+ *
+ * The measurement note is appended ONCE, and only when a sourced whole-domain block was actually
+ * printed: a table of "No organic ranking data on record" has no total for the note to be about,
+ * and a footnote explaining a number nobody was shown is just length.
+ */
 export function formatCompetitorComparison(
   comparison: CompetitorComparison,
   input: CompetitorComparisonRenderInput,
@@ -301,7 +329,11 @@ export function formatCompetitorComparison(
   const blocks = comparison.rows.map(
     (row) => `• ${row.domain} (${SOURCE_LABEL[row.source]})${renderOverlap(row)}\n${renderMetrics(row)}`,
   );
-  return [renderHeading(comparison, input), ...blocks].join("\n\n");
+  const sourced = comparison.rows.some(
+    (row) => row.metrics_source !== undefined && !isEmpty(row.metrics),
+  );
+  const note = sourced ? [WHOLE_DOMAIN_MEASUREMENT_NOTE] : [];
+  return [renderHeading(comparison, input), ...blocks, ...note].join("\n\n");
 }
 
 /** A normalized competitor list, or the first rejection reason. */

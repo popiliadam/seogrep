@@ -97,6 +97,11 @@ const RIVAL_SHARED_METRICS = metrics(
 
 const EMPTY_METRICS: DomainOrganicMetrics = EMPTY_ORGANIC_METRICS;
 
+/**
+ * The DISCOVERY flow's shape as the real ports build it: the target is found in its OWN competitor
+ * list, so both rows are read off the one competitors_domain response and both say so.
+ * dfs/competitors.test.ts pins that the ports really do set this — transport log and all.
+ */
 const DISCOVERED: CompetitorComparison = {
   target: "example.com",
   discovered: true,
@@ -108,6 +113,7 @@ const DISCOVERED: CompetitorComparison = {
       intersections: null,
       avg_position: null,
       metrics: TARGET_METRICS,
+      metrics_source: "competitors_domain",
       shared: null,
     },
     {
@@ -116,7 +122,31 @@ const DISCOVERED: CompetitorComparison = {
       intersections: 1840,
       avg_position: 14.2,
       metrics: RIVAL_METRICS,
+      metrics_source: "competitors_domain",
       shared: RIVAL_SHARED_METRICS,
+    },
+  ],
+};
+
+/**
+ * The SUPPLIED-rivals flow's shape as the real ports build it. No discovery request is sent on
+ * this path at all, so EVERY row — the target included — is a separate domain_rank_overview
+ * request: same table, same labels, a different DataForSEO measurement behind every number.
+ */
+const SUPPLIED: CompetitorComparison = {
+  target: "example.com",
+  discovered: false,
+  discovered_total_count: null,
+  rows: [
+    { ...DISCOVERED.rows[0]!, metrics_source: "domain_rank_overview" },
+    {
+      domain: "chosen.example",
+      source: "supplied",
+      intersections: null,
+      avg_position: null,
+      metrics: RIVAL_METRICS,
+      metrics_source: "domain_rank_overview",
+      shared: null,
     },
   ],
 };
@@ -128,7 +158,8 @@ describe("formatCompetitorComparison", () => {
         "the top 1 of 47 competitors DataForSEO found, ranked by how many organic SERPs each one " +
         "shares with the target:\n\n" +
         "• example.com (target)\n" +
-        "  Across the whole domain — every keyword it ranks for:\n" +
+        "  Across the whole domain — every keyword it ranks for, from DataForSEO's " +
+        "competitor-discovery data:\n" +
         "  - Organic SERPs containing the domain: 1,788\n" +
         "  - Organic SERPs by position, #1-20 — #1: 11 · #2-3: 28 · #4-10: 100 · #11-20: 135\n" +
         "  - Organic SERPs by position, #21-100 — #21-30: 157 · #31-40: 174 · #41-50: 203 · " +
@@ -139,7 +170,8 @@ describe("formatCompetitorComparison", () => {
         "moved down: 418 · no longer found: 547\n\n" +
         "• rival-one.example (found by DataForSEO) — 1,840 intersecting keywords, average " +
         "position 14.2 on them\n" +
-        "  Across the whole domain — every keyword it ranks for:\n" +
+        "  Across the whole domain — every keyword it ranks for, from DataForSEO's " +
+        "competitor-discovery data:\n" +
         "  - Organic SERPs containing the domain: 9,024\n" +
         "  - Organic SERPs by position, #1-20 — #1: 9 · #2-3: 24 · #4-10: 140 · #11-20: 388\n" +
         "  - Organic SERPs by position, #21-100 — #21-30: 1,110 · #31-40: 1,038 · #41-50: 984 · " +
@@ -156,7 +188,10 @@ describe("formatCompetitorComparison", () => {
         "  - Estimated monthly organic traffic (ETV): 6,120\n" +
         "  - Estimated monthly cost of the same traffic as paid ads: $18,221\n" +
         "  - Since DataForSEO's previous check — newly ranking: 148 · moved up: 203 · " +
-        "moved down: 139 · no longer found: 111",
+        "moved down: 139 · no longer found: 111\n\n" +
+        "Note: whole-domain totals name the DataForSEO data they were read from. DataForSEO " +
+        "measures these separately, so a different total in another SeoGrep tool is a second " +
+        "measurement, not a contradiction.",
     );
   });
 
@@ -168,10 +203,14 @@ describe("formatCompetitorComparison", () => {
    */
   it("labels the whole-domain and shared-keyword scopes so neither can pass for the other", () => {
     const text = formatCompetitorComparison(DISCOVERED, WHERE);
-    expect(text).toContain("  Across the whole domain — every keyword it ranks for:\n");
+    expect(text).toContain(
+      "  Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:\n",
+    );
     expect(text).toContain("  Across the keywords it shares with the target only:\n");
     // Both counts appear, each under its own heading, and they are not the same number.
-    const whole = text.indexOf("Across the whole domain — every keyword it ranks for:\n  - Organic SERPs containing the domain: 9,024");
+    const whole = text.indexOf(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:\n  - Organic SERPs containing the domain: 9,024",
+    );
     const shared = text.indexOf("Across the keywords it shares with the target only:\n  - Organic SERPs containing the domain: 1,840");
     expect(whole).toBeGreaterThan(-1);
     expect(shared).toBeGreaterThan(whole);
@@ -207,27 +246,11 @@ describe("formatCompetitorComparison", () => {
   });
 
   it("gives a SUPPLIED rival no shared-keyword section, because none was ever fetched", () => {
-    const text = formatCompetitorComparison(
-      {
-        ...DISCOVERED,
-        discovered: false,
-        discovered_total_count: null,
-        rows: [
-          DISCOVERED.rows[0]!,
-          {
-            domain: "chosen.example",
-            source: "supplied",
-            intersections: null,
-            avg_position: null,
-            metrics: RIVAL_METRICS,
-            shared: null,
-          },
-        ],
-      },
-      WHERE,
-    );
+    const text = formatCompetitorComparison(SUPPLIED, WHERE);
     expect(text).toContain("• chosen.example (supplied by you)\n");
-    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's domain-overview data:",
+    );
     expect(text).not.toContain("shares with the target only");
   });
 
@@ -236,31 +259,15 @@ describe("formatCompetitorComparison", () => {
       { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[1]!, shared: EMPTY_METRICS }] },
       WHERE,
     );
-    expect(text).toContain("Across the whole domain — every keyword it ranks for:");
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's competitor-discovery data:",
+    );
     // An all-null scope is dropped rather than printed as a block of n/a.
     expect(text).not.toContain("shares with the target only");
   });
 
   it("says plainly that a SUPPLIED rival came from the caller, with no discovery figures", () => {
-    const text = formatCompetitorComparison(
-      {
-        ...DISCOVERED,
-        discovered: false,
-        discovered_total_count: null,
-        rows: [
-          DISCOVERED.rows[0]!,
-          {
-            domain: "chosen.example",
-            source: "supplied",
-            intersections: null,
-            avg_position: null,
-            metrics: RIVAL_METRICS,
-            shared: null,
-          },
-        ],
-      },
-      WHERE,
-    );
+    const text = formatCompetitorComparison(SUPPLIED, WHERE);
     expect(text).toContain("the target against 1 competitor you supplied:");
     expect(text).toContain("• chosen.example (supplied by you)\n");
     // No overlap clause is invented for a rival DataForSEO was never asked about.
@@ -665,3 +672,4 @@ describe("S1 — a movement counter absent from the vendor body never becomes a 
     );
   });
 });
+
