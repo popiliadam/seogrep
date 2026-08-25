@@ -242,6 +242,109 @@ export const VENDOR_SPAM_SCORE_NOTE =
   "measurements on two different objects. SeoGrep adds no link-quality verdict of its own and " +
   "does not tell you to disavow anything.";
 
+/**
+ * =====================================================================================
+ * THE OUTPUT CEILING — why the reply is bounded instead of the schema being narrowed
+ * =====================================================================================
+ * MEASURED 2026-08-25: `limit 200, page_limit 9` returned 187 link rows and produced a reply of
+ * 62,729 characters across 404 lines, which the calling client refused with "exceeds maximum
+ * allowed tokens". The 35 credits and the vendor's $0.055 were BOTH taken and the customer saw
+ * nothing at all — the worst shape this product can produce. The schema permits `limit` up to 700
+ * and `page_limit` up to 200, so the same reply can be four times larger again.
+ *
+ * TWO FIXES WERE POSSIBLE, and the ceilings were NOT the one chosen:
+ *   • lowering the schema maxima would make the oversized call a validation ERROR — free, but it
+ *     also removes the wide window entirely, and 700 + 200 is not a taste: dfs/backlink-details.ts
+ *     derives that pair from the SIGNED 35-credit price (5.40x worst-case margin against a 5.2x
+ *     floor). Moving it moves a number NEVER #6 puts in a human's hands;
+ *   • bounding the RENDERED TEXT keeps the wide window, keeps the price arithmetic untouched, and
+ *     keeps the fetched rows — the run report written to domain_lookup_runs still records the
+ *     whole window, so nothing measured is lost. The caller gets as many rows as one reply can
+ *     hold plus an explicit statement of how many were fetched and not printed.
+ * The second is what this formatter does. It is also the only one consistent with the corrected
+ * `limit` description above: a narrower window does not cost less, so the answer to "too big to
+ * read" cannot be "buy a smaller one".
+ *
+ * THE NUMBER. The refusal was measured in TOKENS, so the budget is set in characters with the
+ * worst tokenizer ratio this text can have: URL-and-timestamp-dense ASCII bottoms out near 2
+ * characters per token, so 28,000 characters is at most ~14,000 tokens — inside the 25,000-token
+ * default that rejected the 62,729-character reply, with room for a client configured lower. The
+ * split gives the link list ~62 rows at the ~320 characters a real row measures, so the DEFAULT
+ * call (50 links, 20 pages) never truncates: only the windows that already broke do.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
+const LINK_LIST_CHAR_BUDGET = 20_000;
+const TARGET_PAGE_LIST_CHAR_BUDGET = 5_000;
+
+/**
+ * Render rows until the budget is spent. A row is taken ONLY if it fits whole — a half-printed
+ * backlink row is a URL cut in the middle, which reads as a different URL.
+ */
+function renderWithinBudget<Row>(
+  rows: readonly Row[],
+  render: (row: Row) => string,
+  budget: number,
+): { readonly block: string; readonly printed: number; readonly omitted: number } {
+  const taken: string[] = [];
+  let used = 0;
+  for (const row of rows) {
+    const line = render(row);
+    const cost = line.length + 1; // + the newline that joins it to the block
+    if (used + cost > budget) break;
+    taken.push(line);
+    used += cost;
+  }
+  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
+}
+
+/**
+ * What the reader is told when rows were fetched and not printed. It never says "of": both counts
+ * describe the SAME window, and the module header's rule is that two DIFFERENT sets are never
+ * joined — keeping the phrasing free of "N of M" also keeps it from being read as the vendor's
+ * whole-set total. It states plainly that the missing rows were paid for, because they were.
+ */
+export function renderOutputLimitNote(
+  noun: string,
+  printed: number,
+  omitted: number,
+  advice: string,
+): string {
+  return (
+    `Output limit reached — ${thousands(printed)} ${printed === 1 ? noun : `${noun}s`} printed ` +
+    `above, ${thousands(omitted)} more fetched in this same window but not printed: one reply ` +
+    `cannot hold them, and they were charged for either way. ${advice}`
+  );
+}
+
+const LINK_TRUNCATION_ADVICE =
+  "Move the window with offset to read the rest — each call is a separate " +
+  `${TOOL_COSTS.backlink_details}-credit lookup, and asking for fewer rows does not cost less.`;
+
+const PAGE_TRUNCATION_ADVICE =
+  "This list is ordered most-linked first, so the rows left out are the least-linked pages " +
+  "DataForSEO returned for this window.";
+
+/** One captioned list: its caption, the rows that fit the budget, and the note when some did not. */
+function renderList<Row>(list: {
+  readonly caption: string;
+  readonly rows: readonly Row[];
+  readonly render: (row: Row) => string;
+  readonly budget: number;
+  readonly noun: string;
+  readonly advice: string;
+}): readonly string[] {
+  const shown = renderWithinBudget(list.rows, list.render, list.budget);
+  return [
+    list.caption,
+    // Only when a single row is itself wider than the whole budget is this block empty; the note
+    // below still says how many rows exist, so the reply never goes silent about them.
+    ...(shown.block === "" ? [] : [shown.block]),
+    ...(shown.omitted === 0
+      ? []
+      : [renderOutputLimitNote(list.noun, shown.printed, shown.omitted, list.advice)]),
+  ];
+}
+
 /** The "nothing at all" answer — a real, delivered result rather than an error. */
 function renderNothingFound(details: BacklinkDetails, project?: ProjectRef | null): string {
   const subject = subjectLabel(details.target, project);
@@ -263,23 +366,34 @@ export function formatBacklinkDetails(
     return renderNothingFound(details, project);
   }
   const subject = subjectLabel(details.target, project);
-  const blocks = [
+  return [
     `Backlinks for ${subject} — the individual links, and the pages of this site they point at:`,
-  ];
-  if (links.length > 0) {
-    blocks.push(
-      renderWindowCaption("Individual backlinks", "backlink", details.links),
-      links.map(renderBacklinkRow).join("\n"),
-    );
-  }
-  if (pages.length > 0) {
-    blocks.push(
-      renderWindowCaption("Pages of this site that earn the links", "page", details.target_pages),
-      pages.map(renderTargetPageRow).join("\n"),
-    );
-  }
-  blocks.push(VENDOR_SPAM_SCORE_NOTE);
-  return blocks.join("\n\n");
+    ...(links.length === 0
+      ? []
+      : renderList({
+          caption: renderWindowCaption("Individual backlinks", "backlink", details.links),
+          rows: links,
+          render: renderBacklinkRow,
+          budget: LINK_LIST_CHAR_BUDGET,
+          noun: "backlink",
+          advice: LINK_TRUNCATION_ADVICE,
+        })),
+    ...(pages.length === 0
+      ? []
+      : renderList({
+          caption: renderWindowCaption(
+            "Pages of this site that earn the links",
+            "page",
+            details.target_pages,
+          ),
+          rows: pages,
+          render: renderTargetPageRow,
+          budget: TARGET_PAGE_LIST_CHAR_BUDGET,
+          noun: "page",
+          advice: PAGE_TRUNCATION_ADVICE,
+        })),
+    VENDOR_SPAM_SCORE_NOTE,
+  ].join("\n\n");
 }
 
 /** Dependencies — the port is injectable so tests run offline (mock/disabled). */
