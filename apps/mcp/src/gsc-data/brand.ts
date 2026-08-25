@@ -63,9 +63,18 @@ export const MIN_BRAND_TOKEN_LENGTH = 3;
  * The floor is doing real work rather than decorating the rule. At six characters "mental" is one
  * substitution from "dental" and "bira" (beer) is one from "bura" (this place) at four — ordinary
  * words that a shorter floor would hand to the wrong brand. At eight or more, two distinct real
- * words of equal length differing by exactly one letter are rare, while a customer mistyping a
- * long compound brand is common: both measured misspellings (`dentmotion`, `dent nation` for
+ * words of equal length differing by exactly one letter are UNCOMMON, while a customer mistyping
+ * a long compound brand is common: both measured misspellings (`dentmotion`, `dent nation` for
  * dentnotion, 10 characters) sit above it.
+ *
+ * "UNCOMMON" AND NOT "RARE", because a referee produced the counterexample at exactly this floor
+ * (2026-08-25):
+ *     vocation.com :: "vacation"  -> brand-only (DECISIVE)
+ * Both words are 8 characters and differ in one position, so a site on vocation.com suppresses
+ * the lone query "vacation". The damage is bounded on three sides — the collision must land on
+ * that one domain, the near-spelling must be the ENTIRE query, and the exclusion is printed with
+ * its count and reason — but the earlier wording claimed a rarity the language does not provide,
+ * and a bound that is asserted rather than measured is the kind that drifts.
  *
  * WHAT IT COSTS, stated rather than hidden: a brand of seven characters or fewer gets no
  * misspelling protection at all. "adstarl" is not recognised as adstark. That is deliberate —
@@ -241,8 +250,8 @@ export interface BrandMatch {
  * pinned by "does not brand an inflected form of the brand word".
  *
  * A typo model instead: `dentmotion` and `dentnation` are dentnotion with one letter wrong in
- * place, and a real word of equal length one letter from another real word is rare above the
- * length floor.
+ * place, and a real word of equal length one letter from another real word is uncommon above the
+ * length floor — uncommon, not impossible (MIN_FUZZY_BRAND_LENGTH carries the counterexample).
  */
 function isNearSpelling(value: string, token: string): boolean {
   if (token.length < MIN_FUZZY_BRAND_LENGTH || value.length !== token.length) return false;
@@ -297,6 +306,26 @@ function brandRun(atoms: readonly string[], token: string): readonly string[] | 
  *   - Near-spellings are tested against the WHOLE query only. "dent nation menderes" is not
  *     recognised. Allowing a fuzzy match inside a longer query would let one mistyped word in a
  *     generic phrase suppress it, which is the direction that hides real findings.
+ *   - EXACT-MATCH DOMAINS pay the same cost on the MULTI-WORD axis, and this is the widest limit
+ *     here. On an EMD the domain root IS a generic phrase, so every longer generic query that
+ *     contains that phrase adjacently reaches "compound-run" and is excluded WITHOUT sitelink
+ *     corroboration — which the old code required of it. Measured by a fresh-context referee,
+ *     2026-08-25, verbatim:
+ *         izmirdisklinigi.com :: "izmir diş kliniği fiyatları"  -> compound-run (DECISIVE)
+ *         disbeyazlatma.com   :: "diş beyazlatma fiyatları"     -> compound-run (DECISIVE)
+ *     EMDs are common in Turkish local SEO, which is a measured-majority slice of this product's
+ *     users, so this is not a corner.
+ *
+ *     IT IS UNAVOIDABLE GIVEN THE REQUIREMENT, not an oversight. An unpinned "menderes dent
+ *     notion" HAS to be excluded — that was the P0 — and nothing in Search Console data separates
+ *     a compound BRAND typed as words from a compound EMD PHRASE typed as words. The two shapes
+ *     are identical at the byte level; only the registrant's intent differs, and that is not in
+ *     the data. Requiring sitelinks again would restore the defect wholesale. The trade is
+ *     therefore taken deliberately, and it is bounded by being VISIBLE: the count and the reason
+ *     stay in every surface's output, so an EMD owner reads "Excluded N branded queries" and can
+ *     see the size of what was withheld rather than finding a shorter list with no explanation.
+ *   - The 8-character fuzzy floor bounds the near-spelling class but does NOT empty it; see
+ *     MIN_FUZZY_BRAND_LENGTH for the counterexample that disproves the "rare" wording.
  */
 export function matchBrand(query: string, token: string | null): BrandMatch | null {
   if (token === null) return null;
