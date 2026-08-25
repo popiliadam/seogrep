@@ -322,6 +322,30 @@ export interface LiveClientOptions {
  * deadline would abort healthy work and spend budget for nothing. It is still a bound —
  * chosen to sit inside the platform request timeout so WE give up first and release the
  * slot, rather than being cut off from outside.
+ *
+ * RE-ASSESSED 2026-08-25 AND DELIBERATELY LEFT AT 30 s. This deadline is what two of the three
+ * failed production `serp_snapshot` calls hit ("The operation was aborted due to timeout"), so it
+ * was the visible half of that incident. It is NOT claimed here that the request body was the
+ * cause of those timeouts — nothing measured supports that, and dfs/serp.ts says so at length.
+ * The reasons to leave the number alone are independent of what caused them:
+ *
+ *   - RAISING IT IS NOT A FIX FOR ANYTHING KNOWN. No cause has been established, so a larger
+ *     deadline is a guess that trades a fast failure for a slow one at the same full charge. If a
+ *     healthy SERP request genuinely needs more than 30 s, that is a fact nobody has yet observed,
+ *     and observing it is cheaper than pre-emptively widening the window for every DFS port that
+ *     shares this constant.
+ *   - IT MULTIPLIES HERE. SERP requests run SEQUENTIALLY, one per keyword, up to the 10-keyword
+ *     cap (dfs/serp.ts), unlike lighthouse.ts, whose 55 s is affordable precisely because its
+ *     requests are concurrent. At 30 s the SERP worst case is already 10 x 30 s; enlarging the
+ *     per-request number enlarges that product against the same one-minute envelope
+ *     LIGHTHOUSE_REQUEST_TIMEOUT_MS measures itself against.
+ *
+ * OPEN RISK, not closed by leaving the number alone: there is NO TOTAL WALL-CLOCK CAP anywhere in
+ * the SERP port. This constant bounds one request; nothing bounds the loop. Ten slow-but-healthy
+ * keywords can therefore run past the platform envelope and be cut off from OUTSIDE — the exact
+ * failure this deadline exists to prevent — and because the reservation is taken UP FRONT, before
+ * the first request, an outside kill leaves it open at the full estimate. A per-snapshot budget
+ * (or concurrency) is the real answer and is not in this slice.
  */
 export const DFS_REQUEST_TIMEOUT_MS = 30_000;
 
