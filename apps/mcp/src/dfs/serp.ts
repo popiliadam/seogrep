@@ -37,14 +37,16 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  *      no `search_engine` key is sent in the body.
  *   3. `depth` DEFAULTS TO 10, not 100. An unset depth buys a ten-result scrape, which cannot find
  *      your own position past #10 — and is a different price tier. See the depth pin below.
- *   4. `max_crawl_pages` DEFAULTS TO 1 on that wrapper, and how it interacts with `depth` is NOT
- *      published there and has NOT been measured in this repo. A guessed value could silently
- *      truncate a paid scrape and turn "not found" into a lie, so NO `max_crawl_pages` key is sent —
- *      and, more importantly, this port never claims "not in the top 100" from what it ASKED for. It
- *      claims only what it COUNTED: see {@link SerpKeywordOutcome}.
+ *   4. `max_crawl_pages` DEFAULTS TO 1 on that wrapper — and this port sends it EXPLICITLY, at
+ *      {@link SERP_MAX_CRAWL_PAGES}. It used to be omitted, on the written grounds that its
+ *      interaction with `depth` was unmeasured. It is measured now; see {@link serpMaxCrawlPages}
+ *      for what was measured and what still is not.
  *
- * `people_also_ask_click_depth` is likewise never sent: it buys extra vendor work for a SERP feature
+ * `people_also_ask_click_depth` is still never sent: it buys extra vendor work for a SERP feature
  * this measurement is not about.
+ *
+ * Neither key changes what this port CLAIMS. It never says "not in the top 100" from what it ASKED
+ * for; it claims only what it COUNTED: see {@link SerpKeywordOutcome}.
  *
  * =====================================================================================
  * DEPTH IS PINNED, AND THE PIN IS PART OF THE PRICE
@@ -116,6 +118,52 @@ export const SERP_REQUESTS_PER_KEYWORD = 1;
  * pins it, and it is what makes "where do I rank" answerable at all. NEVER #6.
  */
 export const SERP_DEPTH = 100;
+
+/**
+ * How many organic results ONE Google results page can hold. Google's own page size tops out at
+ * 100 (`num=100`), which is exactly why {@link SERP_DEPTH} is 100: the pinned depth is one page.
+ */
+export const SERP_RESULTS_PER_CRAWL_PAGE = 100;
+
+/**
+ * THE RULE BETWEEN `depth` AND `max_crawl_pages`: **one crawl page per 100 requested results,
+ * rounded up, never fewer than one.** At the pinned depth of 100 that is 1, and the value is
+ * DERIVED from the depth rather than written beside it, so the two cannot drift apart if a human
+ * ever re-signs the depth (NEVER #6).
+ *
+ * =====================================================================================
+ * WHAT WAS MEASURED — 2026-08-25
+ * =====================================================================================
+ * Until this date the key was OMITTED, and the comment here gave the reason: its interaction with
+ * `depth` was unmeasured, and a guess could truncate a paid scrape. That reason has been overtaken
+ * by measurement, in both directions:
+ *
+ *   - PRODUCTION, the body WITHOUT this key (`depth: 100`, no `max_crawl_pages`): three paid
+ *     `serp_snapshot` calls, three failures, three full charges (-39 credits, +$0.09 vendor). One
+ *     failed on the location name (`40501 Invalid Field: 'location_name'`); the other TWO — one
+ *     `Turkiye`/`tr`, one the default `United States`/`en` with a different keyword — both died as
+ *     `The operation was aborted due to timeout`, i.e. the 30 s deadline in client.ts. Every row
+ *     `keyword_position_measurements` held afterwards was `status='not_measured'`, and they were
+ *     the first rows ever written to that table.
+ *   - DIRECT VENDOR CALL, the same query to `serp/google/organic/live/advanced` WITH `depth: 100`
+ *     AND `max_crawl_pages: 1`: the full SERP came back FAST — local pack, 9 organic results,
+ *     people-also-ask and related searches. Nothing was truncated at 1 crawl page; a 100-deep
+ *     scrape fits in one page because a Google page holds 100.
+ *
+ * WHAT IS STILL NOT MEASURED, said plainly so the next reader does not inherit a stronger claim
+ * than the evidence: the two observations above are not a controlled pair. The slow side was
+ * observed through this service (two samples), the fast side directly (one sample), and the
+ * omitted-key body was never re-sent directly for comparison. So "omitting the key is what made it
+ * slow" is the best available reading, not a proven cause. What IS certain is the failing shape:
+ * the body we shipped timed out and charged, and the body with this key returned the whole SERP.
+ * The live confirmation belongs to the deploy that follows this change.
+ */
+export function serpMaxCrawlPages(depth: number): number {
+  return Math.max(1, Math.ceil(depth / SERP_RESULTS_PER_CRAWL_PAGE));
+}
+
+/** The value actually sent, at the pinned depth. Derived — see {@link serpMaxCrawlPages}. */
+export const SERP_MAX_CRAWL_PAGES = serpMaxCrawlPages(SERP_DEPTH);
 
 /**
  * THE KEYWORD CAP — the price control, derived to hold the SIGNED worst case rather than chosen for
@@ -427,9 +475,13 @@ export function validateSerpKeywords(keywords: readonly string[]): readonly stri
 }
 
 /**
- * The request body for ONE keyword. `depth` is PINNED and always present; `search_engine` is absent
- * because it is a path segment; `max_crawl_pages` and `people_also_ask_click_depth` are absent
- * because their interaction with depth is unmeasured and a guess could truncate a paid scrape.
+ * The request body for ONE keyword.
+ *
+ * `depth` is PINNED and always present. `max_crawl_pages` is present too, DERIVED from that depth
+ * by {@link serpMaxCrawlPages} — one crawl page per 100 results — which is where the 2026-08-25
+ * measurement behind it is written down. `search_engine` is absent because it is a path segment,
+ * and `people_also_ask_click_depth` is absent because it buys vendor work for a SERP feature this
+ * measurement is not about.
  */
 export function buildSerpRequestBody(
   query: SerpSnapshotQuery,
@@ -441,6 +493,7 @@ export function buildSerpRequestBody(
     language_code: query.language_code,
     device: query.device,
     depth: SERP_DEPTH,
+    max_crawl_pages: SERP_MAX_CRAWL_PAGES,
   };
 }
 

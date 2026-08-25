@@ -14,7 +14,9 @@ import {
   ORGANIC_ITEM_TYPE,
   SERP_BUDGET_SAFETY_FACTOR,
   SERP_DEPTH,
+  SERP_MAX_CRAWL_PAGES,
   SERP_REQUESTS_PER_KEYWORD,
+  SERP_RESULTS_PER_CRAWL_PAGE,
   buildSerpRequestBody,
   createLiveSerpSnapshotClient,
   createMockSerpSnapshotPort,
@@ -25,6 +27,7 @@ import {
   organicItems,
   outcomeFor,
   resolveDefaultSerpSnapshotPort,
+  serpMaxCrawlPages,
   sumSettledSerpCostUsd,
   validateSerpKeywords,
   type SerpKeywordRow,
@@ -307,19 +310,55 @@ describe("the request body", () => {
       "keyword",
       "language_code",
       "location_name",
+      "max_crawl_pages",
     ]);
   });
 
   /**
-   * The three parameters the wrapper publishes that this port deliberately does NOT send.
-   * `search_engine` is a path segment here; `max_crawl_pages` (wrapper default 1) has an unmeasured
-   * interaction with `depth` and a guess could truncate a paid scrape; `people_also_ask_click_depth`
-   * buys extra vendor work for a feature this measurement is not about.
+   * THE CRAWL-PAGE RULE — ONE CRAWL PAGE PER 100 REQUESTED RESULTS, ROUNDED UP, MINIMUM ONE.
+   *
+   * This key used to be omitted, and the omission is what production paid for on 2026-08-25: two of
+   * three paid calls died as "The operation was aborted due to timeout" at the client's 30 s
+   * deadline and were charged in full, while the same query sent DIRECTLY to the vendor with
+   * `depth: 100` AND `max_crawl_pages: 1` returned the whole SERP quickly. The value is DERIVED
+   * from the depth rather than written beside it, so a re-signed depth cannot leave a stale page
+   * count behind (NEVER #6).
    */
-  it("sends no search_engine, no max_crawl_pages and no people_also_ask_click_depth", () => {
+  it("sends max_crawl_pages on EVERY request, derived from the depth", async () => {
+    const transport = serpTransport();
+    await liveClient(transport, ledger).fetchSerpSnapshot(query({ keywords: ["a", "b"] }));
+    for (const index of [0, 1]) {
+      const body = sentBody(transport, index);
+      expect(body.max_crawl_pages).toBe(SERP_MAX_CRAWL_PAGES);
+      // The rule itself, asserted on the wire: the page count AGREES with the depth beside it.
+      expect(body.max_crawl_pages).toBe(serpMaxCrawlPages(body.depth as number));
+    }
+  });
+
+  /** The rule at its boundaries — one page holds exactly 100, and the 101st result needs a second. */
+  it("rounds the crawl-page count UP at every 100-result boundary, never below one", () => {
+    expect(SERP_RESULTS_PER_CRAWL_PAGE).toBe(100);
+    expect(serpMaxCrawlPages(1)).toBe(1);
+    expect(serpMaxCrawlPages(99)).toBe(1);
+    expect(serpMaxCrawlPages(100)).toBe(1);
+    expect(serpMaxCrawlPages(101)).toBe(2);
+    expect(serpMaxCrawlPages(200)).toBe(2);
+    expect(serpMaxCrawlPages(201)).toBe(3);
+    // A depth of zero or less is not a thing this port sends, but it must never ask for zero pages.
+    expect(serpMaxCrawlPages(0)).toBe(1);
+    // …and the pinned depth resolves to exactly the one page the 2026-08-25 call proved sufficient.
+    expect(SERP_MAX_CRAWL_PAGES).toBe(1);
+    expect(SERP_MAX_CRAWL_PAGES).toBe(serpMaxCrawlPages(SERP_DEPTH));
+  });
+
+  /**
+   * The two parameters the wrapper publishes that this port still deliberately does NOT send.
+   * `search_engine` is a path segment here; `people_also_ask_click_depth` buys extra vendor work
+   * for a feature this measurement is not about.
+   */
+  it("sends no search_engine and no people_also_ask_click_depth", () => {
     const body = buildSerpRequestBody(query(), "seo software");
     expect(body).not.toHaveProperty("search_engine");
-    expect(body).not.toHaveProperty("max_crawl_pages");
     expect(body).not.toHaveProperty("people_also_ask_click_depth");
   });
 
