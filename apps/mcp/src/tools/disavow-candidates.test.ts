@@ -19,6 +19,7 @@ import type { BacklinkDetailRow, VendorWindow } from "../dfs/backlink-details.ts
 import {
   DISAVOW_FILE_CAPTION,
   NO_SUBMISSION_NOTICE,
+  NOFOLLOW_ONLY_MARKER,
   VENDOR_JUDGEMENT_NOTE,
   formatDisavowCandidates,
   makeDisavowCandidatesTool,
@@ -285,6 +286,45 @@ describe("NEVER #7 — the vendor's three scores, under the vendor's three names
     expect(row).not.toMatch(/spam_score not reported/);
   });
 
+  /**
+   * THE DEFECT THIS ROW WAS ALREADY IMMUNE TO, pinned so it stays that way. A domain the vendor
+   * scored 0 whose worst LINK the vendor scored 60 must show BOTH, each under its own vendor field
+   * name — the 0 alone reads as "clean" beside a domain the tool is proposing you disavow
+   * (measured 2026-08-25, tool review card 27; the FILE half is pinned in the port's spec).
+   */
+  it("shows the per-domain 0 and the per-link 60 together, and blends them into nothing", () => {
+    const row = renderCandidateRow({
+      ...SCORED,
+      spam_score: 0,
+      window_max_backlink_spam_score: 60,
+    });
+    expect(row).toMatch(/(?<!backlink_)\bspam_score 0\b/);
+    expect(row).toMatch(/worst backlink_spam_score 60 in this window/);
+    // No composite: the mean of the two would be 30, and no third number is invented.
+    expect(row).not.toMatch(/\b30\b/);
+  });
+
+  /**
+   * NOFOLLOW-ONLY IS MARKED, NEVER REMOVED (operator decision). Google does not count a nofollowed
+   * link, so a candidate whose whole window carries none the vendor marked dofollow may be a
+   * `domain:` entry that accomplishes nothing — 21 of 46 candidates were in that state on the
+   * 2026-08-25 run. The row keeps its place in the list and gains a sentence; it does not vanish.
+   */
+  it("marks a candidate whose window has NO vendor-marked dofollow link, and still renders it", () => {
+    const row = renderCandidateRow({ ...SCORED, window_dofollow_link_count: 0 });
+    expect(row).toContain(SCORED.domain);
+    expect(row).toContain(NOFOLLOW_ONLY_MARKER);
+    expect(row).toMatch(/google does not count nofollowed links/i);
+    // The marking states what was measured, not what the links are.
+    expect(row).toMatch(/none of these links is marked dofollow/i);
+    expect(row).not.toMatch(/\bare nofollow/i);
+  });
+
+  it("does not mark a candidate that HAS a vendor-marked dofollow link in the window", () => {
+    expect(renderCandidateRow(SCORED)).not.toContain(NOFOLLOW_ONLY_MARKER);
+    expect(renderCandidateRow(SCORED)).not.toMatch(/google does not count/i);
+  });
+
   /** Same rule on the network axis, whose fixture row carries nothing but an address. */
   it("prints a network the vendor said nothing about without inventing zeros", () => {
     const row = renderNetworkRow({
@@ -380,9 +420,13 @@ describe("the output makes clear it is a PROPOSAL over a WINDOW", () => {
     expect(text).toContain("domain:SpamFarm.example");
     expect(text).toContain("domain:linkring.example");
     expect(text).toContain("domain:quiet.example");
-    // The unscored domain's line is a comment in WORDS, not a fabricated 0.
-    expect(text).toContain("# spam_score not reported by the vendor");
-    expect(text).not.toMatch(/# spam_score 0\b/);
+    // The unscored domain's line is a comment in WORDS, not a fabricated 0 — at BOTH levels,
+    // because quiet.example carries neither a per-domain score nor a per-link one.
+    expect(text).toMatch(/# per-domain spam_score: not reported by the vendor/);
+    expect(text).toMatch(
+      /worst per-link backlink_spam_score in this window: not reported by the vendor\ndomain:quiet\.example/,
+    );
+    expect(text).not.toMatch(/# per-domain spam_score: 0\b/);
     // No bare URL entries: this tool answers at the domain level and claims nothing about a page.
     expect(text).not.toMatch(/^https?:\/\/\S+$/m);
   });

@@ -9,7 +9,9 @@ import {
   DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT,
   DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT,
   DISAVOW_CANDIDATE_REQUESTS,
-  DISAVOW_TXT_NO_SCORE_NOTE,
+  DISAVOW_TXT_COMMENT_PREFIX,
+  DISAVOW_TXT_DOMAIN_PREFIX,
+  DISAVOW_TXT_NOT_REPORTED_NOTE,
   ESTIMATED_DISAVOW_CANDIDATES_CALL_USD,
   LINK_WINDOW_ORDER_VENDOR_FIELD,
   MAX_BILLED_ROWS,
@@ -743,6 +745,41 @@ describe("estimateDisavowCandidatesUsd", () => {
 // =============================================================================================
 // The disavow.txt BODY.
 // =============================================================================================
+/**
+ * The comment lines the file attached to ONE `domain:` entry — the block a reader reads as "what
+ * this line is". Bounded BELOW by the entry and ABOVE by whichever comes first: the previous
+ * entry, or the header's last line. Without that upper bound the FIRST candidate would silently
+ * absorb the six header comments, and an assertion about a candidate could pass on a header line.
+ */
+function entryBlock(text: string, domain: string): string {
+  const lines = text.split("\n");
+  const at = lines.indexOf(`${DISAVOW_TXT_DOMAIN_PREFIX}${domain}`);
+  expect(at, `no entry for ${domain}`).toBeGreaterThan(-1);
+  const block: string[] = [];
+  for (let index = at - 1; index >= 0; index -= 1) {
+    const line = lines[index] as string;
+    if (!line.startsWith(DISAVOW_TXT_COMMENT_PREFIX)) break;
+    if (/review every line/i.test(line)) break;
+    block.unshift(line);
+  }
+  return block.join("\n");
+}
+
+/** A whole lookup out of raw vendor envelopes: real parsers, real assembly, real formatter. */
+async function fileFrom(
+  links: readonly unknown[],
+  scores: readonly unknown[],
+  query: Partial<DisavowCandidatesQuery> = {},
+): Promise<string> {
+  const port = createMockDisavowCandidatesPort({
+    backlinks: envelope({ items: links }),
+    bulkSpamScore: envelope({ items: scores }),
+    referringNetworks: envelope({ items: [] }),
+  });
+  const result = await port.fetchDisavowCandidates({ ...QUERY, ...query });
+  return result.disavow_txt;
+}
+
 describe("buildDisavowTxt", () => {
   it("renders the exact Google-format body, header lines and all", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates(QUERY);
@@ -754,11 +791,12 @@ describe("buildDisavowTxt", () => {
         "# Window: 4 link rows, vendor filter backlink_spam_score >= 40, dofollow only: no.",
         "# Candidate cap: 200 domains. Candidates listed: 3.",
         "# No claim is made that these links harm your site. Review every line before you upload it.",
-        "# spam_score 84",
+        "# per-domain spam_score: 84 · worst per-link backlink_spam_score in this window: 71",
         "domain:SpamFarm.example",
-        "# spam_score 47",
+        "# per-domain spam_score: 47 · worst per-link backlink_spam_score in this window: 55",
         "domain:linkring.example",
-        `# ${DISAVOW_TXT_NO_SCORE_NOTE}`,
+        `# per-domain spam_score: ${DISAVOW_TXT_NOT_REPORTED_NOTE} · worst per-link ` +
+          `backlink_spam_score in this window: ${DISAVOW_TXT_NOT_REPORTED_NOTE}`,
         "domain:quiet.example",
         "",
       ].join("\n"),
@@ -771,8 +809,11 @@ describe("buildDisavowTxt", () => {
    */
   it("spells a vendor silence in WORDS, never as the digit 0", async () => {
     const result = await createMockDisavowCandidatesPort(FIXTURES).fetchDisavowCandidates(QUERY);
-    expect(result.disavow_txt).toContain(`# ${DISAVOW_TXT_NO_SCORE_NOTE}\ndomain:quiet.example`);
-    expect(result.disavow_txt).not.toContain("spam_score 0\n");
+    const quiet = entryBlock(result.disavow_txt, "quiet.example");
+    // The vendor scored quiet.example at NEITHER level, so the block carries no digit at all —
+    // a stronger pin than "the string 'spam_score 0' is absent", which any reword would satisfy.
+    expect(quiet).not.toMatch(/\d/);
+    expect(quiet.match(new RegExp(DISAVOW_TXT_NOT_REPORTED_NOTE, "gi"))).toHaveLength(2);
   });
 
   it("emits only comments and domain: entries, and ends with a newline", async () => {
@@ -807,6 +848,176 @@ describe("buildDisavowTxt", () => {
     expect(text).toContain("dofollow only: yes.");
     expect(text).not.toContain("domain:");
     expect(text.endsWith("\n")).toBe(true);
+  });
+});
+
+// =============================================================================================
+// EVERY ENTRY CARRIES BOTH LEVELS OF SCORE — the 2026-08-25 defect (tool review, card 27).
+//
+// The window is selected on the per-LINK `backlink_spam_score`; the file labelled each row with
+// the per-DOMAIN `spam_score`. Two rows of a real file read `# spam_score 0` and `# spam_score 1`
+// beside domains whose worst LINK score was 60. The number printed was not wrong — it was the
+// wrong number for the decision on the line, and nothing told the reader which level it was.
+//
+// Every case below is driven from RAW VENDOR ENVELOPES through the real parsers, the real
+// candidate assembly and the real formatter (signed lesson 12): a hand-built DisavowCandidate
+// handed straight to buildDisavowTxt would prove the renderer and skip everything that fills it.
+// =============================================================================================
+describe("both score levels on every disavow entry", () => {
+  /** The measured shape: the vendor scored the DOMAIN 0 and its worst LINK 60. */
+  const CLEAN_DOMAIN_SPAMMY_LINKS = [
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/a", dofollow: true, backlink_spam_score: 60 },
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/b", dofollow: true, backlink_spam_score: 12 },
+  ];
+
+  it("prints the worst LINK score of 60 beside a DOMAIN score of 0, hiding neither", async () => {
+    const block = entryBlock(
+      await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [{ target: "booksreadr.org", spam_score: 0 }]),
+      "booksreadr.org",
+    );
+    // The DOMAIN number, on a line that says which level it describes...
+    expect(block).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    // ...and the LINK number the single-score line dropped entirely. `60`, not the row's `12`:
+    // the max over the window, so a domain is judged by its worst link and not its last one.
+    expect(block).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*60\b/i);
+    expect(block).not.toMatch(/\b12\b/);
+  });
+
+  /**
+   * ...and the two labels must not collapse into one caption. "spam_score 0 · spam_score 60" would
+   * satisfy "both numbers appear" while telling the reader that one measurement contradicts itself.
+   */
+  it("labels the two numbers with DIFFERENT levels, so neither can be read as the other", async () => {
+    const block = entryBlock(
+      await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [{ target: "booksreadr.org", spam_score: 0 }]),
+      "booksreadr.org",
+    );
+    const [domainSide, linkSide] = block.split("·");
+    expect(domainSide).toMatch(/domain/i);
+    expect(domainSide).not.toMatch(/\blink\b/i);
+    expect(linkSide).toMatch(/link/i);
+    expect(linkSide).toMatch(/this window/i);
+  });
+
+  /**
+   * THE VENDOR'S SILENCE vs THE VENDOR'S ZERO, at BOTH levels — all four combinations, because a
+   * shared `?? 0` or a shared `?? null` fallback shows up only in the MIXED ones. `0` is an
+   * answer; a silence is not, and the file may never turn the second into the first.
+   */
+  it("keeps a vendor ZERO and a vendor SILENCE apart at BOTH levels, in all four combinations", async () => {
+    const text = await fileFrom(
+      [
+        { domain_from: "zz.example", url_from: "https://zz.example/a", dofollow: true, backlink_spam_score: 0 },
+        { domain_from: "zu.example", url_from: "https://zu.example/a", dofollow: true },
+        { domain_from: "uz.example", url_from: "https://uz.example/a", dofollow: true, backlink_spam_score: 0 },
+        { domain_from: "uu.example", url_from: "https://uu.example/a", dofollow: true },
+      ],
+      // uz and uu are ANSWERED with no score — present in the response, absent as a number.
+      [
+        { target: "zz.example", spam_score: 0 },
+        { target: "zu.example", spam_score: 0 },
+        { target: "uz.example" },
+        { target: "uu.example" },
+      ],
+    );
+    const zz = entryBlock(text, "zz.example");
+    expect(zz).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    expect(zz).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*0\b/i);
+    expect(zz).not.toMatch(/not reported/i);
+
+    const zu = entryBlock(text, "zu.example");
+    expect(zu).toMatch(/domain[^\n]*\bspam_score\b[^\n]*:\s*0\b/i);
+    expect(zu).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*not reported/i);
+
+    const uz = entryBlock(text, "uz.example");
+    expect(uz).toMatch(/domain[^\n]*\bspam_score\b[^\n]*not reported/i);
+    expect(uz).toMatch(/link[^\n]*\bbacklink_spam_score\b[^\n]*:\s*0\b/i);
+
+    const uu = entryBlock(text, "uu.example");
+    expect(uu).not.toMatch(/\d/);
+    expect(uu.match(/not reported/gi)).toHaveLength(2);
+  });
+
+  /** The two levels stay two numbers: nothing here averages, blends or ranks them (NEVER #7). */
+  it("does not blend the two scores into a composite of SeoGrep's own", async () => {
+    const text = await fileFrom(CLEAN_DOMAIN_SPAMMY_LINKS, [
+      { target: "booksreadr.org", spam_score: 0 },
+    ]);
+    for (const invented of [/toxic/i, /\brisk\b/i, /\bcomposite\b/i, /\boverall\b/i, /\baverage\b/i]) {
+      expect(text).not.toMatch(invented);
+    }
+    // The mean of 0 and 60 would be 30, and it appears nowhere.
+    expect(entryBlock(text, "booksreadr.org")).not.toMatch(/\b30\b/);
+  });
+});
+
+// =============================================================================================
+// NOFOLLOW-ONLY CANDIDATES ARE MARKED — AND NEVER REMOVED (operator decision).
+// Measured on the same run: 21 of 46 candidates carried `0 marked dofollow`. Google does not
+// count a nofollowed link, so those entries may accomplish nothing — and the file said nothing.
+// =============================================================================================
+describe("nofollow-only candidates", () => {
+  const MIXED_FOLLOW = [
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/a", dofollow: false, backlink_spam_score: 60 },
+    { domain_from: "booksreadr.org", url_from: "https://booksreadr.org/b", dofollow: false, backlink_spam_score: 41 },
+    { domain_from: "followed.example", url_from: "https://followed.example/a", dofollow: true, backlink_spam_score: 44 },
+  ];
+  const MIXED_SCORES = [
+    { target: "booksreadr.org", spam_score: 0 },
+    { target: "followed.example", spam_score: 9 },
+  ];
+
+  /** THE OPERATOR DECISION, pinned on the axis that would break it: presence, not wording. */
+  it("STILL LISTS a nofollow-only domain — it is marked, never filtered out", async () => {
+    const text = await fileFrom(MIXED_FOLLOW, MIXED_SCORES);
+    expect(text.split("\n")).toContain("domain:booksreadr.org");
+    // ...and the header's own count agrees, so the entry is not a leftover the summary disowns.
+    expect(text).toContain("Candidates listed: 2.");
+  });
+
+  it("marks it, and says why the entry may accomplish nothing", async () => {
+    const block = entryBlock(await fileFrom(MIXED_FOLLOW, MIXED_SCORES), "booksreadr.org");
+    expect(block).toMatch(/none of the 2 links in this window is marked dofollow/i);
+    expect(block).toMatch(/google does not count nofollowed links/i);
+    expect(block).toMatch(/may change nothing/i);
+  });
+
+  it("does not mark a domain that HAS a vendor-marked dofollow link in the window", async () => {
+    const block = entryBlock(await fileFrom(MIXED_FOLLOW, MIXED_SCORES), "followed.example");
+    expect(block).not.toMatch(/nofollow/i);
+    expect(block).not.toMatch(/may change nothing/i);
+  });
+
+  /**
+   * The marking states what was MEASURED. A link the vendor marked NEITHER way is not a link the
+   * vendor called nofollow, so the note says "none is marked dofollow" and never "these are
+   * nofollow links" — otherwise a vendor silence would leave this module as a vendor statement.
+   */
+  it("claims only 'none is marked dofollow', never that the vendor called them nofollow", async () => {
+    const block = entryBlock(
+      await fileFrom(
+        [{ domain_from: "unmarked.example", url_from: "https://unmarked.example/a", backlink_spam_score: 50 }],
+        [{ target: "unmarked.example", spam_score: 3 }],
+      ),
+      "unmarked.example",
+    );
+    expect(block).toMatch(/none of the 1 link in this window is marked dofollow/i);
+    // Never a claim ABOUT the links themselves — only about what the vendor marked.
+    expect(block).not.toMatch(/\bare nofollow/i);
+    expect(block).not.toMatch(/\bthese (are|links are) nofollow/i);
+  });
+
+  /** The singular/plural of the count is the vendor's own row count, not a fixed word. */
+  it("counts the links it is talking about", async () => {
+    const one = entryBlock(
+      await fileFrom(
+        [{ domain_from: "solo.example", url_from: "https://solo.example/a", dofollow: false }],
+        [{ target: "solo.example", spam_score: 5 }],
+      ),
+      "solo.example",
+    );
+    expect(one).toMatch(/none of the 1 link in this window/i);
+    expect(one).not.toMatch(/1 links/);
   });
 });
 
