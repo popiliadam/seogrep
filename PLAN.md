@@ -5,6 +5,46 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 📋 2026-08-26 — SIRADAKİ OTURUM: TOOL REVİZYONU **DÜZELTME** (91 bulgu, 22 dilim)
+
+**Tur BİTTİ: 36/36 tool gezildi.** Defter `docs/plans/2026-08-25-tool-revizyon-defteri.md` —
+**120 satır** (91 gerçek bulgu + 29 "bakıldı, bulgu yok"), kapsama tablosu **36/36 ☑**,
+oturum sonu üç ölçümü dosyanın sonunda.
+
+> **İŞ EMRİ:** `docs/plans/2026-08-26-tool-revizyon-duzeltme-handoff.md` — **taze oturum buradan
+> başlar.** 18 dilim (S10 beşe bölününce 22), her biri kanıt + kök neden + `done_when` + kapı +
+> yasak ile. İnsan **otonom çalışma izni verdi (2026-08-25)**: `[kod]` dilimleri onay beklemez.
+> **İSTİSNA:** fiyat/politika (NEVER#6) → handoff §4'te **15 maddelik imza paketi**, imzasız dispatch YOK.
+
+#### Üç P0 dilimi — hepsi canlıda ölçüldü
+
+1. **S1 — uydurulmuş sıfır.** *"unreported, never as a zero"* vaadi **dört uçta** kırık; her seferinde
+   vendor gövdesi yan yana konarak kanıtlandı. Kilit kanıt: `ranked_keywords` **aynı satırda**
+   raporlanmayan `cpc`'yi atlıyor, `difficulty`'yi sıfırlıyor.
+2. **S2 — `serp_snapshot` 3/3 timeout.** Sıralama zinciri üretimde **hiç gerçek konum üretmemiş**
+   (`keyword_position_measurements`: 3 satır, 3'ü `not_measured`). Kök neden ölçüldü: istek gövdesinde
+   **`max_crawl_pages` yok** (`dfs/serp.ts:434`); vendor'a doğrudan `max_crawl_pages: 1` ile atılan
+   aynı sorgu **hızla döndü**.
+3. **S3 — AI ailesi çökük ve para yakıyor.** `ai_visibility` 2/2, `ai_visibility_compare` 1/1 hard fail;
+   izole ölçüm: **$0,30 ve $0,45/çağrı**, kredi 0 — *"You were not charged"* **yarım doğru**.
+   Risk: ~10 arıza günlük $3 tavanı doldurup **çalışan bütün ücretli tool'ları bloke eder**.
+
+#### Turun üç ölçümü
+
+**36/36 tool** · **120 satır** (`ÇIKTI` 28 · `VERİ` 27 · `KAPSAM` 23 · `DEĞER` 8 · `ARGÜMAN` 5 ·
+**`SEÇİM` 0** · "bulgu yok" 29) · vendor **$1,635416** harcandı, tavana **$1,352104** kaldı.
+Sahip: **`[kod]` 73** · `[açık]` 17 · `[operatör]` 13.
+
+**`SEÇİM` sıfır:** 36 doğal cümle, 36 doğru tool. **Açıklamaların seçim ekseni çalışıyor — bozma.**
+
+#### Temizlik borcu
+
+Turun ölçüm için yarattığı state handoff §5'te listeli (3 çöp proje — biri `www.` kusurunu
+kanıtlayan `noraninsaat.com`, 2 tracked keyword, 3 `not_measured` satır, 1 public rapor).
+**S2 bitene kadar silinmez** — kanıt onlar.
+
+---
+
 ### 📋 2026-08-25 — SIRADAKİ OTURUM: TOOL REVİZYONU (36 tool, tek tek)
 
 **Bu oturumun işi kod yazmak DEĞİL.** 36 tool'un her biri **müşterinin yolundan** — taze oturum,
