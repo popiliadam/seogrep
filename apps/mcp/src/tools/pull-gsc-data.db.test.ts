@@ -315,7 +315,10 @@ async function expectRefusal(
   errorSpy: MockInstance,
 ): Promise<void> {
   expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toBe(expected);
+  // The refusal's own sentence arrives WHOLE and FIRST; the registry appends the fee sentence
+  // (2026-08-25, review card 12), so this is no longer byte-equal.
+  expect(result.content[0]?.text?.startsWith(expected)).toBe(true);
+  expect(result.content[0]?.text).toMatch(/\b(?:not|never)\s+charged\b|\bno credits were charged\b/i);
   expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
   expect(result.content[0]?.text).not.toMatch(/reference/i);
   expect(errorSpy).not.toHaveBeenCalled();

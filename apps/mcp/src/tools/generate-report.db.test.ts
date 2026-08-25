@@ -509,9 +509,12 @@ describe("generate_report refusals — what the CLIENT receives", () => {
       const result = await callThroughRegistry(ctxOf(user), reportTool, unknownProjectId);
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(
-        `No project found with id ${unknownProjectId}. Create one with setup_project first.`,
-      );
+      expect(
+        result.content[0]?.text.startsWith(
+          `No project found with id ${unknownProjectId}. Create one with setup_project first.`,
+        ),
+      ).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(errorSpy).not.toHaveBeenCalled();
@@ -547,7 +550,8 @@ describe("generate_report refusals — what the CLIENT receives", () => {
       const result = await callThroughRegistry(ctxOf(user), reportTool, projectId);
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+      expect(result.content[0]?.text.startsWith(ARCHIVED_PROJECT_MESSAGE)).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(result.content[0]?.text).toMatch(/archived/i);
       // A designed refusal, not a crash: the registry must render it verbatim and log nothing.
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
@@ -574,10 +578,13 @@ describe("generate_report refusals — what the CLIENT receives", () => {
       const result = await callThroughRegistry(ctxOf(user), reportTool, projectId);
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(
-        "No crawl or Search Console data found for this project. " +
-          "Run crawl_site or pull_gsc_data first.",
-      );
+      expect(
+        result.content[0]?.text.startsWith(
+          "No crawl or Search Console data found for this project. " +
+            "Run crawl_site or pull_gsc_data first.",
+        ),
+      ).toBe(true);
+      expect(result.content[0]?.text).toMatch(/\bnot\s+charged\b/i);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(errorSpy).not.toHaveBeenCalled();
