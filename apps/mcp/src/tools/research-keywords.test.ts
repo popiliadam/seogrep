@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { createMockResearchPort, disabledPort, type KeywordOverviewRow } from "../dfs/client.ts";
+import {
+  createMockResearchPort,
+  disabledPort,
+  parseKeywordOverviewResponse,
+  type KeywordOverviewRow,
+} from "../dfs/client.ts";
 import { STALE_PULL_DAYS } from "../gsc-data/load.ts";
 import {
   formatKeywordOverview,
@@ -401,5 +406,64 @@ describe("research_keywords live-disabled gate (no credit machinery)", () => {
     await expect(tool.run(CTX, { keywords: ["seo software"] })).rejects.toThrow(
       /environment configuration/i,
     );
+  });
+});
+
+// =============================================================================================
+// S1 (follow-up) — the flagship keyword tool's difficulty, through the real parser and renderer.
+//
+// This tool carries the same promise wording as discover_keywords, and ranked_keywords' source
+// names it as the tool whose difficulty phrasing must not drift (dfs/ranked-keywords.ts:291).
+// The PARSE half is already pinned — mutating dfs/client.ts:255 goes red. The RENDER half was
+// not: turning `row.keyword_difficulty !== null` into a TRUTHINESS test at
+// tools/research-keywords.ts:172 left the whole suite green, silently swallowing a vendor-reported
+// difficulty of 0 into the same silence an absent field gets.
+//
+// So the pair below is asymmetric on purpose. The absent half is the claim the product makes; the
+// PRESENT-AS-0 half is the one that catches the truthiness bug, because absent and zero are only
+// distinguishable if the zero survives.
+// =============================================================================================
+
+/** A keyword-overview envelope carrying one item verbatim, as DataForSEO returns it. */
+function overviewEnvelope(item: Record<string, unknown>): unknown {
+  return { status_code: 20000, tasks: [{ status_code: 20000, result: [{ items: [item] }] }] };
+}
+
+/** The measured item shape; `keyword_properties` is supplied by each spec. */
+function overviewItem(keywordProperties: Record<string, unknown>): Record<string, unknown> {
+  return {
+    keyword: "diş beyazlatma",
+    keyword_info: {
+      se_type: "google",
+      last_updated_time: "2026-08-01 00:00:00 +00:00",
+      competition_level: "LOW",
+      cpc: 0.35,
+      search_volume: 2400,
+    },
+    keyword_properties: keywordProperties,
+  };
+}
+
+/** Parse an overview body through the real parser and render it, exactly as the handler does. */
+function renderedOverview(keywordProperties: Record<string, unknown>): string {
+  return formatKeywordOverview(
+    parseKeywordOverviewResponse(overviewEnvelope(overviewItem(keywordProperties))),
+    { keywords: ["diş beyazlatma"], language_code: "tr", location_code: 2792 },
+    NOW,
+  );
+}
+
+describe("S1 — a difficulty absent from the vendor body never becomes a 0", () => {
+  it("omits difficulty when keyword_properties carries no keyword_difficulty key", () => {
+    // The key is ABSENT, not null — absence is the case under test.
+    const text = renderedOverview({ se_type: "google", detected_language: "tr" });
+    expect(text).not.toMatch(/difficulty/i);
+    // …while the row itself is intact: the omission is one field, not a degraded line.
+    expect(text).toContain("• diş beyazlatma — volume 2,400, CPC $0.35, competition LOW");
+  });
+
+  it("prints difficulty 0/100 when DataForSEO reports the difficulty AS 0", () => {
+    const text = renderedOverview({ se_type: "google", detected_language: "tr", keyword_difficulty: 0 });
+    expect(text).toContain("difficulty 0/100");
   });
 });
