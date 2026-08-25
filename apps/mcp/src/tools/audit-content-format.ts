@@ -34,6 +34,22 @@ export function renderContentCoverage(result: ContentMatchResult, crawlPages: nu
 }
 
 /**
+ * The brand exclusion note, or null when nothing was excluded.
+ *
+ * Branded findings leave the LIST but not the ANSWER — formatCannibalization's rule, and it is
+ * the same trap on a different surface: a user whose biggest query vanished with no explanation
+ * is owed the reason, and a silent drop is indistinguishable from a bug.
+ */
+export function renderBrandExclusion(excluded: number): string | null {
+  if (excluded === 0) return null;
+  return (
+    `Excluded ${grouped(excluded)} quer${excluded === 1 ? "y" : "ies"} whose only missing words ` +
+    "were your own brand name: your brand is on the page whether or not the title repeats it, " +
+    "so that is not a missing keyword."
+  );
+}
+
+/**
  * Render the mismatch shortlist (or a friendly empty message).
  *
  * Each line carries the three things a repair needs: WHAT is missing (the words), WHERE it is

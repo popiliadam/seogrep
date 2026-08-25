@@ -9,6 +9,7 @@ export * from "./windows.ts";
 export * from "./rows.ts";
 export * from "./pull.ts";
 export * from "./document.ts";
+export * from "./brand.ts";
 export * from "./quick-wins.ts";
 export * from "./cannibalization.ts";
 export * from "./content-decay.ts";

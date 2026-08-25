@@ -1,9 +1,19 @@
 import { z } from "zod";
-import { analyzeTitleQueryMatch, type ContentPageRecord, type ContentQueryRow } from "@pseo/core";
+import {
+  analyzeTitleQueryMatch,
+  MAX_CONTENT_MISMATCHES,
+  type ContentMatchResult,
+  type ContentMismatch,
+  type ContentPageRecord,
+  type ContentQueryRow,
+} from "@pseo/core";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { loadLatestCrawl, type AuditCrawl, type LoadCrawlFn } from "../audit/index.ts";
 import {
+  brandTokenOf,
+  foldBrandWord,
   loadLatestPull,
+  matchBrand,
   renderAnalyzedWindow,
   renderPullProvenance,
   renderRowCapCaveat,
@@ -12,6 +22,7 @@ import {
 } from "../gsc-data/index.ts";
 import {
   formatContentMismatches,
+  renderBrandExclusion,
   renderContentCoverage,
 } from "./audit-content-format.ts";
 import {
@@ -115,6 +126,70 @@ interface ContentAuditRendering {
 }
 
 /**
+ * The engine's own cap, lifted so the BRAND FILTER below runs over every mismatch rather than
+ * over the first fifty. Filtering a pre-capped list would silently shrink the answer: fifty rows
+ * in, eight of them branded, forty-two out — and `total` would still claim fifty. The engine
+ * builds the full array either way, so this costs nothing but the slice.
+ */
+const UNCAPPED = Number.MAX_SAFE_INTEGER;
+
+/** A brand-filtered result, plus how many findings the brand removed entirely. */
+interface BrandFilteredResult {
+  readonly result: ContentMatchResult;
+  /** Mismatches whose ONLY missing words were the brand's own — dropped, and counted. */
+  readonly brandExcluded: number;
+}
+
+/**
+ * Treat the site's own brand as ALREADY ON THE PAGE.
+ *
+ * Measured 2026-08-25 on dentnotion.com, verbatim:
+ *   `"dent notion" -> https://dentnotion.com/seferihisar-dis-klinigi — 137 impressions;
+ *    missing "dent", "notion" (0/2 words present)`
+ * The firm's own name, reported to the firm as a keyword its page fails to mention. A brand is on
+ * its own site whatever the title says — in the logo, the header, the domain in the SERP — and
+ * "add your company name to your title" is not a finding anybody acts on.
+ *
+ * The blast radius is deliberately small, which is why this uses EVERY tier of the brand match
+ * while detect_cannibalization does not: there, a brand match removes a whole finding, so the
+ * weak tier needs corroboration; here it only removes ONE WORD from a row's missing list. A row
+ * disappears only when the brand accounted for all of its missing words, and that row said
+ * nothing else. On dental.com "dental implants" therefore keeps its place and reports "implants".
+ */
+function withoutBrandWords(
+  result: ContentMatchResult,
+  token: string | null,
+): BrandFilteredResult {
+  if (token === null) return { result, brandExcluded: 0 };
+  const kept: ContentMismatch[] = [];
+  let brandExcluded = 0;
+  for (const mismatch of result.mismatches) {
+    const brand = matchBrand(mismatch.query, token);
+    const brandAtoms = new Set(brand?.brandAtoms ?? []);
+    const missing = mismatch.missing_words.filter((word) => !brandAtoms.has(foldBrandWord(word)));
+    if (missing.length === 0) {
+      brandExcluded += 1;
+    } else if (missing.length === mismatch.missing_words.length) {
+      kept.push(mismatch);
+    } else {
+      const matched = mismatch.total_words - missing.length;
+      kept.push({
+        ...mismatch,
+        missing_words: missing,
+        matched_words: matched,
+        match_ratio: matched / mismatch.total_words,
+      });
+    }
+  }
+  return {
+    // `total` is re-derived from the KEPT list, so the pre-cap headline the caller reads counts
+    // the findings that survived rather than the ones the engine produced.
+    result: { ...result, mismatches: kept.slice(0, MAX_CONTENT_MISMATCHES), total: kept.length },
+    brandExcluded,
+  };
+}
+
+/**
  * Run the engine and render BOTH halves from the SAME call, so the stored row and the reply can
  * never describe different runs (`AuditRendering` / `DiscoveryRendering`, verbatim reasoning).
  *
@@ -125,10 +200,18 @@ export function renderContentAudit(
   pull: PullData,
   crawl: AuditCrawl,
 ): ContentAuditRendering {
-  const result = analyzeTitleQueryMatch(demandRows(pull), supplyPages(crawl));
+  const raw = analyzeTitleQueryMatch(demandRows(pull), supplyPages(crawl), UNCAPPED);
+  const { result, brandExcluded } = withoutBrandWords(raw, brandTokenOf(pull));
+  // COVERAGE FIRST (operator-approved 2026-08-25, price unchanged). The sentence itself is
+  // untouched — it was already the honest one — but it used to sit under fifty rows, so a caller
+  // read the whole list before learning that 5,907 of 6,972 pairs could not be checked at all.
+  // A ratio that changes how you read the list has to arrive before it, not after.
+  const disclosure = [renderContentCoverage(result, crawl.pages.length), renderBrandExclusion(brandExcluded)]
+    .filter((line): line is string => line !== null)
+    .join("\n");
   return {
     report: contentAuditReport(pull, crawl.fetchedAt, crawl.pages.length, result),
-    text: `${formatContentMismatches(result)}\n\n${renderContentCoverage(result, crawl.pages.length)}`,
+    text: `${disclosure}\n\n${formatContentMismatches(result)}`,
   };
 }
 

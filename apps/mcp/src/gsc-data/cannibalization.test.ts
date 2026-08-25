@@ -569,3 +569,58 @@ describe("detectCannibalization — branded queries", () => {
     expect(brandedOf(sitelinkRows("hm.com", "hm"))).toBe(false);
   });
 });
+
+/**
+ * THE LIVE DEFECT, 2026-08-25, dentnotion.com. The tool printed
+ *   `Excluded 2 branded queries ("dent notion", "dentnotion")`
+ * and then listed `"dent notion menderes"` — 7 competing pages, 1130 impressions, the LARGEST
+ * row in the list — as the site's number one problem, with seven more branded rows beneath it.
+ * Its own stated principle should have removed at least eight of the sixty results.
+ *
+ * `competitiveRows` is used throughout ON PURPOSE: none of these SERPs was pinned, which is
+ * exactly why the old conjunction let them through. If the shared matcher stops calling these
+ * decisive, every one of these goes red.
+ */
+describe("detectCannibalization — the eight rows measured on dentnotion.com", () => {
+  const branded = (query: string): boolean => brandedOf(competitiveRows("dentnotion.com", query));
+
+  it("excludes the brand followed by another word — the row that led the list", () => {
+    expect(branded("dent notion menderes")).toBe(true);
+  });
+
+  it("excludes the brand when it is NOT at the start of the query", () => {
+    expect(branded("menderes dent notion")).toBe(true);
+  });
+
+  it("excludes the long descriptive brand queries", () => {
+    expect(branded("dent notion ı menderes diş polikliniği yorumlar")).toBe(true);
+    expect(branded("dent notion ı menderes diş polikliniği yorumları")).toBe(true);
+    expect(branded("dent notion yorumları")).toBe(true);
+    expect(branded("dent notion fotoğraflar")).toBe(true);
+  });
+
+  it("excludes the two misspellings of the brand", () => {
+    expect(branded("dent nation")).toBe(true);
+    expect(branded("dentmotion")).toBe(true);
+  });
+
+  /**
+   * The other side, on the SAME site: a query sharing one word with the compound brand is a real
+   * finding and stays in the list. Half a brand is not a brand — otherwise a dental clinic's
+   * every "dent…" query would vanish, which is the tool doing the opposite of its job.
+   */
+  it("still reports a query that shares only ONE word with the compound brand", () => {
+    expect(branded("dis beyazlatma dent")).toBe(false);
+    expect(branded("izmir diş beyazlatma")).toBe(false);
+  });
+
+  /**
+   * The safe-degradation case for a domain root that is an ordinary word. dental.com's real
+   * queries must not be branded on sight; only the bare word is, and that cost is already pinned
+   * by "suppresses the bare brand word even on generically-named sites".
+   */
+  it("does not brand a common-word domain's ordinary queries", () => {
+    expect(brandedOf(competitiveRows("dental.com", "dental implants"))).toBe(false);
+    expect(brandedOf(competitiveRows("dental.com", "dental clinic prices"))).toBe(false);
+  });
+});
