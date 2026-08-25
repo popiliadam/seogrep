@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DOMAIN_RE, nonPublicHostnameReason, normalizeDomain } from "./hostname.js";
+import {
+  DOMAIN_RE,
+  nonPublicHostnameReason,
+  normalizeDomain,
+  sameSiteDomains,
+  stripWwwLabel,
+} from "./hostname.js";
 
 /**
  * CORE'UN KENDİ ŞERİDİ. Bu modülün pinleri bugüne kadar YALNIZ downstream'de yaşıyordu —
@@ -104,6 +110,76 @@ describe("normalizeDomain", () => {
     });
   });
 
+  /**
+   * S4 — canlı hesapta 6 kez ölçüldü: `www.` düşmediği için aynı müşteri sitesi İKİ proje oldu.
+   * `setup_project`'in kendi açıklaması "aynı domain için tekrar çağırmak mevcut projeyi
+   * döndürür" diyordu; adres çubuğundan yapıştırılan biçim için bu İDDİA YANLIŞTI.
+   */
+  it("baştaki `www.` etiketini düşürür — dört giriş biçimi TEK domaine iner", () => {
+    for (const raw of [
+      "example.com",
+      "www.example.com",
+      "https://www.example.com/x?y=1",
+      "EXAMPLE.COM",
+    ]) {
+      expect(normalizeDomain(raw)).toEqual({ ok: true, domain: "example.com" });
+    }
+  });
+
+  it("`www.` DIŞINDAKİ ilk etiketi ASLA düşürmez — alt alan adı başka bir sitedir", () => {
+    // Tuzak burada: kural "ilk etiketi at" DEĞİL, "baştaki www.'yi at".
+    expect(normalizeDomain("blog.example.com")).toEqual({ ok: true, domain: "blog.example.com" });
+    expect(normalizeDomain("https://shop.example.com/")).toEqual({
+      ok: true,
+      domain: "shop.example.com",
+    });
+  });
+});
+
+describe("stripWwwLabel", () => {
+  it("yalnız BAŞTAKİ www. etiketini, yalnız BİR kez atar", () => {
+    expect(stripWwwLabel("www.example.com")).toBe("example.com");
+    // Orta yerdeki `www` bir etiket olarak kalır: api.www.x.com farklı bir hosttur.
+    expect(stripWwwLabel("api.www.example.com")).toBe("api.www.example.com");
+    // Döngü DEĞİL: iki www. üst üste geldiğinde bir tanesi kalır.
+    expect(stripWwwLabel("www.www.example.com")).toBe("www.example.com");
+  });
+
+  it("büyük harfi ve sondaki noktayı da normalize eder", () => {
+    expect(stripWwwLabel("WWW.Example.COM.")).toBe("example.com");
+  });
+
+  it("`www.com`u BOZMAZ — kayıtlı bir alan adıdır, `com`a indirilemez", () => {
+    expect(stripWwwLabel("www.com")).toBe("www.com");
+    expect(normalizeDomain("www.com")).toEqual({ ok: true, domain: "www.com" });
+  });
+
+  it("zaten kanonik olan hostu değiştirmez", () => {
+    expect(stripWwwLabel("example.com")).toBe("example.com");
+    expect(stripWwwLabel("blog.example.com")).toBe("blog.example.com");
+  });
+});
+
+describe("sameSiteDomains", () => {
+  it("kanonik biçimi ÖNCE, `www.` ikizini SONRA verir — sıra bir tercihtir", () => {
+    // Sırayı çağıranlar kullanıyor: iki satır da varsa kanonik olan seçilir.
+    expect(sameSiteDomains("example.com")).toEqual(["example.com", "www.example.com"]);
+  });
+
+  it("`www.`li bir girdi için de AYNI iki biçimi verir", () => {
+    // Depodaki eski satır `www.` taşıyor; onu arayan çağrı da aynı çifti sormalı.
+    expect(sameSiteDomains("www.example.com")).toEqual(["example.com", "www.example.com"]);
+  });
+
+  it("alt alan adını `www.` ikizine genişletir ama kısaltmaz", () => {
+    expect(sameSiteDomains("blog.example.com")).toEqual([
+      "blog.example.com",
+      "www.blog.example.com",
+    ]);
+  });
+});
+
+describe("normalizeDomain (devam)", () => {
   it("boş değeri ve şekli bozuk adı AYRI cümlelerle reddeder", () => {
     expect(normalizeDomain("   ")).toEqual({
       ok: false,
