@@ -19,24 +19,35 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  *   `ai_visibility_compare` — the same question across 2-10 targets, side by side.
  *
  * =====================================================================================
- * THE ROW CAP IS THE PRICE, NOT A TUNING KNOB
+ * THE PRICING BASIS — AND THE ŞERH THE 2026-08-25 OUTAGE PUT ON IT (READ THIS FIRST)
  * =====================================================================================
  * LLM Mentions is the most expensive family this product touches: **$0.10 per request plus $0.001
  * per row** — ten times the per-request cost of every other family we call, and 8.3x DataForSEO
  * Labs' per-row cost. The 2026-08-17 signature package (MADDE 2) prices `ai_visibility` at 90
  * credits with `internal_list_limit <= 100` **MANDATORY**, and `ai_visibility_compare` at 90 credits
- * PER COMPARED TARGET over 2-10 targets. At the cap the arithmetic is
+ * PER COMPARED TARGET over 2-10 targets. At that basis the arithmetic is
  *
  *     vendor  = $0.10 + 100 rows x $0.001 = $0.20
  *     revenue = 90 credits x $0.0124      = $1.116        ->  5.58x  (the signed "5.6x")
  *
- * and WITHOUT the cap a single 1000-row call bills $0.10 + $1.00 = $1.10 against $1.116 of revenue,
- * i.e. **1.01x** — the margin is gone. The signature says so in its own words ("Satır kapağı olmadan
- * bu iki tool yazılmamalı"), so {@link MAX_INTERNAL_LIST_ROWS} is the thing holding the signed price
- * up. It is enforced in the ESTIMATE and on the WIRE by the same clamp, and llm-mentions.test.ts
- * pins the floor at the cap AND measures the uncapped collapse, so a later widening turns RED
- * instead of quietly erasing the margin. Moving it is a PRICE change and belongs to a human
+ * and at 1000 rows a single call bills $0.10 + $1.00 = $1.10 against $1.116 of revenue, i.e.
+ * **1.01x**. {@link MAX_INTERNAL_LIST_ROWS} is that basis, it is what every reservation and every
+ * margin figure here is computed from, and moving it is a PRICE change that belongs to a human
  * (NEVER #6).
+ *
+ * ŞERH — THE MECHANISM THE SIGNATURE NAMED DOES NOT EXIST. The signature reads
+ * `internal_list_limit` as the ROW CAP that holds the vendor bill down. DataForSEO's published
+ * request documentation, read on 2026-08-25, says it is "maximum number of elements within internal
+ * arrays … `sources_domain` `search_results_domain`", with a ceiling of 20 on one endpoint and 10
+ * on the other (see {@link VENDOR_MAX_INTERNAL_LIST_AGGREGATED}). It is not a row cap, it never
+ * capped a billed row, and 100 was a value the vendor REJECTED — which is why both tools failed
+ * 3/3 in production for as long as they had been live.
+ *
+ * So the numbers above are a BASIS, not a measured margin: nothing this port sends controls how
+ * many rows DataForSEO bills for, and no response from this family has ever been captured here to
+ * count them. The price is NOT moved on that finding — it is raised for signature. What the code
+ * does is keep the basis exactly where the signature put it (the reservation is unchanged and
+ * still errs high) while sending the vendor a value the vendor accepts.
  *
  * =====================================================================================
  * WHAT THE VENDOR'S REAL CONTRACT SAYS — AND WHERE IT CONTRADICTS THE SKETCH
