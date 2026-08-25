@@ -10,7 +10,12 @@ import {
 } from "@pseo/db/projects";
 import type { Database as GeneratedSchema } from "@pseo/db/types";
 import { getServiceClient, type Database as GatewaySchema } from "../db.ts";
-import { defineTool, errorResult, textResult } from "./registry.ts";
+import {
+  checkDomainReachable,
+  reachabilityWarning,
+  type CheckDomainFn,
+} from "./domain-reachability.ts";
+import { defineTool, errorResult, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
  * setup_project — register (or return) a tracked domain for the tenant. 0 credits.
@@ -97,21 +102,55 @@ function renderSetupOutcome(project: TrackedProject): string {
   return `Project already exists for "${project.domain}" (project_id: ${project.id}, created: false).`;
 }
 
-export const setupProjectTool = defineTool({
-  name: "setup_project",
-  description:
-    "Register a website domain to track. Accepts a domain or URL; returns the project id. " +
-    "Idempotent — calling it again for the same domain returns the existing project.",
-  inputSchema: z.object({
-    domain: z
-      .string()
-      .min(1)
-      .describe("The website to track, e.g. \"example.com\" or \"https://example.com\"."),
-  }),
-  handler: async (ctx, { domain }) => {
-    const resolved = await openTrackedProject(ctx.userId, domain);
-    return resolved.ok
-      ? textResult(renderSetupOutcome(resolved.project))
-      : errorResult(resolved.error);
-  },
-});
+/** Dependencies — both ports exist so the fast lane can run this handler with no DB and no DNS. */
+export interface SetupProjectDeps {
+  /**
+   * Reachability check (default: the real capped DNS lookup). A PORT because the design forbids
+   * a spec touching a resolver: the case that matters is a name that does NOT exist, and asserting
+   * that against the real internet is asserting something about DNS rather than about this tool.
+   */
+  readonly checkDomain?: CheckDomainFn;
+  /**
+   * The shared open-or-return route (default: the real one, on the service-role client). A PORT
+   * for the reason audit-shared.ts states about `loadProject`: the default reaches
+   * `getServiceClient`, which needs the full prod env, so without this seam the handler — and
+   * therefore the warning's placement relative to the WRITE — has no fast-lane proof at all.
+   */
+  readonly openProject?: (userId: string, rawDomain: string) => Promise<ProjectResolution>;
+}
+
+export function makeSetupProjectTool(deps: SetupProjectDeps = {}): RegisteredTool {
+  const checkDomain = deps.checkDomain ?? checkDomainReachable;
+  const openProject = deps.openProject ?? openTrackedProject;
+  return defineTool({
+    name: "setup_project",
+    description:
+      "Register a website domain to track. Accepts a domain or URL; returns the project id. " +
+      "Idempotent — calling it again for the same domain returns the existing project. " +
+      "Warns (but still registers) when the domain does not resolve. Costs 0 credits.",
+    inputSchema: z.object({
+      domain: z
+        .string()
+        .min(1)
+        .describe("The website to track, e.g. \"example.com\" or \"https://example.com\"."),
+    }),
+    handler: async (ctx, { domain }) => {
+      const resolved = await openProject(ctx.userId, domain);
+      if (!resolved.ok) return errorResult(resolved.error);
+      // THE CHECK RUNS AFTER THE WRITE, and that ordering is the answer to "can it block
+      // registration?". The row is committed before the first DNS packet leaves; a resolver that
+      // hangs can only delay this reply, by at most DOMAIN_LOOKUP_TIMEOUT_MS, and cannot cost the
+      // caller their project. It is also asked about `resolved.project.domain` — the CANONICAL
+      // name, after the case / scheme / `www.` normalization — so the name checked is the name
+      // the crawler will later fetch, not whatever the caller happened to paste.
+      const reachability = await checkDomain(resolved.project.domain);
+      return textResult(
+        renderSetupOutcome(resolved.project) +
+          reachabilityWarning(resolved.project.domain, reachability),
+      );
+    },
+  });
+}
+
+/** The production setup_project tool (real DNS port). */
+export const setupProjectTool = makeSetupProjectTool();
