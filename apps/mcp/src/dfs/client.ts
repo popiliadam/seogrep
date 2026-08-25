@@ -322,6 +322,25 @@ export interface LiveClientOptions {
  * deadline would abort healthy work and spend budget for nothing. It is still a bound —
  * chosen to sit inside the platform request timeout so WE give up first and release the
  * slot, rather than being cut off from outside.
+ *
+ * RE-ASSESSED 2026-08-25 AND DELIBERATELY LEFT AT 30 s. This deadline is what two of the three
+ * failed production `serp_snapshot` calls hit ("The operation was aborted due to timeout"), so it
+ * was the visible half of that incident — but not the cause, and raising it would not have been
+ * the fix:
+ *
+ *   - The defect was the REQUEST BODY, not the clock. `depth: 100` was going out without
+ *     `max_crawl_pages`; the same query sent DIRECTLY to the vendor WITH `max_crawl_pages: 1`
+ *     returned the whole SERP quickly. A healthy SERP request finishes well inside 30 s, so a
+ *     larger number would only have bought a slower way to fail at the same full charge.
+ *   - SERP requests run SEQUENTIALLY, one per keyword, up to the 10-keyword cap (dfs/serp.ts). The
+ *     deadline therefore MULTIPLIES there in a way it does not in lighthouse.ts, whose 55 s is
+ *     affordable precisely because its requests are concurrent. At 30 s the SERP worst case is
+ *     already 10 x 30 s; enlarging it enlarges that product, against the same one-minute envelope
+ *     LIGHTHOUSE_REQUEST_TIMEOUT_MS measures itself against.
+ *
+ * So the number stays and the body is what changed. NOT settled by this note: the sequential
+ * 10-keyword worst case can still exceed the request envelope on a slow day, and no live
+ * measurement of a full 10-keyword snapshot exists.
  */
 export const DFS_REQUEST_TIMEOUT_MS = 30_000;
 
