@@ -2252,3 +2252,201 @@ describe("crawlSite — the two terminal states say WHICH ceiling stopped the cr
     }
   });
 });
+
+/**
+ * The apex <-> `www.` twin is ONE site (S21).
+ *
+ * Project domains lost their leading `www.` label on 2026-08-25, and the crawl queue seeds
+ * `https://<project.domain>`. For a site canonical at `www.` that combination crawled NOTHING:
+ * every sitemap loc and every extracted link was `www.` and read as off-origin, and the one
+ * remaining seed — the apex homepage — 301'd to `www.` and came back `off-origin-redirect`.
+ * Zero pages makes the queue handler throw, so the job settled `failed` and no spelling of the
+ * domain could produce a crawl any more. Six live rows still STORE `www.`, so the reverse
+ * direction has to work too.
+ *
+ * These drive the real crawler through a fake transport (mocked `fetch` + injected `lookup`):
+ * ZERO network, ZERO DNS. The whole risk of the fix is over-widening, so the refusal specs
+ * below are the primary ones: a crawler that accepts `blog.`, a sibling TLD, a
+ * prefix-lookalike or a scheme change is an OPEN crawler, not a fixed one.
+ */
+describe("crawlSite — the apex and its www. twin are one site", () => {
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  interface TwinSite {
+    /** Every absolute URL the transport was asked for, in order. */
+    readonly requested: string[];
+    readonly impl: (input: RequestInfo | URL) => Promise<Response>;
+  }
+
+  /**
+   * A site whose ONLY 200s live on `canonicalHost`; every other host 301s there, path intact —
+   * exactly what an apex->www (or www->apex) redirect does in production.
+   *
+   * `sitemapLocs` and `pageLinks` are absolute URLs written verbatim into /sitemap.xml and into
+   * every page's markup, so a spec can put an off-site host in front of the crawler and prove
+   * it was never asked for. `redirectPaths` maps a path on the canonical host to an off-site
+   * Location, which is how the `off-origin-redirect` outcome is still reached.
+   */
+  const makeTwinSite = (opts: {
+    canonicalHost: string;
+    sitemapLocs: readonly string[];
+    pageLinks?: readonly string[];
+    redirectPaths?: Readonly<Record<string, string>>;
+  }): TwinSite => {
+    const requested: string[] = [];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = new URL(String(input));
+      requested.push(url.toString());
+      const canonical = `http://${opts.canonicalHost}`;
+      if (url.protocol !== "http:" || url.host !== opts.canonicalHost) {
+        return new Response(null, {
+          status: 301,
+          headers: { location: `${canonical}${url.pathname}` },
+        });
+      }
+      const offSite = opts.redirectPaths?.[url.pathname];
+      if (offSite !== undefined) {
+        return new Response(null, { status: 301, headers: { location: offSite } });
+      }
+      if (url.pathname === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (url.pathname === "/sitemap.xml") {
+        const locs = opts.sitemapLocs.map((loc) => `<url><loc>${loc}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      const links = (opts.pageLinks ?? []).map((href) => `<a href="${href}">l</a>`).join("");
+      return new Response(
+        `<html><head><title>${url.pathname}</title>` +
+          `<meta name="description" content="d"></head>` +
+          `<body><h1>${url.pathname}</h1>word word${links}</body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return { requested, impl };
+  };
+
+  it("crawls a www-canonical site seeded from the stored APEX domain (the blocker)", async () => {
+    // The exact live shape: projects.domain is `twin.example.com`, the handler seeds the apex,
+    // and the site serves everything from `www.twin.example.com`.
+    const canonicalHost = "www.twin.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
+      // Discovered only by LINK, and written on the APEX host — so this URL also pins that an
+      // extracted twin link is enqueued rather than dropped.
+      pageLinks: ["http://twin.example.com/only-linked"],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://twin.example.com", { lookup });
+      // The whole defect in one assertion: this returned ZERO pages before the fix.
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/a`,
+        `http://${canonicalHost}/only-linked`,
+      ]);
+      expect(result.skipped.some((s) => /off-origin/i.test(s.reason))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("crawls an apex-canonical site seeded from a legacy stored `www.` domain", async () => {
+    // The six rows that still store `www.`: the stored domain is the www twin, the site is
+    // canonical at the apex, and the crawl must complete just the same.
+    const canonicalHost = "legacy.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
+      pageLinks: ["http://www.legacy.example.com/only-linked"],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://www.legacy.example.com", { lookup });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/a`,
+        `http://${canonicalHost}/only-linked`,
+      ]);
+      expect(result.skipped.some((s) => /off-origin/i.test(s.reason))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // The over-widening axis. Each of these is one label away from the crawl origin and must
+  // still be off-site; a crawler that accepts any of them crawls the internet on the tenant's
+  // 20 credits. Kept as a named table so a widened rule fails with the shape that broke.
+  const OFF_SITE: ReadonlyArray<readonly [string, string]> = [
+    ["a deeper subdomain", "http://blog.scope.example.com/x"],
+    ["a sibling TLD", "http://scope.example.org/x"],
+    ["a prefix lookalike", "http://notscope.example.com/x"],
+    ["a `www.`-prefixed lookalike", "http://www.scope.example.com.evil.test/x"],
+    ["a scheme change", "https://scope.example.com/x"],
+  ];
+
+  it.each(OFF_SITE)("never fetches %s advertised in the sitemap or linked from a page", async (
+    _label,
+    offSite,
+  ) => {
+    const canonicalHost = "scope.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, offSite],
+      pageLinks: [offSite],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(`http://${canonicalHost}`, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual([`http://${canonicalHost}/`]);
+      // Request-log proof, not merely "absent from the result": the off-site host was never
+      // contacted at all, so nothing was leaked to it either.
+      expect(site.requested.every((u) => new URL(u).host === canonicalHost)).toBe(true);
+      expect(site.requested.every((u) => new URL(u).protocol === "http:")).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it.each(OFF_SITE)("still reports `off-origin redirect` for a hop to %s", async (
+    _label,
+    offSite,
+  ) => {
+    // `off-origin-redirect` stays a REACHABLE outcome with its reason string — the twin rule
+    // narrows when it fires, it does not remove it.
+    const canonicalHost = "scope.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/leave`],
+      redirectPaths: { "/leave": offSite },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(`http://${canonicalHost}`, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual([`http://${canonicalHost}/`]);
+      expect(result.skipped).toContainEqual({
+        url: `http://${canonicalHost}/leave`,
+        reason: `off-origin redirect to ${offSite}`,
+      });
+      // The redirect was refused BEFORE the hop: the off-site host was never contacted.
+      expect(site.requested.every((u) => new URL(u).host === canonicalHost)).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // NO SPEC for the IP-literal exclusion in `sameSite`, deliberately. A draft of this block
+  // had one and it passed with the exclusion REMOVED: WHATWG URL refuses
+  // `http://www.127.0.0.1:8123/x` before the crawler sees it, so the spec was pinning Node's
+  // URL parser and reading as proof of a crawler rule. A green test that cannot go red for the
+  // reason it names is worse than no test.
+});
