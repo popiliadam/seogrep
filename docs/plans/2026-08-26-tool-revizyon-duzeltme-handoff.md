@@ -581,3 +581,102 @@ SON    temizlik (§5) + defterin kapsama tablosuna "düzeltildi" sütunu + rapor
 (ledger/webhook/auth/RLS diff'inde **Fable**), üç kapı ve **hangisinin neyi ölçmediği** yazılı.
 
 **Toplam:** 91 bulgu · 73 `[kod]` satırı · 15 imza maddesi · 18 dilim (S10 beşe bölününce **22**).
+
+---
+
+## 9. PARALEL ÇALIŞMA HARİTASI — **dosya sınırları ölçülerek çizildi**
+
+> **İnsan onayı (2026-08-25):** *"birbirine değmeyen yerlerde paralel agent'lar aynı anda çalışabilir."*
+> **Tek yazar kuralı (imzalı ders 8):** aynı dosyaya iki paralel task yazmaz. Aşağıdaki dalgalar
+> **dosya düzeyinde ayrık** olacak şekilde kuruldu; her dalga içindeki agent'lar **ayrı worktree**'de
+> koşar (`superpowers:using-git-worktrees`), dalga bitince birleştirilir.
+>
+> **Paket-scoped kapı zorunlu:** paralel anlarda repo-geneli `verify.sh` **koşulmaz** —
+> `turbo --filter` ile dokunulan paket koşulur. Repo-geneli kapı yalnız **dalga birleşiminde**.
+> *(Faz 4'te üç hayalet-hata bu kuralın yokluğundan çıkmıştı.)*
+
+### Ölçülen çakışmalar — bu yüzden aynı dalgaya konmadılar
+
+| çakışan | paylaşılan dosya |
+|---|---|
+| S1 ↔ S12 | `apps/mcp/src/dfs/discover-keywords.ts` |
+| S1 ↔ S14 | `apps/mcp/src/tools/analyze-backlinks.ts` |
+| S2 ↔ S13 | `apps/mcp/src/tools/serp-snapshot.ts` |
+| S4 ↔ S17 | `apps/mcp/src/tools/setup-project.ts` |
+| S17 ↔ S18 | `apps/mcp/src/tools/whats-next.ts` |
+| S5 ↔ S10 | `apps/mcp/src/audit/format.ts` + audit testleri |
+| S6 ↔ S10 | `apps/mcp/src/gsc-data/format.ts` |
+| S9 ↔ **hepsi** | `apps/mcp/src/tools/registry.ts` · `tools/index.ts` (tool kaydı) |
+
+### DALGA A — 3 agent paralel · **P0, hepsi ayrık**
+
+| agent | dilim | `files_in_scope` (tek yazar) |
+|---|---|---|
+| A1 | **S1** uydurulmuş sıfır | `dfs/discover-keywords.ts` · `dfs/ranked-keywords.ts` · `dfs/backlinks.ts` · `dfs/competitors.ts` · `tools/discover-keywords.ts` · `tools/ranked-keywords.ts` · `tools/analyze-backlinks.ts` · `tools/compare-competitors.ts` + **yeni ortak `unreported` tipi** |
+| A2 | **S2** serp timeout | `dfs/serp.ts` · `dfs/client.ts` · `tools/serp-snapshot.ts` · `tools/serp-snapshot-format.ts` · `tools/serp-snapshot-store.ts` |
+| A3 | **S3** AI ailesi | `dfs/llm-mentions.ts` · `tools/ai-visibility.ts` · `tools/ai-visibility-compare.ts` · `tools/ai-visibility-shared.ts` · `dfs/budget.ts` |
+
+**Not:** A1'in ortak `unreported` tipini nereye koyduğu **A dalgasının sonunda** duyurulur; B ve C
+dalgaları o tipi kullanır. A1 tipi `packages/core`'a koyarsa `zod` dışı bağımlılık **eklemeyecek**.
+
+### DALGA B — 4 agent paralel
+
+| agent | dilim | `files_in_scope` |
+|---|---|---|
+| B1 | **S4** `www.` normalizasyonu | `tools/setup-project.ts` · `tools/project-target.ts` · `tools/track-gsc-property.ts` · `tools/list-gsc-properties.ts` |
+| B2 | **S5** crawl katmanı | `crawler/crawl.ts` · `crawler/robots.ts` · `tools/crawl-site.ts` + **`audit/**` testlerinin `/cdn-cgi` pinleri** |
+| B3 | **S6** marka elemesi | `gsc-data/cannibalization.ts` · `tools/audit-content.ts` · `tools/audit-content-format.ts` · `report/model.ts` + **yeni ortak marka modülü** |
+| B4 | **S11** iş kaydı | `queue/**` · `tools/pull-gsc-data.ts` · `tools/get-job-status.ts` |
+
+**⚠️ B2 `report/**` dosyalarına DOKUNMAZ** (B3'ün alanı). B2'nin `/cdn-cgi` düzeltmesi rapora
+kendiliğinden yansır; rapor testini B3 günceller — **dalga birleşiminde birlikte doğrulanır**.
+
+### DALGA C — 4 agent paralel *(A ve B bitmiş olmalı)*
+
+| agent | dilim | `files_in_scope` |
+|---|---|---|
+| C1 | **S8** ücret/şart cümleleri | `tools/get-credit-balance.ts` · `tools/audit-schema.ts` · `tools/untrack-project.ts` · `credits/**` |
+| C2 | **S13** yer adı doğrulaması | `tools/track-keywords.ts` · `tools/serp-devices.ts` + **yeni yer-listesi doğrulayıcı** *(S2 bittiği için `serp-snapshot.ts` serbest — yine de yalnız çağrı noktası düzenlenir)* |
+| C3 | **S16** disavow | `tools/disavow-candidates.ts` · `dfs/disavow-candidates.ts` |
+| C4 | **S17+S18** birleşik *(ikisi de `whats-next.ts`e dokunuyor)* | `tools/whats-next.ts` · `tools/setup-project.ts` *(B1 bitmiş olmalı)* · `tools/connect-gsc.ts` |
+
+### DALGA D — seri ağırlıklı
+
+| sıra | dilim | neden seri |
+|---|---|---|
+| D1 | **S12** `research_keywords` → Labs | `dfs/discover-keywords.ts` — A1 bitmeden başlamaz |
+| D2 | **S14** kapsam/limit/fiyat iddiaları | `tools/analyze-backlinks.ts` — A1 ile çakışıyor · `tools/backlink-details.ts` · `tools/link-gap.ts` · `tools/my-pages.ts` · `tools/my-pages-crawl.ts` |
+| D3 | **S10a–e** sunum standardı | `audit/format.ts` · `gsc-data/format.ts` · `tools/*-format.ts` · `audit/rules/onpage.ts` — B2/B3 ile çakışıyor. **Beşe bölünmüş hâliyle kendi içinde paralel koşabilir:** S10a biçimleyici · S10b gruplama · S10c dil/katlama · S10d liste boyutu · S10e onpage biçim kuralı — **ayrık dosyalara düşerse** |
+| D4 | **S9** okuma yüzeyi (yeni uçlar) | `tools/registry.ts` + `tools/index.ts` — **tool kaydına dokunuyor, EN SONA**. §4/madde 15 imzası şart |
+
+### Paralel koşan agent'ın iş emri şablonu
+
+Her agent'a **yalnız kendi iş emri** verilir (CLAUDE.md DISPATCH kuralı — işçi bütün handoff'u görmez):
+
+```json
+{
+  "task": "<dilim başlığı>",
+  "evidence": "<handoff §3'teki kanıt bloğu, birebir>",
+  "done_when": ["<makine-kontrollü predicate listesi>"],
+  "files_in_scope": ["<yalnız bu dilimin dosyaları>"],
+  "gate": "TURBO_FORCE=1 pnpm turbo --filter <paket> test build typecheck",
+  "mutation_proof": "REQUIRED — düzeltmeyi kasten boz, testin kırmızıya döndüğünü gör, geri al",
+  "live_calls": "EN FAZLA 1; öncesi/sonrası `select dfs_spend_today_usd()` raporda",
+  "forbidden": ["fiyat/kredi rakamı değiştirmek", "testi geçirmek için testi değiştirmek",
+                "kapsam dışı dosyaya yazmak", "defteri düzenlemek",
+                "§7'deki korunacak tasarım kararlarını bozmak"]
+}
+```
+
+**Model seçimi (CLAUDE.md DISPATCH):** işçi varsayılan **Opus 4.8**; yalnız mekanik/dar dilimler
+(S8 metin düzeltmeleri, S10e) **Sonnet 5**. Hakem **taze Opus 4.8**; ledger/webhook/auth/RLS
+diff'i olan dilimlerde (S3'ün `budget.ts`'i, S4'ün `packages/db` dokunuşu) **taze Fable 5**.
+
+### Dalga birleşimi — her dalganın sonunda
+
+1. Worktree'ler `main`'e sırayla merge edilir (çakışma yok, ama sıra kaydı tutulur).
+2. **Repo-geneli üç kapı:** `TURBO_FORCE=1 bash guardrails/verify.sh` · `bash guardrails/verify-db.sh`
+   *(00:00–00:30 UTC'de koşma)* · `make goals`.
+3. **Hangi kapının neyi ÖLÇMEDİĞİ** yazılır (`verify.sh` secret taramaz, DB şeritlerini koşmaz;
+   MCP test dosyaları typecheck edilmez).
+4. Dalga raporu: kaç dilim PASS, kaç mutasyon kanıtı, harcanan vendor doları.
