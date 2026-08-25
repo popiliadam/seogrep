@@ -1089,11 +1089,13 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its window to the conversation and " +
-          "nothing else keeps them — there is no saved keyword list, no dashboard page and no " +
-          "\"new since last time\", so run it again for a fresh read. The lookup-history table " +
-          "that backs the other domain tools is bound to those tools by design and does not " +
-          "accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "The keywords are **the vendor's, not yours**: none of your seeds is guaranteed to " +
           "appear in the answer, and a set of many thousands is normal — read the window caption " +
           "for how far your slice sits from DataForSEO's whole-set count, and page through it with " +
@@ -1234,10 +1236,13 @@ export const DOC_PROSE = {
           "reports how a page is distributed across result positions, not which searches put it " +
           "there. Use [`ranked_keywords`](/docs/tools-reference/ranked-keywords) with a page URL " +
           "for that.\n\n" +
-          "**Results are not stored.** Each call returns its window to the conversation and nothing " +
-          "else keeps them — there is no saved page list, no dashboard page and no \"new since last " +
-          "time\", so run it again for a fresh read. The lookup-history table that backs the other " +
-          "domain tools is bound to those tools by design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "**The crawl side is one crawl.** The comparison uses your project's most recent " +
           "completed `crawl_site` run and only the pages that run actually fetched — URLs it " +
           "skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's " +
@@ -1757,11 +1762,13 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its two series to the conversation and " +
-          "nothing else keeps them, so there is no backlink-history page in the dashboard and no " +
-          "\"compared with last month\" — run it again for a fresh read. The lookup-history table " +
-          "that backs the other domain tools is bound to those tools by design and does not " +
-          "accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"compared with last month\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "Two fields DataForSEO returns are deliberately **not** printed: the new and lost " +
           "counts for *referring main domains*. They are a second, different definition of " +
           "\"domain\", and showing them beside the referring-domain counts would invite you to " +
@@ -1871,11 +1878,13 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its two lists to the conversation and " +
-          "nothing else keeps them, so there is no backlink-explorer page in the dashboard and no " +
-          "\"new since last time\" — run it again for a fresh read. The lookup-history table that " +
-          "backs the other domain tools is bound to those tools by design and does not accept " +
-          "this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "Paging stops at an `offset` of **20,000**, DataForSEO's own documented ceiling for " +
           "this endpoint. Going deeper needs a continuation token this tool does not use, so on a " +
           "very large profile you are reading the strongest links rather than every link.\n\n" +
@@ -1965,9 +1974,23 @@ export const DOC_PROSE = {
       "then the refusal, then a plain statement of **how the list was built**: the threshold you " +
       "chose, whether nofollowed links were kept, and which vendor field ordered which list. " +
       "After that the **filtered backlinks** you were billed for, each with its own vendor " +
-      "score; the **candidate referring domains** with their per-domain score and how many links " +
-      "in **this window** each accounted for; the **referring networks**; the **disavow file " +
-      "text**; and the note naming all three vendor fields.\n\n" +
+      "score; the **candidate referring domains**; the **referring networks**; the **disavow " +
+      "file text**; and the note naming all three vendor fields.\n\n" +
+      "Every candidate carries **both** vendor scores, each labelled with the level it " +
+      "describes: DataForSEO's per-**domain** score, and the worst per-**link** score in this " +
+      "window. They are not blended into one number, because they are two measurements from two " +
+      "endpoints and they disagree routinely — real rows scored 0 and 1 per domain beside " +
+      "domains whose worst link scored 60, and the printed number was the wrong one for the " +
+      "decision on that line. The row also names how many links in this window it accounted " +
+      "for, how many of those DataForSEO marked **dofollow**, and one example `from → to` pair.\n\n" +
+      "A candidate whose links are **none of them marked dofollow** is **marked, never " +
+      "removed**: the line says so, because Google does not count a nofollowed link and " +
+      "disavowing that domain may change nothing. It stays in the list because which links are " +
+      "worth naming is your judgement, and dropping rows would hide candidates you paid to see. " +
+      "The wording is careful: \"none is marked dofollow\" is what was measured — a link the " +
+      "vendor never marked either way is not a link the vendor called nofollow. Both score " +
+      "levels and this marking are repeated as comment lines above each entry **inside the file " +
+      "itself**, so they survive the file leaving this conversation.\n\n" +
       "Both vendor lists are captioned as **windows** — the rows you got, the offset and limit " +
       "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by " +
       "name, followed by the sentence that stops the arithmetic: _this window is a slice of that " +
@@ -1990,8 +2013,8 @@ export const DOC_PROSE = {
           "a half-built candidate list is never billed. When the filtered window names no domain " +
           "at all, the second request is not sent: there would be nothing to ask it about.\n\n" +
           "`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider — three requests per call, **every one of them billed** — so it " +
-          "is not available on trial credits. Buy any credit pack and it unlocks straight away; " +
+          "third-party provider, so it is not available on trial credits, and the refusal says " +
+          "outright that you were not charged. Buy any credit pack and it unlocks straight away; " +
           "your existing credits are untouched and keep working for crawls, audits, reports and " +
           "Search Console tools.\n\n" +
           "The `limit` and `network_limit` ceilings, and the cap on how many candidate domains " +
@@ -2003,11 +2026,15 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its lists and its file text to the " +
-          "conversation and nothing else keeps them — there is no saved disavow file, no " +
-          "dashboard page and no \"new since last time\", so run it again for a fresh read. The " +
-          "lookup-history table that backs the other domain tools is bound to those tools by " +
-          "design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked " +
+          "up, when, under which criteria, and a capped summary of the candidates. The " +
+          "**Lookups** page of your dashboard lists them. The **file text itself is " +
+          "deliberately not kept** — everything it is derived from is, so it can be rebuilt, " +
+          "but a saved disavow file is a document that would go stale in place while still " +
+          "looking authoritative.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, " +
+          "nothing is refreshed for you, and there is no \"new since last time\" — so to see " +
+          "the current picture, run it again.\n\n" +
           "The candidate domains come from **the filtered window you paid for**, not from the " +
           "whole link profile: raise `limit` to examine more rows, and read the window caption " +
           "for how far the slice sits from DataForSEO's whole-set count. Only **live** links are " +
@@ -2094,22 +2121,34 @@ export const DOC_PROSE = {
         body:
           "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
           "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
+          "A failed lookup is not a lookup that found nothing, and the refusal keeps the two " +
+          "apart: it quotes DataForSEO's own status code and message rather than reporting an " +
+          "empty result. It also says the half that \"you were not charged\" leaves out — the " +
+          "attempt did go out to DataForSEO and used part of SeoGrep's own daily third-party " +
+          "data allowance. That is our cost, not yours, and saying only the first half read as " +
+          "the whole truth.\n\n" +
           "`ai_visibility` needs a **paid credit balance**. It reads live data from a paid " +
           "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
           "it unlocks straight away; your existing credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
-          "The `internal_list_limit` ceiling is **part of the price**, not a display preference: " +
-          "DataForSEO bills **per returned row** on this family, and that cap is what holds the " +
-          "flat price inside the margin it was signed against. Asking for fewer rows costs the " +
-          "same; asking for more than the ceiling is refused before anything is charged.",
+          "**`internal_list_limit` is not a price control.** It is the vendor's own field, and " +
+          "the vendor's own words for it are \"maximum number of elements within internal " +
+          "arrays\" — it caps two nested arrays inside the aggregate, not the rows returned and " +
+          "not the rows billed. An earlier version of this page called it the price control; " +
+          "that claim is withdrawn rather than restated. What was always true is kept: asking " +
+          "for fewer entries costs the same, and asking for more than the vendor's published " +
+          "ceiling is refused before anything is charged.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its rows to the conversation and nothing " +
-          "else keeps them — there is no saved history, no dashboard page and no \"changed since " +
-          "last time\", so run it again for a fresh read. The lookup-history table that backs the " +
-          "other domain tools is bound to those tools by design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"changed since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "This is a measurement, **not a prediction**. It does not tell you what an assistant " +
           "will say next, why it said what it said, or what to change to be mentioned more — and " +
           "a measurement on one platform does not carry over to another.\n\n" +
@@ -2192,24 +2231,36 @@ export const DOC_PROSE = {
           "reservation is opened before the DataForSEO request and is sized from the targets you " +
           "actually passed; if the request fails, the whole reservation is released and **you are " +
           "not charged**.\n\n" +
-          "Because a wide comparison can be expensive, one above SeoGrep's safety threshold " +
-          "**asks you first**: the call returns an estimate and charges nothing until you run it " +
-          "again with `\"confirm\": true`.\n\n" +
+          "A comparison above SeoGrep's safety threshold **asks you first**: the call returns an " +
+          "estimate and charges nothing until you run it again with `\"confirm\": true`. This is " +
+          "not a rare corner — it is the **usual** case. At the price above, only the two-target " +
+          "minimum runs straight through; **three targets and up cross the threshold and prompt**. " +
+          "Plan for the prompt rather than being surprised by it.\n\n" +
+          "A failed lookup is not a lookup that found nothing. The refusal quotes DataForSEO's " +
+          "own status code and message, and says the half that \"you were not charged\" leaves " +
+          "out: the attempt did go out to DataForSEO and used part of SeoGrep's own daily " +
+          "third-party data allowance. That is our cost, not yours.\n\n" +
           "`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a " +
           "paid third-party provider, so it is not available on trial credits. Buy any credit " +
           "pack and it unlocks straight away; your existing credits are untouched and keep " +
           "working for crawls, audits, reports and Search Console tools.\n\n" +
-          "The `internal_list_limit` ceiling is **part of the price** here too: DataForSEO bills " +
-          "per returned row on this family, and every compared target can contribute its own " +
-          "capped list.",
+          "**`internal_list_limit` is not a price control** here either. The vendor's own words " +
+          "for it are \"maximum number of elements within internal arrays\": it caps two nested " +
+          "arrays inside each aggregate, not the rows returned and not the rows billed. An " +
+          "earlier version of this page called it part of the price; that claim is withdrawn. " +
+          "Asking for fewer entries costs the same, and asking for more than the vendor's " +
+          "published ceiling is refused before anything is charged.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its comparison to the conversation and " +
-          "nothing else keeps them — no saved comparison, no dashboard page, no \"changed since " +
-          "last time\". The lookup-history table that backs the other domain tools is bound to " +
-          "those tools by design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"changed since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "This is a measurement, **not a prediction** and not a verdict: it does not say which " +
           "target is doing better, why an assistant mentioned one and not another, or what to " +
           "change. A measurement on one platform does not carry over to another.\n\n" +

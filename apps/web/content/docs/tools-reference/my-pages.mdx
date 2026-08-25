@@ -93,7 +93,9 @@ The `limit` ceiling is **part of the price** rather than a display preference: D
 
 **No keywords.** Worth repeating, because the name invites the assumption: this endpoint reports how a page is distributed across result positions, not which searches put it there. Use [`ranked_keywords`](/docs/tools-reference/ranked-keywords) with a page URL for that.
 
-**Results are not stored.** Each call returns its window to the conversation and nothing else keeps them — there is no saved page list, no dashboard page and no "new since last time", so run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
 
 **The crawl side is one crawl.** The comparison uses your project's most recent completed `crawl_site` run and only the pages that run actually fetched — URLs it skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's half and a sentence saying so; a bare `target` gets no comparison at all, because there is no project to compare it against.
 
