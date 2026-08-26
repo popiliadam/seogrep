@@ -18,11 +18,26 @@
 //   node apps/web/scripts/gen-tool-docs.mjs            # (re)write all pages + meta + parent nav
 //   node apps/web/scripts/gen-tool-docs.mjs --check     # verify in-sync (exit 1 on any drift)
 //
+// BOTH modes first verify that `apps/mcp/dist` is still a build of `apps/mcp/src` and refuse to run
+// otherwise (dist-freshness.mjs). Reading a stale dist made `--check` compare today's MDX with
+// yesterday's registry and print "N tool pages in sync" — a green measuring nothing (MEASURED
+// 2026-08-26 with a tool description edited in src and deliberately not rebuilt: exit 0). The repo
+// gate was safe only because verify.sh happens to run this after `build`; the meaningless green went
+// to every path with NO build step in front of it — this package's own `docs:tools:check` script,
+// a developer running the CLI by hand, any CI job that skips the build, and worst of all
+// `docs:tools`, whose write mode would have put yesterday's pages back on disk. (`make goals` was
+// never exposed: the docs-schema-sync predicate builds @pseo/mcp first — MEASURED on the merge-base
+// and on HEAD, after this comment first named it as a victim.)
+//
 // The pure functions below are exported and unit-tested (apps/web/lib/tool-docs-gen.test.ts); the
 // registry is imported lazily inside main(), so importing this module for tests is side-effect free.
 
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// The gate's own input has to be verified before it is read: this check derives everything from
+// apps/mcp/dist, so a stale dist turns every assertion below into a comparison against old code.
+import { assertDistFresh } from "./dist-freshness.mjs";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested)
@@ -3350,7 +3365,24 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) 
   return errors;
 }
 
+/**
+ * Refuse to read a `dist` that no longer matches `apps/mcp/src`. Without this, BOTH modes lie in
+ * the same direction: `--check` compares today's MDX with yesterday's registry and prints a green
+ * that measured nothing (MEASURED: a description edited in src and not rebuilt still gave
+ * "38 tool pages in sync", exit 0), and a generating run would WRITE those yesterday pages back.
+ * This is a detector, not a compiler — see dist-freshness.mjs for the criterion and its blind spots.
+ */
+function assertRegistryFresh() {
+  return assertDistFresh({
+    srcDir: fileURLToPath(new URL("../../mcp/src/", import.meta.url)),
+    distDir: fileURLToPath(new URL("../../mcp/dist/", import.meta.url)),
+    srcLabel: "apps/mcp/src",
+    distLabel: "apps/mcp/dist",
+  });
+}
+
 async function main() {
+  const freshness = assertRegistryFresh();
   const registry = await loadRegistry();
   if (process.argv.includes("--check")) {
     const errors = collectCheckErrors(registry);
@@ -3361,7 +3393,9 @@ async function main() {
     }
     console.error(
       `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, no confirm fields, ` +
-        `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars.`,
+        `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars; ` +
+        `apps/mcp/dist verified fresh (${freshness.measured}` +
+        `${freshness.rescued ? ", timestamps forgiven by an identical source fingerprint" : ""}).`,
     );
     return;
   }
