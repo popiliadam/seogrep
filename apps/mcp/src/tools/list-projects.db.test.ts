@@ -7,10 +7,19 @@ import { listProjectsTool } from "./list-projects.ts";
 
 /**
  * DB-integration proofs for list_projects against a LOCAL Supabase stack (test:db lane).
- * Proves: an empty tenant gets actionable guidance (not a bare empty list), a populated
- * tenant gets its domains oldest-first, the read is scoped to the calling tenant, and an
- * archived project is HIDDEN rather than refused — a list enumerates, so there is no id to
- * refuse; a project the tenant stopped tracking simply is not part of the answer.
+ * Proves: an empty tenant gets actionable guidance (not a bare empty list), a populated tenant
+ * gets its domains oldest-first, the read is scoped to the calling tenant, and an archived
+ * project is listed in its OWN section rather than mixed into the tracked one.
+ *
+ * TWO SPECS BELOW CHANGED THEIR CONTRACT ON 2026-08-25, AND THE CHANGE IS SIGNED. They pinned
+ * "an archived project is HIDDEN" and "a tenant whose only project is archived is guided as if
+ * they had none" — the behaviour the operator's item-15 signature retired, because it left the
+ * archive unreachable from MCP while `untrack_project` promised the project could be brought
+ * back. This is a contract that MOVED under a signature, not an assertion relaxed to fit code:
+ * both specs assert MORE than they did before (the archived row must now be present, named and
+ * restorable, and the tracked count must still exclude it), and the split the old reasoning
+ * protected — archived rows never inside the tracked list — is pinned harder than it was, as a
+ * POSITION rather than as an absence.
  */
 
 function requireEnv(name: string): string {
@@ -96,27 +105,45 @@ describe("list_projects against the local stack", () => {
     expect(aText).not.toContain("only-b.com");
   });
 
-  it("leaves an archived project out of the list and keeps the active one", async () => {
+  it("keeps an archived project out of the TRACKED list and shows it in the archive", async () => {
     const ctx = await makeCtx();
     await setupProjectTool.run(ctx, { domain: "kept-shop.com" });
     await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
     const archivedId = await archiveProject(ctx.userId, "retired-shop.com");
 
     const text = (await listProjectsTool.run(ctx, {})).content[0]?.text ?? "";
+    // The tracked count counts what is TRACKED — an archived row does not inflate it.
     expect(text).toMatch(/tracking 1 project/i);
     expect(text).toContain("kept-shop.com");
-    expect(text).not.toContain("retired-shop.com");
-    expect(text).not.toContain(archivedId); // not by domain and not by id
+
+    // …and the archived one is reachable: named, with its id, below the tracked section.
+    expect(text).toContain("retired-shop.com");
+    expect(text).toContain(archivedId);
+    expect(text).toMatch(/archived — 1 project/i);
+    // The SPLIT the old contract protected, pinned as a POSITION rather than as an absence: the
+    // archived domain appears only AFTER the archive heading, and the tracked one only before it.
+    const heading = text.search(/archived — /i);
+    expect(heading).toBeGreaterThan(-1);
+    expect(text.indexOf("retired-shop.com")).toBeGreaterThan(heading);
+    expect(text.indexOf("kept-shop.com")).toBeLessThan(heading);
   });
 
-  it("guides a tenant whose only project is archived as if they had none", async () => {
+  it("shows a tenant whose only project is archived what is in their archive", async () => {
     const ctx = await makeCtx();
     await setupProjectTool.run(ctx, { domain: "retired-shop.com" });
-    await archiveProject(ctx.userId, "retired-shop.com");
+    const archivedId = await archiveProject(ctx.userId, "retired-shop.com");
 
     const result = await listProjectsTool.run(ctx, {});
     expect(result.isError).toBeUndefined();
-    expect(result.content[0]?.text).toMatch(/No projects yet/i);
-    expect(result.content[0]?.text).toMatch(/setup_project/);
+    const text = result.content[0]?.text ?? "";
+    // It must NOT be the empty-account sentence: this tenant HAS a project, and telling them
+    // otherwise is what sent them to create a duplicate instead of restoring their own.
+    expect(text).not.toMatch(/No projects yet/i);
+    expect(text).toMatch(/not tracking any projects/i);
+    // Visible and restorable WITHOUT recalling the exact domain: the id, and both ways back.
+    expect(text).toContain("retired-shop.com");
+    expect(text).toContain(archivedId);
+    expect(text).toMatch(/setup_project/);
+    expect(text).toMatch(/track_gsc_property/);
   });
 });

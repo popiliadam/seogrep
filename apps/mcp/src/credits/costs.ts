@@ -15,8 +15,22 @@ export const TOOL_COSTS = {
   connect_gsc: 0,
   list_projects: 0,
   get_credit_balance: 0,
+  // list_credit_activity (operator signature 2026-08-25, item 15). 0 credits, and for the same
+  // reason get_credit_balance directly above it is 0: reading your own ledger is not a purchase.
+  // It calls no paid API and never writes — credit_ledger is append-only (NEVER #2) and this tool
+  // only selects from it. Pricing a customer's view of what they were charged would be the one
+  // charge they could never audit. No existing number moved.
+  list_credit_activity: 0,
   crawl_site: 20,
   get_job_status: 0,
+  // list_jobs (operator signature 2026-08-25, item 15). 0 credits: it reads the tenant's OWN jobs
+  // rows and calls no paid API, so there is no vendor cost and nothing to price. It is the
+  // read-back half of the two tools that DO cost money — crawl_site (20) and pull_gsc_data (5) —
+  // each of which hands back a job_id and nothing else; charging a customer to find the id of
+  // something they already paid for is not a price, it is a toll on their own data. It joins the
+  // three 0-credit Search Console tools and get_job_status on exactly that ground. No existing
+  // number moved.
+  list_jobs: 0,
   pull_gsc_data: 5,
   research_keywords: 25,
   // discover_keywords (plan 2026-08-17 §B, MADDE 1 row #1): the DataForSEO Labs keyword-DISCOVERY

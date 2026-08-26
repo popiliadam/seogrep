@@ -28,8 +28,10 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
       connect_gsc: 0,
       list_projects: 0,
       get_credit_balance: 0,
+      list_credit_activity: 0,
       crawl_site: 20,
       get_job_status: 0,
+      list_jobs: 0,
       pull_gsc_data: 5,
       research_keywords: 25,
       discover_keywords: 40,
@@ -135,8 +137,36 @@ describe("TOOL_COSTS pin (NEVER #6 human-approval gate)", () => {
   // FIRST row whose price has a fixed part, so the 8 below is a UNIT price and no call of this tool
   // ever costs 8 — CREDIT_UNITS carries the 5 and the 1-10 keyword range, and one call costs 13 to
   // 85. Reading this row as a flat fee would give away the signed base on every call.
-  it("has exactly 36 tools (no silent additions or drops)", () => {
-    expect(Object.keys(TOOL_COSTS)).toHaveLength(36);
+  //
+  // 36 -> 37 on 2026-08-25: list_jobs, and 37 -> 38 the same day: list_credit_activity. Both are
+  // item 15 of the operator's signature package that day — two of the three free READ-BACK
+  // endpoints (the third grew no surface at all; it is a second section inside list_projects).
+  // Same shape as the twelve growths above: the table GREW by two ZEROS and no existing number
+  // moved. Both are 0 for the reason every other zero here is 0 — no paid API, no vendor cost —
+  // and the signature makes the point sharper than that: they read back rows the customer ALREADY
+  // paid for (a 20-credit crawl's job_id, their own ledger), so the operator signed them at 0 and
+  // called that non-negotiable.
+  it("has exactly 38 tools (no silent additions or drops)", () => {
+    expect(Object.keys(TOOL_COSTS)).toHaveLength(38);
+  });
+
+  /**
+   * THE SIGNED ZERO, pinned as a rule the two new rows cannot leave quietly.
+   *
+   * The byte-pin above already holds both at 0, but it holds every number at once: a reader
+   * looking for "is the read-back surface still free?" has to diff a 38-row literal to find out.
+   * This spec says it in one line, and it is what turns a non-zero edit to either row into a
+   * failure that NAMES the rule the operator signed rather than one that says a big object changed.
+   *
+   * It is deliberately NOT `expect(TOOL_COSTS.list_jobs).toBe(TOOL_COSTS.get_job_status)` — a
+   * comparison to a neighbour stays green if BOTH move.
+   */
+  it("keeps the three read-back surfaces free, as signed (0 credits, not negotiable)", () => {
+    expect(TOOL_COSTS.list_jobs).toBe(0);
+    expect(TOOL_COSTS.list_credit_activity).toBe(0);
+    // The third read-back grew no surface of its own: it is a section inside list_projects, which
+    // was free before this slice and is pinned free by it.
+    expect(TOOL_COSTS.list_projects).toBe(0);
   });
 
   it("exposes only non-negative integer costs", () => {
