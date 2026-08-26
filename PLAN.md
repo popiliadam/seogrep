@@ -5,6 +5,137 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🚀 2026-08-26 — **TUR CANLIDA**: 40 dilim `main`'e bindi ve deploy edildi
+
+**PR [#178](https://github.com/popiliadam/seogrep/pull/178) merge edildi** (merge-commit, squash DEĞİL — gitleaks parmak izleri sağlam).
+`main` = `ea8cfa3`, `main @8668ff2` üzerine **212 commit**. `deploy-mcp` ✅ · `mcp.seogrep.com/status`
+`ok:true` `errorsSinceBoot:0` `schema:ready` · `seogrep.com` HTTP 200. CI `main`'de **6/6**.
+
+Üç kapı (UTC 10:00–10:02): `verify.sh` mcp **137/3494** (tur başı 129/3184) · web **119/1952** ·
+**`typecheck-tests` 188/188 — bu kapı ÖNCEDEN YOKTU** · `verify-db.sh` 21/165 · 51/482 · 7/48 ·
+`make goals` **16/16 (5 SKIP)** · `gitleaks` 1.382 commit, sızıntı yok.
+**Kredi fiyatı değişikliği: SIFIR.** Vendor: **$0,101 / $3,00**.
+
+**B bölümü 2/3 kapandı:**
+- ✅ **S3 + S20.1** — AI ailesi çalışıyor. `dfs_spend`: `estimated $0,300` vs **`actual $0,101`**,
+  `status: settled`. Turun "maliyet" sandığı rakam **kapatılmamış rezervasyondu**; gerçek maliyet üçte biri.
+  Marj canlı fiyatlarla **9,3×–20×** → imza **S20.2'nin koşulu gerçekleşmedi**, 90 kredi yerinde kalır.
+- ✅ **S21** — apex→www crawl: `noraninsaat.com` **26 sayfa** (turda 0), ledger tam 20 kredi, **vendor $0**.
+- ⛔ **S2 BU İSTEMCİDEN YAPILAMADI** — `seogrep` MCP bağlantısı şemaları `properties` olmadan verdi,
+  dizi parametresi dizgiye dönüyor. **Ürün sağlam** (`registry.ts:385-390` `inputSchema` servis ediyor).
+  Şema gören bir istemciden tek kelimelik bir çağrı gerekiyor.
+
+**F temizliği turun KENDİ kuralıyla bloke:** 3 `not_measured` satır S2 kanıtı, silinmedi. Hiçbir silme yapılmadı.
+
+Kapanış kaydı: `docs/plans/2026-08-26-TUR-KAPANISI-canli.md` — açık maddeler §6, imza adayı ders §7.
+
+---
+
+### 📋 2026-08-26 (SON) — **A BÖLÜMÜ KAPANDI**: imza paketinin beş yapılmayan maddesi canlı kodda
+
+**5/5 dilim PASS.** İmza md. **3 · 4 · 9 · 10 · 12** artık kodda (defterin "kodda sıfır iz" ölçümü kapandı).
+Dal `integration/duzeltme-dalga-ab` — `main @8668ff2` üzerine **159 commit** (136 → +23), **PUSH EDİLMEDİ**.
+
+Üç kapı yeşil: `verify.sh` (mcp **130/3312** · web 118/1724 · core 17/316 · **38 doküman senkron**) ·
+`verify-db.sh` (db 21/165 · mcp 51/**482** · web 7/48, UTC 06:21) · `make goals` **16/16 (5 SKIP, hepsi canlı uç)**.
+**Kredi fiyatı değişikliği: SIFIR. Vendor harcaması: $0,00** (hiç canlı DFS çağrısı yapılmadı).
+
+**5 hakem turu (2'si Fable) · 4 FAIL · yanlış alarm 0 · 27 mutasyon kanıtı.** Dört FAIL'in dördü de
+aynı şekil: *işçi N ekseni varyantladı, N+1'inci eksen hiç ölçülmemişti.*
+
+En pahalı iki bulgu — ikisi de **para**:
+- **md.10 regresyonu:** çağıranın `min_volume`'u bizim varsayılan tavanımızla çarpışınca vendor'a
+  boş küme gidiyordu; **40 kredi alınır, 0 satır teslim edilir.** Tavan artık geri çekiliyor;
+  çağıranın kendi çelişkisi rezervasyon öncesi **ücretsiz** reddediliyor.
+- **`joinWithAnd`:** üç sınırda çıplak dizi üretiyordu = geçersiz vendor grameri = **ücretli
+  başarısız çağrı**. Latent'ti, tavan onu erişilebilir yapıyordu.
+
+**md.12 fiyat kararı (imzanın kendi sınırından türedi):** varsayılan-açık tohumlama `crawl_site`'ı
+20→60 yapardı; imza *"mevcut hiçbir tool'un fiyatını değiştirmek"* der → **OPT-IN, varsayılan KAPALI**,
+ek 40 mevcut `my_pages` fiyatıyla ayrı ledger kalemi, **yeni `TOOL_COSTS` satırı YOK**.
+
+> **⚠️ YENİ ÖLÇÜM HİJYENİ KURALI (imzalı ders 8'e yeni mekanizma):** `turbo --filter` worktree
+> izolasyonu VERMEZ — bir worktree'den koşulan kapı **başka bir dalın ağacını** ölçebiliyor
+> (11 koşunun 3'ü, log başlığı kanıtladı). `cd <wt>/apps/mcp && pnpm exec vitest run` kullan ve
+> **her koşuda `RUN  v… <yol>` satırını OKU** (`RUN` sonrası iki boşluk).
+
+Kapanış: `docs/plans/2026-08-26-A-bolumu-kapanis.md` · kalan iş: `docs/plans/2026-08-26-KALAN-IS-taze-oturum.md` **§B/C/D/E/F**
+
+**SIRADAKİ:** C bölümü (çıktı boyutu + `my_pages` çift basım) tek dilim · B bölümü (S2/S3/S21 canlı
+doğrulama) **deploy sonrası** · D bölümündeki üç karar (**S20 · S23 · deploy/push**) **insanda**.
+Yeni açık madde: **md.12 ledger telafi penceresi** — seeding commit edildikten sonra `enqueueJob`
+çökerse net -40 ve crawl yok; telafi satırı append-only deftere makine sokar, **operatör kararı**.
+
+---
+
+### 📋 2026-08-26 — DÜZELTME TURU **KOŞULDU** · %100 DEĞİL, kalanlar ölçüldü
+
+**22/22 dilim birleşti ve taze-bağlamlı hakemden geçti.** Dal `integration/duzeltme-dalga-ab`
+(`main @8668ff2` üzerine **136 commit**) — **PUSH EDİLMEDİ**, PR açılmadı.
+
+Üç kapı yeşil: `verify.sh` (mcp **129/3184** · web **118/1724** · core 17/316 · **38** doküman
+senkron) · `verify-db.sh` (21/165 · **51/481** · 7/48) · `make goals` (**16/16, 5 SKIP** — hepsi
+canlı uç; `no-secrets` gerçekten geçti). **Kredi fiyatı değişikliği: SIFIR.** Yüzey **36 → 38**
+(imza md.15: `list_jobs` + `list_credit_activity`, ikisi de 0 kredi).
+Vendor: $1,647896 → **$1,660616** (tek harcama: S1 canlı doğrulaması).
+
+> **⚠️ TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-26-KALAN-IS-taze-oturum.md`
+> — **beş onaylı ekleme hiç yapılmadı** (imza md. **3, 4, 9, 10, 12** — kodda sıfır iz, ölçüldü) ·
+> üç **canlı doğrulama borcu** (S2 · S3 · S21) · ölçülüp düzeltilmeyen **çıktı boyutu + çift basım** ·
+> **10 chip** · temizlik borcu · ve insan kararı bekleyen **S20** / **S23** / **deploy**.
+>
+> **DEPLOY KURALI: S4 ile S21 AYNI trende binmeli.** `www.` normalizasyonu tek başına giderse
+> apex→`www` yönlendiren siteler için YENİ projelerde crawl komple çalışmaz.
+
+**Turun asıl bulgusu:** defterin **ölçüm** satırları sağlamdı, **teşhisleri beş kez yanlıştı** —
+ve beşinde de iş emrini şef yazmıştı (S1 · S12 · S13 · S14/3 · S21). Şef ayrıca **üç kez** kendi
+kararını geri aldı. Sekiz vakalık imza adayı ders kapanış handoff'unda.
+
+Kapanış: `docs/plans/2026-08-26-duzeltme-turu-kapanis-handoff.md` ·
+durum defteri: `docs/plans/2026-08-26-duzeltme-turu-durum.md`
+
+---
+
+### 📋 2026-08-26 (ARŞİV) — bu turun İŞ EMRİ olan handoff (91 bulgu, 22 dilim)
+
+**Tur BİTTİ: 36/36 tool gezildi.** Defter `docs/plans/2026-08-25-tool-revizyon-defteri.md` —
+**120 satır** (91 gerçek bulgu + 29 "bakıldı, bulgu yok"), kapsama tablosu **36/36 ☑**,
+oturum sonu üç ölçümü dosyanın sonunda.
+
+> **İŞ EMRİ:** `docs/plans/2026-08-26-tool-revizyon-duzeltme-handoff.md` — **taze oturum buradan
+> başlar.** 18 dilim (S10 beşe bölününce 22), her biri kanıt + kök neden + `done_when` + kapı +
+> yasak ile. İnsan **otonom çalışma izni verdi (2026-08-25)**: `[kod]` dilimleri onay beklemez.
+> **İSTİSNA:** fiyat/politika (NEVER#6) → handoff §4'te **15 maddelik imza paketi**, imzasız dispatch YOK.
+
+#### Üç P0 dilimi — hepsi canlıda ölçüldü
+
+1. **S1 — uydurulmuş sıfır.** *"unreported, never as a zero"* vaadi **dört uçta** kırık; her seferinde
+   vendor gövdesi yan yana konarak kanıtlandı. Kilit kanıt: `ranked_keywords` **aynı satırda**
+   raporlanmayan `cpc`'yi atlıyor, `difficulty`'yi sıfırlıyor.
+2. **S2 — `serp_snapshot` 3/3 timeout.** Sıralama zinciri üretimde **hiç gerçek konum üretmemiş**
+   (`keyword_position_measurements`: 3 satır, 3'ü `not_measured`). Kök neden ölçüldü: istek gövdesinde
+   **`max_crawl_pages` yok** (`dfs/serp.ts:434`); vendor'a doğrudan `max_crawl_pages: 1` ile atılan
+   aynı sorgu **hızla döndü**.
+3. **S3 — AI ailesi çökük ve para yakıyor.** `ai_visibility` 2/2, `ai_visibility_compare` 1/1 hard fail;
+   izole ölçüm: **$0,30 ve $0,45/çağrı**, kredi 0 — *"You were not charged"* **yarım doğru**.
+   Risk: ~10 arıza günlük $3 tavanı doldurup **çalışan bütün ücretli tool'ları bloke eder**.
+
+#### Turun üç ölçümü
+
+**36/36 tool** · **120 satır** (`ÇIKTI` 28 · `VERİ` 27 · `KAPSAM` 23 · `DEĞER` 8 · `ARGÜMAN` 5 ·
+**`SEÇİM` 0** · "bulgu yok" 29) · vendor **$1,635416** harcandı, tavana **$1,352104** kaldı.
+Sahip: **`[kod]` 73** · `[açık]` 17 · `[operatör]` 13.
+
+**`SEÇİM` sıfır:** 36 doğal cümle, 36 doğru tool. **Açıklamaların seçim ekseni çalışıyor — bozma.**
+
+#### Temizlik borcu
+
+Turun ölçüm için yarattığı state handoff §5'te listeli (3 çöp proje — biri `www.` kusurunu
+kanıtlayan `noraninsaat.com`, 2 tracked keyword, 3 `not_measured` satır, 1 public rapor).
+**S2 bitene kadar silinmez** — kanıt onlar.
+
+---
+
 ### 📋 2026-08-25 — SIRADAKİ OTURUM: TOOL REVİZYONU (36 tool, tek tek)
 
 **Bu oturumun işi kod yazmak DEĞİL.** 36 tool'un her biri **müşterinin yolundan** — taze oturum,
