@@ -62,11 +62,41 @@
  * The value is NEVER suppressed or rewritten. Every 0 still prints on its own row exactly as the
  * vendor sent it; this adds a reading note beside them and changes no number.
  *
+ * =====================================================================================
+ * WHICH COLUMNS THIS COVERS — AND THE TWO THE DECISION FILE CLAIMED IT COVERED AND DOES NOT
+ * =====================================================================================
+ * Every column bound to this note is declared in the two surfaces, in the order the rows print
+ * them, and a NUMERIC column that a surface prints is bound unless there is a measured reason not
+ * to be. An arbitrary gap here is the same defect as the one this note exists to remove: a warning
+ * that fires on one flat-zero column and stays silent on the one beside it teaches the reader that
+ * silence means "measured", which is exactly what it does not mean.
+ *
+ * The S23 decision file's §4.3 said of three other zeros — `rank 0`, `is_lost: 0`,
+ * `trend monthly 0%` — that "4.1's signal covers them too, and nothing more is needed". A render
+ * probe on 2026-08-26 showed that was true of NONE of them at the time, and it is only PARTLY
+ * true now. NARROWED BY MEASUREMENT:
+ *
+ *   - `trend monthly 0%` — WAS uncovered, now IS. All three trend legs are bound on
+ *     discover_keywords, and a flat 0% leg gets its own note.
+ *   - `rank 0` — CANNOT be covered, and not for want of a binding. `rank_group` and
+ *     `rank_absolute` are 1-based SERP positions: the first organic result is #1, so a row at
+ *     position 0 is not a rank the vendor's scale can express. There is no flat zero to detect,
+ *     and a binding would be dead code pretending to guard something.
+ *   - `is_lost: 0` — CANNOT be covered either, and this one is STRUCTURAL. `is_lost` is a
+ *     DOMAIN-level figure on ranked_keywords' health card: ONE number for the whole answer, not a
+ *     column with a value per row. "This never varied across the rows" is not a statement that can
+ *     be made about a single value at all — see {@link MIN_FLAT_ZERO_ROWS}, which refuses a
+ *     pattern claim over fewer than two. The same applies to every other card metric.
+ *
+ * So §4.3's claim is narrowed to what was measured: the pattern covers a flat zero in a PER-ROW
+ * NUMERIC column, and covers nothing else. Nobody is guarding `rank` or `is_lost`.
+ *
  * Pure, dependency-free and deterministic, and it costs nothing: no vendor call, no credit, no
  * price. It lives beside `quantities.ts` for the reason that module states about itself — every
  * consumer is an MCP tool renderer, and putting a formatter behind `packages/core`'s built
  * `dist/` would hide a source change from the MCP test lane until a rebuild.
  */
+
 
 import { exactCount } from "./quantities.ts";
 
@@ -86,10 +116,32 @@ export interface FlatZeroSubject {
   readonly fieldLabel: string;
   /** What the rows are, PLURAL: "keywords". The note never fires on fewer than two. */
   readonly rowsNoun: string;
+  /**
+   * THE WRONG READING THIS PARTICULAR COLUMN INVITES, as a clause completing "it does NOT mean".
+   *
+   * Required, not optional, and this is the whole reason the note is parameterised at all. The
+   * first version of this file was written for `keyword_difficulty` alone and ended "before
+   * treating any of them as easy" — a sentence that is simply FALSE under a flat `search_volume`,
+   * where the misreading is "nobody searches for any of these". A generic caveat printed under a
+   * column it does not describe is the same defect as a generic zero: text that looks like it is
+   * about this measurement and is not.
+   */
+  readonly misreadAs: string;
+  /**
+   * Whether THIS REPO HOLDS a captured non-English vendor response carrying this field non-zero.
+   *
+   * The note's one factual claim about DataForSEO — that it does return non-zero values for the
+   * field elsewhere, including outside English-language markets — is what stops a reader
+   * concluding the field is simply broken in their market. It is also a claim, so it is made only
+   * where a captured response backs it, and the tests read that response rather than trusting this
+   * flag. `est. traffic` is the column where it is FALSE: `etv` appears in no non-English capture
+   * this repo holds, so the note about it says less rather than claiming more.
+   */
+  readonly nonEnglishEvidence: boolean;
 }
 
 /**
- * The reading note for a column that came back flat at zero — or `null`, which is the answer
+ * The reading note for one column that came back flat at zero — or `null`, which is the answer
  * almost every time.
  *
  * `values` is one entry per row IN THE ORDER THEY WERE RENDERED, with `null` for the rows where
@@ -103,17 +155,51 @@ export function flatZeroNote(
   const reported = values.filter((value): value is number => value !== null);
   if (reported.length < MIN_FLAT_ZERO_ROWS) return null;
   if (!reported.every((value) => value === 0)) return null;
+  // Emitted only where a captured non-English response backs it; see `nonEnglishEvidence`.
+  const vendorVaries = subject.nonEnglishEvidence
+    ? `, and DataForSEO does report non-zero ${subject.fieldLabel} for other keywords, including ` +
+      "in non-English markets"
+    : "";
   return (
-    `READ THESE ZEROS AS "NO SIGNAL", NOT AS "EASY". DataForSEO reported ${subject.fieldLabel} 0 ` +
+    `READ THIS FLAT COLUMN AS "NO SIGNAL". DataForSEO reported ${subject.fieldLabel} 0 ` +
     // The count is a thing that was COUNTED, so it is printed the one way this product prints a
     // count (quantities.ts, class 1) rather than as a bare integer that groups nothing at 1,000.
     `for every one of the ${exactCount(reported.length)} ${subject.rowsNoun} above that carried ` +
     `a value at all, so this column separates none of them from any other and there is nothing ` +
-    `in it to act ` +
-    `on. That 0 is a value the vendor SENT, not a field it left out: SeoGrep prints a reported 0 ` +
-    `exactly as it arrived and never rewrites one as "not reported", and DataForSEO does report ` +
-    `non-zero ${subject.fieldLabel} for other keywords, including in non-English markets. What ` +
-    `made THIS set come back flat is not something SeoGrep measured, and it will not guess at it ` +
-    `— check a few of these ${subject.rowsNoun} another way before treating any of them as easy.`
+    `in it to choose by — it does NOT mean ${subject.misreadAs}. That 0 is a value the vendor ` +
+    `SENT, not a field it left out: SeoGrep prints a reported 0 exactly as it arrived and never ` +
+    `rewrites one as "not reported"${vendorVaries}. What made THIS set come back flat is not ` +
+    `something SeoGrep measured, and it will not guess at it — check a few of these ` +
+    `${subject.rowsNoun} another way before acting on ${subject.fieldLabel}.`
   );
+}
+
+/**
+ * ONE COLUMN of a row, as this note sees it: what it is called and how to read its value off a row.
+ */
+export interface FlatZeroColumn<Row> extends Omit<FlatZeroSubject, "rowsNoun"> {
+  readonly valueOf: (row: Row) => number | null;
+}
+
+/**
+ * Every flat-zero note this answer has earned, IN THE ORDER THE COLUMNS ARE PRINTED.
+ *
+ * ORDER IS THE POINT of this function existing rather than each surface looping for itself. When
+ * two or three columns come back flat at once the reader gets two or three notes, and the only
+ * order that does not read as arbitrary is the order the columns appear on the rows above. The
+ * caller therefore declares its columns ONCE, in print order, and both the reserve pass and the
+ * printing pass walk that same list — so the room booked for these notes and the notes actually
+ * printed can never be computed from two different orders or two different sets.
+ */
+export function flatZeroNotes<Row>(
+  rows: readonly Row[],
+  columns: readonly FlatZeroColumn<Row>[],
+  rowsNoun: string,
+): string[] {
+  const notes: string[] = [];
+  for (const column of columns) {
+    const note = flatZeroNote(rows.map(column.valueOf), { ...column, rowsNoun });
+    if (note !== null) notes.push(note);
+  }
+  return notes;
 }

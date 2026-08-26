@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { MIN_FLAT_ZERO_ROWS, flatZeroNote } from "./flat-zero.ts";
+import { MIN_FLAT_ZERO_ROWS, flatZeroNote, flatZeroNotes } from "./flat-zero.ts";
 import trFixture from "../dfs/fixtures/keyword-overview-tr.json";
 
-const SUBJECT = { fieldLabel: "keyword_difficulty", rowsNoun: "keywords" } as const;
+const SUBJECT = {
+  fieldLabel: "keyword_difficulty",
+  rowsNoun: "keywords",
+  misreadAs: "that every one of these keywords is easy to rank for",
+  nonEnglishEvidence: true,
+} as const;
 
 const note = (values: readonly (number | null)[]): string | null => flatZeroNote(values, SUBJECT);
 
 describe("flatZeroNote — WHEN it speaks", () => {
   it("speaks when every reported value in the answer is 0", () => {
-    expect(note([0, 0, 0])).toContain('READ THESE ZEROS AS "NO SIGNAL"');
+    expect(note([0, 0, 0])).toContain('READ THIS FLAT COLUMN AS "NO SIGNAL"');
   });
 
   it("counts the REPORTED values, not the rows", () => {
@@ -16,12 +21,9 @@ describe("flatZeroNote — WHEN it speaks", () => {
   });
 
   it("names the field with the label the rows above it printed", () => {
-    expect(flatZeroNote([0, 0], { fieldLabel: "difficulty", rowsNoun: "keywords" })).toContain(
-      "DataForSEO reported difficulty 0",
-    );
-    expect(flatZeroNote([0, 0], { fieldLabel: "difficulty", rowsNoun: "keywords" })).not.toContain(
-      "keyword_difficulty",
-    );
+    const asPrinted = flatZeroNote([0, 0], { ...SUBJECT, fieldLabel: "difficulty" }) ?? "";
+    expect(asPrinted).toContain("DataForSEO reported difficulty 0");
+    expect(asPrinted).not.toContain("keyword_difficulty");
   });
 });
 
@@ -104,33 +106,139 @@ describe("flatZeroNote — WHAT IT MAY NEVER CLAIM", () => {
     expect(text).toMatch(/not something SeoGrep measured, and it will not guess/i);
   });
 
-  it('refuses the reading "0 means easy" without suppressing the 0', () => {
+  it("refuses the misreading without suppressing the 0", () => {
     const text = note([0, 0]) ?? "";
-    expect(text).toMatch(/not as "easy"/i);
+    expect(text).toContain("it does NOT mean that every one of these keywords is easy to rank for");
     expect(text).toMatch(/prints a reported 0 exactly as it arrived/);
     expect(text).toMatch(/never rewrites one as "not reported"/);
   });
 
   /**
-   * THE ONE FACTUAL CLAIM THE NOTE DOES MAKE, held to this repo's own evidence.
+   * THE MISREADING IS PER-COLUMN, and this is why the subject carries it at all.
    *
-   * "DataForSEO does report non-zero keyword_difficulty for other keywords, including in
-   * non-English markets" is not folklore: a captured vendor response in this repo, in Turkish,
-   * carries non-zero difficulty. If that fixture ever stopped carrying it, the sentence would
-   * become an unbacked claim and this goes red.
+   * The first version of this note was written for `keyword_difficulty` alone and ended "before
+   * treating any of them as easy". Bound to `search_volume` — where the misreading is "nobody
+   * searches for any of these" — that sentence is simply false. A caveat printed under a column
+   * it does not describe is the same defect as a generic zero.
    */
-  it("makes its one claim about DataForSEO only where a captured response backs it", () => {
-    const text = note([0, 0]) ?? "";
-    expect(text).toMatch(/does report non-zero keyword_difficulty for other keywords/);
-    expect(text).toMatch(/including in non-English markets/);
+  it("names the misreading THIS column invites and no other", () => {
+    const volume = flatZeroNote([0, 0], {
+      ...SUBJECT,
+      fieldLabel: "search_volume",
+      misreadAs: "that nobody searches for any of these",
+    });
+    expect(volume).toContain("it does NOT mean that nobody searches for any of these");
+    expect(volume).not.toMatch(/easy to rank for/);
+    expect(volume).toContain("before acting on search_volume");
+  });
 
+  /**
+   * THE ONE FACTUAL CLAIM THE NOTE MAKES, held to this repo's own evidence — AND WITHHELD WHERE
+   * THE EVIDENCE IS NOT HERE.
+   *
+   * "DataForSEO does report non-zero <field> for other keywords, including in non-English
+   * markets" is not folklore: `keyword-overview-tr.json` is a captured Turkish response carrying
+   * non-zero values for every column the two surfaces bind — except `etv`, which appears in no
+   * non-English capture this repo holds. That column's note therefore says LESS.
+   */
+  it("makes the vendor claim only where a captured non-English response backs it", () => {
+    const backed = note([0, 0]) ?? "";
+    expect(backed).toMatch(/does report non-zero keyword_difficulty for other keywords/);
+    expect(backed).toMatch(/including in non-English markets/);
+
+    const unbacked =
+      flatZeroNote([0, 0], {
+        ...SUBJECT,
+        fieldLabel: "est. traffic",
+        nonEnglishEvidence: false,
+      }) ?? "";
+    expect(unbacked).not.toMatch(/non-English markets/);
+    expect(unbacked).not.toMatch(/does report non-zero/);
+    // ...and it still carries everything that is not a claim about the vendor's other lookups.
+    expect(unbacked).toMatch(/value the vendor SENT, not a field it left out/);
+    expect(unbacked).toContain("before acting on est. traffic");
+  });
+
+  /**
+   * THE FIXTURE THE CLAIM RESTS ON, read rather than assumed (signed lesson 11). Every field the
+   * two surfaces mark `nonEnglishEvidence: true` must really be non-zero in this Turkish capture;
+   * if the fixture ever stopped carrying one, the note would be making an unbacked claim.
+   */
+  it.each([
+    ["search_volume", /"search_volume":\s*(\d+(?:\.\d+)?)/g],
+    ["cpc", /"cpc":\s*(\d+(?:\.\d+)?)/g],
+    ["competition", /"competition":\s*(\d+(?:\.\d+)?)/g],
+    ["keyword_difficulty", /"keyword_difficulty":\s*(\d+(?:\.\d+)?)/g],
+    ["monthly", /"monthly":\s*(-?\d+(?:\.\d+)?)/g],
+    ["quarterly", /"quarterly":\s*(-?\d+(?:\.\d+)?)/g],
+    ["yearly", /"yearly":\s*(-?\d+(?:\.\d+)?)/g],
+  ] as const)("the Turkish capture really carries a non-zero %s", (_field, pattern) => {
     const captured = JSON.stringify(trFixture);
-    expect(captured).toMatch(/"language_code":\s*"tr"/);
-    const difficulties = [...captured.matchAll(/"keyword_difficulty":\s*(\d+)/g)].map((m) =>
-      Number(m[1]),
-    );
-    expect(difficulties.length).toBeGreaterThan(0);
-    expect(difficulties.some((value) => value > 0)).toBe(true);
+    expect(captured).toMatch(/"language_code":"tr"/);
+    const values = [...captured.matchAll(pattern)].map((m) => Number(m[1]));
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.some((value) => value !== 0)).toBe(true);
+  });
+
+  /** ...and the column the flag is FALSE for really is absent from that capture. */
+  it("the Turkish capture carries no etv, which is why est. traffic withholds the claim", () => {
+    expect(JSON.stringify(trFixture)).not.toMatch(/"etv"/);
+  });
+});
+
+describe("flatZeroNotes — several flat columns at once", () => {
+  interface Row {
+    readonly a: number | null;
+    readonly b: number | null;
+    readonly c: number | null;
+  }
+  const COLUMNS = [
+    { fieldLabel: "a", misreadAs: "A", nonEnglishEvidence: true, valueOf: (r: Row) => r.a },
+    { fieldLabel: "b", misreadAs: "B", nonEnglishEvidence: true, valueOf: (r: Row) => r.b },
+    { fieldLabel: "c", misreadAs: "C", nonEnglishEvidence: true, valueOf: (r: Row) => r.c },
+  ] as const;
+  const labelsOf = (notes: readonly string[]): string[] =>
+    notes.map((n) => /DataForSEO reported (\S+) 0/.exec(n)?.[1] ?? "?");
+
+  it("emits ONE note per flat column and none for the columns that vary", () => {
+    const rows: Row[] = [
+      { a: 0, b: 0, c: 5 },
+      { a: 0, b: 0, c: 9 },
+    ];
+    expect(labelsOf(flatZeroNotes(rows, COLUMNS, "keywords"))).toEqual(["a", "b"]);
+  });
+
+  /**
+   * ORDER IS DECLARED, NOT INCIDENTAL. The columns are given in the order the rows PRINT them, and
+   * the notes come back in that order — the only order that does not read as arbitrary to someone
+   * scanning the table above. It is also the order the reserve pass walks, so the room booked and
+   * the notes printed can never be computed from two different orders.
+   */
+  it("returns the notes in the declared column order, not in some order it discovered", () => {
+    const rows: Row[] = [
+      { a: 0, b: 0, c: 0 },
+      { a: 0, b: 0, c: 0 },
+    ];
+    expect(labelsOf(flatZeroNotes(rows, COLUMNS, "keywords"))).toEqual(["a", "b", "c"]);
+    const reversed = [...COLUMNS].reverse();
+    expect(labelsOf(flatZeroNotes(rows, reversed, "keywords"))).toEqual(["c", "b", "a"]);
+  });
+
+  it("says nothing at all when nothing is flat", () => {
+    const rows: Row[] = [
+      { a: 1, b: 2, c: 3 },
+      { a: 4, b: 5, c: 6 },
+    ];
+    expect(flatZeroNotes(rows, COLUMNS, "keywords")).toEqual([]);
+  });
+
+  it("applies the per-column bounds independently", () => {
+    // `a` is flat over two reported values; `b` has only ONE reported value; `c` varies.
+    const rows: Row[] = [
+      { a: 0, b: 0, c: 0 },
+      { a: 0, b: null, c: 7 },
+    ];
+    expect(labelsOf(flatZeroNotes(rows, COLUMNS, "keywords"))).toEqual(["a"]);
   });
 });
 
