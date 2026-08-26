@@ -6,6 +6,7 @@ import {
   createMockDisavowCandidatesPort,
   disabledDisavowCandidatesPort,
   DISAVOW_TXT_PROPOSAL_NOTICE,
+  estimateDisavowCandidatesUsd,
   MAX_LINK_ROWS,
   MAX_NETWORK_ROWS,
   VENDOR_SPAM_SCORE_MAX,
@@ -16,6 +17,7 @@ import {
   type ReferringNetworkRow,
 } from "../dfs/disavow-candidates.ts";
 import type { BacklinkDetailRow, VendorWindow } from "../dfs/backlink-details.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   DISAVOW_FILE_CAPTION,
   NO_SUBMISSION_NOTICE,
@@ -637,5 +639,71 @@ describe("disavow_candidates free pre-reserve gates (no credit machinery)", () =
     await expect(
       serving().run(CTX, { project_id: PROJECT_ID, min_backlink_spam_score: 40 }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// F3 claim 1 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// `limit` said "DataForSEO bills per returned row, so this is the price control, not a display
+// preference", and `network_limit` said "Billed per row on the same tariff". Both told the caller
+// their bill moves with the row count. It does not: the credit price is FLAT (TOOL_COSTS), and
+// the vendor bill is nearly all flat per-REQUEST fees — three of them on this lookup — plus
+// $0.000036 a row. The identical claim was MEASURED FALSE 2026-08-25 on backlink_details, which
+// reads the SAME /backlinks/backlinks/live endpoint: limit 10 cost $0.04854, limit 200 (187 rows
+// back) cost $0.05506 — 19x the rows for 13% more money.
+//
+// These specs read the descriptions off the PUBLISHED JSON schema (what the customer's client is
+// handed) and assert on the CLAIM with regexes rather than on a copy of the source string —
+// signed lesson 11: a literal-for-literal grep proves the file, not the promise. The last spec
+// drives the tool's OWN cost model, so the sentence stays true only while the arithmetic does.
+// =============================================================================================
+
+describe("F3 — disavow_candidates describes its row arguments as display controls", () => {
+  const schema = makeDisavowCandidatesTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+  const networkLimit = schema.properties.network_limit?.description ?? "";
+  const dofollowOnly = schema.properties.dofollow_only?.description ?? "";
+
+  it("no longer calls a display control the price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+    expect(networkLimit).not.toMatch(/billed per row/i);
+  });
+
+  it("says a narrower window is not a cheaper one, on BOTH row arguments", () => {
+    expect(limit).toMatch(/\bnot a price control\b/i);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+    expect(networkLimit).toMatch(/fewer rows costs? the same/i);
+    // The third narrowing argument always said it correctly, and still does.
+    expect(dofollowOnly).toMatch(/same price/i);
+  });
+
+  it("names the flat credit price from TOOL_COSTS, and quotes no second price", () => {
+    expect(limit).toContain(`${TOOL_COSTS.disavow_candidates} credits`);
+    expect(limit).toMatch(/whatever you ask for/i);
+    // A second credit figure anywhere in the published input schema would be a second price
+    // table — and the docs generator would publish it onto the tools-reference page.
+    const quoted = [limit, networkLimit, dofollowOnly].flatMap(
+      (text) => text.match(/\d[\d,]*\s*credits?/gi) ?? [],
+    );
+    expect(quoted).toEqual([`${TOOL_COSTS.disavow_candidates} credits`]);
+  });
+
+  it("attributes the near-flat vendor bill to the vendor, as a measurement", () => {
+    expect(limit).toMatch(/flat per-request fee/i);
+    expect(limit).toMatch(/measured/i);
+  });
+
+  it("the tool's OWN cost model agrees: 300x the rows is a fraction more, not 300x", () => {
+    const narrow = estimateDisavowCandidatesUsd(1, 1);
+    const wide = estimateDisavowCandidatesUsd(MAX_LINK_ROWS, MAX_NETWORK_ROWS);
+    // Strictly more money — the sentence does not claim rows are free...
+    expect(wide).toBeGreaterThan(narrow);
+    // ...but nowhere near proportional, which is what makes "costs the same" honest for the
+    // caller, whose own price is flat either way.
+    expect(wide / narrow).toBeLessThan(1.5);
   });
 });
