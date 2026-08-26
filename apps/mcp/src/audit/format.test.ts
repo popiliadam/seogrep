@@ -270,22 +270,33 @@ describe("a stray-edge finding is named in the summary, not summarised away", ()
 });
 
 // =====================================================================================
-// EVERY FINDING TYPE THE ENGINE CAN EMIT IS NAMED — read off the rule engine's SOURCE rather than
-// off a fixture, because a fixture only proves the types it happens to fire, and an unnamed type is
-// by definition one nobody wrote a fixture for. This is the general form of the defect above.
+// EVERY DOUBLE-QUOTED snake_case LITERAL IN THE RULE ENGINE IS A NAMED FINDING TYPE — read off the
+// engine's SOURCE rather than off a fixture, because a fixture only proves the types it happens to
+// fire, and an unnamed type is by definition one nobody wrote a fixture for. That is the general
+// form of the defect above; this spec reaches as much of it as one regex can, and the heading names
+// WHICH PART rather than claiming the whole.
 //
 // THE REGEX IS THE MEASUREMENT, AND THE OBVIOUS ONE IS WRONG. `type:\s*"…"` finds 18 of the 20
 // types and misses `title_stray_chars` and `meta_stray_chars` — the two this whole file is about —
 // because `strayFinding` returns `{ type, text }` with the literal supplied by its CALLER. So the
 // match is on any snake_case string literal in the file, which is discriminating enough here: in a
-// pure rule engine over camelCase fields, every underscore-bearing literal is a finding type. A
-// future literal that is not one would turn this red for the wrong reason — a loud, one-line fix,
-// and that trade is taken deliberately against a hole that stays silent.
+// pure rule engine over camelCase fields, every underscore-bearing literal is a finding type.
+//
+// BOTH ERROR AXES, NAMED — because a heading that claims more than it measures is worse than a
+// narrow one: nobody re-checks it.
+//
+//   FALSE POSITIVE: a future snake_case literal that is NOT a finding type turns this red for the
+//   wrong reason. Loud, and a one-line fix; that trade is taken deliberately.
+//   FALSE NEGATIVE: the match sees DOUBLE-QUOTED literals only, so a type written as a template
+//   literal or in single quotes is outside this measurement. Both shapes were measured on this
+//   file and shipped unnamed with every gate green. Widening the regex is not obviously right — a
+//   template literal can be assembled at runtime and read nothing like the value it emits — so the
+//   limit is stated here rather than papered over by a heading that implies otherwise.
 // =====================================================================================
 
 const ONPAGE_RULES_SOURCE = readFileSync(new URL("./rules/onpage.ts", import.meta.url), "utf8");
 
-describe("the label map names every finding type the rule engine can emit", () => {
+describe("the label map names every double-quoted snake_case type literal in the engine", () => {
   const emitted = [
     ...new Set(
       (ONPAGE_RULES_SOURCE.match(/"[a-z][a-z0-9]*(?:_[a-z0-9]+)+"/g) ?? []).map((lit) =>
