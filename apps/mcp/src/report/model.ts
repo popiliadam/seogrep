@@ -186,10 +186,32 @@ export interface TechSummary {
   readonly redirect3xx: number;
   readonly clientError4xx: number;
   readonly serverError5xx: number;
+  /**
+   * THE FIFTH BUCKET: pages in NONE of the four classes above, so those four do not add up to
+   * `pageCount` whenever this is non-zero.
+   *
+   * Carried since 2026-08-26. Before that `summarizeTech` took the four counts and dropped this
+   * one, so the report's own "Pages crawled" stat counted a page that then appeared NOWHERE in a
+   * document the tenant paid 15 credits for — the shortfall was silent, which is the failure mode
+   * NEVER#7 is about. The four counts themselves are unchanged; what does not add up is stated
+   * separately rather than folded into them.
+   *
+   * Reachable rather than theoretical, and the engine's `StatusCounts.other` says why: a page
+   * whose stored status is missing or non-numeric reads as 0 (audit/crawl-data.ts asFiniteNumber)
+   * and 0 falls through every branch into this bucket. A defective or legacy-stored page is
+   * exactly the page a reader most needs named.
+   */
+  readonly other: number;
   readonly robotsConflicts: number;
   /** The URLs behind the 4xx/5xx counts — the number alone tells nobody which page to fix. */
   readonly clientErrorUrls: CappedList<string>;
   readonly serverErrorUrls: CappedList<string>;
+  /**
+   * The URLs behind `other`, for the same reason the two lists above exist: a count with no URLs
+   * behind it tells the reader a page is missing without telling them WHICH — and this bucket's
+   * entire membership is pages the crawl could not classify.
+   */
+  readonly otherStatusUrls: CappedList<string>;
   readonly slowPages: CappedList<SlowPage>;
   readonly heavyPages: CappedList<HeavyPage>;
   /**
@@ -400,8 +422,9 @@ function summarizeOnpage(crawl: AuditCrawl): OnpageSummary {
 
 /**
  * Technical signals from the REAL engine (auditTech): the 2xx/3xx/4xx/5xx split and the conflict
- * count G1 kept, PLUS the nine sections it computed and dropped. Nothing here re-derives anything
- * — every field is the engine's, capped for the page.
+ * count G1 kept, PLUS the nine sections it computed and dropped, PLUS the fifth status bucket —
+ * `other` and the URLs behind it — that both of them dropped. Nothing here re-derives anything —
+ * every field is the engine's, capped for the page.
  */
 function summarizeTech(crawl: AuditCrawl): TechSummary {
   const report = auditTech(crawl);
@@ -413,9 +436,11 @@ function summarizeTech(crawl: AuditCrawl): TechSummary {
     redirect3xx: status.redirect3xx,
     clientError4xx: status.clientError4xx,
     serverError5xx: status.serverError5xx,
+    other: status.other,
     robotsConflicts: report.robotsConflicts.length,
     clientErrorUrls: cap(report.clientErrorUrls),
     serverErrorUrls: cap(report.serverErrorUrls),
+    otherStatusUrls: cap(report.otherStatusUrls),
     slowPages: cap(report.slowPages),
     heavyPages: cap(report.heavyPages),
     // Counted over crawl.pages — the SAME population collectSignals iterates in audit/rules/tech.ts
