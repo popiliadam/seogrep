@@ -1496,3 +1496,121 @@ describe("the reply is bounded, and says what it could not carry", () => {
     expect(text).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
   });
 });
+
+// =============================================================================================
+// S23.1' — THE FLAT-ZERO READING NOTE (signed 2026-08-26, 0 credits).
+//
+// Measured on the live walkthrough: a `suggestions` lookup returned 13 of 13 rows at
+// `keyword_difficulty 0`, on volumes of 2,400-14,800. The PARSING was not at fault — a 0 reaches
+// the reader only when DataForSEO sent a 0 — and the vendor's own dedicated difficulty endpoint
+// returns 12 for another keyword in the SAME tr/TR market, so the zeros are its answer rather than
+// an absence. What is left is a column with no signal in it that reads as "easy".
+// format/flat-zero.ts carries the whole measurement and the sentence this note is forbidden to
+// become; these are the four cases at the surface, plus the one the output ceiling creates.
+// =============================================================================================
+describe("S23.1' — the flat-zero note on discover_keywords", () => {
+  const FLAT = 'READ THESE ZEROS AS "NO SIGNAL"';
+  const zero = (keyword: string, volume: number): DiscoverKeywordRow => ({
+    ...FULL_ROW,
+    keyword,
+    search_volume: volume,
+    keyword_difficulty: 0,
+  });
+  const ZERO_ROWS = [zero("dis teli", 14_800), zero("zirkonyum dis", 8_100), zero("dis beyazlatma", 6_600)];
+
+  it("(a) speaks ONCE, at the very end, when every reported difficulty is 0", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", ZERO_ROWS), LOCALE);
+    expect(text).toContain(FLAT);
+    expect(text.split(FLAT).length - 1).toBe(1);
+    // LAST — after the vendor-judgement note, which is the block that used to end every answer.
+    expect(text.trimEnd().endsWith("before treating any of them as easy.")).toBe(true);
+    expect(text.indexOf(FLAT)).toBeGreaterThan(text.indexOf(VENDOR_JUDGEMENT_NOTE));
+    expect(text).toContain("every one of the 3 keywords above");
+  });
+
+  it("(a) does NOT suppress or rewrite the zeros it is talking about", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", ZERO_ROWS), LOCALE);
+    expect(text.split("keyword_difficulty 0\n").length - 1).toBe(3);
+    expect(text).not.toContain("keyword_difficulty not reported by DataForSEO");
+  });
+
+  it("(b) says NOTHING when the column varies — one 12 beside a 0 is a working column", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", [
+        zero("dis teli", 14_800),
+        { ...FULL_ROW, keyword: "implant dis fiyatlari", search_volume: 2_400, keyword_difficulty: 12 },
+      ]),
+      LOCALE,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("keyword_difficulty 0");
+    expect(text).toContain("keyword_difficulty 12");
+  });
+
+  it("(c) says NOTHING on a single row — one value never varied from anything", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", [zero("dis teli", 14_800)]), LOCALE);
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("keyword_difficulty 0");
+  });
+
+  it("(d) a null row neither breaks the pattern nor counts toward it", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", [
+        zero("dis teli", 14_800),
+        { ...SILENT_ROW, keyword: "ortodonti" },
+        zero("dis beyazlatma", 6_600),
+      ]),
+      LOCALE,
+    );
+    expect(text).toContain(FLAT);
+    // TWO, not three: the silent row is not evidence of a zero and is not counted as one.
+    expect(text).toContain("every one of the 2 keywords above");
+    // and the silent row still prints the vendor's silence in WORDS, exactly as it always did.
+    expect(text).toContain("keyword_difficulty not reported by DataForSEO");
+  });
+
+  it("(d) a single zero drowned in nulls is not a pattern", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", [
+        zero("dis teli", 14_800),
+        { ...SILENT_ROW, keyword: "ortodonti" },
+        { ...SILENT_ROW, keyword: "dis beyazlatma" },
+      ]),
+      LOCALE,
+    );
+    expect(text).not.toContain(FLAT);
+  });
+
+  it("claims no CAUSE for the zeros at the surface either", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", ZERO_ROWS), LOCALE);
+    const note = text.slice(text.indexOf(FLAT));
+    for (const claim of [/\bplans?\b/i, /\bunavailable\b/i, /\bnot available\b/i, /\babsent\b/i]) {
+      expect(note, `the note claims a cause matching ${claim}`).not.toMatch(claim);
+    }
+  });
+
+  /**
+   * THE AXIS ONLY THIS TOOL HAS: the output ceiling truncates, and the note says "above".
+   *
+   * The note is RESERVED against the whole window (so the ceiling still holds when it appears) but
+   * PRINTED from the rows that survived — otherwise a 1,000-row window would tell the reader
+   * "every one of the 1,000 keywords above" over a table carrying 118 of them.
+   */
+  it("counts the rows the reader can SEE, not the rows the window held, and still fits", () => {
+    const rows = grownRows(1_000, { ...FULL_ROW, keyword_difficulty: 0 });
+    const text = formatDiscoverKeywords(resultWith("ideas", rows), LOCALE);
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    expect(text.length).toBeLessThanOrEqual(40_000);
+    expect(text).toContain(FLAT);
+    const printed = text.split("\n").filter((line) => line.startsWith("• ")).length;
+    expect(printed).toBeGreaterThan(0);
+    expect(printed).toBeLessThan(rows.length);
+    expect(text).toContain(`every one of the ${printed} keywords above`);
+    expect(text).not.toContain("every one of the 1,000 keywords above");
+  });
+
+  it("keeps the note in English (imzali ders 4)", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", ZERO_ROWS), LOCALE);
+    expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});

@@ -29,6 +29,7 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 // that differ between a link list and a keyword list — and because a second wording of "you paid
 // for these and cannot see them" is a second place for that promise to drift.
 import { renderOutputLimitNote } from "./backlink-details.ts";
+import { flatZeroNote } from "../format/flat-zero.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -902,7 +903,19 @@ export function formatDiscoverKeywords(
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
   ].filter((block) => block.length > 0);
-  const after = [VENDOR_JUDGEMENT_NOTE];
+  // RESERVED OVER THE WHOLE WINDOW, PRINTED OVER WHAT SURVIVED. The flat-zero note is measured
+  // twice on purpose, and the two measurements cannot disagree in the dangerous direction: a
+  // window that is uniformly zero has no subset that is not, so reserving room against the whole
+  // window can only ever over-reserve, and its row count has at least as many digits as the
+  // printed one. The note the reader gets is built from the rows the reader can SEE, because it
+  // says "above" — and on a hard truncation that leaves fewer than MIN_FLAT_ZERO_ROWS printed
+  // values it correctly says nothing at all.
+  const flatSubject = { fieldLabel: "keyword_difficulty", rowsNoun: "keywords" } as const;
+  const flatReserve = flatZeroNote(
+    rows.map((row) => row.keyword_difficulty),
+    flatSubject,
+  );
+  const after = [VENDOR_JUDGEMENT_NOTE, ...(flatReserve === null ? [] : [flatReserve])];
   // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
   // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
   // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
@@ -915,6 +928,10 @@ export function formatDiscoverKeywords(
     renderOutputLimitNote("keyword", rows.length, rows.length, TRUNCATION_ADVICE).length +
     BLOCK_SEPARATOR.length;
   const shown = renderWithinBudget(rows, MAX_RENDERED_OUTPUT_CHARS - scaffold - noteReserve);
+  const flat = flatZeroNote(
+    rows.slice(0, shown.printed).map((row) => row.keyword_difficulty),
+    flatSubject,
+  );
   return [
     ...before,
     // Empty only when one keyword row is itself wider than the whole budget; the note below still
@@ -926,7 +943,10 @@ export function formatDiscoverKeywords(
     ...(shown.omitted === 0
       ? []
       : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
-    ...after,
+    VENDOR_JUDGEMENT_NOTE,
+    // ONCE, AT THE VERY END — see format/flat-zero.ts for what was measured and what this sentence
+    // is forbidden to claim. It adds a reading note beside the zeros and rewrites none of them.
+    ...(flat === null ? [] : [flat]),
   ].join(BLOCK_SEPARATOR);
 }
 
