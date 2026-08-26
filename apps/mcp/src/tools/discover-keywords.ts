@@ -24,6 +24,11 @@ import {
   type DiscoverVolumeTrend,
 } from "../dfs/discover-keywords.ts";
 import type { VendorWindow } from "../dfs/backlink-details.ts";
+// The SAME sentence backlink_details prints when rows were fetched and not shown. It is imported
+// rather than re-written because it is already parameterised on noun and advice — the two things
+// that differ between a link list and a keyword list — and because a second wording of "you paid
+// for these and cannot see them" is a second place for that promise to drift.
+import { renderOutputLimitNote } from "./backlink-details.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -100,6 +105,32 @@ const DEFAULT_LOCATION_CODE = 2840;
  * filters on. Declared here because it bounds a CALLER's input; the value it filters is parsed
  * nullish by the port, so nothing here narrows what the vendor may return.
  */
+/**
+ * HOW LONG ONE SEED KEYWORD MAY BE.
+ *
+ * MEASURED 2026-08-26, and this bound exists because of the measurement. The heading quotes the
+ * caller's seeds back, and {@link renderSeedEcho} bounds the LIST but always echoes the FIRST seed
+ * whole — half a quoted keyword is a different keyword. With no per-seed bound, one seed was the
+ * whole reply: a 39,000-character seed produced a 42,666-character answer carrying ZERO keywords,
+ * and a 60,000-character seed produced 63,666 characters with zero keywords and all 1,000 rows
+ * reported as omitted. The second is not only past this file's own ceiling, it is LARGER than the
+ * 62,729-character reply a client refused outright — so the customer would pay 40 credits, the
+ * vendor would be paid, and no keyword would ever be seen.
+ *
+ * WHERE 200 COMES FROM. The longest keyword in ANY DataForSEO response captured in this repo is 29
+ * characters ("seo software comparison chart", across 33 keywords in the Labs fixtures), so 200 is
+ * roughly seven times the longest thing the vendor has ever been observed calling a keyword, and
+ * about thirty ordinary words. It is not a vendor-published limit — DataForSEO documents none that
+ * this repo has read — so it is stated as OUR bound and the rejection says so. What 200 buys is a
+ * heading that cannot displace the answer: the first seed at its longest plus the 600-character
+ * echo budget keeps the whole seed block under ~850 characters, which the row budget absorbs
+ * without dropping a measurable number of keywords.
+ *
+ * The rejection is a SCHEMA rejection, so it lands where every other impossible input on this tool
+ * lands: before the handler, therefore before the reserve, therefore free (NEVER #2).
+ */
+export const MAX_SEED_CHARS = 200;
+
 const VENDOR_DIFFICULTY_MIN = 0;
 const VENDOR_DIFFICULTY_MAX = 100;
 
@@ -183,22 +214,27 @@ const inputSchema = z
           "belongs to another mode is rejected, not ignored.",
       ),
     seeds: z
-      .array(z.string().min(1))
+      .array(z.string().min(1).max(MAX_SEED_CHARS))
       .min(1)
       .max(MAX_SEEDS)
       .optional()
       .describe(
         `MODE "ideas" ONLY: the seed keywords to draw ideas from (1-${MAX_SEEDS}, the vendor's ` +
-          "own documented ceiling). The keywords that come back are the vendor's, not yours — " +
-          "none of your seeds is guaranteed to appear in the answer.",
+          `own documented ceiling), each at most ${MAX_SEED_CHARS} characters — SeoGrep's bound, ` +
+          "not DataForSEO's, because the answer quotes your seeds back and one enormous seed " +
+          "would crowd out the keywords you paid for. The keywords that come back are the " +
+          "vendor's, not yours — none of your seeds is guaranteed to appear in the answer.",
       ),
     seed: z
       .string()
       .min(1)
+      .max(MAX_SEED_CHARS)
       .optional()
       .describe(
-        'MODES "suggestions" and "related" ONLY: exactly one seed keyword. Both endpoints take a ' +
-          "single keyword, not a list — pass one, and run the tool again for another.",
+        'MODES "suggestions" and "related" ONLY: exactly one seed keyword, at most ' +
+          `${MAX_SEED_CHARS} characters (SeoGrep's bound, not DataForSEO's — see "seeds"). Both ` +
+          "endpoints take a single keyword, not a list — pass one, and run the tool again for " +
+          "another.",
       ),
     depth: z
       .number()
@@ -477,13 +513,50 @@ export function vendorFunctionOf(mode: DiscoverMode): string {
   return fn;
 }
 
+/**
+ * How much of the caller's OWN seed list is quoted back in the heading before it is summarised.
+ *
+ * `ideas` accepts up to MAX_SEEDS = 200 seeds of unbounded length, so the heading is the one block
+ * of this reply a caller can inflate without asking for a single extra row — 200 ordinary keywords
+ * echo back as several thousand characters. The output ceiling below spends whatever the prose
+ * leaves on keyword rows, so an unbounded heading does not break the ceiling; it silently EATS the
+ * answer, printing fewer of the keywords the 40 credits were spent on. Bounded here so the trade
+ * is made once, visibly, and the count of what was left out travels with it.
+ */
+const SEED_ECHO_CHAR_BUDGET = 600;
+
+/**
+ * The caller's seeds, quoted back until {@link SEED_ECHO_CHAR_BUDGET} is spent, then counted.
+ *
+ * A seed is echoed WHOLE or not at all — half of a caller's keyword, quoted, is a different
+ * keyword. The first seed is always echoed whatever its length, so this never reports a lookup
+ * without naming what it started from; a single absurdly long seed is therefore the one thing here
+ * that can still stretch the heading, and it is the caller's own text.
+ */
+function renderSeedEcho(seeds: readonly string[]): string {
+  const shown: string[] = [];
+  let used = 0;
+  for (const seed of seeds) {
+    const quoted = `"${seed}"`;
+    const cost = quoted.length + (shown.length === 0 ? 0 : 2); // + the ", " that joins it
+    if (shown.length > 0 && used + cost > SEED_ECHO_CHAR_BUDGET) break;
+    shown.push(quoted);
+    used += cost;
+  }
+  const omitted = seeds.length - shown.length;
+  return omitted === 0
+    ? shown.join(", ")
+    : `${shown.join(", ")}, and ${thousands(omitted)} more you sent that are not repeated here`;
+}
+
 /** WHAT WAS ASKED, narrowed on the subject's own discriminant — never on the caller's input. */
 export function describeSubject(subject: DiscoverSubject, project?: ProjectRef | null): string {
   switch (subject.mode) {
     case "ideas": {
-      const seeds = subject.seeds.map((seed) => `"${seed}"`).join(", ");
       const count = subject.seeds.length;
-      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${seeds})`;
+      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${renderSeedEcho(
+        subject.seeds,
+      )})`;
     }
     case "suggestions":
       return `the seed keyword "${subject.seed}"`;
@@ -711,27 +784,150 @@ function renderNoKeywords(
     .join("\n\n");
 }
 
+/**
+ * =====================================================================================
+ * THE OUTPUT CEILING — measured 2026-08-26, and the same defect backlink_details already had
+ * =====================================================================================
+ * MEASURED, by rendering real fixture rows through this very formatter, with the ceiling lifted:
+ *
+ *   mode          100 rows (the DEFAULT)   1,000 rows (the schema maximum)
+ *   ideas                 33,447 chars              309,749 chars
+ *   related               30,670 chars              292,872 chars
+ *   for_site              30,504 chars              279,506 chars
+ *   suggestions           30,566 chars              292,168 chars
+ *
+ * A keyword row costs ~277-307 characters, so a full-width lookup produced a reply roughly FIVE
+ * TIMES the 62,729 characters a calling client refused outright on 2026-08-25 ("exceeds maximum
+ * allowed tokens"). That refusal is the shape this ceiling exists to prevent, and it is the worst
+ * one this product can make: the 40 credits and DataForSEO's own fee are both spent, and the
+ * customer sees NOTHING — not a short answer, an error.
+ *
+ * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
+ *
+ *   worst DEFAULT render (ideas, 100 rows)               33,447
+ *   + the output-limit note reserved at its widest          805
+ *   ------------------------------------------------------------
+ *   what a default lookup must be allowed to print       34,252
+ *   + headroom for longer keywords than the fixtures'     5,748   (~19 more rows)
+ *   ------------------------------------------------------------
+ *   MAX_RENDERED_OUTPUT_CHARS                            40,000
+ *
+ * EVERY LINE OF THAT SUM IS MEASURED, and a test re-measures it and reads these very digits back
+ * out of this comment (signed lesson 11: a number nobody re-measures goes stale inside a block
+ * headed MEASURED, and is then never questioned again). 805 is `renderOutputLimitNote` at its
+ * widest for a 100-row window (803 characters) plus the blank line that separates it — the exact
+ * value {@link formatDiscoverKeywords} reserves.
+ *
+ * and 40,000 is 64% of the 62,729 that was actually refused — comfortably under the measurement
+ * this whole ceiling is derived from, with the rest of the distance kept as margin.
+ *
+ * WHY THIS IS NOT THE SIBLING'S 28,000. backlink_details set that number against the same refusal
+ * and it was right there, because its DEFAULT window (50 links, 20 pages) fits inside it whole and
+ * only the wide windows truncate. THE ROW SHAPE IS DIFFERENT HERE: a keyword row carries two
+ * competition fields, a difficulty score, an intent pair, a three-legged trend and a timestamp, and
+ * the signed default window is 100 of them — so at 28,000 the DEFAULT call truncated too, every
+ * time, printing 83-88 of its 100 keywords. A tool whose default path never returns a whole answer
+ * is not a bounded tool, it is a broken one: truncation is for the caller who asked for a wide
+ * window, not for the caller who asked for nothing in particular. Human decision, 2026-08-26.
+ *
+ * WHAT THIS NUMBER IS NOT: a token measurement. The refusal was reported in TOKENS and this bound
+ * is in CHARACTERS, because this repo has never tokenized keyword-and-timestamp text and will not
+ * publish a ratio it did not measure. The character figure is therefore held well under the one
+ * character count that is known to have been refused, rather than converted into a token estimate
+ * that would read as more precise than the evidence is. A client configured far below the default
+ * cap can still refuse a reply this size; that is a measurement nobody here has taken either.
+ *
+ * WHAT IS STILL BOUNDED. Every window wider than the default still truncates — a 1,000-row lookup
+ * prints 118-131 keywords (measured, by mode) and says so. The rows are FETCHED and BILLED either
+ * way: the vendor request is unchanged, and the run recorded in `subject_lookup_runs` is unchanged.
+ * Only the reply is bounded, and it says how many rows it could not carry.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 40_000;
+
+/** Blocks of the answer are joined by a blank line; the ceiling arithmetic counts those too. */
+const BLOCK_SEPARATOR = "\n\n";
+
+/**
+ * Render rows until the budget is spent. A row is taken ONLY if it fits whole — half a keyword row
+ * is a truncated keyword, which reads as a different keyword, and truncated vendor numbers.
+ */
+function renderWithinBudget(
+  rows: readonly DiscoverKeywordRow[],
+  budget: number,
+): { readonly block: string; readonly printed: number; readonly omitted: number } {
+  const taken: string[] = [];
+  let used = 0;
+  for (const row of rows) {
+    const line = renderKeywordRow(row);
+    const cost = line.length + 1; // + the newline that joins it to the block
+    if (used + cost > budget) break;
+    taken.push(line);
+    used += cost;
+  }
+  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
+}
+
+/**
+ * HOW TO REACH WHAT WAS PAID FOR AND NOT PRINTED. It names the only route that exists — another
+ * lookup at another offset — and refuses two comforting things that are not true: that the omitted
+ * rows are held somewhere for later (the run report keeps the first rows of a window, not all of
+ * them, and nothing re-serves them), and that a wider `limit` would help (the price is flat, so a
+ * bigger window buys rows no reply can carry).
+ */
+export const TRUNCATION_ADVICE =
+  "The rows are in DataForSEO's own order, highest first, so the ones left out are the lowest by " +
+  "that field in this window — absent from this reply, not absent from the vendor, and SeoGrep " +
+  'does not hold them for you. To read them, advance "offset" by the number printed above and ' +
+  `run the lookup again: that is a separate ${TOOL_COSTS.discover_keywords}-credit call, and ` +
+  'asking for fewer rows does not cost less — so raising "limit" past what one reply can carry ' +
+  'buys rows nobody can show you. Narrowing the set with "min_volume", "max_volume" or ' +
+  '"max_difficulty" changes WHICH rows DataForSEO returns, so the keywords you want arrive inside ' +
+  "the window that prints.";
+
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
 export function formatDiscoverKeywords(
   result: DiscoverKeywordsResult,
   input: LookupLocale,
   project?: ProjectRef | null,
 ): string {
-  if (result.window.rows.length === 0) {
+  const rows = result.window.rows;
+  if (rows.length === 0) {
     return renderNoKeywords(result, input, project);
   }
-  return [
+  const before = [
     renderHeading(result, project),
     // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
     // trust the list at all. Empty on the two modes it does not apply to.
     relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
-    result.window.rows.map(renderKeywordRow).join("\n"),
-    VENDOR_JUDGEMENT_NOTE,
-  ]
-    .filter((block) => block.length > 0)
-    .join("\n\n");
+  ].filter((block) => block.length > 0);
+  const after = [VENDOR_JUDGEMENT_NOTE];
+  // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
+  // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
+  // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
+  // and overflow on another. Measuring the scaffold makes the ceiling true on all four.
+  const scaffold = [...before, ...after].join(BLOCK_SEPARATOR).length + BLOCK_SEPARATOR.length;
+  // The note's own room, reserved at its WIDEST: both counts at the window's full row count is an
+  // upper bound on the digits the real note can carry. Reserved before the rows are laid out, so
+  // the sentence that explains the truncation can never be the thing that overflows the ceiling.
+  const noteReserve =
+    renderOutputLimitNote("keyword", rows.length, rows.length, TRUNCATION_ADVICE).length +
+    BLOCK_SEPARATOR.length;
+  const shown = renderWithinBudget(rows, MAX_RENDERED_OUTPUT_CHARS - scaffold - noteReserve);
+  return [
+    ...before,
+    // Empty only when one keyword row is itself wider than the whole budget; the note below still
+    // states how many rows the window held, so the reply never goes silent about them.
+    ...(shown.block === "" ? [] : [shown.block]),
+    // WHERE THE LIST STOPS is where the reader asks whether that was all of it, so the answer is
+    // there. It is not the relevance warning's job — that one decides whether to trust the list at
+    // all and must come first; this one explains an ending the reader has just reached.
+    ...(shown.omitted === 0
+      ? []
+      : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
+    ...after,
+  ].join(BLOCK_SEPARATOR);
 }
 
 /**
