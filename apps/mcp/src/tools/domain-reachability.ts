@@ -1,4 +1,4 @@
-import type { DomainReachability } from "@pseo/core";
+import { displayDomain, type DomainReachability } from "@pseo/core";
 
 /**
  * setup_project's and whats_next's DNS answer — the PORT itself now lives in @pseo/core
@@ -37,8 +37,12 @@ export {
  */
 export function reachabilityWarning(domain: string, result: DomainReachability): string {
   if (result !== "no_such_domain") return "";
+  // The name the CUSTOMER knows, not the A-label. Measured live minutes after the display fix
+  // shipped (2026-08-26): the receipt above had learned to say `örnek.com (xn--rnek-4qa.com)`
+  // while this paragraph still opened with the raw punycode, so one answer named the same site
+  // two ways. The receipt already carries both spellings; this line needs the readable one.
   return (
-    `\n\nHeads up: ${domain} does not resolve — a DNS lookup found no such name. The project ` +
+    `\n\nHeads up: ${displayDomain(domain)} does not resolve — a DNS lookup found no such name. The project ` +
     "is registered and ready, but a crawl would have nothing to fetch until the domain is " +
     "live. If the site is not launched yet, that is expected. If the domain was mistyped, run " +
     "setup_project again with the correct one."

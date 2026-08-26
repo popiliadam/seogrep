@@ -29,3 +29,28 @@ describe("reachabilityWarning", () => {
     expect(text).toMatch(/not launched yet|not live/i);
   });
 });
+
+/**
+ * ONE ANSWER, ONE NAME — measured on the live tool 2026-08-26, minutes after the IDN display fix
+ * shipped. `setup_project("smoke-dalga2-örnek.com")` replied:
+ *
+ *   Created project for "smoke-dalga2-örnek.com (xn--smoke-dalga2-rnek-c0b.com)" …
+ *   Heads up: xn--smoke-dalga2-rnek-c0b.com does not resolve …
+ *
+ * The receipt had learned the customer's spelling and this paragraph had not, so a single reply
+ * named one site two ways. The axis that went unvaried when D-4 was fixed was not "which tool"
+ * but "which SENTENCE inside one reply".
+ */
+describe("reachabilityWarning — the IDN name", () => {
+  it("opens with the name the customer typed, not the A-label", () => {
+    const text = reachabilityWarning("xn--rnek-4qa.com", "no_such_domain");
+    expect(text).toContain("örnek.com does not resolve");
+    expect(text).not.toContain("xn--rnek-4qa.com");
+  });
+
+  it("leaves an ASCII domain exactly as it is", () => {
+    expect(reachabilityWarning("not-launched-yet.com", "no_such_domain")).toContain(
+      "not-launched-yet.com does not resolve",
+    );
+  });
+});
