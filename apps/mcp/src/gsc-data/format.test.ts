@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  CANNIBAL_CLEAR_LEADER_GAP,
+  cannibalizationAdvice,
+  contentDecayAdvice,
+  DECAY_SEVERE_DROP_RATIO,
   formatCannibalization,
   formatContentDecay,
   formatPullSummary,
@@ -10,9 +14,10 @@ import {
 import { detectCannibalization } from "./cannibalization.ts";
 import type { CannibalGroup } from "./cannibalization.ts";
 import { analyzeContentDecay } from "./content-decay.ts";
+import type { PageDecay } from "./content-decay.ts";
 import { findQuickWins } from "./quick-wins.ts";
 import { SAMPLE_PULL } from "./fixtures.ts";
-import type { PullData } from "./types.ts";
+import type { GscRow, PullData } from "./types.ts";
 
 /**
  * The formatters are the text surface each tool returns. These pin the two branches that
@@ -242,5 +247,284 @@ describe("formatCannibalization — branded queries are excluded, never hidden",
     const text = formatCannibalization([group("seo hizmeti", false)]);
     expect(text).not.toMatch(/excluded/i);
     expect(text).not.toMatch(/branded/i);
+  });
+});
+
+/**
+ * THE CONSOLIDATION RECOMMENDATION. The measured gap this closes (2026-08-25): the tool put
+ * position 7.7 and position 92.4 on adjacent lines and never said which of the two to
+ * canonicalize, leaving the reader with the finding and none of the decision.
+ *
+ * Every case below is about WHEN a keeper may be named, because the wrong keeper is advice to
+ * delete the page that was working. The silent cases are load-bearing, not gaps.
+ */
+describe("cannibalizationAdvice names a keeper only when the data supports one", () => {
+  /** Pages are given IMPRESSIONS-DESC, the order detectCannibalization emits. */
+  function competing(pages: readonly Partial<GscRow>[], query = "trail shoes"): CannibalGroup {
+    const rows: GscRow[] = pages.map((p) => ({
+      query,
+      page: p.page ?? "https://x.test/unnamed",
+      clicks: p.clicks ?? 0,
+      impressions: p.impressions ?? 0,
+      ctr: p.ctr ?? 0,
+      position: p.position ?? 10,
+    }));
+    return {
+      query,
+      total_impressions: rows.reduce((sum, r) => sum + r.impressions, 0),
+      total_clicks: rows.reduce((sum, r) => sum + r.clicks, 0),
+      pages: rows,
+      branded: false,
+    };
+  }
+
+  const LEADER = "https://x.test/keep";
+  const LAGGARD = "https://x.test/fold";
+
+  it("says which URL to keep and which to canonicalize, with both positions", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LEADER, position: 7.7, impressions: 900, clicks: 40 },
+        { page: LAGGARD, position: 92.4, impressions: 300, clicks: 1 },
+      ]),
+    );
+    expect(advice).not.toBeNull();
+    expect(advice).toContain(`Keep ${LEADER}`);
+    expect(advice).toContain("position 7.7");
+    expect(advice).toMatch(/canonicalize or merge/i);
+    expect(advice).toContain(`${LAGGARD} (position 92.4)`);
+  });
+
+  /**
+   * THE KEEPER IS CHOSEN BY POSITION, and the incoming array is ordered by IMPRESSIONS — so this
+   * fixture makes the two orders DISAGREE. Reading `pages[0]` would name the big-but-worse-ranked
+   * page and tell the user to canonicalize the page that is actually winning: the single most
+   * damaging thing this line could say, and it would pass a fixture where the orders agree.
+   */
+  it("picks the best-RANKED page, not the first one in the impressions-ordered array", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LAGGARD, position: 12, impressions: 600, clicks: 10 },
+        { page: LEADER, position: 3, impressions: 400, clicks: 50 },
+      ]),
+    );
+    expect(advice).toContain(`Keep ${LEADER}`);
+    expect(advice).toContain(`${LAGGARD} (position 12.0)`);
+    expect(advice).not.toContain(`Keep ${LAGGARD}`);
+  });
+
+  it("carries the impressions the folded pages hold and the query's total", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LEADER, position: 4, impressions: 900, clicks: 40 },
+        { page: LAGGARD, position: 30, impressions: 1500, clicks: 2 },
+      ]),
+    );
+    expect(advice).toContain("1,500 of this query's 2,400 impressions");
+  });
+
+  it("names EVERY trailing page when several are behind the leader", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LEADER, position: 2, impressions: 900, clicks: 40 },
+        { page: "https://x.test/a", position: 18, impressions: 300, clicks: 1 },
+        { page: "https://x.test/b", position: 25, impressions: 200, clicks: 0 },
+      ]),
+    );
+    expect(advice).toContain("https://x.test/a (position 18.0)");
+    expect(advice).toContain("https://x.test/b (position 25.0)");
+    expect(advice).toMatch(/they sit/);
+  });
+
+  /**
+   * THE SILENT BRANCH. Two pages a couple of positions apart are not distinguishable from a mean
+   * taken over the whole window, and "keep the one at 6.4" would be a coin flip printed as a
+   * decision. SAMPLE_PULL is exactly this shape (6.4 vs 9.1), which is why the fixture-driven
+   * cases above use their own data.
+   */
+  it("stays silent when the pages are within the gap — a near tie is not a decision", () => {
+    expect(
+      cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 6.4, impressions: 600, clicks: 30 },
+          { page: LAGGARD, position: 9.1, impressions: 400, clicks: 12 },
+        ]),
+      ),
+    ).toBeNull();
+    expect(cannibalizationAdvice(detectCannibalization(SAMPLE_PULL)[0] as CannibalGroup)).toBeNull();
+  });
+
+  /**
+   * "EVERY other page", not "the runner-up". Two near-tied contenders plus a distant straggler is
+   * not a keep-one shape, and a rule that only compared the leader with the NEXT page would read
+   * this group as clear-cut and name a keeper over a page 3 positions away.
+   */
+  it("stays silent when ANY trailing page is inside the gap, even with a distant one present", () => {
+    expect(
+      cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 3, impressions: 900, clicks: 40 },
+          { page: "https://x.test/close", position: 6, impressions: 500, clicks: 20 },
+          { page: "https://x.test/far", position: 40, impressions: 200, clicks: 0 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  /**
+   * RANK AND CLICKS DISAGREEING is a contradiction this data cannot resolve — different intent, a
+   * better snippet, something invisible here — and consolidating on rank alone would throw away
+   * the page that is actually converting.
+   */
+  it("stays silent when a trailing page out-earns the leader on clicks", () => {
+    expect(
+      cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 3, impressions: 900, clicks: 5 },
+          { page: LAGGARD, position: 30, impressions: 300, clicks: 40 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it("emits at exactly the gap and stays silent one step inside it", () => {
+    const at = (gap: number) =>
+      cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 4, impressions: 900, clicks: 40 },
+          { page: LAGGARD, position: 4 + gap, impressions: 300, clicks: 1 },
+        ]),
+      );
+    expect(at(CANNIBAL_CLEAR_LEADER_GAP)).not.toBeNull();
+    expect(at(CANNIBAL_CLEAR_LEADER_GAP - 0.1)).toBeNull();
+  });
+
+  it("puts the recommendation in the rendered group, under the pages it was derived from", () => {
+    const text = formatCannibalization([
+      competing([
+        { page: LEADER, position: 7.7, impressions: 900, clicks: 40 },
+        { page: LAGGARD, position: 92.4, impressions: 300, clicks: 1 },
+      ]),
+    ]);
+    const lines = text.split("\n");
+    expect(lines.at(-1)).toMatch(/^ {4}→ Keep /);
+    // …below BOTH page lines, so the reader has the evidence before the instruction.
+    expect(lines.filter((line) => line.startsWith("    - "))).toHaveLength(2);
+  });
+
+  it("prints no arrow at all for a group with no supported keeper", () => {
+    const text = formatCannibalization([
+      competing([
+        { page: LEADER, position: 6.4, impressions: 600, clicks: 30 },
+        { page: LAGGARD, position: 9.1, impressions: 400, clicks: 12 },
+      ]),
+    ]);
+    expect(text).not.toContain("→");
+    expect(text).toContain('"trail shoes"'); // the finding itself is untouched
+  });
+
+  /** A branded group never reaches the list, so it never carries advice to consolidate it. */
+  it("gives no consolidation advice for a branded query", () => {
+    const branded: CannibalGroup = {
+      ...competing(
+        [
+          { page: LEADER, position: 1, impressions: 900, clicks: 40 },
+          { page: LAGGARD, position: 30, impressions: 300, clicks: 1 },
+        ],
+        "adstark",
+      ),
+      branded: true,
+    };
+    const text = formatCannibalization([branded]);
+    expect(text).not.toContain("→");
+    expect(text).toMatch(/excluded 1 branded query/i);
+  });
+});
+
+/**
+ * WHAT TO DO ABOUT A DECAYING PAGE. Three outcomes rather than one templated sentence: the list
+ * is uncapped, so a single sentence repeated down thirty rows would cost thirty lines and add
+ * nothing the row above it did not already say.
+ */
+describe("contentDecayAdvice differentiates by HOW the page fell", () => {
+  function decayed(previous: number, current: number, page = "https://x.test/p"): PageDecay {
+    const lost = previous - current;
+    return {
+      page,
+      previous_clicks: previous,
+      current_clicks: current,
+      clicks_lost: lost,
+      drop_ratio: lost / previous,
+    };
+  }
+
+  /**
+   * A page at zero is not underperforming, it has stopped appearing — and it is also the shape a
+   * truncated pull manufactures. Both reasons point the same way: VERIFY before rewriting.
+   */
+  it("tells the reader to verify serving, not rewrite, when nothing is left", () => {
+    const advice = contentDecayAdvice(decayed(60, 0));
+    expect(advice).toMatch(/nothing left/i);
+    expect(advice).toContain("60 → 0 clicks");
+    expect(advice).toMatch(/indexed/i);
+    expect(advice).toMatch(/reachable/i);
+    expect(advice).not.toMatch(/refresh/i);
+  });
+
+  it("tells the reader to re-target, not tweak, on a severe drop", () => {
+    const advice = contentDecayAdvice(decayed(100, 10));
+    expect(advice).toMatch(/severe/i);
+    expect(advice).toContain("90.0% gone");
+    expect(advice).toContain("10 of 100 clicks left");
+    expect(advice).toMatch(/re-target/i);
+    expect(advice).not.toMatch(/internal links/i);
+  });
+
+  it("tells the reader to refresh and add internal links on a partial slide", () => {
+    const advice = contentDecayAdvice(decayed(60, 30));
+    expect(advice).toMatch(/partial slide/i);
+    expect(advice).toContain("30 of 60 clicks left");
+    expect(advice).toMatch(/refresh/i);
+    expect(advice).toMatch(/internal links/i);
+    expect(advice).toContain("win back the 30");
+    expect(advice).not.toMatch(/severe/i);
+  });
+
+  /**
+   * The severity boundary, both sides. Without the lower side, widening the branch to every drop
+   * would keep the case above green while every partial slide was told to rewrite itself.
+   */
+  it("switches to severe exactly at the threshold, and not one step below it", () => {
+    const previous = 100;
+    const atThreshold = previous * DECAY_SEVERE_DROP_RATIO;
+    expect(contentDecayAdvice(decayed(previous, previous - atThreshold))).toMatch(/severe/i);
+    expect(contentDecayAdvice(decayed(previous, previous - atThreshold + 1))).toMatch(
+      /partial slide/i,
+    );
+  });
+
+  /** A zero-click page is severe by ratio too; the "nothing left" branch has to win. */
+  it("reads a total loss as 'nothing left' rather than as a severe drop", () => {
+    expect(contentDecayAdvice(decayed(60, 0))).not.toMatch(/severe/i);
+  });
+
+  it("attaches exactly one recommendation to each page in the rendered list", () => {
+    const text = formatContentDecay([
+      decayed(100, 0, "https://x.test/gone"),
+      decayed(100, 10, "https://x.test/severe"),
+      decayed(60, 30, "https://x.test/partial"),
+    ]);
+    expect(text.match(/^ {4}→ /gm)).toHaveLength(3);
+    // …and the three are genuinely different INSTRUCTIONS, not one template with the numbers
+    // swapped. The labels are asserted rather than counted as distinct strings: a first pass
+    // compared the sentence prefixes as a Set, which a boilerplate mutation survived because the
+    // click counts embedded in the prefix differed even though every sentence said "Refresh".
+    expect(text).toContain("→ Nothing left:");
+    expect(text).toContain("→ Severe:");
+    expect(text).toContain("→ Partial slide:");
+  });
+
+  it("adds no recommendation when nothing decayed", () => {
+    expect(formatContentDecay([])).not.toContain("→");
   });
 });
