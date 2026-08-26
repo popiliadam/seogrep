@@ -1299,52 +1299,98 @@ describe("S19 — the health card names the DataForSEO measurement it came from"
 });
 
 /**
- * S23.1' — THE FLAT-ZERO READING NOTE (signed 2026-08-26, 0 credits).
+ * S23.1' — THE FLAT-ZERO READING NOTES (signed 2026-08-26, 0 credits; scope widened 2026-08-26
+ * after a judge probe found the signal bound to ONE column while three others went unremarked).
  *
  * Measured on the live walkthrough: 10/10 and then 6/6 ranked keywords came back at
  * `difficulty 0/100` on volumes of 2,400-14,800. The parsing was NOT at fault — a 0 reaches the
  * reader only when DataForSEO sent a 0, and the vendor's own dedicated endpoint proves the field
  * works and varies in that market. What the reader still gets is a column with no signal in it
- * that reads as "easy". See format/flat-zero.ts for the whole measurement and the forbidden
- * sentence; these are the four cases at the surface.
+ * that reads as a measurement.
+ *
+ * EVERY per-row numeric column this table prints is bound: `volume`, `CPC`, `difficulty` and
+ * `est. traffic`. See FLAT_ZERO_COLUMNS in the source for the four exclusions and the measurement
+ * behind each, and format/flat-zero.ts for the sentence these notes are forbidden to become.
  */
-describe("S23.1' — the flat-zero note on ranked_keywords", () => {
-  const FLAT = 'READ THESE ZEROS AS "NO SIGNAL"';
-  const zeroRows = [
-    row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
-    row({ keyword: "zirkonyum diş", position: 7, search_volume: 8100, keyword_difficulty: 0 }),
-    row({ keyword: "diş beyazlatma", position: 11, search_volume: 6600, keyword_difficulty: 0 }),
-  ];
+describe("S23.1' — the flat-zero notes on ranked_keywords", () => {
+  const FLAT = 'READ THIS FLAT COLUMN AS "NO SIGNAL"';
+  /** Which columns spoke, in the order they spoke. Read from the notes, never assumed. */
+  const notedColumns = (text: string): string[] =>
+    [...text.matchAll(/DataForSEO reported (.+?) 0 for every one of/g)].map((m) => m[1]!);
 
-  it("(a) speaks ONCE, at the very end, when every reported difficulty is 0", () => {
-    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
-    expect(text).toContain(FLAT);
-    // ONCE. The output budget of this whole round exists because a per-row caveat is how a reply
-    // gets refused for length; a note repeated on 1,000 rows is the defect, not the fix.
-    expect(text.split(FLAT).length - 1).toBe(1);
-    // AT THE END: the reader reaches it after the table it is about, not before.
-    expect(text.trimEnd().endsWith("before treating any of them as easy.")).toBe(true);
-    expect(text).toContain("every one of the 3 keywords above");
-  });
+  const zeroRow = (keyword: string, position: number, over: Partial<RankedKeywordRow> = {}) =>
+    row({ keyword, position, search_volume: 14800, keyword_difficulty: 0, ...over });
 
-  it("(a) does NOT suppress or rewrite the zeros it is talking about", () => {
-    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
-    // NEVER: the value still prints exactly as the vendor sent it, on every row.
-    expect(text.split("difficulty 0/100").length - 1).toBe(3);
-    expect(text).not.toContain("difficulty not reported");
-  });
-
-  it("(b) says NOTHING when the column varies — one 12 beside a 0 is a working column", () => {
+  it("(a) ONE flat column speaks, and only that one", () => {
     const text = formatRankedKeywords(
       result({
         rows: [
-          row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
-          row({
-            keyword: "implant diş fiyatları",
-            position: 9,
-            search_volume: 2400,
-            keyword_difficulty: 12,
-          }),
+          zeroRow("dis teli", 4, { cpc: 3.2, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 8100, cpc: 1.1, etv: 120 }),
+          zeroRow("dis beyazlatma", 11, { search_volume: 6600, cpc: 0.4, etv: 60 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(1);
+    expect(text).toContain("every one of the 3 keywords above");
+  });
+
+  it("(b) TWO flat columns speak TWICE, in the order the row prints them", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4, { cpc: 0, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 8100, cpc: 0, etv: 120 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    // CPC is printed BEFORE difficulty on the row, so its note comes first.
+    expect(notedColumns(text)).toEqual(["CPC", "difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(2);
+  });
+
+  it("(c) THREE flat columns speak three times, still in print order", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4, { search_volume: 0, cpc: 0, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 0, cpc: 0, etv: 120 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["volume", "CPC", "difficulty"]);
+  });
+
+  it("(c) all FOUR bound columns can speak at once", () => {
+    const flatEverything = { search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 } as const;
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "dis teli", position: 4, ...flatEverything }),
+          row({ keyword: "zirkonyum dis", position: 7, ...flatEverything }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["volume", "CPC", "difficulty", "est. traffic"]);
+    // `est. traffic` is the one column with no non-English capture behind it, so ITS note — and
+    // only its note — withholds the claim about the vendor's other lookups.
+    const traffic = text.slice(text.lastIndexOf(FLAT));
+    expect(traffic).toContain("est. traffic");
+    expect(traffic).not.toContain("non-English markets");
+    expect(text.slice(0, text.lastIndexOf(FLAT))).toContain("non-English markets");
+  });
+
+  it("(d) NOTHING is said when no column is flat", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "dis teli", position: 4, search_volume: 14800, cpc: 3.2, keyword_difficulty: 0, etv: 900 }),
+          row({ keyword: "implant dis fiyatlari", position: 9, search_volume: 2400, cpc: 1.1, keyword_difficulty: 12, etv: 120 }),
         ],
       }),
       RENDER_INPUT,
@@ -1354,55 +1400,88 @@ describe("S23.1' — the flat-zero note on ranked_keywords", () => {
     expect(text).toContain("difficulty 12/100");
   });
 
-  it("(c) says NOTHING on a single row — one value never varied from anything", () => {
+  it("says NOTHING on a single row — one value never varied from anything", () => {
     const text = formatRankedKeywords(
-      result({
-        rows: [row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 })],
-      }),
+      result({ rows: [row({ keyword: "dis teli", position: 4, search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 })] }),
       RENDER_INPUT,
     );
     expect(text).not.toContain(FLAT);
     expect(text).toContain("difficulty 0/100");
   });
 
-  it("(d) a null row neither breaks the pattern nor counts toward it", () => {
+  it("a null row neither breaks a column's pattern nor counts toward it", () => {
     const text = formatRankedKeywords(
       result({
         rows: [
-          row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
-          row({ keyword: "ortodonti", position: 22, keyword_difficulty: null }),
-          row({ keyword: "diş beyazlatma", position: 11, search_volume: 6600, keyword_difficulty: 0 }),
+          zeroRow("dis teli", 4),
+          row({ keyword: "ortodonti", position: 22 }),
+          zeroRow("dis beyazlatma", 11, { search_volume: 6600 }),
         ],
       }),
       RENDER_INPUT,
     );
-    expect(text).toContain(FLAT);
+    expect(notedColumns(text)).toEqual(["difficulty"]);
     // TWO, not three: the silent row is not evidence of a zero and is not counted as one.
     expect(text).toContain("every one of the 2 keywords above");
-    // and the silent row still prints no difficulty at all, exactly as it always did.
     const silent = text.split("\n").find((line) => line.startsWith("• ortodonti")) ?? "";
     expect(silent).not.toContain("difficulty");
   });
 
-  it("(d) a single zero drowned in nulls is not a pattern", () => {
+  it("does NOT suppress or rewrite the zeros it is talking about", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [zeroRow("dis teli", 4), zeroRow("zirkonyum dis", 7, { search_volume: 8100 })] }),
+      RENDER_INPUT,
+    );
+    expect(text.split("difficulty 0/100").length - 1).toBe(2);
+    expect(text).not.toContain("difficulty not reported");
+  });
+
+  /**
+   * WHY `position` AND THE HEALTH CARD ARE NOT BOUND — the S23 decision file's §4.3 claimed the
+   * signal already covered `rank 0` and `is_lost: 0`, and it does not. `rank_group` is 1-based, so
+   * a flat zero is not a value the scale can carry; `is_lost` is ONE number for the whole answer,
+   * and "it never varied across the rows" cannot be said of a single value. Both are narrowed to
+   * "not covered" in the source and in the decision file, and this pins that they stay uncovered.
+   */
+  it("never speaks about position or about a health-card figure", () => {
     const text = formatRankedKeywords(
       result({
+        metrics: metrics({ count: 3, is_lost: 0, is_new: 0, is_up: 0, is_down: 0, etv: 0 }),
         rows: [
-          row({ keyword: "diş teli", position: 4, keyword_difficulty: 0 }),
-          row({ keyword: "ortodonti", position: 22, keyword_difficulty: null }),
-          row({ keyword: "diş beyazlatma", position: 11, keyword_difficulty: null }),
+          row({ keyword: "dis teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
+          row({ keyword: "zirkonyum dis", position: 7, search_volume: 8100, keyword_difficulty: 0 }),
         ],
       }),
       RENDER_INPUT,
     );
-    expect(text).not.toContain(FLAT);
+    expect(notedColumns(text)).toEqual(["difficulty"]);
+    expect(text).not.toMatch(/DataForSEO reported (position|is_lost|is_new) 0/);
+    // ...while the card itself still prints those zeros exactly as it always did.
+    expect(text).toContain("no longer found: 0");
   });
 
   it("claims no CAUSE for the zeros at the surface either", () => {
-    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
+    const text = formatRankedKeywords(
+      result({ rows: [zeroRow("dis teli", 4), zeroRow("zirkonyum dis", 7, { search_volume: 8100 })] }),
+      RENDER_INPUT,
+    );
     const note = text.slice(text.indexOf(FLAT));
     for (const claim of [/\bplans?\b/i, /\bunavailable\b/i, /\bnot available\b/i, /\babsent\b/i]) {
       expect(note, `the note claims a cause matching ${claim}`).not.toMatch(claim);
     }
+  });
+
+  it("keeps the notes in English (imzali ders 4)", () => {
+    const flatEverything = { search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 } as const;
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "kw one", position: 4, ...flatEverything }),
+          row({ keyword: "kw two", position: 7, ...flatEverything }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
   });
 });

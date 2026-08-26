@@ -26,7 +26,7 @@ import {
   writeDomainLookupRun,
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
-import { flatZeroNote } from "../format/flat-zero.ts";
+import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -373,6 +373,58 @@ export interface RankedKeywordsRenderInput {
   readonly project?: ProjectRef | null;
 }
 
+/**
+ * EVERY PER-ROW NUMERIC COLUMN THIS TABLE PRINTS, in the order {@link renderRow} prints them.
+ *
+ * `fieldLabel` is the word the row itself uses, never the vendor's raw field name, because the
+ * reader has to find the column the note is about by scanning the table above it — `volume`, not
+ * `search_volume`; `CPC`, not `cpc`.
+ *
+ * WHAT IS DELIBERATELY NOT HERE, and why each is a MEASURED exclusion rather than an oversight:
+ *
+ *   - `position` / `absolute_position` — `rank_group` and `rank_absolute` are 1-based: the first
+ *     organic result is #1. A flat zero is not a value this scale can carry, so there is nothing
+ *     to detect. (This is the S23 decision file's `rank 0`, narrowed by measurement.)
+ *   - the domain health card's figures (`is_lost`, `is_new`, `count`, the position bands, the
+ *     card's own `etv`) — ONE value each for the whole answer, not a column with a value per row.
+ *     A "this never varied across the rows" claim cannot be made about a single number at all.
+ *   - `rank_change` — rendered as WORDS ("moved up", "newly ranking"), not as a number. There is
+ *     no printed zero to misread.
+ *   - `competition_level` — a vendor BAND ("HIGH"), a string. Same reason.
+ *
+ * `est. traffic` carries `nonEnglishEvidence: false`: `etv` appears in no non-English vendor
+ * response this repo has captured, so its note drops the clause about the vendor returning
+ * non-zero values elsewhere rather than claiming evidence that is not here. The other three are
+ * backed by `fixtures/keyword-overview-tr.json`, and the tests read that file rather than
+ * trusting these flags.
+ */
+const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<RankedKeywordRow>[] = [
+  {
+    fieldLabel: "volume",
+    misreadAs: "that nobody searches for any of these",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume,
+  },
+  {
+    fieldLabel: "CPC",
+    misreadAs: "that none of these keywords are worth anything to advertisers",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.cpc,
+  },
+  {
+    fieldLabel: "difficulty",
+    misreadAs: "that every one of these keywords is easy to rank for",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.keyword_difficulty,
+  },
+  {
+    fieldLabel: "est. traffic",
+    misreadAs: "that none of these rankings bring you any visitors",
+    nonEnglishEvidence: false,
+    valueOf: (row) => row.etv,
+  },
+];
+
 /** Render the ranked keywords as the plain-text tool output (pure — unit-tested directly). */
 export function formatRankedKeywords(
   result: RankedKeywordsResult,
@@ -414,15 +466,12 @@ export function formatRankedKeywords(
   // total_count, NOT rows.length: a 2-row page of a 5,312-keyword domain is TRUNCATED, not thin,
   // and its locale is obviously fine. Only the domain's real ranking count can say otherwise.
   const withHint = table + localeHint(result.target, result.total_count ?? result.rows.length, input);
-  // ONCE, AT THE END, and only when this answer's difficulty column never moved off 0 — see
-  // format/flat-zero.ts for what was measured and what the sentence is forbidden to claim. It is
-  // named `difficulty` here because that is the word the rows above print; the rows themselves are
-  // untouched, and the `!== null` test in renderRow still decides whether a number appears at all.
-  const flat = flatZeroNote(
-    result.rows.map((row) => row.keyword_difficulty),
-    { fieldLabel: "difficulty", rowsNoun: "keywords" },
-  );
-  return flat === null ? withHint : `${withHint}\n\n${flat}`;
+  // AT THE END, one note per column that never moved off 0 — see format/flat-zero.ts for what was
+  // measured and what the sentence is forbidden to claim. The rows themselves are untouched: the
+  // `!== null` tests in renderRow still decide whether a number appears at all, and every 0 still
+  // prints exactly as the vendor sent it.
+  const flat = flatZeroNotes(result.rows, FLAT_ZERO_COLUMNS, "keywords");
+  return flat.length === 0 ? withHint : `${withHint}\n\n${flat.join("\n\n")}`;
 }
 
 /**
