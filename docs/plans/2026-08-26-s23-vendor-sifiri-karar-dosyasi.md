@@ -77,3 +77,65 @@ bunu **ölçüme dayanarak** yaparız.
 - Hiçbir fiyat/kredi değişikliği — hiçbiri önerilmiyor.
 - Çekirdek vaadin kendisi: *"raporlanmayan asla sıfır basılmaz"* **doğru kalıyor ve 11 noktada
   pinli.** Bu dosya vaadin **arkasındaki** soruyu soruyor: vendor sıfır gönderdiğinde ne yapılır.
+
+---
+
+## 7. ⛔ 23.3 ÖLÇÜLDÜ (2026-08-26 07:23 UTC) — ve 23.1'İN ÖNERİ METNİ ÇÜRÜDÜ
+
+**Ölçüm şefin oturumundaki DataForSEO MCP'siyle, `dataforseo_labs_bulk_keyword_difficulty`
+(zorluğun ÖZEL ucu) üzerinden yapıldı.** Ürünün harcama defterine yazılmaz: ölçüm öncesi ve
+sonrası `dfs_spend_today_usd()` = **0**. Gerçek hesap harcaması ≈ **$0,04** (3 Labs isteği),
+ve bu tutar ürünün $3,00 tavanı tarafından **ÖLÇÜLMEZ** — ayrı muhasebe, kayda geçti.
+
+| pazar | anahtar kelime | `keyword_difficulty` |
+|---|---|---|
+| ABD / en | `dental implants` | **44** |
+| ABD / en | `invisalign cost` | **5** |
+| ABD / en | `teeth whitening` | **70** |
+| **TR / tr** | `implant diş fiyatları` | **12** |
+| **TR / tr** | `diş teli` | **0** |
+| **TR / tr** | `zirkonyum diş` | **0** |
+| **TR / tr** | `diş beyazlatma` | **0** |
+
+### §2'nin üç olasılığından ikisi ELENDİ
+
+1. ~~*"DataForSEO bu hesap/pazar için zorluğu hesaplamıyor"*~~ → **YANLIŞ.** ABD'de 44/5/70.
+2. ~~*"Zorluk ayrı bir abonelik/uç gerektiriyor (`bulk_keyword_difficulty`)"*~~ → **YANLIŞ.**
+   Tam olarak o uç çağrıldı; hesapta var ve **TR pazarında da çalışıyor**.
+3. *"Değer gerçekten 0"* → **DOĞRULANDI.** `implant diş fiyatları` **12** döndü; yani alan TR'de
+   de **değişiyor** ve `0`, vendor'ın o terimler için **gerçek cevabı**.
+
+### §1'in teşhisi de düştü
+
+Dosya *"Üç çağrı, iki ayrı uç, 29 satır, hepsi tam olarak 0. Bu bir dağılım değil — **bir sabit**"*
+diyordu. **Dördüncü çağrı, ÜÇÜNCÜ uç, ve sabit DEĞİL** (0 · 0 · 12 · 0). Örneklem, sabitlik
+izlenimini üreten şeydi; ölçüm genişletilince izlenim kayboldu.
+
+### 23.1 ÖNERİLDİĞİ METİNLE UYGULANAMAZ
+
+Önerilen cümle şuydu:
+> *"…more likely **absent from your DataForSEO plan** than measured — treat it as **unavailable**, not as easy."*
+
+**Bu cümle artık ölçülebilir biçimde YANLIŞ.** Alan planda VAR ve ölçülüyor. Onu basmak, bu turun
+düzeltmeye çalıştığı kusurun aynası olurdu: **kanıtlanmamış bir açıklamayı müşteriye olgu diye
+sunmak.** NEVER#7.
+
+### DÜZELTİLMİŞ 23.1 — uygulanacak hâl
+
+Desen sinyali **kalır** (ücretsiz, çıktı sonunda bir kez, yalnız her satır aynı `0` iken), ama
+cümle **ölçtüğümüz şeyi** söyler ve sebep UYDURMAZ:
+
+> *"DataForSEO reported a difficulty of 0 for all N keywords in this response. This vendor does
+> return non-zero difficulty for other keywords in the same market, so a 0 here is its actual
+> answer rather than a missing value — but a 0 across an entire result set carries no ranking
+> signal, so read it as 'no signal', not as 'easy'."*
+
+**Fark:** eski metin bir SEBEP iddia ediyordu (plan kapsamı) ve yanlıştı. Yeni metin bir GÖZLEM
+bildiriyor (vendor aynı pazarda sıfır-olmayan da döndürüyor — **ölçüldü**) ve okuma tavsiyesi
+veriyor. 23.2 (blanket "raporlanmadı" sayma) **HAYIR** olarak kalır — bu ölçüm onu güçlendirdi:
+`0` gerçek bir cevap, silinmemeli.
+
+### 23.4 — artık cevaplanabilir
+
+*"Kapsam dışı çıkarsa alanı basmayı bırakmak"* → **kapsam dışı ÇIKMADI**, dolayısıyla
+**alan basılmaya devam eder.** Bu madde ölçümle kapandı; ayrı bir karar gerekmiyor.
