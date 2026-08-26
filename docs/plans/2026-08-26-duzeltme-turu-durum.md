@@ -543,3 +543,85 @@ gerçek ve yük taşıyor.
 > ve burada iki üslup tek atışta birbirine karşı ölçüldü.
 
 **Kapı:** `@pseo/mcp` 121 dosya / 2840 test (dalda), birleşik ağaçta **124 / 2984**.
+
+## DALGA E — sunum standardı + dokümanlar
+
+### S10a — hakem **PASS**, BİRLEŞTİ (125 dosya / **3007** test)
+
+Dört kesinlik sınıfı, her biri **hangi iddiayı taşıdığını** yazıyor: sayılan şeyler (hiçbir basamak
+düşmez, yalnız gruplama) · modellenen ziyaret (**tam ziyaret** — yarım ziyaret hiç olmadı) ·
+modellenen aylık maliyet (**tam dolar**) · **kanıtlanabilir biçimde sıfır** olan UTC saati.
+
+**Ve `ranked_keywords`'ün iki ondalıklı CPC'sine DOKUNMADI** — çünkü CPC **kote edilmiş** bir fiyat,
+kuruş onun birimi; modellenen bir aylık toplamda kuruş tutmak ise **kesinlik uydurmak** olur.
+"Tutarlılık için" yuvarlamak, aynı sahtekârlığın ters yönü olurdu. Hakem bu ayrımı diff'te iki yönde
+de taradı: **ihlal yok.**
+
+**İşçinin kendi bulduğu, kanıt listesinde OLMAYAN eşik:** `"Only the first pages of that crawl were
+compared"` → `"Only the first **1.000** pages…"`. Eski spec sabiti yalnız `> 0` diye pinliyordu —
+**bir eşiğin basılmadan kalma yolu tam olarak budur.**
+
+### S10e — hakem **FAIL** (deneme 1/3), yanlış-pozitif ekseninde
+
+Hakem ~50 başlıkla saldırdı. **Temiz taraf tuttu** (trailing paren/bracket, `$99`/`€99`/`5000₺`,
+Türkçe `%50 İndirim`, orta nokta, CJK `。`, köşeli ayraç `「…」`, guillemet, çok-kod-noktalı emoji
+`👍🏽`, bayrak `🇹🇷`, `24/7`, `A/B`). **Doğru pozitifler iki uçta da yakalandı** (ters tırnak,
+`{{page_title}}`, `</h1>`, `<?php…?>`, `**bold**`, sondaki `\`).
+
+**Bulunan gerçek yanlış-pozitifler — `+` yüzünden:**
+```
+Affordable Dental Care for Ages 50+      -> İŞARETLENDİ
+Learn C++                                 -> İŞARETLENDİ
++90 232 000 00 00 Diş Kliniği İzmir       -> İŞARETLENDİ   (TR'de telefonla başlayan başlıklar yaygın)
+```
+İş emrinin kendi ölçütü — *"bir FP, açığın kendisinden kötüdür, çünkü 30 kredilik rapora gürültü
+koyar"* — bunu **engelleyici** yapıyor.
+
+**İkinci bulgu:** tire asimetrisi ("başlık tire ile BAŞLAYABİLİR, tire ile BİTEMEZ") **yorumda
+iddia ediliyor, hiçbir yerde pinli değil** — hakem tireleri iki-uç kümesine taşıdı, **80/80 yeşil**.
+
+> **HAKEMİN ANLIK KANITI — dijest yeniden kesmenin dürüst yolu.**
+> İşçinin "+60 bayt tam olarak beş eşik son-eki" aritmetiğini **kâğıt üzerinde kabul etmedi**:
+> fixture'ı gerçek boru hattından **render etti** (`1091` / `71b222a5…`), tam olarak o beş son-eki
+> dizgiden **çıkardı**, ve `main`in pinli dijestini **bayt bayt yeniden türetti** (`1031` /
+> `8d41a338…`). Böylece "dijest değişikliği masum" bir **iddia** değil **ölçüm** oldu.
+
+**Ayrıca ölçülen, sessiz kalmaması gereken:** yalnız stray-char bulgusu olan bir sayfa
+`Summary: no on-page issues found.` yazıp **hemen altında** `1 page(s) with findings` + madde
+basıyor — **çıktı kendisiyle çelişiyor.** `counts` doğru, müşteri maddeyi görüyor; kusur `format.ts`
+tarafında (`ONPAGE_LABELS`'a iki tip eklenmeli) ve **S10d'nin iş emrine taşınacak.**
+
+### S22 — hakem **FAIL**, tek yeni yanlış iddia (deneme 1/3)
+
+Hakem **düzeltilen her iddiayı** kodla doğruladı (7 "saklanmıyor" sayfası `writeDomainLookupRun` /
+`writeSubjectLookupRun`e karşı; `audit_speed`ın gerçekten saklamadığı; `link_gap`'te eksik spam
+skorunun **temiz prospect gibi okunduğu** çıkarımı — *"renderer'ın ima ettiği tam olarak bu"*;
+`connect_gsc`'nin hesap-değil-property callback'i; disavow'un faturalanmayan ikinci isteği).
+Yeniden üretici **sıfır ağaç değişikliği** veriyor, drift kontrolü kendi canary'siyle **canlı**.
+
+**FAIL sebebi — dilimin yok etmek için var olduğu sınıftan YENİ bir iddia:**
+`serp-snapshot.mdx:18`, bu dalın eklediği bölümde:
+> *"`track_keywords` and `keyword_positions` are **free** and run on any account…"*
+
+`keyword_positions` **ücretsiz değil**: `credits/costs.ts:149` → **10 kredi**, 2026-08-17 imzalı.
+Yalnız **boş** vaka (henüz saklanmış ölçüm yok) rezervasyon öncesi ücretsiz reddediliyor.
+Ve dokümanlar artık **birbiriyle çelişiyor**: `keyword-positions.mdx:6` → *"Cost: 10 credits."*
+Bölümü eklemek **doğruydu** (o sayfa kapıdan hiç söz etmiyordu); yanına yanlış bir cümle kondu.
+
+> ### ⚠️ ŞEFİN ÜÇÜNCÜ HATASI — var olmayan bir kapıyı üç iş emrinde iddia ettim
+> İş emirlerine *"generator `DOC_PROSE` içine kredi rakamı koymayı **reddeder**, kasten"* yazdım.
+> **Öyle bir kapı YOK.** Hakem baktı: yalnız açıklamalarda `stripCostSentences` ve türetilmiş
+> maliyet satırı var. Doğrulamadan bir koruma iddia ettim — **bu oturumun baştan beri
+> kataloglandığı hatanın ta kendisi** — ve kanıtı şu: **niteliksel** bir fiyat iddiası ("free")
+> boru hattındaki her kontrolden geçti. Sayısal olan da geçerdi.
+> → İşçiye "boru hattına güvenme, `TOOL_COSTS`'a karşı kendin doğrula" dendi + dokunduğu bütün
+> `DOC_PROSE` bloklarında niteliksel fiyat/erişim iddiası taraması istendi.
+> → **Chip:** `DOC_PROSE` için kredi-iddiası disiplini bugün yalnız **yazarlık geleneği**; kapı değil.
+
+**Hakemin doğruladığı iki düzeltilemez madde — ikisi de GERÇEK:**
+1. `keyword_gap.ts:76` / `link_gap.ts:71` — *"header **always** says how many in total"*; ikisi de
+   toplamı yalnız `total !== null && total > shown` iken basıyor.
+2. `disavow-candidates.ts:129` — `limit` *"the price control"*; **aynı satır-tarifeli Backlinks
+   ucunda** kardeşi `backlink-details.ts:101` bu turda **tam tersine** düzeltildi
+   (ölçüm: 19× satır = **+%13** vendor maliyeti). **Tool şemasında canlı, yanlış bir fiyat iddiası.**
+   → İkisi de ayrı kod dilimine (`fix/f3-claims`) dispatch edildi.
