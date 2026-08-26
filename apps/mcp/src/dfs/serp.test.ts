@@ -131,12 +131,29 @@ function withoutCost(fixture: unknown): unknown {
   return clone;
 }
 
+/**
+ * The first element of a fixture array, INSISTED UPON.
+ *
+ * Every index this file takes is into the committed one-task / one-result envelope that every
+ * DataForSEO response in this directory carries, so `undefined` cannot mean "this response had
+ * none" — it can only mean the fixture was gutted. Naming that beats a `!` (which would hand an
+ * assertion an `undefined` and report the failure as a parse bug) and beats casting the envelope
+ * to a tuple (which needs `as unknown as` and would suppress the check outright).
+ */
+function first<T>(items: readonly T[], what: string): T {
+  const value = items[0];
+  if (value === undefined) {
+    throw new Error(`fixture: serp-organic-live-advanced.json carries no ${what}`);
+  }
+  return value;
+}
+
 /** The fixture's result object, mutated by `edit`. */
 function withResult(edit: (result: Record<string, unknown>) => void): unknown {
   const clone = structuredClone(serpFixture) as {
     tasks: { result: Record<string, unknown>[] }[];
   };
-  edit(clone.tasks[0].result[0]);
+  edit(first(first(clone.tasks, "task").result, "result"));
   return clone;
 }
 
@@ -795,10 +812,11 @@ describe("found vs searched-and-not-found vs not-measured", () => {
     const staleButFailed = structuredClone(serpFixture) as {
       tasks: { status_code: number; status_message?: string; result: unknown[] }[];
     };
-    staleButFailed.tasks[0].status_code = 40501;
-    staleButFailed.tasks[0].status_message = "Invalid Field";
+    const failedTask = first(staleButFailed.tasks, "task");
+    failedTask.status_code = 40501;
+    failedTask.status_message = "Invalid Field";
     // The payload really is the ranked one — otherwise this spec could pass for the wrong reason.
-    expect(JSON.stringify(staleButFailed.tasks[0].result)).toContain(TARGET);
+    expect(JSON.stringify(failedTask.result)).toContain(TARGET);
 
     const row = await rowFor(staleButFailed);
     expect(row.outcome.status).toBe("not_measured");
@@ -821,7 +839,10 @@ describe("found vs searched-and-not-found vs not-measured", () => {
 // WHAT WAS MEASURED — organic only, exact host, and the vendor's own order.
 // =============================================================================================
 describe("what counts as a placement", () => {
-  const result = (serpFixture as { tasks: { result: unknown[] }[] }).tasks[0].result[0];
+  const result = first(
+    first((serpFixture as { tasks: { result: unknown[] }[] }).tasks, "task").result,
+    "result",
+  );
 
   it("counts ORGANIC items only — a featured snippet's rank_group is on a different scale", () => {
     expect(organicItems(result)).toHaveLength(2);
@@ -854,14 +875,20 @@ describe("what counts as a placement", () => {
    * `endsWith` a ranking blog post would be reported as the site's own ranking.
    */
   it("…and the other way round: a SUBDOMAIN result is not the apex domain ranking", () => {
-    const subdomainResult = (
-      withResult((r) => {
-        const items = r.items as Record<string, unknown>[];
-        r.items = items.map((item) =>
-          item.domain === TARGET ? { ...item, domain: `blog.${TARGET}` } : item,
-        );
-      }) as { tasks: { result: unknown[] }[] }
-    ).tasks[0].result[0];
+    const subdomainResult = first(
+      first(
+        (
+          withResult((r) => {
+            const items = r.items as Record<string, unknown>[];
+            r.items = items.map((item) =>
+              item.domain === TARGET ? { ...item, domain: `blog.${TARGET}` } : item,
+            );
+          }) as { tasks: { result: unknown[] }[] }
+        ).tasks,
+        "task",
+      ).result,
+      "result",
+    );
     expect(outcomeFor(subdomainResult, TARGET).status).toBe("absent_from_examined_results");
     expect(outcomeFor(subdomainResult, `blog.${TARGET}`).status).toBe("ranked");
   });

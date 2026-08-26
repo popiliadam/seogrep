@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GscSite } from "@pseo/core";
 import { openTrackedProject, type ProjectsClient } from "@pseo/db/projects";
 import type { AuthContext } from "../auth.ts";
-import type { GscAccountSummary } from "./list-gsc-properties.ts";
+import type { GscAccountSummary, ListAccountSitesFn } from "./list-gsc-properties.ts";
 import type { ProjectResolution } from "./setup-project.ts";
 import { makeTrackGscPropertyTool, type OpenProjectFn } from "./track-gsc-property.ts";
 
@@ -558,11 +558,11 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
   /** Build the tool over an explicit account list and a per-account sites answer. */
   function toolOver(
     accounts: readonly GscAccountSummary[],
-    sitesFor: (accountId: string) => Promise<readonly GscSite[]>,
+    sitesFor: ListAccountSitesFn,
   ) {
     return makeTrackGscPropertyTool({
       loadAccounts: () => Promise.resolve([...accounts]),
-      listAccountSites: (accountId) => sitesFor(accountId),
+      listAccountSites: sitesFor,
       openProject: () =>
         Promise.resolve({
           ok: true,
@@ -574,7 +574,7 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
 
   async function textOf(
     accounts: readonly GscAccountSummary[],
-    sitesFor: (accountId: string) => Promise<readonly GscSite[]>,
+    sitesFor: (accountId: string) => Promise<GscSite[]>,
   ): Promise<string> {
     const result = await toolOver(accounts, sitesFor).run(CTX, { property: TRACKED.siteUrl });
     return result.content.map((part) => part.text).join("\n");
@@ -582,7 +582,7 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
 
   /** Every account fails except `listedOn`, which lists the tracked property. */
   function onlyOneAnswers(listedOn: string) {
-    return (accountId: string): Promise<readonly GscSite[]> =>
+    return (accountId: string): Promise<GscSite[]> =>
       accountId === listedOn
         ? Promise.resolve([TRACKED])
         : Promise.reject(new Error("fixture: sites.list refused"));
@@ -632,7 +632,7 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
 
   it("keeps the all-unreadable refusal deterministic too", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const allFail = (): Promise<readonly GscSite[]> =>
+    const allFail = (): Promise<GscSite[]> =>
       Promise.reject(new Error("fixture: sites.list refused"));
     const forward = await textOf(ACCOUNTS, allFail);
     const reversed = await textOf([...ACCOUNTS].reverse(), allFail);
@@ -665,7 +665,7 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
       { id: "acc-lower-alpha", email: "alpha@mail.invalid" },
     ];
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const allFail = (): Promise<readonly GscSite[]> =>
+    const allFail = (): Promise<GscSite[]> =>
       Promise.reject(new Error("fixture: sites.list refused"));
     const forward = await textOf(mixedCase, allFail);
     const reversed = await textOf([...mixedCase].reverse(), allFail);
@@ -679,7 +679,7 @@ describe("track_gsc_property STEP 1 (parallel, order-independent)", () => {
   });
 
   it("keeps the ambiguous refusal deterministic when several accounts list it", async () => {
-    const everyoneListsIt = (): Promise<readonly GscSite[]> => Promise.resolve([TRACKED]);
+    const everyoneListsIt = (): Promise<GscSite[]> => Promise.resolve([TRACKED]);
     const forward = await textOf(ACCOUNTS, everyoneListsIt);
     const reversed = await textOf([...ACCOUNTS].reverse(), everyoneListsIt);
 

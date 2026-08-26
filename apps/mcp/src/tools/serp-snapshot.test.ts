@@ -385,12 +385,15 @@ describe("the stored report", () => {
    */
   it("caps the stored list without touching the found count", async () => {
     const row = rowOf(await snapshotOf());
-    if (row.outcome.status !== "ranked") throw new Error("expected a ranked row");
+    // Bound to its own const so the "ranked" narrowing survives into the callback below — a
+    // property access re-widens inside a closure, and the widened union has no `placements`.
+    const outcome = row.outcome;
+    if (outcome.status !== "ranked") throw new Error("expected a ranked row");
     const many = {
       ...row,
       outcome: {
-        ...row.outcome,
-        placements: Array.from({ length: MAX_STORED_PLACEMENTS + 7 }, () => row.outcome.placements[0]),
+        ...outcome,
+        placements: Array.from({ length: MAX_STORED_PLACEMENTS + 7 }, () => outcome.placements[0]),
       },
     } as SerpKeywordRow;
     const report = measurementReport(many);

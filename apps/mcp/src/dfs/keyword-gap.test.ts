@@ -128,7 +128,11 @@ describe("parseKeywordGapResponse", () => {
   it("drops a null-keyword row instead of failing the whole parse", () => {
     const parsed = parseKeywordGapResponse(gapFixture);
     // The fixture has 5 items; one of them has `keyword: null`.
-    expect(gapFixture.tasks[0].result[0].items).toHaveLength(5);
+    const items = gapFixture.tasks[0]?.result[0]?.items;
+    if (items === undefined) {
+      throw new Error("fixture: keyword-gap.json no longer carries tasks[0].result[0].items");
+    }
+    expect(items).toHaveLength(5);
     expect(parsed.rows).toHaveLength(4);
     expect(parsed.rows.every((row) => row.keyword.length > 0)).toBe(true);
   });
