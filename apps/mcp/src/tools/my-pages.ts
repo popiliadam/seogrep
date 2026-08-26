@@ -103,6 +103,23 @@ const NOT_ENABLED_MESSAGE =
 const inputSchema = z.object({
   target: targetField("list the ranking pages of"),
   project_id: projectIdField,
+  // WHOSE PRICE. This field used to say "DataForSEO bills per returned row, so this is the price
+  // control, not a display preference". Half of that is true and the half a CUSTOMER reads is not:
+  // the call costs a flat 40 credits at `limit` 1 and at `limit` 1,000, so a caller narrowing the
+  // window to save money pays the same and receives less.
+  //
+  // The other half IS true here, and it is true differently from the Backlinks family. Computed
+  // from the Labs tariff this repo already declares (dfs/relevant-pages.ts: $0.012 per request +
+  // $0.00012 per row, one request per lookup): $0.01212 at 1 row, $0.024 at 100, $0.132 at 1,000 —
+  // the per-row half EQUALS the per-request half at exactly 100 rows ($0.012 / $0.00012) and is
+  // ten times it at the 1,000-row ceiling, where it is 91% of the bill. Backlinks bills
+  // $0.024 + $0.000036 a row, which is why 19x the rows there cost 13% more and the same sentence
+  // was withdrawn outright on backlink_details.
+  //
+  // So the row count is a control on the VENDOR's bill, and what it justifies is the CEILING —
+  // not a saving the caller can make. The 100 and the ten-times below come from the tariff, not
+  // from our caps; if MAX_RELEVANT_PAGES_ROWS ever moves, the "ten times" has to be recomputed
+  // (and moving it is a price change either way — NEVER #6).
   limit: z
     .number()
     .int()
@@ -111,8 +128,15 @@ const inputSchema = z.object({
     .default(DEFAULT_RELEVANT_PAGES_ROWS)
     .describe(
       `How many pages to return (1-${MAX_RELEVANT_PAGES_ROWS}, default ` +
-        `${DEFAULT_RELEVANT_PAGES_ROWS}). DataForSEO bills per returned row, so this is the price ` +
-        "control, not a display preference — the flat price was signed against this ceiling.",
+        `${DEFAULT_RELEVANT_PAGES_ROWS}). It does not change what YOU pay: this call costs ` +
+        `${TOOL_COSTS.my_pages} credits whether you ask for one page or ` +
+        `${MAX_RELEVANT_PAGES_ROWS}, and asking for fewer rows costs the same. It does move ` +
+        "DataForSEO's own bill, unlike SeoGrep's backlink tools where the row count barely " +
+        "shifts it: the Labs tariff is a flat fee per request plus a fee per row, and the " +
+        "per-row half catches the flat half at 100 rows and is ten times it at " +
+        `${MAX_RELEVANT_PAGES_ROWS}. That is what fixes the ceiling — the flat credit price was ` +
+        "signed against a full-width request — and it is not a reason to ask for less than you " +
+        "need.",
     ),
   offset: z
     .number()
@@ -400,10 +424,56 @@ function windowLimitsNote(result: RelevantPagesResult): string {
   );
 }
 
-/** One titled section, or nothing when the population is empty. */
-function section(title: string, count: number, body: string[], note: string): string | null {
+/** One titled section, or nothing when the population is empty. Empty notes are dropped. */
+function section(title: string, count: number, body: string[], ...notes: string[]): string | null {
   if (count === 0) return null;
-  return [`${title} (${exactCount(count)}):`, body.join("\n"), note].filter(Boolean).join("\n\n");
+  return [`${title} (${exactCount(count)}):`, body.join("\n"), ...notes].filter(Boolean).join("\n\n");
+}
+
+/**
+ * THE ONLY LIST HERE NOBODY CHOSE THE LENGTH OF. Measured 2026-08-25: 93 rows, no bound at all.
+ *
+ * The two vendor-side sections are as long as the caller's own `limit` made them. This one is
+ * not: it is every page of the crawl that this window did not name, so its length is set by the
+ * SITE, and the read cap above it (CRAWL_PAGE_READ_CAP, 1,000) is the only thing that ever
+ * stopped it. A caller asking for ten vendor rows against a thousand-page crawl was handed
+ * roughly a thousand lines they did not ask for and could not shorten.
+ *
+ * FIFTY. A row here is one line — a URL and a status — so fifty is a screen or two, and the
+ * paid half of the same reply (up to 1,000 vendor pages, several lines each) is what the reader
+ * came for. The rows are in the crawl's own fetch order, which is discovery order and NOT an
+ * importance ranking, so the note says that too rather than letting "the first fifty" read as
+ * "the top fifty".
+ *
+ * NOTHING IS DROPPED IN SILENCE, and nothing extra was billed for what is dropped: these rows are
+ * the tenant's own stored crawl, not a DataForSEO purchase. That is the difference from
+ * backlink_details' output-limit note, which has to say the omitted rows WERE paid for.
+ */
+export const MAX_CRAWL_ONLY_LISTED = 50;
+
+/** What the reader is told when crawl-side rows exist but are not printed. */
+export function renderCrawlOnlyLimitNote(printed: number, omitted: number): string {
+  return (
+    `Output limit reached — ${exactCount(printed)} ${printed === 1 ? "page" : "pages"} printed ` +
+    `above, ${exactCount(omitted)} more in this same group but not printed: one reply cannot ` +
+    "hold them. They are pages of your own crawl rather than rows bought from DataForSEO, so " +
+    "nothing was charged for the ones left out, and they are listed in the order that crawl " +
+    "fetched them — that is discovery order, not an order of importance. Advance `offset` to " +
+    "read further into DataForSEO's list: a page this window did not name may be named by the next."
+  );
+}
+
+/** The third section — bounded, because its length is the site's and not the caller's. */
+function crawlOnlySection(join: PageJoin, result: RelevantPagesResult): string | null {
+  const shown = join.crawlOnly.slice(0, MAX_CRAWL_ONLY_LISTED);
+  const omitted = join.crawlOnly.length - shown.length;
+  return section(
+    "Fetched by that crawl, not named in this window",
+    join.crawlOnly.length,
+    shown.map((page) => `• ${renderCrawledPage(page)}`),
+    omitted > 0 ? renderCrawlOnlyLimitNote(shown.length, omitted) : "",
+    windowLimitsNote(result),
+  );
 }
 
 /**
@@ -452,12 +522,7 @@ export function renderComparison(result: RelevantPagesResult, crawl: CrawlSide):
       join.vendorOnly.map(renderVendorPage),
       crawlLimitsNote(crawl),
     ),
-    section(
-      "Fetched by that crawl, not named in this window",
-      join.crawlOnly.length,
-      join.crawlOnly.map((page) => `• ${renderCrawledPage(page)}`),
-      windowLimitsNote(result),
-    ),
+    crawlOnlySection(join, result),
     section(
       "Addresses that could not be keyed, and so could not be compared either way",
       join.vendorUnkeyed.length + join.crawlUnkeyed.length,

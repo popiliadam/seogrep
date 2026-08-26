@@ -218,6 +218,18 @@ const inputSchema = z
           "true). Sent to DataForSEO explicitly either way, so the answer never depends on a " +
           "vendor default that could move.",
       ),
+    // WHOSE PRICE — the same correction my_pages carries, and the same arithmetic, because both
+    // tools read Labs. The old sentence ("DataForSEO bills per returned row, so this is the price
+    // control, not a display preference") is half true, and the half a CUSTOMER reads is not: the
+    // call costs a flat 40 credits at `limit` 1 and at `limit` 1,000.
+    //
+    // Computed from the tariff this repo declares (dfs/discover-keywords.ts: $0.012 per request +
+    // $0.00012 per row, one request per lookup): $0.01212 at 1 row, $0.024 at 100, $0.132 at
+    // 1,000. The per-row half equals the per-request half at exactly 100 rows and is ten times it
+    // at the 1,000-row ceiling. So the row count controls the VENDOR's bill — which is what
+    // justifies the CEILING — and never the caller's. The 100 and the ten-times come from the
+    // tariff, not from our caps; moving MAX_DISCOVER_ROWS is a price change (NEVER #6) and would
+    // require recomputing them.
     limit: z
       .number()
       .int()
@@ -226,8 +238,14 @@ const inputSchema = z
       .default(DEFAULT_DISCOVER_ROWS)
       .describe(
         `How many keywords to return (1-${MAX_DISCOVER_ROWS}, default ${DEFAULT_DISCOVER_ROWS}). ` +
-          "DataForSEO bills per returned row, so this is the price control, not a display " +
-          "preference — the flat price was signed against this ceiling.",
+          `It does not change what YOU pay: this call costs ${TOOL_COSTS.discover_keywords} ` +
+          `credits whether you ask for one keyword or ${MAX_DISCOVER_ROWS}, and asking for fewer ` +
+          "rows costs the same. It does move DataForSEO's own bill, unlike SeoGrep's backlink " +
+          "tools where the row count barely shifts it: the Labs tariff is a flat fee per request " +
+          "plus a fee per row, and the per-row half catches the flat half at 100 rows and is ten " +
+          `times it at ${MAX_DISCOVER_ROWS}. That is what fixes the ceiling — the flat credit ` +
+          "price was signed against a full-width request — and it is not a reason to ask for " +
+          "less than you need.",
       ),
     offset: z
       .number()

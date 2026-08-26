@@ -31,6 +31,13 @@ import type { Json } from "../db.ts";
  *    sha256 pin of this report by exactly +60 bytes, which is those five suffixes and not one
  *    byte more. Summary line, section order, page order, every other finding: untouched.
  *
+ *    RE-CUT A SECOND TIME, DELIBERATELY (S10d — the skipped list stopped repeating its reason).
+ *    The four rows under "Not crawled (skipped)" each said `url (reason)`, and a live audit
+ *    measured FIFTY such rows carrying one identical reason. The reason is now named once per
+ *    group with its own count, above the URLs it covers. That is the ONLY edit here: the same
+ *    change moved format-graph.test.ts's `tech` digest by exactly +72 bytes, which is +18 on each
+ *    of these four categories and nothing else. On-page and structured data: untouched.
+ *
  * 2. THE NEW SECTIONS. Each is APPENDED and prints only when it has something, so the same
  *    fixture with signals attached must grow — the second half asserts the sections appear, name
  *    their threshold, and show the data.
@@ -152,13 +159,17 @@ Redirects surfaced: 1
 
 Not crawled (skipped): 4
   non_html: 1
-    · https://legacy.test/x.png (non-HTML (image/png))
+    non-HTML (image/png) — 1 URL(s):
+      · https://legacy.test/x.png
   redirect: 1
-    · https://legacy.test/old (redirects to already-crawled URL)
+    redirects to already-crawled URL — 1 URL(s):
+      · https://legacy.test/old
   robots: 1
-    · https://legacy.test/private (blocked by robots.txt)
+    blocked by robots.txt — 1 URL(s):
+      · https://legacy.test/private
   timeout: 1
-    · https://legacy.test/slow (timeout)
+    timeout — 1 URL(s):
+      · https://legacy.test/slow
 
 Robots conflicts (noindex but internally linked): 1
   · https://legacy.test/noindex (linked from 2 page(s))`;

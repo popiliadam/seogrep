@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatOnpageReport, formatTechReport, formatSchemaReport } from "./format.ts";
+import { formatOnpageReport, formatTechReport, formatSchemaReport, ONPAGE_ORDER } from "./format.ts";
 import { auditOnpage } from "./rules/onpage.ts";
 import { auditTech } from "./rules/tech.ts";
 import { auditSchema } from "./rules/schema.ts";
@@ -48,5 +48,147 @@ describe("audit formatters", () => {
   it("handles a null fetchedAt gracefully", () => {
     const text = formatOnpageReport(auditOnpage(crawl([page({ url: "https://e/a" })])), null);
     expect(text).toContain("crawl timestamp unavailable");
+  });
+});
+
+// =====================================================================================
+// THE SKIPPED LIST SAYS THE REASON ONCE, NOT ONCE PER ROW.
+//
+// Measured 2026-08-25 on a live audit: 50 rows of skipped URLs, every one carrying the SAME
+// reason string. What a reader needs there is how many were skipped for each reason; the URLs are
+// examples. Both caps below are asserted through the REAL renderer, and both print what they
+// withheld — a silent truncation would be worse than the long list it replaces.
+// =====================================================================================
+
+function skippedCrawl(skipped: { url: string; reason: string }[]): AuditCrawl {
+  return { pages: [page({ url: "https://e/" })], skipped, fetchedAt: AT };
+}
+
+describe("the skipped list groups by reason and bounds what it prints", () => {
+  /** Sixty URLs, ONE reason — the shape the live audit produced, at the size that hides it. */
+  const oneReason = Array.from({ length: 60 }, (_, i) => ({
+    url: `https://e/private/${i}`,
+    reason: "blocked by robots.txt",
+  }));
+
+  it("prints one reason line with its own count, not one reason per URL", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(oneReason)), AT);
+    expect(text).toContain("blocked by robots.txt — 60 URL(s):");
+    // The reason appears ONCE: as the group header, never again as a per-row suffix.
+    expect(text.match(/blocked by robots\.txt/g)).toHaveLength(1);
+  });
+
+  it("lists ten example URLs and says how many more share that reason", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(oneReason)), AT);
+    expect(text).toContain("      · https://e/private/9");
+    expect(text).not.toContain("https://e/private/10");
+    expect(text).toMatch(/… and 50 more URL\(s\) with this reason, not listed/);
+    // …and the header still counts every one of them, so the totals reconcile.
+    expect(text).toContain("Not crawled (skipped): 60");
+  });
+
+  /**
+   * THE OPPOSITE FAILURE, and the one grouping ALONE would have made worse: `fetch failed: X`
+   * embeds a variable, so many skips can carry many DISTINCT reasons. Ordered biggest-first, only
+   * the first five groups print, and the tail names both what it left out and how big it was.
+   */
+  const manyReasons = [
+    ...Array.from({ length: 4 }, (_, i) => ({ url: `https://e/a${i}`, reason: "fetch failed: ECONNRESET" })),
+    ...Array.from({ length: 3 }, (_, i) => ({ url: `https://e/b${i}`, reason: "fetch failed: ETIMEDOUT" })),
+    { url: "https://e/c", reason: "fetch failed: EHOSTUNREACH" },
+    { url: "https://e/d", reason: "fetch failed: ECONNREFUSED" },
+    { url: "https://e/e", reason: "fetch failed: EAI_AGAIN" },
+    { url: "https://e/f", reason: "fetch failed: EPROTO" },
+    { url: "https://e/g", reason: "fetch failed: socket hang up" },
+  ];
+
+  it("orders the reasons biggest-first so the one explaining most of the damage is printed", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(manyReasons)), AT);
+    const order = [...text.matchAll(/fetch failed: (\S+) — (\d+) URL\(s\):/g)].map((m) => m[2]);
+    expect(order).toEqual(["4", "3", "1", "1", "1"]);
+  });
+
+  it("counts the reasons it did not print, and the URLs they cover", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(manyReasons)), AT);
+    expect(text).toMatch(/… and 2 more reason\(s\) here, covering 2 URL\(s\), not listed/);
+    expect(text).toContain("Not crawled (skipped): 12");
+  });
+});
+
+// =====================================================================================
+// THE SUMMARY LINE MUST AGREE WITH THE BULLETS UNDER IT.
+//
+// `formatOnpageReport` builds its summary by walking ONPAGE_ORDER — the key order of
+// ONPAGE_LABELS — and DROPS any finding type that map does not name. So a rule can ship, count
+// correctly, print its bullet, and still be summarised as "no on-page issues found": the report
+// then contradicts itself on the same screen. That is what `title_stray_chars` and
+// `meta_stray_chars` did until they were named.
+//
+// These specs drive the REAL engine and the REAL renderer. Removing either key from ONPAGE_LABELS
+// turns them red, and the last one turns red for ANY future type that ships unnamed — which is
+// the failure, rather than these two types in particular.
+// =====================================================================================
+
+/** A page clean on every other rule, whose title opens with a backtick a human never typed. */
+const STRAY_TITLE = "`Teeth Whitening Prices in Izmir";
+/** …and one whose meta description ends with a pipe severed off a template. */
+const STRAY_META =
+  "Teeth whitening prices in Izmir, what a session costs and how to choose a clinic |";
+
+function strayPage(url: string, over: Partial<AuditPage>): AuditPage {
+  return page({
+    url,
+    title: STRAY_TITLE,
+    metaDescription: "A meta description well clear of the fifty character floor and the ceiling.",
+    h1s: ["Whitening prices"],
+    canonical: url,
+    wordCount: 400,
+    ...over,
+  });
+}
+
+describe("a stray-edge finding is named in the summary, not summarised away", () => {
+  const titleOnly = strayPage("https://e/title", {});
+  const metaOnly = strayPage("https://e/meta", {
+    title: "Whitening Prices in Izmir",
+    metaDescription: STRAY_META,
+  });
+
+  /**
+   * THE FIXTURE GUARD, and it is not ceremony: a title one character too long, or a meta one
+   * character under the floor, would fire a SECOND finding — one that IS named — and every
+   * assertion below would pass while proving nothing about the stray rule. Asserting the exact
+   * finding list is what makes the rest of this block mean what it says.
+   */
+  it("fires exactly one finding on each fixture page, and it is the stray one", () => {
+    const report = auditOnpage(crawl([titleOnly, metaOnly]));
+    expect(report.pages.map((p) => p.findings.map((f) => f.type))).toEqual([
+      ["title_stray_chars"],
+      ["meta_stray_chars"],
+    ]);
+  });
+
+  it("does not print 'no on-page issues found' above a page that has one", () => {
+    const text = formatOnpageReport(auditOnpage(crawl([titleOnly])), AT);
+    expect(text).toMatch(/1 page\(s\) with findings/);
+    expect(text).not.toMatch(/no on-page issues found/i);
+  });
+
+  it("summarises both stray types by name, beside the bullets that report them", () => {
+    const text = formatOnpageReport(auditOnpage(crawl([titleOnly, metaOnly])), AT);
+    const summary = text.split("\n").find((line) => line.startsWith("Summary:")) ?? "";
+    expect(summary).toMatch(/1 title has stray markup/i);
+    expect(summary).toMatch(/1 meta description has stray markup/i);
+    expect(text).toMatch(/· title starts with .*stray markup or template character/);
+    expect(text).toMatch(/· meta description ends with .*stray markup or template character/);
+  });
+
+  /** The general form of the defect: any type the engine counts must have a name to print. */
+  it("names every finding type the engine can count — an unnamed one vanishes from the summary", () => {
+    const report = auditOnpage(crawl([titleOnly, metaOnly]));
+    expect(Object.keys(report.counts).length).toBeGreaterThan(0);
+    for (const type of Object.keys(report.counts)) {
+      expect(ONPAGE_ORDER).toContain(type);
+    }
   });
 });
