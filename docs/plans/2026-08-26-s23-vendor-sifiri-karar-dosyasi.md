@@ -1,0 +1,192 @@
+# S23 — VENDOR'IN `0` GÖNDERDİĞİ ALANLAR · KARAR DOSYASI (imza bekliyor)
+
+> Kaynak: `2026-08-26-s1-DUZELTME-canli-olcum.md`. Ürünün çekirdek vaadi
+> *"raporlanmayan alan asla sıfır basılmaz"* **teknik olarak tutuluyor** — ama müşteri yine de
+> güvenilmez bir sayı okuyor, çünkü **sıfırı vendor gönderiyor.**
+
+## 1. Ölçüm
+
+| ölçüm | uç | sonuç |
+|---|---|---|
+| 2026-08-25, tur | Labs `keyword_suggestions` | **13/13** satır `keyword_difficulty 0` |
+| 2026-08-25, tur | Labs `ranked_keywords` | **10/10** satır `difficulty 0/100` |
+| 2026-08-25 21:00 UTC, şef canlı | Labs `ranked_keywords` | **6/6** satır `difficulty 0/100` |
+
+Hacimler: **2.400 – 14.800**. `diş teli` (14.800 arama) için zorluk 0 **inandırıcı değil**.
+
+**Üç çağrı, iki ayrı uç, 29 satır, hepsi tam olarak 0.** Bu bir dağılım değil — **bir sabit.**
+Gerçek zorluk değerleri değişir.
+
+**Ve kod sadık:** ayrıştırma `?? null`, basım `!== null` — `0` ancak vendor `0` gönderdiğinde basılır
+(kaynak okundu + mutasyonla kanıtlandı). Yani kusur bizim tarafta değil.
+
+## 2. Bilmediğimiz şey — ve bunu bilmediğimizi yazmak önemli
+
+`0`ın ne anlama geldiği **ölçülmedi**. En az üç olasılık var ve **hiçbiri elenmedi**:
+1. DataForSEO bu hesap/pazar için zorluğu **hesaplamıyor** ve boş yerine `0` gönderiyor;
+2. Zorluk **ayrı bir abonelik/uç** gerektiriyor (`bulk_keyword_difficulty`) ve temel yanıtta `0` geliyor;
+3. Değer **gerçekten** 0 (uzun kuyrukta mümkün — ama 14.800 aramalı baş terimde değil).
+
+**Bu belirsizliği tek bir ölçüm kapatır** ve o ölçüm **bizim tarafımızda değil, vendor tarafında.**
+
+## 3. Neden kolay çözümlerin ikisi de YANLIŞ
+
+- **(a) Olduğu gibi bas** *(bugünkü hâl)* — sadık, ama müşteriye modellenmiş bir sayı gibi görünen
+  bir yer tutucu gösteriyor. `difficulty 0/100`, "bu kelime kolay" diye okunur.
+- **(b) `0`ı "raporlanmadı" say** — **meşru bir sıfırı yok eder.** Uzun kuyrukta zorluk 0 gerçektir;
+  `is_lost: 0` ("hiç kelime kaybetmedi") tamamen normaldir; küçük bir haber sitesinde `rank 0`
+  olabilir. Ve bu, **turun düzeltmeye çalıştığı kusurun aynadaki hâli** olurdu: bir ölçümü sessizce
+  yok etmek.
+
+**Alanın türüne bakmadan verilen her blanket kural yanlıştır.** Tek bir ölçümden genel politika
+türetmek, bu turda beş kez yakaladığımız hatanın ta kendisi olur.
+
+## 4. ŞEFİN ÖNERİSİ — ölç, sonra alana özel karar ver
+
+**4.1 — Ücretsiz ve hemen: "sabit sıfır" sinyali.**
+Bir yanıtta **DEĞİŞMESİ GEREKEN bir alan her satırda aynı `0` ise**, bu bir ölçüm değil bir
+yer tutucudur. Satır başına değil, **çıktının sonunda bir kez** söylensin:
+> *"DataForSEO returned a difficulty of 0 for all N keywords in this response. A field that does not
+> vary across a whole result set is more likely absent from your DataForSEO plan than measured —
+> treat it as unavailable, not as easy."*
+
+Bedeli: **sıfır vendor parası, sıfır kredi**, ve yalnız ölçülmüş koşulda tetiklenir.
+Alana özel değil, **desene** özel — bu yüzden meşru sıfırları yok etmez.
+
+**4.2 — Ayrı ve ucuz: zorluğun gerçekten sağlanıp sağlanmadığını ölç.**
+DataForSEO dokümantasyonu + gerekirse tek bir `bulk_keyword_difficulty` çağrısı (≤$0,02) ile
+`keyword_difficulty`in bu hesapta **kapsam dahilinde olup olmadığı** ölçülür. Sonuç ne olursa olsun
+dosyaya yazılır. Kapsam dışıysa, doğru düzeltme alanı **basmayı bırakmak** olabilir — ama o zaman
+bunu **ölçüme dayanarak** yaparız.
+
+**4.3 — Diğer üç alan için ŞU AN karar YOK.**
+`rank 0`, `is_lost: 0`, `trend monthly 0%` — üçünde de `0` **meşru bir değer olabilir** ve hiçbiri
+"her satırda aynı" desenini göstermedi. **4.1'in sinyali onları da kapsar** ve fazlası gerekmez.
+
+> **⚠️ §4.3'ÜN BU CÜMLESİ ÖLÇÜMLE DARALTILDI (2026-08-26 — §8'e bakın).** *"4.1'in sinyali onları
+> da kapsar"* iddiası hakem sondasında **üçü için de yanlış** çıktı; ikisi **hiç kapsanamaz**.
+> Gerçek kapsam §8'de yazılıdır. İmzanın genişletilmesi değil **daraltılmasıdır**.
+
+## 5. İMZA MADDELERİ
+
+| # | karar | şef önerisi |
+|---|---|---|
+| **23.1** | "Sabit sıfır" uyarısı eklensin mi (ücretsiz, desen-tetikli, çıktı sonunda bir kez) | **Evet.** Meşru sıfırı yok etmez, müşteriyi yanlış okumaktan korur |
+| **23.2** | `0`ı blanket "raporlanmadı" saymak | **HAYIR.** Meşru ölçümü siler; turun düzelttiği kusurun aynası |
+| **23.3** | `keyword_difficulty`in plan kapsamı ölçülsün mü (≤$0,02) | **Evet**, ve sonuç ne çıkarsa dosyaya yazılsın |
+| **23.4** | Kapsam dışı çıkarsa alanı basmayı bırakmak | **Ölçümden SONRA** ayrı karar. Şimdi taahhüt yok |
+
+## 6. Bu dosyanın KAPSAMADIĞI
+
+- Hiçbir fiyat/kredi değişikliği — hiçbiri önerilmiyor.
+- Çekirdek vaadin kendisi: *"raporlanmayan asla sıfır basılmaz"* **doğru kalıyor ve 11 noktada
+  pinli.** Bu dosya vaadin **arkasındaki** soruyu soruyor: vendor sıfır gönderdiğinde ne yapılır.
+
+---
+
+## 7. ⛔ 23.3 ÖLÇÜLDÜ (2026-08-26 07:23 UTC) — ve 23.1'İN ÖNERİ METNİ ÇÜRÜDÜ
+
+**Ölçüm şefin oturumundaki DataForSEO MCP'siyle, `dataforseo_labs_bulk_keyword_difficulty`
+(zorluğun ÖZEL ucu) üzerinden yapıldı.** Ürünün harcama defterine yazılmaz: ölçüm öncesi ve
+sonrası `dfs_spend_today_usd()` = **0**. Gerçek hesap harcaması ≈ **$0,04** (3 Labs isteği),
+ve bu tutar ürünün $3,00 tavanı tarafından **ÖLÇÜLMEZ** — ayrı muhasebe, kayda geçti.
+
+| pazar | anahtar kelime | `keyword_difficulty` |
+|---|---|---|
+| ABD / en | `dental implants` | **44** |
+| ABD / en | `invisalign cost` | **5** |
+| ABD / en | `teeth whitening` | **70** |
+| **TR / tr** | `implant diş fiyatları` | **12** |
+| **TR / tr** | `diş teli` | **0** |
+| **TR / tr** | `zirkonyum diş` | **0** |
+| **TR / tr** | `diş beyazlatma` | **0** |
+
+### §2'nin üç olasılığından ikisi ELENDİ
+
+1. ~~*"DataForSEO bu hesap/pazar için zorluğu hesaplamıyor"*~~ → **YANLIŞ.** ABD'de 44/5/70.
+2. ~~*"Zorluk ayrı bir abonelik/uç gerektiriyor (`bulk_keyword_difficulty`)"*~~ → **YANLIŞ.**
+   Tam olarak o uç çağrıldı; hesapta var ve **TR pazarında da çalışıyor**.
+3. *"Değer gerçekten 0"* → **DOĞRULANDI.** `implant diş fiyatları` **12** döndü; yani alan TR'de
+   de **değişiyor** ve `0`, vendor'ın o terimler için **gerçek cevabı**.
+
+### §1'in teşhisi de düştü
+
+Dosya *"Üç çağrı, iki ayrı uç, 29 satır, hepsi tam olarak 0. Bu bir dağılım değil — **bir sabit**"*
+diyordu. **Dördüncü çağrı, ÜÇÜNCÜ uç, ve sabit DEĞİL** (0 · 0 · 12 · 0). Örneklem, sabitlik
+izlenimini üreten şeydi; ölçüm genişletilince izlenim kayboldu.
+
+### 23.1 ÖNERİLDİĞİ METİNLE UYGULANAMAZ
+
+Önerilen cümle şuydu:
+> *"…more likely **absent from your DataForSEO plan** than measured — treat it as **unavailable**, not as easy."*
+
+**Bu cümle artık ölçülebilir biçimde YANLIŞ.** Alan planda VAR ve ölçülüyor. Onu basmak, bu turun
+düzeltmeye çalıştığı kusurun aynası olurdu: **kanıtlanmamış bir açıklamayı müşteriye olgu diye
+sunmak.** NEVER#7.
+
+### DÜZELTİLMİŞ 23.1 — uygulanacak hâl
+
+Desen sinyali **kalır** (ücretsiz, çıktı sonunda bir kez, yalnız her satır aynı `0` iken), ama
+cümle **ölçtüğümüz şeyi** söyler ve sebep UYDURMAZ:
+
+> *"DataForSEO reported a difficulty of 0 for all N keywords in this response. This vendor does
+> return non-zero difficulty for other keywords in the same market, so a 0 here is its actual
+> answer rather than a missing value — but a 0 across an entire result set carries no ranking
+> signal, so read it as 'no signal', not as 'easy'."*
+
+**Fark:** eski metin bir SEBEP iddia ediyordu (plan kapsamı) ve yanlıştı. Yeni metin bir GÖZLEM
+bildiriyor (vendor aynı pazarda sıfır-olmayan da döndürüyor — **ölçüldü**) ve okuma tavsiyesi
+veriyor. 23.2 (blanket "raporlanmadı" sayma) **HAYIR** olarak kalır — bu ölçüm onu güçlendirdi:
+`0` gerçek bir cevap, silinmemeli.
+
+### 23.4 — artık cevaplanabilir
+
+*"Kapsam dışı çıkarsa alanı basmayı bırakmak"* → **kapsam dışı ÇIKMADI**, dolayısıyla
+**alan basılmaya devam eder.** Bu madde ölçümle kapandı; ayrı bir karar gerekmiyor.
+
+---
+
+## 8. §4.3 ÖLÇÜLDÜ VE DARALTILDI (2026-08-26, hakem sondası)
+
+23.1' uygulandıktan sonra hakem **gerçek render'la** üç sütunu daha sınadı ve §4.3'ün
+*"4.1'in sinyali onları da kapsar ve fazlası gerekmez"* iddiasını sınadı.
+
+### Ölçüm — iddia üçünde de tutmadı
+
+| sütun | uç | o günkü durum |
+|---|---|---|
+| `cpc` üç satırda da `0` | `discover_keywords` | **not YOK** |
+| `search_volume` üç satırda da `0` | `discover_keywords` | **not YOK** |
+| `search_volume_trend` monthly/quarterly/yearly `%0` | `discover_keywords` | **not YOK** |
+
+Sebep: sinyal **yalnız `keyword_difficulty`e bağlanmıştı.** Yardımcı jenerik yazılmıştı, yani bu
+bir mimari engel değil **eksik bağlamaydı**.
+
+### Düzeltme — her SAYISAL, SATIR-BAŞINA sütun bağlandı
+
+- `discover_keywords` → **7 sütun**: `search_volume` · `cpc` · `competition` ·
+  `keyword_difficulty` · trend'in **üç bacağı** (monthly, quarterly, yearly).
+- `ranked_keywords` → **4 sütun**: `volume` · `CPC` · `difficulty` · `est. traffic`.
+
+Notlar satırların **bastığı sırayla**, çıktının sonunda, sütun başına **bir kez** düşer. Fiyat,
+kredi, vendor çağrısı: **sıfır** (değişiklik yok).
+
+### İKİSİ KAPSANAMAZ — ve bu bir eksiklik değil, ölçülmüş bir sınır
+
+- **`rank 0` → mümkün değil.** `rank_group` / `rank_absolute` **1-tabanlıdır**; ilk organik sonuç
+  `#1`'dir. `0`, vendor'ın ölçeğinin ifade edebildiği bir konum **değildir**, yani tespit edilecek
+  düz sıfır yoktur. Buraya bir bağlama koymak, hiçbir şeyi korumayan ölü kod olurdu.
+- **`is_lost: 0` → yapısal olarak mümkün değil.** `is_lost`, `ranked_keywords`'ün **alan sağlık
+  kartındaki** bir figürdür: bütün yanıt için **TEK** sayı, satır başına bir sütun değil. *"Bu
+  satırlar boyunca hiç değişmedi"* cümlesi tek bir değer hakkında **kurulamaz** (bkz.
+  `MIN_FLAT_ZERO_ROWS` = 2). Aynısı kartın diğer bütün metrikleri için geçerlidir.
+
+### §4.3'ün YERİNE GEÇEN İFADE
+
+> Desen, **satır başına değeri olan SAYISAL bir sütundaki** düz sıfırı kapsar — ve başka hiçbir
+> şeyi. `rank` ve `is_lost` **kimse tarafından korunmuyor**; bunu bilmek, korunduklarını sanmaktan
+> iyidir.
+
+Bu daraltma koda da işlendi (`apps/mcp/src/format/flat-zero.ts` başlığı + iki yüzeydeki
+`FLAT_ZERO_COLUMNS` blokları) ve bir testle pinlendi: not, `position` ya da bir sağlık-kartı
+figürü hakkında **asla** konuşmaz.

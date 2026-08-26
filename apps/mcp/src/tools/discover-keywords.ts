@@ -29,6 +29,7 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 // that differ between a link list and a keyword list — and because a second wording of "you paid
 // for these and cannot see them" is a second place for that promise to drift.
 import { renderOutputLimitNote } from "./backlink-details.ts";
+import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -884,6 +885,72 @@ export const TRUNCATION_ADVICE =
   '"max_difficulty" changes WHICH rows DataForSEO returns, so the keywords you want arrive inside ' +
   "the window that prints.";
 
+/**
+ * EVERY PER-ROW NUMERIC COLUMN {@link renderKeywordRow} PRINTS, in the order it prints them.
+ *
+ * `fieldLabel` is the vendor's own field name here, because that is what the rows themselves use:
+ * this surface prints `search_volume`, not "volume". The note has to name the column the reader
+ * can find above it, so the two files use different labels for the same vendor field ON PURPOSE.
+ *
+ * ALL THREE TREND LEGS ARE BOUND, not just the monthly one. The trend renders as three separate
+ * signed percentages and a reader acts on any of them, so a note under `monthly` while a flat
+ * `yearly 0%` sits unremarked beside it would teach exactly the wrong lesson about the silence.
+ *
+ * WHAT IS DELIBERATELY NOT HERE:
+ *
+ *   - `competition_level` — a vendor BAND ("HIGH"), a string, with no zero to print.
+ *   - `main_intent` / `foreign_intent` / `last_updated_time` / `keyword` — not numbers either.
+ *
+ * Every column below carries `nonEnglishEvidence: true`, and that is not an assumption:
+ * `fixtures/keyword-overview-tr.json` is a captured Turkish DataForSEO response and it holds
+ * non-zero values for search_volume, cpc, competition, keyword_difficulty AND all three trend
+ * legs. The tests read that file rather than trusting these flags.
+ */
+const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<DiscoverKeywordRow>[] = [
+  {
+    fieldLabel: "search_volume",
+    misreadAs: "that nobody searches for any of these",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume,
+  },
+  {
+    fieldLabel: "cpc",
+    misreadAs: "that none of these keywords are worth anything to advertisers",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.cpc,
+  },
+  {
+    fieldLabel: "competition",
+    misreadAs: "that no advertiser is bidding on any of these",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.competition,
+  },
+  {
+    fieldLabel: "keyword_difficulty",
+    misreadAs: "that every one of these keywords is easy to rank for",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.keyword_difficulty,
+  },
+  {
+    fieldLabel: "search_volume_trend monthly",
+    misreadAs: "that monthly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.monthly ?? null,
+  },
+  {
+    fieldLabel: "search_volume_trend quarterly",
+    misreadAs: "that quarterly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.quarterly ?? null,
+  },
+  {
+    fieldLabel: "search_volume_trend yearly",
+    misreadAs: "that yearly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.yearly ?? null,
+  },
+];
+
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
 export function formatDiscoverKeywords(
   result: DiscoverKeywordsResult,
@@ -902,7 +969,18 @@ export function formatDiscoverKeywords(
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
   ].filter((block) => block.length > 0);
-  const after = [VENDOR_JUDGEMENT_NOTE];
+  // RESERVED OVER THE WHOLE WINDOW, PRINTED OVER WHAT SURVIVED. The flat-zero notes are measured
+  // twice on purpose, and the two measurements cannot disagree in the dangerous direction:
+  //   - a window that is uniformly zero in a column has no subset that is not, so the reserve pass
+  //     can only ever find MORE flat columns than the printing pass, never fewer;
+  //   - its row count is at least the printed one, so `exactCount` gives it at least as many
+  //     digits, and each reserved note is at least as long as the one really printed.
+  // The notes the reader gets are therefore built from the rows the reader can SEE — they say
+  // "above" — while the room booked for them is the widest they could possibly have been. On a
+  // hard truncation that leaves fewer than MIN_FLAT_ZERO_ROWS printed values in a column, that
+  // column correctly says nothing at all and simply gives its reserved room back to the rows.
+  const flatReserve = flatZeroNotes(rows, FLAT_ZERO_COLUMNS, "keywords");
+  const after = [VENDOR_JUDGEMENT_NOTE, ...flatReserve];
   // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
   // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
   // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
@@ -915,6 +993,7 @@ export function formatDiscoverKeywords(
     renderOutputLimitNote("keyword", rows.length, rows.length, TRUNCATION_ADVICE).length +
     BLOCK_SEPARATOR.length;
   const shown = renderWithinBudget(rows, MAX_RENDERED_OUTPUT_CHARS - scaffold - noteReserve);
+  const flat = flatZeroNotes(rows.slice(0, shown.printed), FLAT_ZERO_COLUMNS, "keywords");
   return [
     ...before,
     // Empty only when one keyword row is itself wider than the whole budget; the note below still
@@ -926,7 +1005,11 @@ export function formatDiscoverKeywords(
     ...(shown.omitted === 0
       ? []
       : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
-    ...after,
+    VENDOR_JUDGEMENT_NOTE,
+    // AT THE VERY END, one per flat column, in the order the columns are PRINTED on the rows —
+    // see format/flat-zero.ts for what was measured and what these sentences are forbidden to
+    // claim. They add a reading note beside the zeros and rewrite none of them.
+    ...flat,
   ].join(BLOCK_SEPARATOR);
 }
 
