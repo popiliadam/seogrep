@@ -12,9 +12,11 @@ import {
   type VendorWindow,
 } from "../dfs/backlink-details.ts";
 import {
+  MAX_RENDERED_OUTPUT_CHARS,
   VENDOR_SPAM_SCORE_NOTE,
   formatBacklinkDetails,
   makeBacklinkDetailsTool,
+  renderOutputLimitNote,
   renderWindowCaption,
 } from "./backlink-details.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
@@ -514,5 +516,168 @@ describe("backlink_details free pre-reserve gates (no credit machinery)", () => 
 
   it("a RESOLVED project_id also reaches the credit guard — the gates are not a dead end", async () => {
     await expect(serving().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// S14 item 1 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// The schema used to say "DataForSEO bills per returned row, so this is the price control, not a
+// display preference". MEASURED 2026-08-25 on one profile: `limit 10` cost the vendor $0.04854
+// and `limit 200` (187 rows back) cost $0.05506 — NINETEEN times the rows for THIRTEEN percent
+// more money, because the Backlinks tariff is a flat per-request fee plus $0.000036 a row. The
+// credit price was 35 both times. So a customer who narrows the window to save money pays the
+// same and receives less, on the strength of a sentence this product wrote.
+//
+// These specs read the description off the PUBLISHED JSON schema (what the customer's client is
+// handed), and assert on the CLAIM with regexes rather than on a copy of the source string —
+// signed lesson 11: a literal-for-literal grep proves the file, not the promise.
+// =============================================================================================
+
+describe("S14 — the limit description states measured billing behaviour", () => {
+  const schema = makeBacklinkDetailsTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+  const pageLimit = schema.properties.page_limit?.description ?? "";
+
+  it("no longer calls the row count a price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+    expect(pageLimit).not.toMatch(/billed per row/i);
+  });
+
+  it("says a narrower window is not a cheaper one, on BOTH row arguments", () => {
+    expect(limit).toMatch(/\bnot a price control\b/i);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+    expect(pageLimit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  it("names the flat credit price the caller actually pays, whatever they ask for", () => {
+    expect(limit).toMatch(/35 credits/);
+    expect(limit).toMatch(/whatever you ask for/i);
+  });
+
+  it("attributes the near-flat vendor cost to the vendor, as a measurement", () => {
+    expect(limit).toMatch(/flat per-request fee/i);
+    expect(limit).toMatch(/measured/i);
+  });
+});
+
+// =============================================================================================
+// S14 item 2 — THE REPLY THE CLIENT COULD NOT DISPLAY.
+//
+// MEASURED 2026-08-25: `limit 200, page_limit 9` returned 187 link rows and produced a reply of
+// 62,729 characters across 404 lines, refused by the client as "exceeds maximum allowed tokens".
+// 35 credits and $0.055 of vendor money were taken and the customer saw NOTHING. The schema
+// still permits limit 700 / page_limit 200, i.e. four times worse again.
+//
+// The fix bounds the RENDERED TEXT rather than narrowing the schema, because 700 + 200 is derived
+// from the signed 35-credit price (NEVER #6) and because a narrower window does not cost less
+// (item 1). These specs drive the REAL renderer over the previously-failing shape and over the
+// schema's own worst case.
+// =============================================================================================
+
+/** A link row of realistic length — the measured live rows ran ~320 characters over two lines. */
+function linkRow(index: number): BacklinkDetailRow {
+  return {
+    ...LINK,
+    domain_from: `referrer-${index}.example.com`,
+    url_from: `https://referrer-${index}.example.com/blog/2026/03/a-fairly-long-article-slug-${index}/`,
+    url_to: `https://forbes.com/sites/brentgleeson/2014/09/05/launch-${index}/`,
+    anchor: `some anchor text number ${index}`,
+  };
+}
+
+function pageRow(index: number): TargetPageRow {
+  return { ...PAGE, url: `https://www.forbes.com/sites/section-${index}/a-long-page-slug-${index}/` };
+}
+
+const measuredLinks = Array.from({ length: 187 }, (_, i) => linkRow(i));
+const measuredPages = Array.from({ length: 9 }, (_, i) => pageRow(i));
+
+describe("S14 — the reply is bounded so the client can display it", () => {
+  /** The exact call that was charged for and never seen. */
+  it("keeps the measured limit-200 / page_limit-9 shape inside the output ceiling", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(measuredLinks, 187, { offset: 0, limit: 200 }),
+        window_(measuredPages, 9, { offset: 0, limit: 9 }),
+      ),
+    );
+    // The unbounded renderer produced 62,729 characters for this shape.
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    expect(text.length).toBeLessThan(62_729);
+  });
+
+  /** The schema's own worst case — 700 links and 200 pages — is bounded by the SAME ceiling. */
+  it("holds the ceiling at the widest window the schema permits", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(
+          Array.from({ length: MAX_BACKLINK_DETAIL_ROWS }, (_, i) => linkRow(i)),
+          9_000_000,
+          { offset: 0, limit: MAX_BACKLINK_DETAIL_ROWS },
+        ),
+        window_(
+          Array.from({ length: MAX_TARGET_PAGE_ROWS }, (_, i) => pageRow(i)),
+          9_000_000,
+          { offset: 0, limit: MAX_TARGET_PAGE_ROWS },
+        ),
+      ),
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * A truncated reply must say so. The rows that were dropped were FETCHED and CHARGED FOR, and a
+   * list that simply stops is a list the reader believes is complete.
+   */
+  it("says how many rows were fetched and not printed, and that they were paid for", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(measuredLinks, 187, { offset: 0, limit: 200 }),
+        window_(measuredPages, 9, { offset: 0, limit: 9 }),
+      ),
+    );
+    expect(text).toMatch(/output limit reached/i);
+    expect(text).toMatch(/more fetched in this same window but not printed/i);
+    expect(text).toMatch(/charged for either way/i);
+    // The printed + omitted counts must add up to the window the caption already announced.
+    const [, printed, omitted] = /— ([\d,]+) backlinks printed above, ([\d,]+) more/.exec(text) ?? [];
+    expect(Number(printed?.replace(/,/g, ""))+ Number(omitted?.replace(/,/g, ""))).toBe(187);
+    expect(Number(printed?.replace(/,/g, ""))).toBeGreaterThan(0);
+  });
+
+  /**
+   * The advice has to be the advice that WORKS. `offset` moves the window; asking for a smaller
+   * `limit` does not buy more rows and does not cost less (item 1), so the note may not say it.
+   */
+  it("points at offset, not at a narrower window, and repeats that narrowing saves nothing", () => {
+    const note = renderOutputLimitNote("backlink", 62, 125, "Move the window with offset to read the rest.");
+    expect(note).toMatch(/62 backlinks printed above, 125 more/);
+    const text = formatBacklinkDetails(
+      details(window_(measuredLinks, 187, { offset: 0, limit: 200 }), window_([], null)),
+    );
+    expect(text).toMatch(/move the window with offset/i);
+    expect(text).toMatch(/asking for fewer rows does not cost less/i);
+  });
+
+  /** THE DEFAULT CALL MUST NOT REGRESS: 50 links + 20 pages is not truncated at all. */
+  it("does not truncate the default window", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(Array.from({ length: 50 }, (_, i) => linkRow(i)), 187, { offset: 0, limit: 50 }),
+        window_(Array.from({ length: 20 }, (_, i) => pageRow(i)), 9, { offset: 0, limit: 20 }),
+      ),
+    );
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text).toContain("• referrer-49.example.com");
+    expect(text).toContain("a-long-page-slug-19");
+  });
+
+  /** No note when nothing was dropped — an honest report does not warn about a thing that did not happen. */
+  it("prints no truncation note when the whole window fits", () => {
+    expect(formatBacklinkDetails(ONE_OF_EACH)).not.toMatch(/output limit reached/i);
   });
 });

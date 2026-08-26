@@ -1,18 +1,26 @@
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+/**
+ * The FINISH SENTENCE the customer reads, imported from its single home in core — the crawler's
+ * skip reasons are quoted into it verbatim, so pinning the field without the sentence would
+ * prove only half of what these specs claim.
+ */
+import { summarizeCrawlResult, type Json } from "@pseo/core";
 import {
   attachInLinkCounts,
   boundCrawlResult,
   computeIssues,
   crawlSite,
   estimateSiteSize,
+  isInfrastructurePath,
   PRE_DISCOVERY_BUDGET_MS,
   matchesIncludePaths,
   normalizeIncludePaths,
   normalizeUrl,
   parseHtml,
   parseJsonLdTypes,
+  selectExtraSeeds,
   type CrawlResult,
   type PageRecord,
 } from "./crawl.ts";
@@ -551,8 +559,52 @@ describe("parseHtml — per-record ceilings (H-02)", () => {
   });
 });
 
+/**
+ * The FREE-SIGNAL half of a PageRecord, at its zero values.
+ *
+ * These fields are REQUIRED on PageRecord, and the fixtures below used to omit them — which
+ * `tsconfig.json` never noticed, because it excluded every `*.test.ts`. The omission mattered:
+ * a fixture missing half the record is a narrower input than anything production can produce,
+ * so a consumer that read one of these fields was being measured against `undefined` while the
+ * real crawler always supplies a number. Spread this and override only what a spec is about.
+ */
+const PAGE_SIGNALS = {
+  jsonLdBlocks: [],
+  jsonLdTruncated: 0,
+  fetchMs: 1,
+  htmlBytes: 0,
+  h2Count: 0,
+  h3Count: 0,
+  imgCount: 0,
+  imgMissingAlt: 0,
+  hreflangs: [],
+  ogTitle: null,
+  ogDescription: null,
+  ogImage: null,
+  twitterCard: null,
+  htmlLang: null,
+  xRobotsTag: null,
+  redirectChain: [],
+  contentHash: "",
+  depth: 0,
+  inLinkCount: 0,
+} as const satisfies Omit<
+  PageRecord,
+  | "url"
+  | "status"
+  | "title"
+  | "metaDescription"
+  | "h1s"
+  | "canonical"
+  | "robotsMeta"
+  | "links"
+  | "wordCount"
+  | "jsonLdTypes"
+  | "issues"
+>;
+
 describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", () => {
-  const page = (i: number) => ({
+  const page = (i: number): PageRecord => ({
     url: `https://x.test/${i}`,
     status: 200,
     title: "t",
@@ -564,6 +616,7 @@ describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", 
     wordCount: 1,
     jsonLdTypes: [],
     issues: [],
+    ...PAGE_SIGNALS,
   });
   const AT = "2026-07-28T00:00:00.000Z";
 
@@ -1846,23 +1899,7 @@ describe("attachInLinkCounts", () => {
     wordCount: 0,
     jsonLdTypes: [],
     issues: [],
-    fetchMs: 1,
-    htmlBytes: 0,
-    h2Count: 0,
-    h3Count: 0,
-    imgCount: 0,
-    imgMissingAlt: 0,
-    hreflangs: [],
-    ogTitle: null,
-    ogDescription: null,
-    ogImage: null,
-    twitterCard: null,
-    htmlLang: null,
-    xRobotsTag: null,
-    redirectChain: [],
-    contentHash: "",
-    depth: 0,
-    inLinkCount: 0,
+    ...PAGE_SIGNALS,
   });
   const countOf = (pages: PageRecord[], url: string): number | undefined =>
     attachInLinkCounts(pages).find((p) => p.url === url)?.inLinkCount;
@@ -1984,6 +2021,759 @@ describe("crawlSite — contentHash reads the script-stripped view", () => {
       expect(hashOf("/c")).not.toBe(hashOf("/a"));
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / finding 1 — INFRASTRUCTURE NOISE, one row, four PAID surfaces.
+ *
+ * Measured 2026-08-25: `crawl_pages` held exactly ONE `/cdn-cgi/` row, and that row was
+ * audit_schema's only action item, audit_tech's 25/25 broken links, the shared report's
+ * broken-link section, and audit_onpage's first finding. Cloudflare rewrites `mailto:` links
+ * into `/cdn-cgi/l/email-protection#…`, so every page carrying an email address links to one
+ * endpoint that answers 4xx to a plain GET.
+ *
+ * These specs pin the CRAWLER half (the audit half is pinned in audit/infra-paths.test.ts,
+ * where the same crawl is fed to the three rule engines).
+ */
+describe("crawlSite — reserved infrastructure paths are not the site", () => {
+  const ORIGIN = "http://infra.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** Pathnames the fake origin was actually asked for — a fetch never made is the point. */
+  const serveInfraSite = (opts: { sitemap: string[] }) => {
+    const requested: string[] = [];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      requested.push(path);
+      if (path === "/robots.txt") {
+        return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+      }
+      if (path === "/sitemap.xml") {
+        const locs = opts.sitemap.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+        return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      // Cloudflare's endpoint answers 4xx to a plain GET — the 404 that became "broken links".
+      if (path.startsWith("/cdn-cgi/") || path.startsWith("/.well-known/")) {
+        return new Response("<html><body>nope</body></html>", {
+          status: 404,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response(
+        `<html><head><title>${path}</title><meta name="description" content="d"></head><body>` +
+          `<h1>${path}</h1><p>words words words</p>` +
+          `<a href="/cdn-cgi/l/email-protection#a1b2">email</a>` +
+          `<a href="/.well-known/security.txt">security</a>` +
+          `<a href="/about">about</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return { impl, requested };
+  };
+
+  it("classifies exactly the reserved prefixes, and nothing that merely looks like them", () => {
+    expect(isInfrastructurePath("/cdn-cgi/l/email-protection")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi/trace")).toBe(true);
+    expect(isInfrastructurePath("/cdn-cgi")).toBe(true); // the bare prefix is the same tree
+    expect(isInfrastructurePath("/CDN-CGI/TRACE")).toBe(true); // case is not a bypass
+    expect(isInfrastructurePath("/.well-known/security.txt")).toBe(true);
+    // NEGATIVE — a site's own content must never be silently withheld from the tenant.
+    expect(isInfrastructurePath("/")).toBe(false);
+    expect(isInfrastructurePath("/cdn-cgi-news")).toBe(false);
+    expect(isInfrastructurePath("/blog/cdn-cgi/post")).toBe(false); // prefix, not substring
+    expect(isInfrastructurePath("/well-known")).toBe(false);
+  });
+
+  it("never fetches, stores, or even SKIPS a linked /cdn-cgi/ or /.well-known/ URL", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(result.pages.length).toBeGreaterThan(0); // the crawl really ran
+      expect(result.pages.some((p) => /\/cdn-cgi\//.test(p.url))).toBe(false);
+      expect(result.pages.some((p) => /\/\.well-known\//.test(p.url))).toBe(false);
+      // Not recorded as a skip either: a skip is an account of a URL OF THE SITE that we did
+      // not read, and these are not URLs of the site — listing them would move the same noise
+      // into the skip report every audit also prints.
+      expect(result.skipped.some((s) => /cdn-cgi|well-known/.test(s.url))).toBe(false);
+      // And no request was ever made — the exclusion is free, not merely filtered afterwards.
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      expect(site.requested.some((p) => p.startsWith("/.well-known/"))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("drops a reserved path advertised in the SITEMAP from both the seeds and sitemapUrls", async () => {
+    const site = serveInfraSite({ sitemap: ["/", "/cdn-cgi/l/email-protection", "/about"] });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup });
+      expect(site.requested.some((p) => p.startsWith("/cdn-cgi/"))).toBe(false);
+      // Absent from the STORED sitemap list too: audit_tech diffs that list against the crawl,
+      // so a URL kept there but deliberately never crawled reads as a coverage gap.
+      expect(result.sitemapUrls?.some((u) => u.includes("/cdn-cgi/"))).toBe(false);
+      expect(result.sitemapUrls?.some((u) => u.endsWith("/about"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not COUNT reserved paths in the free pre-discovery estimate either", async () => {
+    // No sitemap -> the homepage-link floor, the branch that quoted "~28" for a 222-page site.
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/sitemap.xml") return new Response("", { status: 404 });
+      return new Response(
+        `<html><body><a href="/a">a</a><a href="/b">b</a>` +
+          `<a href="/cdn-cgi/l/email-protection#x">email</a>` +
+          `<a href="/.well-known/security.txt">sec</a></body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const sized = await estimateSiteSize(ORIGIN, { lookup });
+      expect(sized.source).toBe("homepage");
+      // /a and /b only — a quote must never include pages the crawl is guaranteed to refuse.
+      expect(sized.pages).toBe(2);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * S5 / findings 3 + 4 — WHY the crawl stopped, and that it is still moving while it runs.
+ *
+ * Coverage varies at a FIXED price and the crawl never said so: measured on one site at
+ * identical settings, 2026-08-09 stopped at 26 pages ("time budget exhausted") while
+ * 2026-08-25 reached 100 in 78 s. Same 20 credits, 14%-45% coverage. The reason string is what
+ * get_job_status quotes back ("… (mostly: <reason>)"), so it is where the difference between
+ * "you got everything you paid for" and "we ran out of time" has to be stated.
+ *
+ * The `summarizeCrawlResult` assertions are the END-TO-END half: they read the sentence the
+ * customer actually gets, not the field it is built from.
+ */
+describe("crawlSite — the two terminal states say WHICH ceiling stopped the crawl", () => {
+  const ORIGIN = "http://terminal.example.com";
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  /** A closed 8-page site: every page links to every other, so the frontier is deterministic. */
+  const impl = async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    const paths = ["/", ...Array.from({ length: 7 }, (_, i) => `/p-${i}`)];
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\n", { status: 200, headers: { "content-type": "text/plain" } });
+    }
+    if (path === "/sitemap.xml") {
+      const locs = paths.map((p) => `<url><loc>${ORIGIN}${p}</loc></url>`).join("");
+      return new Response(`<?xml version="1.0"?><urlset>${locs}</urlset>`, {
+        status: 200,
+        headers: { "content-type": "application/xml" },
+      });
+    }
+    const links = paths.map((p) => `<a href="${p}">${p}</a>`).join("");
+    return new Response(
+      `<html><head><title>${path}</title><meta name="description" content="d"></head>` +
+        `<body><h1>${path}</h1>word word${links}</body></html>`,
+      { status: 200, headers: { "content-type": "text/html" } },
+    );
+  };
+
+  it("PAGE LIMIT: names the limit, the elapsed time, and that the time budget was NOT the bound", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 3, timeBudgetMs: 90_000 });
+      expect(result.pages).toHaveLength(3);
+      const drained = result.skipped.filter((s) => /max url limit reached/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/the 3-page limit was reached after \d+s/);
+      expect(reason).toMatch(/inside the 90s time budget/);
+      // The customer's own sentence, not the field behind it.
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: max URL limit reached/);
+      expect(line).toMatch(/time budget/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("TIME BUDGET: says it stopped on TIME, before the page limit, and that coverage varies", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      // A budget already spent when the first loop turn is taken: the page limit is untouched.
+      const result = await crawlSite(ORIGIN, { lookup, maxUrls: 100, timeBudgetMs: 0 });
+      expect(result.pages).toHaveLength(0);
+      const drained = result.skipped.filter((s) => /time budget exhausted/i.test(s.reason));
+      expect(drained.length).toBeGreaterThan(0);
+      const reason = drained[0]!.reason;
+      expect(reason).toMatch(/stopped on TIME, not at the 100-page limit/);
+      expect(reason).toMatch(/coverage varies between runs at the same price/);
+      expect(reason).toMatch(/include_paths/);
+      const line = summarizeCrawlResult(JSON.parse(JSON.stringify(result)) as Json);
+      expect(line).toMatch(/mostly: time budget exhausted/);
+      expect(line).toMatch(/coverage varies between runs/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("keeps the audit vocabulary: both reasons still bucket as a LIMIT, not as a site fault", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const capped = await crawlSite(ORIGIN, { lookup, maxUrls: 3 });
+      const timed = await crawlSite(ORIGIN, { lookup, timeBudgetMs: 0 });
+      for (const reason of [...capped.skipped, ...timed.skipped].map((s) => s.reason)) {
+        // categorizeSkip tests these FIRST; a limit that matched one of them would be filed as
+        // a fault of the customer's site.
+        expect(reason).not.toMatch(/robots|redirect|timeout|non-html|parse failed|fetch failed/i);
+      }
+      expect(capped.skipped.every((s) => /max url/i.test(s.reason))).toBe(true);
+      expect(timed.skipped.every((s) => /time budget/i.test(s.reason))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reports PROGRESS while it runs: consecutive ticks differ and only ever move forward", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const ticks: { pagesCrawled: number; urlsSkipped: number }[] = [];
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 8,
+        onProgress: (p) => ticks.push({ ...p }),
+      });
+      expect(result.pages).toHaveLength(8);
+      expect(ticks.length).toBeGreaterThan(1);
+      // TWO CONSECUTIVE READS AT DIFFERENT PROGRESS STATES DIFFER — the whole point: while the
+      // job ran, get_job_status returned a byte-identical line on every poll.
+      expect(ticks[0]!.pagesCrawled).toBeLessThan(ticks[ticks.length - 1]!.pagesCrawled);
+      for (let i = 1; i < ticks.length; i++) {
+        expect(ticks[i]!.pagesCrawled).toBeGreaterThanOrEqual(ticks[i - 1]!.pagesCrawled);
+      }
+      // The last tick is the finished truth, never a number the result contradicts.
+      expect(ticks[ticks.length - 1]!.pagesCrawled).toBe(result.pages.length);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("a THROWING progress listener never fails the crawl (cosmetic signal, charged run)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(impl);
+    try {
+      const result = await crawlSite(ORIGIN, {
+        lookup,
+        maxUrls: 4,
+        onProgress: () => {
+          throw new Error("progress store is down");
+        },
+      });
+      expect(result.pages).toHaveLength(4);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+/**
+ * The apex <-> `www.` twin is ONE site (S21).
+ *
+ * Project domains lost their leading `www.` label on 2026-08-25, and the crawl queue seeds
+ * `https://<project.domain>`. For a site canonical at `www.` that combination crawled NOTHING:
+ * every sitemap loc and every extracted link was `www.` and read as off-origin, and the one
+ * remaining seed — the apex homepage — 301'd to `www.` and came back `off-origin-redirect`.
+ * Zero pages makes the queue handler throw, so the job settled `failed` and no spelling of the
+ * domain could produce a crawl any more. Six live rows still STORE `www.`, so the reverse
+ * direction has to work too.
+ *
+ * These drive the real crawler through a fake transport (mocked `fetch` + injected `lookup`):
+ * ZERO network, ZERO DNS. The whole risk of the fix is over-widening, so the refusal specs
+ * below are the primary ones: a crawler that accepts `blog.`, a sibling TLD, a
+ * prefix-lookalike or a scheme change is an OPEN crawler, not a fixed one.
+ */
+describe("crawlSite — the apex and its www. twin are one site", () => {
+  const lookup: LookupFn = async () => [{ address: "93.184.216.34", family: 4 }];
+
+  interface TwinSite {
+    /** Every absolute URL the transport was asked for, in order. */
+    readonly requested: string[];
+    readonly impl: (input: RequestInfo | URL) => Promise<Response>;
+  }
+
+  /**
+   * A site whose ONLY 200s live on `canonicalHost`; every other host 301s there, path intact —
+   * exactly what an apex->www (or www->apex) redirect does in production.
+   *
+   * `sitemapLocs` and `pageLinks` are absolute URLs written verbatim into /sitemap.xml and into
+   * every page's markup, so a spec can put an off-site host in front of the crawler and prove
+   * it was never asked for. `redirectPaths` maps a path on the canonical host to an off-site
+   * Location, which is how the `off-origin-redirect` outcome is still reached.
+   *
+   * `sitemapIndex` turns /sitemap.xml into a <sitemapindex> whose <loc>s are those absolute
+   * URLs, and `childSitemaps` serves a urlset at each child's path — the shape needed to reach
+   * the child-sitemap guard, which is a DIFFERENT call site from the loc filter and has to be
+   * exercised through a real index or it is not measured at all.
+   */
+  const makeTwinSite = (opts: {
+    canonicalHost: string;
+    sitemapLocs: readonly string[];
+    pageLinks?: readonly string[];
+    redirectPaths?: Readonly<Record<string, string>>;
+    sitemapIndex?: readonly string[];
+    childSitemaps?: Readonly<Record<string, readonly string[]>>;
+    /** 404 /sitemap.xml, forcing the homepage-link branch of estimateSiteSize. */
+    sitemap404?: boolean;
+  }): TwinSite => {
+    const requested: string[] = [];
+    const impl = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = new URL(String(input));
+      requested.push(url.toString());
+      const canonical = `http://${opts.canonicalHost}`;
+      if (url.protocol !== "http:" || url.host !== opts.canonicalHost) {
+        return new Response(null, {
+          status: 301,
+          headers: { location: `${canonical}${url.pathname}` },
+        });
+      }
+      const offSite = opts.redirectPaths?.[url.pathname];
+      if (offSite !== undefined) {
+        return new Response(null, { status: 301, headers: { location: offSite } });
+      }
+      if (url.pathname === "/robots.txt") {
+        return new Response("User-agent: *\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      const urlset = (locs: readonly string[]): Response =>
+        new Response(
+          `<?xml version="1.0"?><urlset>` +
+            `${locs.map((loc) => `<url><loc>${loc}</loc></url>`).join("")}</urlset>`,
+          { status: 200, headers: { "content-type": "application/xml" } },
+        );
+      if (url.pathname === "/sitemap.xml") {
+        if (opts.sitemap404 === true) return new Response("no", { status: 404 });
+        if (opts.sitemapIndex === undefined) return urlset(opts.sitemapLocs);
+        const children = opts.sitemapIndex
+          .map((loc) => `<sitemap><loc>${loc}</loc></sitemap>`)
+          .join("");
+        return new Response(`<?xml version="1.0"?><sitemapindex>${children}</sitemapindex>`, {
+          status: 200,
+          headers: { "content-type": "application/xml" },
+        });
+      }
+      const child = opts.childSitemaps?.[url.pathname];
+      if (child !== undefined) return urlset(child);
+      const links = (opts.pageLinks ?? []).map((href) => `<a href="${href}">l</a>`).join("");
+      return new Response(
+        `<html><head><title>${url.pathname}</title>` +
+          `<meta name="description" content="d"></head>` +
+          `<body><h1>${url.pathname}</h1>word word${links}</body></html>`,
+        { status: 200, headers: { "content-type": "text/html" } },
+      );
+    };
+    return { requested, impl };
+  };
+
+  it("crawls a www-canonical site seeded from the stored APEX domain (the blocker)", async () => {
+    // The exact live shape: projects.domain is `twin.example.com`, the handler seeds the apex,
+    // and the site serves everything from `www.twin.example.com`.
+    const canonicalHost = "www.twin.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
+      // Discovered only by LINK, and written on the host that is NOT the crawl origin — which
+      // is the only way the BFS enqueue's twin branch is exercised at all. An earlier draft put
+      // it on the origin's own host, where plain host equality admits it and the page is then
+      // reached through the redirect call site; a judge measured that reverting the enqueue line
+      // alone left the suite fully green. A www-canonical site links its pages with www hrefs,
+      // so this call site carries every crawl past the sitemap seeds.
+      pageLinks: [`http://${canonicalHost}/only-linked`],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://twin.example.com", { lookup });
+      // The whole defect in one assertion: this returned ZERO pages before the fix.
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/a`,
+        `http://${canonicalHost}/only-linked`,
+      ]);
+      expect(result.skipped.some((s) => /off-origin/i.test(s.reason))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("crawls an apex-canonical site seeded from a legacy stored `www.` domain", async () => {
+    // The six rows that still store `www.`: the stored domain is the www twin, the site is
+    // canonical at the apex, and the crawl must complete just the same.
+    const canonicalHost = "legacy.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/a`],
+      // On the APEX host here — again the host that is not the crawl origin (see above).
+      pageLinks: [`http://${canonicalHost}/only-linked`],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://www.legacy.example.com", { lookup });
+      expect(result.pages.length).toBeGreaterThan(0);
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/a`,
+        `http://${canonicalHost}/only-linked`,
+      ]);
+      expect(result.skipped.some((s) => /off-origin/i.test(s.reason))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("consumes a child sitemap listed on the twin host, and still refuses an off-site child", async () => {
+    // The child-sitemap guard is a SEPARATE call site from the loc filter and is only reachable
+    // through a real <sitemapindex> — with no such fixture, reverting it alone left the whole
+    // suite green while the docstring claimed that path was part of the zero-seeds failure.
+    // A www-canonical Yoast index lists www children, so this is the ordinary production shape.
+    const canonicalHost = "www.index.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [],
+      sitemapIndex: [
+        `http://${canonicalHost}/sitemap-child.xml`,
+        // An off-site child in the SAME index: the guard has to admit the twin while still
+        // refusing this one, so the spec cannot be satisfied by dropping the check altogether.
+        "http://blog.index.example.com/sitemap-evil.xml",
+      ],
+      childSitemaps: { "/sitemap-child.xml": [`http://${canonicalHost}/from-child`] },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite("http://index.example.com", { lookup });
+      // /from-child exists ONLY inside the twin-hosted child sitemap: nothing links to it and
+      // the root index carries no urls of its own, so it is proof the child was consumed.
+      expect(result.pages.map((p) => p.url).sort()).toEqual([
+        `http://${canonicalHost}/`,
+        `http://${canonicalHost}/from-child`,
+      ]);
+      expect(site.requested.filter((u) => new URL(u).hostname === "blog.index.example.com"))
+        .toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("counts twin-host homepage links in the free pre-crawl estimate", async () => {
+    // estimateSiteSize shares countInScopeLinks, a FIFTH scope call site the crawl specs above
+    // never reach — found by varying the call-site axis rather than the host axis, and it was
+    // the one that stayed green. The quote the customer reads before paying 20 credits would
+    // otherwise read "unknown" for every www-canonical site with no usable sitemap.
+    const canonicalHost = "www.est.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [],
+      sitemap404: true,
+      pageLinks: [
+        `http://${canonicalHost}/x1`,
+        `http://${canonicalHost}/x2`,
+        // Still refused by the same count, so this spec cannot pass by counting everything.
+        "http://blog.est.example.com/y",
+      ],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      expect(await estimateSiteSize("http://est.example.com", { lookup })).toEqual({
+        pages: 2,
+        source: "homepage",
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // The over-widening axis. Each of these is one label away from the crawl origin and must
+  // still be off-site; a crawler that accepts any of them crawls the internet on the tenant's
+  // 20 credits. Kept as a named table so a widened rule fails with the shape that broke.
+  const OFF_SITE: ReadonlyArray<readonly [string, string]> = [
+    ["a deeper subdomain", "http://blog.scope.example.com/x"],
+    ["a sibling TLD", "http://scope.example.org/x"],
+    ["a prefix lookalike", "http://notscope.example.com/x"],
+    ["a `www.`-prefixed lookalike", "http://www.scope.example.com.evil.test/x"],
+    ["a scheme change", "https://scope.example.com/x"],
+    ["a port change", "http://scope.example.com:8080/x"],
+  ];
+
+  it.each(OFF_SITE)("never fetches %s advertised in the sitemap or linked from a page", async (
+    _label,
+    offSite,
+  ) => {
+    const canonicalHost = "scope.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, offSite],
+      pageLinks: [offSite],
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(`http://${canonicalHost}`, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual([`http://${canonicalHost}/`]);
+      // Request-log proof, not merely "absent from the result": the off-site host was never
+      // contacted at all, so nothing was leaked to it either.
+      expect(site.requested.every((u) => new URL(u).host === canonicalHost)).toBe(true);
+      expect(site.requested.every((u) => new URL(u).protocol === "http:")).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it.each(OFF_SITE)("still reports `off-origin redirect` for a hop to %s", async (
+    _label,
+    offSite,
+  ) => {
+    // `off-origin-redirect` stays a REACHABLE outcome with its reason string — the twin rule
+    // narrows when it fires, it does not remove it.
+    const canonicalHost = "scope.example.com";
+    const site = makeTwinSite({
+      canonicalHost,
+      sitemapLocs: [`http://${canonicalHost}/`, `http://${canonicalHost}/leave`],
+      redirectPaths: { "/leave": offSite },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(site.impl);
+    try {
+      const result = await crawlSite(`http://${canonicalHost}`, { lookup });
+      expect(result.pages.map((p) => p.url)).toEqual([`http://${canonicalHost}/`]);
+      expect(result.skipped).toContainEqual({
+        url: `http://${canonicalHost}/leave`,
+        reason: `off-origin redirect to ${offSite}`,
+      });
+      // The redirect was refused BEFORE the hop: the off-site host was never contacted.
+      expect(site.requested.every((u) => new URL(u).host === canonicalHost)).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  // NO SPEC for the IP-literal exclusion in `sameSite`, deliberately. A draft of this block
+  // had one and it passed with the exclusion REMOVED: WHATWG URL refuses
+  // `http://www.127.0.0.1:8123/x` before the crawler sees it, so the spec was pinning Node's
+  // URL parser and reading as proof of a crawler rule. A green test that cannot go red for the
+  // reason it names is worse than no test.
+});
+
+/**
+ * RANKING-PAGE SEEDS (crawl_site's opt-in `seed_from_ranking_pages`, CrawlOptions.extraSeeds).
+ *
+ * The defect these exist for, measured 2026-08-25: the site's HIGHEST-etv page never entered a
+ * crawl, because discovery seeds from the sitemap plus the homepage and stops at the page cap.
+ * So what is pinned here is BOTH halves — that a supplied seed really does jump the sitemap, and
+ * that jumping the sitemap buys it NO other privilege: robots, scope and the cap all still apply.
+ */
+describe("selectExtraSeeds — externally supplied seeds go through the crawl's own gates", () => {
+  const ORIGIN = "https://example.com";
+
+  it("keeps same-site, in-scope URLs, normalized and in the order supplied", () => {
+    const selection = selectExtraSeeds(
+      [`${ORIGIN}/pricing/`, `${ORIGIN}/blog/post#top`, "https://www.example.com/about"],
+      ORIGIN,
+    );
+    expect(selection.seeds).toEqual([
+      "https://example.com/pricing",
+      "https://example.com/blog/post",
+      "https://www.example.com/about",
+    ]);
+    expect(selection).toMatchObject({ outOfScope: 0, unusable: 0, duplicates: 0 });
+  });
+
+  it("counts off-site, out-of-scope and infrastructure URLs as outOfScope and drops them", () => {
+    const selection = selectExtraSeeds(
+      [
+        "https://blog.example.com/a", // a different site
+        "https://example.org/a", // a different site
+        `${ORIGIN}/shop/x`, // same site, outside include_paths
+        `${ORIGIN}/cdn-cgi/l/email-protection`, // reserved infrastructure
+        `${ORIGIN}/blog/keep`,
+      ],
+      ORIGIN,
+      ["/blog"],
+    );
+    expect(selection.seeds).toEqual(["https://example.com/blog/keep"]);
+    expect(selection.outOfScope).toBe(4);
+    // WHAT THIS CASE DOES *NOT* PROVE, said out loud so the next reader does not read it as
+    // more than it is: every off-site URL above is ALSO out of `["/blog"]`, so deleting the
+    // sameSite check would leave this assertion green — matchesIncludePaths would reject them
+    // instead. MEASURED: with `!sameSite(...)` removed from selectExtraSeeds, this whole file
+    // and crawl-seeds.test.ts stayed green (168/168). The same-site rule is pinned ON ITS OWN
+    // by the spec directly below, and that spec is the one that goes red.
+  });
+
+  /**
+   * THE SAME-SITE RULE, PINNED ALONE — the mutation the case above cannot catch.
+   *
+   * Every URL here carries a path selectExtraSeeds would ACCEPT on the crawl's own origin, and
+   * NO include_paths filter is passed, so `matchesIncludePaths` returns true for all of them and
+   * `isInfrastructurePath` returns false. The ONLY predicate left that can drop them is
+   * {@link sameSite}. That isolation is the entire point: a spec whose subject is rejected by a
+   * second predicate is a spec that measures the second predicate.
+   *
+   * It is also NETWORK-FREE by construction. `selectExtraSeeds` is pure and synchronous — no
+   * DNS, no fetch, no SSRF guard — so nothing here can pass or fail for a resolver's reasons.
+   * That is the difference from the `crawlSite` spec further down that uses `elsewhere.test`:
+   * that one drives the REAL crawl and proves an off-site seed survives an unresolvable host
+   * without taking the crawl down, which is a different and still-valid guarantee. It cannot
+   * stand in for this one, because a fake TLD fails at DNS before sameSite is ever consulted.
+   *
+   * The hosts are the ones a hostile review reached for: another registered domain, a SUBDOMAIN
+   * (the case sameSite is likeliest to wave through), the suffix trap, loopback, link-local
+   * cloud metadata, a private range, and the two same-host-but-different-ORIGIN forms.
+   */
+  it("drops an off-site seed on the SAME-SITE rule ALONE — no scope filter, no DNS", () => {
+    const offSite = [
+      "https://evil.example/pricing", // another registered domain
+      "https://blog.example.com/pricing", // a subdomain is NOT the site
+      "https://example.com.evil.test/pricing", // suffix trap
+      "https://127.0.0.1/pricing", // loopback
+      "https://169.254.169.254/latest/meta-data/", // link-local cloud metadata
+      "https://localhost:8080/pricing",
+      "https://10.0.0.5/pricing", // private range
+      "http://example.com/pricing", // right host, WRONG scheme
+      "https://example.com:8443/pricing", // right host, WRONG port
+    ];
+    // In one list beside a seed that MUST survive, so a mutation cannot pass by rejecting all.
+    const selection = selectExtraSeeds([...offSite, `${ORIGIN}/pricing`], ORIGIN);
+    expect(selection.seeds).toEqual(["https://example.com/pricing"]);
+    expect(selection.outOfScope).toBe(offSite.length);
+    // And one at a time, so a failure names the host that got through.
+    for (const url of offSite) {
+      expect(selectExtraSeeds([url], ORIGIN), url).toMatchObject({ seeds: [], outOfScope: 1 });
+    }
+  });
+
+  it("counts non-URLs and non-http schemes as unusable, and repeats as duplicates", () => {
+    const selection = selectExtraSeeds(
+      ["not a url", "", 42, `mailto:a@example.com`, `${ORIGIN}/a`, `${ORIGIN}/a/`],
+      ORIGIN,
+    );
+    expect(selection.seeds).toEqual(["https://example.com/a"]);
+    expect(selection).toMatchObject({ unusable: 4, duplicates: 1, outOfScope: 0 });
+  });
+
+  it("yields nothing (and blames the input) when the origin is not a URL", () => {
+    const selection = selectExtraSeeds([`${ORIGIN}/a`], "not-an-origin");
+    expect(selection).toEqual({ seeds: [], outOfScope: 0, unusable: 1, duplicates: 0 });
+  });
+});
+
+describe("crawlSite — ranking-page seeds are queued ahead of the sitemap, not above the rules", () => {
+  it("fetches a supplied seed the sitemap never lists, before the sitemap's own URLs", async () => {
+    // /orphan is deliberately absent from this sitemap — it is only reachable as a seed.
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog", "/noindex"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 2,
+        extraSeeds: [`${site.origin}/orphan`],
+      });
+      const urls = result.pages.map((p) => p.url);
+      // Homepage keeps the first slot; the seed takes the second, ahead of every sitemap URL.
+      expect(urls).toEqual([normalizeUrl(`${site.origin}/`), normalizeUrl(`${site.origin}/orphan`)]);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("is byte-identical to an unseeded crawl when extraSeeds is absent", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog", "/noindex"] });
+    try {
+      const seeded = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2, extraSeeds: [] });
+      const plain = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2 });
+      expect(seeded.pages.map((p) => p.url)).toEqual(plain.pages.map((p) => p.url));
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT crawl a seed outside include_paths", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/blog"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        includePaths: ["/blog"],
+        extraSeeds: [`${site.origin}/orphan`, `${site.origin}/about`],
+      });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/orphan`));
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/about`));
+      // The out-of-scope seeds were never even requested.
+      expect(site.requested).not.toContain("/orphan");
+      expect(site.requested).not.toContain("/about");
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT crawl a seed robots.txt disallows", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        extraSeeds: [`${site.origin}/private`],
+      });
+      expect(result.pages.map((p) => p.url)).not.toContain(normalizeUrl(`${site.origin}/private`));
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${site.origin}/private`),
+        reason: "blocked by robots.txt",
+      });
+      expect(site.requested).not.toContain("/private");
+    } finally {
+      await site.close();
+    }
+  });
+
+  /**
+   * WHAT THIS ONE MEASURES: an off-site seed cannot take a REAL crawl down. `elsewhere.test` is
+   * an unresolvable TLD, so this exercises the whole path — crawlSite, its filters, and the
+   * network layer beneath them — and proves the crawl still returns its own pages.
+   *
+   * WHAT IT DOES NOT MEASURE, and must not be mistaken for: the same-site RULE. MEASURED — with
+   * `!sameSite(...)` deleted from selectExtraSeeds this spec stayed GREEN, because a fake TLD
+   * fails at DNS long before sameSite would have been consulted. The rule itself is pinned,
+   * network-free, in "drops an off-site seed on the SAME-SITE rule ALONE" above. Two specs, two
+   * subjects; neither replaces the other.
+   */
+  it("does NOT crawl an off-site seed", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 3,
+        extraSeeds: ["https://elsewhere.test/pwned"],
+      });
+      expect(result.pages.map((p) => p.url).some((u) => u.includes("elsewhere.test"))).toBe(false);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does not let seeds push the crawl past maxUrls", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 2,
+        extraSeeds: [`${site.origin}/orphan`, `${site.origin}/weird`, `${site.origin}/noindex`],
+      });
+      expect(result.pages).toHaveLength(2);
+    } finally {
+      await site.close();
     }
   });
 });

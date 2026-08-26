@@ -8,7 +8,7 @@ import {
   DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
   DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
   MAX_COMPARE_TARGETS,
-  MAX_INTERNAL_LIST_ROWS,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   MIN_COMPARE_TARGETS,
   createLiveAiVisibilityClient,
   createMockAiVisibilityPort,
@@ -273,7 +273,9 @@ describe("ai_visibility_compare per-target credit path against the local stack",
     expect(seen[0]?.url).not.toBe(DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT);
 
     const asked = seen[0]?.body ?? {};
-    expect(asked.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // The VENDOR's ceiling for THIS endpoint (10, lower than its sibling's 20) — was the pricing
+    // basis 100, which DataForSEO rejects outright. See dfs/llm-mentions.ts.
+    expect(asked.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
     expect(asked.platform).toBe("chat_gpt");
     expect(asked.location_name).toBe("United States");
     expect(asked).not.toHaveProperty("location_code");

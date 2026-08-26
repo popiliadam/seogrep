@@ -4,7 +4,9 @@ import {
   decryptToken,
   fromByteaHex,
   listSites,
+  propertyToDomain,
   refreshAccessToken,
+  stripWwwLabel,
   type GscSite,
 } from "@pseo/core";
 import { forUser, getServiceClient, markGscAccountTokenInvalid } from "../db.ts";
@@ -182,6 +184,51 @@ function readBy(
     .map((mapping) => mapping.domain);
 }
 
+/**
+ * The caller's projects that name the SAME SITE as this property and read nothing yet.
+ *
+ * WHY IT IS HERE. Measured live 2026-08-25: of 27 properties, FIVE had a matching project that
+ * was not linked to them — `sc-domain:seogrep.com` ↔ `seogrep.com`, `https://dentnotion.com/` ↔
+ * `dentnotion.com`, `https://rkturizm.com/` ↔ `rkturizm.com`, `https://bayder.com.tr/` ↔
+ * `bayder.com.tr`, and `sc-domain:noraninsaat.com` ↔ `www.noraninsaat.com`. This tool printed
+ * both sides of every one of those pairs and never said they belonged together, while linking
+ * them is one free call.
+ *
+ * `www.` is ignored on both sides (the fifth pair is exactly that case) and NOTHING else is: a
+ * subdomain property names a different site and must never be offered.
+ *
+ * ONLY projects that read NO property qualify. A project already bound to a different property
+ * is in a deliberate state, and offering to "link" it would be offering to REPOINT it — a
+ * different act, with a different consequence, and not what this line would be read to mean.
+ */
+function unlinkedProjectsFor(
+  mappings: readonly ProjectPropertyMapping[],
+  siteUrl: string,
+): string[] {
+  const domain = propertyToDomain(siteUrl);
+  if (domain === null) return [];
+  const host = stripWwwLabel(domain);
+  return mappings
+    .filter((mapping) => mapping.property === null && stripWwwLabel(mapping.domain) === host)
+    .map((mapping) => mapping.domain)
+    // Byte order, not localeCompare: the sentence must not differ between a developer's machine
+    // and the server (the same ruling track_gsc_property's compareStrings states).
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** How an unread property is described: plainly, or with the project it plainly belongs to. */
+function unusedNote(mappings: readonly ProjectPropertyMapping[], siteUrl: string): string {
+  const candidates = unlinkedProjectsFor(mappings, siteUrl);
+  if (candidates.length === 0) return "not used by any project";
+  const named = candidates.map((domain) => `"${domain}"`).join(", ");
+  const subject = candidates.length === 1 ? "your project" : "your projects";
+  const verb = candidates.length === 1 ? "is" : "are";
+  return (
+    `not used by any project — ${subject} ${named} ${verb} the same site; run ` +
+    "track_gsc_property with this property to link them"
+  );
+}
+
 /** One property line: what it is, what SeoGrep may do with it, and who reads it. */
 function renderSite(
   site: GscSite,
@@ -189,7 +236,8 @@ function renderSite(
   accountId: string,
 ): string {
   const readers = readBy(mappings, accountId, site.siteUrl);
-  const usage = readers.length > 0 ? `read by ${readers.join(", ")}` : "not used by any project";
+  const usage =
+    readers.length > 0 ? `read by ${readers.join(", ")}` : unusedNote(mappings, site.siteUrl);
   const note = canQuerySearchAnalytics(site.permissionLevel)
     ? ""
     : " — NOT QUERYABLE: SeoGrep cannot read Search Console data at this permission level";

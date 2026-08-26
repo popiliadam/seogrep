@@ -109,3 +109,140 @@ describe("auditOnpage — heading, canonical, thin-content rules", () => {
     expect(typesFor(auditOnpage(crawl([page({ url: "https://e/b", wordCount: 200 })])), "https://e/b")).not.toContain("thin_content");
   });
 });
+
+/** The text of the finding of `type` on `url` — "" when the rule did not fire at all. */
+function textFor(report: ReturnType<typeof auditOnpage>, url: string, type: string): string {
+  return report.pages.find((p) => p.url === url)?.findings.find((f) => f.type === type)?.text ?? "";
+}
+
+/**
+ * EVERY THRESHOLD-BASED FINDING NAMES ITS THRESHOLD.
+ *
+ * The measured complaint: `title too long (62 chars)` told a customer they broke a rule without
+ * saying which, so 2-over and 30-over read identically. Each row below therefore asserts TWO
+ * numbers on one finding — what was measured, and the bound it broke — as regexes over the prose
+ * rather than by comparing the whole string to a source literal, which would pass no matter what
+ * the sentence said. Deleting the bound from any one message turns that row red on its second
+ * expectation, and only that one.
+ *
+ * The bounds are LITERALS here on purpose: 60/10/160/50/200 are the product's numbers, not the
+ * module's, so importing them back out of the module under test would let a silent change to a
+ * constant carry its own test along with it.
+ */
+describe("auditOnpage — every threshold finding states its threshold", () => {
+  const cases: { rule: string; type: string; measured: number; bound: number; fields: Partial<AuditPage> }[] = [
+    { rule: "title too long", type: "title_too_long", measured: 62, bound: 60, fields: { title: "x".repeat(62) } },
+    { rule: "title too short", type: "title_too_short", measured: 7, bound: 10, fields: { title: "Dentist" } },
+    { rule: "meta too long", type: "meta_too_long", measured: 161, bound: 160, fields: { metaDescription: "y".repeat(161) } },
+    { rule: "meta too short", type: "meta_too_short", measured: 9, bound: 50, fields: { metaDescription: "too short" } },
+    { rule: "thin content", type: "thin_content", measured: 42, bound: 200, fields: { wordCount: 42 } },
+  ];
+
+  it.each(cases)("$rule reports the measured value AND the bound it broke", ({ type, measured, bound, fields }) => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", ...fields })]));
+    const text = textFor(report, "https://e/a", type);
+    expect(text, `${type} did not fire`).not.toBe("");
+    expect(text, "the measured value is missing").toMatch(new RegExp(String.raw`\b${measured}\b`));
+    expect(text, "the threshold the value broke is missing").toMatch(new RegExp(String.raw`\b${bound}\b`));
+  });
+});
+
+/**
+ * STRAY EDGE CHARACTERS — and the false-positive side carries MORE specs than the true-positive
+ * side, deliberately. A rule that flagged `10 Ways to Whiten Teeth` would be worse than the gap it
+ * closes, so the clean cases below are real title shapes: quotes, a leading digit, brackets,
+ * parentheses, an em dash, an ellipsis, a trailing `?`, a hashtag, an emoji, and Turkish, Greek,
+ * Arabic and CJK text — the measured page was Turkish, so ASCII is never the test.
+ */
+describe("auditOnpage — stray markup at a title/description edge", () => {
+  /** The MEASURED page: a code-fence backtick survived into a live title, and nothing flagged it. */
+  const MEASURED = "`İzmirde Diş Beyazlatma Merkezleri 2026";
+
+  it("flags the measured backtick title, and names the character it found", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", title: MEASURED })]));
+    expect(typesFor(report, "https://e/a")).toContain("title_stray_chars");
+    const text = textFor(report, "https://e/a", "title_stray_chars");
+    expect(text).toMatch(/title/i);
+    expect(text).toContain("`");
+    expect(text).toMatch(/start/i);
+  });
+
+  const dirty: [string, string][] = [
+    ["a trailing dangling separator", "Diş Beyazlatma Fiyatları |"],
+    ["a trailing dangling dash", "Teeth Whitening in Izmir -"],
+    ["a trailing em dash", "Teeth Whitening in Izmir —"],
+    ["a leaked opening HTML tag", "<p>Teeth Whitening in Izmir"],
+    ["a leaked closing HTML tag", "Teeth Whitening in Izmir</p>"],
+    ["an unrendered template placeholder", "{{page_title}} Dental Clinic"],
+    ["a Markdown heading marker", "## Teeth Whitening in Izmir"],
+    ["a Markdown list bullet", "- Teeth Whitening in Izmir"],
+    ["a Markdown emphasis marker", "*Teeth Whitening in Izmir*"],
+    ["a dangling ampersand", "Teeth Whitening in Izmir &"],
+    ["a leading comma", ", Teeth Whitening in Izmir"],
+  ];
+  it.each(dirty)("flags %s", (_why, title) => {
+    expect(typesFor(auditOnpage(crawl([page({ url: "https://e/a", title })])), "https://e/a")).toContain(
+      "title_stray_chars",
+    );
+  });
+
+  const clean: [string, string][] = [
+    ["quotes around a word", 'The "Best" Dentist in Izmir'],
+    // BOTH EDGES are quotes here, which is the shape a naive "strip the punctuation" rule
+    // flags first — and it is a perfectly ordinary title.
+    ["a title wrapped in straight quotes", '"The Best Dentist in Izmir"'],
+    ["a title wrapped in curly quotes", "“The Best Dentist in Izmir”"],
+    ["a title wrapped in parentheses", "(Updated for 2026) Teeth Whitening"],
+    ["curly quotes", "The “Best” Dentist in Izmir"],
+    ["a leading digit", "10 Ways to Whiten Teeth"],
+    ["leading brackets", "[2026] Guide to Dental Implants"],
+    ["trailing parentheses", "Teeth Whitening Costs (2026)"],
+    ["an em dash between clauses", "Diş Beyazlatma — Fiyatlar ve Süreç"],
+    ["a trailing question mark", "Is Teeth Whitening Safe?"],
+    ["a trailing exclamation", "Whiten Your Teeth Today!"],
+    ["a trailing ellipsis", "What Nobody Tells You About Whitening…"],
+    ["a hashtag, which is not a Markdown heading", "#DisBeyazlatma Hakkinda Her Sey"],
+    ["an ampersand and a colon between words", "Zahnärzte in München: Preise & Ablauf"],
+    ["a slash between words", "Dentist 24/7 Emergency Care in Izmir"],
+    ["a leading emoji", "😀 Smile Brighter Every Single Day"],
+    ["Greek text", "Παιδοδοντίατρος στην Αθήνα σήμερα"],
+    ["Arabic text", "العناية بالأسنان في دبي اليوم"],
+    ["CJK text", "牙齿美白指南与价格以及注意事项"],
+    ["a trailing percent", "Whitening Results Improved 40%"],
+    // THE `+` ROWS. `+` used to sit in STRAY_EDGE and flagged all three of these ordinary
+    // titles; the phone-led one is a common local-SEO shape in Turkey, which is what decided it.
+    ["a trailing plus in an age range", "Affordable Dental Care for Ages 50+"],
+    ["a language name that ends in plus signs", "A Beginner's Guide to Learn C++"],
+    ["a phone-led Turkish title", "+90 232 000 00 00 Diş Kliniği İzmir"],
+    // THE LEADING-DASH ROW, and it is the whole evidence for the dash ASYMMETRY: a trailing dash
+    // is a severed separator and IS flagged, while a leading one opens a discount and is not.
+    // Without this row that asymmetry is prose — moving the dashes into STRAY_EDGE stays green.
+    ["a title opening with a dash before a discount", "-50% Off Teeth Whitening This Week"],
+    ["an apostrophe", "Izmir's Most Trusted Dental Clinic"],
+  ];
+  it.each(clean)("leaves %s alone", (_why, title) => {
+    expect(typesFor(auditOnpage(crawl([page({ url: "https://e/a", title })])), "https://e/a")).not.toContain(
+      "title_stray_chars",
+    );
+  });
+
+  it("applies to the meta description too, and a clean description stays clean", () => {
+    const bad = auditOnpage(
+      crawl([page({ url: "https://e/a", metaDescription: "`A meta description long enough to clear the fifty character floor." })]),
+    );
+    expect(typesFor(bad, "https://e/a")).toContain("meta_stray_chars");
+    expect(textFor(bad, "https://e/a", "meta_stray_chars")).toMatch(/meta description/i);
+
+    const good = auditOnpage(
+      crawl([page({ url: "https://e/b", metaDescription: "İzmir'de diş beyazlatma: fiyatlar, süreç ve sık sorulan sorular (2026)." })]),
+    );
+    expect(typesFor(good, "https://e/b")).not.toContain("meta_stray_chars");
+  });
+
+  it("a title that is one stray character reports one problem, not two", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", title: "`" })]));
+    const text = textFor(report, "https://e/a", "title_stray_chars");
+    expect(text).toMatch(/start/i);
+    expect(text).not.toMatch(/end/i);
+  });
+});

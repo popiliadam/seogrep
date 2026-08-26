@@ -49,6 +49,17 @@ export interface StatusCounts {
   readonly redirect3xx: number;
   readonly clientError4xx: number;
   readonly serverError5xx: number;
+  /**
+   * Pages in NONE of the four classes above — and the four therefore do not add up to
+   * `pageCount` whenever this is non-zero.
+   *
+   * It is reachable, not theoretical: `crawl-data.ts` reads `status` through `asFiniteNumber`,
+   * which yields 0 for a missing or non-numeric value, and 0 falls through every branch to here.
+   * So a page a legacy crawl stored without a status, or with a broken one, lands in this bucket
+   * — which is exactly the page a reader most needs to be told about. It went UNPRINTED until
+   * 2026-08-26, so such a page was absent from a report the tenant paid 15 credits for while the
+   * header still counted it (NEVER#7).
+   */
   readonly other: number;
 }
 
@@ -131,6 +142,8 @@ export interface TechReport {
   readonly status: StatusCounts;
   readonly clientErrorUrls: string[];
   readonly serverErrorUrls: string[];
+  /** The URLs behind `status.other` — see that field for why the bucket is reachable. */
+  readonly otherStatusUrls: string[];
   readonly redirects: AuditSkipped[];
   /** skip category -> the skipped entries in it (robots / timeout / non_html / ...). */
   readonly skippedByCategory: Record<string, AuditSkipped[]>;
@@ -196,19 +209,29 @@ function classifyStatus(pages: AuditPage[]): {
   status: StatusCounts;
   clientErrorUrls: string[];
   serverErrorUrls: string[];
+  otherStatusUrls: string[];
 } {
   let ok2xx = 0, redirect3xx = 0, clientError4xx = 0, serverError5xx = 0, other = 0;
   const clientErrorUrls: string[] = [];
   const serverErrorUrls: string[] = [];
+  // Collected for the same reason 4xx and 5xx are: a count with no URLs behind it tells the
+  // reader a page is missing without telling them WHICH, and this bucket's whole membership is
+  // pages the crawl could not classify.
+  const otherStatusUrls: string[] = [];
   for (const page of pages) {
     const s = page.status;
     if (s >= 200 && s < 300) ok2xx++;
     else if (s >= 300 && s < 400) redirect3xx++;
     else if (s >= 400 && s < 500) { clientError4xx++; clientErrorUrls.push(page.url); }
     else if (s >= 500) { serverError5xx++; serverErrorUrls.push(page.url); }
-    else other++;
+    else { other++; otherStatusUrls.push(page.url); }
   }
-  return { status: { ok2xx, redirect3xx, clientError4xx, serverError5xx, other }, clientErrorUrls, serverErrorUrls };
+  return {
+    status: { ok2xx, redirect3xx, clientError4xx, serverError5xx, other },
+    clientErrorUrls,
+    serverErrorUrls,
+    otherStatusUrls,
+  };
 }
 
 /** noindex pages that are still internally linked (a crawl/index intent conflict). */
@@ -373,7 +396,7 @@ function brokenInternalLinks(pages: AuditPage[]): BrokenInternalLink[] {
 
 /** Run the technical rules over a crawl. */
 export function auditTech(crawl: AuditCrawl): TechReport {
-  const { status, clientErrorUrls, serverErrorUrls } = classifyStatus(crawl.pages);
+  const { status, clientErrorUrls, serverErrorUrls, otherStatusUrls } = classifyStatus(crawl.pages);
 
   const skippedByCategory: Record<string, AuditSkipped[]> = {};
   for (const skip of crawl.skipped) {
@@ -387,6 +410,7 @@ export function auditTech(crawl: AuditCrawl): TechReport {
     status,
     clientErrorUrls,
     serverErrorUrls,
+    otherStatusUrls,
     redirects: skippedByCategory.redirect ?? [],
     skippedByCategory,
     robotsConflicts: robotsConflicts(crawl.pages),

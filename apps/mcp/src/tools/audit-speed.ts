@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   MAX_SPEED_URLS,
   resolveDefaultSpeedPort,
@@ -294,7 +295,10 @@ export function makeAuditSpeedTool(deps: AuditSpeedDeps = {}): RegisteredTool {
       // call, free, and an internal or non-http address never reaches the vendor.
       const urls = normalizeSpeedUrls(input.urls);
       if (!urls.ok) {
-        return errorResult(urls.error);
+        // A rejected URL is a free refusal like every other gate in this handler — it returns
+        // before withCredits opens the 15-credit reserve — so it says so, in the same words
+        // NOT_ENABLED_MESSAGE below already uses.
+        return errorResult(withNoChargeNote(urls.error));
       }
       const port = deps.port ?? resolveDefaultSpeedPort();
       // Free pre-reserve gate 3 — refuse rather than reserve credits or serve fixture data.

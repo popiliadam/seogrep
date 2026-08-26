@@ -16,6 +16,8 @@ import {
   MIN_COMPARE_TARGETS,
   PLATFORM_MEANS,
   ROW_ORDER,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+  VENDOR_MAX_INTERNAL_LIST_CROSS,
   VENDOR_TIME_FIELD_CANDIDATES,
   buildAiVisibilityCompareRequestBody,
   buildAiVisibilityRequestBody,
@@ -27,17 +29,21 @@ import {
   disabledAiVisibilityPort,
   estimateLlmMentionsUsd,
   extractEchoedPlatform,
+  extractVendorRefusal,
   extractLlmMentionsCostUsd,
   extractVendorTime,
+  isLlmMentionsVendorError,
   parseAiVisibilityCompareResponse,
   parseAiVisibilityResponse,
   resolveDefaultAiVisibilityPort,
   sumSettledCostUsd,
   toVendorTarget,
   validateCompareGroups,
+  vendorInternalListLimit,
   type AiVisibilityCompareQuery,
   type AiVisibilityQuery,
   type CompareGroup,
+  type LlmMentionsVendorError,
 } from "./llm-mentions.ts";
 import { createMemorySpendLedger, type MemorySpendLedger } from "./budget.ts";
 import type { DfsTransport } from "./client.ts";
@@ -317,7 +323,11 @@ describe("the request body for aggregated_metrics (ai_visibility)", () => {
    */
   it("sends the parameters this endpoint publishes, and NOT the ones siblings use", () => {
     const body = buildAiVisibilityRequestBody(visibilityQuery());
-    expect(body.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // WAS `MAX_INTERNAL_LIST_ROWS` (100) until 2026-08-25. The PREMISE was false, not the
+    // assertion style: DataForSEO publishes "maximum value: `20`" for this endpoint's
+    // `internal_list_limit`, so 100 was rejected at the TASK and this tool never worked in
+    // production. The pricing basis keeps its own constant; the wire keeps the vendor's.
+    expect(body.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
     expect(body.platform).toBe("chat_gpt");
     expect(body.location_name).toBe("United States");
     expect(body.language_code).toBe("en");
@@ -364,7 +374,10 @@ describe("the request body for cross_aggregated_metrics (ai_visibility_compare)"
       { aggregation_key: "rival-one", target: [{ domain: "rival-one-fixture.test" }] },
       { aggregation_key: "rival-two", target: [{ domain: "rival-two-fixture.test" }] },
     ]);
-    expect(body.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // WAS `MAX_INTERNAL_LIST_ROWS` (100). This endpoint's published ceiling is LOWER STILL than
+    // its sibling's — "maximum value: `10`" — which is exactly why one shared constant could not
+    // be right for both.
+    expect(body.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
     expect(body).not.toHaveProperty("filters");
     expect(body).not.toHaveProperty("order_by");
   });
@@ -430,8 +443,10 @@ describe("the row cap", () => {
     const client = liveClient(transport, createMemorySpendLedger());
     await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: 5000 }));
     await client.fetchAiVisibilityCompare(compareQuery({ internal_list_limit: 5000 }));
-    expect(sentBody(transport, 0).internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
-    expect(sentBody(transport, 1).internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    // The cap on the wire is the VENDOR's, per endpoint — see "the vendor's own
+    // internal_list_limit ceiling" below for the measurement and for why this used to say 100.
+    expect(sentBody(transport, 0).internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
+    expect(sentBody(transport, 1).internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
   });
 
   it("enforces the cap IN THE ESTIMATE — asking for more rows cannot under-reserve", () => {
@@ -911,5 +926,204 @@ describe("the mock port", () => {
     await expect(
       port.fetchAiVisibilityCompare(compareQuery({ groups: [group("one", "a-fixture.test")] })),
     ).rejects.toThrow(/2 and 10/);
+  });
+});
+
+// =============================================================================================
+// THE VENDOR'S OWN `internal_list_limit` CEILING — the 2026-08-25 production outage.
+//
+// MEASURED, not derived (signed lesson 11). DataForSEO's published request documentation for the
+// two endpoints this port calls states DIFFERENT ceilings for the same field name, and neither is
+// 100:
+//
+//   aggregated_metrics/live       "minimum value: 1  maximum value: 20  default value: 10"
+//   cross_aggregated_metrics/live "minimum value: 1  maximum value: 10  default value: 5"
+//
+// and the field is NOT a row cap at all — the vendor's own words are "maximum number of elements
+// within internal arrays ... `sources_domain` `search_results_domain`". This port sent 100 on every
+// call, the vendor rejected the TASK, unwrapFirstResult threw, and the throw escaped both tools as
+// "failed unexpectedly … reference <id>" while the reservation stayed open at its full estimate.
+//
+// These two specs are the whole outage, in the two places it has to be stopped: the number on the
+// wire, and the number the surface schema advertises.
+// =============================================================================================
+describe("the vendor's own internal_list_limit ceiling", () => {
+  it("never sends a value above the ceiling DataForSEO publishes for EACH endpoint", async () => {
+    const transport = endpointTransport();
+    const client = liveClient(transport, createMemorySpendLedger());
+    await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: 5000 }));
+    await client.fetchAiVisibilityCompare(compareQuery({ internal_list_limit: 5000 }));
+    expect(sentBody(transport, 0).internal_list_limit).toBeLessThanOrEqual(20);
+    expect(sentBody(transport, 1).internal_list_limit).toBeLessThanOrEqual(10);
+  });
+
+  it("pins BOTH published ceilings, and pins that they are NOT the same number", () => {
+    expect(VENDOR_MAX_INTERNAL_LIST_AGGREGATED).toBe(20);
+    expect(VENDOR_MAX_INTERNAL_LIST_CROSS).toBe(10);
+    expect(VENDOR_MAX_INTERNAL_LIST_AGGREGATED).not.toBe(VENDOR_MAX_INTERNAL_LIST_CROSS);
+    // ...and that neither of them is the PRICING basis, which is what got sent for a year.
+    expect(MAX_INTERNAL_LIST_ROWS).toBeGreaterThan(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
+  });
+
+  it("still lets a caller ask for FEWER than the ceiling, and never for zero or a fraction", () => {
+    expect(vendorInternalListLimit(5, VENDOR_MAX_INTERNAL_LIST_AGGREGATED)).toBe(5);
+    expect(vendorInternalListLimit(0, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(1);
+    expect(vendorInternalListLimit(-3, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(1);
+    expect(vendorInternalListLimit(7.9, VENDOR_MAX_INTERNAL_LIST_AGGREGATED)).toBe(7);
+    expect(vendorInternalListLimit(Number.NaN, VENDOR_MAX_INTERNAL_LIST_CROSS)).toBe(
+      VENDOR_MAX_INTERNAL_LIST_CROSS,
+    );
+  });
+
+  /**
+   * THE RESERVATION DID NOT MOVE. The wire number changed; the money did not (NEVER #6). A lookup
+   * still books the signed basis, and still books it BEFORE any HTTP.
+   */
+  it("books the SAME estimate as before the ceiling fix — the price basis is untouched", async () => {
+    const spend = createMemorySpendLedger();
+    const transport = endpointTransport();
+    await liveClient(transport, spend).fetchAiVisibility(visibilityQuery());
+    expect(spend.rows()[0]?.estimatedUsd).toBeCloseTo(0.3, 10);
+    expect(spend.rows()[0]?.estimatedUsd).toBe(ESTIMATED_AI_VISIBILITY_CALL_USD);
+  });
+
+  it("sends the vendor's ceiling even when the caller asks for the signed pricing basis", async () => {
+    const transport = endpointTransport();
+    const client = liveClient(transport, createMemorySpendLedger());
+    await client.fetchAiVisibility(visibilityQuery({ internal_list_limit: MAX_INTERNAL_LIST_ROWS }));
+    expect(sentBody(transport, 0).internal_list_limit).toBeLessThanOrEqual(20);
+  });
+});
+
+// =============================================================================================
+// A VENDOR THAT REFUSED IS NOT A CRASH — and a refused call must not eat the shared daily cap.
+//
+// Both halves of the 2026-08-25 damage report live here. The tools' half (the sentence the user
+// reads) is in tools/ai-visibility.test.ts; this is the port's half: what is THROWN, and what is
+// BOOKED, when DataForSEO says no.
+// =============================================================================================
+describe("a vendor refusal is typed, and settled at what the vendor charged", () => {
+  /** The shape DataForSEO answers with when it rejects the REQUEST: HTTP 200, task status != 20000. */
+  function refusedTask(cost: number | null): unknown {
+    return {
+      status_code: 20000,
+      status_message: "Ok.",
+      ...(cost === null ? {} : { cost }),
+      tasks: [
+        {
+          status_code: 40501,
+          status_message: "Invalid Field: 'internal_list_limit'.",
+          ...(cost === null ? {} : { cost }),
+          result: null,
+        },
+      ],
+    };
+  }
+
+  const refusing = (body: unknown) =>
+    vi.fn<DfsTransport>(async () => ({ ok: true, status: 200, json: async () => body }));
+
+  it("throws the TYPED refusal carrying the vendor's OWN code and words, on both tools", async () => {
+    const spend = createMemorySpendLedger();
+    const client = liveClient(refusing(refusedTask(0)), spend);
+    for (const call of [
+      () => client.fetchAiVisibility(visibilityQuery()),
+      () => client.fetchAiVisibilityCompare(compareQuery()),
+    ]) {
+      const error = await call().then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(isLlmMentionsVendorError(error)).toBe(true);
+      const typed = error as LlmMentionsVendorError;
+      expect(typed.kind).toBe("vendor_status");
+      expect(typed.vendorStatusCode).toBe(40501);
+      expect(typed.vendorStatusMessage).toMatch(/internal_list_limit/);
+    }
+  });
+
+  /**
+   * THE DRAIN, CLOSED. The daily cap is $3.00, fleet-global and FAIL-CLOSED, so a reservation left
+   * open at its $0.30 estimate for a call the vendor refused at $0.00 is spend that never happened
+   * blocking tools that work. Ten of them filled the cap; that is how one broken tool took the
+   * whole paid surface down for a day.
+   */
+  it("settles a refused call at the vendor's own price, so ten refusals cannot fill the cap", async () => {
+    const spend = createMemorySpendLedger();
+    const client = liveClient(refusing(refusedTask(0)), spend);
+    for (let i = 0; i < 10; i += 1) {
+      await client.fetchAiVisibility(visibilityQuery()).catch(() => undefined);
+    }
+    expect(spend.rows()).toHaveLength(10);
+    for (const row of spend.rows()) expect(row.actualUsd).toBe(0);
+    expect(await spend.todayUsd()).toBe(0);
+    // ...and the cap is still open for a call that would work.
+    await expect(spend.reserve(0.3, "next")).resolves.toBeTruthy();
+  });
+
+  /** A vendor that DID charge for its refusal is settled at THAT, not at $0.00 and not at estimate. */
+  it("settles at the vendor's figure when the refusal carried one", async () => {
+    const spend = createMemorySpendLedger();
+    await liveClient(refusing(refusedTask(0.07)), spend)
+      .fetchAiVisibility(visibilityQuery())
+      .catch(() => undefined);
+    expect(spend.rows()[0]?.actualUsd).toBeCloseTo(0.07, 10);
+  });
+
+  /**
+   * THE CONSERVATIVE DIRECTION IS UNCHANGED where it has to be. A response nobody could read
+   * prices nothing, so the reservation stays OPEN at its estimate rather than being settled at a
+   * number nobody measured — erring toward refusing the next call, which is the direction the
+   * budget guard must never get wrong.
+   */
+  it("leaves the reservation OPEN at its estimate when nothing priced the failure", async () => {
+    const spend = createMemorySpendLedger();
+    const noPrice = vi.fn<DfsTransport>(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    }));
+    const error = await liveClient(noPrice, spend)
+      .fetchAiVisibility(visibilityQuery())
+      .then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+    expect(isLlmMentionsVendorError(error)).toBe(true);
+    expect((error as LlmMentionsVendorError).kind).toBe("transport");
+    expect((error as LlmMentionsVendorError).vendorStatusCode).toBeNull();
+    expect(spend.rows()[0]?.actualUsd).toBeNull();
+    expect(await spend.todayUsd()).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+  });
+
+  /** A 20000 envelope whose body this port cannot read is its OWN state — never "no mentions". */
+  it("separates an unreadable body from a vendor refusal", async () => {
+    const spend = createMemorySpendLedger();
+    const unreadable = refusing({
+      status_code: 20000,
+      cost: 0.1,
+      tasks: [{ status_code: 20000, result: [{ items: [{}] }] }],
+    });
+    const error = await liveClient(unreadable, spend)
+      .fetchAiVisibility(visibilityQuery())
+      .then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+    expect(isLlmMentionsVendorError(error)).toBe(true);
+    expect((error as LlmMentionsVendorError).kind).toBe("unreadable_response");
+    expect((error as LlmMentionsVendorError).detail).toMatch(/no mentions found/i);
+  });
+
+  it("extractVendorRefusal reads the TASK's verdict first, and stays silent on a good response", () => {
+    expect(extractVendorRefusal(refusedTask(0))).toEqual({
+      code: 40501,
+      message: "Invalid Field: 'internal_list_limit'.",
+    });
+    expect(extractVendorRefusal({ status_code: 40401, status_message: "Not Found." })).toEqual({
+      code: 40401,
+      message: "Not Found.",
+    });
+    expect(extractVendorRefusal(aggregatedFixture)).toEqual({ code: null, message: null });
   });
 });

@@ -164,17 +164,29 @@ export type Database = {
          * `queued` with no queue message behind it — a job that can never finish and that
          * nothing reaps. One statement, no window.
          *
-         * Still NOT insertable, on purpose: `started_at`, `error`, `reserve_id` and
-         * `status: "running"` belong to the worker lifecycle, which writes them through
-         * markJobRunning / setJobReserve / failJob so the compare-and-set claim (B-I1) and
-         * the reserve trace stay the only way a run moves. This widening is for terminal
-         * rows a sync tool creates already complete, not a general-purpose escape hatch.
+         * `created_at` and `started_at` joined them for the SAME reason, and the omission cost
+         * the same kind of thing. A row this path writes describes a run that ALREADY HAPPENED,
+         * so `created_at`'s `default now()` stamps the INSERT — which is AFTER the work — while
+         * `started_at` stayed NULL because the type forbade it. get_job_status then printed
+         * `created 15:42:59.928 · finished 15:42:46.054` to a customer: a job that finished 13.9
+         * seconds before it was created. All three stamps of an after-the-fact row must come
+         * from ONE clock and describe the RUN, which is only possible if all three are
+         * insertable (see recordSucceededPull).
+         *
+         * Still NOT insertable, on purpose: `error`, `reserve_id` and `status: "running"` belong
+         * to the worker lifecycle, which writes them through markJobRunning / setJobReserve /
+         * failJob so the compare-and-set claim (B-I1) and the reserve trace stay the only way a
+         * run moves. This widening is for terminal rows a sync tool creates already complete,
+         * not a general-purpose escape hatch — a QUEUED row must still let `created_at` default
+         * and leave `started_at` NULL, because for that row the work genuinely has not begun.
          */
         Insert: {
           user_id: string;
           project_id?: string | null;
           tool: string;
           status?: JobStatus;
+          created_at?: string;
+          started_at?: string | null;
           finished_at?: string | null;
           result?: Json | null;
         };

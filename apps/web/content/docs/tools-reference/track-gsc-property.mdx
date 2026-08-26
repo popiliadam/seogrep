@@ -9,7 +9,17 @@ description: "Start tracking a Search Console property: opens its project (or re
 
 ## What it does
 
-Pass a property exactly as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) prints it. SeoGrep re-reads your Google accounts live and only accepts a property one of them actually lists — what you type is never taken as proof it exists. If you already have a project for that domain, it is reused rather than duplicated, so running this twice is safe. If the same property sits on two of your connected accounts, SeoGrep asks which one to read it through instead of guessing, and you re-run with `account_id`.
+Pass a property as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) prints it — or just the site's host, `example.com`. SeoGrep re-reads your Google accounts live and only accepts a property one of them actually lists; what you type is never taken as proof it exists. If you already have a project for that site, it is reused rather than duplicated — running this twice with the **same** property changes nothing. If the same property sits on two of your connected accounts, SeoGrep asks which one to read it through instead of guessing, and you re-run with `account_id`.
+
+Running it with a **different** property for a site you already track is not a no-op: it **repoints** the project at the new property, and the old link is gone. That is a supported call, not an accident, but it is a change of data source rather than a repeat of the last one.
+
+## A bare host is resolved — unless it is ambiguous
+
+`example.com` is the form people type from memory; `sc-domain:example.com` and `https://example.com/` are the forms Search Console prints. A bare host is matched against the properties your accounts really list, ignoring a leading `www.` on either side, and is accepted when **exactly one** property names that site.
+
+When more than one does, the tool **offers the choice and stops**. `sc-domain:example.com` and `https://example.com/` are two different properties with different data and different permissions, so the answer lists the candidates and asks you to re-run with the one you want, spelled as it is printed. Picking one for you would bind the project to a source you did not choose, and a wrong binding only shows up much later, when the data stops making sense.
+
+The same `www.` blindness applies to the project side: a property for `example.com` finds a project stored as `www.example.com` rather than opening a second project beside it. Only the leading `www.` label is ignored — a subdomain is a different site.
 
 ## When it refuses
 
@@ -27,13 +37,13 @@ Ask your MCP client in plain language:
 
 > Track sc-domain:example.com in SeoGrep.
 
-Run [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) first if you are not sure how a property is spelled.
+Or just name the site — > Track example.com in SeoGrep. — and run [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) if the answer comes back asking which of several properties you meant.
 
 ### Input
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `property` | string | Yes | The property exactly as list_gsc_properties reports it. |
+| `property` | string | Yes | The property exactly as list_gsc_properties reports it. A bare domain ("example.com") also works when it matches exactly one of them. |
 | `account_id` | string (uuid) | No | Which connected Google account, when more than one lists the property. |
 
 ### Returns

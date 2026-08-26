@@ -84,6 +84,78 @@ describe("parseKeywordOverviewResponse", () => {
     ]);
   });
 
+  /**
+   * S12 — WHERE `has_data` USED TO LIE. The three fields this verdict once read
+   * (search_volume, cpc, competition_level) are all Google-Ads-sourced, and Labs leaves them out
+   * for a keyword the Ads side has no figures on — routine outside the US, and exactly what the
+   * operator measured for Turkish keywords. Labs' own metrics live in OTHER objects and can be
+   * full on precisely those rows. Stamping such a row no-data made the renderer print one
+   * sentence and throw the paid difficulty and intent away.
+   */
+  it("marks a row with NO Ads metrics but a Labs difficulty as having data", () => {
+    const rows = parseKeywordOverviewResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              items: [
+                {
+                  keyword: "implant",
+                  keyword_info: { se_type: "google", last_updated_time: "2026-08-11 06:20:15 +00:00" },
+                  keyword_properties: { keyword_difficulty: 38 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(rows[0]?.has_data).toBe(true);
+    expect(rows[0]?.keyword_difficulty).toBe(38);
+    // …and the fields the vendor did NOT report stay unreported. Never a zero.
+    expect(rows[0]?.search_volume).toBeNull();
+    expect(rows[0]?.cpc).toBeNull();
+  });
+
+  it.each([
+    ["a search intent", { search_intent_info: { main_intent: "informational" } }],
+    ["a competition float", { keyword_info: { competition: 0.54 } }],
+    ["a volume trend leg", { keyword_info: { search_volume_trend: { yearly: -5 } } }],
+  ])("counts %s as data even with no Ads metrics anywhere", (_name, extra) => {
+    const rows = parseKeywordOverviewResponse({
+      status_code: 20000,
+      tasks: [{ status_code: 20000, result: [{ items: [{ keyword: "implant", ...extra }] }] }],
+    });
+    expect(rows[0]?.has_data).toBe(true);
+  });
+
+  it("still marks a row carrying NO metric anywhere as having no data", () => {
+    const rows = parseKeywordOverviewResponse({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          result: [
+            {
+              items: [
+                {
+                  keyword: "zirkonyum kaplama",
+                  location_code: 2792,
+                  keyword_info: { se_type: "google", last_updated_time: "2026-08-11 06:20:15 +00:00" },
+                  keyword_properties: { se_type: "google", detected_language: "tr" },
+                  search_intent_info: null,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(rows[0]?.has_data).toBe(false);
+  });
+
   it("treats an explicit ZERO search volume as real data, not as a missing keyword", () => {
     const rows = parseKeywordOverviewResponse({
       status_code: 20000,

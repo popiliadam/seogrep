@@ -14,7 +14,9 @@ import {
   ORGANIC_ITEM_TYPE,
   SERP_BUDGET_SAFETY_FACTOR,
   SERP_DEPTH,
+  SERP_MAX_CRAWL_PAGES,
   SERP_REQUESTS_PER_KEYWORD,
+  SERP_RESULTS_PER_VENDOR_PAGE,
   buildSerpRequestBody,
   createLiveSerpSnapshotClient,
   createMockSerpSnapshotPort,
@@ -25,6 +27,7 @@ import {
   organicItems,
   outcomeFor,
   resolveDefaultSerpSnapshotPort,
+  serpMaxCrawlPages,
   sumSettledSerpCostUsd,
   validateSerpKeywords,
   type SerpKeywordRow,
@@ -128,12 +131,29 @@ function withoutCost(fixture: unknown): unknown {
   return clone;
 }
 
+/**
+ * The first element of a fixture array, INSISTED UPON.
+ *
+ * Every index this file takes is into the committed one-task / one-result envelope that every
+ * DataForSEO response in this directory carries, so `undefined` cannot mean "this response had
+ * none" — it can only mean the fixture was gutted. Naming that beats a `!` (which would hand an
+ * assertion an `undefined` and report the failure as a parse bug) and beats casting the envelope
+ * to a tuple (which needs `as unknown as` and would suppress the check outright).
+ */
+function first<T>(items: readonly T[], what: string): T {
+  const value = items[0];
+  if (value === undefined) {
+    throw new Error(`fixture: serp-organic-live-advanced.json carries no ${what}`);
+  }
+  return value;
+}
+
 /** The fixture's result object, mutated by `edit`. */
 function withResult(edit: (result: Record<string, unknown>) => void): unknown {
   const clone = structuredClone(serpFixture) as {
     tasks: { result: Record<string, unknown>[] }[];
   };
-  edit(clone.tasks[0].result[0]);
+  edit(first(first(clone.tasks, "task").result, "result"));
   return clone;
 }
 
@@ -307,19 +327,69 @@ describe("the request body", () => {
       "keyword",
       "language_code",
       "location_name",
+      "max_crawl_pages",
     ]);
   });
 
   /**
-   * The three parameters the wrapper publishes that this port deliberately does NOT send.
-   * `search_engine` is a path segment here; `max_crawl_pages` (wrapper default 1) has an unmeasured
-   * interaction with `depth` and a guess could truncate a paid scrape; `people_also_ask_click_depth`
-   * buys extra vendor work for a feature this measurement is not about.
+   * THE COVERAGE GUARD — the request must ask for enough pages to actually HOLD the depth it is
+   * paying for, at the rate the VENDOR documents: "you will be charged for each page crawled (10
+   * organic results per page)", and, on `depth`, "billed per each SERP containing up to 10 results".
+   *
+   * The 10 below is written as a LITERAL, deliberately, and is NOT read from the module under test.
+   * A shortfall here is not cosmetic: the first version of this rule divided by 100 — Google's own
+   * page size, which is a fact about Google and not about how DataForSEO paginates and bills — and
+   * would have sent `max_crawl_pages: 1` beside `depth: 100`, buying a TENTH of the scrape the
+   * caller was charged for. Asserting against the module's own constant would have let exactly that
+   * mistake stay green, because the constant was the thing that was wrong.
    */
-  it("sends no search_engine, no max_crawl_pages and no people_also_ask_click_depth", () => {
+  it("asks for enough crawl pages to COVER the pinned depth at the vendor's 10-per-page rate", () => {
+    const DOCUMENTED_RESULTS_PER_CRAWLED_PAGE = 10;
+    const body = buildSerpRequestBody(query(), "seo software");
+    const pages = body.max_crawl_pages as number;
+    expect(pages * DOCUMENTED_RESULTS_PER_CRAWLED_PAGE).toBeGreaterThanOrEqual(SERP_DEPTH);
+    // …and what goes on the wire is the derivation, not a number typed twice beside it.
+    expect(pages).toBe(serpMaxCrawlPages(body.depth as number));
+  });
+
+  it("sends max_crawl_pages on EVERY request, derived from the depth", async () => {
+    const transport = serpTransport();
+    await liveClient(transport, ledger).fetchSerpSnapshot(query({ keywords: ["a", "b"] }));
+    for (const index of [0, 1]) {
+      const body = sentBody(transport, index);
+      expect(body.max_crawl_pages).toBe(SERP_MAX_CRAWL_PAGES);
+      // The rule itself, asserted on the wire: the page count AGREES with the depth beside it.
+      expect(body.max_crawl_pages).toBe(serpMaxCrawlPages(body.depth as number));
+    }
+  });
+
+  /** The rule at its boundaries — a crawled page holds ten, so the 11th result needs a second one. */
+  it("rounds the crawl-page count UP at every 10-result boundary, never below one", () => {
+    expect(SERP_RESULTS_PER_VENDOR_PAGE).toBe(10);
+    expect(serpMaxCrawlPages(1)).toBe(1);
+    expect(serpMaxCrawlPages(9)).toBe(1);
+    expect(serpMaxCrawlPages(10)).toBe(1);
+    expect(serpMaxCrawlPages(11)).toBe(2);
+    expect(serpMaxCrawlPages(100)).toBe(10);
+    // The vendor's documented depth ceiling is 200 — twenty pages, well inside its own
+    // max_crawl_pages ceiling of 100, so this rule cannot ask for more pages than are allowed.
+    expect(serpMaxCrawlPages(200)).toBe(20);
+    expect(serpMaxCrawlPages(200)).toBeLessThanOrEqual(100);
+    // A depth of zero or less is not a thing this port sends, but it must never ask for zero pages.
+    expect(serpMaxCrawlPages(0)).toBe(1);
+    // …and the pinned depth of 100 resolves to the ten pages that depth is billed as.
+    expect(SERP_MAX_CRAWL_PAGES).toBe(10);
+    expect(SERP_MAX_CRAWL_PAGES).toBe(serpMaxCrawlPages(SERP_DEPTH));
+  });
+
+  /**
+   * The two parameters the wrapper publishes that this port still deliberately does NOT send.
+   * `search_engine` is a path segment here; `people_also_ask_click_depth` buys extra vendor work
+   * for a feature this measurement is not about.
+   */
+  it("sends no search_engine and no people_also_ask_click_depth", () => {
     const body = buildSerpRequestBody(query(), "seo software");
     expect(body).not.toHaveProperty("search_engine");
-    expect(body).not.toHaveProperty("max_crawl_pages");
     expect(body).not.toHaveProperty("people_also_ask_click_depth");
   });
 
@@ -742,10 +812,11 @@ describe("found vs searched-and-not-found vs not-measured", () => {
     const staleButFailed = structuredClone(serpFixture) as {
       tasks: { status_code: number; status_message?: string; result: unknown[] }[];
     };
-    staleButFailed.tasks[0].status_code = 40501;
-    staleButFailed.tasks[0].status_message = "Invalid Field";
+    const failedTask = first(staleButFailed.tasks, "task");
+    failedTask.status_code = 40501;
+    failedTask.status_message = "Invalid Field";
     // The payload really is the ranked one — otherwise this spec could pass for the wrong reason.
-    expect(JSON.stringify(staleButFailed.tasks[0].result)).toContain(TARGET);
+    expect(JSON.stringify(failedTask.result)).toContain(TARGET);
 
     const row = await rowFor(staleButFailed);
     expect(row.outcome.status).toBe("not_measured");
@@ -768,7 +839,10 @@ describe("found vs searched-and-not-found vs not-measured", () => {
 // WHAT WAS MEASURED — organic only, exact host, and the vendor's own order.
 // =============================================================================================
 describe("what counts as a placement", () => {
-  const result = (serpFixture as { tasks: { result: unknown[] }[] }).tasks[0].result[0];
+  const result = first(
+    first((serpFixture as { tasks: { result: unknown[] }[] }).tasks, "task").result,
+    "result",
+  );
 
   it("counts ORGANIC items only — a featured snippet's rank_group is on a different scale", () => {
     expect(organicItems(result)).toHaveLength(2);
@@ -801,14 +875,20 @@ describe("what counts as a placement", () => {
    * `endsWith` a ranking blog post would be reported as the site's own ranking.
    */
   it("…and the other way round: a SUBDOMAIN result is not the apex domain ranking", () => {
-    const subdomainResult = (
-      withResult((r) => {
-        const items = r.items as Record<string, unknown>[];
-        r.items = items.map((item) =>
-          item.domain === TARGET ? { ...item, domain: `blog.${TARGET}` } : item,
-        );
-      }) as { tasks: { result: unknown[] }[] }
-    ).tasks[0].result[0];
+    const subdomainResult = first(
+      first(
+        (
+          withResult((r) => {
+            const items = r.items as Record<string, unknown>[];
+            r.items = items.map((item) =>
+              item.domain === TARGET ? { ...item, domain: `blog.${TARGET}` } : item,
+            );
+          }) as { tasks: { result: unknown[] }[] }
+        ).tasks,
+        "task",
+      ).result,
+      "result",
+    );
     expect(outcomeFor(subdomainResult, TARGET).status).toBe("absent_from_examined_results");
     expect(outcomeFor(subdomainResult, `blog.${TARGET}`).status).toBe("ranked");
   });

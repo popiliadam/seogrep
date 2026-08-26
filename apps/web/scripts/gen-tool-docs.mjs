@@ -18,11 +18,26 @@
 //   node apps/web/scripts/gen-tool-docs.mjs            # (re)write all pages + meta + parent nav
 //   node apps/web/scripts/gen-tool-docs.mjs --check     # verify in-sync (exit 1 on any drift)
 //
+// BOTH modes first verify that `apps/mcp/dist` is still a build of `apps/mcp/src` and refuse to run
+// otherwise (dist-freshness.mjs). Reading a stale dist made `--check` compare today's MDX with
+// yesterday's registry and print "N tool pages in sync" — a green measuring nothing (MEASURED
+// 2026-08-26 with a tool description edited in src and deliberately not rebuilt: exit 0). The repo
+// gate was safe only because verify.sh happens to run this after `build`; the meaningless green went
+// to every path with NO build step in front of it — this package's own `docs:tools:check` script,
+// a developer running the CLI by hand, any CI job that skips the build, and worst of all
+// `docs:tools`, whose write mode would have put yesterday's pages back on disk. (`make goals` was
+// never exposed: the docs-schema-sync predicate builds @pseo/mcp first — MEASURED on the merge-base
+// and on HEAD, after this comment first named it as a victim.)
+//
 // The pure functions below are exported and unit-tested (apps/web/lib/tool-docs-gen.test.ts); the
 // registry is imported lazily inside main(), so importing this module for tests is side-effect free.
 
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// The gate's own input has to be verified before it is read: this check derives everything from
+// apps/mcp/dist, so a stale dist turns every assertion below into a comparison against old code.
+import { assertDistFresh } from "./dist-freshness.mjs";
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested)
@@ -330,11 +345,32 @@ export const DOC_PROSE = {
       "**idempotent** — running it again for the same domain (in any URL or host form) returns the " +
       "existing project instead of creating a duplicate.",
     whatItDoes:
-      "Normalizes the input to a canonical domain, then creates the project under your account — or " +
-      "returns the existing one if you already track that site.",
+      "Normalizes the input to a canonical domain — a leading `www.` label is dropped, so " +
+      "`www.example.com` and `example.com` are the same site and never open two projects — then " +
+      "creates the project under your account, or returns the existing one if you already track " +
+      "that site.",
+    preExampleSections: [
+      {
+        heading: "A domain that does not resolve is registered anyway",
+        body:
+          "After the project is written, SeoGrep asks DNS whether the name exists. If DNS answers " +
+          "**no such name**, the reply still confirms the project and adds a warning saying a " +
+          "crawl would have nothing to fetch until the domain is live. It does **not** refuse: a " +
+          "site registered before launch is a legitimate project, and blocking it would be wrong " +
+          "more often than right.\n\n" +
+          "The warning is raised only on that positive finding. A lookup that times out or whose " +
+          "resolver could not be reached is **not** a missing domain and says nothing — telling a " +
+          "customer their domain does not exist because of a DNS blip is a worse answer than " +
+          "silence. The check runs after the write and is capped, so a slow resolver can delay " +
+          "the reply and can never delay or prevent the registration.",
+      },
+    ],
     example: "Ask your MCP client in plain language:\n\n> Set up example.com as a project.",
     returns:
-      "The `project_id`, the canonical `domain`, and `created` (whether it was newly created).",
+      "The `project_id`, the canonical `domain`, and `created` — in one of **three** wordings, " +
+      "not two: the project was created, it already existed, or it was **restored from your " +
+      "archive** and is tracked again on its original id. The resolution warning above follows " +
+      "when DNS says the name does not exist.",
   },
 
   connect_gsc: {
@@ -344,11 +380,37 @@ export const DOC_PROSE = {
       "**optional**: your first crawl and audit work without it, so connecting is the **second step, " +
       "never the first barrier**.",
     whatItDoes:
-      "Given one of your projects, it returns a secure Google sign-in link. Opening the link takes you " +
-      "to Google's consent screen, where SeoGrep requests **read-only** Search Console access — it " +
-      "never asks for write access to your property. After you approve, SeoGrep stores an encrypted " +
-      "token and matches your project's domain to a verified Search Console property.",
+      "Given one of your projects, it returns a secure Google sign-in link. Opening the link takes " +
+      "you to Google's consent screen, where SeoGrep requests **read-only** Search Console access " +
+      "— it never asks for write access to your property. Approving stores an encrypted token for " +
+      "the **Google account**; which property the project reads is a separate, later choice.",
     preExampleSections: [
+      {
+        heading: "Approving connects an account, not a property",
+        body:
+          "The consent screen grants SeoGrep access to a Google account and nothing more. It does " +
+          "not decide which of that account's Search Console properties your project reads — you " +
+          "pick that afterwards, on the **Connection page** in your dashboard, or in one call " +
+          "with [`track_gsc_property`](/docs/tools-reference/track-gsc-property).\n\n" +
+          "This is worth stating plainly because the obvious repair is the wrong one: **approving " +
+          "again does not change which property a project reads.** A fresh consent re-grants the " +
+          "account, which is the right move only when access was withdrawn on Google's side. If " +
+          "the project is reading the wrong property — or none — the consent round trip cannot " +
+          "fix it, and the answers this tool gives say which route can.",
+      },
+      {
+        heading: "What it says on a project that is already connected",
+        body:
+          "It does not hand out a fresh consent link and pretend nothing happened. A project that " +
+          "already reads a property is told which one, and pointed at " +
+          "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n\n" +
+          "A project whose account connected but whose domain matched **no** verified property is " +
+          "the case that used to look identical to success. It now says outright that nothing was " +
+          "stored and that the Search Console tools cannot run yet, then names what to verify in " +
+          "Search Console — a URL-prefix property or a domain property for that domain. A domain " +
+          "property named for a **parent** domain is not used: SeoGrep drops a leading `www.` " +
+          "label and no other subdomain label, because a subdomain can belong to someone else.",
+      },
       {
         heading: "How it stays safe",
         body:
@@ -361,39 +423,145 @@ export const DOC_PROSE = {
     example:
       "Ask your MCP client in plain language:\n\n> Connect Search Console for my example.com project.\n\n" +
       "The tool replies with a link. Open it, approve read-only access, and you land back on your " +
-      "dashboard with the connection in place.",
+      "dashboard with the Google account connected — then choose the property for this project on " +
+      "the Connection page, or with " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property).",
     returns:
-      "A Google sign-in link for the project, plus a reminder that the connection is optional and " +
-      "read-only. If your account has no property matching the project's domain, the connection is " +
-      "still saved — just without a matched property; you can reconnect to retry matching once the " +
-      "property is verified in Search Console.",
+      "For a project with no connection yet: a Google sign-in link, plus a reminder that the " +
+      "connection is optional and read-only. For a project that is already connected: the " +
+      "property it reads (or a plain statement that none matched), where to change it, and the " +
+      "re-approval link for the one case that needs it. An archived project is refused rather " +
+      "than handed a link, and a `project_id` that is not yours is reported exactly like an id " +
+      "that does not exist.",
   },
 
   list_projects: {
     lead:
-      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`. " +
-      "If you have none yet, it points you to `setup_project`.",
-    whatItDoes: "Reads your projects, scoped to your account, and returns them as a simple list.",
-    example: "Ask your MCP client in plain language:\n\n> Which sites am I tracking?",
+      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` " +
+      "— and, below them, anything you have **archived**. If you have neither yet, it points you to " +
+      "`setup_project`.",
+    whatItDoes:
+      "Reads your projects, scoped to your account, and returns them as two lists: the ones you are " +
+      "tracking, and the ones you archived with " +
+      "[`untrack_project`](/docs/tools-reference/untrack-project).",
+    preExampleSections: [
+      {
+        heading: "The archive",
+        body:
+          "Archived projects are listed separately, most recently archived first, each with its " +
+          "`project_id` and the date it was archived. They are **not** counted as tracked and never " +
+          "appear in the tracked list — but they are visible, which is what makes them recoverable: " +
+          "you do not have to remember the exact domain to bring one back.\n\n" +
+          "Either route restores the original project in place, on the same `project_id`, with its " +
+          "crawls, reports and Search Console connection intact: " +
+          "[`setup_project`](/docs/tools-reference/setup-project) with the same domain, or " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) for its property.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which sites am I tracking?\n\nor\n\n" +
+      "> What did I archive?",
     returns:
-      "One line per project (`domain` and `project_id`), or guidance to create your first project " +
-      "when the list is empty.",
+      "One line per tracked project (`domain` and `project_id`), oldest first; then an archive " +
+      "section, most recently archived first, with each archived project's `domain`, `project_id`, " +
+      "archive date, and how to restore it. Guidance to create your first project when you have " +
+      "nothing at all.",
+  },
+
+  list_jobs: {
+    lead:
+      "`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run " +
+      "in the background — newest first, each with its `job_id`. It is the tool to reach for when " +
+      "you **do not have a `job_id` to hand**.",
+    whatItDoes:
+      "Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what " +
+      "state it is in, when it was created and finished, its `project_id` when it has one, and the " +
+      "`job_id` to ask about.",
+    preExampleSections: [
+      {
+        heading: "What the list shows, and what needs a second call",
+        body:
+          "The list deliberately carries **no results**. A finished crawl or Search Console pull can " +
+          "store a very large result — one measured pull held close to a megabyte — so printing even " +
+          "a few of them would bury the answer you asked for.\n\n" +
+          "Take a `job_id` from the list and pass it to " +
+          "[`get_job_status`](/docs/tools-reference/get-job-status) for that one job's detail: its " +
+          "crawl summary, how far a running job has got, or why it failed.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> How is the crawl I started doing?\n\n" +
+      "The tool replies with your recent jobs; pick the one you mean and ask " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status) about its `job_id`.",
+    returns:
+      "One line per job — tool, status, timestamps, `project_id` where there is one, and `job_id` — " +
+      "newest first, followed by a pointer to `get_job_status` for the full result. Guidance to the " +
+      "two tools that create jobs when you have run none.",
+  },
+
+  list_credit_activity: {
+    lead:
+      "`list_credit_activity` shows your most recent credit ledger entries, newest first — what was " +
+      "granted, what you bought, and which tool charged what.",
+    whatItDoes:
+      "Reads your own credit ledger, scoped to your account, and returns one line per entry: when it " +
+      "happened, the signed number of credits, what kind of entry it is, and the tool behind it.",
+    preExampleSections: [
+      {
+        heading: "What counts as an entry",
+        body:
+          "Only entries that **moved your balance** are listed. A tool run is recorded internally as " +
+          "a charge and a matching settlement marker worth zero credits; the marker is bookkeeping " +
+          "and is left out, because a `0 credits` line next to the real charge for the same tool " +
+          "reads as an error rather than as a record.\n\n" +
+          "A run that was refunded therefore shows **twice** — once as the charge and once as the " +
+          "refund — rather than disappearing. That is what keeps the numbers you see equal to the " +
+          "movements behind your balance.\n\n" +
+          "For the running total itself, use " +
+          "[`get_credit_balance`](/docs/tools-reference/get-credit-balance). For charts and a full " +
+          "history, use the Usage page in your dashboard.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> What have I spent credits on lately?",
+    returns:
+      "One line per ledger entry — timestamp, signed credits, kind, and the tool where there is one " +
+      "— newest first, with a pointer to `get_credit_balance` for your current total. Guidance when " +
+      "nothing has moved your balance yet.",
   },
 
   get_credit_balance: {
     lead:
       "`get_credit_balance` reports your available credits — the running total of your credit ledger.",
     whatItDoes:
-      "Sums your credit ledger, scoped to your account, and returns the available balance. Paid tools " +
-      "debit credits when they run; a balance of 0 blocks paid tools until you top up.",
+      "Sums your credit ledger, scoped to your account, and returns the available balance. Paid " +
+      "tools debit credits when they run, and a balance of 0 blocks them until you top up.",
+    preExampleSections: [
+      {
+        heading: "Having credits is not always enough",
+        body:
+          "The tools that read live data from a paid third-party SEO provider need a **paid** " +
+          "balance: they are refused on an account that has never bought anything, however many " +
+          "trial credits are left. The reply says so, because the balance alone reads as " +
+          "permission — a trial account seeing a healthy number concluded \"mine is not zero, so " +
+          "it works\", and it did not.\n\n" +
+          "Buying any credit pack clears it. The reply states the rule but does **not** say " +
+          "whether your own account has paid: that would be a second ledger read on a free tool, " +
+          "and the sentence exists to make the rule knowable before it fires, not to pre-answer " +
+          "it. Which tools are gated is on each tool's own page and in " +
+          "[Billing & Credits](/docs/billing-and-credits).",
+      },
+    ],
     example: "Ask your MCP client in plain language:\n\n> How many credits do I have left?",
-    returns: "Your available credit balance.",
+    returns:
+      "Your available credit balance, followed by the paid-balance rule above — stated every " +
+      "time, whether or not it currently applies to you.",
   },
 
   crawl_site: {
     lead:
       "`crawl_site` crawls the website behind one of your projects — following its sitemap and " +
-      "same-origin links, respecting `robots.txt` — and records the pages for later audits. It is " +
+      "its own links, respecting `robots.txt` — and records the pages for later audits. It is " +
       "**asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to " +
       "finish, so the MCP request never times out on a large site. The crawl is charged only when it " +
       "runs — a crawl that reaches no pages is not charged.",
@@ -403,25 +571,79 @@ export const DOC_PROSE = {
       "[`get_job_status`](/docs/tools-reference/get-job-status).",
     preExampleSections: [
       {
-        heading: "Large sites",
+        heading: "What counts as the site",
+        body:
+          "A site's apex and its `www.` twin are **one scope**, not two. `example.com` and " +
+          "`www.example.com` are the same site to the crawler, in the sitemap and in every link " +
+          "it follows. Strict same-origin was the old rule, and on a www-canonical site it " +
+          "produced a crawl of **zero pages**: the seed redirected off-origin on the first hop. " +
+          "Only the leading `www.` label is folded — `blog.example.com` is a different site and " +
+          "is not crawled.\n\n" +
+          "Infrastructure paths are left out: `/cdn-cgi/` and `/.well-known/` are the CDN's and " +
+          "the protocol's plumbing, not the customer's pages, and counting them would inflate " +
+          "both the crawl and the page count quoted before it. They are excluded from the " +
+          "sitemap, from link following, and from the free size check alike.",
+      },
+      {
+        heading: "Large sites, and why the page count is a floor",
         body:
           "Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with " +
           "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; this " +
           "keeps every crawl within the cap and spends predictably.\n\n" +
-          "Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, " +
-          "it first returns a **confirmation** — nothing is charged — that states this run's flat cost " +
-          "and, kept separate, an **informational projection** of what crawling the whole site would " +
-          "take at the current rate. The projection is never what you are charged; it just means a big " +
-          "site can't silently run up cost. Re-run with `\"confirm\": true` to proceed, or narrow the " +
-          "scope with `include_paths`.",
+          "Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it " +
+          "quotes is a **lower bound** — \"at least N pages\", never \"~N\". Both ways of sizing " +
+          "a site are floors by construction: reading the sitemap is bounded by how much of it " +
+          "is read, and the fallback counts only the links on your homepage. On one measured " +
+          "site the check said 28 and the crawl's own queue found at least 222. A \"~\" reads as " +
+          "\"approximately\", i.e. as likely-high as likely-low, and it never is — so the " +
+          "wording says which direction it can be wrong in. Where the floor came from is named " +
+          "too, and the homepage-only case says outright that the real site is very likely " +
+          "larger.\n\n" +
+          "If your site is large, the call first returns a **confirmation** — nothing is charged " +
+          "— stating this run's flat cost and, kept separate, an **informational projection** of " +
+          "what crawling the whole site would take at the current rate. The projection is never " +
+          "what you are charged; it just means a big site can't silently run up cost. Re-run " +
+          "with `\"confirm\": true` to proceed, or narrow the scope with `include_paths`.",
+      },
+      {
+        heading: "Starting the crawl from the pages that already rank",
+        body:
+          "A crawl seeds from your sitemap and your homepage, and stops at the page cap — and a " +
+          "sitemap is not ordered by importance. On one measured site that combination meant the " +
+          "single **highest-traffic page never entered the crawl at all**: it sat too deep in the " +
+          "sitemap to survive the cap, on every run.\n\n" +
+          "`seed_from_ranking_pages: true` starts the crawl from the pages DataForSEO reports as " +
+          "ranking for your domain, so they are fetched first — right after the homepage and " +
+          "ahead of the sitemap.\n\n" +
+          "**It is off by default, and it is a separate charge.** The ranking list is a paid " +
+          "DataForSEO lookup — the same one [`my_pages`](/docs/tools-reference/my-pages) makes — " +
+          "so it is billed at that tool's price, on its own line in your credit history, under " +
+          "the name `my_pages`. The crawl itself is unchanged: `crawl_site` costs what it has " +
+          "always cost, whether you seed or not. Like `my_pages`, seeding needs a paid credit " +
+          "balance.\n\n" +
+          "**If it produces nothing, you pay nothing.** A lookup that names no page this crawl " +
+          "can use — because it returned nothing, because the pages it named are on another host, " +
+          "or because they all fall outside your `include_paths` — is not charged, and the crawl " +
+          "is queued without the seeds. The same holds if the lookup cannot run at all. The reply " +
+          "always says which of those happened, how many pages were used as seeds, and how many " +
+          "were left out and why.\n\n" +
+          "Seeds buy no privileges. Each one is still checked against your `include_paths`, " +
+          "against `robots.txt` and against the same-site rule, and each counts towards the page " +
+          "cap like any other URL — a seed is a page the crawl starts from, not a page it may " +
+          "break its own rules for. The lookup runs with the same defaults as `my_pages` (United " +
+          "States, English); for another market, run `my_pages` yourself.",
       },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +
       "with a `job_id`. Poll it until the job is done:\n\n> What's the status of job `<job_id>`?",
     returns:
-      "A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost. Feed the " +
-      "`job_id` to `get_job_status` to watch it finish and read the summary.",
+      "A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — " +
+      "plus, when the free size check sized the site, how many pages it found **at least** and " +
+      "how many of them this one crawl covers. Feed the `job_id` to " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports " +
+      "the pages crawled and skipped so far, so a job that is working and a job that is stuck no " +
+      "longer look alike, and when it finishes it carries the summary.",
   },
 
   get_job_status: {
@@ -430,16 +652,37 @@ export const DOC_PROSE = {
       "[`crawl_site`](/docs/tools-reference/crawl-site) run — by its `job_id`. It is how you follow an " +
       "async tool from `queued` to `succeeded` (or `failed`).",
     whatItDoes:
-      "Looks up the job under your account and returns its current status, its lifecycle timestamps, " +
-      "and — once it succeeds — a short summary of the result. A job that does not belong to you is " +
-      "reported as not found, the same as an unknown id.",
+      "Looks up the job under your account and returns its current status, its lifecycle " +
+      "timestamps, how long it has taken, and — once it succeeds — a short summary of the result. " +
+      "A job that does not belong to you is reported as not found, the same as an unknown id. It " +
+      "is not crawl-only: a [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) job is " +
+      "summarized here too, and which summary you get is decided by the **shape of the stored " +
+      "result**, not by the tool's name.",
+    preExampleSections: [
+      {
+        heading: "A running job says how far it has got",
+        body:
+          "While a crawl is running, each poll reports the pages crawled and skipped **so far**, " +
+          "with the moment that count was taken. Before this, every poll of a 90-second job " +
+          "returned the same string, so a job that was working and a job that was stuck looked " +
+          "exactly alike — and the only way to tell them apart was to wait and find out.\n\n" +
+          "Every status line also carries a duration. When a job's stored timestamps contradict " +
+          "each other, the line says **timing unavailable** rather than printing a figure; a " +
+          "negative or impossible duration is not a measurement, and rows written before that was " +
+          "fixed still exist.",
+      },
+    ],
     example:
       "After `crawl_site` gives you a `job_id`, ask your MCP client:\n\n> What's the status of job " +
       "`<job_id>`?\n\nRepeat until the status is `succeeded`. A finished crawl summarizes how many " +
       "pages were crawled, how many were skipped, and how many issues were found.",
     returns:
       "The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / " +
-      "finished timestamps, and — on success — a result summary, or the error message on failure.",
+      "finished timestamps and elapsed time, a live page count while a crawl runs, and — on " +
+      "success — a result summary, or the error message on failure. A crawl summary also names " +
+      "the **dominant reason** pages were skipped, and says outright when the **homepage** was " +
+      "among them: \"0 issues found\" must not be readable as \"clean\" while the homepage never " +
+      "got fetched.",
   },
 
   pull_gsc_data: {
@@ -455,8 +698,20 @@ export const DOC_PROSE = {
       "runs `searchAnalytics.query` for both windows, broken down by **query and page**. The two " +
       "windows are equal length and adjacent, so the discovery tools can compare \"now\" against " +
       "\"before\". The result is stored against your project; the discovery tools read the most recent " +
-      "pull.\n\nOnly a completed pull is charged: if the project has no Search Console connection, no " +
-      "stored token, or no matched property — or if the Google call fails — you are **not** charged.",
+      "pull.\n\nOnly a completed pull is charged, and every refusal below happens before anything " +
+      "is spent — you are **not** charged, and each one says so:\n\n" +
+      "- the project is **archived**;\n" +
+      "- the project has **no Search Console connection** — no Google account is attached yet;\n" +
+      "- the connection has **no matched property**, so there is nothing to query;\n" +
+      "- Google **refuses the property** (403). The answer names the property and the two things " +
+      "that clear it: have an owner grant this account access, or connect an account that " +
+      "already has it;\n" +
+      "- the Google **credential is dead** (access revoked or expired). The answer names the " +
+      "account and hands you the re-approval link — and SeoGrep also records that the account " +
+      "needs reconnecting, which is why " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) and " +
+      "[`whats_next`](/docs/tools-reference/whats-next) start saying so straight afterwards;\n" +
+      "- the Google call fails for any other reason.",
     example:
       "Ask your MCP client in plain language:\n\n> Pull the last 90 days of Search Console data for my " +
       "example.com project.\n\nThen run a discovery tool over it:\n\n> Find quick wins for example.com.",
@@ -498,14 +753,27 @@ export const DOC_PROSE = {
     whatItDoes:
       "From the pull's current window, it selects queries where your page ranks in **positions 8–20** " +
       "with **at least 20 impressions**, then prioritizes them by impressions (biggest opportunity " +
-      "first). Already-winning queries (position under 8) and near-zero-demand long-tail queries are " +
-      "left out, so the list stays a focused shortlist rather than a dump.",
+      "first, ties broken by the better position). Already-winning queries (position under 8) and " +
+      "near-zero-demand long-tail queries are left out, so the list stays a focused shortlist " +
+      "rather than a dump.\n\n" +
+      "A \"page\" here is a **document**: rows that differ only by a `#fragment` are added " +
+      "together before the bands are read. That changes outcomes in both directions — two " +
+      "anchor rows below the impression floor can clear it as one page, and no `#anchor` URL is " +
+      "ever printed as the page to go and fix.",
     example:
       "Ask your MCP client in plain language:\n\n> What are the quick wins for my example.com project?",
     returns:
-      "A prioritized list of quick-win opportunities — each with its query, page, average position, " +
-      "impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so " +
-      "(and you are still charged for the delivered analysis).",
+      "A prioritized list of quick-win opportunities, **grouped by page** — each page with its " +
+      "queries, their average positions, impressions, clicks, and CTR — best opportunity first. " +
+      "The list is capped; past the cap the reply says how many more pairs cleared the bands, so a " +
+      "shortlist is never mistaken for the whole set. If nothing clears the bands, it says so (and " +
+      "you are still charged for the delivered analysis).\n\nEach page also carries **one recommended " +
+      "next move**, derived from that page's own rows: which of its queries to push, from its current " +
+      "position into the nearest band above it, and whether to widen the page to cover all the " +
+      "near-miss queries riding on it or tighten it around the single one.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
+      "plus a sentence once that is old, and — when your Search Console credential has stopped " +
+      "working — a warning to reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -528,13 +796,41 @@ export const DOC_PROSE = {
       "From the pull's current window, it groups rows by query and flags a query when **two or more of " +
       "its pages** each clear both floors: at least **10 impressions** and at least a **10% share** of " +
       "that query's impressions. A dominant page plus a negligible straggler is not flagged — only " +
-      "genuine competition. Groups are ordered by total impressions, biggest query first.",
+      "genuine competition. Groups are ordered by total impressions, biggest query first.\n\n" +
+      "Rows for the same page that differ only by a `#fragment` are folded into one page " +
+      "**before** any of that is read, so a page competing with its own section anchors is not " +
+      "a group.",
+    preExampleSections: [
+      {
+        heading: "Queries for your own brand are excluded, and counted",
+        body:
+          "Several of your pages ranking for your own brand name is **normal** — it is what " +
+          "Google's sitelinks look like in this data — and consolidating those pages would be " +
+          "self-harm. So branded queries are taken out of the list.\n\n" +
+          "They are not taken out silently. The reply names how many were excluded and which " +
+          "queries they were, because your biggest query disappearing without explanation is " +
+          "its own problem. **This matters most when the list ends up empty**: \"no " +
+          "cannibalization found\" can mean nothing was contested, or that everything contested " +
+          "was branded — the exclusion line under it is what tells you which, so read it before " +
+          "concluding the site is clean.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Do I have any keyword cannibalization on example.com?",
     returns:
       "A list of cannibalized queries, each with its competing pages and their impressions, clicks, and " +
-      "average position (main contender first). If no query is contested, it says so (and you are still " +
-      "charged for the delivered analysis).",
+      "average position (main contender first), followed by the branded-query exclusion line when " +
+      "there was one. If no query is contested, it says so (and you are still charged for the " +
+      "delivered analysis).\n\nWhere the data supports it, a query also carries a **consolidation " +
+      "recommendation**: which URL to keep and which to canonicalize or merge into it, with the " +
+      "positions and impressions that decision was read from. It is deliberately **omitted** when the " +
+      "competing pages are within about half a SERP page of each other, or when a lower-ranking page " +
+      "is earning more clicks than the better-ranked one — naming a keeper there would be a guess, and " +
+      "the wrong keeper means consolidating away the page that was working.\n\nEvery reply ends with the same four-line footer the other two " +
+      "discovery tools carry: the window that was analyzed against the one before it, a caveat " +
+      "when either window hit the row cap, when the pull was taken plus a sentence once that is " +
+      "old, and — when your Search Console credential has stopped working — a warning to " +
+      "reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -558,13 +854,27 @@ export const DOC_PROSE = {
       "It sums each page's clicks across both windows (a page can rank for many queries) and flags a " +
       "page when it lost **at least 5 clicks** AND **at least 30%** of its previous clicks. Both " +
       "thresholds must be met, so a tiny wobble or a large-but-proportionally-small dip is left out. " +
-      "Results are ordered by clicks lost, biggest bleed first.",
+      "Results are ordered by clicks lost, biggest bleed first.\n\n" +
+      "Two rules sit alongside those thresholds. A page with **no clicks at all** in the previous " +
+      "window is skipped outright — with no baseline there is nothing that could have decayed, " +
+      "whatever the arithmetic says. And a \"page\" is a **document**: rows differing only by a " +
+      "`#fragment` are summed together in **both** windows first, because Google routinely moves " +
+      "an article's clicks between its bare URL and its anchors, and reading those as two pages " +
+      "manufactures a decay on one and a rise on the other.",
     example:
       "Ask your MCP client in plain language:\n\n> Which pages on example.com are losing traffic?",
     returns:
       "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
-      "drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still " +
-      "charged for the delivered analysis).",
+      "drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so " +
+      "(and you are still charged for the delivered analysis).\n\nEach page carries **what to do about " +
+      "it**, and which of three instructions you get depends on how the page fell. A page down to no " +
+      "clicks at all is told to verify it is still indexed, reachable and not redirected **before** " +
+      "rewriting anything — that is also the shape a truncated pull manufactures. A page that lost " +
+      "most of its clicks but not all is told to re-target rather than tweak. A page in the middle " +
+      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
+      "plus a sentence once that is old, and — when your Search Console credential has stopped " +
+      "working — a warning to reconnect.",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -589,13 +899,27 @@ export const DOC_PROSE = {
       "- **Meta descriptions** — missing, too long (over ~160 characters), too short, or duplicated.\n" +
       "- **Headings** — a missing `h1`, or more than one `h1`.\n" +
       "- **Canonicals** — missing, or pointing to a different URL than the page itself.\n" +
-      "- **Thin content** — pages under ~200 words.\n\n" +
-      "Thresholds are conservative \"worth a look\" signals, not hard rules.",
+      "- **Thin content** — pages under ~200 words.\n"  +
+      "- **Images with no alt text** — how many of the images on the page have none.\n" +
+      "- **A title that merely repeats the h1** — the search snippet spent on words the visitor " +
+      "is about to read anyway. Only checked when the page has exactly one `h1`.\n" +
+      "- **No OpenGraph title or description** — the page has no share preview at all. Both " +
+      "missing is one finding; declaring one and not the other is a style choice, not a gap.\n" +
+      "- **A missing `html lang`** attribute.\n" +
+      "- **A heading hierarchy gap** — `h3`s under an `h1` with no `h2` between them.\n\n" +
+      "Thresholds are conservative \"worth a look\" signals, not hard rules. A rule whose input " +
+      "an older crawl never recorded produces **no finding** for those pages rather than a " +
+      "false one — not-measured and not-present are kept apart.\n\n" +
+      "Alongside the per-page findings it reports **duplicate content**: groups of pages that " +
+      "share one text fingerprint. That is a site-level finding, so it is deliberately not part " +
+      "of the per-page issue counts and cannot be inferred from them.",
     example:
       "Ask your MCP client in plain language:\n\n> Run an on-page audit for my example.com project.",
     returns:
-      "A summary of issue counts followed by a per-page list of findings. Pages with no issues are " +
-      "counted but not listed.",
+      "A summary of issue counts, then the duplicate-content groups with their member URLs, then " +
+      "a per-page list of findings. Pages with no issues are counted but not listed. The per-page " +
+      "list is capped, and past the cap the reply says how many further pages had findings — a " +
+      "short list never reads as a short audit.",
   },
 
   audit_tech: {
@@ -605,21 +929,61 @@ export const DOC_PROSE = {
       "findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and " +
       "charges nothing.",
     whatItDoes:
-      "Summarizes the crawl from a technical angle:\n\n" +
-      "- **HTTP status spread** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
-      "page URLs listed.\n" +
-      "- **Redirects** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and " +
-      "redirects onto an already-crawled URL).\n" +
-      "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by " +
-      "`robots.txt`, timed out, non-HTML, and so on).\n" +
-      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n\n" +
-      "Because the crawler follows a successful redirect and records the destination page, redirects " +
-      "appear here through the crawler's skip reasons rather than as duplicate pages.",
+      "Summarizes the crawl from a technical angle. Twelve sections, each named below by the " +
+      "exact heading it carries in the reply, so what you read here is what you can search for " +
+      "in the output:\n\n" +
+      "- **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
+      "page URLs listed. A page whose stored status is missing or unreadable belongs to none " +
+      "of those four, and where there is one the section says how many and names them — so " +
+      "the four counts and the page total in the heading are never quietly different " +
+      "numbers.\n" +
+      "- **Redirects surfaced** — the redirects the crawler surfaced (off-origin redirects, " +
+      "redirect loops, and redirects onto an already-crawled URL).\n" +
+      "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked " +
+      "by `robots.txt`, timed out, non-HTML, and so on).\n" +
+      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n" +
+      "- **Slow pages** — a fetch that took over three seconds, redirect hops included, because " +
+      "that is what a visitor actually waits for.\n" +
+      "- **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images " +
+      "are never counted here.\n" +
+      "- **Redirect chains** — two or more hops to reach the destination, printed as the whole " +
+      "trail.\n" +
+      "- **X-Robots-Tag conflicts** — the response header says `noindex` while the page's own " +
+      "meta tag does not, which is the half of the disagreement you cannot see in the HTML.\n" +
+      "- **Deep pages** — four or more clicks from a crawl seed.\n" +
+      "- **No internal links found** — the orphan signal: no page in this crawl links there.\n" +
+      "- **Sitemap vs crawl** — what is in the sitemap and was never crawled, and what was " +
+      "crawled and is absent from the sitemap.\n" +
+      "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
+      "from.\n\n" +
+      "Redirects appear in three places, on purpose, and only one of the three is a repeat. The " +
+      "crawler follows a successful redirect and records the destination, so a redirect never " +
+      "becomes a duplicate page — it surfaces as a **skip reason**. **Redirects surfaced** is " +
+      "that one skip category promoted to a section of its own, which is the repeat: the same " +
+      "URL is printed there with its reason, and again under **Not crawled** inside the full " +
+      "skip ledger, whose per-reason grouping is what lets the skip counts reconcile. The " +
+      "third is different data rather than a repeat — a page's own hop trail, read back as a " +
+      "**chain** when it took more than one hop.\n\n" +
+      "Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, " +
+      "**Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a " +
+      "count this engine always takes, so a zero there is a measurement rather than a silence. " +
+      "Every section after them prints only when it has rows, and that too is deliberate: on a " +
+      "crawl stored before a signal existed the list is empty because nobody looked, and a " +
+      "heading reading \"Slow pages: 0\" would report a measurement that never happened.\n\n" +
+      "The sitemap comparison is the one exception in the other direction. It prints even at " +
+      "zero and zero, because a diff that exists means the sitemap **was read**, and a measured " +
+      "agreement is worth stating where an empty list elsewhere would only mean an unmeasured " +
+      "axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
+      "linking page was never fetched lands there too.",
     example:
       "Ask your MCP client in plain language:\n\n> Run a technical audit for my example.com project.",
     returns:
-      "The status distribution, the redirect and skipped-URL breakdowns, and any noindex-but-linked " +
-      "conflicts.",
+      "Always the four guaranteed sections — the status distribution, the redirects surfaced, " +
+      "the skipped URLs by reason, and the noindex-but-internally-linked conflicts — each at " +
+      "its own count, zero included. Then whichever of the remaining sections this crawl gave " +
+      "rows for, plus the sitemap comparison whenever a sitemap was read. So a short reply is a " +
+      "clean crawl, not a shallow audit. Every list is capped, and past the cap says how many " +
+      "more there were.",
   },
 
   audit_schema: {
@@ -634,15 +998,44 @@ export const DOC_PROSE = {
       "- **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, " +
       "`WebSite`, `Article`, `Product`, and so on).\n" +
       "- **Gaps** — the URLs of pages with no structured data at all.\n\n" +
-      "**Detection is JSON-LD only** — microdata and RDFa are not read — and only the `@type` names " +
-      "are analyzed. The crawler never stores the JSON-LD body, so this is a coverage and type-spread " +
-      "report, not per-field validation.",
+      "**Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked " +
+      "up that way counts here as having no structured data.\n\n" +
+      "Coverage is what this tool is for, and coverage is what it always reports. On a crawl " +
+      "that stored the JSON-LD **bodies**, it additionally checks the required fields of the " +
+      "types it knows — see below. On an older crawl that stored only the type names, it checks " +
+      "nothing of the sort and says so. **The closing note of every reply tells you which of the " +
+      "two you just got**, and names how many pages were checked; a reader should trust that " +
+      "line over any general statement, here or in the tool list.",
+    preExampleSections: [
+      {
+        heading: "What it checks in a stored JSON-LD body",
+        body:
+          "For a short, fixed list of schema.org types it checks that the fields without which " +
+          "the markup says nothing are declared — a `Product` with no `offers`, an `Article` " +
+          "with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no " +
+          "address. A type **not** on that list is **not judged at all**: schema.org has " +
+          "hundreds of types, and inventing requirements for the ones nobody considered would " +
+          "produce findings you could not trust.\n\n" +
+          "A block that is not valid JSON is **reported, not skipped**. A parser that cannot " +
+          "read it is a stand-in for a search engine that cannot read it either, and it is " +
+          "invisible in the rendered page — nobody finds it by looking.\n\n" +
+          "**This is not full structured-data validation.** It is a required-field check over a " +
+          "handful of types, on the blocks that were stored. Only the first few blocks of a " +
+          "page are kept, and each is kept only up to a length cap, so a page whose markup was " +
+          "partly stored is listed as such and the reply says the fields were checked on the " +
+          "stored blocks only. Absence of a finding is not a clean bill of health.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> Run a structured-data audit for my example.com " +
       "project.",
     returns:
       "The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with no " +
-      "structured data.",
+      "structured data. Where bodies were stored, it also lists the pages missing a required " +
+      "field (naming the type and the fields), the pages whose JSON-LD could not be parsed, and " +
+      "the pages whose blocks were only partly stored. Each of those three sections is printed " +
+      "only when it has rows, so a crawl carrying no bodies returns exactly the coverage report " +
+      "it always did — an absent section is never a clean result.",
   },
 
   audit_speed: {
@@ -659,7 +1052,9 @@ export const DOC_PROSE = {
       "Speed Index, Total Blocking Time, Cumulative Layout Shift, and Time to Interactive, each " +
       "printed with Lighthouse's own formatting.\n" +
       "- **The biggest opportunities** — the improvements Lighthouse estimates the largest " +
-      "load-time saving for, largest first, with the estimated milliseconds saved.\n\n" +
+      "load-time saving for, largest first, with the estimated milliseconds saved. A short " +
+      "list, not the full audit: only the handful with the largest savings are printed, and an " +
+      "audit Lighthouse estimates no saving for is dropped rather than listed at zero.\n\n" +
       "**These are lab measurements.** Lighthouse loads the page once, on the vendor's machine, " +
       "under simulated throttling. That is a repeatable diagnostic, not a record of what your " +
       "visitors experienced — the field metrics Google reports from real Chrome users (including " +
@@ -678,7 +1073,8 @@ export const DOC_PROSE = {
         body:
           "`audit_speed` needs a **paid credit balance**. Despite sitting in the audit family it " +
           "reads live data from a paid third-party provider — one real browser run per page — so " +
-          "it is not available on trial credits. Buy any credit pack and it unlocks straight " +
+          "it is not available on trial credits — the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight " +
           "away; your existing credits keep working for crawls, the other audits, reports and " +
           "Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -735,7 +1131,13 @@ export const DOC_PROSE = {
       "accent-insensitively, and anywhere inside a word (so \"shoe\" is found in \"shoes\").\n\n" +
       "A short bilingual list of filler words (`the`, `and`, `for`, `ve`, `ile`, `bir`, and a " +
       "few more) is ignored — their presence in a title says nothing about whether the page " +
-      "covers the query. Everything else has to be there.\n\n" +
+      "covers the query.\n\n" +
+      "**Your own brand words are ignored too.** A query whose only missing words are your " +
+      "site's own name is dropped from the list entirely, and a query missing your brand *and* " +
+      "something else keeps only the something else. The reply says how many were dropped that " +
+      "way. This is not a courtesy: reporting a firm to itself for not repeating its own name " +
+      "in its titles is a finding nobody can act on, and a list of those crowds out the ones " +
+      "you can. Everything else has to be there.\n\n" +
       "Both the title **and** the h1s are read, deliberately. A title trimmed to fit the search " +
       "result routinely drops a qualifier the heading keeps, and reading the title alone would " +
       "report every such page as a problem — a list of findings you cannot act on is worse than " +
@@ -758,12 +1160,15 @@ export const DOC_PROSE = {
       "their titles don't mention?\n\nThen hand a finding straight back to your assistant:\n\n" +
       "> Rewrite that page's title so it covers the missing words.",
     returns:
-      "One line per mismatching query — the query, the page ranking for it, its impressions and " +
-      "clicks, the words that are missing, how many of the query's words the page does carry, " +
-      "and the page's current title — biggest opportunity first. Then the coverage line, the " +
-      "window the Search Console figures cover, when that data was pulled, and when the crawl " +
-      "was taken. If nothing mismatches, it says so (and you are still charged for the " +
-      "delivered analysis).",
+      "**The coverage line comes first**, above the findings, together with the window the " +
+      "Search Console figures cover, when that data was pulled, when the crawl was taken, and " +
+      "how many queries were dropped as brand-only. A ratio that changes how you read the list " +
+      "has to arrive before the list, not under it.\n\n" +
+      "Then one line per mismatching query — the query, the page ranking for it, its " +
+      "impressions and clicks, the words that are missing, how many of the query's words the " +
+      "page does carry, and the page's current title — biggest opportunity first. The list is " +
+      "capped; past the cap the reply says how many more pairs mismatch. If nothing mismatches, " +
+      "it says so (and you are still charged for the delivered analysis).",
     postReturnsSections: [
       {
         heading: "Inherited limits",
@@ -798,31 +1203,67 @@ export const DOC_PROSE = {
       "navigational or transactional), plus any secondary intents it also carries.\n" +
       "- **Search-volume trend** — how the volume moved month-over-month, quarter-over-quarter and " +
       "year-over-year, as signed percentages.\n\n" +
-      "Every one of these is printed only when the provider actually returns it — a metric it did " +
-      "not send is left out rather than filled in with a placeholder.\n\n" +
+      "The first three are **always stated**, as `n/a` when the provider sent no figure: they are " +
+      "the line's spine, and a row that quietly lost its volume column would read as a shorter " +
+      "row rather than as a missing measurement. `n/a` there means \"nobody has a number for " +
+      "this\", never \"nobody searches this\". The last three — difficulty, intent and trend — " +
+      "are **left out** when the provider did not send them, so a row with nothing extra to say " +
+      "stays short.\n\n" +
       "It also prints a one-line summary with the total monthly search volume across the batch.",
     preExampleSections: [
       {
         heading: "Who can run it",
         body:
           "`research_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live keyword data is unavailable on this deployment, the tool returns a clear " +
           "_\"keyword research is not yet enabled on this deployment\"_ message and **charges you " +
           "nothing** — no credits are reserved or spent. SeoGrep never returns sample or " +
-          "placeholder figures dressed up as real data.",
+          "placeholder figures dressed up as real data.\n\n" +
+          "**You are also not charged for a lookup that comes back completely empty.** If the " +
+          "provider returns no figure for a single one of your keywords, there is no table to hand " +
+          "you, so the tool refuses the lookup with a message saying so and the credits are " +
+          "returned to your balance. This tends to happen with keywords outside the provider's " +
+          "Google Ads coverage — often non-English markets, or very rare terms — and the message " +
+          "suggests trying a broader or more common phrasing for the same market. As soon as " +
+          "**one** keyword in the batch comes back with something, the lookup is served and " +
+          "charged normally.",
       },
       {
         heading: "No data is not zero",
         body:
           "A keyword the provider holds **nothing** on comes back as _\"no data returned for this " +
-          "keyword\"_, and the header says how many of your keywords that happened to. It is never " +
-          "printed as `volume 0`, and it never contributes a silent zero to the batch total — " +
-          "\"nobody has a figure for this\" and \"nobody searches this\" are different facts that " +
-          "lead to different decisions. A genuine zero, when the provider does report one, is still " +
-          "printed as `volume 0`.",
+          "keyword\"_. It is never printed as `volume 0` — \"nobody has a figure for this\" and " +
+          "\"nobody searches this\" are different facts that lead to different decisions — and a " +
+          "genuine zero, when the provider does report one, is still printed as `volume 0`.\n\n" +
+          "It adds **nothing** to the batch total, and it is worth being exact about how: no row " +
+          "is filtered out of the sum, a missing volume simply counts as nothing. The arithmetic " +
+          "is the same either way, but there is no filter to find if you go looking for one. " +
+          "What makes such a keyword visible is the count in the header, not the total.\n\n" +
+          "The same rule applies **field by field**, not just row by row. A keyword can come back " +
+          "with a difficulty and an intent but no search volume — common in markets the provider's " +
+          "advertising data covers thinly — and you get the figures it does hold, with the missing " +
+          "ones marked `n/a` rather than the whole row being written off as empty.",
+      },
+      {
+        heading: "Every keyword you asked about is answered for",
+        body:
+          "Your keyword list is accounted for in full. Alongside the two cases above there is a " +
+          "third, and it gets its own sentence because it is a different fact:\n\n" +
+          "- _\"no data returned for this keyword\"_ — the provider **sent a row** for it, and that " +
+          "row holds no metrics.\n" +
+          "- _\"DataForSEO returned no row for this keyword\"_ — **no row arrived at all**. That is " +
+          "all we can honestly tell you: it is not a claim that nobody searches the term, nor that " +
+          "the provider holds nothing on it.\n\n" +
+          "Either way the keyword is named in the output, so it can never quietly vanish between " +
+          "what you asked and what you read. The header's count covers **both** cases under one " +
+          "figure — it answers \"how many of my keywords came back without data\", not which of " +
+          "the two reasons applied; the lines themselves say that.\n\n" +
+          "A keyword list that is empty or all whitespace is refused before anything is " +
+          "reserved, and the refusal says you were not charged.",
       },
       {
         heading: "How fresh the CPC is",
@@ -841,10 +1282,13 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> What's the search volume for \"seo software\" and " +
       "\"rank tracker\"?",
     returns:
-      "A table with one row per keyword — search volume, CPC, competition, and (when the provider " +
-      "returns them) keyword difficulty, search intent and volume trend — plus a total-volume " +
-      "summary line and the date the CPC figures were last refreshed. While live data is off, it " +
-      "returns the \"not yet enabled\" message instead and charges nothing.",
+      "A table with one line per keyword you asked about — search volume, CPC, competition, and " +
+      "(when the provider returns them) keyword difficulty, search intent and volume trend — plus " +
+      "a total-volume summary line and the date the CPC figures were last refreshed. Keywords the " +
+      "provider answered with nothing, and keywords it sent no row for, are named on their own " +
+      "lines and counted in the summary. While live data is off, it returns the \"not yet " +
+      "enabled\" message instead and charges nothing; a lookup that comes back with no figures at " +
+      "all is likewise refused and not charged.",
   },
 
   discover_keywords: {
@@ -870,10 +1314,63 @@ export const DOC_PROSE = {
       "Each row carries DataForSEO's own `search_volume`, `cpc`, `competition`, " +
       "`competition_level`, `keyword_difficulty`, search intent, search-volume trend and the date " +
       "the vendor last refreshed the row.\n\n" +
-      "Two optional filters, `min_volume` and `max_difficulty`, are applied **at DataForSEO** " +
-      "rather than after the fact. Neither is sent unless you ask for it, so by default nothing is " +
-      "dropped before you see it.",
+      "Three filters — `min_volume`, `max_volume` and `max_difficulty` — are applied **at " +
+      "DataForSEO** rather than after the fact. `min_volume` and `max_difficulty` are never sent " +
+      "unless you ask for them. `max_volume` is the one exception: on `for_site` and `ideas` it " +
+      "has a **default ceiling**, for the reason in the next section, and every answer says which " +
+      "ceiling it used.",
     preExampleSections: [
+      {
+        heading: "`for_site` and `ideas` leave relevance to DataForSEO — and it measured poorly",
+        body:
+          "Two of the four modes do **not** start from a keyword you typed. `for_site` asks " +
+          "DataForSEO which keywords belong to a domain; `ideas` asks which belong to a category. " +
+          "Both answers are the vendor's judgement alone, and on a live walkthrough both came " +
+          "back off-subject: `for_site` returned **none of its first 15 keywords about the site** " +
+          "— national general-purpose queries (weather, translation, government services) of the " +
+          "kind any domain in that country is handed — and `ideas` returned unrelated products " +
+          "and topics at ordinary search volume.\n\n" +
+          "So those two modes carry a **warning** above their results, and a **default " +
+          "search-volume ceiling**. The answer always names the ceiling it applied; pass " +
+          "`max_volume` to move it, or `max_volume: 0` to remove it and see the unfiltered set.\n\n" +
+          "**What that ceiling is, and is not.** It is a bound SeoGrep chose — **not a measured " +
+          "relevance threshold**. What the walkthrough measured was that the whole first window, " +
+          "ordered by search volume, was off-subject; **the volume of those rows was never " +
+          "captured**, so no number here is derived from them. The bound is set where it is on the " +
+          "reasoning that a single site rarely owns a keyword above it, and it drops whatever sits " +
+          "above it regardless of what that keyword is about.\n\n" +
+          "It is therefore a **partial** remedy and is described as one: a volume bound cannot " +
+          "remove an off-subject keyword of ordinary volume, which is exactly what `ideas` " +
+          "returned. SeoGrep does not read meaning and will not filter rows by it.\n\n" +
+          "The ceiling also **stands down** when it would contradict you: give `for_site` or " +
+          "`ideas` a `min_volume` at or above it and the default is dropped rather than sent " +
+          "alongside your floor, because the two together match nothing and you would have paid " +
+          "the flat price for an empty list. The answer says the ceiling withdrew. Two bounds of " +
+          "**your own** that contradict each other (`min_volume` above `max_volume`) are refused " +
+          "outright, before anything is charged — there SeoGrep has no default of its own to give " +
+          "up, and picking one of your bounds to ignore would run a lookup you did not ask for.\n\n" +
+          "`suggestions` and `related` are **left alone** — no warning, no ceiling. They stay " +
+          "anchored to a seed keyword you choose (the first returns queries that contain it, the " +
+          "second what Google itself lists beside it), and both measured clean on the same " +
+          "walkthrough. If a `for_site` or `ideas` answer reads as noise, those two are the " +
+          "narrower question.",
+      },
+      {
+        heading: "How long a seed may be",
+        body:
+          "A seed keyword is capped at **200 characters** — `seed` on `suggestions` and `related`, " +
+          "and every entry of `seeds` on `ideas`. That is **SeoGrep's bound, not DataForSEO's**: " +
+          "the vendor publishes none we have read, and the longest keyword we have ever seen come " +
+          "back from it is 29 characters.\n\n" +
+          "It exists because the answer **quotes your seeds back** in its heading, and one " +
+          "enormous seed would crowd out the keywords you paid for: measured, a 60,000-character " +
+          "seed produced a reply too large for any client to show, carrying **zero keywords**. " +
+          "Two hundred characters is about thirty ordinary words — far more than a real search " +
+          "query — and a longer one is refused **before anything is charged**.\n\n" +
+          "A long seed **list** is handled differently, because there the cap would lose " +
+          "information: `ideas` takes up to 200 seeds and the heading quotes as many as it can, " +
+          "then says how many more you sent. The count is always exact.",
+      },
       {
         heading: "A field from another mode is rejected, not ignored",
         body:
@@ -917,10 +1414,13 @@ export const DOC_PROSE = {
       "software\".\n\nOr start from a domain instead of a keyword:\n\n> What keywords does " +
       "DataForSEO consider relevant to example.com? Skip anything under 500 monthly searches.",
     returns:
-      "A heading naming **which mode ran** and the DataForSEO Labs function behind it, then what " +
-      "that mode means in the vendor's own terms, then the locale, the vendor field the rows are " +
-      "ordered by, and the filters that were actually sent — printed in DataForSEO's own " +
-      "`[field, operator, value]` grammar, so what you read is what the vendor received.\n\n" +
+      "A heading naming **which mode ran** and the DataForSEO Labs function behind it, then — on " +
+      "`for_site` and `ideas` only — the relevance warning, then what that mode means in the " +
+      "vendor's own terms, then the locale, the vendor field the rows are ordered by, the filters " +
+      "that were actually sent (printed in DataForSEO's own `[field, operator, value]` grammar, " +
+      "so what you read is what the vendor received) and a plain sentence naming **which " +
+      "search-volume ceiling applied** — a default one, your own, or none — and the argument that " +
+      "changes it.\n\n" +
       "The keyword list is captioned as a **window**: the rows you got, the `offset` and `limit` " +
       "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
       "followed by the sentence that stops the arithmetic — _this window is a slice of that set, " +
@@ -939,22 +1439,40 @@ export const DOC_PROSE = {
           "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
           "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
           "`discover_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away; your existing credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
           "The `limit` ceiling is **part of the price** rather than a display preference: " +
           "DataForSEO bills **per returned row**, and that cap is what holds the flat price inside " +
           "the margin it was signed against. Asking for fewer rows costs the same; asking for more " +
-          "than the ceiling is refused before anything is charged.",
+          "than the ceiling is refused before anything is charged.\n\n" +
+          "**A wide reply is bounded, and it says so when it is.** A keyword row costs about 300 " +
+          "characters, so a full-width 1,000-row lookup would render close to **300,000 " +
+          "characters** — several times the size a calling client refuses outright, and a " +
+          "refused reply means the credits are spent and you see an error instead of an " +
+          "answer. So the reply has a size budget.\n\n" +
+          "**The default window is not affected.** Ask for no `limit` at all and every one of " +
+          "the 100 keywords prints — the budget is set above the widest default answer on " +
+          "purpose, because a call you did not tune should return a whole answer. A wider " +
+          "window is where the budget bites: a 1,000-row lookup prints roughly **120–130** " +
+          "keywords. When rows are cut, the reply says how many keywords were shown and how " +
+          "many more were fetched in the same window but not printed, and states plainly that " +
+          "those were charged for either way. Raising `limit` past what one reply carries buys " +
+          "rows nobody can show you: advance `offset` to read the next stretch — a separate " +
+          "call at the same flat price — or narrow the set with `min_volume`, `max_volume` or " +
+          "`max_difficulty` so the keywords you want arrive inside the window that prints.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its window to the conversation and " +
-          "nothing else keeps them — there is no saved keyword list, no dashboard page and no " +
-          "\"new since last time\", so run it again for a fresh read. The lookup-history table " +
-          "that backs the other domain tools is bound to those tools by design and does not " +
-          "accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "The keywords are **the vendor's, not yours**: none of your seeds is guaranteed to " +
           "appear in the answer, and a set of many thousands is normal — read the window caption " +
           "for how far your slice sits from DataForSEO's whole-set count, and page through it with " +
@@ -1056,16 +1574,30 @@ export const DOC_PROSE = {
       "does not return, the result types and locale that were asked for, the vendor field the rows " +
       "are ordered by, and the filters that were actually sent — printed in DataForSEO's own " +
       "`[field, operator, value]` grammar, so what you read is what the vendor received.\n\n" +
-      "The page list is captioned as a **window**: the rows you got, the `offset` and `limit` they " +
-      "were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
+      "What comes next is captioned as a **window**: the rows you got, the `offset` and `limit` " +
+      "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
       "followed by the sentence that stops the arithmetic — _this window is a slice of that set, " +
       "not a count of it_. When the vendor gave no total, the caption says that instead of " +
       "back-filling one from the rows in hand.\n\n" +
-      "The comparison follows, in whichever of its three states applies: the three groups above " +
-      "when a project with a crawl was named; a plain sentence saying **no comparison was made** " +
-      "when you passed a bare `target`; and a plain sentence saying **the project has no completed " +
-      "crawl yet** when it does not — in which case DataForSEO's half is delivered in full and " +
-      "nothing in it is missing because of it.\n\n" +
+      "Then the pages themselves, in whichever of two shapes applies — and **every page appears " +
+      "exactly once either way**, in DataForSEO's own order. With a bare `target`, or with a " +
+      "project that has no crawl yet, you get one flat list of the window. With a project whose " +
+      "crawl could be compared, that flat list is **replaced** by the three groups above: they are " +
+      "a partition of the same window, so printing both would be the same pages a second time. The " +
+      "answer says which shape you are reading rather than leaving you to notice.\n\n" +
+      "The comparison half states which of its three states applies: the three groups when a " +
+      "project with a crawl was named; a plain sentence saying **no comparison was made** when you " +
+      "passed a bare `target`; and a plain sentence saying **the project has no completed crawl " +
+      "yet** when it does not — in which case DataForSEO's half is delivered in full and nothing " +
+      "in it is missing because of it.\n\n" +
+      "**One reply has a size limit, and reaching it is said out loud.** A wide window can produce " +
+      "more text than a single MCP reply can carry, so each list is printed up to a fixed budget " +
+      "and then stops with a line naming **how many pages were printed and how many were not** — " +
+      "never a silent cut, and never a zero. Vendor rows that were fetched and not printed **were " +
+      "charged for either way**, and the note says so; move the window with `offset`, or ask for a " +
+      "smaller `limit`, to read the rest. Group headings keep counting **every** row, and the " +
+      "record kept on the Lookups page covers the whole window — the budget bounds what is " +
+      "printed, never what was measured.\n\n" +
       "A lookup that matched nothing says so plainly, naming the window and the filters it asked " +
       "for, and you are still charged for the delivered lookup — \"nothing here matched\" is a real " +
       "answer, not an error. A `limit` or `offset` outside the allowed range, a call naming " +
@@ -1080,7 +1612,8 @@ export const DOC_PROSE = {
           "request. If it fails, the whole call fails and **you are not charged**. Reading your own " +
           "crawl costs nothing extra — it is data you have already paid for.\n\n" +
           "`my_pages` needs a **paid credit balance**. It reads live data from a paid third-party " +
-          "provider, so it is not available on trial credits. Buy any credit pack and it unlocks " +
+          "provider, so it is not available on trial credits; the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks " +
           "straight away; your existing credits are untouched and keep working for crawls, audits, " +
           "reports and Search Console tools.\n\n" +
           "The `limit` ceiling is **part of the price** rather than a display preference: " +
@@ -1095,15 +1628,23 @@ export const DOC_PROSE = {
           "reports how a page is distributed across result positions, not which searches put it " +
           "there. Use [`ranked_keywords`](/docs/tools-reference/ranked-keywords) with a page URL " +
           "for that.\n\n" +
-          "**Results are not stored.** Each call returns its window to the conversation and nothing " +
-          "else keeps them — there is no saved page list, no dashboard page and no \"new since last " +
-          "time\", so run it again for a fresh read. The lookup-history table that backs the other " +
-          "domain tools is bound to those tools by design and does not accept this one.\n\n" +
-          "**The crawl side is one crawl.** The comparison uses your project's most recent " +
-          "completed `crawl_site` run and only the pages that run actually fetched — URLs it " +
-          "skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's " +
-          "half and a sentence saying so; a bare `target` gets no comparison at all, because there " +
-          "is no project to compare it against.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
+          "**The crawl side is one crawl, and a bounded read of it.** The comparison uses your " +
+          "project's most recent completed `crawl_site` run and only the pages that run actually " +
+          "fetched — URLs it skipped are not counted as crawled. It also reads only the first " +
+          "pages of that crawl, up to a fixed ceiling; past it the answer says the crawl side " +
+          "was truncated and the list may be incomplete. So \"reported by DataForSEO, not found " +
+          "in that crawl\" is bounded twice over — by what the crawl fetched, and by how much " +
+          "of it was read.\n\n" +
+          "A project with no completed crawl gets DataForSEO's half and a sentence saying so; a " +
+          "bare `target` gets no comparison at all, because there is no project to compare it " +
+          "against.\n\n" +
           "**Clickstream data is not bought.** DataForSEO offers a clickstream option on this " +
           "endpoint that doubles the cost of the request; SeoGrep does not enable it, and every " +
           "answer states that rather than leaving you to wonder why no clickstream figures appear.",
@@ -1156,10 +1697,13 @@ export const DOC_PROSE = {
       "what sits between your result and the top of the page.\n" +
       "- **A verify link** — Google, at the exact locale DataForSEO measured. You cannot rebuild " +
       "it from the keyword alone, and the locale is usually what a surprising result turns on.\n\n" +
-      "Each of those fields is **omitted when DataForSEO did not send it**, rather than padded " +
-      "with `n/a`; a row with nothing extra to say stays a single line. A dated line under the " +
-      "table says when the vendor last refreshed the CPC and competition figures, and says so in " +
-      "a sentence once that is over a month old.\n\n" +
+      "**Position**, **search volume** and the **URL** are always stated, as `n/a` when the "  +
+      "vendor sent nothing — they are the row's spine, and a row that quietly lost its "  +
+      "position would read as a shorter row rather than as a missing measurement. Everything "  +
+      "else above is **omitted** when DataForSEO did not send it, so a row with nothing extra "  +
+      "to say stays a single line. A dated line under the table says when the vendor last "  +
+      "refreshed the CPC and competition figures, and says so in a sentence once that is over "  +
+      "a month old.\n\n" +
       "Only **organic** results are counted — paid placements are excluded. The header line says " +
       "how many rows you got, which ordering you got them in, and — when the domain ranks for " +
       "more than the `limit` you asked for — how many it ranks for in total, so a truncated list " +
@@ -1169,7 +1713,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`ranked_keywords` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1193,9 +1738,15 @@ export const DOC_PROSE = {
       "on-page position when a SERP feature outranks it), search volume, CPC, competition, " +
       "difficulty, intent, estimated traffic, the ranking URL and its SERP title, plus a second " +
       "line carrying how the ranking moved, which other element types share that SERP " +
-      "(`ai_overview` among them) and a link to check Google yourself. Fields DataForSEO did not " +
-      "send are left out rather than shown as `n/a`.\n\nThe header says how many of the domain's ranked " +
-      "keywords are shown, in which ordering, and out of how many in total; when you looked the " +
+      "(`ai_overview` among them) and a link to check Google yourself. Position, volume and the " +
+      "URL are stated as `n/a` when the vendor sent none; the added fields are left out.\n\n" +
+      "The whole-domain summary **names the DataForSEO measurement it was read from**, and " +
+      "carries a note saying that DataForSEO measures these separately — so a different total " +
+      "for the same domain in another SeoGrep tool is a second measurement, not a " +
+      "contradiction.\n\nThe header says how many of the domain's ranked " +
+      "keywords are shown, in which ordering, and out of how many in total — and how many " +
+      "returned rows carried no keyword at all and were dropped, so a short table is never " +
+      "mistaken for a complete one; when you looked the " +
       "site up by `project_id`, it names that project. A dated line under the table says when the " +
       "vendor last refreshed the CPC and competition figures. A domain with no organic rankings " +
       "on record is reported as such — with the summary still shown, because \"no rows came back\" " +
@@ -1231,8 +1782,10 @@ export const DOC_PROSE = {
       "- **Profile summary** — total backlinks, referring domains (with the share that link " +
       "**exclusively with dofollow** links), referring main domains, broken backlinks, the " +
       "aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.\n" +
-      "- **Top referring domains** — the domains linking to the target, most backlinks first, each " +
-      "with its own rank.\n" +
+      "- **Top referring domains** — the domains linking to the target, most backlinks first, " +
+      "each with its own rank **and DataForSEO's spam score for that domain**. A domain the " +
+      "vendor did not score says so in words rather than showing a number, because an " +
+      "unscored domain and a domain scored clean are different findings.\n" +
       "- **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry " +
       "no anchor text (image links) are labelled as such rather than hidden.\n\n" +
       "Only **live** backlinks are counted — links that have since been lost are excluded. Each " +
@@ -1243,7 +1796,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`analyze_backlinks` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1256,9 +1810,11 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Analyze the backlink profile of competitor.com." +
       "\n\nOr keep it short:\n\n> Show me the top 25 referring domains and anchors for example.com.",
     returns:
-      "The profile summary, then the top referring domains (domain, backlink count, rank), then " +
-      "the top anchors (anchor text, backlink count) — each list headed by how many of the total " +
-      "are shown. A metric DataForSEO has no value for is shown as `n/a` rather than as a zero. " +
+      "The profile summary, then the top referring domains (domain, backlink count, rank, spam " +
+      "score), then the top anchors (anchor text, backlink count) — each list headed by how " +
+      "many of the total are shown. A summary metric or a count DataForSEO has no value for is " +
+      "shown as `n/a` rather than as a zero; an unreported referring-domain spam score is " +
+      "stated in words instead, naming the vendor field it would have come from. " +
       "When you looked the site up by `project_id`, the heading names that project.\n\nAn input " +
       "that is not a public domain, a call naming neither `target` nor `project_id` (or both), " +
       "and a `project_id` that is not yours are all rejected before anything is charged; while " +
@@ -1319,9 +1875,30 @@ export const DOC_PROSE = {
       "printed under its own heading. The whole-domain block is how big the rival is everywhere; " +
       "the shared block is how it does on the ground you actually compete on. A large rival can " +
       "appear in tens of thousands of result pages while sharing only a few thousand of them with " +
-      "you. The side-by-side comparison is made on the whole-domain figures, because those are " +
-      "measured the same way for every row — the shared figures cover a different keyword set for " +
-      "each rival.\n\n" +
+      "you. The side-by-side comparison is made on the whole-domain figures, because the shared " +
+      "figures cover a different keyword set for each rival.\n\n" +
+      "**The answer ends with the difference**, so you do not have to subtract by eye. Under " +
+      "**Target vs each competitor**, every rival gets one line per measure — organic result " +
+      "pages, estimated monthly traffic, and what that traffic would cost as ads — showing your " +
+      "figure, theirs, and the gap between them. The gap is the competitor's figure minus yours, " +
+      "so a plus means theirs is the larger number. This is where a site that ranks for *more* " +
+      "keywords than a rival while pulling *less* valuable traffic shows up as what it is: a " +
+      "minus on one line and a plus on the next.\n\n" +
+      "Two things are deliberately **not** differenced. A figure DataForSEO did not report is " +
+      "never treated as a zero — the line says the difference is not reported rather than " +
+      "inventing the largest gap in the table out of a missing value. And two figures read from " +
+      "**different DataForSEO measurements** are not subtracted from each other at all; the line " +
+      "says so and names both measurements, because most of that gap would be the distance " +
+      "between the vendor's own methods rather than between the two domains.\n\n" +
+      "**Read the whole-domain rows with their source in view.** Each block names the " +
+      "DataForSEO measurement it was read from, and in one table they are not always the same " +
+      "one: on the discovery flow, rivals DataForSEO found carry its competitor-discovery " +
+      "figures while your target may carry its domain-overview figures instead. The two " +
+      "disagree routinely — the same domain's lost-ranking count read 319 under one and 547 " +
+      "under the other. Neither is wrong; they are two measurements, and the source line on " +
+      "each block is what lets you see which you are comparing. Every answer also carries one " +
+      "note saying the same thing about SeoGrep's other tools: a different total elsewhere is " +
+      "a second measurement, not a contradiction.\n\n" +
       "A competitor **you supplied** carries neither, because no discovery request is made for " +
       "it.\n\n" +
       "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO has " +
@@ -1332,7 +1909,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`compare_competitors` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away. Your trial credits are untouched and keep working for crawls, " +
           "audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1348,7 +1926,10 @@ export const DOC_PROSE = {
     returns:
       "A heading naming the target — or, when you passed a `project_id`, the project it came from " +
       "— the language and location the figures were read for, and where the compared rivals came " +
-      "from; then one block per domain with its metric lines, the target first.\n\nAn input that " +
+      "from; then one block per domain with its metric lines, the target first; then a " +
+      "**Target vs each competitor** section putting your organic result pages, estimated " +
+      "traffic and paid-equivalent cost beside each rival's, with the gap between them stated " +
+      "(or the reason there is none).\n\nAn input that " +
       "is not a public domain (the target, or any competitor you named), a call naming neither " +
       "`target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected " +
       "before anything is charged; while live data is off you get the \"not yet enabled\" message " +
@@ -1395,7 +1976,11 @@ export const DOC_PROSE = {
       "- **The ranking page** — the competitor URL that holds the position, and DataForSEO's " +
       "estimate of the monthly visits it earns.\n\n" +
       "Only **organic** results are counted; paid placements are excluded. A metric DataForSEO " +
-      "has no value for is left out of the row rather than printed as a zero.",
+      "has no value for is left out of the row rather than printed as a zero — with **one " +
+      "exception**: search volume, the axis the list is ordered by, is always stated, and shows " +
+      "`n/a` when the vendor holds no figure. Dropping it would silently move a row up or down " +
+      "an ordering the reader is trusting, and \"nobody has a number for this\" is not \"nobody " +
+      "searches this\".",
     preExampleSections: [
       {
         heading: "There is no \"your position\" column, and there cannot be",
@@ -1413,7 +1998,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`keyword_gap` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits — buy any credit pack " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack " +
           "and it unlocks straight away. Your trial credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1470,6 +2056,11 @@ export const DOC_PROSE = {
       "- **Backlink spam score** — the average spam score of those links, so a prospect worth " +
       "avoiding is visible before you spend a morning on it.\n" +
       "- **First seen** — when DataForSEO's crawler first found a link from that domain.\n\n" +
+      "Rank is the only one of those that is always there. Each of the other four is printed " +
+      "**only when DataForSEO returned a value for it**, and left out entirely otherwise — so " +
+      "a row with no spam column is a domain the vendor did not score, not a domain it scored " +
+      "clean. That distinction is the whole reason the clause is dropped rather than zeroed, " +
+      "and it is worth reading rows accordingly.\n\n" +
       "Only **live** backlinks are counted — links that have since been lost are excluded.",
     preExampleSections: [
       {
@@ -1480,6 +2071,14 @@ export const DOC_PROSE = {
           "is a plausible place to be covered, but nothing here says it would link to you, and " +
           "the spam-score column is printed precisely because some of them are places you should " +
           "not want a link from.\n\n" +
+          "**It names no example linking page, and says so rather than inventing one.** The " +
+          "DataForSEO endpoint behind this tool reports these prospects at **domain level " +
+          "only** — it returns no page URL at all — so any URL printed here would be one " +
+          "SeoGrep made up. Every non-empty answer ends with that sentence and points at the " +
+          "tool that does have linking pages: run " +
+          "[`backlink_details`](/docs/tools-reference/backlink-details) on the competitor to " +
+          "see which of their pages carry the links, with the anchor text and the page linked " +
+          "to. That is a separate, separately-priced lookup.\n\n" +
           "One competitor per call, deliberately. Running it against each rival in turn gives you " +
           "the same picture and keeps every list traceable to the domain it came from.",
       },
@@ -1487,7 +2086,8 @@ export const DOC_PROSE = {
         heading: "Who can run it",
         body:
           "`link_gap` needs a **paid credit balance**. It reads live data from a paid third-party " +
-          "provider, so it is not available on trial credits — buy any credit pack and it unlocks " +
+          "provider, so it is not available on trial credits; the refusal arrives before anything is " +
+          "reserved and says outright that you were not charged. Buy any credit pack and it unlocks " +
           "straight away. Your trial credits are untouched and keep working for crawls, audits, " +
           "reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
@@ -1579,7 +2179,8 @@ export const DOC_PROSE = {
         body:
           "`backlink_changes` needs a **paid credit balance**. It reads live data from a paid " +
           "third-party provider — two requests per call — so it is not available on trial " +
-          "credits. Buy any credit pack and it unlocks straight away; your existing credits are " +
+          "credits; the refusal arrives before anything is reserved and says outright that you " +
+          "were not charged. Buy any credit pack and it unlocks straight away; your existing credits are " +
           "untouched and keep working for crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
           "_\"backlink change history is not yet enabled on this deployment\"_ message and " +
@@ -1618,11 +2219,13 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its two series to the conversation and " +
-          "nothing else keeps them, so there is no backlink-history page in the dashboard and no " +
-          "\"compared with last month\" — run it again for a fresh read. The lookup-history table " +
-          "that backs the other domain tools is bound to those tools by design and does not " +
-          "accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"compared with last month\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "Two fields DataForSEO returns are deliberately **not** printed: the new and lost " +
           "counts for *referring main domains*. They are a second, different definition of " +
           "\"domain\", and showing them beside the referring-domain counts would invite you to " +
@@ -1694,7 +2297,8 @@ export const DOC_PROSE = {
         body:
           "`backlink_details` needs a **paid credit balance**. It reads live data from a paid " +
           "third-party provider — two requests per call — so it is not available on trial " +
-          "credits. Buy any credit pack and it unlocks straight away; your existing credits are " +
+          "credits; the refusal arrives before anything is reserved and says outright that you " +
+          "were not charged. Buy any credit pack and it unlocks straight away; your existing credits are " +
           "untouched and keep working for crawls, audits, reports and Search Console tools.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool returns a clear " +
           "_\"backlink details are not yet enabled on this deployment\"_ message and **charges " +
@@ -1724,19 +2328,30 @@ export const DOC_PROSE = {
           "One call is one **flat price**, charged **once**. Behind it are **two** DataForSEO " +
           "requests — the backlink list and the site's own pages — and if either one fails the " +
           "whole call fails and **you are not charged**. A half-built list is never billed.\n\n" +
-          "The `limit` and `page_limit` ceilings are part of the price rather than stylistic " +
-          "limits: DataForSEO bills **per returned row**, so the two row caps together are what " +
-          "hold the flat price to the margin it was signed against. Asking for fewer rows costs " +
-          "the same; asking for more than the ceiling is refused before anything is charged.",
+          "**`limit` and `page_limit` are display controls, not price controls.** This call " +
+          "costs the same whatever you ask for, and asking for fewer rows saves you nothing: " +
+          "DataForSEO's own bill for this endpoint is nearly all a flat per-request fee — " +
+          "measured on one profile, nineteen times the rows cost thirteen per cent more. What " +
+          "the two **ceilings** do is hold the worst case inside the margin the flat price was " +
+          "signed against; asking for more than a ceiling is refused before anything is " +
+          "charged. Set them for the reply you want to read.\n\n" +
+          "**A reply can be bounded, and it says so when it is.** The two lists have their own " +
+          "size budgets, because one oversized answer is an answer a client will not display " +
+          "at all. When rows are cut, the reply prints how many were shown and how many more " +
+          "were fetched in the same window but not printed — and states plainly that those " +
+          "were charged for either way. Ask for a smaller `limit`, or page through with " +
+          "`offset`, to read them.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its two lists to the conversation and " +
-          "nothing else keeps them, so there is no backlink-explorer page in the dashboard and no " +
-          "\"new since last time\" — run it again for a fresh read. The lookup-history table that " +
-          "backs the other domain tools is bound to those tools by design and does not accept " +
-          "this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"new since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "Paging stops at an `offset` of **20,000**, DataForSEO's own documented ceiling for " +
           "this endpoint. Going deeper needs a continuation token this tool does not use, so on a " +
           "very large profile you are reading the strongest links rather than every link.\n\n" +
@@ -1826,9 +2441,23 @@ export const DOC_PROSE = {
       "then the refusal, then a plain statement of **how the list was built**: the threshold you " +
       "chose, whether nofollowed links were kept, and which vendor field ordered which list. " +
       "After that the **filtered backlinks** you were billed for, each with its own vendor " +
-      "score; the **candidate referring domains** with their per-domain score and how many links " +
-      "in **this window** each accounted for; the **referring networks**; the **disavow file " +
-      "text**; and the note naming all three vendor fields.\n\n" +
+      "score; the **candidate referring domains**; the **referring networks**; the **disavow " +
+      "file text**; and the note naming all three vendor fields.\n\n" +
+      "Every candidate carries **both** vendor scores, each labelled with the level it " +
+      "describes: DataForSEO's per-**domain** score, and the worst per-**link** score in this " +
+      "window. They are not blended into one number, because they are two measurements from two " +
+      "endpoints and they disagree routinely — real rows scored 0 and 1 per domain beside " +
+      "domains whose worst link scored 60, and the printed number was the wrong one for the " +
+      "decision on that line. The row also names how many links in this window it accounted " +
+      "for, how many of those DataForSEO marked **dofollow**, and one example `from → to` pair.\n\n" +
+      "A candidate whose links are **none of them marked dofollow** is **marked, never " +
+      "removed**: the line says so, because Google does not count a nofollowed link and " +
+      "disavowing that domain may change nothing. It stays in the list because which links are " +
+      "worth naming is your judgement, and dropping rows would hide candidates you paid to see. " +
+      "The wording is careful: \"none is marked dofollow\" is what was measured — a link the " +
+      "vendor never marked either way is not a link the vendor called nofollow. Both score " +
+      "levels and this marking are repeated as comment lines above each entry **inside the file " +
+      "itself**, so they survive the file leaving this conversation.\n\n" +
       "Both vendor lists are captioned as **windows** — the rows you got, the offset and limit " +
       "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by " +
       "name, followed by the sentence that stops the arithmetic: _this window is a slice of that " +
@@ -1851,8 +2480,8 @@ export const DOC_PROSE = {
           "a half-built candidate list is never billed. When the filtered window names no domain " +
           "at all, the second request is not sent: there would be nothing to ask it about.\n\n" +
           "`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider — three requests per call, **every one of them billed** — so it " +
-          "is not available on trial credits. Buy any credit pack and it unlocks straight away; " +
+          "third-party provider, so it is not available on trial credits, and the refusal says " +
+          "outright that you were not charged. Buy any credit pack and it unlocks straight away; " +
           "your existing credits are untouched and keep working for crawls, audits, reports and " +
           "Search Console tools.\n\n" +
           "The `limit` and `network_limit` ceilings, and the cap on how many candidate domains " +
@@ -1864,11 +2493,15 @@ export const DOC_PROSE = {
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its lists and its file text to the " +
-          "conversation and nothing else keeps them — there is no saved disavow file, no " +
-          "dashboard page and no \"new since last time\", so run it again for a fresh read. The " +
-          "lookup-history table that backs the other domain tools is bound to those tools by " +
-          "design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked " +
+          "up, when, under which criteria, and a capped summary of the candidates. The " +
+          "**Lookups** page of your dashboard lists them. The **file text itself is " +
+          "deliberately not kept** — everything it is derived from is, so it can be rebuilt, " +
+          "but a saved disavow file is a document that would go stale in place while still " +
+          "looking authoritative.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, " +
+          "nothing is refreshed for you, and there is no \"new since last time\" — so to see " +
+          "the current picture, run it again.\n\n" +
           "The candidate domains come from **the filtered window you paid for**, not from the " +
           "whole link profile: raise `limit` to examine more rows, and read the window caption " +
           "for how far the slice sits from DataForSEO's whole-set count. Only **live** links are " +
@@ -1955,22 +2588,35 @@ export const DOC_PROSE = {
         body:
           "One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO " +
           "request. If it fails, the whole call fails and **you are not charged**.\n\n" +
+          "A failed lookup is not a lookup that found nothing, and the refusal keeps the two " +
+          "apart: it quotes DataForSEO's own status code and message rather than reporting an " +
+          "empty result. It also says the half that \"you were not charged\" leaves out — the " +
+          "attempt did go out to DataForSEO and used part of SeoGrep's own daily third-party " +
+          "data allowance. That is our cost, not yours, and saying only the first half read as " +
+          "the whole truth.\n\n" +
           "`ai_visibility` needs a **paid credit balance**. It reads live data from a paid " +
-          "third-party provider, so it is not available on trial credits. Buy any credit pack and " +
+          "third-party provider, so it is not available on trial credits; the refusal arrives before " +
+          "anything is reserved and says outright that you were not charged. Buy any credit pack and " +
           "it unlocks straight away; your existing credits are untouched and keep working for " +
           "crawls, audits, reports and Search Console tools.\n\n" +
-          "The `internal_list_limit` ceiling is **part of the price**, not a display preference: " +
-          "DataForSEO bills **per returned row** on this family, and that cap is what holds the " +
-          "flat price inside the margin it was signed against. Asking for fewer rows costs the " +
-          "same; asking for more than the ceiling is refused before anything is charged.",
+          "**`internal_list_limit` is not a price control.** It is the vendor's own field, and " +
+          "the vendor's own words for it are \"maximum number of elements within internal " +
+          "arrays\" — it caps two nested arrays inside the aggregate, not the rows returned and " +
+          "not the rows billed. An earlier version of this page called it the price control; " +
+          "that claim is withdrawn rather than restated. What was always true is kept: asking " +
+          "for fewer entries costs the same, and asking for more than the vendor's published " +
+          "ceiling is refused before anything is charged.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its rows to the conversation and nothing " +
-          "else keeps them — there is no saved history, no dashboard page and no \"changed since " +
-          "last time\", so run it again for a fresh read. The lookup-history table that backs the " +
-          "other domain tools is bound to those tools by design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"changed since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "This is a measurement, **not a prediction**. It does not tell you what an assistant " +
           "will say next, why it said what it said, or what to change to be mentioned more — and " +
           "a measurement on one platform does not carry over to another.\n\n" +
@@ -2053,24 +2699,37 @@ export const DOC_PROSE = {
           "reservation is opened before the DataForSEO request and is sized from the targets you " +
           "actually passed; if the request fails, the whole reservation is released and **you are " +
           "not charged**.\n\n" +
-          "Because a wide comparison can be expensive, one above SeoGrep's safety threshold " +
-          "**asks you first**: the call returns an estimate and charges nothing until you run it " +
-          "again with `\"confirm\": true`.\n\n" +
+          "A comparison above SeoGrep's safety threshold **asks you first**: the call returns an " +
+          "estimate and charges nothing until you run it again with `\"confirm\": true`. This is " +
+          "not a rare corner — it is the **usual** case. At the price above, only the two-target " +
+          "minimum runs straight through; **three targets and up cross the threshold and prompt**. " +
+          "Plan for the prompt rather than being surprised by it.\n\n" +
+          "A failed lookup is not a lookup that found nothing. The refusal quotes DataForSEO's " +
+          "own status code and message, and says the half that \"you were not charged\" leaves " +
+          "out: the attempt did go out to DataForSEO and used part of SeoGrep's own daily " +
+          "third-party data allowance. That is our cost, not yours.\n\n" +
           "`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a " +
-          "paid third-party provider, so it is not available on trial credits. Buy any credit " +
+          "paid third-party provider, so it is not available on trial credits; the refusal arrives " +
+          "before anything is reserved and says outright that you were not charged. Buy any credit " +
           "pack and it unlocks straight away; your existing credits are untouched and keep " +
           "working for crawls, audits, reports and Search Console tools.\n\n" +
-          "The `internal_list_limit` ceiling is **part of the price** here too: DataForSEO bills " +
-          "per returned row on this family, and every compared target can contribute its own " +
-          "capped list.",
+          "**`internal_list_limit` is not a price control** here either. The vendor's own words " +
+          "for it are \"maximum number of elements within internal arrays\": it caps two nested " +
+          "arrays inside each aggregate, not the rows returned and not the rows billed. An " +
+          "earlier version of this page called it part of the price; that claim is withdrawn. " +
+          "Asking for fewer entries costs the same, and asking for more than the vendor's " +
+          "published ceiling is refused before anything is charged.",
       },
       {
         heading: "Limitations",
         body:
-          "Results are **not stored**. Each call returns its comparison to the conversation and " +
-          "nothing else keeps them — no saved comparison, no dashboard page, no \"changed since " +
-          "last time\". The lookup-history table that backs the other domain tools is bound to " +
-          "those tools by design and does not accept this one.\n\n" +
+          "Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was " +
+          "looked up, when, under which settings, and a capped summary of what came back. " +
+          "The **Lookups** page of your dashboard lists them, so a lookup you paid for an " +
+          "hour ago is still something you can point at.\n\n" +
+          "That record is history, not a live surface. No call here reads a previous run, nothing " +
+          "is refreshed for you, and there is no \"changed since last time\" — so to see the current " +
+          "picture, run it again.\n\n" +
           "This is a measurement, **not a prediction** and not a verdict: it does not say which " +
           "target is doing better, why an assistant mentioned one and not another, or what to " +
           "change. A measurement on one platform does not carry over to another.\n\n" +
@@ -2095,8 +2754,14 @@ export const DOC_PROSE = {
       "- **On-page issues** — the full finding breakdown from `audit_onpage`, plus duplicate-content " +
       "groups.\n" +
       "- **Technical health** — the HTTP status split and the pages behind it, plus broken internal " +
-      "links, slow and heavy pages, redirect chains, `X-Robots-Tag` conflicts, deep and orphaned " +
-      "pages, skipped-page categories, and the sitemap-vs-crawl comparison.\n" +
+      "links, redirect chains, `X-Robots-Tag` conflicts, deep and orphaned pages, skipped-page " +
+      "categories, and the sitemap-vs-crawl comparison.\n" +
+      "- **Page speed** — slow and heavy pages, from how long **our crawler's** fetch of each page " +
+      "took and how large the HTML it returned was. These are **not** lab Core Web Vitals and " +
+      "**not** field data from real visitors — no browser renders the page, so nothing here " +
+      "measures LCP, INP or CLS. Use [`audit_speed`](/docs/tools-reference/audit-speed) for Core " +
+      "Web Vitals. A crawl stored before SeoGrep recorded these signals says so, instead of " +
+      "reporting an unmeasured site as a fast one.\n" +
       "- **Structured data** — coverage and declared types, plus missing required fields, " +
       "unparseable JSON-LD, and partly-stored blocks.\n" +
       "- **Search performance** — the current window's total clicks and impressions, plus your top " +
@@ -2131,31 +2796,69 @@ export const DOC_PROSE = {
       "data — and tells you the **single best next step**, a short reason, and the two or three steps " +
       "that come after.",
     whatItDoes:
-      "It reads the project's current state through the same tenant-scoped data the tools use (your " +
-      "latest [`crawl_site`](/docs/tools-reference/crawl-site) and " +
-      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, plus your Search Console " +
-      "connection) and walks a simple ladder:\n\n" +
+      "Pass a `project_id` to route that project; omit it and it routes your **only** project, or " +
+      "lists them and asks which one if you track several. It reads the project's state through " +
+      "the same tenant-scoped data the tools use — your latest " +
+      "[`crawl_site`](/docs/tools-reference/crawl-site) and " +
+      "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) runs, whether Search Console is " +
+      "connected, **whether that connection is still alive**, and whether the domain resolves — " +
+      "then walks a ladder, taking the first rung that applies:\n\n" +
       "- **No project yet** → run [`setup_project`](/docs/tools-reference/setup-project).\n" +
-      "- **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without Search " +
-      "Console).\n" +
-      "- **Crawl ready** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage), " +
+      "- **The domain does not resolve** → nothing to measure yet. This rung names no paid tool " +
+      "at all, because every recommendation below it would be work against a host that is not " +
+      "there.\n" +
+      "- **No crawl yet** → run [`crawl_site`](/docs/tools-reference/crawl-site) (works without " +
+      "Search Console).\n" +
+      "- **Crawl ready, Search Console never used** → run the audits: " +
+      "[`audit_onpage`](/docs/tools-reference/audit-onpage), " +
       "[`audit_tech`](/docs/tools-reference/audit-tech), " +
       "[`audit_schema`](/docs/tools-reference/audit-schema). Connecting Search Console with " +
       "[`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional** and never a barrier.\n" +
-      "- **Search Console connected, no data pulled** → run " +
+      "- **Old Search Console data but no live connection** → " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc), which is free. Frozen rows cannot be " +
+      "refreshed, so nothing that reads them is offered.\n" +
+      "- **Connected, but the credential is dead** → " +
+      "[`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are " +
+      "deliberately withheld: they read a pull this project cannot take.\n" +
+      "- **Connected, nothing pulled** → run " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
-      "- **Data pulled** → run the discovery tools: " +
-      "[`find_quick_wins`](/docs/tools-reference/find-quick-wins), " +
-      "[`detect_cannibalization`](/docs/tools-reference/detect-cannibalization), " +
-      "[`analyze_content_decay`](/docs/tools-reference/analyze-content-decay).\n" +
+      "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +
+      "the site as it is now.\n" +
       "- **Everything fresh** → you're all set: " +
       "[`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the " +
       "`monthly-routine` prompt to keep it up to date.",
+    preExampleSections: [
+      {
+        heading: "\"Rows were pulled once\" is not \"the link is live\"",
+        body:
+          "The two used to be the same signal, and the difference is what the middle of that " +
+          "ladder is for. A succeeded pull is a fact about the past: it outlives a disconnect, an " +
+          "unmapped property and a deleted Google account. A project holding one such pull and no " +
+          "connection was told it was **all set** and pointed at a paid report — while the free " +
+          "reconnection that was the real next step went unmentioned.\n\n" +
+          "So liveness is now read separately, and a project that cannot refresh its Search " +
+          "Console data is never called all set, however fresh the frozen rows look.",
+      },
+      {
+        heading: "Every step says what it costs",
+        body:
+          "The primary step and each line of what follows carry their own price — free, or the " +
+          "credits that tool charges. This tool is for the reader who does not already know the " +
+          "price list, and a list that named a free step and a paid one in the same breath left " +
+          "them nothing to choose with.\n\n" +
+          "The figures are read from the same signed cost table the tools charge from, never " +
+          "restated here, and a tool priced per unit shows the **range** a call can really cost " +
+          "rather than a unit price no call ever pays. A step that is not a priced tool — a " +
+          "prompt, or a note about coming back later — shows no price rather than a guessed one.",
+      },
+    ],
     example:
       "Ask your MCP client in plain language:\n\n> What should I do next with my example.com project?",
     returns:
-      "One clear next step for the project, a short reason, and the next two or three steps — all in " +
-      "plain language, naming the exact tools to run.",
+      "One clear next step for the project, a short reason, and the next two or three steps — all " +
+      "in plain language, naming the exact tools to run and what each one costs. An archived " +
+      "project is refused rather than routed, and a `project_id` that is not yours is reported " +
+      "exactly like an id that does not exist.",
   },
 
   list_gsc_properties: {
@@ -2170,6 +2873,21 @@ export const DOC_PROSE = {
       "listed**, marked `NOT QUERYABLE` with its permission level, so a property is never silently " +
       "missing. Nothing is cached: the list is read live, every time.",
     preExampleSections: [
+      {
+        heading: "It names the project a property plainly belongs to",
+        body:
+          "A property no project reads is not left as a bare \"not used by any project\". If one " +
+          "of your projects names the **same site** and reads no property yet, the line names " +
+          "that project and tells you to run " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) to link them. Both " +
+          "sides used to be printed with nothing to say they belonged together, which left one " +
+          "free call undone for as long as nobody noticed.\n\n" +
+          "The match ignores a leading `www.` on either side and **nothing else**. A subdomain is " +
+          "a different site and is never offered: `blog.example.com` is not `example.com`. And " +
+          "only a project that reads **no** property qualifies — a project already bound to a " +
+          "different property is in a deliberate state, and offering to link it would really be " +
+          "offering to repoint it.",
+      },
       {
         heading: "When an account cannot be read",
         body:
@@ -2196,13 +2914,36 @@ export const DOC_PROSE = {
       "back from your archive — and links the property to it, ready for " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).",
     whatItDoes:
-      "Pass a property exactly as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
-      "prints it. SeoGrep re-reads your Google accounts live and only accepts a property one of " +
-      "them actually lists — what you type is never taken as proof it exists. If you already have " +
-      "a project for that domain, it is reused rather than duplicated, so running this twice is " +
-      "safe. If the same property sits on two of your connected accounts, SeoGrep asks which one " +
-      "to read it through instead of guessing, and you re-run with `account_id`.",
+      "Pass a property as [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) " +
+      "prints it — or just the site's host, `example.com`. SeoGrep re-reads your Google accounts " +
+      "live and only accepts a property one of them actually lists; what you type is never taken " +
+      "as proof it exists. If you already have a project for that site, it is reused rather than " +
+      "duplicated — running this twice with the **same** property changes nothing. If the same " +
+      "property sits on two of your connected accounts, SeoGrep asks which one to read it " +
+      "through instead of guessing, and you re-run with `account_id`.\n\n" +
+      "Running it with a **different** property for a site you already track is not a no-op: it " +
+      "**repoints** the project at the new property, and the old link is gone. That is a " +
+      "supported call, not an accident, but it is a change of data source rather than a repeat " +
+      "of the last one.",
     preExampleSections: [
+      {
+        heading: "A bare host is resolved — unless it is ambiguous",
+        body:
+          "`example.com` is the form people type from memory; `sc-domain:example.com` and " +
+          "`https://example.com/` are the forms Search Console prints. A bare host is matched " +
+          "against the properties your accounts really list, ignoring a leading `www.` on either " +
+          "side, and is accepted when **exactly one** property names that site.\n\n" +
+          "When more than one does, the tool **offers the choice and stops**. " +
+          "`sc-domain:example.com` and `https://example.com/` are two different properties with " +
+          "different data and different permissions, so the answer lists the candidates and asks " +
+          "you to re-run with the one you want, spelled as it is printed. Picking one for you " +
+          "would bind the project to a source you did not choose, and a wrong binding only shows " +
+          "up much later, when the data stops making sense.\n\n" +
+          "The same `www.` blindness applies to the project side: a property for " +
+          "`example.com` finds a project stored as `www.example.com` rather than opening a " +
+          "second project beside it. Only the leading `www.` label is ignored — a subdomain is a " +
+          "different site.",
+      },
       {
         heading: "When it refuses",
         body:
@@ -2228,8 +2969,9 @@ export const DOC_PROSE = {
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Track sc-domain:example.com in SeoGrep." +
-      "\n\nRun [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) first if you are " +
-      "not sure how a property is spelled.",
+      "\n\nOr just name the site — > Track example.com in SeoGrep. — and run " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) if the answer comes " +
+      "back asking which of several properties you meant.",
     returns:
       "The project the property was attached to — its domain and `project_id`, whether it was " +
       "created, already tracked or restored from your archive, which Google account it now reads " +
@@ -2300,13 +3042,33 @@ export const DOC_PROSE = {
       "answer you asked for.",
     preExampleSections: [
       {
+        heading: "Who can run it",
+        body:
+          "`serp_snapshot` needs a **paid credit balance**. Each keyword is a separate live " +
+          "search bought from a paid third-party provider, so it is not available on trial " +
+          "credits, however many are left; the refusal arrives before anything is reserved and " +
+          "says outright that you were not charged. Buy any credit pack and it unlocks straight " +
+          "away — your existing credits are untouched and keep working for crawls, audits, " +
+          "reports and Search Console tools.\n\n" +
+          "This is the one part of the rank tracker that is **gated**, and gating is a separate " +
+          "question from price. " +
+          "[`track_keywords`](/docs/tools-reference/track-keywords) is free; " +
+          "[`keyword_positions`](/docs/tools-reference/keyword-positions) charges for the " +
+          "analysis but contacts no search engine. Neither is gated — both run on a trial " +
+          "account, and each page states its own cost.\n\n" +
+          "If live DataForSEO access is unavailable on this deployment, the tool says so and " +
+          "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
+          "sample or placeholder positions as if a search engine had really returned them.",
+      },
+      {
         heading: "Three answers, and none of them is a number you can misread",
         body:
           "A keyword comes back as exactly one of three things, and they are never collapsed:\n\n" +
           "- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and " +
           "`rank_absolute` (its rank among every element on the page, including featured snippets " +
-          "and ad blocks). Both are reported, because they disagree whenever a SERP feature sits " +
-          "above the result, and that gap is itself the finding.\n" +
+          "and ad blocks). Both are reported where the vendor sent them, because they disagree " +
+          "whenever a SERP feature sits above the result and that gap is itself the finding; " +
+          "either one the vendor left out is stated as not reported rather than filled in.\n" +
           "- **Searched for and not found** — together with **how many organic results were " +
           "actually examined**. That is the scope of the claim: it is not position 0, and it says " +
           "nothing about results beyond the ones counted.\n" +
@@ -2356,7 +3118,12 @@ export const DOC_PROSE = {
       "**measures nothing** — no search engine is contacted and no new position is read.",
     whatItDoes:
       "Pass a `project_id` (or any `target` domain) and it returns the stored readings, newest " +
-      "first, grouped into one series per keyword, location, language and device. Narrow it with " +
+      "first, grouped into series. A series is everything a reading was taken **under** — not " +
+      "just the keyword, location, language and device you chose, but the search engine, the " +
+      "depth that was requested, and the rule used to decide a result was yours. Those last " +
+      "three fork a series too, and must: \"not found in the 10 results examined\" and \"not " +
+      "found in the 100 results examined\" answer different questions, and putting them on one " +
+      "line would turn a change of depth into an apparent movement. Narrow it with " +
       "`keyword`, `location_name`, `language_code` or `device`, and bound the answer with " +
       "`limit` — the reply always states how many readings match your filter in total, " +
       "separately from how many are in the window.",
@@ -2377,25 +3144,36 @@ export const DOC_PROSE = {
           "were examined** — it is not position 0, and it says nothing about results beyond " +
           "those examined. A reading that never happened says so instead: the position is " +
           "unknown, and nothing was examined at all.\n\nA position is never compared across " +
-          "either of them, because there is no second position to compare with. A reading where " +
-          "the domain was found but the vendor reported no rank is a third case, and it says " +
-          "that too.",
+          "either of them, because there is no second position to compare with.\n\nA reading " +
+          "where the domain was **found** but the vendor reported no rank is a third case, and " +
+          "it is really two, kept apart. DataForSEO has two rank scales — the organic-only one " +
+          "and the one counting every element on the page — and it may withhold either. A row " +
+          "with neither says so; a row where it gave the all-elements rank and withheld the " +
+          "organic one says exactly that, and prints the number it did send. One sentence for " +
+          "both would have printed \"DataForSEO reported no rank\" over a row on which " +
+          "DataForSEO had reported one.",
       },
       {
         heading: "If nothing has been measured yet",
         body:
-          "The tool says so and **charges nothing**. Positions appear here once a SERP snapshot " +
-          "has been taken for a domain's keywords; " +
+          "The tool says so and **charges nothing** — that refusal is returned before any " +
+          "credits are reserved. It is the **only** free answer this tool gives: a read that " +
+          "delivers stored readings is charged at the cost above, whether it returns one " +
+          "reading or hundreds.\n\n" +
+          "Positions appear here once a SERP snapshot has been taken for a domain's keywords. " +
           "[`track_keywords`](/docs/tools-reference/track-keywords) chooses which keywords to " +
-          "watch, which is a separate step and also free.",
+          "watch — a separate step, and that one is free; " +
+          "[`serp_snapshot`](/docs/tools-reference/serp-snapshot) is what takes the readings, " +
+          "and it is priced per keyword.",
       },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Show me the stored positions for \"seo tools\" " +
       "on my example.com project.",
     returns:
-      "One block per keyword, location, language and device — with what each reading was measured " +
-      "under (search engine, depth, and how a domain was matched), each reading's own date, and " +
+      "One block per series — keyword, location, language, device, search engine, depth " +
+      "requested and domain-match rule — with what each reading was measured under, each " +
+      "reading's own date, and " +
       "the elapsed time between them. Ranks are DataForSEO's own `rank_group` and " +
       "`rank_absolute`; SeoGrep adds no score of its own.",
   },
@@ -2433,7 +3211,11 @@ export const DOC_PROSE = {
     returns:
       "Confirmation that the project was archived — its domain and `project_id` — together with " +
       "how to bring it back. A project that is already archived says so and nothing changes. A " +
-      "`project_id` that is not yours is reported exactly like an id that does not exist.",
+      "`project_id` that is not yours is reported exactly like an id that does not exist.\n\n" +
+      "There is a fourth answer, and it is the one that must not be silent: if the archive write " +
+      "matches no row — the project changed while the call was running — you are told **nothing " +
+      "was changed** and that the project is still tracked. Reporting \"stopped tracking\" for a " +
+      "write that changed nothing would be the worst of the four.",
   },
 };
 
@@ -2590,7 +3372,24 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) 
   return errors;
 }
 
+/**
+ * Refuse to read a `dist` that no longer matches `apps/mcp/src`. Without this, BOTH modes lie in
+ * the same direction: `--check` compares today's MDX with yesterday's registry and prints a green
+ * that measured nothing (MEASURED: a description edited in src and not rebuilt still gave
+ * "38 tool pages in sync", exit 0), and a generating run would WRITE those yesterday pages back.
+ * This is a detector, not a compiler — see dist-freshness.mjs for the criterion and its blind spots.
+ */
+function assertRegistryFresh() {
+  return assertDistFresh({
+    srcDir: fileURLToPath(new URL("../../mcp/src/", import.meta.url)),
+    distDir: fileURLToPath(new URL("../../mcp/dist/", import.meta.url)),
+    srcLabel: "apps/mcp/src",
+    distLabel: "apps/mcp/dist",
+  });
+}
+
 async function main() {
+  const freshness = assertRegistryFresh();
   const registry = await loadRegistry();
   if (process.argv.includes("--check")) {
     const errors = collectCheckErrors(registry);
@@ -2601,7 +3400,9 @@ async function main() {
     }
     console.error(
       `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, no confirm fields, ` +
-        `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars.`,
+        `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars; ` +
+        `apps/mcp/dist verified fresh (${freshness.measured}` +
+        `${freshness.rescued ? ", timestamps forgiven by an identical source fingerprint" : ""}).`,
     );
     return;
   }

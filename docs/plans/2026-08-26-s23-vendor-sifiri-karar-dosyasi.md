@@ -63,6 +63,10 @@ bunu **ölçüme dayanarak** yaparız.
 `rank 0`, `is_lost: 0`, `trend monthly 0%` — üçünde de `0` **meşru bir değer olabilir** ve hiçbiri
 "her satırda aynı" desenini göstermedi. **4.1'in sinyali onları da kapsar** ve fazlası gerekmez.
 
+> **⚠️ §4.3'ÜN BU CÜMLESİ ÖLÇÜMLE DARALTILDI (2026-08-26 — §8'e bakın).** *"4.1'in sinyali onları
+> da kapsar"* iddiası hakem sondasında **üçü için de yanlış** çıktı; ikisi **hiç kapsanamaz**.
+> Gerçek kapsam §8'de yazılıdır. İmzanın genişletilmesi değil **daraltılmasıdır**.
+
 ## 5. İMZA MADDELERİ
 
 | # | karar | şef önerisi |
@@ -139,3 +143,50 @@ veriyor. 23.2 (blanket "raporlanmadı" sayma) **HAYIR** olarak kalır — bu öl
 
 *"Kapsam dışı çıkarsa alanı basmayı bırakmak"* → **kapsam dışı ÇIKMADI**, dolayısıyla
 **alan basılmaya devam eder.** Bu madde ölçümle kapandı; ayrı bir karar gerekmiyor.
+
+---
+
+## 8. §4.3 ÖLÇÜLDÜ VE DARALTILDI (2026-08-26, hakem sondası)
+
+23.1' uygulandıktan sonra hakem **gerçek render'la** üç sütunu daha sınadı ve §4.3'ün
+*"4.1'in sinyali onları da kapsar ve fazlası gerekmez"* iddiasını sınadı.
+
+### Ölçüm — iddia üçünde de tutmadı
+
+| sütun | uç | o günkü durum |
+|---|---|---|
+| `cpc` üç satırda da `0` | `discover_keywords` | **not YOK** |
+| `search_volume` üç satırda da `0` | `discover_keywords` | **not YOK** |
+| `search_volume_trend` monthly/quarterly/yearly `%0` | `discover_keywords` | **not YOK** |
+
+Sebep: sinyal **yalnız `keyword_difficulty`e bağlanmıştı.** Yardımcı jenerik yazılmıştı, yani bu
+bir mimari engel değil **eksik bağlamaydı**.
+
+### Düzeltme — her SAYISAL, SATIR-BAŞINA sütun bağlandı
+
+- `discover_keywords` → **7 sütun**: `search_volume` · `cpc` · `competition` ·
+  `keyword_difficulty` · trend'in **üç bacağı** (monthly, quarterly, yearly).
+- `ranked_keywords` → **4 sütun**: `volume` · `CPC` · `difficulty` · `est. traffic`.
+
+Notlar satırların **bastığı sırayla**, çıktının sonunda, sütun başına **bir kez** düşer. Fiyat,
+kredi, vendor çağrısı: **sıfır** (değişiklik yok).
+
+### İKİSİ KAPSANAMAZ — ve bu bir eksiklik değil, ölçülmüş bir sınır
+
+- **`rank 0` → mümkün değil.** `rank_group` / `rank_absolute` **1-tabanlıdır**; ilk organik sonuç
+  `#1`'dir. `0`, vendor'ın ölçeğinin ifade edebildiği bir konum **değildir**, yani tespit edilecek
+  düz sıfır yoktur. Buraya bir bağlama koymak, hiçbir şeyi korumayan ölü kod olurdu.
+- **`is_lost: 0` → yapısal olarak mümkün değil.** `is_lost`, `ranked_keywords`'ün **alan sağlık
+  kartındaki** bir figürdür: bütün yanıt için **TEK** sayı, satır başına bir sütun değil. *"Bu
+  satırlar boyunca hiç değişmedi"* cümlesi tek bir değer hakkında **kurulamaz** (bkz.
+  `MIN_FLAT_ZERO_ROWS` = 2). Aynısı kartın diğer bütün metrikleri için geçerlidir.
+
+### §4.3'ün YERİNE GEÇEN İFADE
+
+> Desen, **satır başına değeri olan SAYISAL bir sütundaki** düz sıfırı kapsar — ve başka hiçbir
+> şeyi. `rank` ve `is_lost` **kimse tarafından korunmuyor**; bunu bilmek, korunduklarını sanmaktan
+> iyidir.
+
+Bu daraltma koda da işlendi (`apps/mcp/src/format/flat-zero.ts` başlığı + iki yüzeydeki
+`FLAT_ZERO_COLUMNS` blokları) ve bir testle pinlendi: not, `position` ya da bir sağlık-kartı
+figürü hakkında **asla** konuşmaz.

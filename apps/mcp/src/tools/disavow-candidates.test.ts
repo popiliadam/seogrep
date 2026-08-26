@@ -6,6 +6,7 @@ import {
   createMockDisavowCandidatesPort,
   disabledDisavowCandidatesPort,
   DISAVOW_TXT_PROPOSAL_NOTICE,
+  estimateDisavowCandidatesUsd,
   MAX_LINK_ROWS,
   MAX_NETWORK_ROWS,
   VENDOR_SPAM_SCORE_MAX,
@@ -16,9 +17,11 @@ import {
   type ReferringNetworkRow,
 } from "../dfs/disavow-candidates.ts";
 import type { BacklinkDetailRow, VendorWindow } from "../dfs/backlink-details.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   DISAVOW_FILE_CAPTION,
   NO_SUBMISSION_NOTICE,
+  NOFOLLOW_ONLY_MARKER,
   VENDOR_JUDGEMENT_NOTE,
   formatDisavowCandidates,
   makeDisavowCandidatesTool,
@@ -285,6 +288,45 @@ describe("NEVER #7 — the vendor's three scores, under the vendor's three names
     expect(row).not.toMatch(/spam_score not reported/);
   });
 
+  /**
+   * THE DEFECT THIS ROW WAS ALREADY IMMUNE TO, pinned so it stays that way. A domain the vendor
+   * scored 0 whose worst LINK the vendor scored 60 must show BOTH, each under its own vendor field
+   * name — the 0 alone reads as "clean" beside a domain the tool is proposing you disavow
+   * (measured 2026-08-25, tool review card 27; the FILE half is pinned in the port's spec).
+   */
+  it("shows the per-domain 0 and the per-link 60 together, and blends them into nothing", () => {
+    const row = renderCandidateRow({
+      ...SCORED,
+      spam_score: 0,
+      window_max_backlink_spam_score: 60,
+    });
+    expect(row).toMatch(/(?<!backlink_)\bspam_score 0\b/);
+    expect(row).toMatch(/worst backlink_spam_score 60 in this window/);
+    // No composite: the mean of the two would be 30, and no third number is invented.
+    expect(row).not.toMatch(/\b30\b/);
+  });
+
+  /**
+   * NOFOLLOW-ONLY IS MARKED, NEVER REMOVED (operator decision). Google does not count a nofollowed
+   * link, so a candidate whose whole window carries none the vendor marked dofollow may be a
+   * `domain:` entry that accomplishes nothing — 21 of 46 candidates were in that state on the
+   * 2026-08-25 run. The row keeps its place in the list and gains a sentence; it does not vanish.
+   */
+  it("marks a candidate whose window has NO vendor-marked dofollow link, and still renders it", () => {
+    const row = renderCandidateRow({ ...SCORED, window_dofollow_link_count: 0 });
+    expect(row).toContain(SCORED.domain);
+    expect(row).toContain(NOFOLLOW_ONLY_MARKER);
+    expect(row).toMatch(/google does not count nofollowed links/i);
+    // The marking states what was measured, not what the links are.
+    expect(row).toMatch(/none of these links is marked dofollow/i);
+    expect(row).not.toMatch(/\bare nofollow/i);
+  });
+
+  it("does not mark a candidate that HAS a vendor-marked dofollow link in the window", () => {
+    expect(renderCandidateRow(SCORED)).not.toContain(NOFOLLOW_ONLY_MARKER);
+    expect(renderCandidateRow(SCORED)).not.toMatch(/google does not count/i);
+  });
+
   /** Same rule on the network axis, whose fixture row carries nothing but an address. */
   it("prints a network the vendor said nothing about without inventing zeros", () => {
     const row = renderNetworkRow({
@@ -380,9 +422,13 @@ describe("the output makes clear it is a PROPOSAL over a WINDOW", () => {
     expect(text).toContain("domain:SpamFarm.example");
     expect(text).toContain("domain:linkring.example");
     expect(text).toContain("domain:quiet.example");
-    // The unscored domain's line is a comment in WORDS, not a fabricated 0.
-    expect(text).toContain("# spam_score not reported by the vendor");
-    expect(text).not.toMatch(/# spam_score 0\b/);
+    // The unscored domain's line is a comment in WORDS, not a fabricated 0 — at BOTH levels,
+    // because quiet.example carries neither a per-domain score nor a per-link one.
+    expect(text).toMatch(/# per-domain spam_score: not reported by the vendor/);
+    expect(text).toMatch(
+      /worst per-link backlink_spam_score in this window: not reported by the vendor\ndomain:quiet\.example/,
+    );
+    expect(text).not.toMatch(/# per-domain spam_score: 0\b/);
     // No bare URL entries: this tool answers at the domain level and claims nothing about a page.
     expect(text).not.toMatch(/^https?:\/\/\S+$/m);
   });
@@ -593,5 +639,71 @@ describe("disavow_candidates free pre-reserve gates (no credit machinery)", () =
     await expect(
       serving().run(CTX, { project_id: PROJECT_ID, min_backlink_spam_score: 40 }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// F3 claim 1 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// `limit` said "DataForSEO bills per returned row, so this is the price control, not a display
+// preference", and `network_limit` said "Billed per row on the same tariff". Both told the caller
+// their bill moves with the row count. It does not: the credit price is FLAT (TOOL_COSTS), and
+// the vendor bill is nearly all flat per-REQUEST fees — three of them on this lookup — plus
+// $0.000036 a row. The identical claim was MEASURED FALSE 2026-08-25 on backlink_details, which
+// reads the SAME /backlinks/backlinks/live endpoint: limit 10 cost $0.04854, limit 200 (187 rows
+// back) cost $0.05506 — 19x the rows for 13% more money.
+//
+// These specs read the descriptions off the PUBLISHED JSON schema (what the customer's client is
+// handed) and assert on the CLAIM with regexes rather than on a copy of the source string —
+// signed lesson 11: a literal-for-literal grep proves the file, not the promise. The last spec
+// drives the tool's OWN cost model, so the sentence stays true only while the arithmetic does.
+// =============================================================================================
+
+describe("F3 — disavow_candidates describes its row arguments as display controls", () => {
+  const schema = makeDisavowCandidatesTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+  const networkLimit = schema.properties.network_limit?.description ?? "";
+  const dofollowOnly = schema.properties.dofollow_only?.description ?? "";
+
+  it("no longer calls a display control the price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+    expect(networkLimit).not.toMatch(/billed per row/i);
+  });
+
+  it("says a narrower window is not a cheaper one, on BOTH row arguments", () => {
+    expect(limit).toMatch(/\bnot a price control\b/i);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+    expect(networkLimit).toMatch(/fewer rows costs? the same/i);
+    // The third narrowing argument always said it correctly, and still does.
+    expect(dofollowOnly).toMatch(/same price/i);
+  });
+
+  it("names the flat credit price from TOOL_COSTS, and quotes no second price", () => {
+    expect(limit).toContain(`${TOOL_COSTS.disavow_candidates} credits`);
+    expect(limit).toMatch(/whatever you ask for/i);
+    // A second credit figure anywhere in the published input schema would be a second price
+    // table — and the docs generator would publish it onto the tools-reference page.
+    const quoted = [limit, networkLimit, dofollowOnly].flatMap(
+      (text) => text.match(/\d[\d,]*\s*credits?/gi) ?? [],
+    );
+    expect(quoted).toEqual([`${TOOL_COSTS.disavow_candidates} credits`]);
+  });
+
+  it("attributes the near-flat vendor bill to the vendor, as a measurement", () => {
+    expect(limit).toMatch(/flat per-request fee/i);
+    expect(limit).toMatch(/measured/i);
+  });
+
+  it("the tool's OWN cost model agrees: 300x the rows is a fraction more, not 300x", () => {
+    const narrow = estimateDisavowCandidatesUsd(1, 1);
+    const wide = estimateDisavowCandidatesUsd(MAX_LINK_ROWS, MAX_NETWORK_ROWS);
+    // Strictly more money — the sentence does not claim rows are free...
+    expect(wide).toBeGreaterThan(narrow);
+    // ...but nowhere near proportional, which is what makes "costs the same" honest for the
+    // caller, whose own price is flat either way.
+    expect(wide / narrow).toBeLessThan(1.5);
   });
 });

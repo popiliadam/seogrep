@@ -9,7 +9,13 @@ description: "Register a website domain to track. Accepts a domain or URL; retur
 
 ## What it does
 
-Normalizes the input to a canonical domain, then creates the project under your account — or returns the existing one if you already track that site.
+Normalizes the input to a canonical domain — a leading `www.` label is dropped, so `www.example.com` and `example.com` are the same site and never open two projects — then creates the project under your account, or returns the existing one if you already track that site.
+
+## A domain that does not resolve is registered anyway
+
+After the project is written, SeoGrep asks DNS whether the name exists. If DNS answers **no such name**, the reply still confirms the project and adds a warning saying a crawl would have nothing to fetch until the domain is live. It does **not** refuse: a site registered before launch is a legitimate project, and blocking it would be wrong more often than right.
+
+The warning is raised only on that positive finding. A lookup that times out or whose resolver could not be reached is **not** a missing domain and says nothing — telling a customer their domain does not exist because of a DNS blip is a worse answer than silence. The check runs after the write and is capped, so a slow resolver can delay the reply and can never delay or prevent the registration.
 
 ## Example
 
@@ -25,4 +31,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-The `project_id`, the canonical `domain`, and `created` (whether it was newly created).
+The `project_id`, the canonical `domain`, and `created` — in one of **three** wordings, not two: the project was created, it already existed, or it was **restored from your archive** and is tracked again on its original id. The resolution warning above follows when DNS says the name does not exist.

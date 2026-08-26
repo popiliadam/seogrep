@@ -6,6 +6,7 @@ import {
   type EstimateFn,
   type ProjectResolver,
 } from "./crawl-site.ts";
+import type { RankingSeedFetcher, RankingSeedOutcome } from "./crawl-seeds.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -32,7 +33,10 @@ describe("crawl_site input schema (referee: project_id + max_urls + include_path
       "include_paths",
       "max_urls",
       "project_id",
+      "seed_from_ranking_pages",
     ]);
+    // The paid opt-in is a BOOLEAN and is never required — a caller who says nothing buys nothing.
+    expect(schema.properties.seed_from_ranking_pages).toMatchObject({ type: "boolean" });
     // The CrawlOptions test-timing knobs must NEVER leak onto the tool surface.
     for (const knob of ["pageTimeoutMs", "timeBudgetMs", "crawlDelayCapMs"]) {
       expect(schema.properties).not.toHaveProperty(knob);
@@ -106,6 +110,8 @@ interface ConfirmationBody {
   run_cost_credits: number;
   pages_per_crawl: number;
   site_pages_estimate: number;
+  site_pages_is_lower_bound: boolean;
+  site_pages_source: string;
   full_site_projection: { credits: number; runs: number; note: string };
   message: string;
 }
@@ -127,6 +133,12 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(body.full_site_projection).toMatchObject({ credits: 300, runs: 15 });
     expect(body.message).toMatch(/"confirm": true/);
     expect(body.message).toMatch(/include_paths/);
+    // The figure is a FLOOR, in the prose and in the structured body — a client reading the
+    // number must be able to learn that without parsing English.
+    expect(body.message).toMatch(/at least 1,500 pages/i);
+    expect(body.message).not.toMatch(/about 1,500 pages/i);
+    expect(body.site_pages_is_lower_bound).toBe(true);
+    expect(body.site_pages_source).toBe("sitemap");
   });
 
   it("HONESTY: states the real 20-credit charge and never presents the projection as the charge", async () => {
@@ -222,8 +234,36 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(calls).toHaveLength(1);
     const text = result.content[0]!.text;
     expect(text).toContain("estimated_credits: 20");
-    expect(text).toMatch(/~30 pages discovered/);
+    // A LOWER BOUND, said as one. Pre-discovery said "~28" for a site whose own crawl queue
+    // found 222+ (measured 2026-08-25): a "~" in front of a number that can only be too low
+    // tells the customer it might be too high, while they approve the spend.
+    expect(text).toMatch(/at least 30 pages discovered/i);
+    expect(text).not.toMatch(/~30/);
     expect(text).not.toMatch(/requires_confirmation/);
+  });
+
+  it("names the DISCOVERY SOURCE, and warns that a homepage-only count is far from the truth", async () => {
+    const { fn: enqueue } = captureEnqueue();
+    const homepageOnly: EstimateFn = async () => ({ pages: 28, source: "homepage" });
+    const fromSitemap: EstimateFn = async () => ({ pages: 28, source: "sitemap" });
+
+    const viaHome = (
+      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
+        project_id: PID,
+      })
+    ).content[0]!.text;
+    expect(viaHome).toMatch(/at least 28 pages discovered/i);
+    expect(viaHome).toMatch(/links on the homepage only/i);
+    expect(viaHome).toMatch(/very likely larger/i);
+
+    const viaSitemap = (
+      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
+        project_id: PID,
+      })
+    ).content[0]!.text;
+    expect(viaSitemap).toMatch(/counted from your sitemap/i);
+    // The two branches must not read alike: only the weaker one carries the warning.
+    expect(viaSitemap).not.toMatch(/very likely larger/i);
   });
 
   it("degrades to a normal enqueue (no one-liner) when pre-discovery returns null", async () => {
@@ -297,5 +337,161 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(result.content[0]!.text).toMatch(/no project found/i);
     expect(estimateCalled).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+// --- OPT-IN ranking-page seeding (imza paketi madde 12) -------------------------------
+// The seeding step itself is injected: what is measured here is the SURFACE's decisions —
+// whether it runs at all, what reaches the queue payload, and what the caller is told.
+
+/** A seeding spy that records every call and answers with a fixed outcome. */
+function seedSpy(outcome: Partial<RankingSeedOutcome> = {}): {
+  fn: RankingSeedFetcher;
+  calls: Parameters<RankingSeedFetcher>[0][];
+} {
+  const calls: Parameters<RankingSeedFetcher>[0][] = [];
+  const fn: RankingSeedFetcher = async (request) => {
+    calls.push(request);
+    return {
+      kind: "seeded",
+      seeds: ["https://big.example.com/pricing"],
+      rowsReturned: 1,
+      offSite: 0,
+      outOfScope: 0,
+      creditsCharged: 40,
+      note: "Seeded this crawl with 1 of the pages DataForSEO reports as ranking.",
+      ...outcome,
+    };
+  };
+  return { fn, calls };
+}
+
+describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () => {
+  it("DEFAULT OFF: a call that does not ask for seeding never reaches the paid lookup", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(null),
+      fetchSeeds: seed.fn,
+    });
+    const result = await tool.run(CTX, { project_id: PID });
+
+    // THE PRICE GUARANTEE: no vendor lookup, so crawl_site still costs exactly its own 20.
+    expect(seed.calls).toHaveLength(0);
+    expect(calls[0]![1].payload).toEqual({ max_urls: 100 });
+    expect(result.content[0]!.text).toContain("estimated_credits: 20");
+    expect(result.content[0]!.text).not.toMatch(/DataForSEO/i);
+  });
+
+  it("explicit false is the same as saying nothing", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(null),
+      fetchSeeds: seed.fn,
+    });
+    await tool.run(CTX, { project_id: PID, seed_from_ranking_pages: false });
+    expect(seed.calls).toHaveLength(0);
+    expect(calls[0]![1].payload).toEqual({ max_urls: 100 });
+  });
+
+  it("opting in carries the seeds to the worker and states the separate charge", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(null),
+      fetchSeeds: seed.fn,
+    });
+    const result = await tool.run(CTX, {
+      project_id: PID,
+      max_urls: 30,
+      include_paths: ["/blog"],
+      seed_from_ranking_pages: true,
+    });
+
+    // The seeding step is asked in the TENANT's name, for THIS project, under THIS crawl's caps.
+    expect(seed.calls).toEqual([
+      {
+        userId: CTX.userId,
+        domain: "big.example.com",
+        maxUrls: 30,
+        includePaths: ["/blog"],
+      },
+    ]);
+    expect(calls[0]![1].payload).toEqual({
+      max_urls: 30,
+      include_paths: ["/blog"],
+      seed_urls: ["https://big.example.com/pricing"],
+    });
+    // The crawl's own price is UNCHANGED and the seeding fee is a separate sentence.
+    expect(result.content[0]!.text).toContain("estimated_credits: 20");
+    expect(result.content[0]!.text).toContain("ranking");
+  });
+
+  it("a seeding that produced nothing sends no seed_urls, still queues, and says it was free", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy({
+      kind: "empty",
+      seeds: [],
+      creditsCharged: 0,
+      note: "DataForSEO named no ranking page this crawl could use as a starting point. The crawl was queued without them, and you were not charged for the seeding.",
+    });
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(null),
+      fetchSeeds: seed.fn,
+    });
+    const result = await tool.run(CTX, { project_id: PID, seed_from_ranking_pages: true });
+
+    expect(calls).toHaveLength(1); // the crawl still runs
+    expect(calls[0]![1].payload).toEqual({ max_urls: 100 }); // no seed_urls key at all
+    expect(result.content[0]!.text).toContain("status: queued");
+    expect(result.content[0]!.text).toMatch(/not charged for the seeding/i);
+  });
+
+  it("does NOT buy seeds for a call that returns the large-site confirmation instead of queuing", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    const tool = makeCrawlSiteTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(1500),
+      fetchSeeds: seed.fn,
+    });
+    const result = await tool.run(CTX, { project_id: PID, seed_from_ranking_pages: true });
+    expect(calls).toHaveLength(0);
+    // Nothing was enqueued, so nothing may have been spent on its behalf.
+    expect(seed.calls).toHaveLength(0);
+    expect(JSON.parse(result.content[0]!.text).requires_confirmation).toBe(true);
+  });
+
+  it("does NOT buy seeds for a project that is missing or archived", async () => {
+    const seed = seedSpy();
+    const missing = makeCrawlSiteTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => null,
+      fetchSeeds: seed.fn,
+    });
+    expect((await missing.run(CTX, { project_id: PID, seed_from_ranking_pages: true })).isError).toBe(true);
+
+    const archived = makeCrawlSiteTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => ({
+        id: PID,
+        domain: "retired.example.com",
+        archivedAt: "2026-08-13T00:00:00Z",
+      }),
+      fetchSeeds: seed.fn,
+    });
+    expect((await archived.run(CTX, { project_id: PID, seed_from_ranking_pages: true })).isError).toBe(true);
+
+    expect(seed.calls).toHaveLength(0);
   });
 });

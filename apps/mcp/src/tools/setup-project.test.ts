@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { normalizeDomain } from "./setup-project.ts";
+import type { AuthContext } from "../auth.ts";
+import type { DomainReachability } from "./domain-reachability.ts";
+import { makeSetupProjectTool, normalizeDomain } from "./setup-project.ts";
 
 /**
  * Unit tests for domain normalization (pure — no DB). A domain may arrive as a bare
@@ -62,7 +64,105 @@ describe("normalizeDomain", () => {
     }
   });
 
+  /**
+   * S4. The canonical form drops a leading `www.` — the difference between one project per site
+   * and two. Measured live 2026-08-25: `https://www.seogrep.com/pricing?utm_source=…` opened a
+   * SECOND project beside `seogrep.com`, while the tool's own description promised idempotency.
+   */
+  it("drops a leading `www.` so one site canonicalizes to ONE domain", () => {
+    for (const raw of ["www.example.com", "https://www.example.com/x?y=1", "WWW.Example.com"]) {
+      expect(normalizeDomain(raw)).toEqual({ ok: true, domain: "example.com" });
+    }
+  });
+
+  it("drops ONLY `www.` — a subdomain is a different site and stays one", () => {
+    expect(normalizeDomain("blog.example.com")).toEqual({ ok: true, domain: "blog.example.com" });
+  });
+
   it("still accepts a normal public domain", () => {
     expect(normalizeDomain("example.com")).toEqual({ ok: true, domain: "example.com" });
+  });
+});
+
+/**
+ * THE REACHABILITY WARNING (S17). Measured 2026-08-25:
+ * `setup_project("bu-domain-kesinlikle-yok-9f3a2c.com")` answered
+ * `Created project … (created: true)` in the same successful tone as a real site, with no
+ * warning — and whats_next then recommended a 20-credit crawl against it.
+ *
+ * Both ports are injected, so these specs make no DB call and no DNS query. The operator signed
+ * WARN, not block, so every case below asserts the project was still created.
+ */
+describe("setup_project — the domain-does-not-resolve warning", () => {
+  const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
+
+  function tool(reachability: DomainReachability, seen: string[] = []) {
+    return makeSetupProjectTool({
+      openProject: async (_userId, raw) => {
+        const normalized = normalizeDomain(raw);
+        if (!normalized.ok) return { ok: false, error: normalized.error };
+        return {
+          ok: true,
+          project: { id: "p-1", domain: normalized.domain, outcome: "created" },
+        };
+      },
+      checkDomain: async (domain) => {
+        seen.push(domain);
+        return reachability;
+      },
+    });
+  }
+
+  async function textOf(reachability: DomainReachability, domain = "bu-domain-yok-9f3a2c.com") {
+    const result = await tool(reachability).run(CTX, { domain });
+    expect(result.isError).toBeUndefined();
+    return result.content[0]?.text ?? "";
+  }
+
+  it("warns AND still registers when the domain does not resolve", async () => {
+    const text = await textOf("no_such_domain");
+    // Both halves of the signed behaviour, in one assertion pair: the project exists...
+    expect(text).toMatch(/created: true/);
+    expect(text).toContain("project_id: p-1");
+    // ...and the answer no longer reads as an unqualified success.
+    expect(text).toMatch(/does not resolve/i);
+  });
+
+  it("says nothing extra for a domain that resolves", async () => {
+    const text = await textOf("resolves", "seogrep.com");
+    expect(text).toMatch(/created: true/);
+    expect(text).not.toMatch(/does not resolve/i);
+    expect(text).not.toMatch(/heads up/i);
+  });
+
+  /**
+   * THE FAILURE SEMANTICS, at the tool's own surface. A lookup that timed out or whose resolver
+   * was unreachable must be indistinguishable from one that succeeded — silence, not an
+   * accusation. This is the case a network blip produces, and it is the one that would otherwise
+   * warn on every registration in the account.
+   */
+  it("stays silent when the check could not run — a blip is not a missing domain", async () => {
+    const text = await textOf("unknown");
+    expect(text).toMatch(/created: true/);
+    expect(text).not.toMatch(/does not resolve/i);
+    expect(text).toBe(await textOf("resolves", "bu-domain-yok-9f3a2c.com"));
+  });
+
+  /**
+   * It asks about the CANONICAL name. The `www.` normalization landed earlier in this wave and a
+   * check that queried the raw input would be checking a different host than the crawler will
+   * fetch — and would answer for `www.` sites that publish only an apex record, or the reverse.
+   */
+  it("checks the normalized domain, not the string the caller pasted", async () => {
+    const seen: string[] = [];
+    await tool("resolves", seen).run(CTX, { domain: "HTTPS://WWW.Example.com/pricing?x=1" });
+    expect(seen).toEqual(["example.com"]);
+  });
+
+  it("runs no check at all when the domain never became a project", async () => {
+    const seen: string[] = [];
+    const result = await tool("no_such_domain", seen).run(CTX, { domain: "not a domain" });
+    expect(result.isError).toBe(true);
+    expect(seen).toEqual([]);
   });
 });

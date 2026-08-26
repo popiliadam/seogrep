@@ -158,7 +158,7 @@ describe("every priced audit records the run it just performed", () => {
  * passes through any change the engine and the formatter make together.
  *
  * WHEN A RULE WAVE DELIBERATELY MOVES THEM, the literal is re-frozen and the reason is written
- * here — never quietly. One such move so far:
+ * here — never quietly. Two such moves so far:
  *
  *  - Faz 2 (broken internal links): `audit_tech` grew two lines. THIS FIXTURE EARNS THEM — the
  *    home page links to `/gone`, and `/gone` is a page THIS crawl fetched and got a 404 from,
@@ -166,6 +166,21 @@ describe("every priced audit records the run it just performed", () => {
  *    cannot judge is elsewhere and is a stronger measurement than this one: format-graph.test.ts
  *    pins the sha256 of all three renderers over an OLD-SHAPED crawl against the digests measured
  *    on `main`. The other two literals below are untouched.
+ *
+ *  - S10e (a threshold breach must name its threshold): `audit_onpage` grew ", minimum 200" and
+ *    ", minimum 10" on two lines. THIS FIXTURE EARNS THEM — the home page really is 50 words
+ *    against a 200-word floor, `/gone`'s title really is 7 chars against a 10-char one, and a
+ *    customer told only "thin content (50 words)" cannot tell how far short that is. Two lines
+ *    moved, both by a suffix; nothing was added, removed or reordered, and `audit_tech` and
+ *    `audit_schema` are untouched.
+ *
+ *  - S10d (the skipped list states its reason once): `audit_tech`'s one skipped row became two
+ *    lines — the reason with its own count, then the URL under it. THIS FIXTURE EARNS THE SHAPE
+ *    but not the motive: a live audit printed FIFTY rows carrying that same one reason, and the
+ *    repetition hid the only readable fact, which is how many URLs each reason accounts for. One
+ *    row here is the smallest case of the same rendering, and it is the one that proves the shape
+ *    holds when there is nothing to summarise. `audit_onpage` and `audit_schema` are untouched,
+ *    and format-graph.test.ts carries the arithmetic that nothing else in the tech report moved.
  */
 const SNAPSHOTS: Record<string, string> = {
   audit_onpage: [
@@ -177,9 +192,9 @@ const SNAPSHOTS: Record<string, string> = {
     "Findings by page:",
     "- https://snap.example/",
     "    · missing meta description",
-    "    · thin content (50 words)",
+    "    · thin content (50 words, minimum 200)",
     "- https://snap.example/gone",
-    "    · title too short (7 chars)",
+    "    · title too short (7 chars, minimum 10)",
     "    · missing canonical",
   ].join("\n"),
   audit_tech: [
@@ -193,7 +208,8 @@ const SNAPSHOTS: Record<string, string> = {
     "",
     "Not crawled (skipped): 1",
     "  robots: 1",
-    "    · https://snap.example/private (blocked by robots.txt)",
+    "    blocked by robots.txt — 1 URL(s):",
+    "      · https://snap.example/private",
     "",
     "Robots conflicts (noindex but internally linked): 0",
     "",

@@ -109,6 +109,34 @@ describe("untrack_project", () => {
     expect(run.recorder.archived).toEqual([]);
   });
 
+  /**
+   * Measured 2026-08-25 (tool review card 9): the already-archived answer named ONLY
+   * track_gsc_property, which restores a project through its Search Console PROPERTY. A project
+   * created by setup_project and never connected has none, so the single route on offer did not
+   * work for it.
+   *
+   * The pin is a COMPARISON, not a copy of either sentence: whatever ways back the first
+   * archiving names, the second call must name at least those. A wording change that quietly
+   * drops one turns this red without any literal being pinned (signed lesson 11).
+   */
+  it("offers the already-archived caller every way back the first archiving offered", async () => {
+    const first = await callTool({ project_id: ACTIVE.id }, { own: [ACTIVE] });
+    const again = await callTool({ project_id: ALREADY_PUT_AWAY.id }, { own: [ALREADY_PUT_AWAY] });
+
+    const routes = (text: string): string[] =>
+      [...text.matchAll(/\b(setup_project|track_gsc_property|connect_gsc|list_projects)\b/g)]
+        .map((match) => match[1]!)
+        .filter((name, index, all) => all.indexOf(name) === index)
+        .sort();
+
+    expect(routes(first.text).length).toBeGreaterThan(0);
+    for (const route of routes(first.text)) {
+      expect(routes(again.text), `already-archived answer drops "${route}"`).toContain(route);
+    }
+    // And specifically: a route that does not depend on having a Search Console property.
+    expect(routes(again.text)).toContain("setup_project");
+  });
+
   it("answers another tenant's project exactly like an id that exists for nobody", async () => {
     // No existence oracle (the get_job_status pattern): the two answers are compared
     // byte-for-byte rather than by a shared /not found/ pattern, which two DIFFERENT

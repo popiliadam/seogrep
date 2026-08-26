@@ -4,12 +4,17 @@ import {
   DEFAULT_RANKED_KEYWORDS_LIMIT,
   createMockRankedKeywordsPort,
   disabledRankedKeywordsPort,
+  parseRankedKeywordsResponse,
   type RankedKeywordRow,
   type RankedKeywordsPort,
   type RankedKeywordsQuery,
   type RankedKeywordsResult,
 } from "../dfs/ranked-keywords.ts";
-import { EMPTY_ORGANIC_METRICS, type DomainOrganicMetrics } from "../dfs/competitors.ts";
+import {
+  EMPTY_ORGANIC_METRICS,
+  WHOLE_DOMAIN_MEASUREMENT_NOTE,
+  type DomainOrganicMetrics,
+} from "../dfs/competitors.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import {
   fetchAndRenderRankedKeywords,
@@ -1079,5 +1084,404 @@ describe("ranked_keywords free pre-reserve gates (no credit machinery)", () => {
     await expect(withProjects().run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(
       /environment configuration/i,
     );
+  });
+});
+
+// =============================================================================================
+// S1 — ABSENT IS NOT ZERO, PROVEN FROM THE VENDOR BODY AND NOT FROM A HAND-BUILT ROW.
+//
+// Every spec above builds a RankedKeywordRow directly, so the zod projection in
+// dfs/ranked-keywords.ts — the only place a zero could be invented — was never under test from
+// this side. These run the REAL parser over a body shaped like the one measured 2026-08-25
+// (dentnotion.com, tr/Türkiye), where `keyword_properties` carried `detected_language` alone and
+// `keyword_difficulty` was NOT among its keys.
+//
+// TWO fields, two conventions, both deliberate and both pinned here:
+//   - a ROW field (`keyword_difficulty`) is OMITTED when absent, exactly as `cpc` already is —
+//     the rule the "OMITS %s" specs above established, so a hundred rows are not padded with n/a;
+//   - a HEALTH-CARD field (`is_lost`) is a fixed line, so it prints the word "n/a".
+// Either way the output distinguishes "the vendor did not say" from "the vendor said zero", which
+// is the whole claim; a 0 in place of a silence is a number the reader will act on.
+// =============================================================================================
+
+/** The measured item shape, with the two keys under test supplied by each spec. */
+function rankedItem(overrides: {
+  readonly keyword_properties: Record<string, unknown>;
+}): unknown {
+  return {
+    keyword_data: {
+      keyword: "diş taşı temizliğinden sonra yemek yenir mi",
+      location_code: 2792,
+      language_code: "tr",
+      keyword_info: {
+        se_type: "google",
+        last_updated_time: "2026-08-01 00:00:00 +00:00",
+        competition_level: "LOW",
+        search_volume: 480,
+      },
+      keyword_properties: overrides.keyword_properties,
+    },
+    ranked_serp_element: {
+      serp_item: { type: "organic", rank_group: 3, rank_absolute: 4, url: "https://dentnotion.com/a" },
+    },
+  };
+}
+
+/** A ranked_keywords envelope carrying one item and, optionally, a metrics block. */
+function rankedEnvelope(item: unknown, organic?: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [
+      {
+        status_code: 20000,
+        result: [
+          {
+            target: "dentnotion.com",
+            total_count: 1,
+            items_count: 1,
+            ...(organic === undefined ? {} : { metrics: { organic } }),
+            items: [item],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Parse a whole body through the real parser and render it, exactly as the handler does. */
+function renderedFromBody(raw: unknown): string {
+  return formatRankedKeywords(parseRankedKeywordsResponse(raw), {
+    language_code: "tr",
+    location_code: 2792,
+  });
+}
+
+/** The four movement counters, minus the one key each spec is about. */
+const MOVEMENT_WITHOUT_IS_LOST = { count: 6, is_new: 89, is_up: 57, is_down: 41 };
+
+describe("S1 — a field absent from the vendor body never becomes a 0", () => {
+  it("omits difficulty when keyword_properties carries no keyword_difficulty key", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } })),
+    );
+    expect(text).not.toMatch(/difficulty/i);
+    // …while the row itself is intact: the omission is one field, not a degraded line.
+    expect(text).toContain("position #3 organic (#4 on the page), volume 480, competition LOW");
+  });
+
+  it("prints difficulty 0/100 when the vendor reports the difficulty AS 0", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({
+          keyword_properties: { se_type: "google", detected_language: "tr", keyword_difficulty: 0 },
+        }),
+      ),
+    );
+    expect(text).toContain("difficulty 0/100");
+  });
+
+  it("prints 'no longer found: n/a' when the metrics block carries no is_lost key", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } }),
+        MOVEMENT_WITHOUT_IS_LOST,
+      ),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: n/a",
+    );
+  });
+
+  it("prints 'no longer found: 0' when the vendor reports is_lost AS 0", () => {
+    const text = renderedFromBody(
+      rankedEnvelope(
+        rankedItem({ keyword_properties: { se_type: "google", detected_language: "tr" } }),
+        { ...MOVEMENT_WITHOUT_IS_LOST, is_lost: 0 },
+      ),
+    );
+    expect(text).toContain(
+      "newly ranking: 89 · moved up: 57 · moved down: 41 · no longer found: 0",
+    );
+  });
+});
+
+// =============================================================================================
+// S19 — WHICH DataForSEO MEASUREMENT THE HEALTH CARD IS.
+//
+// The card is this tool's own `result.metrics.organic`, arriving in the SAME paid response as the
+// rows. compare_competitors prints the identical nineteen fields under identical labels from
+// competitors_domain or domain_rank_overview — separate DataForSEO measurements of the same
+// domain, which disagree (this fixture's `is_lost` is 96; competitors-domain.json says 319 and
+// domain-rank-overview.json says 547 for the same domain). Under one unnamed heading that read as
+// the product contradicting itself. Forcing the numbers to agree would fabricate one of them, so
+// the heading names the measurement instead.
+//
+// Both specs drive the REAL parser into the REAL renderer: asserting against a metrics object
+// built in the test would prove nothing about which vendor key was read (lesson 12).
+// =============================================================================================
+
+/** A ranked_keywords envelope carrying a whole `metrics` block — organic plus any siblings. */
+function rankedEnvelopeWithMetrics(metricsBlock: Record<string, unknown>): unknown {
+  return {
+    status_code: 20000,
+    tasks: [
+      {
+        status_code: 20000,
+        result: [
+          {
+            target: "dentnotion.com",
+            total_count: 1,
+            items_count: 1,
+            metrics: metricsBlock,
+            items: [rankedItem({ keyword_properties: { se_type: "google" } })],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe("S19 — the health card names the DataForSEO measurement it came from", () => {
+  it("names ranked keywords — and neither of the endpoints compare_competitors reads", () => {
+    const text = formatRankedKeywords(parseRankedKeywordsResponse(fixtureResponse), RENDER_INPUT);
+    expect(text).toContain(
+      "Across the whole domain — every keyword it ranks for, from DataForSEO's ranked-keywords data:\n" +
+        "- Organic SERPs containing the domain: 5,312",
+    );
+    // 96 is THIS response's figure. The other two measurements of the same domain say 319 and 547
+    // in this repo's own fixtures; claiming either name here would misattribute a real number.
+    expect(text).toContain("no longer found: 96");
+    expect(text).not.toContain("DataForSEO's competitor-discovery data");
+    expect(text).not.toContain("DataForSEO's domain-overview data");
+  });
+
+  /**
+   * The card is `metrics.organic` specifically, not "whichever block `metrics` happens to hold".
+   * The sibling below is modelled on domain-rank-overview.json, which carries a `metrics.paid`
+   * beside its organic one; whether ranked_keywords returns one is NOT claimed here — the spec is
+   * about which key OUR parser reads when more than one is present.
+   *
+   * Mutation proof: re-point projectOrganicMetrics at `metrics.paid` and the card prints 4,242
+   * lost rankings under a heading that says ranked keywords.
+   */
+  it("reads the ORGANIC block, never a sibling block sitting beside it", () => {
+    const text = formatRankedKeywords(
+      parseRankedKeywordsResponse(
+        rankedEnvelopeWithMetrics({
+          organic: { count: 5312, is_new: 128, is_up: 402, is_down: 517, is_lost: 96 },
+          paid: { count: 11, is_new: 2, is_up: 11, is_down: 3, is_lost: 4242 },
+        }),
+      ),
+      RENDER_INPUT,
+    );
+    expect(text).toContain("- Organic SERPs containing the domain: 5,312");
+    expect(text).toContain("no longer found: 96");
+    expect(text).not.toContain("4,242");
+    expect(text).not.toContain("- Organic SERPs containing the domain: 11");
+  });
+
+  it("prints the measurement note ONCE, below the figures the card just stated", () => {
+    const text = formatRankedKeywords(parseRankedKeywordsResponse(fixtureResponse), RENDER_INPUT);
+    expect(text.split(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toHaveLength(2);
+    expect(text.indexOf(WHOLE_DOMAIN_MEASUREMENT_NOTE)).toBeGreaterThan(
+      text.indexOf("Organic SERPs containing the domain"),
+    );
+  });
+
+  it("carries no note when the vendor sent no metrics block — nothing to attribute", () => {
+    const text = formatRankedKeywords(
+      parseRankedKeywordsResponse(rankedEnvelope(rankedItem({ keyword_properties: {} }))),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain("Across the whole domain");
+    expect(text).not.toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
+  });
+});
+
+/**
+ * S23.1' — THE FLAT-ZERO READING NOTES (signed 2026-08-26, 0 credits; scope widened 2026-08-26
+ * after a judge probe found the signal bound to ONE column while three others went unremarked).
+ *
+ * Measured on the live walkthrough: 10/10 and then 6/6 ranked keywords came back at
+ * `difficulty 0/100` on volumes of 2,400-14,800. The parsing was NOT at fault — a 0 reaches the
+ * reader only when DataForSEO sent a 0, and the vendor's own dedicated endpoint proves the field
+ * works and varies in that market. What the reader still gets is a column with no signal in it
+ * that reads as a measurement.
+ *
+ * EVERY per-row numeric column this table prints is bound: `volume`, `CPC`, `difficulty` and
+ * `est. traffic`. See FLAT_ZERO_COLUMNS in the source for the four exclusions and the measurement
+ * behind each, and format/flat-zero.ts for the sentence these notes are forbidden to become.
+ */
+describe("S23.1' — the flat-zero notes on ranked_keywords", () => {
+  const FLAT = 'READ THIS FLAT COLUMN AS "NO SIGNAL"';
+  /** Which columns spoke, in the order they spoke. Read from the notes, never assumed. */
+  const notedColumns = (text: string): string[] =>
+    [...text.matchAll(/DataForSEO reported (.+?) 0 for every one of/g)].map((m) => m[1]!);
+
+  const zeroRow = (keyword: string, position: number, over: Partial<RankedKeywordRow> = {}) =>
+    row({ keyword, position, search_volume: 14800, keyword_difficulty: 0, ...over });
+
+  it("(a) ONE flat column speaks, and only that one", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4, { cpc: 3.2, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 8100, cpc: 1.1, etv: 120 }),
+          zeroRow("dis beyazlatma", 11, { search_volume: 6600, cpc: 0.4, etv: 60 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(1);
+    expect(text).toContain("every one of the 3 keywords above");
+  });
+
+  it("(b) TWO flat columns speak TWICE, in the order the row prints them", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4, { cpc: 0, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 8100, cpc: 0, etv: 120 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    // CPC is printed BEFORE difficulty on the row, so its note comes first.
+    expect(notedColumns(text)).toEqual(["CPC", "difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(2);
+  });
+
+  it("(c) THREE flat columns speak three times, still in print order", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4, { search_volume: 0, cpc: 0, etv: 900 }),
+          zeroRow("zirkonyum dis", 7, { search_volume: 0, cpc: 0, etv: 120 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["volume", "CPC", "difficulty"]);
+  });
+
+  it("(c) all FOUR bound columns can speak at once", () => {
+    const flatEverything = { search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 } as const;
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "dis teli", position: 4, ...flatEverything }),
+          row({ keyword: "zirkonyum dis", position: 7, ...flatEverything }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["volume", "CPC", "difficulty", "est. traffic"]);
+    // `est. traffic` is the one column with no non-English capture behind it, so ITS note — and
+    // only its note — withholds the claim about the vendor's other lookups.
+    const traffic = text.slice(text.lastIndexOf(FLAT));
+    expect(traffic).toContain("est. traffic");
+    expect(traffic).not.toContain("non-English markets");
+    expect(text.slice(0, text.lastIndexOf(FLAT))).toContain("non-English markets");
+  });
+
+  it("(d) NOTHING is said when no column is flat", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "dis teli", position: 4, search_volume: 14800, cpc: 3.2, keyword_difficulty: 0, etv: 900 }),
+          row({ keyword: "implant dis fiyatlari", position: 9, search_volume: 2400, cpc: 1.1, keyword_difficulty: 12, etv: 120 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("difficulty 0/100");
+    expect(text).toContain("difficulty 12/100");
+  });
+
+  it("says NOTHING on a single row — one value never varied from anything", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "dis teli", position: 4, search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("difficulty 0/100");
+  });
+
+  it("a null row neither breaks a column's pattern nor counts toward it", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          zeroRow("dis teli", 4),
+          row({ keyword: "ortodonti", position: 22 }),
+          zeroRow("dis beyazlatma", 11, { search_volume: 6600 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["difficulty"]);
+    // TWO, not three: the silent row is not evidence of a zero and is not counted as one.
+    expect(text).toContain("every one of the 2 keywords above");
+    const silent = text.split("\n").find((line) => line.startsWith("• ortodonti")) ?? "";
+    expect(silent).not.toContain("difficulty");
+  });
+
+  it("does NOT suppress or rewrite the zeros it is talking about", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [zeroRow("dis teli", 4), zeroRow("zirkonyum dis", 7, { search_volume: 8100 })] }),
+      RENDER_INPUT,
+    );
+    expect(text.split("difficulty 0/100").length - 1).toBe(2);
+    expect(text).not.toContain("difficulty not reported");
+  });
+
+  /**
+   * WHY `position` AND THE HEALTH CARD ARE NOT BOUND — the S23 decision file's §4.3 claimed the
+   * signal already covered `rank 0` and `is_lost: 0`, and it does not. `rank_group` is 1-based, so
+   * a flat zero is not a value the scale can carry; `is_lost` is ONE number for the whole answer,
+   * and "it never varied across the rows" cannot be said of a single value. Both are narrowed to
+   * "not covered" in the source and in the decision file, and this pins that they stay uncovered.
+   */
+  it("never speaks about position or about a health-card figure", () => {
+    const text = formatRankedKeywords(
+      result({
+        metrics: metrics({ count: 3, is_lost: 0, is_new: 0, is_up: 0, is_down: 0, etv: 0 }),
+        rows: [
+          row({ keyword: "dis teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
+          row({ keyword: "zirkonyum dis", position: 7, search_volume: 8100, keyword_difficulty: 0 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(notedColumns(text)).toEqual(["difficulty"]);
+    expect(text).not.toMatch(/DataForSEO reported (position|is_lost|is_new) 0/);
+    // ...while the card itself still prints those zeros exactly as it always did.
+    expect(text).toContain("no longer found: 0");
+  });
+
+  it("claims no CAUSE for the zeros at the surface either", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [zeroRow("dis teli", 4), zeroRow("zirkonyum dis", 7, { search_volume: 8100 })] }),
+      RENDER_INPUT,
+    );
+    const note = text.slice(text.indexOf(FLAT));
+    for (const claim of [/\bplans?\b/i, /\bunavailable\b/i, /\bnot available\b/i, /\babsent\b/i]) {
+      expect(note, `the note claims a cause matching ${claim}`).not.toMatch(claim);
+    }
+  });
+
+  it("keeps the notes in English (imzali ders 4)", () => {
+    const flatEverything = { search_volume: 0, cpc: 0, keyword_difficulty: 0, etv: 0 } as const;
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "kw one", position: 4, ...flatEverything }),
+          row({ keyword: "kw two", position: 7, ...flatEverything }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
   });
 });

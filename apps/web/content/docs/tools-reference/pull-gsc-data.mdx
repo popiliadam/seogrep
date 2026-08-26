@@ -11,7 +11,14 @@ description: "Pull two windows of Google Search Console performance (current + p
 
 Using your project's encrypted refresh token, it mints a short-lived Google access token and runs `searchAnalytics.query` for both windows, broken down by **query and page**. The two windows are equal length and adjacent, so the discovery tools can compare "now" against "before". The result is stored against your project; the discovery tools read the most recent pull.
 
-Only a completed pull is charged: if the project has no Search Console connection, no stored token, or no matched property — or if the Google call fails — you are **not** charged.
+Only a completed pull is charged, and every refusal below happens before anything is spent — you are **not** charged, and each one says so:
+
+- the project is **archived**;
+- the project has **no Search Console connection** — no Google account is attached yet;
+- the connection has **no matched property**, so there is nothing to query;
+- Google **refuses the property** (403). The answer names the property and the two things that clear it: have an owner grant this account access, or connect an account that already has it;
+- the Google **credential is dead** (access revoked or expired). The answer names the account and hands you the re-approval link — and SeoGrep also records that the account needs reconnecting, which is why [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) and [`whats_next`](/docs/tools-reference/whats-next) start saying so straight afterwards;
+- the Google call fails for any other reason.
 
 ## Example
 

@@ -11,7 +11,9 @@ description: "Find queries your pages rank for but never mention in their title 
 
 It joins two things you have already paid for and calls no outside service. From your latest pull it takes each `(query, page)` row; from your latest crawl it takes each page's title and h1s. A query counts as **said** when every one of its meaningful words appears somewhere in the title *or* an h1 of that page, matched case- and accent-insensitively, and anywhere inside a word (so "shoe" is found in "shoes").
 
-A short bilingual list of filler words (`the`, `and`, `for`, `ve`, `ile`, `bir`, and a few more) is ignored — their presence in a title says nothing about whether the page covers the query. Everything else has to be there.
+A short bilingual list of filler words (`the`, `and`, `for`, `ve`, `ile`, `bir`, and a few more) is ignored — their presence in a title says nothing about whether the page covers the query.
+
+**Your own brand words are ignored too.** A query whose only missing words are your site's own name is dropped from the list entirely, and a query missing your brand *and* something else keeps only the something else. The reply says how many were dropped that way. This is not a courtesy: reporting a firm to itself for not repeating its own name in its titles is a finding nobody can act on, and a list of those crowds out the ones you can. Everything else has to be there.
 
 Both the title **and** the h1s are read, deliberately. A title trimmed to fit the search result routinely drops a qualifier the heading keeps, and reading the title alone would report every such page as a problem — a list of findings you cannot act on is worse than no list. Results are ordered by impressions, biggest missed opportunity first.
 
@@ -37,7 +39,9 @@ Then hand a finding straight back to your assistant:
 
 ### Returns
 
-One line per mismatching query — the query, the page ranking for it, its impressions and clicks, the words that are missing, how many of the query's words the page does carry, and the page's current title — biggest opportunity first. Then the coverage line, the window the Search Console figures cover, when that data was pulled, and when the crawl was taken. If nothing mismatches, it says so (and you are still charged for the delivered analysis).
+**The coverage line comes first**, above the findings, together with the window the Search Console figures cover, when that data was pulled, when the crawl was taken, and how many queries were dropped as brand-only. A ratio that changes how you read the list has to arrive before the list, not under it.
+
+Then one line per mismatching query — the query, the page ranking for it, its impressions and clicks, the words that are missing, how many of the query's words the page does carry, and the page's current title — biggest opportunity first. The list is capped; past the cap the reply says how many more pairs mismatch. If nothing mismatches, it says so (and you are still charged for the delivered analysis).
 
 ### Inherited limits
 

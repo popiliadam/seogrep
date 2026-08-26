@@ -4,6 +4,7 @@ import { createMockLinkGapPort, disabledLinkGapPort } from "../dfs/link-gap.ts";
 import type { LinkGapResult, LinkGapRow } from "../dfs/link-gap.ts";
 import { SELF_COMPETITOR_MESSAGE, formatLinkGap, makeLinkGapTool } from "./link-gap.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import linkGapFixture from "../dfs/fixtures/backlinks-domain-intersection.json";
 
 /**
@@ -266,5 +267,118 @@ describe("link_gap free pre-reserve gates (no credit machinery)", () => {
     await expect(
       serving().run(CTX, { project_id: PROJECT_ID, competitor: "rival.com" }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// S14 item 3 — THE EXAMPLE URL THAT CANNOT BE SUPPLIED, SAID OUT LOUD.
+//
+// The review asked for one example source URL per candidate, "the sibling tools already have it".
+// They have it because they read /backlinks/backlinks, whose rows are individual LINKS carrying
+// `url_from` and `url_to`. This tool's ONE paid request is /backlinks/domain_intersection, whose
+// entry carries no page URL of any kind — checked against the vendor's documented field list and
+// against the parser in dfs/link-gap.ts, which throws nothing away. Inventing "https://<domain>"
+// would publish a page nobody fetched, and buying a second request would move what the signed 45
+// credits pay for. So the tool states the limit and names the tool that does have the URLs.
+// =============================================================================================
+
+describe("S14 — link_gap says why it shows no example URL, and never invents one", () => {
+  const text = formatLinkGap(gap([FULL_ROW, BARE_ROW], 612));
+
+  it("names the vendor endpoint and says it reports at domain level only", () => {
+    expect(text).toMatch(/no example linking page is shown/i);
+    expect(text).toMatch(/domain_intersection/);
+    expect(text).toMatch(/domain level/i);
+  });
+
+  it("does not fabricate a URL for any prospect domain", () => {
+    expect(text).not.toMatch(/https?:\/\/searchengineweekly\.test/);
+    expect(text).not.toMatch(/https?:\/\/marketingroundup\.test/);
+    // The only URL-shaped thing allowed on the page is nothing at all.
+    expect(text).not.toMatch(/https?:\/\//);
+  });
+
+  it("names the tool that DOES carry the linking pages, and that it is a separate paid lookup", () => {
+    expect(text).toMatch(/backlink_details/);
+    expect(text).toMatch(/rival\.com/);
+    expect(text).toMatch(/separate 35-credit lookup/i);
+  });
+
+  /** A "no gap" answer has no rows to caption, so the footer would be answering nothing. */
+  it("stays off the empty answer", () => {
+    expect(formatLinkGap(gap([]))).not.toMatch(/no example linking page/i);
+  });
+});
+
+// =============================================================================================
+// F3 claim 3 — THE HEADER PROMISE, PINNED ON BOTH SIDES (the keyword_gap defect, same wording).
+//
+// The schema promised "The header always says how many exist in total, so a shorter list never
+// reads like the whole picture." `renderLinkGapHeader` printed the total ONLY when the vendor
+// sent one AND it exceeded the window, so the two cases that matter most were silent: a short
+// list that IS the whole picture, and a vendor that sent no count at all.
+//
+// Fixed on both sides — the header now states the vendor's total whenever it has one and says
+// plainly when it does not, and the schema sentence describes that instead of promising more.
+// `rows.length` is never printed as the total: it is our count of what came back, not the
+// vendor's count of what exists (NEVER #7).
+//
+// The schema specs read the PUBLISHED JSON schema and assert on meaning with regexes rather than
+// on a copy of the source string (signed lesson 11).
+// =============================================================================================
+
+describe("F3 — the link_gap header states what is known about the whole set", () => {
+  it("says N of M when the vendor's total exceeds the window", () => {
+    const text = formatLinkGap(gap([FULL_ROW], 612));
+    expect(text).toContain("1 of 612 domains");
+    expect(text).not.toMatch(/all of them/i);
+  });
+
+  it("says the list IS all of them when the window covers the vendor's total", () => {
+    const text = formatLinkGap(gap([FULL_ROW], 1));
+    expect(text).toMatch(/reports 1 in total/i);
+    expect(text).toMatch(/all of them/i);
+    expect(text).not.toContain(" of 1 domains");
+  });
+
+  it("says the vendor sent no total, rather than letting the list read as complete", () => {
+    const text = formatLinkGap(gap([FULL_ROW, BARE_ROW], null));
+    expect(text).toMatch(/no count of the whole set/i);
+    expect(text).toMatch(/may not be all of them/i);
+  });
+
+  it("never promotes the row count to a vendor total", () => {
+    const text = formatLinkGap(gap([FULL_ROW, BARE_ROW], null));
+    expect(text).not.toMatch(/\b2 in total\b/);
+    expect(text).not.toMatch(/of 2 domains/);
+    expect(text).not.toMatch(/reports \d+ in total/i);
+  });
+});
+
+describe("F3 — the link_gap limit description matches what the header does", () => {
+  const tool = makeLinkGapTool();
+  const schema = tool.inputJsonSchema as { properties: Record<string, { description?: string }> };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("withdraws the unconditional 'always says how many in total' promise", () => {
+    expect(limit).not.toMatch(/header always says/i);
+    expect(limit).not.toMatch(/always says how many/i);
+  });
+
+  it("conditions the total on the vendor sending one", () => {
+    expect(limit).toMatch(/whenever[\s\S]*sends a count/i);
+  });
+
+  it("says plainly what happens when the vendor sends no count", () => {
+    expect(limit).toMatch(/no count/i);
+  });
+
+  it("keeps the promise it CAN keep", () => {
+    expect(limit).toMatch(/never reads like the whole picture/i);
+  });
+
+  it("keeps the signed price: TOOL_COSTS stays the only price table", () => {
+    expect(tool.description).toContain(`${TOOL_COSTS.link_gap} credits`);
+    expect(limit).not.toMatch(/credits?/i);
   });
 });

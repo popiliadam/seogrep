@@ -72,11 +72,59 @@ export type NormalizedDomain = { readonly ok: true; readonly domain: string } | 
 };
 
 /**
+ * `host`, lower-cased, trailing dot gone, and its LEADING `www.` label dropped.
+ *
+ * WHY IT EXISTS. `www.seogrep.com` and `seogrep.com` are the same customer site, and until
+ * 2026-08-25 nothing here said so: `setup_project` stripped the scheme, the path and the query
+ * but kept `www.`, so a customer who pasted the URL out of their address bar got a SECOND
+ * project for a site they were already tracking. Six such rows exist in one live account and
+ * five of them predate the review; the split sends the crawl history to one project and the
+ * Search Console data to the other, and every tool that joins the two then reads half the data
+ * whichever project it is called from.
+ *
+ * ONLY THE LEADING `www.` LABEL, and that is the whole rule. `blog.example.com` is a genuinely
+ * different site and stays one; `api.www.example.com` keeps its mid-host `www`; and it strips
+ * ONCE rather than in a loop, so `www.www.example.com` becomes `www.example.com` instead of
+ * collapsing an arbitrary number of labels. Two modules already draw the line in exactly this
+ * place — `dfs/serp.ts`'s DOMAIN_MATCH_RULE ("exact_host_www_stripped") and
+ * `dfs/relevant-pages.ts`'s pageJoinKey, whose header already asserted "our own domain
+ * normalizer drops it" while this one did not. This is the third statement of one rule, not a
+ * fourth answer.
+ *
+ * The `rest.includes(".")` guard is not decoration: `www.com` is a real registrable domain, and
+ * stripping it would leave the single label `com`, which no gate below would accept.
+ */
+export function stripWwwLabel(host: string): string {
+  const lower = host.trim().toLowerCase().replace(/\.+$/, "");
+  if (!lower.startsWith("www.")) return lower;
+  const rest = lower.slice("www.".length);
+  return rest.includes(".") ? rest : lower;
+}
+
+/**
+ * Every STORED form that means the same site as `domain`: the canonical host and its `www.`
+ * twin, in that order.
+ *
+ * A forward-only fix does not reach rows that already exist. The six `www.` projects measured on
+ * 2026-08-25 keep their stored domain, so a lookup asking for the canonical host alone would
+ * miss them and open a seventh — the very failure this change exists to stop. Callers that look
+ * a project up by domain ask for both forms and prefer the canonical one; the ORDER of this
+ * array is that preference, and callers depend on it.
+ */
+export function sameSiteDomains(domain: string): readonly string[] {
+  const bare = stripWwwLabel(domain);
+  return [bare, `www.${bare}`];
+}
+
+/**
  * Canonicalize a domain input. Accepts a bare host or a full URL; extracts the host,
- * lowercases it, drops any trailing dot (FQDN) — the scheme/path/port/query fall away
- * with the URL parse. Returns a descriptive English error for anything that is not a
- * valid public domain (no host, single label, illegal characters, or an internal /
- * reserved name such as foo.internal / x.local).
+ * lowercases it, drops any trailing dot (FQDN) and a leading `www.` label — the
+ * scheme/path/port/query fall away with the URL parse. Returns a descriptive English error for
+ * anything that is not a valid public domain (no host, single label, illegal characters, or an
+ * internal / reserved name such as foo.internal / x.local).
+ *
+ * The `www.` strip is what makes `setup_project`'s idempotency claim true for the form a
+ * customer actually pastes; see {@link stripWwwLabel} for the rule and its limits.
  */
 export function normalizeDomain(raw: string): NormalizedDomain {
   const trimmed = raw.trim();
@@ -90,7 +138,7 @@ export function normalizeDomain(raw: string): NormalizedDomain {
   } catch {
     return { ok: false, error: `"${raw}" is not a valid domain or URL.` };
   }
-  const domain = host.toLowerCase().replace(/\.+$/, "");
+  const domain = stripWwwLabel(host);
   if (!DOMAIN_RE.test(domain)) {
     return {
       ok: false,

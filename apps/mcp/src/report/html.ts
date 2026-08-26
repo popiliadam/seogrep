@@ -1,3 +1,4 @@
+import { describeDataAge } from "@pseo/core";
 import {
   DEEP_PAGE_DEPTH,
   HEAVY_PAGE_BYTES,
@@ -166,12 +167,6 @@ function urlText(url: string): string {
   return `<span class="u">${escapeHtml(url)}</span>`;
 }
 
-/** "today" / "1 day ago" / "N days ago" — the age wording renderPullProvenance uses. */
-function agePhrase(ageDays: number): string {
-  if (ageDays <= 0) return "today";
-  return ageDays === 1 ? "1 day ago" : `${fmtNum(ageDays)} days ago`;
-}
-
 /**
  * A staleness banner for one dated section, or "" when there is nothing to warn about.
  *
@@ -190,7 +185,7 @@ function staleBanner(stale: boolean, ageDays: number | null, tool: string): stri
 function crawlSection(crawl: CrawlSummary): string {
   const provenance = crawl.fetchedAt
     ? `Crawl from ${escapeHtml(isoDate(crawl.fetchedAt))}${
-        crawl.ageDays === null ? "" : ` (${agePhrase(crawl.ageDays)})`
+        crawl.ageDays === null ? "" : ` (${describeDataAge(crawl.ageDays)})`
       }.`
     : "Crawl timestamp unavailable.";
   return `<section class="rpt">
@@ -255,6 +250,39 @@ function sitemapBlock(tech: TechSummary): string {
 }
 
 /**
+ * THE FOUR STAT BLOCKS ARE NOT A PARTITION, and this block is the sentence that says so.
+ *
+ * A page whose stored status is missing or unreadable reads as 0 (audit/crawl-data.ts
+ * asFiniteNumber) and lands in the engine's fifth bucket, `status.other`. Until 2026-08-26 the
+ * report model dropped that bucket, so such a page was counted by "Pages crawled" at the top of
+ * the document and then appeared in none of the four numbers and on none of the lists below them
+ * — silently, on a public page a tenant paid 15 credits for. A missing page that reads as no page
+ * at all is the invented zero NEVER#7 forbids.
+ *
+ * The four counts are left byte-for-byte as they were and the shortfall is STATED IN ITS OWN
+ * SENTENCE, naming both numbers, exactly as formatTechReport states it in audit_tech's plain
+ * text. Same fact, same honesty, rendered for this medium: a callout plus the same escaped,
+ * non-linking URL list every other finding here uses.
+ *
+ * TWO DELIBERATE SHAPES:
+ * - Returns "" when the bucket is empty, and carries its OWN leading newline so that the empty
+ *   case leaves the surrounding template byte-identical to what it rendered before this existed.
+ *   Every already-stored report re-renders unchanged.
+ * - Reuses the `.stale` callout rather than introducing a class, because a new selector would
+ *   change the inline stylesheet — which ships in EVERY document, including the ones with no
+ *   unclassified page, and would break exactly that byte-identity. `.stale` is this document's
+ *   one "must survive being skimmed" treatment, which is what a count that does not add up needs.
+ */
+function unclassifiedStatusBlock(tech: TechSummary): string {
+  if (tech.other === 0) return "";
+  return `
+    <p class="stale">${fmtNum(tech.other)} page(s) carried no usable HTTP status and are in none of
+    the four counts above, so those four do not add up to the ${fmtNum(tech.pageCount)} page(s)
+    crawled.</p>
+    ${listBlock("Pages with no usable HTTP status", tech.otherStatusUrls, urlText)}`;
+}
+
+/**
  * Technical health from the REAL engine. G1 printed the four status counts and a robots-conflict
  * number; the engine had already computed nine more sections and the report threw them away.
  *
@@ -269,7 +297,7 @@ function techSection(tech: TechSummary): string {
       ${statBlock(tech.redirect3xx, "Redirects (3xx)")}
       ${statBlock(tech.clientError4xx, "Client errors (4xx)")}
       ${statBlock(tech.serverError5xx, "Server errors (5xx)")}
-    </div>
+    </div>${unclassifiedStatusBlock(tech)}
     <p class="muted">Robots conflicts (noindex but internally linked): <strong>${fmtNum(tech.robotsConflicts)}</strong></p>
     ${listBlock("Client error pages (4xx)", tech.clientErrorUrls, urlText)}
     ${listBlock("Server error pages (5xx)", tech.serverErrorUrls, urlText)}
@@ -277,16 +305,6 @@ function techSection(tech: TechSummary): string {
       "Broken internal links",
       tech.brokenInternalLinks,
       (l) => `${urlText(l.from)} → ${urlText(l.to)} (${fmtNum(l.status)})`,
-    )}
-    ${listBlock(
-      `Slow pages (over ${fmtNum(SLOW_PAGE_MS)} ms)`,
-      tech.slowPages,
-      (p) => `${urlText(p.url)} — ${fmtNum(p.fetchMs)} ms`,
-    )}
-    ${listBlock(
-      `Heavy pages (HTML over ${fmtNum(HEAVY_PAGE_BYTES)} bytes)`,
-      tech.heavyPages,
-      (p) => `${urlText(p.url)} — ${fmtNum(p.htmlBytes)} bytes`,
     )}
     ${listBlock(
       `Redirect chains (${fmtNum(REDIRECT_CHAIN_MIN)}+ hops)`,
@@ -325,6 +343,81 @@ function techSection(tech: TechSummary): string {
     ${sitemapBlock(tech)}
     ${auditHint("audit_tech")}
   </section>`;
+}
+
+/**
+ * WHAT THIS SECTION IS NOT, stated in the copy because its own name invites the wrong reading.
+ *
+ * Every figure here is OUR crawler's: how long SeoGrep's fetch of a page took, and how many bytes
+ * of HTML came back. Both fall out of a crawl the reader already paid for, which is why the
+ * section costs nothing extra. Neither is a lab Core Web Vitals score and neither is field data
+ * from real visitors — no browser rendered anything, so LCP/INP/CLS are not measured here at all.
+ * Presenting these as "page speed" without saying so would be exactly the invented metric NEVER #7
+ * forbids, so the provenance line ships with the section and points Core Web Vitals questions at
+ * `audit_speed`, the tool that actually runs Lighthouse.
+ *
+ * Both thresholds are INTERPOLATED FROM THE RULE'S OWN CONSTANTS (audit/rules/tech.ts), never
+ * retyped: when a constant moves, the prose moves with it instead of quietly becoming a lie.
+ */
+function speedSection(tech: TechSummary): string {
+  // Either axis being present is enough to have something honest to say; the body then reports
+  // each axis's own coverage rather than implying one number covers both.
+  const measured = tech.pagesTimed > 0 || tech.pagesSized > 0;
+  return `<section class="rpt">
+    <h2>Page speed</h2>
+    ${measured ? speedMeasured(tech) : speedUnmeasured()}
+    ${speedProvenance()}
+  </section>`;
+}
+
+/**
+ * The "nobody looked" sentence. `fetchMs`/`htmlBytes` are optional on a stored page, and a crawl
+ * taken before they shipped carries neither — which produces empty slow/heavy lists that are
+ * INDISTINGUISHABLE from a genuinely fast site. Saying "Slow pages: 0" here would report a
+ * measurement that never took place, so the section says the measurement is missing instead.
+ */
+function speedUnmeasured(): string {
+  return `<p class="muted">This crawl carries no fetch-time or HTML-size signal: it was stored
+    before SeoGrep recorded them, so no page here was measured on either axis. That is reported as
+    unmeasured rather than as zero — a clean result and an absent one are not the same finding.
+    Re-run <code>crawl_site</code> to measure it.</p>`;
+}
+
+/**
+ * The measured body. The coverage line comes FIRST because it is what licenses everything after
+ * it, and the "nothing crossed the threshold" sentence is printed only in this branch — it is a
+ * real claim about a real measurement, which is precisely why the unmeasured branch may not make
+ * it. The lists themselves stay silent when empty (listBlock's own rule).
+ */
+function speedMeasured(tech: TechSummary): string {
+  const clean = tech.slowPages.total === 0 && tech.heavyPages.total === 0;
+  return `<p class="muted">Fetch time measured on <strong>${fmtNum(tech.pagesTimed)}</strong> of
+    ${fmtNum(tech.pageCount)} crawled page(s); HTML size on
+    <strong>${fmtNum(tech.pagesSized)}</strong>.</p>
+    ${
+      clean
+        ? `<p class="muted">No measured page took longer than ${fmtNum(SLOW_PAGE_MS)} ms to fetch
+    or returned more than ${fmtNum(HEAVY_PAGE_BYTES)} bytes of HTML.</p>`
+        : ""
+    }
+    ${listBlock(
+      `Slow pages (fetch over ${fmtNum(SLOW_PAGE_MS)} ms)`,
+      tech.slowPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.fetchMs)} ms`,
+    )}
+    ${listBlock(
+      `Heavy pages (HTML over ${fmtNum(HEAVY_PAGE_BYTES)} bytes)`,
+      tech.heavyPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.htmlBytes)} bytes`,
+    )}`;
+}
+
+/** The provenance disclaimer — shipped in BOTH branches, because both invite the same misreading. */
+function speedProvenance(): string {
+  return `<p class="hint">These are SeoGrep's own crawler measurements — how long our fetch of each
+    page took and how large the HTML it returned was. They are <strong>not</strong> lab Core Web
+    Vitals and <strong>not</strong> field data from real visitors: no browser rendered these pages,
+    so nothing here measures LCP, INP or CLS. Run <code>audit_speed</code> for Core Web Vitals.</p>`;
 }
 
 /**
@@ -415,7 +508,7 @@ function gscSection(gsc: GscSummary): string {
     gsc.pulledAt === null
       ? ""
       : `<p class="muted">Pulled ${escapeHtml(isoDate(gsc.pulledAt))}${
-          gsc.ageDays === null ? "" : ` (${agePhrase(gsc.ageDays)})`
+          gsc.ageDays === null ? "" : ` (${describeDataAge(gsc.ageDays)})`
         }.</p>`;
   return `<section class="rpt">
     <h2>Search performance</h2>
@@ -545,6 +638,7 @@ export function renderReportHtml(model: ReportModel): string {
     ${model.crawl ? crawlSection(model.crawl) : crawlAbsentSection()}
     ${model.onpage ? onpageSection(model.onpage) : ""}
     ${model.tech ? techSection(model.tech) : ""}
+    ${model.tech ? speedSection(model.tech) : ""}
     ${model.schema ? schemaSection(model.schema) : ""}
     ${model.gsc ? gscSection(model.gsc) : gscAbsentSection(model.gscConnected)}
     ${model.opportunities ? opportunitySection(model.opportunities) : ""}

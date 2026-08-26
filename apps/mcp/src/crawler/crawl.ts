@@ -12,6 +12,7 @@
  */
 
 import type { Dispatcher } from "undici";
+import { stripWwwLabel } from "@pseo/core";
 import {
   clampField,
   contentHash,
@@ -132,7 +133,7 @@ export interface CrawlResult {
   /** ISO-8601 timestamp of when the crawl started. */
   readonly fetchedAt: string;
   /**
-   * The same-origin, in-scope URLs the crawl READ OUT OF /sitemap.xml, capped at
+   * The same-site, in-scope URLs the crawl READ OUT OF /sitemap.xml, capped at
    * MAX_SITEMAP_URLS_STORED. `[]` means the crawl found no usable sitemap (absent, non-200,
    * empty, or every loc filtered out) — it never means "the sitemap was not looked at", because
    * a crawl that got as far as seeding always looked.
@@ -184,6 +185,41 @@ export interface CrawlOptions {
    * only the homepage; if the homepage itself is out of scope, nothing in scope is reachable.
    */
   includePaths?: string[];
+  /**
+   * EXTRA entry points to queue ahead of the sitemap — `crawl_site`'s opt-in
+   * `seed_from_ranking_pages`, i.e. the pages DataForSEO reports as ranking for this domain.
+   *
+   * WHY IT EXISTS (measured 2026-08-25): the site's HIGHEST-etv page (127.2) never entered a
+   * crawl. Discovery seeds from the sitemap plus the homepage, the crawl stops at 100 pages, and
+   * a sitemap is not ordered by importance — so the one page that earns the traffic can sit
+   * hundreds of entries deep and never survive the ceiling. Seeding from the ranking list puts it
+   * in the first batch.
+   *
+   * THEY BUY NO PRIVILEGE. Every entry is filtered by {@link selectExtraSeeds} — same-site, in
+   * `includePaths`, not a reserved infrastructure path, normalized and deduped — and then queued
+   * as an ordinary depth-0 item, so robots.txt, the SSRF guards, `maxUrls` and the time budget all
+   * still apply. Absent or empty leaves the crawl byte-identical to before.
+   */
+  extraSeeds?: readonly string[];
+  /**
+   * Called after every committed batch with the counts SO FAR — the crawl's only live signal.
+   *
+   * WHY IT EXISTS: a crawl_site run takes up to 90 s, and while it ran `get_job_status`
+   * returned a byte-identical line on every poll (measured: two consecutive reads, same string),
+   * so a customer could not tell a working crawl from a stuck one. The counts are already in
+   * hand at each commit; the queue handler turns them into something a poll can read.
+   *
+   * CONTRACT: fire-and-forget and NON-FATAL. It is called synchronously, its return value is
+   * ignored, and a throw from it is swallowed — a cosmetic progress signal must never fail a
+   * crawl the tenant is being charged for.
+   */
+  onProgress?: (progress: CrawlProgress) => void;
+}
+
+/** Counts of a crawl IN FLIGHT — what has been committed so far, never a final result. */
+export interface CrawlProgress {
+  readonly pagesCrawled: number;
+  readonly urlsSkipped: number;
 }
 
 /** Parsed page signals, before url/status/issues are attached. */
@@ -499,6 +535,134 @@ export function matchesIncludePaths(pathname: string, prefixes: readonly string[
 }
 
 /**
+ * RESERVED INFRASTRUCTURE PATH PREFIXES — never crawled, never seeded, never counted.
+ *
+ * The bar for an entry here is deliberately high, because everything excluded is a page the
+ * tenant can never be told about: a prefix qualifies only when a SPEC OR A PLATFORM reserves it
+ * for machine endpoints, so no URL under it can belong to the site's own content tree. A path
+ * that is merely "usually boring" (/cart, /login, /wp-admin) does NOT qualify — those are the
+ * site author's own URLs, and refusing them would be us deciding what their site is.
+ *
+ *  - `/cdn-cgi/` — Cloudflare's reserved prefix (email-protection, /trace, rum, challenges).
+ *    MEASURED, and the reason this list exists: Cloudflare rewrites every `mailto:` on a
+ *    protected page into `<a href="/cdn-cgi/l/email-protection#…">`, so ONE endpoint that
+ *    answers 4xx to a plain GET was linked from 25 crawled pages. That single stored row
+ *    surfaced as audit_tech's 25/25 broken links, audit_schema's ONLY action item, the shared
+ *    report's broken-link section, and audit_onpage's first finding — four PAID surfaces
+ *    reporting the CDN's own plumbing as a defect of the customer's site.
+ *  - `/.well-known/` — reserved by RFC 8615 for machine-readable metadata (security.txt,
+ *    apple-app-site-association, acme-challenge). Same shape: not content, not indexable, and
+ *    a 4xx there says nothing about the site's SEO.
+ *
+ * Nothing else is on this list. A future entry carries its own reason or does not go in.
+ */
+export const INFRASTRUCTURE_PATH_PREFIXES: readonly string[] = ["/cdn-cgi/", "/.well-known/"];
+
+/**
+ * True when `pathname` belongs to a reserved infrastructure prefix (see the list above).
+ * Matched case-insensitively, and the bare prefix without its trailing slash counts too
+ * (`/cdn-cgi` is the same endpoint tree as `/cdn-cgi/`). Pure — the ONE predicate the BFS
+ * enqueue, the sitemap claim and the free pre-discovery estimate all share, so a URL cannot
+ * be excluded from the crawl and still inflate the size the customer is quoted.
+ */
+export function isInfrastructurePath(pathname: string): boolean {
+  const path = pathname.toLowerCase();
+  return INFRASTRUCTURE_PATH_PREFIXES.some(
+    (prefix) => path.startsWith(prefix) || path === prefix.slice(0, -1),
+  );
+}
+
+/**
+ * What became of a list of EXTERNALLY SUPPLIED seed URLs — see {@link selectExtraSeeds}. The
+ * three rejection counts are kept apart because they mean different things to the person who
+ * asked for the seeding: "not your site" is the vendor's doing, "outside the scope you asked
+ * for" is the caller's own `include_paths`, and "not a URL" is a broken input.
+ */
+export interface ExtraSeedSelection {
+  /** Normalized, same-site, in-scope, deduped seeds, in the order they were supplied. */
+  readonly seeds: string[];
+  /** Parseable URLs that are off-site, out of `includePaths`, or a reserved infrastructure path. */
+  readonly outOfScope: number;
+  /** Values that are not a usable http(s) URL at all. */
+  readonly unusable: number;
+  /** URLs an earlier entry had already claimed under the same normalized form. */
+  readonly duplicates: number;
+}
+
+/**
+ * Turn externally supplied seed URLs into entry points this crawl may actually queue — through
+ * the crawl's OWN gates, never around them.
+ *
+ * It exists because `crawl_site`'s opt-in `seed_from_ranking_pages` hands the crawl a list of URLs
+ * that came from OUTSIDE (DataForSEO's ranking-page list, carried to the worker in a queue
+ * message). Such a list must not be able to widen a crawl by a single URL: every entry goes
+ * through the same four predicates a sitemap loc goes through in `loadSitemapSeeds`'s `claim` —
+ * {@link sameSite}, {@link matchesIncludePaths}, {@link isInfrastructurePath} and
+ * {@link normalizeUrl} — and everything downstream (robots.txt, the SSRF origin/redirect guards,
+ * the page cap, the time budget) applies to a seed exactly as it applies to a sitemap URL, because
+ * a seed is just another queue item.
+ *
+ * It is EXPORTED and pure so BOTH sides use the one function: the `crawl_site` surface runs it to
+ * decide (and COUNT, for the answer it prints) what it will send, and `crawlSite` runs it again on
+ * what arrives, because a queue payload is external input for the same reason `clampMaxUrls` is.
+ * Running it twice is idempotent — its output is already normalized and in scope.
+ */
+export function selectExtraSeeds(
+  rawUrls: readonly unknown[] | undefined,
+  origin: string,
+  includePaths?: readonly string[],
+): ExtraSeedSelection {
+  const supplied = rawUrls ?? [];
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    // No origin means no scope to judge against: nothing is seeded, and the count says the
+    // inputs could not be used rather than claiming they were out of scope.
+    return { seeds: [], outOfScope: 0, unusable: supplied.length, duplicates: 0 };
+  }
+  const prefixes = normalizeIncludePaths(includePaths);
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  let outOfScope = 0;
+  let unusable = 0;
+  let duplicates = 0;
+  for (const raw of supplied) {
+    if (typeof raw !== "string" || raw.trim() === "") {
+      unusable++;
+      continue;
+    }
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      unusable++;
+      continue;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      unusable++;
+      continue;
+    }
+    if (
+      !sameSite(url, originUrl) ||
+      !matchesIncludePaths(url.pathname, prefixes) ||
+      isInfrastructurePath(url.pathname)
+    ) {
+      outOfScope++;
+      continue;
+    }
+    const norm = normalizeUrl(url.toString());
+    if (seen.has(norm)) {
+      duplicates++;
+      continue;
+    }
+    seen.add(norm);
+    seeds.push(norm);
+  }
+  return { seeds, outOfScope, unusable, duplicates };
+}
+
+/**
  * Page-level issue flags. Deliberately shallow — the four cheap on-page signals the
  * crawler owns; deep on-page/tech/schema analysis is T8's job, not this module's.
  */
@@ -627,6 +791,30 @@ const RESULT_BUDGET_REASON =
   `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); this URL was not ` +
   "included — narrow the crawl with include_paths or a lower max_urls to cover it";
 
+/**
+ * THE TWO WAYS A CRAWL STOPS SHORT, in the words the tenant actually reads.
+ *
+ * They matter because get_job_status's finish line quotes the DOMINANT skip reason verbatim
+ * (`… (mostly: <reason>)`), and until now both states said only which ceiling was hit — never
+ * WHICH ONE, in a form that separates "you got everything you paid for" from "we ran out of
+ * time". Measured on one site at identical settings: 2026-08-09 stopped at 26 pages on the time
+ * budget, 2026-08-25 reached 100 in 78 s. Same 20 credits, 14%-45% coverage, and the crawl's own
+ * output never said so — the customer could only learn it by buying the 15-credit audit_tech.
+ *
+ * VOCABULARY IS LOAD-BEARING, not decoration: audit_tech's categorizeSkip buckets on the
+ * substrings "max url" and "time budget", so both keep them. Neither may contain "robots",
+ * "redirect", "timeout", "non-html", "parse failed" or "fetch failed" — each of those is
+ * checked FIRST there and would silently re-file a limit as a fault of the site.
+ */
+const pageLimitReason = (maxUrls: number, elapsedMs: number, timeBudgetMs: number): string =>
+  `max URL limit reached — the ${maxUrls}-page limit was reached after ${Math.round(elapsedMs / 1_000)}s, ` +
+  `inside the ${Math.round(timeBudgetMs / 1_000)}s time budget (this run covered every page it paid for)`;
+
+const timeBudgetReason = (maxUrls: number, pagesCrawled: number, elapsedMs: number): string =>
+  `time budget exhausted after ${Math.round(elapsedMs / 1_000)}s — the crawl stopped on TIME, not at the ` +
+  `${maxUrls}-page limit (${pagesCrawled} page(s) crawled); coverage varies between runs at the same ` +
+  "price, so re-run, or narrow the crawl with include_paths to cover a section fully";
+
 /** The bound's one-line summary when it had to DROP already-crawled pages to fit the budget. */
 const resultBudgetDropReason = (dropped: number): string =>
   `result byte budget reached (${MAX_RESULT_BYTES} bytes of page data); ${dropped} crawled ` +
@@ -653,8 +841,61 @@ function jsonByteSize(value: unknown): number {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Same ORIGIN in the strict sense: identical scheme and identical host (URL.host carries the
+ * port). This is the SECURITY predicate — it is what tells `fetchText` that a redirect hop
+ * needs no fresh SSRF validation — and it must stay exactly this narrow. Scope questions ask
+ * {@link sameSite} instead.
+ */
 function sameOrigin(a: URL, b: URL): boolean {
   return a.protocol === b.protocol && a.host === b.host;
+}
+
+/**
+ * The crawl's SCOPE predicate: is `a` part of the same SITE as the crawl origin `b`? Strict
+ * same-origin, plus the one pair the web treats as a single site — an apex and its `www.`
+ * twin.
+ *
+ * WHY IT EXISTS. Project domains lost their leading `www.` label on 2026-08-25
+ * (`stripWwwLabel`), and the crawl queue seeds `https://<project.domain>` — the apex. For a
+ * site canonical at `www.` that combination CRAWLED NOTHING, in four places at once: every
+ * sitemap loc was `www.` and was filtered off-origin, every extracted link likewise, and the
+ * one remaining seed — the apex homepage — 301'd to `www.` and came back
+ * `off-origin-redirect`. Zero pages makes the queue handler throw, so the job settled
+ * `failed`; the tenant was not charged, but no spelling of the domain could produce a crawl
+ * any more, since every spelling now normalizes to the apex. The reverse direction is just as
+ * real: six live rows still STORE `www.` for sites canonical at the apex.
+ *
+ * THE RULE IS THE PAIR AND NOTHING WIDER. Scheme must match, port must match, and the two
+ * hostnames must be equal once ONE leading `www.` label is dropped from each. So
+ * `blog.example.com`, `example.org`, `notexample.com`, `www.example.com.evil.test`, a port
+ * change and an http->https hop are all still off-site, and `off-origin-redirect` remains a
+ * reachable outcome with its reason string — this narrows WHEN it fires, it does not remove it.
+ *
+ * ONE equivalence beyond the pair comes in with `stripWwwLabel`, and is named rather than
+ * glossed: it strips a trailing dot, so the FQDN form `example.com.` compares equal to
+ * `example.com`. Those are the same name in DNS and resolve to the same addresses, so this is
+ * not a widening anyone can steer — but "the pair and nothing wider" would be false without
+ * saying so.
+ *
+ * IP LITERALS ARE EXCLUDED, as defence in depth rather than a reachable branch. `www.` is a
+ * DNS label, so a literal has no twin — and MEASURED, no parseable URL can reach the twin
+ * branch with one anyway: WHATWG URL refuses `http://www.127.0.0.1/` outright (a trailing
+ * numeric label sends the host through the IPv4 parser), so the only host that strips to a
+ * literal IS that literal, which the `a.host === b.host` line already answered. No spec pins
+ * this line, because a spec could only pin Node's URL parser; it stays because a fail-closed
+ * line costs nothing and the reasoning above is about a parser we do not own.
+ *
+ * NOT AN SSRF DECISION. Every hop this admits is still resolved and vetted by
+ * `pinnedDispatcherFor` before a socket opens, and `fetchText`'s redirect guard keeps asking
+ * strict {@link sameOrigin}, so a twin hop there still goes the long way through
+ * `validateRedirectTarget`.
+ */
+function sameSite(a: URL, b: URL): boolean {
+  if (a.protocol !== b.protocol || a.port !== b.port) return false;
+  if (a.host === b.host) return true;
+  if (isIpLiteralHost(a.hostname) || isIpLiteralHost(b.hostname)) return false;
+  return stripWwwLabel(a.hostname) === stripWwwLabel(b.hostname);
 }
 
 /**
@@ -783,16 +1024,18 @@ async function readCappedText(res: Response, maxBytes: number): Promise<CappedBo
 }
 
 /**
- * Fetch one page, following up to MAX_REDIRECTS same-origin redirects manually so
- * the whole chain shares a single timeout and off-origin hops can be rejected. Only
+ * Fetch one page, following up to MAX_REDIRECTS same-SITE redirects manually so
+ * the whole chain shares a single timeout and off-site hops can be rejected. Only
  * text/html bodies are read; other content types return with an empty body for the
  * caller to skip. AbortController bounds the entire chain to `timeoutMs`.
  *
  * Every hop — the first request included — is re-validated and PINNED to the address
- * that validation just approved (pinnedDispatcherFor). The chain is same-origin, so the
- * hostname never changes, but a hostile low-TTL answer can still flip that one name to an
- * internal address between hops; the origin gate validated once and cannot see that. A
- * refused hop emits NO request and reports through the existing fetch-failure path.
+ * that validation just approved (pinnedDispatcherFor). The chain stays on one site but the
+ * hostname CAN change once, between an apex and its `www.` twin (see {@link sameSite}), and a
+ * hostile low-TTL answer can flip either name to an internal address between hops; the origin
+ * gate validated once and cannot see that. Because the pin re-runs checkPublicHost per hop,
+ * both the twin hop and the rebind are covered by the same mechanism. A refused hop emits NO
+ * request and reports through the existing fetch-failure path.
  */
 async function fetchPage(
   url: string,
@@ -851,7 +1094,9 @@ async function fetchPage(
         } catch {
           return { kind: "error", message: "invalid redirect location" };
         }
-        if (!sameOrigin(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
+        // sameSite, not sameOrigin: an apex->www hop (or the reverse) stays on the site. Every
+        // hop is still pinned and SSRF-vetted above, so this widens SCOPE only.
+        if (!sameSite(next, origin)) return { kind: "off-origin-redirect", target: next.toString() };
         // The hop we are LEAVING is what belongs in the chain; the URL finally served is the
         // record's own `url` and would be a duplicate here.
         redirectChain.push(clampField(current));
@@ -1109,7 +1354,7 @@ function hopTimeout(deadline: Deadline, timeoutMs: number): number {
 
 /**
  * Seed URLs from /sitemap.xml (one bounded level of index expansion); [] if none. When
- * `prefixes` is non-empty, only same-origin locs whose pathname is in scope are kept — an
+ * `prefixes` is non-empty, only same-site locs whose pathname is in scope are kept — an
  * empty `prefixes` (the default) filters nothing, so the crawl's existing behavior is
  * byte-identical. The guarded fetchText path (incl. its cross-origin redirect checks) is
  * unchanged; scoping is a pure post-fetch filter.
@@ -1145,8 +1390,13 @@ async function loadSitemapSeeds(
     } catch {
       return null;
     }
-    if (!sameOrigin(u, origin)) return null;
+    if (!sameSite(u, origin)) return null;
     if (!matchesIncludePaths(u.pathname, prefixes)) return null;
+    // A sitemap that advertises a reserved infrastructure path is refused HERE, at the one
+    // place a loc is claimed, so the URL is absent from BOTH uses of this list: it is not
+    // seeded, and it is not stored in `sitemapUrls` either — otherwise audit_tech's
+    // sitemap↔crawl diff would report the URL we deliberately skipped as a coverage gap.
+    if (isInfrastructurePath(u.pathname)) return null;
     const norm = normalizeUrl(u.toString());
     if (seen.has(norm)) return null;
     seen.add(norm);
@@ -1191,15 +1441,17 @@ async function loadSitemapSeeds(
     const childTimeout = hopTimeout(deadline, timeoutMs);
     if (childTimeout <= 0) break;
     // SSRF guard: child-sitemap locs are tenant-controlled input on a hosted
-    // service — never let them point our fetcher off the crawl origin (e.g. at
-    // cloud metadata endpoints). Off-origin or unparsable children are skipped.
+    // service — never let them point our fetcher off the crawl SITE (e.g. at
+    // cloud metadata endpoints). Off-site or unparsable children are skipped. The apex/www
+    // twin is on the site (sameSite): a `www.` index routinely lists `www.` children, and
+    // refusing them is how the www-canonical crawl reached zero seeds.
     let childUrl: URL;
     try {
       childUrl = new URL(child);
     } catch {
       continue;
     }
-    if (!sameOrigin(childUrl, origin)) continue;
+    if (!sameSite(childUrl, origin)) continue;
     const res = await fetchText(child, childTimeout, lookup, MAX_SITEMAP_BYTES);
     if (!res || res.status !== 200) continue;
     // FILTER first, then cap: the cap must bound usable URLs, not raw locs (see `claim`).
@@ -1215,7 +1467,7 @@ async function loadSitemapSeeds(
   // Round-robin: one URL from each child in turn. Semantic-free — nothing here guesses which
   // child matters — but under any budget every child is represented in proportion, so the
   // pages a site sells from cannot be starved by the size of its blog archive. Every URL here
-  // has already passed the same-origin, scope and dedupe filters, so which URLs are ELIGIBLE is
+  // has already passed the same-site, scope and dedupe filters, so which URLs are ELIGIBLE is
   // unchanged from before — what changes is which of them a short budget spends itself on.
   const longest = childLists.reduce((max, list) => Math.max(max, list.length), 0);
   for (let index = 0; index < longest && seeds.length < limit; index++) {
@@ -1261,8 +1513,9 @@ function blockedOrigin(origin: URL, reason: string, fetchedAt: string): CrawlRes
 /**
  * Crawl a site starting from `origin`, robots-respectfully and bounded by maxUrls
  * and a wall-clock budget. Seeds come from /sitemap.xml when present, otherwise from
- * same-origin link-following (BFS). Produces the PageRecords audits (T8) consume; it
- * touches no DB/queue/credits and follows only same-origin http(s) links.
+ * same-site link-following (BFS). Produces the PageRecords audits (T8) consume; it
+ * touches no DB/queue/credits and follows only same-site http(s) links (see {@link sameSite}:
+ * the crawl origin's apex/`www.` twin counts as the same site, nothing wider).
  */
 export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promise<CrawlResult> {
   const started = Date.now();
@@ -1353,13 +1606,28 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   // (with no prefixes matchesIncludePaths is always true, so the common case is unchanged), and
   // the Set below keeps a sitemap that ALSO lists "/" from queueing it twice.
   const rootInScope = matchesIncludePaths(new URL(rootSeed).pathname, prefixes);
+  // RANKING-PAGE SEEDS (CrawlOptions.extraSeeds). Re-filtered HERE and not merely trusted from
+  // the surface that sent them: they reach a worker through a queue message, which is external
+  // input for the same reason clampMaxUrls exists. selectExtraSeeds is the SAME function the
+  // surface counted with, and it is idempotent, so this second pass is a gate and not a second
+  // opinion. Sliced to maxUrls because a seed the page cap can never reach is pure ballast.
+  //
+  // POSITION: behind the homepage, AHEAD of the sitemap. The homepage keeps the first slot for
+  // the reason written above it; after that, the pages that already earn traffic outrank a
+  // sitemap's arbitrary order — which is the whole defect this option was added to fix.
+  const extraSeeds = selectExtraSeeds(opts.extraSeeds, originUrl.toString(), prefixes).seeds.slice(
+    0,
+    maxUrls,
+  );
   // Deduped at construction: a sitemap that ALSO lists "/" would otherwise leave a second root
   // entry in the array (the Set below only dedupes the SET, not the array). `visited` already
   // stops it being fetched twice — measured — but a ceiling that drains the queue would count
   // that dead entry as "skipped", inflating the very number this slice is making honest.
   // Seeds are depth 0 by definition: the homepage and every sitemap URL is an entry point,
   // not something discovered from another page.
-  const seedUrls = [...new Set(rootInScope ? [rootSeed, ...seeds] : seeds)];
+  const seedUrls = [
+    ...new Set([...(rootInScope ? [rootSeed] : []), ...extraSeeds, ...seeds]),
+  ];
   const queue: QueueItem[] = seedUrls.map((url) => ({ url, depth: 0 }));
   const enqueued = new Set<string>(seedUrls);
   const visited = new Set<string>();
@@ -1373,6 +1641,20 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   let queueFull = false;
   // T8: what the accumulated pages have cost so far, in the unit they will be PERSISTED in.
   let resultBytes = 0;
+
+  /**
+   * The progress tick, guarded once here rather than at each call site: a cosmetic signal
+   * may not fail a charged crawl (CrawlOptions.onProgress), and a crawl with no listener
+   * pays nothing for it.
+   */
+  const reportProgress = (progress: CrawlProgress): void => {
+    if (opts.onProgress === undefined) return;
+    try {
+      opts.onProgress(progress);
+    } catch {
+      // Deliberately swallowed — see the contract on CrawlOptions.onProgress.
+    }
+  };
 
   /** Record a skip, bounded: past the listing ceiling only the DROP COUNT is kept. */
   const addSkip = (url: string, reason: string): void => {
@@ -1396,9 +1678,14 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
     } catch {
       return;
     }
-    if (!sameOrigin(u, originUrl)) return;
+    if (!sameSite(u, originUrl)) return;
     // Out-of-scope links are skipped, not fetched (with no prefixes this is a no-op).
     if (!matchesIncludePaths(u.pathname, prefixes)) return;
+    // Reserved infrastructure endpoints are not the site (see INFRASTRUCTURE_PATH_PREFIXES).
+    // Dropped SILENTLY rather than recorded as a skip: a skip entry is an account of a URL of
+    // the SITE that we did not read, and these are not URLs of the site — listing them would
+    // move the same noise from the findings into the skip report the audits also print.
+    if (isInfrastructurePath(u.pathname)) return;
     const norm = normalizeUrl(link);
     if (!visited.has(norm) && !enqueued.has(norm)) {
       enqueued.add(norm);
@@ -1417,11 +1704,15 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
 
   while (queue.length > 0 && !stopped) {
     if (pages.length >= maxUrls) {
-      for (const item of queue.splice(0)) addSkip(item.url, "max URL limit reached");
+      // Built ONCE per drain, not per URL: the sentence is the same for every URL the ceiling
+      // dropped, and it is a statement about the RUN, not about the individual URL.
+      const reason = pageLimitReason(maxUrls, Date.now() - started, timeBudgetMs);
+      for (const item of queue.splice(0)) addSkip(item.url, reason);
       break;
     }
     if (Date.now() - started >= timeBudgetMs) {
-      for (const item of queue.splice(0)) addSkip(item.url, "time budget exhausted");
+      const reason = timeBudgetReason(maxUrls, pages.length, Date.now() - started);
+      for (const item of queue.splice(0)) addSkip(item.url, reason);
       break;
     }
 
@@ -1593,6 +1884,11 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
       if (parsed.linksTruncated) linkFloodedPages++;
       for (const link of parsed.links) enqueue(link, slot.depth + 1);
     }
+
+    // One progress tick per COMMITTED batch — after the batch, never inside it, so a reader
+    // never sees a half-applied wave. Swallowed on throw: see CrawlOptions.onProgress. The
+    // counts are already in hand; this costs no request and no measurement of its own.
+    reportProgress({ pagesCrawled: pages.length, urlsSkipped: skipped.length });
   }
 
   // The ceilings report themselves ONCE, appended AFTER the (already capped) skip list so
@@ -1748,7 +2044,7 @@ const DEFAULT_ESTIMATE_TIMEOUT_MS = 5_000;
  */
 export const PRE_DISCOVERY_BUDGET_MS = 8_000;
 
-/** Count distinct same-origin, in-scope links in `html` (a homepage-size floor). Pure. */
+/** Count distinct same-site, in-scope links in `html` (a homepage-size floor). Pure. */
 function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly string[]): number {
   const { links } = parseHtml(html, normalizeUrl(originUrl.toString()));
   const seen = new Set<string>();
@@ -1759,8 +2055,11 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
     } catch {
       continue;
     }
-    if (!sameOrigin(u, originUrl)) continue;
+    if (!sameSite(u, originUrl)) continue;
     if (!matchesIncludePaths(u.pathname, prefixes)) continue;
+    // Counted with the SAME filter the crawl applies, or the estimate would quote the customer
+    // pages the crawl is guaranteed never to fetch.
+    if (isInfrastructurePath(u.pathname)) continue;
     seen.add(normalizeUrl(link));
   }
   return seen.size;
@@ -1775,9 +2074,9 @@ function countInScopeLinks(html: string, originUrl: URL, prefixes: readonly stri
  * (loadSitemapSeeds) — so there is ONE guarded fetcher, not a second with different rules.
  *
  *  - a blocked / non-public / invalid origin returns null WITHOUT any fetch;
- *  - /sitemap.xml (one bounded level of index expansion) -> count same-origin, in-scope
+ *  - /sitemap.xml (one bounded level of index expansion) -> count same-site, in-scope
  *    `<loc>`s -> source "sitemap";
- *  - otherwise the homepage's same-origin, in-scope links as a rough floor -> source "homepage";
+ *  - otherwise the homepage's same-site, in-scope links as a rough floor -> source "homepage";
  *  - `includePaths` scopes the count exactly as it scopes the crawl.
  *
  * It is also BOUNDED IN TOTAL by `budgetMs` (default PRE_DISCOVERY_BUDGET_MS) — see that
@@ -1830,7 +2129,7 @@ export async function estimateSiteSize(
       return { pages: sitemapSeeds.length, source: "sitemap" };
     }
 
-    // No usable sitemap -> the homepage's in-scope same-origin links as a rough floor.
+    // No usable sitemap -> the homepage's in-scope same-site links as a rough floor.
     // The homepage is HTML, so it gets the page ceiling. A body at the ceiling yields a
     // link count from the bounded prefix — which is exactly what this estimate claims to
     // be (a floor), so truncation never overstates the site's size.

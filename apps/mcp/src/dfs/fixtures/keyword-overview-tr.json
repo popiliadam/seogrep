@@ -1,0 +1,108 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.3114 sec.",
+  "cost": 0.01248,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08251200-0000-0000-0000-fixture0002",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.2981 sec.",
+      "cost": 0.01248,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_overview", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_overview",
+        "se_type": "google",
+        "language_code": "tr",
+        "location_code": 2792
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 2792,
+          "language_code": "tr",
+          "total_count": 4,
+          "items_count": 4,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "diş beyazlatma fiyat",
+              "location_code": 2792,
+              "language_code": "tr",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-08-11 06:20:15 +00:00",
+                "competition": 0.54,
+                "competition_level": "MEDIUM",
+                "cpc": 0.84,
+                "search_volume": 12100,
+                "monthly_searches": [
+                  { "year": 2026, "month": 7, "search_volume": 12100 },
+                  { "year": 2026, "month": 6, "search_volume": 9900 }
+                ],
+                "search_volume_trend": { "monthly": 22, "quarterly": 8, "yearly": -5 }
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "keyword_difficulty": 41,
+                "detected_language": "tr",
+                "is_another_language": false
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "commercial",
+                "foreign_intent": ["transactional"],
+                "last_updated_time": "2026-07-30 09:12:44 +00:00"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "zirkonyum kaplama",
+              "location_code": 2792,
+              "language_code": "tr"
+            },
+            {
+              "se_type": "google",
+              "keyword": null,
+              "location_code": 2792,
+              "language_code": "tr",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-08-11 06:20:15 +00:00"
+              }
+            },
+            {
+              "se_type": "google",
+              "keyword": "implant",
+              "location_code": 2792,
+              "language_code": "tr",
+              "keyword_info": {
+                "se_type": "google",
+                "last_updated_time": "2026-08-11 06:20:15 +00:00",
+                "categories": null
+              },
+              "keyword_properties": {
+                "se_type": "google",
+                "keyword_difficulty": 38,
+                "detected_language": "tr",
+                "is_another_language": false
+              },
+              "search_intent_info": {
+                "se_type": "google",
+                "main_intent": "informational",
+                "foreign_intent": null,
+                "last_updated_time": "2026-07-30 09:12:44 +00:00"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

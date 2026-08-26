@@ -139,6 +139,38 @@ async function toolNamesDefinedIn(file: string): Promise<ToolName[]> {
 const TOOL_MODULES = sourceFiles(TOOLS_DIR).filter((file) => file !== join(TOOLS_DIR, "index.ts"));
 
 /**
+ * THE ONE NARROW EXEMPTION — a tool that reaches `reserveSpend` and is deliberately NOT in
+ * PAID_BALANCE_TOOLS, mapped to the tool whose gate stands in its place.
+ *
+ * The rule this file enforces is a MECHANISM, not a spelling: a trial account must not be able to
+ * reach a DataForSEO spend. Putting the tool's own name in PAID_BALANCE_TOOLS is one way to
+ * guarantee that, and for every other entry it is the only way. `crawl_site` is different, and the
+ * difference is what makes the exemption safe rather than merely convenient:
+ *
+ *   - Its vendor reach is `seed_from_ranking_pages` — an OPT-IN flag, off by default. The crawl
+ *     itself spends no vendor money at all, and gating the tool would take the 20-credit crawl
+ *     away from every trial account over a lookup they never asked for.
+ *   - The seeding it does perform runs INSIDE `withCredits(…, { tool: "my_pages" })`, and that
+ *     guard applies `requiresPaidBalance` to `my_pages` BEFORE it reserves anything and BEFORE it
+ *     invokes its callback — the callback that holds the only vendor call. A trial account is
+ *     therefore refused one step EARLIER than a gate on `crawl_site` would refuse it.
+ *
+ * That claim is not taken on trust. Three independent pins carry it, and this exemption is worth
+ * exactly what they are worth:
+ *   1. the stand-in below is asserted to be in PAID_BALANCE_TOOLS, so this cannot exempt a tool by
+ *      naming an ungated one;
+ *   2. the guard's paid-balance refusal is proven to fire before the callback runs
+ *      (credits/guard-paid-balance.db.test.ts);
+ *   3. tools/crawl-seeds.test.ts proves the vendor call happens ONLY inside that callback — a
+ *      credit guard that refuses without invoking it produces ZERO vendor requests.
+ *
+ * A new entry needs the same three, written down. Without them this map is a hole.
+ */
+const GATED_UNDER_ANOTHER_TOOL: ReadonlyMap<ToolName, ToolName> = new Map([
+  ["crawl_site", "my_pages"],
+]);
+
+/**
  * The rule proven on a SYNTHETIC tree before it is trusted on the real one — the failure this
  * whole file exists for, staged deliberately: a fifth tool that spends through a CHAIN and is
  * not in the allowlist, beside the three shapes that must NOT be flagged.
@@ -208,6 +240,16 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
       // backlink_details (2026-08-18): reaches reserveSpend through dfs/backlink-details.ts.
       "tools/backlink-details.ts",
       "tools/compare-competitors.ts",
+      // crawl_site (2026-08-26), TWO entries and NEITHER is a fifth DataForSEO tool. Its OPT-IN
+      // `seed_from_ranking_pages` starts a crawl from the pages DataForSEO reports as ranking, so
+      // tools/crawl-seeds.ts reaches reserveSpend through dfs/relevant-pages.ts and crawl-site.ts
+      // inherits the reach by importing it. The scanner is reachability, not intent, so it flags
+      // both and this list says so. What matters for money is the spec below: `crawl_site` is the
+      // ONE name in GATED_UNDER_ANOTHER_TOOL — its spend runs inside my_pages' own credit guard,
+      // which refuses a trial account before the vendor call exists. See that map for the three
+      // pins that claim rests on.
+      "tools/crawl-seeds.ts",
+      "tools/crawl-site.ts",
       // disavow_candidates (2026-08-19): reaches reserveSpend through dfs/disavow-candidates.ts.
       "tools/disavow-candidates.ts",
       // discover_keywords (2026-08-19): reaches reserveSpend through dfs/discover-keywords.ts.
@@ -243,6 +285,17 @@ describe("every tool that can spend vendor money is behind the paid-balance gate
 
     expect(spendingTools.length).toBeGreaterThan(0);
     for (const tool of spendingTools) {
+      const standIn = GATED_UNDER_ANOTHER_TOOL.get(tool);
+      if (standIn !== undefined) {
+        // An exemption may only ever point at a tool that IS gated — otherwise the map would be
+        // a way to launder an ungated spend through a second ungated name.
+        expect(
+          PAID_BALANCE_TOOLS.has(standIn),
+          `${tool} is exempted on the grounds that its spend runs under ${standIn} — but ` +
+            `${standIn} is not in PAID_BALANCE_TOOLS, so the exemption gates nothing`,
+        ).toBe(true);
+        continue;
+      }
       expect(
         PAID_BALANCE_TOOLS.has(tool),
         `${tool} reaches reserveSpend but is not in PAID_BALANCE_TOOLS — a trial account could ` +

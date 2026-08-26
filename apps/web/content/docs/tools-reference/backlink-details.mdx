@@ -34,7 +34,7 @@ SeoGrep adds **no link-quality verdict of its own**. Nothing here is labelled to
 
 ## Who can run it
 
-`backlink_details` needs a **paid credit balance**. It reads live data from a paid third-party provider — two requests per call — so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`backlink_details` needs a **paid credit balance**. It reads live data from a paid third-party provider — two requests per call — so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 If live DataForSEO access is unavailable on this deployment, the tool returns a clear _"backlink details are not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder rows dressed up as real data.
 
@@ -54,9 +54,9 @@ Or page further into a big profile:
 | --- | --- | --- | --- |
 | `target` | string | No | The domain to list individual backlinks for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
 | `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
-| `limit` | integer | No | How many individual backlinks to return (1-700, default 50). DataForSEO bills per returned row, so this is the price control, not a display preference. |
+| `limit` | integer | No | How many individual backlinks to return (1-700, default 50). A display control, NOT a price control: this call costs 35 credits whatever you ask for, and asking for fewer rows costs the same. DataForSEO's own bill is nearly all a flat per-request fee — measured on one profile, 19x the rows cost 13% more. |
 | `offset` | integer | No | How many backlinks to skip before the window starts (0-20000, default 0). Page through a large profile by advancing this; the output always states the offset and limit the rows were fetched under. |
-| `page_limit` | integer | No | How many of the target's OWN pages to return, most-linked first (1-200, default 20). Billed per row on the same tariff as the backlink list. |
+| `page_limit` | integer | No | How many of the target's OWN pages to return, most-linked first (1-200, default 20). Same rule as limit: a display control, and asking for fewer rows costs the same. |
 
 ### Returns
 
@@ -68,11 +68,15 @@ A target that is not a public domain, a call naming neither `target` nor `projec
 
 One call is one **flat price**, charged **once**. Behind it are **two** DataForSEO requests — the backlink list and the site's own pages — and if either one fails the whole call fails and **you are not charged**. A half-built list is never billed.
 
-The `limit` and `page_limit` ceilings are part of the price rather than stylistic limits: DataForSEO bills **per returned row**, so the two row caps together are what hold the flat price to the margin it was signed against. Asking for fewer rows costs the same; asking for more than the ceiling is refused before anything is charged.
+**`limit` and `page_limit` are display controls, not price controls.** This call costs the same whatever you ask for, and asking for fewer rows saves you nothing: DataForSEO's own bill for this endpoint is nearly all a flat per-request fee — measured on one profile, nineteen times the rows cost thirteen per cent more. What the two **ceilings** do is hold the worst case inside the margin the flat price was signed against; asking for more than a ceiling is refused before anything is charged. Set them for the reply you want to read.
+
+**A reply can be bounded, and it says so when it is.** The two lists have their own size budgets, because one oversized answer is an answer a client will not display at all. When rows are cut, the reply prints how many were shown and how many more were fetched in the same window but not printed — and states plainly that those were charged for either way. Ask for a smaller `limit`, or page through with `offset`, to read them.
 
 ### Limitations
 
-Results are **not stored**. Each call returns its two lists to the conversation and nothing else keeps them, so there is no backlink-explorer page in the dashboard and no "new since last time" — run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
 
 Paging stops at an `offset` of **20,000**, DataForSEO's own documented ceiling for this endpoint. Going deeper needs a continuation token this tool does not use, so on a very large profile you are reading the strongest links rather than every link.
 

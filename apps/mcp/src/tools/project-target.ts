@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { forUser, getServiceClient } from "../db.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import { normalizeDomain } from "./setup-project.ts";
 
 /**
@@ -126,6 +127,28 @@ export function projectNotFoundMessage(projectId: string): string {
  * setup_project stores canonical domains, so this is normally a no-op; it is not skipped
  * because a row that predates a normalizer change would otherwise reach DataForSEO unchecked.
  */
+/**
+ * EVERY refusal this resolver produces leaves through here, and here is where it is told the
+ * caller was not charged.
+ *
+ * The reason it is ONE funnel rather than a sentence per branch: this resolver is the free
+ * pre-reserve gate of FOURTEEN priced tools (65-90 credits at the top end), and all of them
+ * return its `error` with `errorResult(subject.error)` BEFORE withCredits — so none of these
+ * refusals reaches the registry's typed-refusal catch, which is where the rest of the surface
+ * got its fee sentence. Three of the six branches were silent: the ARCHIVED sentence and both
+ * normalizeDomain failures. Archiving a project and calling ranked_keywords with its id was a
+ * free 0-credit refusal on a 65-credit tool that never said so — the same defect as review card
+ * 12, on the most expensive tools in the product.
+ *
+ * withNoChargeNote adds nothing to the three that already say it (NO_SUBJECT / AMBIGUOUS /
+ * projectNotFound), so those sentences are untouched. normalizeDomain's wording lives in
+ * packages/core and is shared with 0-credit tools like setup_project; it is deliberately NOT
+ * edited there — the note is added HERE, where the call is known to be a priced tool's.
+ */
+function refuse(error: string): TargetResolution {
+  return { ok: false, error: withNoChargeNote(error) };
+}
+
 export async function resolveTarget(
   userId: string,
   input: { readonly target?: string; readonly project_id?: string },
@@ -133,15 +156,15 @@ export async function resolveTarget(
 ): Promise<TargetResolution> {
   const { target, project_id: projectId } = input;
   if (target !== undefined && projectId !== undefined) {
-    return { ok: false, error: AMBIGUOUS_SUBJECT_MESSAGE };
+    return refuse(AMBIGUOUS_SUBJECT_MESSAGE);
   }
   if (target === undefined && projectId === undefined) {
-    return { ok: false, error: NO_SUBJECT_MESSAGE };
+    return refuse(NO_SUBJECT_MESSAGE);
   }
   if (projectId !== undefined) {
     const project = await loadProject(userId, projectId);
     if (!project) {
-      return { ok: false, error: projectNotFoundMessage(projectId) };
+      return refuse(projectNotFoundMessage(projectId));
     }
     // AFTER the ownership gate above, never before it. An archive check that ran first would
     // answer another tenant's archived project with "that project is archived" — which says the
@@ -149,17 +172,17 @@ export async function resolveTarget(
     // written to avoid. Missing, another tenant's, and another tenant's ARCHIVED must all leave
     // through the same sentence.
     if (project.archivedAt !== null) {
-      return { ok: false, error: ARCHIVED_PROJECT_MESSAGE };
+      return refuse(ARCHIVED_PROJECT_MESSAGE);
     }
     const normalized = normalizeDomain(project.domain);
     if (!normalized.ok) {
-      return { ok: false, error: normalized.error };
+      return refuse(normalized.error);
     }
     return { ok: true, domain: normalized.domain, project };
   }
   const normalized = normalizeDomain(target as string);
   if (!normalized.ok) {
-    return { ok: false, error: normalized.error };
+    return refuse(normalized.error);
   }
   return { ok: true, domain: normalized.domain, project: null };
 }
