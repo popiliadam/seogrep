@@ -1266,3 +1266,179 @@ Search Console, son iş, apex/www ve çift-property uyarılarını basıyor — 
 yolundan görüldü.
 
 ### Sıradaki tool: `whats_next` — operatörün "okey"i bekleniyor
+
+---
+
+## §D2 — DEPLOY SONRASI KÜÇÜK SMOKE (ilk üç tool, 2026-08-26 18:2xZ)
+
+Operatör: *"ilk 3 tool'u aktifleştirmek için hangi komutlar gerekiyor, küçük smoke test yapalım."*
+Bu üç tool dalga 1'de **deploy'dan ÖNCE** ölçülmüştü; düzeltmeleri müşteri yolundan ilk kez görülüyor.
+
+| tool | müşteri cümlesi | canlı sonuç |
+|---|---|---|
+| `list_projects` | *"list my projects"* · *"hangi siteleri takip ediyorum"* | 18 aktif + 1 arşiv · üç durumlu Search Console · son iş · apex/www ve çift-property uyarıları — **G1/G4/G5/G7 canlıda** |
+| `get_credit_balance` | *"how many credits do I have"* · *"kredi bakiyem ne"* | **G10 canlıda:** artık genel kural paragrafı değil, **hesaba özel** cümle: *"Your account has a paid balance, so … unlocked"* |
+| `list_credit_activity` | *"what have I spent credits on"* · *"kredilerim nereye gitti"* (`limit` 1-50, varsayılan 10) | **G13 canlıda:** *"5 most recent of 512"* + *"507 older entries not shown — raise limit (max 50)"* |
+
+### 🔴 BULGU D-7 — VERİ · sahip: kod · **YÜKSEK (para dürüstlüğü)**
+
+`list_credit_activity` bugünkü crawl satırı için **`no project scope`** basıyor. Ölçüm:
+
+```
+- 2026-08-26T10:36:21 · -20 credits · charge · crawl_site · no project scope
+```
+
+Aynı satır SQL'de:
+
+| ledger.project_id | job_id | işin gerçek projesi |
+|---|---|---|
+| `null` | `af7a2925…` | **`ea77221c…` = `noraninsaat.com`** |
+
+**O çağrının bir projesi VARDI.** `project_id`'nin null olmasının sebebi "kapsam yoktu" değil,
+**kolon o gün henüz yoktu** — migration 0033 bugün 17:36Z'de uygulandı, satır 10:36Z'de yazıldı.
+
+Bu, turun çekirdek vaadinin ihlali — *"unreported, never as a zero"*: kaydedilmemiş bir değer,
+**pozitif bir iddia** olarak sunuluyor. Migration'ın kendi yorumu da `NULL`'ı "gerçek bir cevap"
+diye tanımlıyor (`research_keywords` gibi projesi olmayan çağrılar için) — o tanım **yalnız
+0033'ten SONRAKİ satırlar** için doğru.
+
+**Neden geri doldurulamaz:** `credit_ledger` append-only — `UPDATE` hem 0002'nin tetikleyicisiyle
+koşulsuz reddediliyor hem de her role'den revoke edilmiş (bugün canlıda doğrulandı). Yani eski
+satırlara `project_id` yazmak **imkânsız, ve öyle olmalı**.
+
+**Önerilen düzeltme:** okuma tarafında bir eşik. 0033'ün uygulandığı andan ÖNCE yazılmış satırlar
+için `no project scope` yerine **`project not recorded`** (ve tek seferlik bir not: bu satırlar
+proje kapsamı deftere eklenmeden önce yazıldı). Eşikten sonraki `NULL` ise gerçekten "kapsam yok".
+
+**Kapsam:** `projectLabel` `list_jobs` tarafından da kullanılıyor, ama orada `project_id` `jobs`
+tablosundan geliyor ve o kolon hep vardı — **bu delik yalnız ledger'a özgü**.
+
+### Ek gözlem — istemcinin tool listesi yine bayat (A1'in tekrarı)
+
+Deploy edilmiş `list_credit_activity` açıklaması `"… which tool charged what, for which project."`
+diyor (`list-credit-activity.ts:243-245`); asistanın istemcisinde görünen şema hâlâ eski metni
+taşıyor. **Çağrılar canlı sunucuya gidiyor** (sonuçlar yeni kodun çıktısı), yalnız şema/açıklama
+önbelleği bayat. Yeni açıklamaları görmek için bağlantı yenilenmeli.
+
+---
+
+## §D3 — MÜŞTERİ SORUSU: "hangi projelere / hangi tool'lara ne kadar harcadım?" (18:3xZ)
+
+Operatör dört soruyu müşteri gibi sordu. İlk ikisini **ürün cevapladı**, son ikisini **cevaplayamadı**.
+
+| soru | ürün cevapladı mı |
+|---|---|
+| aktif projelerim | ✅ `list_projects` — 18 aktif + 1 arşiv |
+| kaç kredim kaldı | ✅ `get_credit_balance` — 4519 |
+| **hangi projeye ne kadar** | ❌ **hiçbir yüzey cevaplayamıyor** |
+| **hangi tool'a ne kadar** | ❌ tek tek satır veriyor, **toplam yok** |
+
+### Bakiyenin doğrulaması (tool doğru çıktı)
+
+`200 grant + 1400 purchase + 10000 adjust − 7081 harcama = **4519**` — `get_credit_balance`'ın
+verdiği sayı defter toplamıyla **birebir**.
+
+> **Şefin kendi hatası, kayda geçer:** ilk toplama sorgusunu **tenant filtresiz** yazdım, 4699
+> çıktı ve bir an "tool ile defter çelişiyor" gibi göründü. Fark başka bir kiracının 180 kredisiydi.
+> NEVER#4'ün okuma tarafındaki karşılığı: **tenant filtresiz sorgu yanlış cevap üretir**, ve o
+> cevabı "üründe tutarsızlık" diye raporlamak bir adım kalmıştı.
+
+### 🔴 BULGU D-8 — KAPSAM · sahip: kod · orta-yüksek
+
+`list_credit_activity` **512 kaydın 50'sini** gösteriyor ve altına şunu yazıyor:
+*"462 older entries not shown — raise `limit` (max 50) to see more."*
+**`limit` zaten 50 — tavanda.** Yani tavsiye çıkmaz sokak: kalan 462 kayda ulaşmanın **hiçbir
+yolu yok**, ve hiçbir yüzey **toplam** vermiyor (ne tool bazında, ne proje bazında).
+Müşterinin "kredilerim nereye gitti" sorusu, 778 satırlık bir defterin üzerinde cevapsız kalıyor.
+
+**Öneri:** ya sayfalama (`before` imleci), ya da bir **özet** kalemi — tool bazında net toplam,
+`get_credit_balance`'ın altında veya ayrı bir uçta. Kararı operatörün.
+
+### D-7'nin canlı ölçeği
+
+**778 satırın 0'ı** proje taşıyor (%100 boş — kolon bugün eklendi). `job_id` üzerinden **gerçek**
+bir işe bağlanabilen harcama yalnız **540 kredi / 7081** = **%7,6**. Kalan **6541 kredi (%92,4)**
+hiçbir projeye bağlanamıyor. Migration 0033'ün ölçtüğü "%3,4 cevaplanabilir" oranı, iş kaydı
+join'iyle %7,6'ya çıkıyor — ama **hiçbiri ledger'ın kendi kolonundan gelmiyor**.
+
+Bu, 0033'ün ileriye dönük değerini de gösteriyor: **bugünden sonraki** her harcama satırı projesini
+taşıyacak. Geçmiş kalıcı olarak bağlanamaz (append-only, `UPDATE` yok).
+
+### Ölçülen tablolar (kanıt)
+
+Tool bazında net harcama (ilk 8): `ranked_keywords` 1430 · `compare_competitors` 1170 ·
+`analyze_backlinks` 980 · `audit_onpage` 720 · `crawl_site` 540 · `research_keywords` 375 ·
+`audit_tech` 285 · `detect_cannibalization` 220. Toplam **7081**.
+
+Projeye bağlanabilen (job_id join'i): `adstark.com.tr` 160 · `www.bigcattr.com` 80 ·
+`seogrep.com` 80 · `dentnotion.com` 60 · `katrenur.com` 40 · `bayder.com.tr` 40 ·
+`rkturizm.com` 40 · `www.noraninsaat.com` 20 · `noraninsaat.com` 20 → **540**.
+
+---
+
+## §D4 — D-7 + D-8 DÜZELTİLDİ (2026-08-26 19:0xZ)
+
+### D-7 — bir `null`, iki anlam, ve ayıran tek şey saat
+
+`LEDGER_PROJECT_SCOPE_SINCE_MS = 2026-08-26T17:48:00Z` — `project_id`'yi **YAZAN** deploy'un
+canlıya çıktığı an (`deploy-mcp`, `642804c`; migration on iki dakika önce inmişti). Eşikten
+**önceki** `null` = **`project not recorded`**, sonraki `null` = **`no project scope`**.
+
+Neden sabit, neden join değil: ledger **append-only**, o 778 satır **asla** doldurulamaz
+(0002 hem tetikleyiciyle `UPDATE`'i reddediyor hem her role'den revoke ediyor). Yani belirsizlik
+kalıcı ve her okumada, sonsuza kadar cevaplanmak zorunda. Ayrıştırılamayan bir tarih **daha zayıf**
+iddiaya düşüyor (`not_recorded`): "kaydedilmemiş" cehaleti itiraf eder, "kapsam yok" müşterinin
+çağrısı hakkında bir olgu iddia eder — ve bir olgu, okunamayan bir tarihe dayanamaz.
+
+Açıklama cümlesi **yalnız ekranda öyle bir satır varsa** ve **bir kez** basılıyor.
+`list_jobs` DEĞİŞMEDİ: `jobs.project_id` tablo kadar eski, oradaki `null`un hep tek anlamı vardı.
+
+### D-8 — çıkmaz sokak yerine imleç, ve nihayet bir toplam
+
+**① Sayfalama.** `before_id` (opsiyonel, pozitif tam sayı) → `.lt("id", …)`. Cevap sonraki sayfanın
+değerini **adıyla** veriyor: *"call again with `before_id: 511`"*. **İmleç `created_at` DEĞİL `id`**
+— modülün kendi başlığı "bir rezervasyon ve iadesi aynı milisaniyeye düşebilir" diye uyarıyor;
+zaman damgalı imleç ya satır atlar ya tekrarlar. `id` append-only tablonun monotonik ekleme sırası.
+
+**② Toplam.** `summarizeOwnSpend` + tek satırlık özet:
+*"Spent so far: 7081 credits, net of refunds, across 24 tools. Top: ranked_keywords 1430 · … — 2141 across 19 other tools."*
+**Net**, brüt değil: iade edilen rezervasyon hiçbir şeye mal olmaz, bu yüzden `audit_onpage`
+36 çağrının 1080'i değil **720** okunuyor. Tavan `SUMMARY_ROW_CAP = 2000` ve **sesi var** — kap
+ısırırsa cümle "en yeni N / M" diyor; sessiz kesme bu turun tekrar tekrar bulduğu arıza.
+
+### Mutasyon kanıtı — dört eksen
+
+| mutasyon | sonuç |
+|---|---|
+| eşik kaldırıldı (her `null` → "no project scope") | **2 kırmızı** |
+| imleç **en yeni** id'yi veriyor (sonsuz döngü) | **1 kırmızı** |
+| özet **brüt** sayıyor (iadeleri yok sayar) | **2 kırmızı** |
+| kap sessizce kesiyor (`rowsCovered` gizleniyor) | **1 kırmızı** |
+
+DB şeridinde ayrıca **gerçek sorguya karşı** iki pin: dört kayıtlı defter ikişerli sayfalanıyor ve
+birleşim **tam olarak** dört kayıt (atlama yok, tekrar yok) · iade edilen rezervasyon özetten
+düşüyor.
+
+### Kapının yakaladığı iki şey (ikisi de gerçek)
+
+1. **`credit_ledger_spend_reserve_id_present`** — DB şeridi ilk koşuda kırmızı: elle kurduğum
+   `spend_reserve` satırı `reserve_id` taşımıyordu. **Harcamaya benzeyen bir satır harcama
+   değildir**; tablo bunu benim yerime söyledi.
+2. **`gen-tool-docs --check`** — tool açıklamasını değiştirdim, üretilen MDX bayat kaldı, kapı
+   kırmızı verdi. Ayrıca açıklama 155 karakter tavanını aşınca `per…` diye **kesiliyordu**;
+   154'e indirildi. Bayat `dist` de ayrıca reddedildi ("stale dist compares today's MDX with
+   yesterday's code and passes for the wrong reason").
+
+### Kapılar
+
+`TURBO_FORCE=1 bash guardrails/verify.sh` **PASS** — mcp **3553** (3545→, +8) · core 339 ·
+web 1975 · db 12 · 38 doküman senkron · `dist` taze.
+`bash guardrails/verify-db.sh` **PASS** — db 165 · mcp **493** (491→, +2) · web 48.
+**NE ÖLÇMEZLER:** secret taraması · canlı uç (henüz deploy edilmedi).
+
+### ⚠️ Operasyonel not — migration defteri ile şema ayrıştı
+
+0033 Supabase SQL Editor'dan elle koşuldu, bu yüzden `supabase_migrations.schema_migrations`'ta
+**kaydı yok** (son kayıt `0032_subject_lookup_runs`). Şema doğru, defter eksik. İleride
+`supabase db push` 0033'ü **yeniden uygulamayı deneyip** "column already exists" ile düşebilir.
+Kaydı elle eklemek operatörün işi; şef ortamda migration yazamıyor.

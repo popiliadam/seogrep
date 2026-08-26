@@ -6,6 +6,7 @@ import {
   listCreditActivityTool,
   listOwnCreditActivity,
   MAX_ACTIVITY_LIMIT,
+  summarizeOwnSpend,
 } from "./list-credit-activity.ts";
 
 /**
@@ -149,6 +150,59 @@ describe("list_credit_activity against the local stack", () => {
 
     const rows = (await listOwnCreditActivity(ctx.userId, 2)).rows;
     expect(rows.map((row) => row.reason)).toEqual(["newest-entry", "middle-entry"]);
+  });
+
+  /**
+   * D-8 — PAGING, against the real query. The fast lane can only prove the cursor VALUE is handed
+   * to the port; whether `.lt("id", …)` actually walks the ledger without skipping or repeating a
+   * row is a property of the SQL, and the case that would break a timestamp cursor — two entries
+   * sharing one `created_at` — only exists here. The module's header warns about exactly that: a
+   * reserve and its release can land in the same millisecond.
+   */
+  it("pages through the whole ledger on the id cursor, skipping and repeating nothing", async () => {
+    const ctx = await makeCtx();
+    await seedLedger(ctx.userId, [
+      { delta: 200, kind: "grant", reason: "e1" },
+      { delta: 50, kind: "purchase", reason: "e2" },
+      { delta: 25, kind: "purchase", reason: "e3" },
+      { delta: 30, kind: "purchase", reason: "e4" },
+    ]);
+
+    const seen: string[] = [];
+    let cursor: number | undefined;
+    for (let page = 0; page < 4; page += 1) {
+      const rows = (await listOwnCreditActivity(ctx.userId, 2, cursor)).rows;
+      if (rows.length === 0) break;
+      seen.push(...rows.map((row) => row.reason ?? ""));
+      cursor = rows[rows.length - 1]?.id;
+    }
+
+    // Every entry exactly once, newest first — the union is the ledger, not a sample of it.
+    expect(seen).toEqual(["e4", "e3", "e2", "e1"]);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  /**
+   * The summary's own arithmetic against real rows: a released reserve must net to nothing, which
+   * is the difference between "what this tool charged" and "what it COST you".
+   */
+  it("nets released reserves out of the per-tool spend summary", async () => {
+    const ctx = await makeCtx();
+    // Every reserve carries a reserve_id, because the TABLE says so
+    // (`credit_ledger_spend_reserve_id_present`). Caught by that CHECK when this spec first ran
+    // with bare rows — a reminder that a hand-made row shaped like a spend is not one.
+    const released = randomUUID();
+    await seedLedger(ctx.userId, [
+      { delta: 100, kind: "purchase", reason: "seed" },
+      { delta: -30, kind: "spend_reserve", tool: "audit_onpage", reserve_id: released },
+      { delta: 30, kind: "spend_release", tool: "audit_onpage", reserve_id: released },
+      { delta: -20, kind: "spend_reserve", tool: "crawl_site", reserve_id: randomUUID() },
+    ]);
+
+    const summary = await summarizeOwnSpend(ctx.userId);
+    expect(summary.byTool).toEqual([{ tool: "crawl_site", net: 20 }]);
+    expect(summary.totalNet).toBe(20);
+    expect(summary.rowsCovered).toBe(summary.rowsTotal);
   });
 
   /**

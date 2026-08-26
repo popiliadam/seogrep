@@ -7,6 +7,8 @@ import {
   MAX_ACTIVITY_LIMIT,
   formatActivityLine,
   formatCreditActivity,
+  formatSpendSummary,
+  summarizeSpendRows,
   formatDelta,
   kindLabel,
   makeListCreditActivityTool,
@@ -38,9 +40,9 @@ function entry(overrides: Partial<CreditActivityRow> = {}): CreditActivityRow {
 }
 
 function recordingPort(rows: readonly CreditActivityRow[]) {
-  const calls: { userId: string; limit: number }[] = [];
-  const listActivity: ListCreditActivityFn = async (userId, limit) => {
-    calls.push({ userId, limit });
+  const calls: { userId: string; limit: number; beforeId?: number }[] = [];
+  const listActivity: ListCreditActivityFn = async (userId, limit, beforeId) => {
+    calls.push({ userId, limit, beforeId });
     // `total` equals what the port hands back, so these specs describe an UNCUT page and none of
     // their wordings change; the cut sentence has its own specs below.
     return { rows, total: rows.length };
@@ -49,9 +51,16 @@ function recordingPort(rows: readonly CreditActivityRow[]) {
   // getServiceClient, which needs the full prod env, and these specs are about the limit the read
   // port is asked for and the wording around it. An empty map changes no assertion below — every
   // scope clause they exercise renders from the row's own project_id.
+  // The spend summary is stubbed for the SAME reason the domain port is: its default reaches
+  // getServiceClient and would drag the full prod env into a fast-lane spec. Empty byTool renders
+  // nothing, so no wording below changes; the summary has its own specs.
   return {
     calls,
-    tool: makeListCreditActivityTool({ listActivity, listDomains: async () => new Map() }),
+    tool: makeListCreditActivityTool({
+      listActivity,
+      listDomains: async () => new Map(),
+      summarizeSpend: async () => ({ byTool: [], totalNet: 0, rowsCovered: 0, rowsTotal: 0 }),
+    }),
   };
 }
 
@@ -214,12 +223,40 @@ describe("the project a charge was for", () => {
    * rather than as "there was no site". It is also the answer to the customer's question for that
    * row — the same rule the tour applied to unreported numbers.
    */
-  it("says so, in words, when a charge had no project scope", () => {
+  it("says so, in words, when a charge really had no project scope", () => {
     const line = formatActivityLine(
-      entry({ kind: "spend_reserve", delta: -25, tool: "research_keywords", project_id: null }),
+      entry({
+        kind: "spend_reserve",
+        delta: -25,
+        tool: "research_keywords",
+        project_id: null,
+        // AFTER the ledger learned to store a project — so this null is a finding, not a gap.
+        created_at: "2026-08-27T09:00:00.000Z",
+      }),
       domains,
     );
     expect(line).toMatch(/no project scope/i);
+  });
+
+  /**
+   * D-7, measured live 2026-08-26. The SAME null means something else on an older row: the column
+   * did not exist when it was written. The tool printed "no project scope" for a crawl_site charge
+   * whose job row names noraninsaat.com — an unrecorded value asserted as a positive finding, the
+   * precise shape of "unreported, never as a zero".
+   */
+  it("calls an older null NOT RECORDED — the column did not exist when it was written", () => {
+    const line = formatActivityLine(
+      entry({
+        kind: "spend_reserve",
+        delta: -20,
+        tool: "crawl_site",
+        project_id: null,
+        created_at: "2026-08-25T10:00:00.000Z",
+      }),
+      domains,
+    );
+    expect(line).toMatch(/project not recorded/i);
+    expect(line).not.toMatch(/no project scope/i);
   });
 
   /**
@@ -254,7 +291,10 @@ describe("the project a charge was for", () => {
  * with no way to tell it was cut.
  */
 describe("what the answer leaves out", () => {
-  const rows = [entry({ id: 1 }), entry({ id: 2 })];
+  // Newest first, as the read port returns them — so the OLDEST id is the last element, and that
+  // is the one a cursor must carry. A fixture in the other order would let a `rows[0].id` cursor
+  // pass while paging the same entries forever.
+  const rows = [entry({ id: 512 }), entry({ id: 511 })];
 
   it("says how many entries exist and how many are not shown", () => {
     const text = formatCreditActivity({ rows, total: 512 });
@@ -262,8 +302,16 @@ describe("what the answer leaves out", () => {
     expect(text).toMatch(/510 older entries not shown/i);
   });
 
-  it("names the argument that shows more, so the sentence is actionable", () => {
-    expect(formatCreditActivity({ rows, total: 512 })).toMatch(/limit/);
+  /**
+   * D-8, measured live 2026-08-26: the sentence said "raise `limit` (max 50)" TO A CALLER ALREADY
+   * AT 50. True about the count, a dead end about the remedy — 462 entries with no way to reach
+   * them. Actionable now means a cursor carrying the value to pass, and the value must be the
+   * OLDEST id on screen or the next page repeats what was just read.
+   */
+  it("hands back the cursor for the next page, not an argument already at its maximum", () => {
+    const text = formatCreditActivity({ rows, total: 512 });
+    expect(text).toMatch(/before_id: 511/);
+    expect(text).not.toMatch(/raise `?limit/i);
   });
 
   it("says nothing about a cut when the page IS the whole ledger", () => {
@@ -273,5 +321,69 @@ describe("what the answer leaves out", () => {
 
   it("counts one leftover entry in the singular", () => {
     expect(formatCreditActivity({ rows, total: 3 })).toMatch(/1 older entry not shown/i);
+  });
+});
+
+
+/**
+ * D-8's other half, measured live 2026-08-26. Asked "which tools did my credits go to?", the
+ * product could not answer: 512 entries, 50 per call, no total anywhere. The numbers had to be
+ * computed out of the database by hand — which is exactly what a customer cannot do.
+ */
+describe("where the credits went", () => {
+  const rows = (...pairs: [string, number][]) => pairs.map(([tool, delta]) => ({ tool, delta }));
+
+  it("nets a refunded reserve out of its tool's total", () => {
+    // 36 charges of 30 with 12 released is 720, not 1080 — the number that LEFT the balance.
+    const summary = summarizeSpendRows(rows(["audit_onpage", -30], ["audit_onpage", 30], ["audit_onpage", -30]), 3);
+    expect(summary.byTool).toEqual([{ tool: "audit_onpage", net: 30 }]);
+    expect(summary.totalNet).toBe(30);
+  });
+
+  it("drops a tool whose every call was refunded, rather than printing a useless zero", () => {
+    const summary = summarizeSpendRows(rows(["ai_visibility", -90], ["ai_visibility", 90], ["crawl_site", -20]), 3);
+    expect(summary.byTool).toEqual([{ tool: "crawl_site", net: 20 }]);
+  });
+
+  it("orders by net spend and names the tail as a number instead of listing it", () => {
+    const summary = summarizeSpendRows(
+      rows(["a", -10], ["b", -60], ["c", -50], ["d", -40], ["e", -30], ["f", -20]),
+      6,
+    );
+    expect(summary.byTool.map((entry_) => entry_.tool)).toEqual(["b", "c", "d", "e", "f", "a"]);
+    const text = formatSpendSummary(summary);
+    expect(text).toMatch(/b 60 · c 50 · d 40 · e 30 · f 20/);
+    expect(text).toMatch(/10 across 1 other tool\./);
+    expect(text).toMatch(/210 credits, net of refunds, across 6 tools/);
+  });
+
+  /**
+   * THE CAP HAS A VOICE. A partial sum that calls itself the whole ledger is the failure this
+   * review keeps finding; when the row cap bites, the sentence says what it covered.
+   */
+  it("says when the total covers only the most recent rows", () => {
+    const capped = summarizeSpendRows(rows(["crawl_site", -20]), 9_000);
+    expect(formatSpendSummary(capped)).toMatch(/the most recent 1 of 9000 spend entries/);
+    const complete = summarizeSpendRows(rows(["crawl_site", -20]), 1);
+    expect(formatSpendSummary(complete)).not.toMatch(/most recent/);
+  });
+
+  it("renders nothing at all for an account that has never spent", () => {
+    expect(formatSpendSummary(summarizeSpendRows([], 0))).toBe("");
+  });
+});
+
+describe("paging and the not-recorded note", () => {
+  it("passes before_id through to the read port untouched", async () => {
+    const port = recordingPort([entry({ id: 4 })]);
+    await port.tool.run({ userId: "u-1", keyId: "k-1" }, { limit: 10, before_id: 99 });
+    expect(port.calls).toEqual([{ userId: "u-1", limit: 10, beforeId: 99 }]);
+  });
+
+  it("explains 'not recorded' ONLY when such a row is on screen", () => {
+    const older = entry({ project_id: null, created_at: "2026-08-25T10:00:00.000Z" });
+    const newer = entry({ project_id: null, created_at: "2026-08-27T10:00:00.000Z" });
+    expect(formatCreditActivity({ rows: [older], total: 1 })).toMatch(/cannot be filled in/i);
+    expect(formatCreditActivity({ rows: [newer], total: 1 })).not.toMatch(/cannot be filled in/i);
   });
 });
