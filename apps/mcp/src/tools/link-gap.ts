@@ -68,8 +68,10 @@ const inputSchema = z.object({
     .default(DEFAULT_LINK_GAP_LIMIT)
     .describe(
       `How many referring domains to return (1–${LINK_GAP_MAX_LIMIT}, default ` +
-        `${DEFAULT_LINK_GAP_LIMIT}), strongest first by DataForSEO rank. The header always says ` +
-        "how many exist in total, so a shorter list never reads like the whole picture.",
+        `${DEFAULT_LINK_GAP_LIMIT}), strongest first by DataForSEO rank. Whenever DataForSEO ` +
+        "sends a count of the whole set, the header states it — as \"N of M\", or as a note that " +
+        "this list is all of them — and when the vendor sends no count the header says that too, " +
+        "so a shorter list never reads like the whole picture.",
     ),
 });
 
@@ -110,9 +112,40 @@ export function renderLinkGapHeader(gap: LinkGapResult, project?: ProjectRef | n
     total !== null && total > shown
       ? `${thousands(shown)} of ${thousands(total)} domains`
       : `${thousands(shown)} domain${shown === 1 ? "" : "s"}`;
-  return (
+  const lead =
     `Link gap for ${subject} against ${gap.competitor} — ${scope} that link to ` +
-    `${gap.competitor} and not to ${subject}, strongest first:`
+    `${gap.competitor} and not to ${subject}, strongest first`;
+  const note = renderLinkGapTotalNote(total, shown);
+  return note === "" ? `${lead}:` : `${lead}. ${note}:`;
+}
+
+/**
+ * WHAT THE WHOLE SET IS — stated on EVERY answer, including the two cases "N of M" cannot cover.
+ *
+ * The schema used to promise "the header always says how many exist in total". It did not: the
+ * total appeared ONLY when the vendor sent one AND it exceeded the window. The two silent cases
+ * are the ones that matter — a short list that IS the whole picture read like a truncation, and a
+ * vendor that sent no count at all read like a complete answer.
+ *
+ * `rows.length` is never promoted to a total: it is OUR count of what came back, not DataForSEO's
+ * count of what exists, and printing it as the whole set would be a measurement nobody made
+ * (NEVER #7). The keeping-able promise is "always says what is known about the whole set" — the
+ * sibling keyword_gap states the same three cases in its own words.
+ */
+export function renderLinkGapTotalNote(total: number | null, shown: number): string {
+  if (total === null) {
+    return (
+      "DataForSEO sent no count of the whole set for this request, so this list may not be all " +
+      "of them"
+    );
+  }
+  if (total > shown) return "";
+  if (total === shown) {
+    return `DataForSEO reports ${thousands(total)} in total, so this list is all of them`;
+  }
+  return (
+    `DataForSEO reports ${thousands(total)} in total, fewer than the ${thousands(shown)} rows it ` +
+    "returned"
   );
 }
 
