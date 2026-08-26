@@ -914,22 +914,27 @@ export const DOC_PROSE = {
       "findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and " +
       "charges nothing.",
     whatItDoes:
-      "Summarizes the crawl from a technical angle:\n\n" +
-      "- **HTTP status spread** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
+      "Summarizes the crawl from a technical angle. Twelve sections, each named below by the " +
+      "exact heading it carries in the reply, so what you read here is what you can search for " +
+      "in the output:\n\n" +
+      "- **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
       "page URLs listed.\n" +
-      "- **Redirects** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and " +
-      "redirects onto an already-crawled URL).\n" +
-      "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by " +
-      "`robots.txt`, timed out, non-HTML, and so on).\n" +
-      "- **Robots conflicts** — pages marked `noindex` that are still linked internally, and " +
-      "pages whose `X-Robots-Tag` header says `noindex` while the page's own meta tag does not.\n" +
-      "- **Slow pages** and **heavy pages** — fetches over a few seconds, and HTML documents over " +
-      "a megabyte and a half.\n" +
+      "- **Redirects surfaced** — the redirects the crawler surfaced (off-origin redirects, " +
+      "redirect loops, and redirects onto an already-crawled URL).\n" +
+      "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked " +
+      "by `robots.txt`, timed out, non-HTML, and so on).\n" +
+      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n" +
+      "- **Slow pages** — a fetch that took over three seconds, redirect hops included, because " +
+      "that is what a visitor actually waits for.\n" +
+      "- **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images " +
+      "are never counted here.\n" +
       "- **Redirect chains** — two or more hops to reach the destination, printed as the whole " +
       "trail.\n" +
-      "- **Deep pages** and **orphan signals** — pages several clicks from a crawl seed, and " +
-      "pages the crawl found no internal link to at all.\n" +
-      "- **Sitemap versus crawl** — what is in the sitemap and was never crawled, and what was " +
+      "- **X-Robots-Tag conflicts** — the response header says `noindex` while the page's own " +
+      "meta tag does not, which is the half of the disagreement you cannot see in the HTML.\n" +
+      "- **Deep pages** — four or more clicks from a crawl seed.\n" +
+      "- **No internal links found** — the orphan signal: no page in this crawl links there.\n" +
+      "- **Sitemap vs crawl** — what is in the sitemap and was never crawled, and what was " +
       "crawled and is absent from the sitemap.\n" +
       "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
       "from.\n\n" +
@@ -937,17 +942,26 @@ export const DOC_PROSE = {
       "redirect and records the destination, so a redirect surfaces as a **skip reason** rather " +
       "than a duplicate page; separately, a page's own hop trail is read back as a **chain** " +
       "when it took more than one hop.\n\n" +
-      "Every section prints only when it has rows — with one exception. The sitemap comparison " +
-      "prints even at zero and zero, because a diff that exists means the sitemap **was read**, " +
-      "and a measured agreement is worth stating where an empty list elsewhere would only mean " +
-      "an unmeasured axis. The orphan list carries its own caveat: the crawl is bounded, so a " +
-      "page whose only linking page was never fetched lands there too.",
+      "Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, " +
+      "**Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a " +
+      "count this engine always takes, so a zero there is a measurement rather than a silence. " +
+      "Every section after them prints only when it has rows, and that too is deliberate: on a " +
+      "crawl stored before a signal existed the list is empty because nobody looked, and a " +
+      "heading reading \"Slow pages: 0\" would report a measurement that never happened.\n\n" +
+      "The sitemap comparison is the one exception in the other direction. It prints even at " +
+      "zero and zero, because a diff that exists means the sitemap **was read**, and a measured " +
+      "agreement is worth stating where an empty list elsewhere would only mean an unmeasured " +
+      "axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
+      "linking page was never fetched lands there too.",
     example:
       "Ask your MCP client in plain language:\n\n> Run a technical audit for my example.com project.",
     returns:
-      "The status distribution, the redirect and skipped-URL breakdowns, the noindex-but-linked " +
-      "and `X-Robots-Tag` conflicts, and each of the sections above that had rows. Every list is " +
-      "capped, and past the cap says how many more there were.",
+      "Always the four guaranteed sections — the status distribution, the redirects surfaced, " +
+      "the skipped URLs by reason, and the noindex-but-internally-linked conflicts — each at " +
+      "its own count, zero included. Then whichever of the remaining sections this crawl gave " +
+      "rows for, plus the sitemap comparison whenever a sitemap was read. So a short reply is a " +
+      "clean crawl, not a shallow audit. Every list is capped, and past the cap says how many " +
+      "more there were.",
   },
 
   audit_schema: {
