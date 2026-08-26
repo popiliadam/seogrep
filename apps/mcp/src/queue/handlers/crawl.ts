@@ -34,6 +34,7 @@ export type CrawlFn = (
   opts: {
     maxUrls?: number;
     includePaths?: string[];
+    extraSeeds?: readonly string[];
     onProgress?: (progress: CrawlProgress) => void;
   },
 ) => Promise<CrawlResult>;
@@ -66,6 +67,29 @@ export function clampIncludePaths(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const paths = raw.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
   return paths.length > 0 ? paths : undefined;
+}
+
+/**
+ * The most seeds a queue message may carry. It is the crawler's own page cap: a seed the crawl
+ * could never reach is ballast, and an unbounded list from a message is a memory question nobody
+ * needs to have.
+ */
+export const MAX_SEED_URLS = 100;
+
+/**
+ * Coerce a queue-message `seed_urls` into the crawler's contract — `crawl_site`'s opt-in
+ * ranking-page seeding, carried from the surface that paid for it.
+ *
+ * It is a SHAPE gate, not a scope gate: it accepts only non-empty strings and caps the count. What
+ * makes a seed legitimate — same site, inside `include_paths`, not a reserved infrastructure path,
+ * normalized — is decided by `selectExtraSeeds` INSIDE the crawler, on this same list, so a
+ * tampered or stale message cannot widen a crawl by one URL. Anything else yields undefined, and
+ * the crawl seeds exactly as it always did.
+ */
+export function clampSeedUrls(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const urls = raw.filter((u): u is string => typeof u === "string" && u.trim().length > 0);
+  return urls.length > 0 ? urls.slice(0, MAX_SEED_URLS) : undefined;
 }
 
 // --- Live progress (what a poll of a RUNNING crawl can read) ------------------------------
@@ -298,6 +322,7 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
     // clampMaxUrls / clampIncludePaths).
     const maxUrls = clampMaxUrls(payload.max_urls);
     const includePaths = clampIncludePaths(payload.include_paths);
+    const extraSeeds = clampSeedUrls(payload.seed_urls);
 
     // LIVE PROGRESS. The crawl takes up to 90 s, and until now every poll of a running job read
     // the same byte-identical line — a customer could not tell "working" from "stuck". The
@@ -310,7 +335,12 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
       // H-02: what reaches jobs.result is BOUNDED here rather than trusted from the crawl
       // function (which is an injectable dep). On the real crawler this is the identity.
       result = boundCrawlResult(
-        await crawl(origin, { maxUrls, includePaths, onProgress: progress.onProgress }),
+        await crawl(origin, {
+          maxUrls,
+          includePaths,
+          extraSeeds,
+          onProgress: progress.onProgress,
+        }),
       );
     } finally {
       await progress.settle();

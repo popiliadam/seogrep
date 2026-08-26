@@ -5,6 +5,12 @@ import { withNoChargeNote } from "../credits/free-refusal.ts";
 import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
 import { enqueueJob } from "../queue/boss.ts";
 import {
+  fetchRankingSeeds,
+  SEED_CHARGE_CREDITS,
+  type RankingSeedFetcher,
+  type RankingSeedOutcome,
+} from "./crawl-seeds.ts";
+import {
   ARCHIVED_PROJECT_MESSAGE,
   loadOwnProject,
   type ProjectRef,
@@ -73,6 +79,12 @@ export interface CrawlSiteDeps {
   readonly enqueue?: EnqueueFn;
   readonly estimate?: EstimateFn;
   readonly resolveProject?: ProjectResolver;
+  /**
+   * The OPT-IN ranking-page seeding step (default: the real, env-resolved, credit-charging one).
+   * Injected so the fast lane can prove the surface's seeding behavior — including that it is
+   * NEVER reached without the flag — with no vendor, no ledger and no database.
+   */
+  readonly fetchSeeds?: RankingSeedFetcher;
 }
 
 /**
@@ -97,6 +109,18 @@ const inputSchema = z.object({
     .optional()
     .describe(
       'Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap).',
+    ),
+  seed_from_ranking_pages: z
+    .boolean()
+    .default(false)
+    .describe(
+      "OPT-IN, off by default: start the crawl from the pages DataForSEO reports as ranking for " +
+        `this domain, so they are fetched before the ${PAGE_CAP}-page cap is reached. This is a ` +
+        `paid DataForSEO lookup and is charged SEPARATELY at the my_pages price (${SEED_CHARGE_CREDITS} ` +
+        `credits, its own ledger line); the crawl itself still costs ${TOOL_COSTS.crawl_site}. If the ` +
+        "lookup returns nothing this crawl can use, or cannot run at all, the crawl runs without " +
+        "the seeds and the seeding is not charged. The lookup uses the same defaults as my_pages " +
+        "(United States, English) — for another market, run my_pages yourself.",
     ),
 });
 
@@ -223,19 +247,26 @@ function queuedResult(
   jobId: string,
   projection: FullCrawlProjection | null,
   maxUrls: number,
+  seeding: RankingSeedOutcome | null,
 ): ToolResult {
-  // estimated_credits reads from the human-approved price table — never a literal.
+  // estimated_credits reads from the human-approved price table — never a literal. It is the
+  // CRAWL's cost and stays that: any seeding charge is a separate line under its own tool name,
+  // reported in its own sentence rather than folded into this number.
   const base =
     `Crawl queued for ${domain}. job_id: ${jobId} · status: queued · ` +
     `estimated_credits: ${TOOL_COSTS.crawl_site}. ` +
     `Track it with get_job_status { "job_id": "${jobId}" }.`;
-  if (!projection) return textResult(base);
+  // The seeding sentence is APPENDED, never merged: it states its own fee outcome (including
+  // "you were not charged" on every branch that spent nothing), and how many of the vendor's
+  // pages this crawl could and could not use.
+  const seedNote = seeding === null ? "" : ` ${seeding.note}`;
+  if (!projection) return textResult(`${base}${seedNote}`);
   // "at least N", never "~N". The number is a floor (see FullCrawlProjection.pages), and "~"
   // told the customer it could fall either way while they approved the spend.
   return textResult(
     `${base} At least ${groupThousands(projection.pages)} pages discovered ` +
       `(${sourceClause(projection.source)}); this crawl covers up to ` +
-      `${maxUrls} of them (${TOOL_COSTS.crawl_site} credits).`,
+      `${maxUrls} of them (${TOOL_COSTS.crawl_site} credits).${seedNote}`,
   );
 }
 
@@ -249,6 +280,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
   const enqueue = deps.enqueue ?? enqueueJob;
   const estimate = deps.estimate ?? estimateSiteSize;
   const resolveProject = deps.resolveProject ?? defaultResolveProject;
+  const fetchSeeds = deps.fetchSeeds ?? ((request) => fetchRankingSeeds(request));
   return defineTool({
     name: "crawl_site",
     description:
@@ -258,7 +290,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
     charge: "worker",
     handler: async (
       ctx: AuthContext,
-      { project_id, max_urls, include_paths },
+      { project_id, max_urls, include_paths, seed_from_ranking_pages },
       rawInput,
     ): Promise<ToolResult> => {
       // Tenant-scoped project fetch is the ownership gate: fail fast with a clear error rather
@@ -314,16 +346,37 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
         }
       }
 
+      // RANKING-PAGE SEEDING — after BOTH free gates and after the confirmation branch, never
+      // before. A call that returns the confirmation above enqueues nothing, so it must also buy
+      // nothing: seeding only ever happens on a request that is actually going to be queued.
+      // It never throws (fetchRankingSeeds turns every failure into an outcome), so an optional
+      // enrichment cannot take down a crawl the tenant asked for.
+      const seeding = seed_from_ranking_pages
+        ? await fetchSeeds({
+            userId: ctx.userId,
+            domain: project.domain,
+            maxUrls: max_urls,
+            includePaths: scopedPaths,
+          })
+        : null;
+      // Only a NON-EMPTY seed list travels: an absent key keeps the payload byte-identical to a
+      // crawl that never asked for seeding.
+      const seedUrls = seeding && seeding.seeds.length > 0 ? [...seeding.seeds] : undefined;
+
       const { jobId } = await enqueue(
         { userId: ctx.userId },
         {
           tool: "crawl_site",
           projectId: project_id,
-          payload: { max_urls, ...(scopedPaths ? { include_paths: scopedPaths } : {}) },
+          payload: {
+            max_urls,
+            ...(scopedPaths ? { include_paths: scopedPaths } : {}),
+            ...(seedUrls ? { seed_urls: seedUrls } : {}),
+          },
         },
       );
 
-      return queuedResult(project.domain, jobId, projection, max_urls);
+      return queuedResult(project.domain, jobId, projection, max_urls, seeding);
     },
   });
 }

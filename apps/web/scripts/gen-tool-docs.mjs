@@ -590,6 +590,34 @@ export const DOC_PROSE = {
           "what you are charged; it just means a big site can't silently run up cost. Re-run " +
           "with `\"confirm\": true` to proceed, or narrow the scope with `include_paths`.",
       },
+      {
+        heading: "Starting the crawl from the pages that already rank",
+        body:
+          "A crawl seeds from your sitemap and your homepage, and stops at the page cap — and a " +
+          "sitemap is not ordered by importance. On one measured site that combination meant the " +
+          "single **highest-traffic page never entered the crawl at all**: it sat too deep in the " +
+          "sitemap to survive the cap, on every run.\n\n" +
+          "`seed_from_ranking_pages: true` starts the crawl from the pages DataForSEO reports as " +
+          "ranking for your domain, so they are fetched first — right after the homepage and " +
+          "ahead of the sitemap.\n\n" +
+          "**It is off by default, and it is a separate charge.** The ranking list is a paid " +
+          "DataForSEO lookup — the same one [`my_pages`](/docs/tools-reference/my-pages) makes — " +
+          "so it is billed at that tool's price, on its own line in your credit history, under " +
+          "the name `my_pages`. The crawl itself is unchanged: `crawl_site` costs what it has " +
+          "always cost, whether you seed or not. Like `my_pages`, seeding needs a paid credit " +
+          "balance.\n\n" +
+          "**If it produces nothing, you pay nothing.** A lookup that names no page this crawl " +
+          "can use — because it returned nothing, because the pages it named are on another host, " +
+          "or because they all fall outside your `include_paths` — is not charged, and the crawl " +
+          "is queued without the seeds. The same holds if the lookup cannot run at all. The reply " +
+          "always says which of those happened, how many pages were used as seeds, and how many " +
+          "were left out and why.\n\n" +
+          "Seeds buy no privileges. Each one is still checked against your `include_paths`, " +
+          "against `robots.txt` and against the same-site rule, and each counts towards the page " +
+          "cap like any other URL — a seed is a page the crawl starts from, not a page it may " +
+          "break its own rules for. The lookup runs with the same defaults as `my_pages` (United " +
+          "States, English); for another market, run `my_pages` yourself.",
+      },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +

@@ -20,6 +20,7 @@ import {
   normalizeUrl,
   parseHtml,
   parseJsonLdTypes,
+  selectExtraSeeds,
   type CrawlResult,
   type PageRecord,
 } from "./crawl.ts";
@@ -2537,4 +2538,213 @@ describe("crawlSite — the apex and its www. twin are one site", () => {
   // `http://www.127.0.0.1:8123/x` before the crawler sees it, so the spec was pinning Node's
   // URL parser and reading as proof of a crawler rule. A green test that cannot go red for the
   // reason it names is worse than no test.
+});
+
+/**
+ * RANKING-PAGE SEEDS (crawl_site's opt-in `seed_from_ranking_pages`, CrawlOptions.extraSeeds).
+ *
+ * The defect these exist for, measured 2026-08-25: the site's HIGHEST-etv page never entered a
+ * crawl, because discovery seeds from the sitemap plus the homepage and stops at the page cap.
+ * So what is pinned here is BOTH halves — that a supplied seed really does jump the sitemap, and
+ * that jumping the sitemap buys it NO other privilege: robots, scope and the cap all still apply.
+ */
+describe("selectExtraSeeds — externally supplied seeds go through the crawl's own gates", () => {
+  const ORIGIN = "https://example.com";
+
+  it("keeps same-site, in-scope URLs, normalized and in the order supplied", () => {
+    const selection = selectExtraSeeds(
+      [`${ORIGIN}/pricing/`, `${ORIGIN}/blog/post#top`, "https://www.example.com/about"],
+      ORIGIN,
+    );
+    expect(selection.seeds).toEqual([
+      "https://example.com/pricing",
+      "https://example.com/blog/post",
+      "https://www.example.com/about",
+    ]);
+    expect(selection).toMatchObject({ outOfScope: 0, unusable: 0, duplicates: 0 });
+  });
+
+  it("counts off-site, out-of-scope and infrastructure URLs as outOfScope and drops them", () => {
+    const selection = selectExtraSeeds(
+      [
+        "https://blog.example.com/a", // a different site
+        "https://example.org/a", // a different site
+        `${ORIGIN}/shop/x`, // same site, outside include_paths
+        `${ORIGIN}/cdn-cgi/l/email-protection`, // reserved infrastructure
+        `${ORIGIN}/blog/keep`,
+      ],
+      ORIGIN,
+      ["/blog"],
+    );
+    expect(selection.seeds).toEqual(["https://example.com/blog/keep"]);
+    expect(selection.outOfScope).toBe(4);
+    // WHAT THIS CASE DOES *NOT* PROVE, said out loud so the next reader does not read it as
+    // more than it is: every off-site URL above is ALSO out of `["/blog"]`, so deleting the
+    // sameSite check would leave this assertion green — matchesIncludePaths would reject them
+    // instead. MEASURED: with `!sameSite(...)` removed from selectExtraSeeds, this whole file
+    // and crawl-seeds.test.ts stayed green (168/168). The same-site rule is pinned ON ITS OWN
+    // by the spec directly below, and that spec is the one that goes red.
+  });
+
+  /**
+   * THE SAME-SITE RULE, PINNED ALONE — the mutation the case above cannot catch.
+   *
+   * Every URL here carries a path selectExtraSeeds would ACCEPT on the crawl's own origin, and
+   * NO include_paths filter is passed, so `matchesIncludePaths` returns true for all of them and
+   * `isInfrastructurePath` returns false. The ONLY predicate left that can drop them is
+   * {@link sameSite}. That isolation is the entire point: a spec whose subject is rejected by a
+   * second predicate is a spec that measures the second predicate.
+   *
+   * It is also NETWORK-FREE by construction. `selectExtraSeeds` is pure and synchronous — no
+   * DNS, no fetch, no SSRF guard — so nothing here can pass or fail for a resolver's reasons.
+   * That is the difference from the `crawlSite` spec further down that uses `elsewhere.test`:
+   * that one drives the REAL crawl and proves an off-site seed survives an unresolvable host
+   * without taking the crawl down, which is a different and still-valid guarantee. It cannot
+   * stand in for this one, because a fake TLD fails at DNS before sameSite is ever consulted.
+   *
+   * The hosts are the ones a hostile review reached for: another registered domain, a SUBDOMAIN
+   * (the case sameSite is likeliest to wave through), the suffix trap, loopback, link-local
+   * cloud metadata, a private range, and the two same-host-but-different-ORIGIN forms.
+   */
+  it("drops an off-site seed on the SAME-SITE rule ALONE — no scope filter, no DNS", () => {
+    const offSite = [
+      "https://evil.example/pricing", // another registered domain
+      "https://blog.example.com/pricing", // a subdomain is NOT the site
+      "https://example.com.evil.test/pricing", // suffix trap
+      "https://127.0.0.1/pricing", // loopback
+      "https://169.254.169.254/latest/meta-data/", // link-local cloud metadata
+      "https://localhost:8080/pricing",
+      "https://10.0.0.5/pricing", // private range
+      "http://example.com/pricing", // right host, WRONG scheme
+      "https://example.com:8443/pricing", // right host, WRONG port
+    ];
+    // In one list beside a seed that MUST survive, so a mutation cannot pass by rejecting all.
+    const selection = selectExtraSeeds([...offSite, `${ORIGIN}/pricing`], ORIGIN);
+    expect(selection.seeds).toEqual(["https://example.com/pricing"]);
+    expect(selection.outOfScope).toBe(offSite.length);
+    // And one at a time, so a failure names the host that got through.
+    for (const url of offSite) {
+      expect(selectExtraSeeds([url], ORIGIN), url).toMatchObject({ seeds: [], outOfScope: 1 });
+    }
+  });
+
+  it("counts non-URLs and non-http schemes as unusable, and repeats as duplicates", () => {
+    const selection = selectExtraSeeds(
+      ["not a url", "", 42, `mailto:a@example.com`, `${ORIGIN}/a`, `${ORIGIN}/a/`],
+      ORIGIN,
+    );
+    expect(selection.seeds).toEqual(["https://example.com/a"]);
+    expect(selection).toMatchObject({ unusable: 4, duplicates: 1, outOfScope: 0 });
+  });
+
+  it("yields nothing (and blames the input) when the origin is not a URL", () => {
+    const selection = selectExtraSeeds([`${ORIGIN}/a`], "not-an-origin");
+    expect(selection).toEqual({ seeds: [], outOfScope: 0, unusable: 1, duplicates: 0 });
+  });
+});
+
+describe("crawlSite — ranking-page seeds are queued ahead of the sitemap, not above the rules", () => {
+  it("fetches a supplied seed the sitemap never lists, before the sitemap's own URLs", async () => {
+    // /orphan is deliberately absent from this sitemap — it is only reachable as a seed.
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog", "/noindex"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 2,
+        extraSeeds: [`${site.origin}/orphan`],
+      });
+      const urls = result.pages.map((p) => p.url);
+      // Homepage keeps the first slot; the seed takes the second, ahead of every sitemap URL.
+      expect(urls).toEqual([normalizeUrl(`${site.origin}/`), normalizeUrl(`${site.origin}/orphan`)]);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("is byte-identical to an unseeded crawl when extraSeeds is absent", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog", "/noindex"] });
+    try {
+      const seeded = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2, extraSeeds: [] });
+      const plain = await crawlSite(site.origin, { crawlDelayCapMs: 0, maxUrls: 2 });
+      expect(seeded.pages.map((p) => p.url)).toEqual(plain.pages.map((p) => p.url));
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT crawl a seed outside include_paths", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/blog"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        includePaths: ["/blog"],
+        extraSeeds: [`${site.origin}/orphan`, `${site.origin}/about`],
+      });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/orphan`));
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/about`));
+      // The out-of-scope seeds were never even requested.
+      expect(site.requested).not.toContain("/orphan");
+      expect(site.requested).not.toContain("/about");
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does NOT crawl a seed robots.txt disallows", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        extraSeeds: [`${site.origin}/private`],
+      });
+      expect(result.pages.map((p) => p.url)).not.toContain(normalizeUrl(`${site.origin}/private`));
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${site.origin}/private`),
+        reason: "blocked by robots.txt",
+      });
+      expect(site.requested).not.toContain("/private");
+    } finally {
+      await site.close();
+    }
+  });
+
+  /**
+   * WHAT THIS ONE MEASURES: an off-site seed cannot take a REAL crawl down. `elsewhere.test` is
+   * an unresolvable TLD, so this exercises the whole path — crawlSite, its filters, and the
+   * network layer beneath them — and proves the crawl still returns its own pages.
+   *
+   * WHAT IT DOES NOT MEASURE, and must not be mistaken for: the same-site RULE. MEASURED — with
+   * `!sameSite(...)` deleted from selectExtraSeeds this spec stayed GREEN, because a fake TLD
+   * fails at DNS long before sameSite would have been consulted. The rule itself is pinned,
+   * network-free, in "drops an off-site seed on the SAME-SITE rule ALONE" above. Two specs, two
+   * subjects; neither replaces the other.
+   */
+  it("does NOT crawl an off-site seed", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 3,
+        extraSeeds: ["https://elsewhere.test/pwned"],
+      });
+      expect(result.pages.map((p) => p.url).some((u) => u.includes("elsewhere.test"))).toBe(false);
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("does not let seeds push the crawl past maxUrls", async () => {
+    const site = await startFixtureSite({ sitemapPaths: ["/about", "/blog"] });
+    try {
+      const result = await crawlSite(site.origin, {
+        crawlDelayCapMs: 0,
+        maxUrls: 2,
+        extraSeeds: [`${site.origin}/orphan`, `${site.origin}/weird`, `${site.origin}/noindex`],
+      });
+      expect(result.pages).toHaveLength(2);
+    } finally {
+      await site.close();
+    }
+  });
 });
