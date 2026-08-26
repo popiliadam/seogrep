@@ -13,6 +13,9 @@ import {
   type RelevantPagesResult,
 } from "../dfs/relevant-pages.ts";
 import {
+  MAX_CRAWL_ONLY_LISTED,
+  MAX_RENDERED_OUTPUT_CHARS,
+  PARTITION_NOTE,
   VENDOR_JUDGEMENT_NOTE,
   WHAT_THE_VENDOR_RETURNS,
   formatMyPages,
@@ -833,6 +836,296 @@ describe("the crawl card stored on the run row (migration 0031)", () => {
   });
 });
 
+
+// =============================================================================================
+// 5. THE DOUBLE PRINT, AND THE SIZE OF THE REPLY
+//
+// MEASURED on the real renderer, 2026-08-26, 1,000 organic-only rows:
+//   • no project named ............................... 404,171 characters
+//   • project named, crawl matched every page ........ 880,080 characters  (+118%)
+// A single page address occurred THREE times in one answer. The client that refused
+// `backlink_details` this same round refused 62,729 characters as "exceeds maximum allowed
+// tokens" — so BOTH of those replies were unreadable, and both cost the caller 40 credits and
+// DataForSEO $0.132 either way.
+//
+// AXES VARIED BELOW (signed lesson 14 — the list is written, not assumed):
+//   crawl state      × not_requested / none / crawl
+//   join population  × matched-only / vendorOnly-only / mixed / crawl-only / unkeyed on BOTH sides
+//   bound that binds × character budget / row cap / neither
+//   row width        × organic-only / organic+paid / no metrics at all
+//   window size      × 1 row / 100 rows / 1,000 rows (the schema's own ceiling)
+// =============================================================================================
+
+describe("no page is printed twice, and no reply is too big to read", () => {
+  const WIDE_METRICS: RelevantPageMetrics = {
+    pos_1: 3,
+    pos_2_3: 7,
+    pos_4_10: 21,
+    pos_11_20: 34,
+    pos_21_30: 18,
+    pos_31_40: 11,
+    pos_41_50: 6,
+    pos_51_60: 4,
+    pos_61_70: 2,
+    pos_71_80: 1,
+    pos_81_90: 0,
+    pos_91_100: 0,
+    etv: 1842.5,
+    count: 107,
+    estimated_paid_traffic_cost: 5120.75,
+    is_new: 9,
+    is_up: 21,
+    is_down: 14,
+    is_lost: 5,
+  };
+
+  /** `n` vendor rows at the width DataForSEO really sends — both item types, every bucket filled. */
+  function wideRows(n: number, prefix = "https://example.com/blog/post-"): RelevantPageRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      page_address: `${prefix}${i}`,
+      our_join_key: pageJoinKey(`${prefix}${i}`),
+      metrics: { organic: WIDE_METRICS, paid: WIDE_METRICS },
+    }));
+  }
+
+  function windowOf(rows: readonly RelevantPageRow[], limit = MAX_RELEVANT_PAGES_ROWS) {
+    const base = resultWith(rows);
+    return { ...base, window: { ...base.window, window_limit: limit } };
+  }
+
+  /** How many times a given page's OWN bullet line appears in the answer. */
+  function bulletCount(text: string, address: string): number {
+    return [...text.matchAll(new RegExp(`^• ${address.replace(/[.?*+^$[\]\\(){}|-]/g, "\\$&")}$`, "gm"))]
+      .length;
+  }
+
+  /**
+   * THE DEFECT ITSELF. Every vendor row used to be printed once in a flat list of the window and
+   * again inside the comparison. Asserted per ROW rather than on the total length, because a
+   * length assertion alone would also go green if the duplicate survived and the budget merely cut
+   * it off — the two failures this slice fixes are separate and are pinned separately.
+   */
+  it("prints each vendor page ONCE when a comparison was made, across all three populations", () => {
+    const rows = wideRows(6);
+    // rows 0-2 matched, rows 3-5 vendor-only, plus one page only the crawl has.
+    const text = formatMyPages(
+      windowOf(rows),
+      LOCALE,
+      crawlOf([...rows.slice(0, 3).map((r) => r.page_address), "https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(text).toContain("Reported by DataForSEO, and fetched by that crawl (3)");
+    expect(text).toContain("Reported by DataForSEO, not found in that crawl (3)");
+    for (const row of rows) {
+      expect(bulletCount(text, row.page_address)).toBe(1);
+    }
+    // …and the answer says why there is no separate list of the window above the groups.
+    expect(text).toContain(PARTITION_NOTE);
+    expect(text).toMatch(/each one appears exactly once, in DataForSEO's own order/i);
+  });
+
+  /**
+   * THE OTHER DIRECTION, and it is the one that keeps the fix from being a deletion: with NO
+   * comparison there is no partition, so the flat list IS the answer and every row's FIGURES must
+   * still be there. A fix that dropped the list unconditionally would pass the spec above.
+   */
+  it.each(["not_requested", "none"] as const)(
+    "still prints the window with its figures when the crawl side is %s",
+    (kind) => {
+      const rows = wideRows(6);
+      const text = formatMyPages(windowOf(rows), LOCALE, { kind }, PROJECT);
+      for (const row of rows) {
+        expect(bulletCount(text, row.page_address)).toBe(1);
+      }
+      expect(text).toContain("organic: count 107");
+      expect(text).toContain("paid: count 107");
+      expect(text).not.toContain(PARTITION_NOTE);
+    },
+  );
+
+  /**
+   * THE SIZE BOUND, on the worst window the schema permits: the ceiling `limit`, rows at full
+   * width, the join split across BOTH vendor populations, a long crawl-only tail, and an unkeyable
+   * address on each side. Every sub-budget is loaded at once — this is the assertion that catches
+   * a later section being added with no bound of its own.
+   */
+  it("never renders more than MAX_RENDERED_OUTPUT_CHARS on the widest window the schema allows", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const unkeyableVendor: RelevantPageRow = { page_address: "::::", our_join_key: null, metrics: {} };
+    const crawled = [
+      // half the window matched…
+      ...rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address),
+      // …a crawl-only tail longer than both of its bounds…
+      ...Array.from({ length: 400 }, (_, i) => `https://example.com/docs/section/${i}`),
+      // …and an address our own crawl could not key either.
+      "::::",
+    ];
+    const text = formatMyPages(
+      windowOf([...rows, unkeyableVendor], MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(crawled),
+      PROJECT,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    // …and it is not small because it went silent: all four groups are present and counted.
+    expect(text).toContain("Reported by DataForSEO, and fetched by that crawl (500)");
+    expect(text).toContain("Reported by DataForSEO, not found in that crawl (500)");
+    expect(text).toContain("Fetched by that crawl, not named in this window (400)");
+    expect(text).toMatch(/could not be keyed, and so could not be compared either way \(2\)/i);
+  });
+
+  it("never renders more than MAX_RENDERED_OUTPUT_CHARS with no comparison either", () => {
+    const text = formatMyPages(
+      windowOf(wideRows(MAX_RELEVANT_PAGES_ROWS), MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * TRUNCATION IS NEVER SILENT, and it never reads as a zero. The heading counts every row the
+   * window returned; the note says how many were printed, how many were not, that the omitted ones
+   * were CHARGED FOR (they were — the vendor billed the whole window), and what to do next.
+   */
+  it("says how many vendor rows it did not print, and that they were paid for", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    const printed = [...text.matchAll(/^• https:\/\/example\.com\/blog\/post-\d+$/gm)].length;
+    expect(printed).toBeGreaterThan(0);
+    expect(printed).toBeLessThan(MAX_RELEVANT_PAGES_ROWS);
+    expect(text).toContain(
+      `${exactCount(printed)} pages printed above, ` +
+        `${exactCount(MAX_RELEVANT_PAGES_ROWS - printed)} more fetched in this same group but ` +
+        "not printed",
+    );
+    expect(text).toMatch(/they were charged for either way/i);
+    expect(text).toMatch(/asking for fewer rows does not cost less/i);
+    // The WINDOW caption still reports every row that came back — the budget bounds the print,
+    // never the measurement.
+    expect(text).toContain(`${exactCount(MAX_RELEVANT_PAGES_ROWS)} pages in this window`);
+  });
+
+  it("says nothing about an output limit when the whole window fits", () => {
+    const text = formatMyPages(windowOf(wideRows(4)), LOCALE, { kind: "not_requested" }, null);
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text).not.toMatch(/but not printed/i);
+  });
+
+  /**
+   * BOTH vendor populations are bounded, and NEITHER starves the other. A single running budget
+   * spent matched-first would print 1,000 matches and zero misses; the even split means each group
+   * prints what it can and says what it could not.
+   */
+  it("bounds each vendor population separately, so one cannot starve the other", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address)),
+      PROJECT,
+    );
+    const [matchedBlock = "", missedBlock = ""] = [
+      text.split("Reported by DataForSEO, and fetched by that crawl")[1]?.split(
+        "Reported by DataForSEO, not found in that crawl",
+      )[0],
+      text.split("Reported by DataForSEO, not found in that crawl")[1],
+    ];
+    const matchedPrinted = [...matchedBlock.matchAll(/^• https:/gm)].length;
+    const missedPrinted = [...missedBlock.matchAll(/^• https:/gm)].length;
+    expect(matchedPrinted).toBeGreaterThan(0);
+    expect(missedPrinted).toBeGreaterThan(0);
+    // …and both said so when they stopped.
+    expect([...text.matchAll(/output limit reached/gi)].length).toBeGreaterThanOrEqual(2);
+
+    /**
+     * A HEADING COUNTS WHAT CAME BACK, NEVER WHAT FITTED. A heading that reported the printed
+     * number instead would make the truncation invisible — the reply would look complete and be
+     * short, which is the shape this whole slice exists to prevent.
+     */
+    const half = MAX_RELEVANT_PAGES_ROWS / 2;
+    expect(matchedPrinted).toBeLessThan(half);
+    expect(missedPrinted).toBeLessThan(half);
+    expect(text).toContain(
+      `Reported by DataForSEO, and fetched by that crawl (${exactCount(half)}):`,
+    );
+    expect(text).toContain(
+      `Reported by DataForSEO, not found in that crawl (${exactCount(half)}):`,
+    );
+  });
+
+  /**
+   * THE ROW CAP AND THE CHARACTER BOUND ARE BOTH REAL. 50 short rows fit the crawl-only character
+   * budget, so the ROW cap binds and the pinned 50/43 behaviour above is unchanged; long URLs
+   * exhaust the characters first and the same honest note fires on fewer rows.
+   */
+  it("bounds the crawl-side list by characters as well as by rows", () => {
+    const longUrls = Array.from(
+      { length: 60 },
+      (_, i) => `https://example.com/${"segment/".repeat(40)}${i}`,
+    );
+    const text = formatMyPages(
+      windowOf(wideRows(1)),
+      LOCALE,
+      crawlOf(longUrls),
+      PROJECT,
+    );
+    const listed = [...text.matchAll(/^• https:\/\/example\.com\/segment/gm)].length;
+    expect(listed).toBeGreaterThan(0);
+    expect(listed).toBeLessThan(MAX_CRAWL_ONLY_LISTED);
+    expect(text).toContain("Fetched by that crawl, not named in this window (60)");
+    expect(text).toMatch(/nothing was charged for the ones left out/i);
+  });
+
+  /**
+   * NOTHING IS LOST BY DELETING THE FLAT LIST. The uncomparable vendor rows used to be one bare
+   * address line each — survivable only because the flat list printed their figures a second time.
+   * With the duplicate gone this is the ONLY place they appear, so it carries the figures.
+   */
+  it("prints the figures of a vendor row that could not be keyed", () => {
+    const unkeyable: RelevantPageRow = {
+      page_address: "::::",
+      our_join_key: null,
+      metrics: { organic: { ...WIDE_METRICS, count: 4242 } },
+    };
+    const text = formatMyPages(
+      windowOf([...wideRows(1), unkeyable]),
+      LOCALE,
+      crawlOf(["https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(text).toContain("organic: count 4,242");
+    expect(text).toMatch(/from DataForSEO — this address could not be keyed/);
+    expect(text).toMatch(/rather than counted as misses on either side/i);
+  });
+
+  /**
+   * THE STORED ROW MEASURES THE WHOLE WINDOW, NOT THE PRINTED PART. `domain_lookup_runs` is the
+   * record the panel reads; a budget that silently shrank its counts would make the truncation
+   * retroactive and unmeasurable.
+   */
+  it("records the whole join on the run row even when the text was truncated", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const crawledUrls = rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(crawledUrls),
+      PROJECT,
+    );
+    expect(text).toMatch(/output limit reached/i);
+    const card = myPagesCrawlView(crawlOf(crawledUrls), rows);
+    expect(card.matched).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+    expect(card.vendor_only).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+    expect(card.pages_compared).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+  });
+});
 
 // =============================================================================================
 // S10d item 3 — THE PRICE SENTENCE, PINNED BY MEANING.

@@ -424,10 +424,142 @@ function windowLimitsNote(result: RelevantPagesResult): string {
   );
 }
 
-/** One titled section, or nothing when the population is empty. Empty notes are dropped. */
-function section(title: string, count: number, body: string[], ...notes: string[]): string | null {
+/** One titled section, or nothing when the population is empty. Empty parts are dropped. */
+function section(title: string, count: number, ...parts: string[]): string | null {
   if (count === 0) return null;
-  return [`${title} (${exactCount(count)}):`, body.join("\n"), ...notes].filter(Boolean).join("\n\n");
+  return [`${title} (${exactCount(count)}):`, ...parts].filter(Boolean).join("\n\n");
+}
+
+/**
+ * =====================================================================================
+ * THE OUTPUT BUDGET — measured 2026-08-26, and the reason it exists
+ * =====================================================================================
+ * Two defects, and they had to be fixed TOGETHER because each one doubled the other's damage.
+ *
+ * ONE — EVERY VENDOR PAGE WAS PRINTED TWICE. `formatMyPages` printed the whole window as a flat
+ * list AND then `renderComparison` printed the SAME rows again, partitioned into "fetched by that
+ * crawl" / "not found in that crawl". Measured on 1,000 organic-only rows: 404,171 characters with
+ * no project named, 880,080 with a project whose crawl matched every page — **+118%** for a reply
+ * that carried no extra fact. A single page address occurred THREE times in one answer.
+ *
+ * TWO — NOTHING BOUNDED THE LENGTH. 404,171 characters is roughly 200,000 tokens. The client that
+ * refused `backlink_details` this same round refused 62,729 characters as "exceeds maximum allowed
+ * tokens"; this reply is six times that before the duplication and fourteen times it after. The
+ * 40 credits and DataForSEO's own $0.132 were spent either way and the caller saw NOTHING.
+ *
+ * THE DUPLICATION IS FIXED BY DELETING THE FLAT LIST WHEN — AND ONLY WHEN — A COMPARISON WAS MADE.
+ * The comparison is a PARTITION of the same window: matched + vendorOnly + vendorUnkeyed is every
+ * row, in the vendor's own order, so printing the flat list beside it added a second copy and no
+ * second fact. With no project named there is no partition, so the flat list IS the answer and
+ * stays. Nothing is lost: the unkeyed group now carries each row's full figures, which the flat
+ * list used to be the only place to read them.
+ *
+ * THE LENGTH IS FIXED THE WAY `backlink_details` fixed it — bound the RENDERED TEXT, not the
+ * schema. Lowering `limit`'s maximum would turn an oversized call into a free validation error,
+ * but 1,000 is derived from the SIGNED 40-credit price (dfs/relevant-pages.ts) and moving it is a
+ * price change a human owns (NEVER #6). It would also contradict this tool's own `limit`
+ * description, which now tells the caller plainly that a narrower window does not cost less: the
+ * answer to "too big to read" cannot be "buy a smaller one".
+ *
+ * THE NUMBER is the sibling's, for the sibling's measured reason: the refusal was in TOKENS, and
+ * URL-dense ASCII bottoms out near 2 characters per token, so 28,000 characters is at most ~14,000
+ * tokens — inside the 25,000-token default that rejected 62,729 characters, with room for a client
+ * configured lower. The sub-budgets below sum under it with the fixed prose (~3,000 characters
+ * measured) still to pay for, and `my-pages.test.ts` asserts the whole rendered answer against
+ * MAX_RENDERED_OUTPUT_CHARS on a worst-case window rather than trusting this arithmetic.
+ *
+ * WHAT IS NOT LOST: the run row written to `domain_lookup_runs` records the WHOLE window and the
+ * whole join (myPagesCrawlView), and every section heading counts every row it has. The budget
+ * bounds what is PRINTED, never what was measured or counted.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
+
+/**
+ * The vendor half's share, and it is the SAME ceiling in both arrangements: 18,000 characters for
+ * the flat list when no comparison was made, or 9,000 + 9,000 when the partition replaced it.
+ *
+ * The split is EVEN on purpose. A running budget spent matched-first would let one full group
+ * starve the other outright, and "not found in that crawl" is the half a reader most often came
+ * for; an even split means each group prints what it can and says what it could not.
+ *
+ * WHAT 9,000 BUYS, MEASURED rather than assumed: a my_pages row is FAT next to a backlink row —
+ * 12 position buckets and 7 counters per item type, so ~400 characters for an organic-only page
+ * and ~760 when the vendor also reports `paid`. That is ~22 and ~11 pages per group. It is a small
+ * number and it is said out loud in the note, which is the whole difference from what it replaces:
+ * before this, the same call printed all 1,000 rows TWICE and the client refused the reply, so the
+ * caller read ZERO of them and paid for all of them. Widening the budget instead would only move
+ * the refusal, not remove it.
+ */
+const VENDOR_LIST_CHAR_BUDGET = 18_000;
+const MATCHED_CHAR_BUDGET = 9_000;
+const VENDOR_ONLY_CHAR_BUDGET = 9_000;
+
+/** The uncomparable group — small by nature, bounded anyway because nothing else bounds it. */
+const UNKEYED_CHAR_BUDGET = 2_000;
+
+/**
+ * The crawl-side group is bounded TWICE, and both bounds are load-bearing.
+ *
+ * {@link MAX_CRAWL_ONLY_LISTED} is a ROW cap and predates this budget; it stays because 50 rows is
+ * the length a reader was promised. The character bound is added beside it because a row cap is
+ * not a size bound: fifty 500-character URLs are 25,000 characters and would blow the whole reply
+ * open on their own. Whichever binds first, the same honest note fires.
+ */
+const CRAWL_ONLY_CHAR_BUDGET = 3_500;
+
+/** One list, rendered until either bound is reached. A row is taken ONLY if it fits WHOLE. */
+function renderWithinBudget<Row>(
+  rows: readonly Row[],
+  render: (row: Row) => string,
+  budget: number,
+  maxRows = Number.POSITIVE_INFINITY,
+): { readonly block: string; readonly printed: number; readonly omitted: number } {
+  const taken: string[] = [];
+  let used = 0;
+  for (const row of rows) {
+    if (taken.length >= maxRows) break;
+    const line = render(row);
+    const cost = line.length + 1; // + the newline that joins it to the block
+    if (used + cost > budget) break;
+    taken.push(line);
+    used += cost;
+  }
+  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
+}
+
+/**
+ * What the reader is told when VENDOR rows were fetched and not printed. It says outright that the
+ * omitted rows were charged for, because they were: the flat 40 credits and DataForSEO's per-row
+ * fee were both spent on the whole window. It never says "N of M" — that phrasing reads as a
+ * fraction of the vendor's whole-set total, which is a different set entirely.
+ */
+export function renderVendorLimitNote(printed: number, omitted: number): string {
+  return (
+    `Output limit reached — ${exactCount(printed)} ${printed === 1 ? "page" : "pages"} printed ` +
+    `above, ${exactCount(omitted)} more fetched in this same group but not printed: one reply ` +
+    "cannot hold them, and they were charged for either way. Move the window with `offset`, or " +
+    `ask for a smaller \`limit\` — each call is a separate ${TOOL_COSTS.my_pages}-credit lookup ` +
+    "and asking for fewer rows does not cost less, so this is about what one reply can hold, not " +
+    "about price."
+  );
+}
+
+/** One vendor-side list under its heading, bounded, with the note when rows did not fit. */
+function budgetedVendorSection<Row>(
+  title: string,
+  rows: readonly Row[],
+  render: (row: Row) => string,
+  budget: number,
+  ...notes: string[]
+): string | null {
+  const shown = renderWithinBudget(rows, render, budget);
+  return section(
+    title,
+    rows.length,
+    shown.block,
+    shown.omitted > 0 ? renderVendorLimitNote(shown.printed, shown.omitted) : "",
+    ...notes,
+  );
 }
 
 /**
@@ -448,6 +580,10 @@ function section(title: string, count: number, body: string[], ...notes: string[
  * NOTHING IS DROPPED IN SILENCE, and nothing extra was billed for what is dropped: these rows are
  * the tenant's own stored crawl, not a DataForSEO purchase. That is the difference from
  * backlink_details' output-limit note, which has to say the omitted rows WERE paid for.
+ *
+ * A ROW CAP IS NOT A SIZE BOUND, so it is not the only bound on this list any more: fifty
+ * 500-character URLs are 25,000 characters. {@link CRAWL_ONLY_CHAR_BUDGET} bounds the same list in
+ * characters, whichever binds first, and the note below fires either way.
  */
 export const MAX_CRAWL_ONLY_LISTED = 50;
 
@@ -465,13 +601,17 @@ export function renderCrawlOnlyLimitNote(printed: number, omitted: number): stri
 
 /** The third section — bounded, because its length is the site's and not the caller's. */
 function crawlOnlySection(join: PageJoin, result: RelevantPagesResult): string | null {
-  const shown = join.crawlOnly.slice(0, MAX_CRAWL_ONLY_LISTED);
-  const omitted = join.crawlOnly.length - shown.length;
+  const shown = renderWithinBudget(
+    join.crawlOnly,
+    (page) => `• ${renderCrawledPage(page)}`,
+    CRAWL_ONLY_CHAR_BUDGET,
+    MAX_CRAWL_ONLY_LISTED,
+  );
   return section(
     "Fetched by that crawl, not named in this window",
     join.crawlOnly.length,
-    shown.map((page) => `• ${renderCrawledPage(page)}`),
-    omitted > 0 ? renderCrawlOnlyLimitNote(shown.length, omitted) : "",
+    shown.block,
+    shown.omitted > 0 ? renderCrawlOnlyLimitNote(shown.printed, shown.omitted) : "",
     windowLimitsNote(result),
   );
 }
@@ -509,33 +649,55 @@ export function renderComparison(result: RelevantPagesResult, crawl: CrawlSide):
     );
   }
   const join = joinPages(result.window.rows, crawl.pages);
-  const sections = [
-    section(
-      "Reported by DataForSEO, and fetched by that crawl",
-      join.matched.length,
-      join.matched.map(renderMatchedPage),
-      "",
+  const unkeyed = [
+    // The vendor's uncomparable rows carry their FULL figures here. They used to be one bare
+    // address line, which was survivable only because the flat window list above printed every
+    // vendor row a second time; now that the duplicate list is gone, this is the ONLY place these
+    // rows appear, and an answer that dropped their figures would be losing paid data.
+    ...join.vendorUnkeyed.map(
+      (row) => `${renderVendorPage(row)}\n  (from DataForSEO — this address could not be keyed)`,
     ),
-    section(
+    ...join.crawlUnkeyed.map((page) => `• ${page.url} (from your crawl)`),
+  ];
+  const unkeyedShown = renderWithinBudget(unkeyed, (line) => line, UNKEYED_CHAR_BUDGET);
+  const sections = [
+    budgetedVendorSection(
+      "Reported by DataForSEO, and fetched by that crawl",
+      join.matched,
+      renderMatchedPage,
+      MATCHED_CHAR_BUDGET,
+    ),
+    budgetedVendorSection(
       "Reported by DataForSEO, not found in that crawl",
-      join.vendorOnly.length,
-      join.vendorOnly.map(renderVendorPage),
+      join.vendorOnly,
+      renderVendorPage,
+      VENDOR_ONLY_CHAR_BUDGET,
       crawlLimitsNote(crawl),
     ),
     crawlOnlySection(join, result),
     section(
       "Addresses that could not be keyed, and so could not be compared either way",
-      join.vendorUnkeyed.length + join.crawlUnkeyed.length,
-      [
-        ...join.vendorUnkeyed.map((row) => `• ${row.page_address} (from DataForSEO)`),
-        ...join.crawlUnkeyed.map((page) => `• ${page.url} (from your crawl)`),
-      ],
+      unkeyed.length,
+      unkeyedShown.block,
+      unkeyedShown.omitted > 0
+        ? renderVendorLimitNote(unkeyedShown.printed, unkeyedShown.omitted)
+        : "",
       "These addresses did not parse as URLs, so they are held out of the three groups above " +
         "rather than counted as misses on either side.",
     ),
   ].filter((part): part is string => part !== null);
-  return [renderMatchCount(join, crawl), ...sections].join("\n\n");
+  return [renderMatchCount(join, crawl), PARTITION_NOTE, ...sections].join("\n\n");
 }
+
+/**
+ * WHY THERE IS NO SEPARATE LIST OF THE WINDOW ABOVE THIS. Said in the answer rather than only in
+ * a comment, because a reader who knows the old shape would otherwise look for the missing list
+ * and wonder which rows were dropped from it. None were: the groups below are a partition.
+ */
+export const PARTITION_NOTE =
+  "The groups below hold every page this window returned — each one appears exactly once, in " +
+  "DataForSEO's own order, under the group it fell into. There is no separate list of the window " +
+  "above them, because it would be the same pages a second time.";
 
 /**
  * Whose numbers these are, and what this tool does NOT claim. Printed on every answer (NEVER #7).
@@ -574,6 +736,19 @@ function renderNoPages(
   ].join("\n\n");
 }
 
+/**
+ * The window as ONE flat list — printed only when no comparison was made, because when one WAS
+ * made the comparison is a partition of these very rows and this list would be the second copy.
+ * See the budget header: printing both measured +118% for no extra fact.
+ */
+function vendorWindowList(rows: readonly RelevantPageRow[]): readonly string[] {
+  const shown = renderWithinBudget(rows, renderVendorPage, VENDOR_LIST_CHAR_BUDGET);
+  return [
+    shown.block,
+    shown.omitted > 0 ? renderVendorLimitNote(shown.printed, shown.omitted) : "",
+  ].filter(Boolean);
+}
+
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
 export function formatMyPages(
   result: RelevantPagesResult,
@@ -589,7 +764,7 @@ export function formatMyPages(
     WHAT_THE_VENDOR_RETURNS,
     renderCriteria(result, input),
     renderWindowCaption(result),
-    result.window.rows.map(renderVendorPage).join("\n"),
+    ...(crawl.kind === "crawl" ? [] : vendorWindowList(result.window.rows)),
     renderComparison(result, crawl),
     VENDOR_JUDGEMENT_NOTE,
   ].join("\n\n");
