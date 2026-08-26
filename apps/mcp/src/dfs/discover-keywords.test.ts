@@ -544,7 +544,7 @@ describe("the noisy-mode search-volume ceiling", () => {
    */
   it("leaves suggestions and related COMPLETELY alone — no clause, no filters key", () => {
     for (const mode of CLEAN_MODES) {
-      expect(resolveVolumeCeiling(mode, undefined)).toEqual({ kind: "off" });
+      expect(resolveVolumeCeiling(mode, undefined, undefined)).toEqual({ kind: "off" });
       expect(buildDiscoverFilters(queryFor(mode))).toEqual([]);
       expect(buildDiscoverRequestBody(queryFor(mode)).filters).toBeUndefined();
     }
@@ -562,7 +562,7 @@ describe("the noisy-mode search-volume ceiling", () => {
   });
 
   it("lets the caller replace the default with their own bound, on a noisy mode", () => {
-    expect(resolveVolumeCeiling("for_site", 5_000)).toEqual({ kind: "caller", max_volume: 5_000 });
+    expect(resolveVolumeCeiling("for_site", 5_000, undefined)).toEqual({ kind: "caller", max_volume: 5_000 });
     expect(buildDiscoverRequestBody({ ...queryFor("for_site"), max_volume: 5_000 }).filters).toEqual(
       [ceilingClause("for_site", 5_000)],
     );
@@ -570,7 +570,7 @@ describe("the noisy-mode search-volume ceiling", () => {
 
   it("lets the caller switch the ceiling OFF entirely, on every noisy mode", () => {
     for (const mode of NOISY_MODES) {
-      expect(resolveVolumeCeiling(mode, NO_VOLUME_CEILING)).toEqual({ kind: "off" });
+      expect(resolveVolumeCeiling(mode, NO_VOLUME_CEILING, undefined)).toEqual({ kind: "off" });
       expect(
         buildDiscoverRequestBody({ ...queryFor(mode), max_volume: NO_VOLUME_CEILING }).filters,
       ).toBeUndefined();
@@ -579,7 +579,7 @@ describe("the noisy-mode search-volume ceiling", () => {
   });
 
   it("still honours an EXPLICIT ceiling on a clean mode — the default is what they are spared", () => {
-    expect(resolveVolumeCeiling("related", 900)).toEqual({ kind: "caller", max_volume: 900 });
+    expect(resolveVolumeCeiling("related", 900, undefined)).toEqual({ kind: "caller", max_volume: 900 });
     expect(buildDiscoverRequestBody({ ...queryFor("related"), max_volume: 900 }).filters).toEqual([
       ceilingClause("related", 900),
     ]);
@@ -667,6 +667,92 @@ describe("the noisy-mode search-volume ceiling", () => {
     await client.fetchDiscoverKeywords({ ...queryFor("ideas"), max_volume: NO_VOLUME_CEILING });
     expect(transport).toHaveBeenCalledTimes(2);
     expect(estimateDiscoverKeywordsUsd(DEFAULT_DISCOVER_ROWS)).toBe(before);
+  });
+});
+
+// =============================================================================================
+// THE CEILING STANDS DOWN IN FRONT OF THE CALLER'S OWN FLOOR — a MONEY rule.
+//
+// MEASURED before the fix: `for_site` + `min_volume: 200000` put
+// `[[">=",200000],"and",["<=",100000]]` on the wire — a set empty BY CONSTRUCTION. The vendor
+// SUCCEEDS at returning nothing, the handler returns, and withCredits commits: 40 credits for
+// zero rows, caused by OUR default. On the base branch the same call returned real rows, so
+// shipping this without the withdrawal would have been a paid REGRESSION.
+// =============================================================================================
+describe("our default ceiling withdraws rather than empty a caller's own floor", () => {
+  /** A floor at or above the default is what makes the pair unsatisfiable. */
+  const ABOVE = DEFAULT_NOISY_MODE_MAX_VOLUME * 2;
+
+  it("sends the caller's floor ALONE, with no ceiling clause, on both noisy modes", () => {
+    for (const mode of NOISY_MODES) {
+      const filters = buildDiscoverRequestBody({ ...queryFor(mode), min_volume: ABOVE }).filters;
+      expect(filters).toEqual([[modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", ABOVE]]);
+      // The exact shape the probe measured before the fix must NOT come back.
+      expect(JSON.stringify(filters)).not.toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}`);
+    }
+  });
+
+  it("reports the withdrawal as its own state, carrying the number that stood down", () => {
+    for (const mode of NOISY_MODES) {
+      expect(resolveVolumeCeiling(mode, undefined, ABOVE)).toEqual({
+        kind: "withdrawn",
+        max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME,
+      });
+    }
+  });
+
+  /** The boundary is `>=`: a floor EQUAL to the ceiling admits nothing but the exact value. */
+  it("withdraws at exactly equal, and stays on one below", () => {
+    expect(resolveVolumeCeiling("ideas", undefined, DEFAULT_NOISY_MODE_MAX_VOLUME).kind).toBe(
+      "withdrawn",
+    );
+    expect(resolveVolumeCeiling("ideas", undefined, DEFAULT_NOISY_MODE_MAX_VOLUME - 1)).toEqual({
+      kind: "default",
+      max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME,
+    });
+    // Below the ceiling BOTH clauses go out, and they are satisfiable rather than empty.
+    expect(
+      buildDiscoverRequestBody({ ...queryFor("ideas"), min_volume: 500 }).filters,
+    ).toEqual([
+      ["keyword_info.search_volume", ">=", 500],
+      "and",
+      ["keyword_info.search_volume", "<=", DEFAULT_NOISY_MODE_MAX_VOLUME],
+    ]);
+  });
+
+  it("never withdraws a ceiling the CALLER set — that one is theirs to keep", () => {
+    expect(resolveVolumeCeiling("for_site", 5_000, ABOVE)).toEqual({
+      kind: "caller",
+      max_volume: 5_000,
+    });
+  });
+
+  it("changes nothing on the clean modes, which never had a ceiling to withdraw", () => {
+    for (const mode of CLEAN_MODES) {
+      expect(resolveVolumeCeiling(mode, undefined, ABOVE)).toEqual({ kind: "off" });
+      expect(buildDiscoverRequestBody({ ...queryFor(mode), min_volume: ABOVE }).filters).toEqual([
+        [modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", ABOVE],
+      ]);
+    }
+  });
+
+  /** The whole wire, pinned — the probe's exact scenario, as it must now go out. */
+  it("pins the ENTIRE body of the for_site + min_volume lookup that used to be empty", async () => {
+    const transport = modeTransport();
+    await liveClient(transport, ledger).fetchDiscoverKeywords({
+      ...queryFor("for_site"),
+      min_volume: ABOVE,
+    });
+    expect(sentBody(transport)).toEqual({
+      limit: DEFAULT_DISCOVER_ROWS,
+      offset: 0,
+      language_code: "en",
+      location_code: 2840,
+      order_by: ["keyword_info.search_volume,desc"],
+      filters: [["keyword_info.search_volume", ">=", ABOVE]],
+      target: "example.com",
+      include_subdomains: true,
+    });
   });
 });
 

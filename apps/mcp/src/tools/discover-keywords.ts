@@ -336,6 +336,31 @@ const inputSchema = z
         });
       }
     }
+    // A FLOOR ABOVE THE CALLER'S OWN CEILING IS AN EMPTY SET, AND THE PRICE IS FLAT. DataForSEO
+    // would SUCCEED at returning nothing, the handler would return, and the credit guard commits a
+    // handler that returns — 40 credits for a set that could not have held a row. Refused here, in
+    // the schema, so it lands with the other free rejections: before the reserve, ledger untouched.
+    //
+    // Only the caller-vs-caller case is refused. When the ceiling in the way is OURS, the port
+    // withdraws it instead (resolveVolumeCeiling) — refusing a sensible request because of a
+    // default we invented would be the wrong half to blame. `max_volume` 0 is the off switch, not
+    // a bound, so it never contradicts anything. Equal bounds are a one-value set, not an empty one.
+    if (
+      input.min_volume !== undefined &&
+      input.max_volume !== undefined &&
+      input.max_volume !== NO_VOLUME_CEILING &&
+      input.min_volume > input.max_volume
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["max_volume"],
+        message:
+          `"min_volume" (${input.min_volume}) is above "max_volume" (${input.max_volume}), so no ` +
+          "keyword could satisfy both and DataForSEO would return an empty list for the full " +
+          "price. Refused before anything was charged: raise max_volume, lower min_volume, or " +
+          'pass "max_volume": 0 to drop the ceiling entirely.',
+      });
+    }
   });
 
 type DiscoverKeywordsInput = z.infer<typeof inputSchema>;
@@ -497,7 +522,7 @@ export function renderCriteria(result: DiscoverKeywordsResult, input: LookupLoca
   // the caller's, and "bounds you chose" was simply true. It is not any more: on `for_site` and
   // `ideas` a default clause can be in there that the caller never asked for, and attributing it
   // to them would be the surface telling the customer they made a choice SeoGrep made.
-  const ceiling = resolveVolumeCeiling(result.mode, input.max_volume);
+  const ceiling = resolveVolumeCeiling(result.mode, input.max_volume, input.min_volume);
   const whose =
     ceiling.kind === "default"
       ? "the search-volume ceiling among them is SeoGrep's own default, described in the next " +
@@ -516,7 +541,7 @@ export function renderCriteria(result: DiscoverKeywordsResult, input: LookupLoca
     // The ceiling is resolved against the RESULT's mode, never the caller's requested one, for the
     // same reason the heading is: an answer built for a different mode must not wear this one's
     // caption. `max_volume` is the caller's intent and has nowhere else to come from.
-    describeVolumeCeiling(result.mode, input.max_volume)
+    describeVolumeCeiling(result.mode, input.max_volume, input.min_volume)
   );
 }
 
@@ -531,6 +556,8 @@ export interface LookupLocale {
   readonly location_code: number;
   /** Undefined = no opinion (the noisy modes default); NO_VOLUME_CEILING (0) = no ceiling. */
   readonly max_volume?: number;
+  /** The caller's FLOOR. Read here only to say whether our default ceiling stood down for it. */
+  readonly min_volume?: number;
 }
 
 /**
@@ -542,9 +569,24 @@ export interface LookupLocale {
  * customer's paid answer behind their back. So the ceiling is named, the number is printed, and
  * the two ways out of it are spelled with the literal argument that does it.
  */
-export function describeVolumeCeiling(mode: DiscoverMode, requested: number | undefined): string {
-  const ceiling = resolveVolumeCeiling(mode, requested);
+export function describeVolumeCeiling(
+  mode: DiscoverMode,
+  requested: number | undefined,
+  minVolume: number | undefined,
+): string {
+  const ceiling = resolveVolumeCeiling(mode, requested, minVolume);
   switch (ceiling.kind) {
+    // A withdrawal the reader is not told about is the same defect as a silent ceiling, read from
+    // the other side: they would see their own floor honoured and never learn a bound of ours had
+    // been in the way. It names OUR number and THEIR number, so the arithmetic is checkable.
+    case "withdrawn":
+      return (
+        `SeoGrep's default search-volume ceiling of ${thousands(ceiling.max_volume)} was NOT ` +
+        `applied here: your own "min_volume" of ${thousands(minVolume ?? 0)} meets or exceeds it, ` +
+        "and sending both would have asked DataForSEO for keywords above your floor AND below our " +
+        "ceiling — a set that is empty whatever the vendor holds, and you would have paid the " +
+        "flat price for it. Your floor stands alone; nothing was dropped for being high-volume."
+      );
     case "default":
       return (
         `A DEFAULT search-volume ceiling of ${thousands(ceiling.max_volume)} was applied to this ` +
@@ -559,11 +601,16 @@ export function describeVolumeCeiling(mode: DiscoverMode, requested: number | un
         `above it were dropped at DataForSEO. Pass "max_volume": ${NO_VOLUME_CEILING} to remove ` +
         "it entirely."
       );
+    // WHAT THIS SENTENCE MAY NOT CLAIM. It used to say the ceiling "holds back the very
+    // high-volume national queries", which states as fact something this repo never measured: no
+    // captured response carries those rows' volumes (see DEFAULT_NOISY_MODE_MAX_VOLUME's own note,
+    // "NOT a measured relevance threshold"). The customer text now says what the code says.
     case "off":
       return isNoisyDiscoverMode(mode)
-        ? `NO search-volume ceiling was applied: you switched this mode's default ceiling of ` +
-            `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} off, so the very high-volume national ` +
-            "queries it holds back are in the set below."
+        ? `NO search-volume ceiling was applied: you switched this mode's default bound of ` +
+            `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} off, so nothing was dropped here for ` +
+            "being high-volume. That bound is a convention SeoGrep chose, not a measured " +
+            "relevance threshold — turning it off costs you no accuracy the vendor promised."
         : `No search-volume ceiling was applied — mode "${mode}" has no default one, and you ` +
             "asked for none.";
   }
@@ -576,9 +623,10 @@ export function describeVolumeCeiling(mode: DiscoverMode, requested: number | un
  *
  * It reports the measurement and refuses the cure it does not have: SeoGrep does not read meaning,
  * so it cannot tell an off-topic row from an on-topic one, and it says so rather than implying the
- * volume ceiling below fixed the problem. The ceiling removes the national-volume class the
- * `for_site` walkthrough found; it does nothing about the ORDINARY-volume off-topic keywords the
- * `ideas` walkthrough found, and this paragraph is what stands in for that.
+ * volume ceiling below fixed the problem. It also refuses to describe the ceiling as a MEASURED
+ * remedy — the volume of the walkthrough's noisy rows was never captured (see the port's
+ * DEFAULT_NOISY_MODE_MAX_VOLUME note), so calling it "the bound that holds back national queries"
+ * would publish a measurement nobody made. It is a chosen bound, and it says so.
  */
 export function relevanceWarningFor(mode: DiscoverMode): string {
   if (!isNoisyDiscoverMode(mode)) return "";
@@ -598,9 +646,9 @@ export function relevanceWarningFor(mode: DiscoverMode): string {
     "your subject — it will not filter them for you, and it will not pretend they are all " +
     'relevant. If they read as off-subject: modes "suggestions" and "related" stay anchored to a ' +
     "seed keyword YOU choose (the first returns queries containing it, the second what Google " +
-    "itself lists beside it), and both came back clean on the same walkthrough. The volume " +
-    "ceiling below holds back the very high-volume national queries; it cannot remove an " +
-    "off-subject keyword of ordinary volume."
+    "itself lists beside it), and both came back clean on the same walkthrough. The volume bound " +
+    "described below is a convention SeoGrep chose, NOT a measured relevance threshold: it drops " +
+    "whatever sits above it, and it cannot remove an off-subject keyword of ordinary volume."
   );
 }
 

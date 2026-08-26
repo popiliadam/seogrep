@@ -225,24 +225,45 @@ export const NO_VOLUME_CEILING = 0;
 export type VolumeCeiling =
   | { readonly kind: "default"; readonly max_volume: number }
   | { readonly kind: "caller"; readonly max_volume: number }
-  | { readonly kind: "off" };
+  | { readonly kind: "off" }
+  /** The default WOULD have been this number, and stood down — see resolveVolumeCeiling. */
+  | { readonly kind: "withdrawn"; readonly max_volume: number };
 
 /**
  * Resolve the caller's ceiling INTENT into the ceiling that is really sent. The ONE place the
  * default is applied, so the filter that goes to the vendor and the sentence the reader sees are
  * decided by the same function and cannot disagree.
+ *
+ * OUR DEFAULT STANDS DOWN IN FRONT OF THE CALLER'S OWN FLOOR. Asking a noisy mode for keywords at
+ * or above this ceiling is a perfectly sensible request; it is OUR default that makes it
+ * impossible. Sent together the two clauses read `>= 200,000 and <= 100,000` — a set that is EMPTY
+ * BY CONSTRUCTION — and the tool still charges its flat 40 credits, because the vendor SUCCEEDS at
+ * returning nothing and the credit guard commits a handler that returns. So the ceiling withdraws.
+ * This is a MONEY rule, not a display one, and it is pinned in both test files.
+ *
+ * The mirror case — the caller's own `min_volume` above their own explicit `max_volume` — is NOT
+ * resolved here. Both bounds are theirs, so there is no default of ours to stand down, and quietly
+ * dropping one of THEIR bounds would run a different lookup than the one they asked for and bill
+ * them for it (the rule the mode discrimination already follows). The surface refuses it outright,
+ * before any reserve.
  */
 export function resolveVolumeCeiling(
   mode: DiscoverMode,
   requested: number | undefined,
+  minVolume: number | undefined,
 ): VolumeCeiling {
   if (requested === NO_VOLUME_CEILING) return { kind: "off" };
   if (requested !== undefined && Number.isFinite(requested)) {
     return { kind: "caller", max_volume: Math.trunc(requested) };
   }
-  return isNoisyDiscoverMode(mode)
-    ? { kind: "default", max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME }
-    : { kind: "off" };
+  if (!isNoisyDiscoverMode(mode)) return { kind: "off" };
+  const floorMeetsCeiling =
+    minVolume !== undefined &&
+    Number.isFinite(minVolume) &&
+    minVolume >= DEFAULT_NOISY_MODE_MAX_VOLUME;
+  return floorMeetsCeiling
+    ? { kind: "withdrawn", max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME }
+    : { kind: "default", max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME };
 }
 
 // --- Price, caps and the budget estimate --------------------------------------------------------
@@ -478,8 +499,10 @@ export function buildDiscoverFilters(query: DiscoverKeywordsQuery): readonly unk
   if (query.min_volume !== undefined && Number.isFinite(query.min_volume)) {
     clauses.push([modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", query.min_volume]);
   }
-  const ceiling = resolveVolumeCeiling(mode, query.max_volume);
-  if (ceiling.kind !== "off") {
+  // "withdrawn" and "off" both mean NO clause. Withdrawal is what keeps a caller's own floor from
+  // meeting our default ceiling and buying an empty set at 40 credits.
+  const ceiling = resolveVolumeCeiling(mode, query.max_volume, query.min_volume);
+  if (ceiling.kind === "default" || ceiling.kind === "caller") {
     clauses.push([modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), "<=", ceiling.max_volume]);
   }
   if (query.max_difficulty !== undefined && Number.isFinite(query.max_difficulty)) {

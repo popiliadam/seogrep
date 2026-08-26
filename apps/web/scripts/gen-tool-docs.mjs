@@ -1254,12 +1254,24 @@ export const DOC_PROSE = {
           "kind any domain in that country is handed — and `ideas` returned unrelated products " +
           "and topics at ordinary search volume.\n\n" +
           "So those two modes carry a **warning** above their results, and a **default " +
-          "search-volume ceiling** that holds back the very high-volume national queries. The " +
-          "answer always names the ceiling it applied; pass `max_volume` to move it, or " +
-          "`max_volume: 0` to remove it and see the unfiltered set.\n\n" +
-          "The ceiling is a **partial** remedy and is described as one: a volume bound cannot " +
+          "search-volume ceiling**. The answer always names the ceiling it applied; pass " +
+          "`max_volume` to move it, or `max_volume: 0` to remove it and see the unfiltered set.\n\n" +
+          "**What that ceiling is, and is not.** It is a bound SeoGrep chose — **not a measured " +
+          "relevance threshold**. What the walkthrough measured was that the whole first window, " +
+          "ordered by search volume, was off-subject; **the volume of those rows was never " +
+          "captured**, so no number here is derived from them. The bound is set where it is on the " +
+          "reasoning that a single site rarely owns a keyword above it, and it drops whatever sits " +
+          "above it regardless of what that keyword is about.\n\n" +
+          "It is therefore a **partial** remedy and is described as one: a volume bound cannot " +
           "remove an off-subject keyword of ordinary volume, which is exactly what `ideas` " +
           "returned. SeoGrep does not read meaning and will not filter rows by it.\n\n" +
+          "The ceiling also **stands down** when it would contradict you: give `for_site` or " +
+          "`ideas` a `min_volume` at or above it and the default is dropped rather than sent " +
+          "alongside your floor, because the two together match nothing and you would have paid " +
+          "the flat price for an empty list. The answer says the ceiling withdrew. Two bounds of " +
+          "**your own** that contradict each other (`min_volume` above `max_volume`) are refused " +
+          "outright, before anything is charged — there SeoGrep has no default of its own to give " +
+          "up, and picking one of your bounds to ignore would run a lookup you did not ask for.\n\n" +
           "`suggestions` and `related` are **left alone** — no warning, no ceiling. They stay " +
           "anchored to a seed keyword you choose (the first returns queries that contain it, the " +
           "second what Google itself lists beside it), and both measured clean on the same " +
