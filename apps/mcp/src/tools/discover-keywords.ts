@@ -24,6 +24,11 @@ import {
   type DiscoverVolumeTrend,
 } from "../dfs/discover-keywords.ts";
 import type { VendorWindow } from "../dfs/backlink-details.ts";
+// The SAME sentence backlink_details prints when rows were fetched and not shown. It is imported
+// rather than re-written because it is already parameterised on noun and advice — the two things
+// that differ between a link list and a keyword list — and because a second wording of "you paid
+// for these and cannot see them" is a second place for that promise to drift.
+import { renderOutputLimitNote } from "./backlink-details.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -477,13 +482,50 @@ export function vendorFunctionOf(mode: DiscoverMode): string {
   return fn;
 }
 
+/**
+ * How much of the caller's OWN seed list is quoted back in the heading before it is summarised.
+ *
+ * `ideas` accepts up to MAX_SEEDS = 200 seeds of unbounded length, so the heading is the one block
+ * of this reply a caller can inflate without asking for a single extra row — 200 ordinary keywords
+ * echo back as several thousand characters. The output ceiling below spends whatever the prose
+ * leaves on keyword rows, so an unbounded heading does not break the ceiling; it silently EATS the
+ * answer, printing fewer of the keywords the 40 credits were spent on. Bounded here so the trade
+ * is made once, visibly, and the count of what was left out travels with it.
+ */
+const SEED_ECHO_CHAR_BUDGET = 600;
+
+/**
+ * The caller's seeds, quoted back until {@link SEED_ECHO_CHAR_BUDGET} is spent, then counted.
+ *
+ * A seed is echoed WHOLE or not at all — half of a caller's keyword, quoted, is a different
+ * keyword. The first seed is always echoed whatever its length, so this never reports a lookup
+ * without naming what it started from; a single absurdly long seed is therefore the one thing here
+ * that can still stretch the heading, and it is the caller's own text.
+ */
+function renderSeedEcho(seeds: readonly string[]): string {
+  const shown: string[] = [];
+  let used = 0;
+  for (const seed of seeds) {
+    const quoted = `"${seed}"`;
+    const cost = quoted.length + (shown.length === 0 ? 0 : 2); // + the ", " that joins it
+    if (shown.length > 0 && used + cost > SEED_ECHO_CHAR_BUDGET) break;
+    shown.push(quoted);
+    used += cost;
+  }
+  const omitted = seeds.length - shown.length;
+  return omitted === 0
+    ? shown.join(", ")
+    : `${shown.join(", ")}, and ${thousands(omitted)} more you sent that are not repeated here`;
+}
+
 /** WHAT WAS ASKED, narrowed on the subject's own discriminant — never on the caller's input. */
 export function describeSubject(subject: DiscoverSubject, project?: ProjectRef | null): string {
   switch (subject.mode) {
     case "ideas": {
-      const seeds = subject.seeds.map((seed) => `"${seed}"`).join(", ");
       const count = subject.seeds.length;
-      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${seeds})`;
+      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${renderSeedEcho(
+        subject.seeds,
+      )})`;
     }
     case "suggestions":
       return `the seed keyword "${subject.seed}"`;
@@ -711,27 +753,130 @@ function renderNoKeywords(
     .join("\n\n");
 }
 
+/**
+ * =====================================================================================
+ * THE OUTPUT CEILING — measured 2026-08-26, and the same defect backlink_details already had
+ * =====================================================================================
+ * MEASURED, by rendering real fixture rows through this very formatter:
+ *
+ *   mode          100 rows (the DEFAULT)   1,000 rows (the schema maximum)
+ *   ideas                 33,640 chars              309,942 chars
+ *   related               30,683 chars              292,885 chars
+ *   suggestions           30,566 chars              292,168 chars
+ *   for_site              30,697 chars              279,699 chars
+ *
+ * A row costs ~277-307 characters, so a full-width lookup produces a reply roughly FIVE TIMES the
+ * 62,729 characters a calling client refused outright on 2026-08-25 ("exceeds maximum allowed
+ * tokens"). That refusal is the shape this ceiling exists to prevent, and it is the worst one this
+ * product can make: the 40 credits and DataForSEO's own fee are both spent, and the customer sees
+ * NOTHING — not a short answer, an error.
+ *
+ * WHY THE NUMBER IS THE SIBLING'S NUMBER. backlink_details set 28,000 characters against that
+ * refusal: measured in tokens, bounded with the worst ratio dense ASCII can have (~2 characters a
+ * token), so ~14,000 tokens — inside the 25,000-token default that rejected 62,729, with room for
+ * a client configured lower. Nothing about that reasoning is specific to backlinks: the constraint
+ * belongs to the CLIENT, not to the tool, and two different guesses at one client's cap would be
+ * two numbers where the evidence supports one. This repo has never measured the token ratio of
+ * keyword-and-timestamp text, and inventing a friendlier one to buy a wider reply is exactly the
+ * unmeasured claim this file refuses everywhere else.
+ *
+ * WHAT IT COSTS, STATED PLAINLY: at ~300 characters a row a DEFAULT `limit` 100 lookup does NOT
+ * fit either — roughly 80 of its 100 keywords print, and the note says so. That is a worse default
+ * experience than the sibling's (whose default window fits whole), and it is the direction to be
+ * wrong in: a truncated answer that names what it left out is recoverable, a refused reply is a
+ * total loss. Raising this number is a judgement about a client's token cap and belongs to a human
+ * with a real measurement, not to this file.
+ *
+ * The rows are FETCHED and BILLED either way — the vendor request is unchanged, and the run
+ * recorded in `subject_lookup_runs` is unchanged. Only the reply is bounded, and it says how many
+ * rows it could not carry.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
+
+/** Blocks of the answer are joined by a blank line; the ceiling arithmetic counts those too. */
+const BLOCK_SEPARATOR = "\n\n";
+
+/**
+ * Render rows until the budget is spent. A row is taken ONLY if it fits whole — half a keyword row
+ * is a truncated keyword, which reads as a different keyword, and truncated vendor numbers.
+ */
+function renderWithinBudget(
+  rows: readonly DiscoverKeywordRow[],
+  budget: number,
+): { readonly block: string; readonly printed: number; readonly omitted: number } {
+  const taken: string[] = [];
+  let used = 0;
+  for (const row of rows) {
+    const line = renderKeywordRow(row);
+    const cost = line.length + 1; // + the newline that joins it to the block
+    if (used + cost > budget) break;
+    taken.push(line);
+    used += cost;
+  }
+  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
+}
+
+/**
+ * HOW TO REACH WHAT WAS PAID FOR AND NOT PRINTED. It names the only route that exists — another
+ * lookup at another offset — and refuses two comforting things that are not true: that the omitted
+ * rows are held somewhere for later (the run report keeps the first rows of a window, not all of
+ * them, and nothing re-serves them), and that a wider `limit` would help (the price is flat, so a
+ * bigger window buys rows no reply can carry).
+ */
+const TRUNCATION_ADVICE =
+  "The rows are in DataForSEO's own order, highest first, so the ones left out are the lowest by " +
+  "that field in this window — absent from this reply, not absent from the vendor, and SeoGrep " +
+  'does not hold them for you. To read them, advance "offset" by the number printed above and ' +
+  `run the lookup again: that is a separate ${TOOL_COSTS.discover_keywords}-credit call, and ` +
+  'asking for fewer rows does not cost less — so raising "limit" past what one reply can carry ' +
+  'buys rows nobody can show you. Narrowing the set with "min_volume", "max_volume" or ' +
+  '"max_difficulty" changes WHICH rows DataForSEO returns, so the keywords you want arrive inside ' +
+  "the window that prints.";
+
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
 export function formatDiscoverKeywords(
   result: DiscoverKeywordsResult,
   input: LookupLocale,
   project?: ProjectRef | null,
 ): string {
-  if (result.window.rows.length === 0) {
+  const rows = result.window.rows;
+  if (rows.length === 0) {
     return renderNoKeywords(result, input, project);
   }
-  return [
+  const before = [
     renderHeading(result, project),
     // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
     // trust the list at all. Empty on the two modes it does not apply to.
     relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
-    result.window.rows.map(renderKeywordRow).join("\n"),
-    VENDOR_JUDGEMENT_NOTE,
-  ]
-    .filter((block) => block.length > 0)
-    .join("\n\n");
+  ].filter((block) => block.length > 0);
+  const after = [VENDOR_JUDGEMENT_NOTE];
+  // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
+  // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
+  // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
+  // and overflow on another. Measuring the scaffold makes the ceiling true on all four.
+  const scaffold = [...before, ...after].join(BLOCK_SEPARATOR).length + BLOCK_SEPARATOR.length;
+  // The note's own room, reserved at its WIDEST: both counts at the window's full row count is an
+  // upper bound on the digits the real note can carry. Reserved before the rows are laid out, so
+  // the sentence that explains the truncation can never be the thing that overflows the ceiling.
+  const noteReserve =
+    renderOutputLimitNote("keyword", rows.length, rows.length, TRUNCATION_ADVICE).length +
+    BLOCK_SEPARATOR.length;
+  const shown = renderWithinBudget(rows, MAX_RENDERED_OUTPUT_CHARS - scaffold - noteReserve);
+  return [
+    ...before,
+    // Empty only when one keyword row is itself wider than the whole budget; the note below still
+    // states how many rows the window held, so the reply never goes silent about them.
+    ...(shown.block === "" ? [] : [shown.block]),
+    // WHERE THE LIST STOPS is where the reader asks whether that was all of it, so the answer is
+    // there. It is not the relevance warning's job — that one decides whether to trust the list at
+    // all and must come first; this one explains an ending the reader has just reached.
+    ...(shown.omitted === 0
+      ? []
+      : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
+    ...after,
+  ].join(BLOCK_SEPARATOR);
 }
 
 /**

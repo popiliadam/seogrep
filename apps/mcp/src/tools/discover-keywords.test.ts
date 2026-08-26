@@ -20,7 +20,10 @@ import {
   type DiscoverKeywordsResult,
   type DiscoverMode,
 } from "../dfs/discover-keywords.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
+import { MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS } from "./backlink-details.ts";
 import {
+  MAX_RENDERED_OUTPUT_CHARS,
   MODE_INPUT_RULES,
   MODE_SPECIFIC_FIELDS,
   VENDOR_JUDGEMENT_NOTE,
@@ -1142,5 +1145,205 @@ describe("S10d — the limit description states measured Labs behaviour", () => 
   it("says the row count moves the VENDOR's bill, and how much", () => {
     expect(limit).toMatch(/dataforseo'?s own bill/i);
     expect(limit).toMatch(/ten times it at 1000/i);
+  });
+});
+
+// =============================================================================================
+// THE OUTPUT CEILING (2026-08-26).
+//
+// MEASURED THROUGH THIS FORMATTER, before the ceiling existed: a 1,000-row answer rendered
+// 279,699 characters on "for_site", 292,168 on "suggestions", 292,885 on "related" and 309,942 on
+// "ideas" — roughly FIVE TIMES the 62,729-character reply a calling client refused outright on
+// 2026-08-25. The DEFAULT 100-row window already measured 30,566-33,640.
+//
+// A refused reply is the worst shape this product makes: 40 credits and DataForSEO's fee are both
+// spent and the customer sees an error instead of an answer. So the reply is bounded and says what
+// it left out — the rows are still fetched, still billed, and still recorded.
+//
+// The pins below vary FIVE axes, because a ceiling that holds on one mode with one prose block is
+// not a ceiling: mode (all four), window width, keyword length, the caller's own seed list (the
+// one block a caller can inflate without asking for a row), and the pathological single row that
+// is wider than the whole budget.
+// =============================================================================================
+
+/** A window of `count` rows built from one template, each keyword made distinct. */
+function grownRows(count: number, template: DiscoverKeywordRow = FULL_ROW): DiscoverKeywordRow[] {
+  return Array.from({ length: count }, (_, i) => ({
+    ...template,
+    keyword: `${template.keyword} variant ${i}`,
+  }));
+}
+
+/** A complete result for one mode, carrying the rows given. */
+function resultWith(
+  mode: DiscoverMode,
+  rows: readonly DiscoverKeywordRow[],
+  seeds: readonly string[] = ["seo software"],
+): DiscoverKeywordsResult {
+  const subject =
+    mode === "ideas"
+      ? ({ mode, seeds } as const)
+      : mode === "for_site"
+        ? ({ mode, target: "example.com", include_subdomains: true } as const)
+        : mode === "related"
+          ? ({ mode, seed: "seo software", depth: DEFAULT_RELATED_DEPTH } as const)
+          : ({ mode, seed: "seo software" } as const);
+  return {
+    mode,
+    mode_means: MODE_MEANS[mode],
+    subject,
+    ordered_by_vendor_field: "keyword_info.search_volume",
+    vendor_filters_applied: [],
+    window: {
+      window_offset: 0,
+      window_limit: MAX_DISCOVER_ROWS,
+      window_row_count: rows.length,
+      vendor_total_count: 128_400,
+      rows,
+    },
+  };
+}
+
+/** "78 keywords printed above" -> 78; "922 more fetched" -> 922. Read from the note, not assumed. */
+const MANY_SEEDS = Array.from({ length: MAX_SEEDS }, (_, i) => `enterprise seo platform ${i}`);
+
+function countsInNote(text: string): { printed: number; omitted: number } {
+  const printed = /([\d,]+) keywords? printed above/.exec(text);
+  const omitted = /([\d,]+) more fetched in this same window/.exec(text);
+  if (!printed || !omitted) throw new Error(`no output-limit note in:\n${text.slice(-1200)}`);
+  return {
+    printed: Number(printed[1]!.replace(/,/g, "")),
+    omitted: Number(omitted[1]!.replace(/,/g, "")),
+  };
+}
+
+describe("the reply is bounded, and says what it could not carry", () => {
+  const MODES: readonly DiscoverMode[] = ["ideas", "suggestions", "related", "for_site"];
+
+  /**
+   * THE CONSTANT ITSELF, pinned against numbers that are NOT it. Asserting a rendered reply against
+   * `MAX_RENDERED_OUTPUT_CHARS` alone is a tautology: raise the constant and the assertion follows
+   * it up. So the ceiling is pinned twice from outside — to the sibling surface that set it against
+   * a real refusal, and to that refusal's own measured size.
+   */
+  it("keeps the ceiling where the measured refusal put it", () => {
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBe(BACKLINK_MAX_RENDERED_OUTPUT_CHARS);
+    // MEASURED 2026-08-25: a 62,729-character reply was refused by the calling client outright.
+    // The ceiling must be a fraction of it, not merely below it.
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBeLessThan(62_729 / 2);
+  });
+
+  it("holds the ceiling on all four modes at the schema's widest window", () => {
+    for (const mode of MODES) {
+      const text = formatDiscoverKeywords(
+        resultWith(mode, grownRows(MAX_DISCOVER_ROWS)),
+        LOCALE,
+      );
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+      // The same bound as a LITERAL, so raising the constant cannot carry this assertion with it.
+      expect(text.length, `${mode} overflowed the literal bound`).toBeLessThanOrEqual(28_000);
+      // and it is not bounded by returning nothing: the answer still carries keyword rows.
+      expect(countsInNote(text).printed).toBeGreaterThan(20);
+    }
+  });
+
+  it("holds the ceiling when the KEYWORDS themselves are long", () => {
+    const long: DiscoverKeywordRow = { ...FULL_ROW, keyword: "x".repeat(400) };
+    for (const mode of MODES) {
+      const text = formatDiscoverKeywords(resultWith(mode, grownRows(500, long)), LOCALE);
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    }
+  });
+
+  it("holds the ceiling when the CALLER's own seed list is the thing inflating the reply", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(MAX_DISCOVER_ROWS), MANY_SEEDS),
+      LOCALE,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    expect(text.length).toBeLessThanOrEqual(28_000);
+  });
+
+  /**
+   * The seed echo is the one block a caller can inflate without asking for a single extra keyword,
+   * and the budget above spends whatever the prose leaves — so an unbounded heading does not break
+   * the ceiling, it EATS the answer. MEASURED: 200 ordinary seeds quoted in full cost 19 of the 83
+   * keyword rows a one-seed lookup prints, at the same 40 credits.
+   */
+  it("summarises a long seed list instead of letting it eat the keywords that were paid for", () => {
+    const rows = grownRows(MAX_DISCOVER_ROWS);
+    const one = formatDiscoverKeywords(resultWith("ideas", rows, ["seo software"]), LOCALE);
+    const many = formatDiscoverKeywords(resultWith("ideas", rows, MANY_SEEDS), LOCALE);
+    expect(countsInNote(many).printed).toBeGreaterThanOrEqual(countsInNote(one).printed - 5);
+    // The COUNT is exact and the remainder is named, so a caller can tell their own input was not
+    // quietly shortened — and the first seed is still quoted whole.
+    expect(many).toContain(`${MAX_SEEDS} seed keywords`);
+    expect(many).toMatch(/and [\d,]+ more you sent that are not repeated here/);
+    expect(many).toContain('"enterprise seo platform 0"');
+  });
+
+  it("counts the cut EXACTLY — printed plus omitted is the window the vendor filled", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", grownRows(1_000)), LOCALE);
+    const { printed, omitted } = countsInNote(text);
+    expect(printed + omitted).toBe(1_000);
+    expect(omitted).toBeGreaterThan(0);
+    // The count the note reports is the count the reply really printed.
+    expect(text.match(/^• /gm)?.length).toBe(printed);
+  });
+
+  it("never lets the cut read as an absence: the note is loud and says it was paid for", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", grownRows(1_000)), LOCALE);
+    expect(text).toMatch(/output limit reached/i);
+    expect(text).toMatch(/more fetched in this same window but not printed/i);
+    expect(text).toMatch(/charged for either way/i);
+    // The whole-set count is untouched by the cut — the window is still a slice of the vendor's
+    // set, and the reply still says so rather than presenting the printed rows as the total.
+    expect(text).toContain("DataForSEO counts 128,400 keywords matching this lookup in total");
+    expect(text).toContain("1,000 keywords in this window");
+  });
+
+  it("says how to reach the rows that were paid for and not printed", () => {
+    const text = formatDiscoverKeywords(resultWith("related", grownRows(1_000)), LOCALE);
+    expect(text).toMatch(/advance "offset" by the number printed above/i);
+    expect(text).toContain(`${TOOL_COSTS.discover_keywords}-credit call`);
+    // and it refuses the two comforting readings that are false.
+    expect(text).toMatch(/SeoGrep does not hold them for you/i);
+    expect(text).toMatch(/asking for fewer rows does not cost less/i);
+  });
+
+  it("prints no output-limit note at all when the whole window fits", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", grownRows(5)), LOCALE);
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text.match(/^• /gm)?.length).toBe(5);
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  it("takes rows WHOLE — the last keyword printed is a complete row, never a cut one", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", grownRows(1_000)), LOCALE);
+    const { printed } = countsInNote(text);
+    const rowLines = text.split("\n").filter((line) => line.startsWith("• "));
+    // Every printed keyword is one of the keywords the window carried, in full.
+    expect(rowLines[rowLines.length - 1]!).toMatch(/^• seo tools variant \d+$/);
+    // A HALF-PRINTED ROW IS THE FAILURE THIS PIN IS FOR, and the keyword line alone cannot see it:
+    // a row cut anywhere after its first line still starts with a whole keyword. So the LAST field
+    // of the row is counted instead — it appears once per row and nowhere else in the reply, so
+    // one short count is one truncated row.
+    expect((text.match(/last_updated_time /g) ?? []).length).toBe(printed);
+    expect((text.match(/ main_intent /g) ?? []).length).toBe(printed);
+    expect(text).toContain("last_updated_time 2026-07-31 04:12:07 +00:00");
+  });
+
+  it("stays silent about NOTHING even when one row is wider than the whole budget", () => {
+    const monster: DiscoverKeywordRow = { ...FULL_ROW, keyword: "y".repeat(MAX_RENDERED_OUTPUT_CHARS) };
+    const text = formatDiscoverKeywords(resultWith("suggestions", [monster, monster]), LOCALE);
+    const { printed, omitted } = countsInNote(text);
+    expect(printed).toBe(0);
+    expect(omitted).toBe(2);
+    expect(text).not.toContain("• yyy");
+  });
+
+  it("keeps the whole reply in English (imzali ders 4)", () => {
+    const text = formatDiscoverKeywords(resultWith("for_site", grownRows(1_000)), LOCALE);
+    expect(text).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
   });
 });
