@@ -184,10 +184,14 @@ export function cannibalizationAdvice(group: CannibalGroup): string | null {
   const minGap = Math.min(...gaps);
   const held = trailing.reduce((sum, p) => sum + p.impressions, 0);
   const named = trailing.map((p) => `${p.page} (position ${pos(p.position)})`).join(", ");
+  // "84.7 positions behind" for one trailing page and "84.7+" for several: with one the gap IS
+  // that number, and a "+" on an exact figure quietly tells the reader the tool is rounding when
+  // it is not. With several it is the SMALLEST of their gaps, and the "+" is the honest part.
   const sit = trailing.length === 1 ? "it sits" : "they sit";
+  const gapText = trailing.length === 1 ? pos(minGap) : `${pos(minGap)}+`;
   return (
     `    → Keep ${leader.page} (position ${pos(leader.position)}, ${grouped(leader.clicks)} clicks); ` +
-    `canonicalize or merge ${named} into it — ${sit} ${pos(minGap)}+ positions behind while holding ` +
+    `canonicalize or merge ${named} into it — ${sit} ${gapText} positions behind while holding ` +
     `${grouped(held)} of this query's ${grouped(group.total_impressions)} impressions.`
   );
 }

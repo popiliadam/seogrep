@@ -293,6 +293,10 @@ describe("cannibalizationAdvice names a keeper only when the data supports one",
     expect(advice).toContain("position 7.7");
     expect(advice).toMatch(/canonicalize or merge/i);
     expect(advice).toContain(`${LAGGARD} (position 92.4)`);
+    // ONE trailing page: the gap is exact, so no "+" — a "+" on an exact figure says the tool is
+    // rounding when it is not.
+    expect(advice).toContain("it sits 84.7 positions behind");
+    expect(advice).not.toContain("84.7+");
   });
 
   /**
@@ -333,7 +337,8 @@ describe("cannibalizationAdvice names a keeper only when the data supports one",
     );
     expect(advice).toContain("https://x.test/a (position 18.0)");
     expect(advice).toContain("https://x.test/b (position 25.0)");
-    expect(advice).toMatch(/they sit/);
+    // SEVERAL trailing pages: the figure is the SMALLEST of their gaps, so the "+" is honest.
+    expect(advice).toContain("they sit 16.0+ positions behind");
   });
 
   /**
