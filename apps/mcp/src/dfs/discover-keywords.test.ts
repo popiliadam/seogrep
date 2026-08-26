@@ -4,6 +4,7 @@ import * as discoverModule from "./discover-keywords.ts";
 import {
   BUDGET_SAFETY_FACTOR,
   DEFAULT_DISCOVER_ROWS,
+  DEFAULT_NOISY_MODE_MAX_VOLUME,
   DEFAULT_RELATED_DEPTH,
   DFS_KEYWORD_IDEAS_ENDPOINT,
   DFS_LABS_REQUEST_USD,
@@ -17,6 +18,8 @@ import {
   MAX_SEEDS,
   MODE_ITEM_CARRIER,
   MODE_MEANS,
+  NOISY_DISCOVER_MODES,
+  NO_VOLUME_CEILING,
   ORDER_VENDOR_FIELD,
   VOLUME_FILTER_VENDOR_FIELD,
   buildDiscoverFilters,
@@ -32,9 +35,11 @@ import {
   discoverBounds,
   estimateDiscoverKeywordsUsd,
   extractDiscoverCostUsd,
+  isNoisyDiscoverMode,
   modeFieldPath,
   parseDiscoverResponse,
   resolveDefaultDiscoverKeywordsPort,
+  resolveVolumeCeiling,
   type DiscoverKeywordsQuery,
   type DiscoverMode,
 } from "./discover-keywords.ts";
@@ -80,6 +85,14 @@ const FIXTURES: Readonly<Record<DiscoverMode, unknown>> = {
 };
 
 const ALL_MODES: readonly DiscoverMode[] = ["ideas", "suggestions", "related", "for_site"];
+
+/**
+ * The two halves of the mode set, split by the ONE property the ceiling turns on. Written out
+ * rather than derived from NOISY_DISCOVER_MODES: a spec that reads the same table the code reads
+ * agrees with it by construction, including when the table is wrong.
+ */
+const NOISY_MODES: readonly DiscoverMode[] = ["ideas", "for_site"];
+const CLEAN_MODES: readonly DiscoverMode[] = ["suggestions", "related"];
 
 /** One query per mode, at this port's defaults. Each is a DIFFERENT union member on purpose. */
 function queryFor(mode: DiscoverMode, over: Partial<{ limit: number; offset: number }> = {}) {
@@ -436,20 +449,22 @@ describe("the request body, per MODE", () => {
 // FILTERS — opt-in, in the vendor's grammar, at this mode's paths.
 // =============================================================================================
 describe("vendor filters", () => {
-  it("sends NO filters key at all when the caller supplied no bound", () => {
-    for (const mode of ALL_MODES) {
+  it("sends NO filters key at all when a CLEAN mode's caller supplied no bound", () => {
+    for (const mode of CLEAN_MODES) {
       expect(buildDiscoverRequestBody(queryFor(mode)).filters).toBeUndefined();
     }
   });
 
   it("builds each bound on the vendor's own field, in the vendor's [field, op, value] grammar", () => {
-    expect(buildDiscoverFilters("ideas", 500, undefined)).toEqual([
+    expect(buildDiscoverFilters({ ...queryFor("suggestions"), min_volume: 500 })).toEqual([
       ["keyword_info.search_volume", ">=", 500],
     ]);
-    expect(buildDiscoverFilters("ideas", undefined, 40)).toEqual([
+    expect(buildDiscoverFilters({ ...queryFor("suggestions"), max_difficulty: 40 })).toEqual([
       ["keyword_properties.keyword_difficulty", "<=", 40],
     ]);
-    expect(buildDiscoverFilters("ideas", 500, 40)).toEqual([
+    expect(
+      buildDiscoverFilters({ ...queryFor("suggestions"), min_volume: 500, max_difficulty: 40 }),
+    ).toEqual([
       ["keyword_info.search_volume", ">=", 500],
       "and",
       ["keyword_properties.keyword_difficulty", "<=", 40],
@@ -466,19 +481,278 @@ describe("vendor filters", () => {
     const body = buildDiscoverRequestBody({ ...queryFor("related"), min_volume: 100 });
     expect(body.filters).toEqual([["keyword_data.keyword_info.search_volume", ">=", 100]]);
     expect(body.order_by).toEqual(["keyword_data.keyword_info.search_volume,desc"]);
-    const flat = buildDiscoverRequestBody({ ...queryFor("ideas"), min_volume: 100 });
+    const flat = buildDiscoverRequestBody({
+      ...queryFor("ideas"),
+      min_volume: 100,
+      max_volume: NO_VOLUME_CEILING,
+    });
     expect(flat.filters).toEqual([["keyword_info.search_volume", ">=", 100]]);
     expect(flat.order_by).toEqual(["keyword_info.search_volume,desc"]);
   });
 
   it("echoes the filters it really sent into the answer", async () => {
     const port = createMockDiscoverKeywordsPort(FIXTURES);
-    const none = await port.fetchDiscoverKeywords(queryFor("ideas"));
+    const none = await port.fetchDiscoverKeywords(queryFor("suggestions"));
     expect(none.vendor_filters_applied).toEqual([]);
-    const bounded = await port.fetchDiscoverKeywords({ ...queryFor("ideas"), max_difficulty: 30 });
+    const bounded = await port.fetchDiscoverKeywords({
+      ...queryFor("suggestions"),
+      max_difficulty: 30,
+    });
     expect(bounded.vendor_filters_applied).toEqual([
       ["keyword_properties.keyword_difficulty", "<=", 30],
     ]);
+  });
+});
+
+// =============================================================================================
+// THE NOISY-MODE VOLUME CEILING (imza paketi madde 10, 2026-08-25).
+//
+// Two modes leave relevance to the vendor and were MEASURED handing back off-subject keywords.
+// They get a DEFAULT upper bound on search volume; the two seed-anchored modes get NOTHING.
+// Every constraint the signature named is one `it` below.
+// =============================================================================================
+describe("the noisy-mode search-volume ceiling", () => {
+  /** The vendor clause the ceiling produces, at a given mode's own carrier path. */
+  const ceilingClause = (mode: DiscoverMode, value: number) => [
+    modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD),
+    "<=",
+    value,
+  ];
+
+  it("names EXACTLY the two measured-noisy modes, and the two clean ones not at all", () => {
+    expect(NOISY_DISCOVER_MODES).toEqual({
+      ideas: true,
+      suggestions: false,
+      related: false,
+      for_site: true,
+    });
+    expect(ALL_MODES.filter(isNoisyDiscoverMode)).toEqual(["ideas", "for_site"]);
+  });
+
+  it("applies the DEFAULT ceiling on the noisy modes when the caller said nothing", () => {
+    for (const mode of NOISY_MODES) {
+      expect(buildDiscoverRequestBody(queryFor(mode)).filters).toEqual([
+        ceilingClause(mode, DEFAULT_NOISY_MODE_MAX_VOLUME),
+      ]);
+    }
+  });
+
+  /**
+   * THE CONSTRAINT THAT KEEPS THE FIX FROM BECOMING A REGRESSION. `suggestions` and `related`
+   * measured 8/8 and 5/5 clean; a ceiling on them would silently drop head terms the caller's own
+   * seed produced, for a defect they do not have.
+   */
+  it("leaves suggestions and related COMPLETELY alone — no clause, no filters key", () => {
+    for (const mode of CLEAN_MODES) {
+      expect(resolveVolumeCeiling(mode, undefined, undefined)).toEqual({ kind: "off" });
+      expect(buildDiscoverFilters(queryFor(mode))).toEqual([]);
+      expect(buildDiscoverRequestBody(queryFor(mode)).filters).toBeUndefined();
+    }
+  });
+
+  it("reads the ceiling off ONE named constant, never a sprinkled literal", () => {
+    expect(DEFAULT_NOISY_MODE_MAX_VOLUME).toBe(100_000);
+    const source = readFileSync(new URL("./discover-keywords.ts", import.meta.url), "utf8");
+    const declaration = /DEFAULT_NOISY_MODE_MAX_VOLUME = 100_000/;
+    expect(source).toMatch(declaration);
+    // Every OTHER appearance of the number is the constant's own name, not the digits again.
+    // Only the CODE forms are hunted (`100000`, `100_000`); `100,000` is prose, and the module's
+    // own rationale paragraph is allowed to spell the figure it is justifying.
+    expect(source.replace(declaration, "").match(/100_?000/g)).toBeNull();
+  });
+
+  it("lets the caller replace the default with their own bound, on a noisy mode", () => {
+    expect(resolveVolumeCeiling("for_site", 5_000, undefined)).toEqual({ kind: "caller", max_volume: 5_000 });
+    expect(buildDiscoverRequestBody({ ...queryFor("for_site"), max_volume: 5_000 }).filters).toEqual(
+      [ceilingClause("for_site", 5_000)],
+    );
+  });
+
+  it("lets the caller switch the ceiling OFF entirely, on every noisy mode", () => {
+    for (const mode of NOISY_MODES) {
+      expect(resolveVolumeCeiling(mode, NO_VOLUME_CEILING, undefined)).toEqual({ kind: "off" });
+      expect(
+        buildDiscoverRequestBody({ ...queryFor(mode), max_volume: NO_VOLUME_CEILING }).filters,
+      ).toBeUndefined();
+    }
+    expect(NO_VOLUME_CEILING).toBe(0);
+  });
+
+  it("still honours an EXPLICIT ceiling on a clean mode — the default is what they are spared", () => {
+    expect(resolveVolumeCeiling("related", 900, undefined)).toEqual({ kind: "caller", max_volume: 900 });
+    expect(buildDiscoverRequestBody({ ...queryFor("related"), max_volume: 900 }).filters).toEqual([
+      ceilingClause("related", 900),
+    ]);
+  });
+
+  it("addresses the ceiling at the WRAPPED mode's carrier too, never at a bare path", () => {
+    const body = buildDiscoverRequestBody({ ...queryFor("related"), max_volume: 900 });
+    expect(body.filters).toEqual([["keyword_data.keyword_info.search_volume", "<=", 900]]);
+    expect(body.order_by).toEqual(["keyword_data.keyword_info.search_volume,desc"]);
+  });
+
+  /**
+   * THE PAID-FAILURE GUARD. The module header says it outright: a `filters` value the vendor
+   * rejects costs a PAID call. Three bounds are now reachable in one request, and DataForSEO's
+   * grammar wants the literal "and" between EVERY adjacent pair — the old two-clause special case
+   * would have emitted a bare array of three, which is not that grammar.
+   */
+  it("joins THREE bounds with the vendor's literal 'and' between every pair", () => {
+    expect(
+      buildDiscoverFilters({ ...queryFor("ideas"), min_volume: 500, max_difficulty: 40 }),
+    ).toEqual([
+      ["keyword_info.search_volume", ">=", 500],
+      "and",
+      ["keyword_info.search_volume", "<=", DEFAULT_NOISY_MODE_MAX_VOLUME],
+      "and",
+      ["keyword_properties.keyword_difficulty", "<=", 40],
+    ]);
+  });
+
+  /**
+   * THE WIRE, PINNED BYTE FOR BYTE. Not a spot-check of one key: the whole JSON body DataForSEO
+   * receives for a defaulted `for_site` lookup, so a stray key, a renamed one or a filter clause
+   * in the wrong grammar turns this red before it turns into a paid failure.
+   */
+  it("pins the ENTIRE request body a defaulted for_site lookup puts on the wire", async () => {
+    const transport = modeTransport();
+    await liveClient(transport, ledger).fetchDiscoverKeywords(queryFor("for_site"));
+    expect(sentBody(transport)).toEqual({
+      limit: DEFAULT_DISCOVER_ROWS,
+      offset: 0,
+      language_code: "en",
+      location_code: 2840,
+      order_by: ["keyword_info.search_volume,desc"],
+      filters: [["keyword_info.search_volume", "<=", DEFAULT_NOISY_MODE_MAX_VOLUME]],
+      target: "example.com",
+      include_subdomains: true,
+    });
+  });
+
+  it("pins the ENTIRE body of an untouched suggestions lookup — still no filters key", async () => {
+    const transport = modeTransport();
+    await liveClient(transport, ledger).fetchDiscoverKeywords(queryFor("suggestions"));
+    expect(sentBody(transport)).toEqual({
+      limit: DEFAULT_DISCOVER_ROWS,
+      offset: 0,
+      language_code: "en",
+      location_code: 2840,
+      order_by: ["keyword_info.search_volume,desc"],
+      keyword: "seo software",
+    });
+  });
+
+  it("echoes the ceiling into the answer's own filter list, so the surface can print it", async () => {
+    const port = createMockDiscoverKeywordsPort(FIXTURES);
+    const defaulted = await port.fetchDiscoverKeywords(queryFor("ideas"));
+    expect(defaulted.vendor_filters_applied).toEqual([
+      ["keyword_info.search_volume", "<=", DEFAULT_NOISY_MODE_MAX_VOLUME],
+    ]);
+    const off = await port.fetchDiscoverKeywords({
+      ...queryFor("ideas"),
+      max_volume: NO_VOLUME_CEILING,
+    });
+    expect(off.vendor_filters_applied).toEqual([]);
+  });
+
+  /**
+   * NOT A PRICE CONTROL (NEVER #6). The signed 40 credits rest on ONE request at MAX_DISCOVER_ROWS
+   * billed rows; the ceiling changes WHICH rows come back and neither of those two numbers.
+   */
+  it("moves no price: same request count, same estimate, ceiling on or off", async () => {
+    const before = estimateDiscoverKeywordsUsd(DEFAULT_DISCOVER_ROWS);
+    const transport = modeTransport();
+    const client = liveClient(transport, ledger);
+    await client.fetchDiscoverKeywords(queryFor("ideas"));
+    await client.fetchDiscoverKeywords({ ...queryFor("ideas"), max_volume: NO_VOLUME_CEILING });
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(estimateDiscoverKeywordsUsd(DEFAULT_DISCOVER_ROWS)).toBe(before);
+  });
+});
+
+// =============================================================================================
+// THE CEILING STANDS DOWN IN FRONT OF THE CALLER'S OWN FLOOR — a MONEY rule.
+//
+// MEASURED before the fix: `for_site` + `min_volume: 200000` put
+// `[[">=",200000],"and",["<=",100000]]` on the wire — a set empty BY CONSTRUCTION. The vendor
+// SUCCEEDS at returning nothing, the handler returns, and withCredits commits: 40 credits for
+// zero rows, caused by OUR default. On the base branch the same call returned real rows, so
+// shipping this without the withdrawal would have been a paid REGRESSION.
+// =============================================================================================
+describe("our default ceiling withdraws rather than empty a caller's own floor", () => {
+  /** A floor at or above the default is what makes the pair unsatisfiable. */
+  const ABOVE = DEFAULT_NOISY_MODE_MAX_VOLUME * 2;
+
+  it("sends the caller's floor ALONE, with no ceiling clause, on both noisy modes", () => {
+    for (const mode of NOISY_MODES) {
+      const filters = buildDiscoverRequestBody({ ...queryFor(mode), min_volume: ABOVE }).filters;
+      expect(filters).toEqual([[modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", ABOVE]]);
+      // The exact shape the probe measured before the fix must NOT come back.
+      expect(JSON.stringify(filters)).not.toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}`);
+    }
+  });
+
+  it("reports the withdrawal as its own state, carrying the number that stood down", () => {
+    for (const mode of NOISY_MODES) {
+      expect(resolveVolumeCeiling(mode, undefined, ABOVE)).toEqual({
+        kind: "withdrawn",
+        max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME,
+      });
+    }
+  });
+
+  /** The boundary is `>=`: a floor EQUAL to the ceiling admits nothing but the exact value. */
+  it("withdraws at exactly equal, and stays on one below", () => {
+    expect(resolveVolumeCeiling("ideas", undefined, DEFAULT_NOISY_MODE_MAX_VOLUME).kind).toBe(
+      "withdrawn",
+    );
+    expect(resolveVolumeCeiling("ideas", undefined, DEFAULT_NOISY_MODE_MAX_VOLUME - 1)).toEqual({
+      kind: "default",
+      max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME,
+    });
+    // Below the ceiling BOTH clauses go out, and they are satisfiable rather than empty.
+    expect(
+      buildDiscoverRequestBody({ ...queryFor("ideas"), min_volume: 500 }).filters,
+    ).toEqual([
+      ["keyword_info.search_volume", ">=", 500],
+      "and",
+      ["keyword_info.search_volume", "<=", DEFAULT_NOISY_MODE_MAX_VOLUME],
+    ]);
+  });
+
+  it("never withdraws a ceiling the CALLER set — that one is theirs to keep", () => {
+    expect(resolveVolumeCeiling("for_site", 5_000, ABOVE)).toEqual({
+      kind: "caller",
+      max_volume: 5_000,
+    });
+  });
+
+  it("changes nothing on the clean modes, which never had a ceiling to withdraw", () => {
+    for (const mode of CLEAN_MODES) {
+      expect(resolveVolumeCeiling(mode, undefined, ABOVE)).toEqual({ kind: "off" });
+      expect(buildDiscoverRequestBody({ ...queryFor(mode), min_volume: ABOVE }).filters).toEqual([
+        [modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", ABOVE],
+      ]);
+    }
+  });
+
+  /** The whole wire, pinned — the probe's exact scenario, as it must now go out. */
+  it("pins the ENTIRE body of the for_site + min_volume lookup that used to be empty", async () => {
+    const transport = modeTransport();
+    await liveClient(transport, ledger).fetchDiscoverKeywords({
+      ...queryFor("for_site"),
+      min_volume: ABOVE,
+    });
+    expect(sentBody(transport)).toEqual({
+      limit: DEFAULT_DISCOVER_ROWS,
+      offset: 0,
+      language_code: "en",
+      location_code: 2840,
+      order_by: ["keyword_info.search_volume,desc"],
+      filters: [["keyword_info.search_volume", ">=", ABOVE]],
+      target: "example.com",
+      include_subdomains: true,
+    });
   });
 });
 

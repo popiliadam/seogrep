@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import {
   DEFAULT_DISCOVER_ROWS,
+  DEFAULT_NOISY_MODE_MAX_VOLUME,
   DEFAULT_RELATED_DEPTH,
   DISCOVER_ENDPOINTS,
   MAX_DISCOVER_ROWS,
@@ -10,6 +11,7 @@ import {
   MAX_SEEDS,
   MIN_RELATED_DEPTH,
   MODE_MEANS,
+  NO_VOLUME_CEILING,
   createMockDiscoverKeywordsPort,
   disabledDiscoverKeywordsPort,
   parseDiscoverResponse,
@@ -24,8 +26,10 @@ import {
   VENDOR_JUDGEMENT_NOTE,
   buildDiscoverQuery,
   describeSubject,
+  describeVolumeCeiling,
   formatDiscoverKeywords,
   makeDiscoverKeywordsTool,
+  relevanceWarningFor,
   renderDiscoveryCaption,
   renderKeywordRow,
   vendorFunctionOf,
@@ -83,7 +87,10 @@ async function formattedFixtureAnswer(
     ...overrides,
   } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0];
   const answer = await mockPort().fetchDiscoverKeywords(query);
-  return formatDiscoverKeywords(answer, LOCALE);
+  // The ceiling INTENT travels to the renderer exactly as the handler passes it: the parsed input
+  // is BOTH the port's query and the criteria line's source, so a helper that dropped it here
+  // would prove a sentence the real tool never prints.
+  return formatDiscoverKeywords(answer, { ...LOCALE, max_volume: query.max_volume, min_volume: query.min_volume });
 }
 
 const FULL_ROW: DiscoverKeywordRow = {
@@ -293,6 +300,7 @@ describe("the price controls — the schema's maxima ARE the port's caps", () =>
       "limit",
       "location_code",
       "max_difficulty",
+      "max_volume",
       "min_volume",
       "mode",
       "offset",
@@ -535,8 +543,16 @@ describe("the output says WHICH question was answered, and over WHAT window", ()
   });
 
   it("prints the vendor filters exactly as they were sent, or says none were", async () => {
-    expect(await formattedFixtureAnswer()).toContain("No vendor filter was applied");
-    const filtered = await formattedFixtureAnswer({ min_volume: 500, max_difficulty: 40 });
+    // A CLEAN mode with no bounds is the only lookup that sends nothing at all — the two noisy
+    // modes carry their default ceiling, and this line is what tells them apart.
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("suggestions") })).toContain(
+      "No vendor filter was applied",
+    );
+    const filtered = await formattedFixtureAnswer({
+      ...minimalPortQuery("suggestions"),
+      min_volume: 500,
+      max_difficulty: 40,
+    });
     expect(filtered).toContain(
       '[["keyword_info.search_volume",">=",500],"and",["keyword_properties.keyword_difficulty","<=",40]]',
     );
@@ -589,6 +605,283 @@ describe("the output says WHICH question was answered, and over WHAT window", ()
       'Keyword discovery for your project "example.com"',
     );
     expect(formatDiscoverKeywords(forSite, LOCALE)).not.toContain("your project");
+  });
+});
+
+// =============================================================================================
+// THE NOISY-MODE WARNING AND THE VISIBLE CEILING (imza paketi madde 10, 2026-08-25).
+//
+// The measurement: for_site 0/15 relevant, ideas 0/5, suggestions 8/8 clean, related 5/5 clean.
+// The surface owes the reader TWO things — that the two noisy modes leave relevance to the vendor,
+// and that a default bound was applied to their answer at all. A ceiling nobody is told about is
+// a 40-credit answer trimmed behind the customer's back.
+// =============================================================================================
+describe("the noisy modes warn, and the ceiling they get is VISIBLE", () => {
+  const NOISY: readonly DiscoverMode[] = ["ideas", "for_site"];
+  const CLEAN: readonly DiscoverMode[] = ["suggestions", "related"];
+
+  it("warns on BOTH noisy modes, naming what was measured and what SeoGrep cannot do", async () => {
+    for (const mode of NOISY) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(text).toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+      expect(text).toMatch(/measured to be poor on this mode/i);
+      expect(text).toMatch(/SeoGrep does not read meaning/i);
+      // It points somewhere better rather than only complaining.
+      expect(text).toMatch(/"suggestions" and "related" stay anchored to a seed keyword YOU choose/);
+    }
+  });
+
+  it("reports the two measurements SEPARATELY — the two modes failed differently", async () => {
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("for_site") })).toMatch(
+      /none of its first 15 keywords about the site/i,
+    );
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("ideas") })).toMatch(
+      /at ordinary search volume rather than national-scale volume/i,
+    );
+  });
+
+  /**
+   * THE HONESTY THE CEILING ITSELF CANNOT PROVIDE (measured): the `ideas` noise was ORDINARY-volume
+   * and off-subject, so no upper bound on volume removes it. Claiming the ceiling fixed relevance
+   * would be exactly the invented verdict NEVER #7 forbids, so the warning says the opposite.
+   */
+  it("refuses to claim the ceiling fixed relevance", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas") });
+    expect(text).toMatch(/cannot remove an off-subject keyword of ordinary volume/i);
+    expect(relevanceWarningFor("ideas")).not.toMatch(/relevant results|now relevant|fixes/i);
+  });
+
+  it("says NOTHING of the kind on the two modes that measured clean", async () => {
+    for (const mode of CLEAN) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(relevanceWarningFor(mode)).toBe("");
+      expect(text).not.toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+    }
+  });
+
+  it("states WHICH ceiling was applied, and the literal argument that moves or removes it", async () => {
+    for (const mode of NOISY) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(text).toContain(
+        `A DEFAULT search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")} was applied`,
+      );
+      expect(text).toMatch(/Pass "max_volume" to move it, or "max_volume": 0 to remove it/);
+      // The filter really went out, in the vendor's own grammar, at this mode's carrier path.
+      expect(text).toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}]]`);
+    }
+  });
+
+  /**
+   * FOUND BY READING THE REAL OUTPUT, not by a spec. Before the ceiling existed, every clause in
+   * the filter list WAS the caller's, and the line said "bounds you chose" unconditionally. With a
+   * default clause in there that sentence tells the customer they made a choice SeoGrep made — the
+   * exact attribution error this file refuses everywhere else.
+   */
+  it("never attributes SeoGrep's DEFAULT ceiling to the caller as a bound they chose", async () => {
+    const defaulted = await formattedFixtureAnswer({ ...minimalPortQuery("for_site") });
+    expect(defaulted).toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}]]`);
+    expect(defaulted).not.toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+    expect(defaulted).toMatch(/the search-volume ceiling among them is SeoGrep's own default/);
+    // A caller's OWN bound on the same mode is still theirs, and is still said to be.
+    const chosen = await formattedFixtureAnswer({
+      ...minimalPortQuery("for_site"),
+      max_volume: 5_000,
+    });
+    expect(chosen).toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+  });
+
+  it("says a CALLER's own ceiling is theirs, not a default of ours", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas"), max_volume: 5_000 });
+    expect(text).toContain("Your own search-volume ceiling of 5,000 was applied");
+    expect(text).not.toContain("A DEFAULT search-volume ceiling");
+  });
+
+  it("says so when the caller switched the default OFF — silence would read as 'never applied'", async () => {
+    const text = await formattedFixtureAnswer({
+      ...minimalPortQuery("for_site"),
+      max_volume: NO_VOLUME_CEILING,
+    });
+    expect(text).toMatch(/NO search-volume ceiling was applied: you switched this mode's default/);
+    expect(text).toContain("No vendor filter was applied");
+  });
+
+  it("tells a clean mode's reader that no ceiling exists there at all", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("related") });
+    expect(text).toMatch(/No search-volume ceiling was applied — mode "related" has no default one/);
+  });
+
+  /** The empty answer is charged too, so it owes the reader the same two sentences. */
+  it("carries the warning and the ceiling onto the EMPTY answer as well", () => {
+    const empty: DiscoverKeywordsResult = {
+      mode: "for_site",
+      mode_means: MODE_MEANS.for_site,
+      subject: { mode: "for_site", target: "example.com", include_subdomains: true },
+      ordered_by_vendor_field: "keyword_info.search_volume",
+      vendor_filters_applied: [["keyword_info.search_volume", "<=", 100_000]],
+      window: {
+        window_offset: 0,
+        window_limit: 100,
+        window_row_count: 0,
+        vendor_total_count: 0,
+        rows: [],
+      },
+    };
+    const text = formatDiscoverKeywords(empty, LOCALE);
+    expect(text).toContain("No keywords for");
+    expect(text).toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+    expect(text).toContain("A DEFAULT search-volume ceiling of 100,000 was applied");
+  });
+
+  /** The warning is a caveat about the list; a caveat printed under it is decoration. */
+  it("prints the warning BEFORE the keyword rows, not after them", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas") });
+    const warning = text.indexOf("RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT");
+    const firstRow = text.indexOf("\n• ");
+    expect(warning).toBeGreaterThanOrEqual(0);
+    expect(firstRow).toBeGreaterThan(warning);
+  });
+
+  it("advertises both in the tool description, so a client sees them before it spends", () => {
+    const tool = makeDiscoverKeywordsTool();
+    expect(tool.description).toMatch(/measured returning off-subject national queries/i);
+    expect(tool.description).toContain(
+      `default search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")}`,
+    );
+    const schema = tool.inputJsonSchema as {
+      properties: Record<string, { description?: string; minimum?: number; type?: string }>;
+    };
+    expect(schema.properties.max_volume?.type).toBe("integer");
+    expect(schema.properties.max_volume?.minimum).toBe(NO_VOLUME_CEILING);
+    expect(schema.properties.max_volume?.description).toMatch(/0 to remove it entirely/);
+  });
+
+  /** UI copy is English in this product (signed lesson 4) — the emir dili is not. */
+  it("keeps every new sentence in English", () => {
+    for (const mode of NOISY) {
+      expect(relevanceWarningFor(mode)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+      expect(describeVolumeCeiling(mode, undefined, undefined)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+      expect(describeVolumeCeiling(mode, undefined, 999_999)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+    }
+  });
+
+  /**
+   * THE HONESTY ASYMMETRY. The port's own DEFAULT_NOISY_MODE_MAX_VOLUME note says the number is
+   * "NOT a measured relevance threshold" and that the noisy rows' volumes were never captured. The
+   * customer text used to assert the opposite as fact — that the ceiling "holds back the very
+   * high-volume national queries" — publishing a measurement nobody made (NEVER #9). What the code
+   * admits and what the customer is told have to be the same thing.
+   */
+  it("never sells the ceiling to the customer as a MEASURED relevance remedy", async () => {
+    const surfaces = [
+      relevanceWarningFor("ideas"),
+      relevanceWarningFor("for_site"),
+      describeVolumeCeiling("for_site", NO_VOLUME_CEILING, undefined),
+      await formattedFixtureAnswer({ ...minimalPortQuery("for_site") }),
+    ];
+    for (const text of surfaces) {
+      expect(text).not.toMatch(/holds back the very high-volume national queries/i);
+    }
+    expect(relevanceWarningFor("for_site")).toMatch(
+      /a convention SeoGrep chose, NOT a measured relevance threshold/,
+    );
+    expect(describeVolumeCeiling("ideas", NO_VOLUME_CEILING, undefined)).toMatch(
+      /a convention SeoGrep chose, not a measured relevance threshold/i,
+    );
+  });
+
+  /**
+   * THE PUBLISHED HALF OF THE SAME CLAIM. `gen-tool-docs --check` only proves page and generator
+   * agree — neither knows what the code admits, which is exactly how the asymmetry got in. This
+   * spec lives here because the two discover-keywords test files are the only ones this task may
+   * write; a claim pinned on one surface and free on the other is not pinned.
+   */
+  it("keeps the published docs page at the same honesty as the code", () => {
+    const page = readFileSync(
+      new URL("../../../web/content/docs/tools-reference/discover-keywords.mdx", import.meta.url),
+      "utf8",
+    );
+    expect(page).not.toMatch(/holds back the very high-volume national queries/i);
+    expect(page).toMatch(/not a measured relevance threshold/i);
+    expect(page).toMatch(/the volume of those rows was never captured/i);
+  });
+});
+
+// =============================================================================================
+// THE MONEY AXIS — a contradictory pair of bounds must never reach a paid, empty lookup.
+//
+// MEASURED before the fix: `for_site` + `min_volume: 200000` put
+// `[[">=",200000],"and",["<=",100000]]` on the wire. DataForSEO SUCCEEDS at returning nothing,
+// the handler returns, and withCredits commits a handler that returns — 40 credits, zero rows,
+// caused by OUR default. On the base branch the same call returned real rows.
+// =============================================================================================
+describe("no contradictory bound pair is ever paid for", () => {
+  withoutSupabaseEnv();
+
+  it("tells the reader OUR ceiling stood down, naming both numbers", async () => {
+    for (const mode of ["for_site", "ideas"] as const) {
+      const text = await formattedFixtureAnswer({
+        ...minimalPortQuery(mode),
+        min_volume: 200_000,
+      });
+      expect(text).toContain(
+        `SeoGrep's default search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")} was NOT applied here`,
+      );
+      expect(text).toContain('your own "min_volume" of 200,000 meets or exceeds it');
+      expect(text).toMatch(/a set that is empty whatever the vendor holds/);
+      // The wire agrees with the sentence: the caller's floor alone, no ceiling clause.
+      expect(text).toContain('[["keyword_info.search_volume",">=",200000]]');
+      expect(text).not.toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}`);
+      // With our default gone, the only remaining bound really IS the caller's.
+      expect(text).toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+    }
+  });
+
+  /**
+   * THE CALLER-vs-CALLER CASE. Both bounds are theirs, so there is no default of ours to withdraw,
+   * and dropping one of theirs would run a different lookup than they asked for. Refused in the
+   * SCHEMA — before the handler, therefore before any reserve, the same place every other
+   * impossible input on this tool lands.
+   */
+  it("refuses min_volume above the caller's own max_volume, FREE, before any reserve", async () => {
+    const tool = makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
+    const refused = await tool.run(CTX, {
+      mode: "suggestions",
+      seed: "seo software",
+      min_volume: 900,
+      max_volume: 100,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/invalid input/i);
+    expect(refused.content[0]?.text).toMatch(/no keyword could satisfy both/i);
+    // With no Supabase env, anything that REACHED the credit guard would say so instead.
+    expect(refused.content[0]?.text).not.toMatch(/SUPABASE/i);
+  });
+
+  /**
+   * The two NON-contradictions must still get through. Proven with this file's own credit-guard
+   * signal (no Supabase env -> the guard throws naming SUPABASE): reaching it means validation
+   * passed, which a `not.toMatch` on the refusal text could not tell apart from an early return.
+   */
+  it("allows EQUAL bounds — a one-value set is not an empty one", async () => {
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "suggestions",
+        seed: "seo software",
+        min_volume: 500,
+        max_volume: 500,
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  it("leaves max_volume 0 alone — the off switch is not a bound to contradict", async () => {
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "for_site",
+        target: "example.com",
+        min_volume: 900,
+        max_volume: NO_VOLUME_CEILING,
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
   });
 });
 

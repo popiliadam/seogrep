@@ -4,13 +4,17 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   DEFAULT_DISCOVER_ROWS,
+  DEFAULT_NOISY_MODE_MAX_VOLUME,
   DEFAULT_RELATED_DEPTH,
   DISCOVER_ENDPOINTS,
   MAX_DISCOVER_ROWS,
   MAX_RELATED_DEPTH,
   MAX_SEEDS,
   MIN_RELATED_DEPTH,
+  NO_VOLUME_CEILING,
+  isNoisyDiscoverMode,
   resolveDefaultDiscoverKeywordsPort,
+  resolveVolumeCeiling,
   type DiscoverKeywordRow,
   type DiscoverKeywordsPort,
   type DiscoverKeywordsQuery,
@@ -268,6 +272,26 @@ const inputSchema = z
           "at all, so nothing is dropped on your behalf. Filtering happens at DataForSEO, so it " +
           "changes which rows you are billed for.",
       ),
+    // WHY THIS ONE HAS A DEFAULT AND ITS SIBLING DOES NOT. `min_volume` is a preference; this is a
+    // correction to a MEASURED defect (dfs/discover-keywords.ts: NOISY_DISCOVER_MODES). It is not
+    // a price control — the flat 40 credits and the `limit` ceiling own the price, and this moves
+    // WHICH rows come back, never how many are billed for.
+    max_volume: z
+      .number()
+      .int()
+      .min(NO_VOLUME_CEILING)
+      .optional()
+      .describe(
+        "OPTIONAL upper bound on DataForSEO `keyword_info.search_volume` — the one filter here " +
+          `that has a DEFAULT. On modes "for_site" and "ideas" a ceiling of ` +
+          `${DEFAULT_NOISY_MODE_MAX_VOLUME} monthly searches is applied when you pass nothing, ` +
+          "because those two modes ask DataForSEO to judge relevance and were measured returning " +
+          "national general-purpose queries that had nothing to do with the subject. The answer " +
+          'always states which ceiling was applied. Pass your own number to move it, or 0 to ' +
+          `remove it entirely. Modes "suggestions" and "related" get NO default ceiling — a ` +
+          "number here still applies to them if you want one. Filtering happens at DataForSEO, so " +
+          "it changes which rows you are billed for.",
+      ),
     max_difficulty: z
       .number()
       .int()
@@ -312,6 +336,31 @@ const inputSchema = z
         });
       }
     }
+    // A FLOOR ABOVE THE CALLER'S OWN CEILING IS AN EMPTY SET, AND THE PRICE IS FLAT. DataForSEO
+    // would SUCCEED at returning nothing, the handler would return, and the credit guard commits a
+    // handler that returns — 40 credits for a set that could not have held a row. Refused here, in
+    // the schema, so it lands with the other free rejections: before the reserve, ledger untouched.
+    //
+    // Only the caller-vs-caller case is refused. When the ceiling in the way is OURS, the port
+    // withdraws it instead (resolveVolumeCeiling) — refusing a sensible request because of a
+    // default we invented would be the wrong half to blame. `max_volume` 0 is the off switch, not
+    // a bound, so it never contradicts anything. Equal bounds are a one-value set, not an empty one.
+    if (
+      input.min_volume !== undefined &&
+      input.max_volume !== undefined &&
+      input.max_volume !== NO_VOLUME_CEILING &&
+      input.min_volume > input.max_volume
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["max_volume"],
+        message:
+          `"min_volume" (${input.min_volume}) is above "max_volume" (${input.max_volume}), so no ` +
+          "keyword could satisfy both and DataForSEO would return an empty list for the full " +
+          "price. Refused before anything was charged: raise max_volume, lower min_volume, or " +
+          'pass "max_volume": 0 to drop the ceiling entirely.',
+      });
+    }
   });
 
 type DiscoverKeywordsInput = z.infer<typeof inputSchema>;
@@ -322,7 +371,13 @@ const DESCRIPTION =
   `${MAX_SEEDS} seed keywords), "suggestions" (longer queries containing one seed), "related" ` +
   '(the "searches related to" keywords for one seed), or "for_site" (keywords DataForSEO ' +
   "considers relevant to a DOMAIN — pass target or project_id). Each mode takes its own input, " +
-  "and a field belonging to another mode is rejected rather than ignored. Returns each keyword " +
+  'and a field belonging to another mode is rejected rather than ignored. "for_site" and "ideas" ' +
+  "leave relevance to DataForSEO and were measured returning off-subject national queries, so " +
+  "their answers carry a warning and a default search-volume ceiling of " +
+  `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} that the answer names and max_volume can move or ` +
+  "remove; " +
+  '"suggestions" and "related" stay anchored to your seed and are left alone. Returns each ' +
+  "keyword " +
   "with DataForSEO's own search_volume, cpc, competition, competition_level, keyword_difficulty " +
   "and search intent, in the vendor's order by search volume — SeoGrep ranks nothing and " +
   "recommends nothing. Synchronous — everything comes back immediately. Costs " +
@@ -463,24 +518,138 @@ export function renderHeading(result: DiscoverKeywordsResult, project?: ProjectR
  * with the one the vendor actually received.
  */
 export function renderCriteria(result: DiscoverKeywordsResult, input: LookupLocale): string {
+  // WHOSE BOUNDS THESE ARE. Until the noisy-mode ceiling existed, every clause in this list was
+  // the caller's, and "bounds you chose" was simply true. It is not any more: on `for_site` and
+  // `ideas` a default clause can be in there that the caller never asked for, and attributing it
+  // to them would be the surface telling the customer they made a choice SeoGrep made.
+  const ceiling = resolveVolumeCeiling(result.mode, input.max_volume, input.min_volume);
+  const whose =
+    ceiling.kind === "default"
+      ? "the search-volume ceiling among them is SeoGrep's own default, described in the next " +
+        "line; any other bound there is one you chose. Neither is a recommendation."
+      : "bounds you chose, not ones SeoGrep or DataForSEO recommends.";
   const filters =
     result.vendor_filters_applied.length === 0
       ? "No vendor filter was applied, so nothing was dropped before you saw it."
       : `DataForSEO filtered the set, in the vendor's own grammar: ` +
-        `${JSON.stringify(result.vendor_filters_applied)} — bounds you chose, not ones SeoGrep or ` +
-        "DataForSEO recommends.";
+        `${JSON.stringify(result.vendor_filters_applied)} — ${whose}`;
   return (
     `What this mode returns: ${result.mode_means}\n` +
     `Asked in language ${input.language_code}, location ${input.location_code}. The rows are in ` +
     `DataForSEO's own order, by ${result.ordered_by_vendor_field}, highest first — SeoGrep does ` +
-    `not re-order them and computes no score of its own. ${filters}`
+    `not re-order them and computes no score of its own. ${filters}\n` +
+    // The ceiling is resolved against the RESULT's mode, never the caller's requested one, for the
+    // same reason the heading is: an answer built for a different mode must not wear this one's
+    // caption. `max_volume` is the caller's intent and has nowhere else to come from.
+    describeVolumeCeiling(result.mode, input.max_volume, input.min_volume)
   );
 }
 
-/** The locale echoed back into the criteria line — the caller's own two request facts. */
+/**
+ * The caller's own request facts, echoed back into the criteria line. The locale is two of them;
+ * `max_volume` is the third, and it is the caller's INTENT rather than the resolved ceiling — the
+ * resolution runs here through the port's own resolveVolumeCeiling, against the RESULT's mode, so
+ * the sentence a reader gets is produced by the same function that built the filter that was sent.
+ */
 export interface LookupLocale {
   readonly language_code: string;
   readonly location_code: number;
+  /** Undefined = no opinion (the noisy modes default); NO_VOLUME_CEILING (0) = no ceiling. */
+  readonly max_volume?: number;
+  /** The caller's FLOOR. Read here only to say whether our default ceiling stood down for it. */
+  readonly min_volume?: number;
+}
+
+/**
+ * WHICH SEARCH-VOLUME CEILING REALLY APPLIED, and how to move or remove it. Printed on every
+ * answer, including the empty one.
+ *
+ * A default the reader is not told about is the shape this whole file refuses everywhere else: at
+ * 40 credits a call, silently dropping the rows above a bound nobody mentioned is trimming a
+ * customer's paid answer behind their back. So the ceiling is named, the number is printed, and
+ * the two ways out of it are spelled with the literal argument that does it.
+ */
+export function describeVolumeCeiling(
+  mode: DiscoverMode,
+  requested: number | undefined,
+  minVolume: number | undefined,
+): string {
+  const ceiling = resolveVolumeCeiling(mode, requested, minVolume);
+  switch (ceiling.kind) {
+    // A withdrawal the reader is not told about is the same defect as a silent ceiling, read from
+    // the other side: they would see their own floor honoured and never learn a bound of ours had
+    // been in the way. It names OUR number and THEIR number, so the arithmetic is checkable.
+    case "withdrawn":
+      return (
+        `SeoGrep's default search-volume ceiling of ${thousands(ceiling.max_volume)} was NOT ` +
+        `applied here: your own "min_volume" of ${thousands(minVolume ?? 0)} meets or exceeds it, ` +
+        "and sending both would have asked DataForSEO for keywords above your floor AND below our " +
+        "ceiling — a set that is empty whatever the vendor holds, and you would have paid the " +
+        "flat price for it. Your floor stands alone; nothing was dropped for being high-volume."
+      );
+    case "default":
+      return (
+        `A DEFAULT search-volume ceiling of ${thousands(ceiling.max_volume)} was applied to this ` +
+        `lookup — mode "${mode}" has one because of the relevance note above. Keywords above ` +
+        "that volume were dropped at DataForSEO, so they are not in this window and not in the " +
+        `whole-set count either. Pass "max_volume" to move it, or "max_volume": ` +
+        `${NO_VOLUME_CEILING} to remove it and see the unfiltered set.`
+      );
+    case "caller":
+      return (
+        `Your own search-volume ceiling of ${thousands(ceiling.max_volume)} was applied: keywords ` +
+        `above it were dropped at DataForSEO. Pass "max_volume": ${NO_VOLUME_CEILING} to remove ` +
+        "it entirely."
+      );
+    // WHAT THIS SENTENCE MAY NOT CLAIM. It used to say the ceiling "holds back the very
+    // high-volume national queries", which states as fact something this repo never measured: no
+    // captured response carries those rows' volumes (see DEFAULT_NOISY_MODE_MAX_VOLUME's own note,
+    // "NOT a measured relevance threshold"). The customer text now says what the code says.
+    case "off":
+      return isNoisyDiscoverMode(mode)
+        ? `NO search-volume ceiling was applied: you switched this mode's default bound of ` +
+            `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} off, so nothing was dropped here for ` +
+            "being high-volume. That bound is a convention SeoGrep chose, not a measured " +
+            "relevance threshold — turning it off costs you no accuracy the vendor promised."
+        : `No search-volume ceiling was applied — mode "${mode}" has no default one, and you ` +
+            "asked for none.";
+  }
+}
+
+/**
+ * THE RELEVANCE WARNING for the two modes that were measured returning off-subject keywords —
+ * empty for the two that were not. Printed BEFORE the list, because a caveat under a hundred rows
+ * is not a caveat.
+ *
+ * It reports the measurement and refuses the cure it does not have: SeoGrep does not read meaning,
+ * so it cannot tell an off-topic row from an on-topic one, and it says so rather than implying the
+ * volume ceiling below fixed the problem. It also refuses to describe the ceiling as a MEASURED
+ * remedy — the volume of the walkthrough's noisy rows was never captured (see the port's
+ * DEFAULT_NOISY_MODE_MAX_VOLUME note), so calling it "the bound that holds back national queries"
+ * would publish a measurement nobody made. It is a chosen bound, and it says so.
+ */
+export function relevanceWarningFor(mode: DiscoverMode): string {
+  if (!isNoisyDiscoverMode(mode)) return "";
+  const measured =
+    mode === "for_site"
+      ? 'On a live walkthrough, a "for_site" lookup came back with none of its first 15 keywords ' +
+        "about the site at all — they were national general-purpose queries (weather, " +
+        "translation, government services) of the kind any domain in that country is handed."
+      : 'On a live walkthrough, an "ideas" lookup came back with none of its keywords about the ' +
+        "site — unrelated products and topics, at ordinary search volume rather than " +
+        "national-scale volume.";
+  return (
+    `RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT, AND IT WAS MEASURED TO BE POOR ON THIS MODE. ` +
+    `"${mode}" does not start from a keyword you typed: it asks DataForSEO which keywords belong ` +
+    `to a ${mode === "for_site" ? "domain" : "category"}, and that answer is the vendor's alone. ` +
+    `${measured} SeoGrep does not read meaning and cannot tell you which rows below are about ` +
+    "your subject — it will not filter them for you, and it will not pretend they are all " +
+    'relevant. If they read as off-subject: modes "suggestions" and "related" stay anchored to a ' +
+    "seed keyword YOU choose (the first returns queries containing it, the second what Google " +
+    "itself lists beside it), and both came back clean on the same walkthrough. The volume bound " +
+    "described below is a convention SeoGrep chose, NOT a measured relevance threshold: it drops " +
+    "whatever sits above it, and it cannot remove an off-subject keyword of ordinary volume."
+  );
 }
 
 /**
@@ -531,11 +700,15 @@ function renderNoKeywords(
   return [
     `No keywords for ${describeSubject(result.subject, project)} — DataForSEO Labs ` +
       `${vendorFunctionOf(result.mode)} (mode "${result.mode}").`,
+    // Empty on the two clean modes; `filter(Boolean)` keeps the blank line out of the answer.
+    relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     `DataForSEO returned no keyword for this lookup in the window that was asked for (offset ` +
       `${thousands(offset)}, limit ${thousands(limit)}). That is an answer about this window and ` +
       "these filters — it is not a statement that no such keywords exist.",
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
@@ -549,11 +722,16 @@ export function formatDiscoverKeywords(
   }
   return [
     renderHeading(result, project),
+    // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
+    // trust the list at all. Empty on the two modes it does not apply to.
+    relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
     result.window.rows.map(renderKeywordRow).join("\n"),
     VENDOR_JUDGEMENT_NOTE,
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /**
@@ -584,6 +762,10 @@ export function buildDiscoverQuery(
     language_code: input.language_code,
     location_code: input.location_code,
     min_volume: input.min_volume,
+    // The caller's INTENT is carried through untouched; the port's resolveVolumeCeiling is the one
+    // place the noisy-mode default is applied, so the filter sent and the sentence printed cannot
+    // be decided in two places.
+    max_volume: input.max_volume,
     max_difficulty: input.max_difficulty,
   };
   switch (input.mode) {
