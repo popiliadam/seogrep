@@ -2791,10 +2791,12 @@ export const DOC_PROSE = {
           "says outright that you were not charged. Buy any credit pack and it unlocks straight " +
           "away — your existing credits are untouched and keep working for crawls, audits, " +
           "reports and Search Console tools.\n\n" +
-          "This is the one part of the rank tracker that is gated. " +
-          "[`track_keywords`](/docs/tools-reference/track-keywords) and " +
-          "[`keyword_positions`](/docs/tools-reference/keyword-positions) are free and run on " +
-          "any account, because neither contacts a search engine.\n\n" +
+          "This is the one part of the rank tracker that is **gated**, and gating is a separate " +
+          "question from price. " +
+          "[`track_keywords`](/docs/tools-reference/track-keywords) is free; " +
+          "[`keyword_positions`](/docs/tools-reference/keyword-positions) charges for the " +
+          "analysis but contacts no search engine. Neither is gated — both run on a trial " +
+          "account, and each page states its own cost.\n\n" +
           "If live DataForSEO access is unavailable on this deployment, the tool says so and " +
           "**charges you nothing** — no credits are reserved or spent. SeoGrep never returns " +
           "sample or placeholder positions as if a search engine had really returned them.",
@@ -2895,10 +2897,15 @@ export const DOC_PROSE = {
       {
         heading: "If nothing has been measured yet",
         body:
-          "The tool says so and **charges nothing**. Positions appear here once a SERP snapshot " +
-          "has been taken for a domain's keywords; " +
+          "The tool says so and **charges nothing** — that refusal is returned before any " +
+          "credits are reserved. It is the **only** free answer this tool gives: a read that " +
+          "delivers stored readings is charged at the cost above, whether it returns one " +
+          "reading or hundreds.\n\n" +
+          "Positions appear here once a SERP snapshot has been taken for a domain's keywords. " +
           "[`track_keywords`](/docs/tools-reference/track-keywords) chooses which keywords to " +
-          "watch, which is a separate step and also free.",
+          "watch — a separate step, and that one is free; " +
+          "[`serp_snapshot`](/docs/tools-reference/serp-snapshot) is what takes the readings, " +
+          "and it is priced per keyword.",
       },
     ],
     example:
