@@ -62,7 +62,8 @@ import {
  * Lower than the audit tools' MAX_LISTED (50, audit/format.ts) on purpose: that reader ASKED for
  * the per-page breakdown, while a shared report is read by a client and often on paper. The
  * pre-cap total travels WITH the list (see CappedList) so a truncated list is never presented as
- * the whole answer — the silent-truncation rule formatQuickWins states.
+ * the whole answer — the silent-truncation rule `formatGroupedQuickWins` states
+ * (tools/find-quick-wins.ts).
  */
 export const REPORT_MAX_LISTED = 10;
 
