@@ -1715,6 +1715,19 @@ export const DOC_PROSE = {
       "appear in tens of thousands of result pages while sharing only a few thousand of them with " +
       "you. The side-by-side comparison is made on the whole-domain figures, because the shared " +
       "figures cover a different keyword set for each rival.\n\n" +
+      "**The answer ends with the difference**, so you do not have to subtract by eye. Under " +
+      "**Target vs each competitor**, every rival gets one line per measure — organic result " +
+      "pages, estimated monthly traffic, and what that traffic would cost as ads — showing your " +
+      "figure, theirs, and the gap between them. The gap is the competitor's figure minus yours, " +
+      "so a plus means theirs is the larger number. This is where a site that ranks for *more* " +
+      "keywords than a rival while pulling *less* valuable traffic shows up as what it is: a " +
+      "minus on one line and a plus on the next.\n\n" +
+      "Two things are deliberately **not** differenced. A figure DataForSEO did not report is " +
+      "never treated as a zero — the line says the difference is not reported rather than " +
+      "inventing the largest gap in the table out of a missing value. And two figures read from " +
+      "**different DataForSEO measurements** are not subtracted from each other at all; the line " +
+      "says so and names both measurements, because most of that gap would be the distance " +
+      "between the vendor's own methods rather than between the two domains.\n\n" +
       "**Read the whole-domain rows with their source in view.** Each block names the " +
       "DataForSEO measurement it was read from, and in one table they are not always the same " +
       "one: on the discovery flow, rivals DataForSEO found carry its competitor-discovery " +
@@ -1751,7 +1764,10 @@ export const DOC_PROSE = {
     returns:
       "A heading naming the target — or, when you passed a `project_id`, the project it came from " +
       "— the language and location the figures were read for, and where the compared rivals came " +
-      "from; then one block per domain with its metric lines, the target first.\n\nAn input that " +
+      "from; then one block per domain with its metric lines, the target first; then a " +
+      "**Target vs each competitor** section putting your organic result pages, estimated " +
+      "traffic and paid-equivalent cost beside each rival's, with the gap between them stated " +
+      "(or the reason there is none).\n\nAn input that " +
       "is not a public domain (the target, or any competitor you named), a call naming neither " +
       "`target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected " +
       "before anything is charged; while live data is off you get the \"not yet enabled\" message " +

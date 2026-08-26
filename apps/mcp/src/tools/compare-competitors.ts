@@ -113,7 +113,9 @@ const DESCRIPTION =
   "Compare a domain with its competitors on Google organic search — organic SERP counts, all " +
   "twelve position bands (#1 to #100), estimated monthly organic traffic, the paid-equivalent " +
   "traffic cost, and whether each domain is gaining or losing rankings, side " +
-  `by side. NAME the competitors you care about (up to ${MAX_COMPETITORS}) for a useful ` +
+  "by side. Ends with a target-vs-competitor difference section: each rival's organic SERP count, " +
+  "estimated traffic and paid-equivalent cost against the target's, with the gap between them " +
+  `stated. NAME the competitors you care about (up to ${MAX_COMPETITORS}) for a useful ` +
   "comparison; automatic discovery only works well for domains with a broad keyword footprint. " +
   "Pass a target domain (any public domain) or a project_id to compare one of your own sites. " +
   "Synchronous — returns a table immediately. Costs " +
@@ -281,6 +283,157 @@ function renderMetrics(row: ComparisonRow): string {
 }
 
 /**
+ * How many rivals the difference section prints line by line.
+ *
+ * It equals MAX_COMPETITORS because that is how many rivals a priced comparison can hold, so on
+ * every real call the section covers the whole table and the truncation note never fires. It is
+ * still enforced, and still stated when it bites: `formatCompetitorComparison` is an exported pure
+ * function, and a table that outgrew the cap must say what it left out rather than quietly print
+ * three of five (the same rule backlink_details' output-limit note follows).
+ */
+const MAX_DIFFERENCE_ROWS = MAX_COMPETITORS;
+
+/**
+ * The whole-domain measures the difference section compares, in print order.
+ *
+ * Three, not nineteen. These are the figures whose gap answers the question the section exists
+ * for — how much of the market each domain holds and what that presence is worth — and a
+ * subtraction printed for all twelve position bands plus four movement counters would bury them.
+ * Every band is still printed in full in the row blocks above; nothing is hidden, only the
+ * side-by-side arithmetic is limited to the three measures a difference is meaningful on.
+ */
+const DIFFERENCE_METRICS: readonly (readonly [
+  keyof DomainOrganicMetrics,
+  string,
+  (value: number | null) => string,
+])[] = [
+  ["count", "Organic SERPs containing the domain", metric],
+  ["etv", "Estimated monthly organic traffic (ETV)", metric],
+  ["estimated_paid_traffic_cost", "Estimated monthly cost of the same traffic as paid ads", money],
+];
+
+/**
+ * The difference between two figures, or an honest refusal to state one.
+ *
+ * A null side is DataForSEO reporting nothing, and the product's core promise is that an
+ * unreported value is shown as unreported and NEVER as a zero. Subtracting a null as if it were 0
+ * would manufacture the largest difference in the table out of the vendor's silence, so no
+ * difference is computed at all when either side is missing.
+ *
+ * The arithmetic is done on the ROUNDED figures — the ones actually printed on the same line — so
+ * the difference is always exactly what a reader subtracting the two displayed numbers gets. The
+ * raw floats would be more precise and would sometimes disagree with the line by one.
+ */
+function renderDifferenceValue(
+  target: number | null,
+  rival: number | null,
+  format: (value: number | null) => string,
+): string {
+  if (target === null || rival === null) return "difference not reported";
+  const delta = Math.round(rival) - Math.round(target);
+  if (delta === 0) return "no difference";
+  return `difference ${delta > 0 ? "+" : "-"}${format(Math.abs(delta))}`;
+}
+
+/** One rival's three comparison lines, target column first. */
+function renderDifferenceLines(target: ComparisonRow, rival: ComparisonRow): readonly string[] {
+  return DIFFERENCE_METRICS.map(([key, label, format]) => {
+    const columns = `${target.domain} (target) ${format(target.metrics[key])} · ${rival.domain} ${format(rival.metrics[key])}`;
+    return `  - ${label}: ${columns} · ${renderDifferenceValue(target.metrics[key], rival.metrics[key], format)}`;
+  });
+}
+
+/**
+ * One rival's difference block — or the reason there is none.
+ *
+ * TWO refusals guard it, and both exist because this file spends its length keeping figures apart
+ * that must not be mixed:
+ *   1. SCOPE is never crossed. Only `metrics` is read on both sides — the whole-domain scope every
+ *      row of the table is compared on. `shared` covers only the keywords a rival intersects the
+ *      target on, a different keyword set for every rival, and subtracting it from a whole-domain
+ *      figure would state a difference between two things that were never measured alike.
+ *   2. MEASUREMENT is never crossed. `metrics_source` varies row to row (see ComparisonRow), and
+ *      the endpoints disagree by design — the repo's own fixtures put one domain's whole-domain
+ *      count at 5,312 under competitors_domain and 1,788 under domain_rank_overview. A difference
+ *      taken across two of them would be mostly the gap between the vendor's own measurements, not
+ *      between the two domains, and it is exactly the false attribution the source labels exist to
+ *      prevent. An unstated source is refused for the same reason: it cannot be shown to match.
+ */
+function renderDifferenceBlock(target: ComparisonRow, rival: ComparisonRow): string {
+  if (isEmpty(rival.metrics)) {
+    return `• ${rival.domain} — not compared: DataForSEO holds no whole-domain figures for it.`;
+  }
+  const targetSource = target.metrics_source;
+  const rivalSource = rival.metrics_source;
+  if (targetSource === undefined || rivalSource === undefined) {
+    return (
+      `• ${rival.domain} — not compared: at least one of the two rows does not state which ` +
+      "DataForSEO measurement its figures were read from, and figures of unknown origin cannot be " +
+      "shown to be measured alike."
+    );
+  }
+  if (targetSource !== rivalSource) {
+    return (
+      `• ${rival.domain} — not compared: its figures were read from ` +
+      `${WHOLE_DOMAIN_SOURCE_LABEL[rivalSource]} and the target's from ` +
+      `${WHOLE_DOMAIN_SOURCE_LABEL[targetSource]}. Those are two separate DataForSEO ` +
+      "measurements of the same thing, so subtracting one from the other would state a gap " +
+      "neither of them reports."
+    );
+  }
+  return [
+    `• ${rival.domain}, both figures read from ${WHOLE_DOMAIN_SOURCE_LABEL[rivalSource]}:`,
+    ...renderDifferenceLines(target, rival),
+  ].join("\n");
+}
+
+/**
+ * The difference section: the target against each rival, column by column.
+ *
+ * The row blocks above print each domain's figures one after another, which leaves the reader to
+ * subtract nineteen pairs of numbers by eye. That is the whole gap this section closes, and it is
+ * the reason the tool's own description has always promised "side by side".
+ *
+ * Nothing here interprets. It prints the two figures and their difference and stops — no sentence
+ * claiming a rival is stronger, better positioned or winning, because none of that follows from
+ * three numbers (NEVER #7). What DOES follow is visible without being asserted: a rival with fewer
+ * organic SERPs and a higher paid-equivalent cost shows exactly that, as a minus on one line and a
+ * plus on another.
+ *
+ * The target row is FOUND, not assumed to be first: the type documents it as first, but this
+ * function is exported and a caller holding a rival-only comparison must get no section rather
+ * than a difference measured against a rival mistaken for the target.
+ */
+function renderDifferences(comparison: CompetitorComparison): readonly string[] {
+  const target = comparison.rows.find((row) => row.source === "target");
+  const rivals = comparison.rows.filter((row) => row !== target);
+  if (target === undefined || rivals.length === 0) return [];
+  if (isEmpty(target.metrics)) {
+    return [
+      "Target vs each competitor — not compared: DataForSEO holds no whole-domain figures for " +
+        "the target, so there is nothing to compare the competitors against.",
+    ];
+  }
+  const shown = rivals.slice(0, MAX_DIFFERENCE_ROWS);
+  const omitted = rivals.length - shown.length;
+  const truncation =
+    omitted === 0
+      ? []
+      : [
+          `Only the first ${MAX_DIFFERENCE_ROWS} competitors are compared line by line; ` +
+            `${thousands(omitted)} more are not, and their own blocks above carry the same ` +
+            "whole-domain figures.",
+        ];
+  return [
+    "Target vs each competitor — the whole-domain figures above, side by side. The difference is " +
+      "the competitor's figure minus the target's, so a plus means the competitor's figure is the " +
+      "larger of the two.",
+    ...shown.map((rival) => renderDifferenceBlock(target, rival)),
+    ...truncation,
+  ];
+}
+
+/**
  * The heading — the one line that states WHERE the compared rivals came from, so a discovered set
  * is never mistaken for the caller's own and vice versa.
  */
@@ -334,7 +487,12 @@ export function formatCompetitorComparison(
     (row) => row.metrics_source !== undefined && !isEmpty(row.metrics),
   );
   const note = sourced ? [WHOLE_DOMAIN_MEASUREMENT_NOTE] : [];
-  return [renderHeading(comparison, input), ...blocks, ...note].join("\n\n");
+  return [
+    renderHeading(comparison, input),
+    ...blocks,
+    ...renderDifferences(comparison),
+    ...note,
+  ].join("\n\n");
 }
 
 /** A normalized competitor list, or the first rejection reason. */

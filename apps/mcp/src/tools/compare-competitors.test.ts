@@ -193,6 +193,16 @@ describe("formatCompetitorComparison", () => {
         "  - Estimated monthly cost of the same traffic as paid ads: $18,221\n" +
         "  - Since DataForSEO's previous check — newly ranking: 148 · moved up: 203 · " +
         "moved down: 139 · no longer found: 111\n\n" +
+        "Target vs each competitor — the whole-domain figures above, side by side. The difference " +
+        "is the competitor's figure minus the target's, so a plus means the competitor's figure " +
+        "is the larger of the two.\n\n" +
+        "• rival-one.example, both figures read from DataForSEO's competitor-discovery data:\n" +
+        "  - Organic SERPs containing the domain: example.com (target) 1,788 · " +
+        "rival-one.example 9,024 · difference +7,236\n" +
+        "  - Estimated monthly organic traffic (ETV): example.com (target) 3,056 · " +
+        "rival-one.example 28,111 · difference +25,055\n" +
+        "  - Estimated monthly cost of the same traffic as paid ads: example.com (target) " +
+        "$15,079 · rival-one.example $91,044 · difference +$75,965\n\n" +
         "Note: whole-domain totals name the DataForSEO data they were read from. DataForSEO " +
         "measures these separately, so a different total in another SeoGrep tool is a second " +
         "measurement, not a contradiction.",
@@ -349,6 +359,247 @@ describe("formatCompetitorComparison", () => {
   it("echoes the language and location the numbers were read for", () => {
     const text = formatCompetitorComparison(DISCOVERED, { language_code: "de", location_code: 2276 });
     expect(text).toContain("(language de, location 2276)");
+  });
+});
+
+// =============================================================================================
+// S4 — THE TARGET-VS-COMPETITOR DIFFERENCE SECTION.
+//
+// The measured defect: the tool's own description promised "side by side" and the output never
+// put two figures beside each other. On the campaign's dentnotion table the reader had to
+// subtract by eye to see the one thing the data actually said — 190 organic SERPs worth $347
+// against rivals holding 59 and 25 SERPs worth $976 and $1,140.
+//
+// Printing that difference is easy; printing it HONESTLY is the whole task, and every refusal
+// below is a spec of its own. This file spends most of its length keeping figures apart that must
+// not be mixed — two scopes (whole-domain vs shared) and three vendor measurements that disagree
+// by design — so a subtraction is exactly the operation that can silently undo that work.
+// =============================================================================================
+
+/** A comparison built from the DISCOVERED shape with a custom rival list — same target row. */
+function withRivals(rivals: readonly CompetitorComparison["rows"][number][]): CompetitorComparison {
+  return { ...DISCOVERED, rows: [DISCOVERED.rows[0]!, ...rivals] };
+}
+
+/** The one rival of DISCOVERED, patched. */
+function rival(
+  patch: Partial<CompetitorComparison["rows"][number]>,
+): CompetitorComparison["rows"][number] {
+  return { ...DISCOVERED.rows[1]!, ...patch };
+}
+
+/** The difference section only — everything from its heading on. */
+function differenceSection(comparison: CompetitorComparison): string {
+  const text = formatCompetitorComparison(comparison, WHERE);
+  const from = text.indexOf("Target vs each competitor");
+  return from === -1 ? "" : text.slice(from);
+}
+
+describe("S4 — compare_competitors states the target-vs-competitor difference", () => {
+  it("prints both figures and the gap between them, on one line per measure", () => {
+    const section = differenceSection(DISCOVERED);
+    expect(section).toContain(
+      "• rival-one.example, both figures read from DataForSEO's competitor-discovery data:",
+    );
+    expect(section).toContain(
+      "  - Organic SERPs containing the domain: example.com (target) 1,788 · rival-one.example 9,024 · difference +7,236",
+    );
+    expect(section).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) 3,056 · rival-one.example 28,111 · difference +25,055",
+    );
+    expect(section).toContain(
+      "  - Estimated monthly cost of the same traffic as paid ads: example.com (target) $15,079 · rival-one.example $91,044 · difference +$75,965",
+    );
+  });
+
+  /**
+   * THE SCOPE RULE. The rival's WHOLE-DOMAIN count is 9,024 and its shared-keyword count is 1,840;
+   * the target's whole-domain count is 1,788. Subtracting the shared scope would give a plausible
+   * +52 that means nothing — the two figures cover different keyword sets.
+   *
+   * Mutation proof: read `rival.shared` instead of `rival.metrics` in renderDifferenceLines and
+   * this goes red on the printed figure AND on the difference.
+   */
+  it("compares whole-domain against whole-domain, never against the shared-keyword scope", () => {
+    const section = differenceSection(DISCOVERED);
+    expect(section).toContain("rival-one.example 9,024 · difference +7,236");
+    // The shared scope's own numbers, and any difference taken from them, are absent.
+    expect(section).not.toContain("rival-one.example 1,840");
+    expect(section).not.toContain("difference +52");
+    expect(section).not.toContain("6,120");
+    expect(section).not.toContain("shares with the target");
+  });
+
+  /**
+   * THE MEASUREMENT RULE — the sub-case a table-wide assumption gets wrong. DataForSEO sometimes
+   * omits the target from its own competitor list; the target then carries domain-overview figures
+   * while the rivals beside it carry competitor-discovery figures. Those two disagree by design
+   * (5,312 vs 1,788 for the same domain in this repo's own fixtures), so most of any "difference"
+   * would be the gap between the vendor's measurements, not between the two domains.
+   */
+  it("refuses to subtract figures read from two different DataForSEO measurements", () => {
+    const mixed = differenceSection({
+      ...DISCOVERED,
+      rows: [
+        { ...DISCOVERED.rows[0]!, metrics_source: "domain_rank_overview" },
+        rival({ metrics_source: "competitors_domain" }),
+      ],
+    });
+    expect(mixed).toContain(
+      "• rival-one.example — not compared: its figures were read from DataForSEO's " +
+        "competitor-discovery data and the target's from DataForSEO's domain-overview data.",
+    );
+    expect(mixed).not.toContain("difference +7,236");
+    expect(mixed).not.toContain("difference -7,236");
+  });
+
+  it("refuses to compare when either row leaves its measurement unstated", () => {
+    for (const mixed of [
+      withRivals([rival({ metrics_source: undefined })]),
+      { ...DISCOVERED, rows: [{ ...DISCOVERED.rows[0]!, metrics_source: undefined }, rival({})] },
+    ]) {
+      const section = differenceSection(mixed);
+      expect(section).toContain(
+        "• rival-one.example — not compared: at least one of the two rows does not state which " +
+          "DataForSEO measurement its figures were read from",
+      );
+      expect(section).not.toContain("difference +7,236");
+    }
+  });
+
+  /**
+   * THE NULL RULE — the core promise of this whole revision round: an unreported figure is shown
+   * as unreported, NEVER as a zero. Treating the target's missing ETV as 0 would manufacture the
+   * largest gap in the table (+28,111) out of the vendor's silence.
+   *
+   * Mutation proof: replace the null guard in renderDifferenceValue with `?? 0` and this goes red.
+   */
+  it("never treats an unreported figure as a zero when taking the difference", () => {
+    const section = differenceSection(
+      withRivals([rival({ metrics: { ...RIVAL_METRICS, count: null } })]),
+    );
+    // The target's ETV is missing on one side, the rival's count on the other — neither is
+    // subtracted, and each line still shows which side had nothing.
+    expect(section).toContain(
+      "  - Organic SERPs containing the domain: example.com (target) 1,788 · rival-one.example n/a · difference not reported",
+    );
+    expect(section).not.toContain("difference -1,788");
+    expect(section).not.toContain("difference +0");
+
+    const nullTarget = differenceSection({
+      ...DISCOVERED,
+      rows: [
+        { ...DISCOVERED.rows[0]!, metrics: { ...TARGET_METRICS, etv: null } },
+        rival({}),
+      ],
+    });
+    expect(nullTarget).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) n/a · rival-one.example 28,111 · difference not reported",
+    );
+    expect(nullTarget).not.toContain("difference +28,111");
+  });
+
+  it("says 'no difference' rather than printing a signed zero", () => {
+    const section = differenceSection(withRivals([rival({ metrics: TARGET_METRICS })]));
+    expect(section).toContain(
+      "  - Organic SERPs containing the domain: example.com (target) 1,788 · rival-one.example 1,788 · no difference",
+    );
+    expect(section).not.toContain("difference +0");
+    expect(section).not.toContain("difference -0");
+  });
+
+  it("compares nothing against a rival DataForSEO holds no figures for", () => {
+    const section = differenceSection(withRivals([rival({ metrics: EMPTY_METRICS })]));
+    expect(section).toContain(
+      "• rival-one.example — not compared: DataForSEO holds no whole-domain figures for it.",
+    );
+    expect(section).not.toContain("n/a · difference");
+  });
+
+  it("compares nothing when the TARGET has no figures to compare against", () => {
+    const section = differenceSection({
+      ...DISCOVERED,
+      rows: [{ ...DISCOVERED.rows[0]!, metrics: EMPTY_METRICS }, rival({})],
+    });
+    expect(section).toContain(
+      "Target vs each competitor — not compared: DataForSEO holds no whole-domain figures for " +
+        "the target, so there is nothing to compare the competitors against.",
+    );
+    // Not one rival line, and above all no figure differenced against an absent target.
+    expect(section).not.toContain("difference");
+    expect(section).not.toContain("• rival-one.example");
+  });
+
+  it("prints no section at all when there is nothing to compare", () => {
+    // No rivals…
+    expect(differenceSection({ ...DISCOVERED, rows: [DISCOVERED.rows[0]!] })).toBe("");
+    // …and no target row: a difference measured against a rival mistaken for the target would be
+    // worse than no section.
+    expect(differenceSection({ ...DISCOVERED, rows: [rival({}), rival({ domain: "two.example" })] })).toBe(
+      "",
+    );
+  });
+
+  it("says what it left out when the table outgrew the line-by-line cap", () => {
+    const many = withRivals(
+      ["a.example", "b.example", "c.example", "d.example"].map((domain) => rival({ domain })),
+    );
+    const section = differenceSection(many);
+    expect(section).toContain("• a.example, both figures read from");
+    expect(section).toContain("• c.example, both figures read from");
+    expect(section).not.toContain("• d.example, both figures read from");
+    expect(section).toContain(
+      "Only the first 3 competitors are compared line by line; 1 more are not, and their own " +
+        "blocks above carry the same whole-domain figures.",
+    );
+  });
+
+  /**
+   * Lesson 12: every spec above drives a hand-built comparison, which proves what the renderer
+   * prints and nothing about what the PORT hands it. This one drives the real mock port, real
+   * vendor parsers and real fixtures, so the figures being differenced are the ones a paying
+   * caller would see. 5,312 is example.com's competitors_domain count; 9,024 / 3,711 / 1,402 are
+   * the three rivals'.
+   */
+  it("differences the REAL port's figures on the discovery path", async () => {
+    const section = differenceSection(
+      await createMockCompetitorsPort(FIXTURES).fetchCompetitorComparison({
+        target: "example.com",
+        competitors: [],
+        limit: 10,
+        language_code: "en",
+        location_code: 2840,
+      }),
+    );
+    expect(section).toContain(
+      "  - Organic SERPs containing the domain: example.com (target) 5,312 · rival-one.example 9,024 · difference +3,712",
+    );
+    // The rival that is SMALLER than the target reads as a minus, not as an absolute value.
+    expect(section).toContain(
+      "  - Organic SERPs containing the domain: example.com (target) 5,312 · rival-three.example 1,402 · difference -3,910",
+    );
+    // …and the paid-equivalent gap the whole section exists to make visible.
+    expect(section).toContain("rival-one.example $91,044 · difference +$42,923");
+
+    /*
+     * THE ROUNDING SOURCE. renderDifferenceValue subtracts the ROUNDED figures — the two numbers
+     * actually printed on the line — so the difference is exactly what a reader subtracting them
+     * gets. Subtracting the raw floats instead would keep the printed columns identical and move
+     * the difference by one, which is the worst shape this whole round is about: a line that
+     * contradicts itself in the customer's own arithmetic.
+     *
+     * These two lines are the ONLY ones in the fixture where the two methods disagree, and they
+     * are the reason they are asserted. example.com's etv is 15234.5, rival-two's 8402.1 and
+     * rival-three's 1180.3: rounded-first gives -6,833 / -14,055, raw-first gives -6,832 /
+     * -14,054. Every other line in this fixture rounds the same either way and proves nothing
+     * about the rule — the ETV line above (28110.9 - 15234.5) among them.
+     */
+    expect(section).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) 15,235 · rival-two.example 8,402 · difference -6,833",
+    );
+    expect(section).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) 15,235 · rival-three.example 1,180 · difference -14,055",
+    );
   });
 });
 
