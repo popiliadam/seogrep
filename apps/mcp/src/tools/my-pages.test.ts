@@ -325,6 +325,41 @@ describe("the three populations are legible, and neither absence reads as a find
     expect(text).toMatch(/advance `offset`/i);
   });
 
+  /**
+   * THE ONE LIST NOBODY CHOSE THE LENGTH OF — measured at 93 rows with no bound at all. The two
+   * vendor-side groups are as long as the caller's own `limit` made them; this one is as long as
+   * the SITE is, up to the crawl read cap, so a caller asking for a handful of vendor rows was
+   * handed hundreds of lines they could not shorten.
+   *
+   * 93 is the measured size, kept deliberately: it exercises the cap (50 printed) and the
+   * remainder (43) at once.
+   */
+  it("bounds the crawl-side list, and says how many it did not print and in what order", async () => {
+    const many = Array.from({ length: 93 }, (_, i) => `https://example.com/blog/post-${i}`);
+    const text = await answer(crawlOf(many));
+
+    // The HEADING still counts every row — the cap bounds what is printed, never what is counted.
+    expect(text).toContain("Fetched by that crawl, not named in this window (93)");
+    const listed = [...text.matchAll(/• https:\/\/example\.com\/blog\/post-\d+ \(HTTP status 200\)/g)];
+    expect(listed).toHaveLength(50);
+    expect(text).toContain("• https://example.com/blog/post-49 (HTTP status 200)");
+    expect(text).not.toContain("post-50 (HTTP status 200)");
+
+    expect(text).toMatch(/50 pages printed above, 43 more in this same group but not printed/);
+    // Not a purchase, and not a ranking — both stated, because both are easy to assume.
+    expect(text).toMatch(/nothing was charged for the ones left out/i);
+    expect(text).toMatch(/discovery order, not an order of importance/i);
+    // …and the sentence that bounds the whole group is still under it.
+    expect(text).toMatch(/not a statement that the page does not rank/i);
+  });
+
+  it("says nothing about an output limit when every crawl-side row fits", async () => {
+    const text = await answer(crawlOf(["https://example.com/about", "https://example.com/team"]));
+    expect(text).toContain("Fetched by that crawl, not named in this window (2)");
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text).not.toMatch(/but not printed/i);
+  });
+
   it("prints ONE count, and says it counts this window against that crawl", async () => {
     const text = await answer(crawlOf(["https://example.com/pricing"]));
     expect(text).toContain(
