@@ -1,6 +1,6 @@
 ---
 title: audit_schema
-description: "Audit structured data (JSON-LD) for a project's latest crawl: coverage and the spread of schema.org @type names, plus pages with none. Run crawl_site…"
+description: "Report structured-data coverage AND required-field validation for a project's latest crawl: which pages carry JSON-LD, which carry none, how often each…"
 ---
 
 **Cost:** 5 credits.
@@ -15,7 +15,17 @@ Reports on the JSON-LD found across the site:
 - **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, `WebSite`, `Article`, `Product`, and so on).
 - **Gaps** — the URLs of pages with no structured data at all.
 
-**Detection is JSON-LD only** — microdata and RDFa are not read — and only the `@type` names are analyzed. The crawler never stores the JSON-LD body, so this is a coverage and type-spread report, not per-field validation.
+**Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked up that way counts here as having no structured data.
+
+Coverage is what this tool is for, and coverage is what it always reports. On a crawl that stored the JSON-LD **bodies**, it additionally checks the required fields of the types it knows — see below. On an older crawl that stored only the type names, it checks nothing of the sort and says so. **The closing note of every reply tells you which of the two you just got**, and names how many pages were checked; a reader should trust that line over any general statement, here or in the tool list.
+
+## What it checks in a stored JSON-LD body
+
+For a short, fixed list of schema.org types it checks that the fields without which the markup says nothing are declared — a `Product` with no `offers`, an `Article` with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no address. A type **not** on that list is **not judged at all**: schema.org has hundreds of types, and inventing requirements for the ones nobody considered would produce findings you could not trust.
+
+A block that is not valid JSON is **reported, not skipped**. A parser that cannot read it is a stand-in for a search engine that cannot read it either, and it is invisible in the rendered page — nobody finds it by looking.
+
+**This is not full structured-data validation.** It is a required-field check over a handful of types, on the blocks that were stored. Only the first few blocks of a page are kept, and each is kept only up to a length cap, so a page whose markup was partly stored is listed as such and the reply says the fields were checked on the stored blocks only. Absence of a finding is not a clean bill of health.
 
 ## Example
 
@@ -31,4 +41,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with no structured data.
+The JSON-LD coverage counts, the site-wide `@type` spread, and the list of pages with no structured data. Where bodies were stored, it also lists the pages missing a required field (naming the type and the fields), the pages whose JSON-LD could not be parsed, and the pages whose blocks were only partly stored. Each of those three sections is printed only when it has rows, so a crawl carrying no bodies returns exactly the coverage report it always did — an absent section is never a clean result.

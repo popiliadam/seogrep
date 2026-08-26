@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { DATA_FRESHNESS_DAYS, dataAgeInDays } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
+import type { AuditCrawl } from "../audit/index.ts";
+import { auditSchema, formatSchemaReport } from "../audit/index.ts";
+import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
+import { STALE_PULL_DAYS } from "../gsc-data/index.ts";
+import { renderReportHtml } from "../report/html.ts";
+import { buildReportModel, STALE_CRAWL_DAYS } from "../report/model.ts";
 import {
   decideProjectNextStep,
   formatNextStep,
+  FRESHNESS_WINDOW_DAYS,
   makeWhatsNextTool,
+  priceLabel,
   renderWhatsNext,
   type ProjectSignals,
   type WhatsNextState,
@@ -228,5 +237,319 @@ describe("whats_next tool metadata + handler wiring", () => {
     expect(result.content[0]?.text).toMatch(/archived/i);
     // It must not go on to recommend a next step for a project that is not being tracked.
     expect(result.content[0]?.text).not.toMatch(/next step/i);
+  });
+});
+
+/**
+ * PRICES IN THE ROUTING (defect card 5, 2026-08-25). The router printed eight recommendations and
+ * not one credit cost: `generate_report` (15) and `audit_onpage` (30) sat in the same list with
+ * nothing to tell them apart, and the audience this tool exists for — people who do not know the
+ * tool names — had to leave it to find out what "next step" would charge.
+ *
+ * NEVER #6 is not in play: no number moves here. Every assertion below derives its expectation
+ * from TOOL_COSTS rather than restating one, so this file cannot become a second price table.
+ */
+describe("every recommendation carries its price", () => {
+  /** Every recommendation the ladder can emit, over the whole signal space plus both new signals. */
+  function everyRecommendation(): string[] {
+    const out = new Set<string>();
+    for (let mask = 0; mask < 32; mask++) {
+      const base = {
+        hasCrawl: Boolean(mask & 1),
+        crawlFresh: Boolean(mask & 2),
+        gscConnected: Boolean(mask & 4),
+        hasPull: Boolean(mask & 8),
+        pullFresh: Boolean(mask & 16),
+      };
+      for (const extra of [{}, { gscTokenInvalid: true }, { domainUnreachable: true }]) {
+        const step = decideProjectNextStep({ ...base, ...extra });
+        out.add(step.primary);
+        for (const item of step.upcoming) out.add(item);
+      }
+    }
+    return [...out];
+  }
+
+  it("labels every priced tool it can ever name, and none of them silently", () => {
+    const priced = everyRecommendation().filter((r) => {
+      const name = r.split(" ")[0] ?? "";
+      return name in TOOL_COSTS && TOOL_COSTS[name as ToolName] > 0;
+    });
+    // A sanity floor: if the ladder ever stopped naming priced tools this whole describe would
+    // pass vacuously, which is the failure mode a "for each" assertion cannot see by itself.
+    expect(priced.length).toBeGreaterThanOrEqual(5);
+    for (const item of priced) {
+      const cost = TOOL_COSTS[(item.split(" ")[0] ?? "") as ToolName];
+      expect(priceLabel(item), item).toBe(`${cost} credits`);
+    }
+  });
+
+  it("marks the free ones free rather than leaving them blank beside a priced one", () => {
+    expect(priceLabel("connect_gsc")).toBe("free");
+    expect(priceLabel("connect_gsc (optional)")).toBe("free");
+    expect(priceLabel("setup_project")).toBe("free");
+    expect(priceLabel("whats_next")).toBe("free");
+  });
+
+  /** Guessing that an unrecognised step is free is the one wrong answer available here. */
+  it("says nothing at all about a step that is not a priced tool", () => {
+    expect(priceLabel("monthly-routine (prompt)")).toBe("");
+    expect(priceLabel("some_tool_that_does_not_exist")).toBe("");
+  });
+
+  /**
+   * A per-unit tool must render the RANGE a call really costs, never the unit price. None of the
+   * ladder's current recommendations is per-unit; this pins the branch so that adding one cannot
+   * print "8 credits" for a call that bills 13 to 85.
+   */
+  it("renders a per-unit tool's real call range, not its unit price", () => {
+    const label = priceLabel("serp_snapshot");
+    expect(label).toMatch(/per call/);
+    expect(label).not.toBe(`${TOOL_COSTS.serp_snapshot} credits`);
+  });
+
+  it("puts the price on the primary step and on every line of the Then: list", () => {
+    const text = renderWhatsNext({
+      kind: "project",
+      domain: "x.com",
+      signals: signals({ hasCrawl: false, crawlFresh: false, hasPull: false, pullFresh: false, gscConnected: false }),
+    });
+    expect(text).toMatch(new RegExp(`run crawl_site \\(${TOOL_COSTS.crawl_site} credits\\)`));
+    expect(text).toMatch(new RegExp(`- audit_onpage — ${TOOL_COSTS.audit_onpage} credits`));
+    expect(text).toMatch(/- connect_gsc \(optional\) — free/);
+  });
+
+  it("prices the no-projects onboarding list too", () => {
+    const text = renderWhatsNext({ kind: "no_projects" });
+    expect(text).toMatch(new RegExp(`crawl_site \\(${TOOL_COSTS.crawl_site} credits\\)`));
+    expect(text).toMatch(new RegExp(`generate_report \\(${TOOL_COSTS.generate_report} credits\\)`));
+    expect(text).toMatch(/setup_project \(free\)/);
+  });
+});
+
+/**
+ * S18 item 1 — the description promised routing it does not do.
+ *
+ * Measured on an account with 15 projects: the schema said "omit it to route from your project
+ * list" and the tool printed the same rows list_projects prints. THE DESCRIPTION WAS CORRECTED
+ * rather than the behaviour changed: routing N projects means running four tenant-scoped queries
+ * and a DNS lookup PER PROJECT for a 0-credit tool, and then still picking one "next step" out of
+ * fifteen unrelated sites — a guess presented as a recommendation.
+ */
+describe("the description says what the tool does", () => {
+  const tool = makeWhatsNextTool();
+
+  function projectIdDescription(): string {
+    const schema = tool.inputJsonSchema as {
+      properties: { project_id?: { description?: string } };
+    };
+    return schema.properties.project_id?.description ?? "";
+  }
+
+  it("no longer claims that omitting project_id routes from the project list", () => {
+    for (const text of [tool.description, projectIdDescription()]) {
+      expect(text).not.toMatch(/route from your project list/i);
+    }
+  });
+
+  it("states both halves of what omitting it really does — one routes, several are listed", () => {
+    const both = `${tool.description}\n${projectIdDescription()}`;
+    expect(both).toMatch(/only project|one project/i);
+    expect(both).toMatch(/lists them|asks which|several/i);
+  });
+
+  it("advertises that the routing shows what each step costs", () => {
+    expect(tool.description).toMatch(/cost/i);
+  });
+
+  it("answers a multi-project account with the rule, not a bare copy of list_projects", () => {
+    const text = renderWhatsNext({
+      kind: "choose_project",
+      projects: [
+        { id: "p-1", domain: "a.com" },
+        { id: "p-2", domain: "b.com" },
+      ],
+    });
+    expect(text).toContain("2 projects");
+    expect(text).toMatch(/project_id/);
+    // The rule a reader could not otherwise infer: a single project needs no id at all.
+    expect(text).toMatch(/exactly one project/i);
+  });
+});
+
+/**
+ * S18 item 3, at the RENDERER — a surviving pull is not a live connection.
+ *
+ * The ladder's own proofs live in packages/core (guide/next-step.test.ts). What this adds is the
+ * sentence a user reads, and the money claim: for the exact state measured on dentnotion.com
+ * (a succeeded pull_gsc_data job dated 2026-08-09, a fresh crawl, and NO connection — in the same
+ * session `list_gsc_properties` said "not used by any project" and `connect_gsc` took its
+ * not-connected branch) whats_next answered "you're all set" and recommended a 15-credit report.
+ */
+describe("renderWhatsNext — a pull that outlived its connection", () => {
+  const DENTNOTION: WhatsNextState = {
+    kind: "project",
+    domain: "dentnotion.com",
+    signals: signals({ gscConnected: false, crawlAgeDays: 16, pullAgeDays: 16 }),
+  };
+
+  it("routes to the FREE connect_gsc and stops claiming the project is all set", () => {
+    const text = renderWhatsNext(DENTNOTION);
+    expect(text).toMatch(/run connect_gsc \(free\)/);
+    expect(text).not.toMatch(/all set/i);
+  });
+
+  /**
+   * The money assertion, made on MEANING rather than on a copy of the source sentence: whatever
+   * the recommendation is worded as, the ONE thing the router tells this project to run must not
+   * be a tool that charges. `generate_report` — the old answer — costs 15.
+   */
+  it("does not make a charged tool the one recommendation", () => {
+    const primary = /run ([a-z_]+)/.exec(renderWhatsNext(DENTNOTION))?.[1] ?? "";
+    expect(TOOL_COSTS[primary as ToolName]).toBe(0);
+  });
+
+  it("says the connection is not live, and does not blame an expired credential", () => {
+    const text = renderWhatsNext(DENTNOTION);
+    expect(text).toMatch(/no live connection/i);
+    expect(text).not.toMatch(/expired/i);
+  });
+});
+
+/**
+ * S18 item 6 / S17 — the router must not recommend paid work against a domain that is not there.
+ */
+describe("renderWhatsNext — a domain that does not resolve", () => {
+  const DEAD: WhatsNextState = {
+    kind: "project",
+    domain: "bu-domain-kesinlikle-yok-9f3a2c.com",
+    signals: signals({ hasCrawl: false, crawlFresh: false, hasPull: false, pullFresh: false,
+      gscConnected: false, domainUnreachable: true }),
+  };
+
+  it("names no priced tool anywhere in the answer", () => {
+    const text = renderWhatsNext(DEAD);
+    const priced = (Object.keys(TOOL_COSTS) as ToolName[]).filter((t) => TOOL_COSTS[t] > 0);
+    expect(priced.length).toBeGreaterThan(10);
+    for (const tool of priced) expect(text, tool).not.toContain(tool);
+  });
+
+  it("replaces the 20-credit crawl recommendation the live call produced", () => {
+    expect(renderWhatsNext(DEAD)).not.toMatch(/crawl_site/);
+    expect(renderWhatsNext(DEAD)).toMatch(/does not resolve/i);
+  });
+
+  /** A check that could not RUN must change nothing — the fail-open half, at the renderer. */
+  it("routes an unchecked project exactly as before", () => {
+    const unchecked = { ...DEAD, signals: { ...DEAD.signals, domainUnreachable: false } };
+    const never = { ...DEAD, signals: signals({ hasCrawl: false, crawlFresh: false,
+      hasPull: false, pullFresh: false, gscConnected: false }) };
+    expect(renderWhatsNext(unchecked)).toBe(renderWhatsNext(never));
+    expect(renderWhatsNext(never)).toMatch(/crawl_site/);
+  });
+});
+
+describe("whats_next wires the DNS port", () => {
+  it("accepts an injected reachability check and defaults to the real one", () => {
+    // The tool builds with the port injected and with it omitted; the END-TO-END read
+    // (project row -> domain -> port -> signal) needs a database and is pinned in
+    // whats-next.db.test.ts, which this lane does not run.
+    expect(makeWhatsNextTool({ checkDomain: async () => "no_such_domain" }).name).toBe("whats_next");
+    expect(makeWhatsNextTool().name).toBe("whats_next");
+  });
+});
+
+/**
+ * S18 item 4 — ONE 16-day-old crawl, described by all three surfaces that talk about it.
+ *
+ * Measured 2026-08-25, same crawl, same day: `audit_schema` said `crawl from 2026-08-09`,
+ * `generate_report` said `16 days ago`, and `whats_next` said "fresh" — with nothing anywhere
+ * saying what "fresh" meant. Underneath, the number 30 was written out three times in three
+ * packages, each with a comment explaining that it deliberately matched the others.
+ *
+ * WHAT IS PROVEN HERE, and what is not. The threshold is now ONE binding and all three names
+ * resolve to it; the two surfaces that quote an age quote the same words from the same function;
+ * and none of the three calls this crawl stale. NOT proven: `audit_schema` still prints a bare
+ * timestamp and quotes no age — its renderers are pure and clockless and their output is frozen
+ * byte-for-byte (audit/format-signals.test.ts) and digest-pinned (audit/format-graph.test.ts), so
+ * giving them a clock is a different change. It cannot CONTRADICT the window; it does not yet
+ * quote it, and the last case below pins exactly that much rather than pretending otherwise.
+ */
+describe("one crawl, three surfaces, one freshness window", () => {
+  const CRAWLED_AT = "2026-08-09T00:00:00.000Z";
+  const TODAY = "2026-08-25T00:00:00.000Z";
+  const AGE_DAYS = 16;
+
+  const CRAWL: AuditCrawl = {
+    fetchedAt: CRAWLED_AT,
+    skipped: [],
+    pages: [
+      {
+        url: "https://dentnotion.com/",
+        status: 200,
+        title: "Home",
+        metaDescription: "A description that is long enough to avoid a finding on this axis.",
+        h1s: ["Home"],
+        canonical: null,
+        robotsMeta: null,
+        links: [],
+        wordCount: 500,
+        jsonLdTypes: ["Organization"],
+      },
+    ],
+  };
+
+  /** The number itself: three names, one binding — not three numbers that happen to agree. */
+  it("is one threshold under all three surfaces' names for it", () => {
+    expect(FRESHNESS_WINDOW_DAYS).toBe(DATA_FRESHNESS_DAYS);
+    expect(STALE_PULL_DAYS).toBe(DATA_FRESHNESS_DAYS);
+    expect(STALE_CRAWL_DAYS).toBe(DATA_FRESHNESS_DAYS);
+  });
+
+  it("generate_report dates the crawl, ages it at 16 days, and does not call it stale", () => {
+    const model = buildReportModel({
+      domain: "dentnotion.com",
+      title: "SEO report",
+      generatedAt: TODAY,
+      crawl: CRAWL,
+      pull: null,
+      pulledAt: null,
+    });
+    expect(model.crawl?.ageDays).toBe(AGE_DAYS);
+    expect(model.crawl?.stale).toBe(false);
+    const html = renderReportHtml(model);
+    expect(html).toContain(CRAWLED_AT.slice(0, 10));
+    expect(html).toContain(`${AGE_DAYS} days ago`);
+    expect(html).not.toMatch(/This data is \d+ days old/);
+  });
+
+  it("whats_next quotes the SAME age in the SAME words, instead of an unanchored 'fresh'", () => {
+    const text = renderWhatsNext({
+      kind: "project",
+      domain: "dentnotion.com",
+      signals: signals({
+        crawlAgeDays: dataAgeInDays(CRAWLED_AT, TODAY),
+        pullAgeDays: dataAgeInDays(CRAWLED_AT, TODAY),
+      }),
+    });
+    expect(text).toContain(`${AGE_DAYS} days ago`);
+    expect(text).toContain(`${DATA_FRESHNESS_DAYS}-day freshness window`);
+    // The word survives — it is now accompanied by the number that justifies it.
+    expect(text).toMatch(/fresh crawl/);
+  });
+
+  it("audit_schema names the same crawl and contradicts neither of them", () => {
+    const text = formatSchemaReport(auditSchema(CRAWL), CRAWL.fetchedAt);
+    expect(text).toContain(CRAWLED_AT);
+    // It makes no freshness claim at all — which is the honest reading of "does not disagree",
+    // and is the remaining gap this describe's header names.
+    expect(text).not.toMatch(/stale|fresh|days old|days ago/i);
+  });
+
+  /** The whole point of one binding: move it, and all three move together. */
+  it("all three names move together — there is nothing left to drift", () => {
+    expect(new Set([FRESHNESS_WINDOW_DAYS, STALE_PULL_DAYS, STALE_CRAWL_DAYS]).size).toBe(1);
+    expect(dataAgeInDays(CRAWLED_AT, TODAY)).toBe(AGE_DAYS);
+    expect(AGE_DAYS).toBeLessThan(DATA_FRESHNESS_DAYS);
   });
 });

@@ -30,6 +30,7 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@pseo/mcp": "workspace:*",
     "@types/mdx": "^2.0.13",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",

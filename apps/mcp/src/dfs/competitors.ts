@@ -164,6 +164,44 @@ export const POSITION_BAND_KEYS = [
 export type PositionBandKey = (typeof POSITION_BAND_KEYS)[number];
 
 /**
+ * WHICH DataForSEO measurement a WHOLE-DOMAIN metrics block was read from.
+ *
+ * Three different DataForSEO endpoints report "every keyword this domain ranks for", and they do
+ * not agree: the repo's own fixtures put example.com's `is_lost` at 320 (ranked_keywords family),
+ * 319 (competitors_domain `full_domain_metrics`) and 547 (domain_rank_overview) for the same
+ * domain. None of them is wrong — they are separate measurements — but two SeoGrep tools printing
+ * two of them under one identical label is what makes the product look self-contradicting, which
+ * is the defect this type exists to close. Reconciling the numbers is NOT an option: it would
+ * mean fabricating one of them.
+ */
+export type WholeDomainSource = "ranked_keywords" | "competitors_domain" | "domain_rank_overview";
+
+/**
+ * How each measurement is NAMED in customer-facing output.
+ *
+ * Deliberately not DataForSEO's endpoint names: the reader is an SEO customer, not an API
+ * integrator, and "competitors_domain" tells them nothing. What they need is enough of a handle
+ * to see that two numbers came from two places.
+ */
+export const WHOLE_DOMAIN_SOURCE_LABEL: Readonly<Record<WholeDomainSource, string>> = {
+  ranked_keywords: "DataForSEO's ranked-keywords data",
+  competitors_domain: "DataForSEO's competitor-discovery data",
+  domain_rank_overview: "DataForSEO's domain-overview data",
+};
+
+/**
+ * The one sentence that turns a disagreement into two measurements instead of a bug report.
+ *
+ * Printed ONCE per output by every tool that prints a whole-domain block, never per row: naming
+ * the source on each block is the attribution, and this is the single line that says what a
+ * reader should conclude when two of them differ.
+ */
+export const WHOLE_DOMAIN_MEASUREMENT_NOTE =
+  "Note: whole-domain totals name the DataForSEO data they were read from. DataForSEO measures " +
+  "these separately, so a different total in another SeoGrep tool is a second measurement, not a " +
+  "contradiction.";
+
+/**
  * The organic metrics of ONE domain, at ONE scope. The same shape comes out of THREE places, all
  * of which DataForSEO documents with the same sub-fields:
  *   - domain_rank_overview's `metrics.organic`               (whole domain)
@@ -251,6 +289,19 @@ export interface ComparisonRow {
   readonly avg_position: number | null;
   /** WHOLE-DOMAIN organic metrics — the scope every row of the table is compared on. */
   readonly metrics: DomainOrganicMetrics;
+  /**
+   * WHICH DataForSEO measurement `metrics` was read from. It is NOT constant across a table: on
+   * the discovery flow the rivals — and normally the target too — come from competitors_domain's
+   * `full_domain_metrics`, but a target DataForSEO leaves out of its own competitor list falls
+   * back to a domain_rank_overview request, and the supplied-rivals flow reads EVERY row from
+   * domain_rank_overview. Three different numbers, so the row carries which one it is.
+   *
+   * OPTIONAL, and absent means "not stated" — the renderer then prints the block with no source
+   * clause at all. That is the same rule the product applies to every vendor field: a thing we do
+   * not know is left unsaid, never guessed. A wrong source label would be worse than none, since
+   * it is precisely the false attribution this field exists to prevent.
+   */
+  readonly metrics_source?: WholeDomainSource;
   /**
    * The SAME domain restricted to the keywords it shares with the target, or null when there is
    * no such scope: the target (which shares everything with itself) and every caller-supplied
@@ -511,6 +562,18 @@ export function findTargetRow(
 }
 
 /**
+ * The target's whole-domain figures AND the measurement they came from, kept together because
+ * they are one fact: on the discovery flow the target is normally read off its own row in the
+ * competitors_domain response, but a target the vendor omits costs an extra domain_rank_overview
+ * request — a different measurement, with its own numbers. Passing the metrics without the source
+ * is what let one number be printed under the other one's name.
+ */
+export interface TargetWholeDomainMetrics {
+  readonly metrics: DomainOrganicMetrics;
+  readonly source: WholeDomainSource;
+}
+
+/**
  * Build the discovery flow's table from the ONE competitors_domain response.
  *
  * The target row carries `shared: null` on purpose: "the keywords the target shares with the
@@ -520,7 +583,7 @@ export function findTargetRow(
  */
 export function buildDiscoveredRows(
   target: string,
-  targetMetrics: DomainOrganicMetrics,
+  targetMetrics: TargetWholeDomainMetrics,
   rivals: readonly DiscoveredCompetitor[],
 ): readonly ComparisonRow[] {
   return [
@@ -529,7 +592,8 @@ export function buildDiscoveredRows(
       source: "target" as const,
       intersections: null,
       avg_position: null,
-      metrics: targetMetrics,
+      metrics: targetMetrics.metrics,
+      metrics_source: targetMetrics.source,
       shared: null,
     },
     ...rivals.map((rival) => ({
@@ -539,6 +603,9 @@ export function buildDiscoveredRows(
       avg_position: rival.avg_position,
       // The side-by-side scope is the WHOLE domain; the intersecting slice rides alongside it.
       metrics: rival.full,
+      // A discovered rival's figures are the discovery response's own — no second request was
+      // ever sent for it, so naming any other endpoint here would be a fabricated attribution.
+      metrics_source: "competitors_domain" as const,
       shared: rival.shared,
     })),
   ];
@@ -590,6 +657,7 @@ export function createMockCompetitorsPort(fixtures: CompetitorsFixtures): Compet
               intersections: null,
               avg_position: null,
               metrics: metricsFor(query.target),
+              metrics_source: "domain_rank_overview" as const,
               shared: null,
             },
             ...supplied.map((domain) => ({
@@ -598,6 +666,7 @@ export function createMockCompetitorsPort(fixtures: CompetitorsFixtures): Compet
               intersections: null,
               avg_position: null,
               metrics: metricsFor(domain),
+              metrics_source: "domain_rank_overview" as const,
               shared: null,
             })),
           ],
@@ -613,7 +682,9 @@ export function createMockCompetitorsPort(fixtures: CompetitorsFixtures): Compet
         discovered_total_count: discovery.total_count,
         rows: buildDiscoveredRows(
           query.target,
-          targetRow ? targetRow.full : metricsFor(query.target),
+          targetRow
+            ? { metrics: targetRow.full, source: "competitors_domain" }
+            : { metrics: metricsFor(query.target), source: "domain_rank_overview" },
           selectDiscoveredCompetitors(query.target, visible),
         ),
       };
@@ -736,9 +807,14 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
         // Only when DataForSEO leaves it out does the fallback fire — better one extra request
         // than telling a caller their own domain has "no organic ranking data on record".
         const targetRow = findTargetRow(query.target, discovery.rows);
-        const targetMetrics = targetRow
-          ? targetRow.full
-          : await fetchRankOverview(tally, query, query.target);
+        // The measurement travels WITH the numbers: the two branches below are two different
+        // DataForSEO endpoints, and which one answered is not recoverable downstream.
+        const targetMetrics: TargetWholeDomainMetrics = targetRow
+          ? { metrics: targetRow.full, source: "competitors_domain" }
+          : {
+              metrics: await fetchRankOverview(tally, query, query.target),
+              source: "domain_rank_overview",
+            };
         comparison = {
           target: query.target,
           discovered: true,
@@ -762,7 +838,16 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
           const metrics = await fetchRankOverview(tally, query, entry.domain);
           rows = [
             ...rows,
-            { ...entry, intersections: null, avg_position: null, metrics, shared: null },
+            {
+              ...entry,
+              intersections: null,
+              avg_position: null,
+              metrics,
+              // EVERY row of this flow — the target included — is a domain_rank_overview
+              // request; no competitors_domain response is fetched at all.
+              metrics_source: "domain_rank_overview" as const,
+              shared: null,
+            },
           ];
         }
         comparison = {

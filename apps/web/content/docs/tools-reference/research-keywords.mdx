@@ -18,19 +18,36 @@ Given a list of keywords (plus an optional language and location), it returns on
 - **Search intent** — the dominant intent behind the query (informational, commercial, navigational or transactional), plus any secondary intents it also carries.
 - **Search-volume trend** — how the volume moved month-over-month, quarter-over-quarter and year-over-year, as signed percentages.
 
-Every one of these is printed only when the provider actually returns it — a metric it did not send is left out rather than filled in with a placeholder.
+The first three are **always stated**, as `n/a` when the provider sent no figure: they are the line's spine, and a row that quietly lost its volume column would read as a shorter row rather than as a missing measurement. `n/a` there means "nobody has a number for this", never "nobody searches this". The last three — difficulty, intent and trend — are **left out** when the provider did not send them, so a row with nothing extra to say stays short.
 
 It also prints a one-line summary with the total monthly search volume across the batch.
 
 ## Who can run it
 
-`research_keywords` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits — buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`research_keywords` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 If live keyword data is unavailable on this deployment, the tool returns a clear _"keyword research is not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data.
 
+**You are also not charged for a lookup that comes back completely empty.** If the provider returns no figure for a single one of your keywords, there is no table to hand you, so the tool refuses the lookup with a message saying so and the credits are returned to your balance. This tends to happen with keywords outside the provider's Google Ads coverage — often non-English markets, or very rare terms — and the message suggests trying a broader or more common phrasing for the same market. As soon as **one** keyword in the batch comes back with something, the lookup is served and charged normally.
+
 ## No data is not zero
 
-A keyword the provider holds **nothing** on comes back as _"no data returned for this keyword"_, and the header says how many of your keywords that happened to. It is never printed as `volume 0`, and it never contributes a silent zero to the batch total — "nobody has a figure for this" and "nobody searches this" are different facts that lead to different decisions. A genuine zero, when the provider does report one, is still printed as `volume 0`.
+A keyword the provider holds **nothing** on comes back as _"no data returned for this keyword"_. It is never printed as `volume 0` — "nobody has a figure for this" and "nobody searches this" are different facts that lead to different decisions — and a genuine zero, when the provider does report one, is still printed as `volume 0`.
+
+It adds **nothing** to the batch total, and it is worth being exact about how: no row is filtered out of the sum, a missing volume simply counts as nothing. The arithmetic is the same either way, but there is no filter to find if you go looking for one. What makes such a keyword visible is the count in the header, not the total.
+
+The same rule applies **field by field**, not just row by row. A keyword can come back with a difficulty and an intent but no search volume — common in markets the provider's advertising data covers thinly — and you get the figures it does hold, with the missing ones marked `n/a` rather than the whole row being written off as empty.
+
+## Every keyword you asked about is answered for
+
+Your keyword list is accounted for in full. Alongside the two cases above there is a third, and it gets its own sentence because it is a different fact:
+
+- _"no data returned for this keyword"_ — the provider **sent a row** for it, and that row holds no metrics.
+- _"DataForSEO returned no row for this keyword"_ — **no row arrived at all**. That is all we can honestly tell you: it is not a claim that nobody searches the term, nor that the provider holds nothing on it.
+
+Either way the keyword is named in the output, so it can never quietly vanish between what you asked and what you read. The header's count covers **both** cases under one figure — it answers "how many of my keywords came back without data", not which of the two reasons applied; the lines themselves say that.
+
+A keyword list that is empty or all whitespace is refused before anything is reserved, and the refusal says you were not charged.
 
 ## How fresh the CPC is
 
@@ -54,4 +71,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A table with one row per keyword — search volume, CPC, competition, and (when the provider returns them) keyword difficulty, search intent and volume trend — plus a total-volume summary line and the date the CPC figures were last refreshed. While live data is off, it returns the "not yet enabled" message instead and charges nothing.
+A table with one line per keyword you asked about — search volume, CPC, competition, and (when the provider returns them) keyword difficulty, search intent and volume trend — plus a total-volume summary line and the date the CPC figures were last refreshed. Keywords the provider answered with nothing, and keywords it sent no row for, are named on their own lines and counted in the summary. While live data is off, it returns the "not yet enabled" message instead and charges nothing; a lookup that comes back with no figures at all is likewise refused and not charged.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GscWindow, PullData } from "./types.ts";
+import type { PullData } from "./types.ts";
 import { parsePullResult, pullResultToJson } from "./types.ts";
 import { SAMPLE_PULL, gscRow, pullData } from "./fixtures.ts";
 
@@ -19,9 +19,17 @@ describe("pullResultToJson / parsePullResult round-trip", () => {
     const capped: PullData = { ...SAMPLE_PULL, current: { ...SAMPLE_PULL.current, capped: true } };
 
     // Serialize emits capped:true only for the capped window; the un-capped one omits the field.
-    const json = pullResultToJson(capped) as { current: GscWindow; previous: GscWindow };
-    expect(json.current.capped).toBe(true);
-    expect("capped" in json.previous).toBe(false);
+    // `json` stays `Json` — it is handed straight back to parsePullResult below, and THAT is the
+    // round trip under test. The two fields this spec inspects are read through a separate view:
+    // the serialized window is a JSON projection, not a `GscWindow` (it omits `capped` entirely
+    // when the window was not capped), so claiming the stronger type here would be a fiction.
+    const json = pullResultToJson(capped);
+    const windows = json as unknown as {
+      current: { capped?: boolean };
+      previous: { capped?: boolean };
+    };
+    expect(windows.current.capped).toBe(true);
+    expect("capped" in windows.previous).toBe(false);
 
     // Parse restores capped:true and round-trips the whole pull with full fidelity.
     const parsed = parsePullResult(json);

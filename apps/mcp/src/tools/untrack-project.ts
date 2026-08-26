@@ -84,11 +84,22 @@ function archivedMessage(project: ProjectRef): string {
   );
 }
 
+/**
+ * The idempotent answer — and it must offer the SAME two ways back that archivedMessage does.
+ *
+ * Measured 2026-08-25 (tool review card 9): it named only `track_gsc_property`. That tool restores
+ * a project through its Search Console PROPERTY, so for a project that has none — every project
+ * created by `setup_project` and never connected — the single route on offer does not work, and
+ * the caller is pointed at a tool that cannot help them. `setup_project` for the same domain goes
+ * through the same `openTrackedProject`, clearing `archived_at` in place, so it restores exactly
+ * what the first message promises: the same id, the same crawls, reports and property.
+ */
 function alreadyArchivedMessage(project: ProjectRef): string {
   return (
     `"${project.domain}" (project_id: ${project.id}) is already in your archive, so nothing was ` +
-    "changed. Its history and its Search Console link are still kept, and track_gsc_property " +
-    "brings it back unchanged."
+    "changed. Its history and its Search Console link are still kept. Run track_gsc_property for " +
+    "the same property — or setup_project for the same domain, which works whether or not this " +
+    "project has a Search Console property — and it comes back unchanged."
   );
 }
 

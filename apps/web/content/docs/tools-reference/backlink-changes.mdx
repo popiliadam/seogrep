@@ -34,7 +34,7 @@ History starts at **2019-01-30**, DataForSEO's own earliest date. A longer windo
 
 ## Who can run it
 
-`backlink_changes` needs a **paid credit balance**. It reads live data from a paid third-party provider — two requests per call — so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`backlink_changes` needs a **paid credit balance**. It reads live data from a paid third-party provider — two requests per call — so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 If live DataForSEO access is unavailable on this deployment, the tool returns a clear _"backlink change history is not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data.
 
@@ -71,6 +71,8 @@ The `periods` ceiling is part of the price rather than a stylistic limit: DataFo
 
 ### Limitations
 
-Results are **not stored**. Each call returns its two series to the conversation and nothing else keeps them, so there is no backlink-history page in the dashboard and no "compared with last month" — run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "compared with last month" — so to see the current picture, run it again.
 
 Two fields DataForSEO returns are deliberately **not** printed: the new and lost counts for *referring main domains*. They are a second, different definition of "domain", and showing them beside the referring-domain counts would invite you to read the difference as a signal the vendor never described.

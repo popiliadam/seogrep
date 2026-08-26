@@ -21,7 +21,13 @@ describe("listPrompts (prompts/list)", () => {
 
   it("declares arguments for each prompt", () => {
     for (const prompt of listPrompts().prompts) {
-      expect(prompt.description.length).toBeGreaterThan(0);
+      // `description` is optional in the MCP SDK's Prompt shape; this spec's claim is that ours
+      // always carries one, so an absent description fails by NAME rather than as a TypeError.
+      const { description } = prompt;
+      if (description === undefined) {
+        throw new Error(`prompt ${prompt.name} declares no description`);
+      }
+      expect(description.length).toBeGreaterThan(0);
       expect(Array.isArray(prompt.arguments)).toBe(true);
       expect(prompt.arguments?.length).toBeGreaterThan(0);
     }

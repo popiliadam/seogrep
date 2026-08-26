@@ -592,17 +592,85 @@ export function compareCandidates(left: DisavowCandidate, right: DisavowCandidat
 export const DISAVOW_TXT_DOMAIN_PREFIX = "domain:";
 export const DISAVOW_TXT_COMMENT_PREFIX = "# ";
 export const DISAVOW_TXT_LINE_ENDING = "\n";
-/** What a candidate line says when the vendor returned no score. Never the digit 0. */
-export const DISAVOW_TXT_NO_SCORE_NOTE = "spam_score not reported by the vendor";
+/**
+ * What a score reads as when the vendor returned none — at EITHER level. Never the digit 0: a
+ * silence printed as 0 publishes "the vendor scored this clean" out of a response that said
+ * nothing at all, on the one line where the reader is deciding whether to name a domain to Google.
+ */
+export const DISAVOW_TXT_NOT_REPORTED_NOTE = "not reported by the vendor";
 /** The refusal that travels with the file even after it leaves this process. */
 export const DISAVOW_TXT_PROPOSAL_NOTICE =
   "PROPOSAL ONLY — SeoGrep has not sent this to Google and does not submit disavow files.";
+
+/**
+ * THE TWO SCORE LABELS, each naming the LEVEL its number describes as well as the vendor field it
+ * came from — and BOTH are printed on every candidate line.
+ *
+ * MEASURED 2026-08-25 (tool review, card 27), which is why they are two and not one. The window is
+ * selected on the per-LINK `backlink_spam_score`, and the file labelled each row with the
+ * per-DOMAIN `spam_score` — a different measurement, from a different endpoint. Real rows read
+ * `# spam_score 0` and `# spam_score 1` beside domains whose worst LINK score was 60. Neither
+ * number was wrong; the printed one was the wrong number for the decision on the line, and a
+ * reader with no way to tell which level they were looking at could not have known.
+ *
+ * They are NOT blended. Two vendor fields on two endpoints stay two numbers here (NEVER #7): an
+ * average or a single "risk score" would be a measurement DataForSEO never published.
+ */
+export const DISAVOW_TXT_DOMAIN_SCORE_LABEL = `per-domain ${CANDIDATE_ORDER_VENDOR_FIELD}`;
+export const DISAVOW_TXT_LINK_SCORE_LABEL = `worst per-link ${LINK_WINDOW_ORDER_VENDOR_FIELD} in this window`;
+
+/** ONE score, under its LEVEL and the vendor's own field name. A vendor silence is words. */
+function scoreComment(label: string, value: number | null): string {
+  return `${label}: ${value === null ? DISAVOW_TXT_NOT_REPORTED_NOTE : value}`;
+}
+
+/**
+ * Whether NOT ONE link in this candidate's window carried the vendor's `dofollow: true`.
+ *
+ * MEASURED on the same run: 21 of 46 candidates were in this state. Google does not count a
+ * nofollowed link, so a `domain:` entry for one of them may accomplish exactly nothing — and the
+ * file said nothing about it.
+ *
+ * They are MARKED, NEVER REMOVED (operator decision): which links are worth naming is the caller's
+ * judgement, and silently dropping rows would hide candidates the caller paid to see.
+ */
+export function isNofollowOnlyInWindow(candidate: DisavowCandidate): boolean {
+  return candidate.window_link_count > 0 && candidate.window_dofollow_link_count === 0;
+}
+
+/**
+ * The marking itself. It states what was MEASURED — "none is marked dofollow" — rather than "these
+ * links are nofollow": a row the vendor never marked either way counts as neither, and turning a
+ * vendor silence into a vendor statement is the mistake this module exists to avoid.
+ */
+export function nofollowOnlyNote(linkCount: number): string {
+  return (
+    `NONE of the ${linkCount} ${linkCount === 1 ? "link" : "links"} in this window is marked ` +
+    "dofollow by the vendor — Google does not count nofollowed links, so disavowing this domain " +
+    "may change nothing."
+  );
+}
+
+/** The comment lines that precede ONE `domain:` entry: both score levels, then any marking. */
+function candidateComments(candidate: DisavowCandidate): readonly string[] {
+  const scores =
+    `${scoreComment(DISAVOW_TXT_DOMAIN_SCORE_LABEL, candidate.spam_score)} · ` +
+    `${scoreComment(DISAVOW_TXT_LINK_SCORE_LABEL, candidate.window_max_backlink_spam_score)}`;
+  return isNofollowOnlyInWindow(candidate)
+    ? [scores, nofollowOnlyNote(candidate.window_link_count)]
+    : [scores];
+}
 
 /**
  * Render the BODY of a Google-format disavow file. A pure string function: it opens no socket,
  * writes no file and returns text the caller may do nothing with. The header states, in the file
  * itself, that nothing was submitted and that no harm is being claimed (NEVER #7) — a caveat that
  * lives only in a chat message is a caveat that gets separated from the file.
+ *
+ * Each `domain:` entry is preceded by the comment lines {@link candidateComments} builds: BOTH
+ * vendor scores under their own levels, and — when it applies — the nofollow-only marking. Both
+ * are there because the file is what the reader acts on, and a fact that lives only in the chat
+ * answer is a fact that is gone the moment the file is copied out.
  */
 export function buildDisavowTxt(
   target: string,
@@ -630,11 +698,7 @@ export function buildDisavowTxt(
     candidates.rows.length === 0
       ? [comment("No candidates matched these criteria.")]
       : candidates.rows.flatMap((candidate) => [
-          comment(
-            candidate.spam_score === null
-              ? DISAVOW_TXT_NO_SCORE_NOTE
-              : `${CANDIDATE_ORDER_VENDOR_FIELD} ${candidate.spam_score}`,
-          ),
+          ...candidateComments(candidate).map(comment),
           `${DISAVOW_TXT_DOMAIN_PREFIX}${candidate.domain}`,
         ]);
   return [...header, ...body].join(DISAVOW_TXT_LINE_ENDING) + DISAVOW_TXT_LINE_ENDING;

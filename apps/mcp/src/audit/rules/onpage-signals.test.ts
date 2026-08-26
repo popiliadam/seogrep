@@ -17,7 +17,6 @@ import type { AuditCrawl, AuditPage } from "../crawl-data.ts";
  */
 function page(p: Partial<AuditPage> & { url: string }): AuditPage {
   return {
-    url: p.url,
     status: 200,
     title: null,
     metaDescription: null,

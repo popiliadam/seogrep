@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleSpend,
+  type SpendLedger,
+  type SpendReservation,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -13,24 +19,35 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  *   `ai_visibility_compare` — the same question across 2-10 targets, side by side.
  *
  * =====================================================================================
- * THE ROW CAP IS THE PRICE, NOT A TUNING KNOB
+ * THE PRICING BASIS — AND THE ŞERH THE 2026-08-25 OUTAGE PUT ON IT (READ THIS FIRST)
  * =====================================================================================
  * LLM Mentions is the most expensive family this product touches: **$0.10 per request plus $0.001
  * per row** — ten times the per-request cost of every other family we call, and 8.3x DataForSEO
  * Labs' per-row cost. The 2026-08-17 signature package (MADDE 2) prices `ai_visibility` at 90
  * credits with `internal_list_limit <= 100` **MANDATORY**, and `ai_visibility_compare` at 90 credits
- * PER COMPARED TARGET over 2-10 targets. At the cap the arithmetic is
+ * PER COMPARED TARGET over 2-10 targets. At that basis the arithmetic is
  *
  *     vendor  = $0.10 + 100 rows x $0.001 = $0.20
  *     revenue = 90 credits x $0.0124      = $1.116        ->  5.58x  (the signed "5.6x")
  *
- * and WITHOUT the cap a single 1000-row call bills $0.10 + $1.00 = $1.10 against $1.116 of revenue,
- * i.e. **1.01x** — the margin is gone. The signature says so in its own words ("Satır kapağı olmadan
- * bu iki tool yazılmamalı"), so {@link MAX_INTERNAL_LIST_ROWS} is the thing holding the signed price
- * up. It is enforced in the ESTIMATE and on the WIRE by the same clamp, and llm-mentions.test.ts
- * pins the floor at the cap AND measures the uncapped collapse, so a later widening turns RED
- * instead of quietly erasing the margin. Moving it is a PRICE change and belongs to a human
+ * and at 1000 rows a single call bills $0.10 + $1.00 = $1.10 against $1.116 of revenue, i.e.
+ * **1.01x**. {@link MAX_INTERNAL_LIST_ROWS} is that basis, it is what every reservation and every
+ * margin figure here is computed from, and moving it is a PRICE change that belongs to a human
  * (NEVER #6).
+ *
+ * ŞERH — THE MECHANISM THE SIGNATURE NAMED DOES NOT EXIST. The signature reads
+ * `internal_list_limit` as the ROW CAP that holds the vendor bill down. DataForSEO's published
+ * request documentation, read on 2026-08-25, says it is "maximum number of elements within internal
+ * arrays … `sources_domain` `search_results_domain`", with a ceiling of 20 on one endpoint and 10
+ * on the other (see {@link VENDOR_MAX_INTERNAL_LIST_AGGREGATED}). It is not a row cap, it never
+ * capped a billed row, and 100 was a value the vendor REJECTED — which is why both tools failed
+ * 3/3 in production for as long as they had been live.
+ *
+ * So the numbers above are a BASIS, not a measured margin: nothing this port sends controls how
+ * many rows DataForSEO bills for, and no response from this family has ever been captured here to
+ * count them. The price is NOT moved on that finding — it is raised for signature. What the code
+ * does is keep the basis exactly where the signature put it (the reservation is unchanged and
+ * still errs high) while sending the vendor a value the vendor accepts.
  *
  * =====================================================================================
  * WHAT THE VENDOR'S REAL CONTRACT SAYS — AND WHERE IT CONTRADICTS THE SKETCH
@@ -158,6 +175,52 @@ export const MAX_INTERNAL_LIST_ROWS = 100;
 
 /** The default is the cap: the signed price point, and the only row count the margin was signed at. */
 export const DEFAULT_INTERNAL_LIST_ROWS = MAX_INTERNAL_LIST_ROWS;
+
+/**
+ * =====================================================================================
+ * THE VENDOR'S OWN CEILING FOR `internal_list_limit` — AND WHAT THE FIELD ACTUALLY DOES
+ * =====================================================================================
+ * MEASURED from DataForSEO's published request documentation on 2026-08-25 (signed lesson 11: the
+ * number is read from the vendor, never derived from a sibling family). The two endpoints this
+ * port calls publish DIFFERENT ceilings for the same field name, and neither of them is 100:
+ *
+ *   aggregated_metrics/live        "minimum value: `1`  maximum value: `20`  default value: `10`"
+ *   cross_aggregated_metrics/live  "minimum value: `1`  maximum value: `10`  default value: `5`"
+ *
+ * AND THE FIELD IS NOT A ROW CAP. The vendor's own words: "maximum number of elements within
+ * internal arrays — you can use this field to limit the number of elements within the following
+ * arrays: `sources_domain`, `search_results_domain`". It caps two nested arrays INSIDE the vendor's
+ * aggregate; it does not cap the rows returned and it does not cap the rows billed.
+ *
+ * THIS IS THE 2026-08-25 OUTAGE. {@link MAX_INTERNAL_LIST_ROWS} went on the wire on every call. 100
+ * is above BOTH ceilings, so DataForSEO rejected the TASK, {@link unwrapFirstResult} threw, and the
+ * throw escaped both tools as "failed unexpectedly … reference <id>" — three production calls,
+ * three hard failures, zero output, with the budget reservation left open at its full estimate.
+ *
+ * WHAT THIS DOES NOT TOUCH: THE PRICE. {@link MAX_INTERNAL_LIST_ROWS} stays exactly where the
+ * 2026-08-17 signature put it and remains the basis every reservation and every margin figure is
+ * computed from, so the reservation is unchanged at $0.30 / $0.45 and still errs HIGH — the one
+ * direction it must never get wrong. What changed is only the number the vendor was never going to
+ * accept.
+ *
+ * THE PRICING DOCTRINE ABOVE IS NOW UNPROVEN AND NEEDS A HUMAN (NEVER #6). The signature's MADDE 2
+ * — "`internal_list_limit <= 100` ZORUNLU" — and the 5.58x margin arithmetic both read this field
+ * as the row cap that holds the vendor bill down. It is not, and it never was: nothing this port
+ * sends controls how many rows the vendor bills for. No credit price is moved here; the finding is
+ * reported for signature instead.
+ */
+export const VENDOR_MAX_INTERNAL_LIST_AGGREGATED = 20;
+export const VENDOR_MAX_INTERNAL_LIST_CROSS = 10;
+
+/**
+ * The value that may go ON THE WIRE for one endpoint: the caller's request, clamped into the range
+ * THAT endpoint publishes. Deliberately separate from {@link clampInternalListLimit}, which clamps
+ * into the PRICING basis — conflating the two is what sent 100 to a vendor whose ceiling is 20.
+ */
+export function vendorInternalListLimit(rows: number, vendorMax: number): number {
+  if (!Number.isFinite(rows)) return vendorMax;
+  return Math.min(vendorMax, Math.max(1, Math.trunc(rows)));
+}
 
 /** The vendor's own documented bound on `cross_aggregated_metrics.targets`: "up to 10, but not less
  * than 2". Also, exactly, the signed 2-10 range. */
@@ -302,6 +365,67 @@ export interface MentionsResultSet<Row> {
   readonly rows: readonly Row[];
 }
 
+/**
+ * WHY THE VENDOR CALL DID NOT PRODUCE AN ANSWER — the three states this port can tell apart, and
+ * the only three it will claim.
+ *
+ *   transport            — the request never came back readable (network, timeout, non-2xx).
+ *   vendor_status        — DataForSEO answered, and its OWN status says it refused the task. THIS
+ *                          IS THE 2026-08-25 OUTAGE'S CLASS: the vendor had already diagnosed the
+ *                          problem in plain words, and the user was never shown them.
+ *   unreadable_response  — DataForSEO answered 20000 but the body was not a shape this port can
+ *                          read. Deliberately NOT reported as "no mentions found".
+ */
+export type LlmMentionsFailureKind = "transport" | "vendor_status" | "unreadable_response";
+
+/**
+ * A DataForSEO LLM-Mentions request that produced no answer — TYPED, for the reason
+ * budget-error.ts and the precondition / reauth errors state at length: the registry's generic
+ * catch turns anything untyped into
+ *
+ *     Tool "ai_visibility" failed unexpectedly. The server logged the details under
+ *     reference e383191d — quote it if you report this.
+ *
+ * which is exactly what BOTH AI tools answered on 2026-08-25, three times out of three, while
+ * DataForSEO had already said what was wrong with the request. A vendor refusal this port has READ
+ * is not an unexplained crash and must not wear an unexplained crash's sentence.
+ *
+ * THROWN, not returned, and that is what keeps it FREE: withCredits commits a handler that RETURNS
+ * and releases one that THROWS (credits/guard.ts). Both tools catch it OUTSIDE withCredits — after
+ * the release has already happened — and turn it into an explanatory refusal there.
+ *
+ * WHAT IT DELIBERATELY DOES NOT CARRY TO THE USER: dollars, and this message. Every field is
+ * operator context; budget-error.ts's rule holds, and the user's sentence is built from the facts.
+ */
+export class LlmMentionsVendorError extends Error {
+  constructor(
+    /** The vendor endpoint the attempt was aimed at. Operator context, never user copy. */
+    readonly endpoint: string,
+    readonly kind: LlmMentionsFailureKind,
+    /** The vendor's own status code, when it gave one. Null on a transport failure. */
+    readonly vendorStatusCode: number | null,
+    /** The vendor's own status message, when it gave one. */
+    readonly vendorStatusMessage: string | null,
+    /** The underlying failure, verbatim. Operator-facing only. */
+    readonly detail: string,
+  ) {
+    super(`DataForSEO LLM Mentions ${kind} (${endpoint}): ${detail}`);
+    this.name = "LlmMentionsVendorError";
+  }
+}
+
+/**
+ * Narrow an unknown error to the vendor failure. The `name` fallback is here for the reason
+ * isDfsBudgetExhausted carries one: across a duplicated module instance `instanceof` silently
+ * answers false and drops the refusal back into the generic branch.
+ */
+export function isLlmMentionsVendorError(error: unknown): error is LlmMentionsVendorError {
+  return (
+    error instanceof LlmMentionsVendorError ||
+    (error instanceof Error && error.name === "LlmMentionsVendorError")
+  );
+}
+
 /** How the rows are ordered — and by whom. This port sorts nothing. */
 export const ROW_ORDER = "vendor_response_order";
 export const ROW_ORDER_MEANS =
@@ -426,7 +550,10 @@ export function buildAiVisibilityRequestBody(query: AiVisibilityQuery): Record<s
   return {
     target: [toVendorTarget(query.target)],
     platform: query.platform,
-    internal_list_limit: clampInternalListLimit(query.internal_list_limit),
+    internal_list_limit: vendorInternalListLimit(
+      query.internal_list_limit,
+      VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+    ),
     ...localeKeys(query),
   };
 }
@@ -486,7 +613,10 @@ export function buildAiVisibilityCompareRequestBody(
       target: [toVendorTarget(group.target)],
     })),
     platform: query.platform,
-    internal_list_limit: clampInternalListLimit(query.internal_list_limit),
+    internal_list_limit: vendorInternalListLimit(
+      query.internal_list_limit,
+      VENDOR_MAX_INTERNAL_LIST_CROSS,
+    ),
     ...localeKeys(query),
   };
 }
@@ -553,6 +683,11 @@ const resultSchema = z.object({
   items: z.array(z.unknown()).nullish(),
 });
 
+/** An unknown throw's own words, for the operator log. Never shown to a user. */
+function detailOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** True for a plain JSON object (not an array, not null). */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -595,6 +730,28 @@ export function extractVendorTime(result: unknown): {
     if (typeof value === "string" && value !== "") return { field: candidate, value };
   }
   return { field: null, value: null };
+}
+
+/**
+ * THE VENDOR'S OWN VERDICT ON ITS OWN REQUEST, when it refused one — the task's status first,
+ * because that is where a rejected REQUEST is diagnosed (a wrong field value, an unsupported
+ * value, a plan that does not include this API), then the envelope's. Both null means the vendor
+ * did not refuse: whatever went wrong is ours to explain, not its.
+ */
+export function extractVendorRefusal(raw: unknown): {
+  code: number | null;
+  message: string | null;
+} {
+  const parsed = envelopeSchema.safeParse(raw);
+  if (!parsed.success) return { code: null, message: null };
+  const task = parsed.data.tasks?.[0];
+  if (task !== undefined && task.status_code !== DFS_OK) {
+    return { code: task.status_code, message: task.status_message ?? null };
+  }
+  if (parsed.data.status_code !== DFS_OK) {
+    return { code: parsed.data.status_code, message: parsed.data.status_message ?? null };
+  }
+  return { code: null, message: null };
 }
 
 /** The platform the vendor echoed in `tasks[].data`, or null when it echoed none. */
@@ -861,8 +1018,11 @@ export function createMockAiVisibilityPort(fixtures: AiVisibilityFixtures): AiVi
   return {
     enabled: true,
     fetchAiVisibility: async (query) => {
-      const limit = clampInternalListLimit(query.internal_list_limit);
-      const estimate = estimateLlmMentionsUsd(1, limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+      );
+      const estimate = estimateLlmMentionsUsd(1, MAX_INTERNAL_LIST_ROWS);
       return assembleVisibility(
         query,
         fixtures.aggregated,
@@ -872,8 +1032,11 @@ export function createMockAiVisibilityPort(fixtures: AiVisibilityFixtures): AiVi
     },
     fetchAiVisibilityCompare: async (query) => {
       const groups = validateCompareGroups(query.groups);
-      const limit = clampInternalListLimit(query.internal_list_limit);
-      const estimate = estimateLlmMentionsUsd(groups.length, limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_CROSS,
+      );
+      const estimate = estimateLlmMentionsUsd(groups.length, MAX_INTERNAL_LIST_ROWS);
       return assembleCompare(
         query,
         fixtures.crossAggregated,
@@ -934,15 +1097,70 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
     return (await response.json()) as unknown;
   }
 
+  /**
+   * ONE ATTEMPT: send, parse, and — on either failure — turn the throw into a TYPED one so the
+   * tools can explain it instead of the registry calling it unexpected.
+   *
+   * THE FAILED CALL IS SETTLED AT WHAT THE VENDOR SAID IT COST. Before this, a rejected task left
+   * the reservation open at its full safety-factored estimate: $0.30 for a call DataForSEO
+   * refused, against a fleet-wide $3.00/day cap that is FAIL-CLOSED. Ten such failures filled the
+   * cap and blocked every WORKING paid tool for the rest of the day — which is what made one
+   * broken tool an outage of the whole paid surface. `settleSpend` is exactly the reconciliation
+   * step for "the real cost is now known", and a refusal the vendor priced at $0.00 is a real cost
+   * of $0.00. When the body carries no price the reservation is left OPEN at its estimate, which
+   * is the conservative direction and unchanged.
+   */
+  async function attempt<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    reservation: SpendReservation,
+    parse: (raw: unknown) => T,
+  ): Promise<{ raw: unknown; parsed: T }> {
+    let raw: unknown;
+    try {
+      raw = await post(endpoint, body);
+    } catch (error) {
+      // Nothing readable came back, so nothing is known about the cost: the reservation stays open
+      // at its estimate rather than being settled at a number nobody measured.
+      throw new LlmMentionsVendorError(endpoint, "transport", null, null, detailOf(error));
+    }
+    try {
+      return { raw, parsed: parse(raw) };
+    } catch (error) {
+      const refusal = extractVendorRefusal(raw);
+      const vendorPriced = extractLlmMentionsCostUsd(raw);
+      if (vendorPriced !== null) {
+        await settleSpend(reservation, vendorPriced, 0, ledger);
+      }
+      throw new LlmMentionsVendorError(
+        endpoint,
+        refusal.code === null ? "unreadable_response" : "vendor_status",
+        refusal.code,
+        refusal.message,
+        detailOf(error),
+      );
+    }
+  }
+
   return {
     enabled: true,
     async fetchAiVisibility(query) {
-      const limit = clampInternalListLimit(query.internal_list_limit);
+      // THE WIRE VALUE and THE PRICING BASIS are two different numbers, and the outage was sending
+      // the second one as the first. The reservation keeps the signed basis (unchanged, errs high);
+      // the request keeps the vendor's published ceiling for THIS endpoint.
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+      );
       const endpoint = DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT;
-      const estimate = estimateLlmMentionsUsd(1, limit);
+      const estimate = estimateLlmMentionsUsd(1, MAX_INTERNAL_LIST_ROWS);
       const reservation = await reserveSpend(estimate, endpoint, ledger);
-      const raw = await post(endpoint, buildAiVisibilityRequestBody(query));
-      const resultSet = parseAiVisibilityResponse(raw, limit);
+      const { raw, parsed: resultSet } = await attempt(
+        endpoint,
+        buildAiVisibilityRequestBody(query),
+        reservation,
+        (body) => parseAiVisibilityResponse(body, limit),
+      );
       const settled = sumSettledCostUsd([{ raw, estimateUsd: estimate }]);
       await settleSpend(reservation, settled.totalUsd, resultSet.window_row_count, ledger);
       return assembleVisibility(query, raw, resultSet, settled);
@@ -950,15 +1168,23 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
     async fetchAiVisibilityCompare(query) {
       // Validated BEFORE the reservation: a comparison the vendor would reject must not book money.
       const groups = validateCompareGroups(query.groups);
-      const limit = clampInternalListLimit(query.internal_list_limit);
+      const limit = vendorInternalListLimit(
+        query.internal_list_limit,
+        VENDOR_MAX_INTERNAL_LIST_CROSS,
+      );
       const endpoint = DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT;
-      const estimate = estimateLlmMentionsUsd(groups.length, limit);
+      const estimate = estimateLlmMentionsUsd(groups.length, MAX_INTERNAL_LIST_ROWS);
       const reservation = await reserveSpend(estimate, endpoint, ledger);
-      const raw = await post(endpoint, buildAiVisibilityCompareRequestBody(query));
-      const parsed = parseAiVisibilityCompareResponse(
-        raw,
-        limit,
-        groups.map((group) => group.aggregation_key),
+      const { raw, parsed } = await attempt(
+        endpoint,
+        buildAiVisibilityCompareRequestBody(query),
+        reservation,
+        (body) =>
+          parseAiVisibilityCompareResponse(
+            body,
+            limit,
+            groups.map((group) => group.aggregation_key),
+          ),
       );
       const settled = sumSettledCostUsd([{ raw, estimateUsd: estimate }]);
       await settleSpend(

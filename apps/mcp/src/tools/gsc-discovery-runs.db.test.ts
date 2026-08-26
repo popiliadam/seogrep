@@ -11,14 +11,31 @@ import {
   findQuickWinsResult,
   formatCannibalization,
   formatContentDecay,
-  formatQuickWins,
   pullResultToJson,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
-import { makeFindQuickWinsTool, findQuickWinsTool } from "./find-quick-wins.ts";
+import {
+  formatGroupedQuickWins,
+  makeFindQuickWinsTool,
+  findQuickWinsTool,
+} from "./find-quick-wins.ts";
 import { detectCannibalizationTool } from "./detect-cannibalization.ts";
 import { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 import type { RegisteredTool } from "./registry.ts";
+
+/**
+ * An ORDERED run bracket for the pull fixtures below. recordSucceededPull writes a row for work
+ * that already happened, so it takes the run's own start and end rather than stamping the insert
+ * — and `created_at` follows the START, which is what makes the stored row internally coherent.
+ *
+ * RELATIVE TO NOW, not a fixed date, and that is load-bearing rather than lazy: `created_at` used
+ * to come from the DDL's `default now()`, and the discovery tools READ it (renderPullProvenance's
+ * age line, whats_next's freshness window). Pinning these fixtures to a calendar date would age
+ * them past STALE_PULL_DAYS and change what the specs below are reading. A few seconds of span
+ * keeps the prior behaviour exactly while still being ordered.
+ */
+const FIXTURE_RUN_STARTED_AT = new Date(Date.now() - 7_500);
+const FIXTURE_RUN_FINISHED_AT = new Date();
 
 /**
  * The discovery-run ledger (migration 0025) against a LOCAL Supabase stack — the twin of
@@ -115,6 +132,9 @@ async function seedSucceededPull(userId: string, projectId: string): Promise<str
   const { jobId } = await recordSucceededPull(service, {
     userId,
     projectId,
+    // Fixture run bracket: these specs read the stored pull, not its clock.
+    startedAt: FIXTURE_RUN_STARTED_AT,
+    finishedAt: FIXTURE_RUN_FINISHED_AT,
     result: pullResultToJson(SAMPLE_PULL),
   });
   return jobId;
@@ -253,9 +273,17 @@ describe("the recorded run and the delivered text are the same measurement", () 
     {
       name: "find_quick_wins" as ToolName,
       tool: findQuickWinsTool,
+      /**
+       * THROUGH THE TOOL'S OWN RENDERER, and the reason is a defect this pin caught by going red:
+       * it used to name `formatQuickWins`, the flat renderer find_quick_wins no longer uses. A
+       * byte-pin that names a renderer BY HAND is a second source of truth for what the tool
+       * prints, and it stops agreeing the moment the tool changes its mind — silently, in a lane
+       * the unit gate never runs. It still recomputes rather than reading the row back, so this
+       * compares two renderings of one pull instead of comparing a value with itself.
+       */
       expected: (() => {
         const result = findQuickWinsResult(SAMPLE_PULL);
-        return formatQuickWins(result.wins, result.total);
+        return formatGroupedQuickWins(result.wins, result.total);
       })(),
     },
     {

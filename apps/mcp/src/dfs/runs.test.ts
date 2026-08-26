@@ -78,7 +78,10 @@ const LOCALE = { language_code: "en", location_code: 2840 } as const;
 const RANKED_QUERY = { limit: 100, sort: "volume", ...LOCALE } as const;
 
 function referringDomain(over: Partial<ReferringDomainRow> = {}): ReferringDomainRow {
-  return { domain: "seoblog.example", backlinks: 412, rank: 300, ...over };
+  // `backlinks_spam_score` is REQUIRED on the row and defaults to null — "the vendor did not
+  // score this domain". It was simply missing here, which is not the same fixture: a renderer
+  // that branches on `!== null` treats an ABSENT field as a score and prints `undefined`.
+  return { domain: "seoblog.example", backlinks: 412, rank: 300, backlinks_spam_score: null, ...over };
 }
 
 function anchor(over: Partial<AnchorRow> = {}): AnchorRow {

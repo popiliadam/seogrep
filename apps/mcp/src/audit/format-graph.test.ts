@@ -104,10 +104,32 @@ const LEGACY_RESULT: Json = {
  * The MEASUREMENT, not a guess: sha256 (hex) and byte length of each rendered report, produced by
  * running the renderers at `main` (f954d3d, the commit this branch forked from) over the fixture
  * above. Any change to any of the three outputs on old-shaped data turns this red.
+ *
+ * RE-CUT ONCE, DELIBERATELY (S10e — thresholds in the finding text). Every threshold finding now
+ * renders the bound it broke alongside the value it measured: `title too long (65 chars, limit
+ * 60)` where it used to say `(65 chars)`. That is a wording change to the on-page report, so this
+ * digest HAD to move; the pin did its job by refusing the change silently.
+ *
+ * THE ARITHMETIC IS THE PROOF THAT NOTHING ELSE MOVED. On-page grew 1031 -> 1091 bytes, and +60
+ * is exactly the five suffixes this fixture earns and nothing more: `, minimum 200` twice (2x13)
+ * + `, limit 60` (10) + `, minimum 50` (12) + `, minimum 10` (12). No new line, no new section,
+ * and no finding from the new stray-edge rule — this fixture's titles are all clean prose.
+ * `tech` and `schema` are untouched, which is the other half of the same statement.
+ *
+ * RE-CUT A SECOND TIME, DELIBERATELY (S10d — the skipped list stopped repeating its reason). The
+ * technical report's "Not crawled (skipped)" section printed one `url (reason)` row per skip, and
+ * a live audit measured 50 such rows carrying the SAME reason. The reason is now stated once per
+ * group, with its own count, above the URLs it covers.
+ *
+ * THE ARITHMETIC AGAIN. `tech` grew 748 -> 820, and +72 is exactly +18 on each of this fixture's
+ * FOUR skip categories and not one byte more: per category the old single line
+ * `    · URL (reason)` (U + R + 10 bytes) became `    REASON — 1 URL(s):` + a newline +
+ * `      · URL` (U + R + 28). No new section, no changed count, no reordering — the categories are
+ * still sorted by name and each still holds one skip. `onpage` and `schema` are byte-identical.
  */
 const __baseline__ = {
-  onpage: { bytes: 1031, sha256: "8d41a3380736fe8e52b02a996ff64a7f875a0c3e1c2cbde716db6ad9b714c986" },
-  tech: { bytes: 748, sha256: "0cbf727daedc2157ffaef46da55b2c908246ca466d627784abd0c88847e0111a" },
+  onpage: { bytes: 1091, sha256: "71b222a583638607904f1cc1cc1bfad390206c1fd99a6c35a487a53ebc06a2fb" },
+  tech: { bytes: 820, sha256: "61d286358f67dc62d676e40ae8b27f1b428aafcc382e54ea95e673e68226cf74" },
   schema: { bytes: 442, sha256: "109001323c5f9de8760be8921f3a3bc406b22b43100a1062182090c759071f59" },
 } as const;
 
@@ -152,7 +174,6 @@ describe("a legacy crawl renders byte-for-byte what main rendered", () => {
 
 function page(p: Partial<AuditPage> & { url: string }): AuditPage {
   return {
-    url: p.url,
     status: 200,
     title: null,
     metaDescription: null,

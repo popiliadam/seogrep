@@ -187,6 +187,24 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
 
     // On-page: the report's findings are exactly the engine's per-type counts (>0), each mapped
     // through the SAME ONPAGE_LABELS vocabulary audit_onpage prints, sorted by count desc.
+    //
+    // THE EXPRESSION BELOW RESTATES THE PRODUCTION ONE, and that reads like a tautology, so it was
+    // measured rather than argued (2026-08-26, four mutations in report/model.ts's summarizeOnpage):
+    //   • `> 0` → `>= 0`                       → RED here. The filter is really asserted.
+    //   • `ONPAGE_LABELS[type]!` → `type`      → RED here. The label mapping is really asserted.
+    //   • `.sort(desc)` → `.sort(asc)`         → green.
+    //   • `ONPAGE_ORDER` → `Object.keys(counts)` → green.
+    // It is not a tautology: the copy here is FIXED, so production moving away from it reddens. The
+    // two greens are this FIXTURE's reach, not the assertion's — KNOWN_ISSUES yields exactly one
+    // finding type (`{"missing_canonical": 2}`), and neither a sort direction nor a tie-break order
+    // is observable in a one-element list. A second finding type at a different count would close
+    // both, and is the change to make here if this spec is ever extended.
+    //
+    // The axis where both sides WOULD move together — the shared vocabulary itself — is not silent
+    // either, and that was measured too: relabelling `missing_canonical` in ONPAGE_LABELS keeps
+    // this file green but reddens three byte-for-byte legacy specs elsewhere, and swapping two of
+    // its keys reddens format.test.ts's SHIPPED_ORDER pin. Running only this file would have
+    // reported that axis unpinned (signed lesson 11).
     const expectedFindings = ONPAGE_ORDER.filter((type) => (onpage.counts[type] ?? 0) > 0)
       .map((type) => ({ label: ONPAGE_LABELS[type]!, count: onpage.counts[type]! }))
       .sort((a, b) => b.count - a.count);
@@ -205,11 +223,20 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
       redirect3xx: tech.status.redirect3xx,
       clientError4xx: tech.status.clientError4xx,
       serverError5xx: tech.status.serverError5xx,
+      // The fifth bucket, carried like the other four. This exhaustive toEqual is what makes it
+      // a PIN rather than a hope: dropping the field again fails here as well as in its own test.
+      other: tech.status.other,
       robotsConflicts: tech.robotsConflicts.length,
       clientErrorUrls: capOf(tech.clientErrorUrls),
       serverErrorUrls: capOf(tech.serverErrorUrls),
+      otherStatusUrls: capOf(tech.otherStatusUrls),
       slowPages: capOf(tech.slowPages),
       heavyPages: capOf(tech.heavyPages),
+      // Derived from the crawl rather than from `tech`: the engine reports the findings, not how
+      // many pages were eligible to produce one. KNOWN_ISSUES predates both fields, so 0/0 here
+      // is "nobody looked", which is exactly what the renderer must not print as a clean result.
+      pagesTimed: 0,
+      pagesSized: 0,
       redirectChains: capOf(tech.redirectChains),
       xRobotsConflicts: capOf(tech.xRobotsConflicts),
       deepPages: capOf(tech.deepPages),
@@ -346,6 +373,51 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     expect(model.tech?.redirectChains.total).toBe(1);
   });
 
+  /**
+   * Speed COVERAGE (imza 9). slowPages/heavyPages come back empty for a fast site AND for a crawl
+   * that never recorded the fields, so the lists alone cannot tell the renderer which sentence to
+   * print. These counts are that distinction — the only thing standing between the report and a
+   * "Slow pages: 0" that claims a measurement nobody made.
+   */
+  it("counts how many pages carry EACH speed signal, per axis", () => {
+    // Only "/" carries fetchMs and htmlBytes in SIGNAL_CRAWL; the other four predate them.
+    expect(model.tech?.pagesTimed).toBe(1);
+    expect(model.tech?.pagesSized).toBe(1);
+    expect(model.tech?.pageCount).toBe(5);
+  });
+
+  it("counts each axis independently — a timed page is not automatically a sized one", () => {
+    // One number for both axes would be a claim the crawl does not support. Two pages, one signal
+    // each: any single shared counter reads 2 for an axis that actually saw 1.
+    const lopsided = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([
+        page({ url: "https://example.com/timed", fetchMs: 120 }),
+        page({ url: "https://example.com/sized", htmlBytes: 4_096 }),
+      ]),
+      pull: null,
+    });
+    expect(lopsided.tech?.pagesTimed).toBe(1);
+    expect(lopsided.tech?.pagesSized).toBe(1);
+  });
+
+  it("counts a MEASURED ZERO as measured (0 bytes is a reading, not a missing field)", () => {
+    // The crawler stores htmlBytes: 0 for a response that carried no HTML body (crawler/crawl.ts).
+    // A truthiness test would file that page under "never measured" and send the report silent
+    // about a crawl it did measure — the undefined/null/0 confusion crawl-data.ts warns about.
+    const zeroBytes = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([page({ url: "https://example.com/empty", fetchMs: 0, htmlBytes: 0 })]),
+      pull: null,
+    });
+    expect(zeroBytes.tech?.pagesTimed).toBe(1);
+    expect(zeroBytes.tech?.pagesSized).toBe(1);
+  });
+
   it("carries the 4xx URLs and the broken internal links behind the status counts", () => {
     expect(model.tech?.clientError4xx).toBe(1);
     expect(model.tech?.clientErrorUrls.items).toEqual(["https://example.com/gone"]);
@@ -412,6 +484,9 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     });
     expect(legacy.tech?.slowPages.total).toBe(0);
     expect(legacy.tech?.heavyPages.total).toBe(0);
+    // …and the coverage counts say WHY those two are empty: nobody looked.
+    expect(legacy.tech?.pagesTimed).toBe(0);
+    expect(legacy.tech?.pagesSized).toBe(0);
     expect(legacy.tech?.deepPages.total).toBe(0);
     expect(legacy.tech?.orphanSignals.total).toBe(0);
     expect(legacy.tech?.xRobotsConflicts.total).toBe(0);
@@ -439,6 +514,86 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     // The pre-cap total travels WITH the list so a truncated list is never the whole answer.
     expect(capped.tech?.slowPages.items).toHaveLength(REPORT_MAX_LISTED);
     expect(capped.tech?.slowPages.total).toBe(REPORT_MAX_LISTED + 7);
+  });
+});
+
+/**
+ * THE FIFTH STATUS BUCKET. `summarizeTech` took four of the engine's five status counts, and the
+ * page behind the fifth was in the report's "Pages crawled" stat and in nothing else.
+ *
+ * Status 0 is not a contrived value: `crawl-data.ts` reads `status` through `asFiniteNumber`,
+ * which yields 0 for a missing or non-numeric one, and 0 falls through every branch of
+ * `classifyStatus` into `other`. So this is what a page from a legacy or defective crawl looks
+ * like by the time the report sees it.
+ */
+describe("buildReportModel — pages the crawl could not classify", () => {
+  const UNCLASSIFIED_CRAWL: AuditCrawl = crawl([
+    page({ url: "https://example.com/ok", status: 200 }),
+    page({ url: "https://example.com/gone", status: 404 }),
+    page({ url: "https://example.com/no-status", status: 0 }),
+  ]);
+
+  it("carries the count and the URLs behind it, straight from the engine", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: UNCLASSIFIED_CRAWL,
+      pull: null,
+    });
+    const tech = auditTech(UNCLASSIFIED_CRAWL);
+    expect(model.tech?.other).toBe(tech.status.other);
+    expect(model.tech?.other).toBe(1);
+    expect(model.tech?.otherStatusUrls).toEqual(capOf(tech.otherStatusUrls));
+    expect(model.tech?.otherStatusUrls.items).toEqual(["https://example.com/no-status"]);
+  });
+
+  it("is the exact amount by which the four counts fall short of pageCount", () => {
+    // The whole reason the bucket has to be carried: WITHOUT it the model states a page count and
+    // four numbers that silently disagree with it, and nothing in the model records the gap.
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: UNCLASSIFIED_CRAWL,
+      pull: null,
+    });
+    const t = model.tech!;
+    const four = t.ok2xx + t.redirect3xx + t.clientError4xx + t.serverError5xx;
+    expect(four).toBe(2);
+    expect(t.pageCount).toBe(3);
+    expect(four + t.other).toBe(t.pageCount);
+  });
+
+  it("is 0 with an empty URL list when every page classified", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([page({ status: 200 }), page({ url: "https://example.com/x", status: 301 })]),
+      pull: null,
+    });
+    expect(model.tech?.other).toBe(0);
+    expect(model.tech?.otherStatusUrls).toEqual({ items: [], total: 0 });
+  });
+
+  it("caps the URL list while keeping the pre-cap total", () => {
+    const many = crawl(
+      Array.from({ length: REPORT_MAX_LISTED + 4 }, (_, i) =>
+        page({ url: `https://example.com/nostatus-${i}`, status: 0 }),
+      ),
+    );
+    const capped = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: many,
+      pull: null,
+    });
+    expect(capped.tech?.otherStatusUrls.items).toHaveLength(REPORT_MAX_LISTED);
+    expect(capped.tech?.otherStatusUrls.total).toBe(REPORT_MAX_LISTED + 4);
+    // The COUNT is never capped — it is the number the shortfall sentence has to be right about.
+    expect(capped.tech?.other).toBe(REPORT_MAX_LISTED + 4);
   });
 });
 
@@ -575,6 +730,53 @@ describe("buildReportModel — Opportunities (R1-b)", () => {
     expect(model.opportunities?.cannibalization.items.every((g) => !g.branded)).toBe(true);
     // Reported, never silently dropped.
     expect(model.opportunities?.brandedExcluded).toBe(1);
+  });
+
+  /**
+   * THE HIGHEST-VISIBILITY SURFACE THERE IS: the report is a link the customer sends to other
+   * people. Measured 2026-08-25 on dentnotion.com, the cannibalization section's first three rows
+   * were the customer's own brand, with "Excluded 2 branded queries" sitting directly beneath
+   * them.
+   *
+   * The fixture deliberately gives the branded rows UNPINNED positions — no sitelink block — and
+   * a MISSPELLING, because those are the two shapes that reached the shared report unfiltered. If
+   * the shared matcher stops calling them decisive, this section fills with the brand again.
+   */
+  it("EXCLUDES branded rows the sitelink shape cannot see: brand+word, and a misspelling", () => {
+    const brandedPull: PullData = {
+      days: 28,
+      property: "sc-domain:dentnotion.com",
+      current: {
+        start_date: "2026-06-22",
+        end_date: "2026-07-19",
+        rows: [
+          // The live number-one row: the brand plus a place name, nothing pinned.
+          { query: "dent notion menderes", page: "https://dentnotion.com/", clicks: 40, impressions: 700, ctr: 0.05, position: 2.9 },
+          { query: "dent notion menderes", page: "https://dentnotion.com/iletisim", clicks: 5, impressions: 430, ctr: 0.01, position: 4.4 },
+          // A misspelling of the brand, likewise unpinned.
+          { query: "dentmotion", page: "https://dentnotion.com/", clicks: 6, impressions: 40, ctr: 0.15, position: 3.2 },
+          { query: "dentmotion", page: "https://dentnotion.com/doktorlarimiz", clicks: 1, impressions: 33, ctr: 0.03, position: 5.1 },
+          // A genuine finding on the same site, which must SURVIVE.
+          { query: "izmir dis beyazlatma", page: "https://dentnotion.com/beyazlatma", clicks: 9, impressions: 300, ctr: 0.03, position: 6.2 },
+          { query: "izmir dis beyazlatma", page: "https://dentnotion.com/blog/beyazlatma", clicks: 2, impressions: 260, ctr: 0.01, position: 8.4 },
+        ],
+      },
+      previous: { start_date: "2026-05-25", end_date: "2026-06-21", rows: [] },
+    };
+    // The fixture is only meaningful if NOTHING in it looks like a sitelink block.
+    expect(brandedPull.current.rows.filter((r) => r.position <= 1.5)).toHaveLength(0);
+
+    const built = buildReportModel({
+      domain: "dentnotion.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: null,
+      pull: brandedPull,
+    });
+    expect(built.opportunities?.cannibalization.items.map((g) => g.query)).toEqual([
+      "izmir dis beyazlatma",
+    ]);
+    expect(built.opportunities?.brandedExcluded).toBe(2);
   });
 
   it("keeps the engine's PRE-CAP quick-win total when its own cap already cut the list", () => {

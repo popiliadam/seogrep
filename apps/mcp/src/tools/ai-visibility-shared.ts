@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { errorResult, type ToolResult } from "./registry.ts";
 import {
-  DEFAULT_INTERNAL_LIST_ROWS,
-  MAX_INTERNAL_LIST_ROWS,
+  isLlmMentionsVendorError,
   PLATFORM_MEANS,
   type AiVisibilityRow,
   type LlmPlatform,
@@ -56,22 +56,33 @@ export const platformField = z
   );
 
 /**
- * THE ROW CAP IS THE PRICE. The maximum is the port's own constant, never a number typed here: the
- * 2026-08-17 signature makes `internal_list_limit <= 100` MANDATORY, and at that cap one lookup
- * bills $0.20 of vendor cost against the signed credits. Widening it is a price change (NEVER #6).
+ * THE CEILING IS THE VENDOR'S, AND IT IS DIFFERENT ON THE TWO ENDPOINTS — 20 on
+ * `aggregated_metrics`, 10 on `cross_aggregated_metrics` (Part A holds the published quotes). So
+ * this is a FACTORY rather than one shared field: a single schema could only have advertised one
+ * of the two, and the version that advertised 100 advertised a value the vendor rejects outright —
+ * the 2026-08-25 outage.
+ *
+ * IT IS NOT A PRICE CONTROL. The vendor's own words are "maximum number of elements within internal
+ * arrays … `sources_domain` `search_results_domain`" — it caps two nested arrays inside the
+ * aggregate, not the rows returned and not the rows billed. The old description called it "the
+ * price control"; that claim is withdrawn here rather than restated, and the honest half of the old
+ * wording ("Asking for fewer rows costs the same") is kept verbatim because it was always true.
  */
-export const internalListLimitField = z
-  .number()
-  .int()
-  .min(1)
-  .max(MAX_INTERNAL_LIST_ROWS)
-  .default(DEFAULT_INTERNAL_LIST_ROWS)
-  .describe(
-    `How many rows DataForSEO may return per compared target (1-${MAX_INTERNAL_LIST_ROWS}, ` +
-      `default ${DEFAULT_INTERNAL_LIST_ROWS}). DataForSEO bills per returned row on this family, ` +
-      "so this is the price control rather than a display preference — the signed price was " +
-      "measured at the ceiling. Asking for fewer rows costs the same; asking for more is refused.",
-  );
+export function internalListLimitField(vendorMax: number) {
+  return z
+    .number()
+    .int()
+    .min(1)
+    .max(vendorMax)
+    .default(vendorMax)
+    .describe(
+      `How many entries DataForSEO may put inside its internal \`sources_domain\` and ` +
+        `\`search_results_domain\` arrays (1-${vendorMax}, default ${vendorMax}) — the vendor's ` +
+        `own \`internal_list_limit\`, whose published ceiling is ${vendorMax} on this endpoint. ` +
+        "It controls how much supporting detail comes back, NOT what the lookup costs you. " +
+        "Asking for fewer rows costs the same; asking for more is refused.",
+    );
+}
 
 /**
  * `location_name` is a STRING on this family — not the `location_code` NUMBER every other
@@ -120,6 +131,79 @@ export function notEnabledMessage(tool: string): string {
     "them. This tool will start returning data once live DataForSEO access is switched on — you " +
     "were not charged."
   );
+}
+
+/**
+ * THE VENDOR-FAILURE REFUSAL, worded once for both tools — the sentence that replaces
+ * `Tool "ai_visibility" failed unexpectedly … quote reference e383191d`.
+ *
+ * Four things the old sentence did not say and this one does:
+ *
+ *   WHAT FAILED   — the vendor, not the tool, and which vendor function the attempt was made at.
+ *   WHAT IT SAID  — DataForSEO's OWN status code and message when it gave one. On 2026-08-25 the
+ *                   vendor had already diagnosed the problem; nobody was shown it.
+ *   WHAT IT MEANS — nothing about the subject. A failed measurement is not a low one, and this is
+ *                   a 90-credit question about whether a brand is mentioned at all (NEVER #7).
+ *   WHAT IT COST  — "You were not charged" was HALF true and read as the whole truth. The credits
+ *                   really are released; the ATTEMPT really did use SeoGrep's own daily
+ *                   third-party-data allowance. Both are said, and neither in dollars: our vendor
+ *                   spend is our margin (budget-error.ts), and no credit figure is quoted here
+ *                   because this file must not carry a price (NEVER #6).
+ */
+export function vendorFailureMessage(
+  tool: string,
+  endpoint: string,
+  vendorStatusCode: number | null,
+  vendorStatusMessage: string | null,
+): string {
+  const said =
+    vendorStatusCode === null
+      ? "DataForSEO did not return a readable answer, and gave no status of its own to quote."
+      : `DataForSEO refused the request with status ${vendorStatusCode}` +
+        (vendorStatusMessage === null ? "." : `: "${vendorStatusMessage}".`);
+  return (
+    `${tool} could not measure anything this time: the attempt to DataForSEO LLM Mentions ` +
+    `${vendorFunctionOf(endpoint)} did not produce an answer. ${said}\n\n` +
+    "This says nothing about the subject you asked about. A lookup that failed is not a lookup " +
+    "that found nothing — no measurement was made at all, so no conclusion about mentions, or " +
+    "the absence of them, can be drawn from it.\n\n" +
+    "You were not charged any credits: the credits reserved for this lookup were released, and " +
+    "the balance is unchanged. The attempt itself did go out to DataForSEO and used part of " +
+    "SeoGrep's own daily third-party-data allowance — that is our cost, not yours, and it is " +
+    "named here rather than left out so that \"you were not charged\" is not read as \"this cost " +
+    "nobody anything\"."
+  );
+}
+
+/**
+ * Run one priced lookup and turn a VENDOR failure into an explanatory refusal.
+ *
+ * THE CATCH IS OUTSIDE withCredits, and that placement is the whole design. Catching INSIDE the
+ * guarded region and returning a result would COMMIT — full price for a lookup that measured
+ * nothing. The throw has to escape it to make the guard RELEASE; by the time it lands here the
+ * release has already happened, so the refusal below is free (credits/guard.ts).
+ *
+ * Only the TYPED vendor failure is caught. Anything else is rethrown into the registry's generic
+ * branch on purpose: a wider catch here would dress a genuine crash — a broken run-ledger write, a
+ * bug in the renderer — as "the vendor had a problem", which is the disguise the 2026-08-09
+ * campaign found twelve real failures wearing.
+ *
+ * The operator's log line is written HERE because this bypasses the registry catch that used to
+ * write it.
+ */
+export async function catchVendorFailure(
+  tool: string,
+  run: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isLlmMentionsVendorError(error)) throw error;
+    console.error(`Tool "${tool}" refused — DataForSEO LLM Mentions: ${error.message}`);
+    return errorResult(
+      vendorFailureMessage(tool, error.endpoint, error.vendorStatusCode, error.vendorStatusMessage),
+    );
+  }
 }
 
 /** One vendor scalar, printed as the vendor sent it. `null` is a SILENCE and is printed in words. */

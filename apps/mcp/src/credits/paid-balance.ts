@@ -1,4 +1,5 @@
 import type { ToolName } from "./costs.ts";
+import { NOT_CHARGED_SENTENCE } from "./free-refusal.ts";
 import { getServiceClient } from "../db.ts";
 
 /**
@@ -141,7 +142,7 @@ export function paidBalanceRequiredMessage(tool: ToolName, billingUrl: string | 
     `"${tool}" needs a paid credit balance. It reads live data from a paid third-party SEO ` +
     `provider, so it is not available on trial credits. Buy any credit pack ${where} and this ` +
     `tool unlocks straight away. Your existing credits are untouched and keep working for ` +
-    `crawls, audits, reports and Search Console tools. You were not charged.`
+    `crawls, audits, reports and Search Console tools. ${NOT_CHARGED_SENTENCE}`
   );
 }
 

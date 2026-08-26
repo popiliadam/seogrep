@@ -7,6 +7,7 @@ import {
   DEFAULT_LINK_ROWS,
   DEFAULT_NETWORK_ROWS,
   DISAVOW_TXT_PROPOSAL_NOTICE,
+  isNofollowOnlyInWindow,
   LINK_WINDOW_ORDER_VENDOR_FIELD,
   MAX_LINK_ROWS,
   MAX_NETWORK_ROWS,
@@ -94,6 +95,21 @@ const NOT_ENABLED_MESSAGE =
   "and SeoGrep never returns sample or placeholder rows as if they were real. This tool will " +
   "start returning data once live DataForSEO access is switched on — you were not charged.";
 
+/**
+ * THE ROW ARGUMENTS ARE DISPLAY CONTROLS, AND THE SCHEMA SAYS SO.
+ *
+ * `limit` used to read "DataForSEO bills per returned row, so this is the price control, not a
+ * display preference". Both halves were wrong for the caller. The credit price is FLAT — one
+ * lookup is TOOL_COSTS.disavow_candidates credits at limit 1 and at limit 300 alike — and the
+ * vendor bill barely moves either: the Backlinks tariff is a flat fee per REQUEST plus $0.000036
+ * a row, and this lookup pays three of those flat fees. From the cost model in
+ * dfs/disavow-candidates.ts, tripling `limit` from the 100 default to the 300 cap moves the link
+ * request from $0.0276 to $0.0348, and the whole lookup (with `network_limit` at its own cap)
+ * from $0.0799 to $0.0918 — 3x the rows for ~15% more vendor money, none of which the caller pays.
+ * The same claim was MEASURED FALSE 2026-08-25 on backlink_details, which reads the SAME endpoint:
+ * `limit 10` cost $0.04854 and `limit 200` (187 rows) cost $0.05506 — 19x the rows, 13% more.
+ * A caller who narrows the window to save money pays the same and receives less.
+ */
 const inputSchema = z.object({
   target: targetField("find disavow candidates for"),
   project_id: projectIdField,
@@ -125,8 +141,12 @@ const inputSchema = z.object({
     .default(DEFAULT_LINK_ROWS)
     .describe(
       `How many filtered backlinks to examine (1-${MAX_LINK_ROWS}, default ${DEFAULT_LINK_ROWS}). ` +
-        "DataForSEO bills per returned row, so this is the price control, not a display " +
-        "preference. The candidate domains are derived from exactly these rows.",
+        `A display control, NOT a price control: this call costs ${TOOL_COSTS.disavow_candidates} ` +
+        "credits whatever you ask for, and asking for fewer rows costs the same. DataForSEO's own " +
+        "bill for this lookup is nearly all flat per-request fees — three of them, one per " +
+        "endpoint — and rows are charged in ten-thousandths of a cent: measured on the same vendor " +
+        "endpoint this tool reads, 19x the rows cost 13% more. The candidate domains are derived " +
+        "from exactly these rows, so a narrower window buys less and saves nothing.",
     ),
   network_limit: z
     .number()
@@ -136,8 +156,9 @@ const inputSchema = z.object({
     .default(DEFAULT_NETWORK_ROWS)
     .describe(
       `How many referring NETWORKS (IP subnets) to return (1-${MAX_NETWORK_ROWS}, default ` +
-        `${DEFAULT_NETWORK_ROWS}). Billed per row on the same tariff. A separate axis: several ` +
-        "linking domains sitting in one subnet is a fact about addresses, not a verdict.",
+        `${DEFAULT_NETWORK_ROWS}). Same rule as limit: a display control, and asking for fewer ` +
+        "rows costs the same. A separate axis: several linking domains sitting in one subnet is a " +
+        "fact about addresses, not a verdict.",
     ),
 });
 
@@ -213,9 +234,22 @@ export function renderFilteredLinkRow(row: BacklinkDetailRow): string {
 }
 
 /**
+ * The nofollow-only marking, in the ANSWER. The file carries its own copy (nofollowOnlyNote), for
+ * the reason the refusal is printed twice: the file leaves this conversation and the answer does
+ * not. It says only what was measured — none of these links is MARKED dofollow — because a link
+ * the vendor never marked either way is not a link the vendor called nofollow.
+ */
+export const NOFOLLOW_ONLY_MARKER =
+  "NONE of these links is marked dofollow by DataForSEO — Google does not count nofollowed " +
+  "links, so disavowing this domain may change nothing.";
+
+/**
  * ONE candidate domain. The vendor's per-domain `spam_score` leads, because that is the ONE field
  * the list is ordered by; the window counts that follow are explicitly OURS ("in this window"),
- * so a reader cannot mistake them for the domain's total link count.
+ * so a reader cannot mistake them for the domain's total link count. The per-LINK score sits
+ * beside it under its OWN vendor name — the two disagree routinely, and the level each one
+ * describes is the difference between reading a 0 as reassurance and reading it as one endpoint's
+ * answer to one question.
  */
 export function renderCandidateRow(candidate: DisavowCandidate): string {
   const links = candidate.window_link_count;
@@ -226,11 +260,12 @@ export function renderCandidateRow(candidate: DisavowCandidate): string {
     LINK_WINDOW_ORDER_VENDOR_FIELD,
     candidate.window_max_backlink_spam_score,
   )} in this window`;
+  const marking = isNofollowOnlyInWindow(candidate) ? `\n  ${NOFOLLOW_ONLY_MARKER}` : "";
   return (
     `• ${candidate.domain} — ${vendorScore(CANDIDATE_ORDER_VENDOR_FIELD, candidate.spam_score)}\n` +
     `  ${counts} · ${worst}\n` +
     `  example: ${urlOrUnnamed(candidate.window_example_url_from)} → ` +
-    `${urlOrUnnamed(candidate.window_example_url_to)}`
+    `${urlOrUnnamed(candidate.window_example_url_to)}${marking}`
   );
 }
 

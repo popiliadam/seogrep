@@ -13,6 +13,9 @@ import {
   type RelevantPagesResult,
 } from "../dfs/relevant-pages.ts";
 import {
+  MAX_CRAWL_ONLY_LISTED,
+  MAX_RENDERED_OUTPUT_CHARS,
+  PARTITION_NOTE,
   VENDOR_JUDGEMENT_NOTE,
   WHAT_THE_VENDOR_RETURNS,
   formatMyPages,
@@ -37,6 +40,7 @@ import {
   type LoadProjectFn,
   type ProjectRef,
 } from "./project-target.ts";
+import { exactCount } from "../format/quantities.ts";
 import fixture from "../dfs/fixtures/labs-relevant-pages.json";
 
 /**
@@ -324,6 +328,41 @@ describe("the three populations are legible, and neither absence reads as a find
     expect(text).toMatch(/advance `offset`/i);
   });
 
+  /**
+   * THE ONE LIST NOBODY CHOSE THE LENGTH OF — measured at 93 rows with no bound at all. The two
+   * vendor-side groups are as long as the caller's own `limit` made them; this one is as long as
+   * the SITE is, up to the crawl read cap, so a caller asking for a handful of vendor rows was
+   * handed hundreds of lines they could not shorten.
+   *
+   * 93 is the measured size, kept deliberately: it exercises the cap (50 printed) and the
+   * remainder (43) at once.
+   */
+  it("bounds the crawl-side list, and says how many it did not print and in what order", async () => {
+    const many = Array.from({ length: 93 }, (_, i) => `https://example.com/blog/post-${i}`);
+    const text = await answer(crawlOf(many));
+
+    // The HEADING still counts every row — the cap bounds what is printed, never what is counted.
+    expect(text).toContain("Fetched by that crawl, not named in this window (93)");
+    const listed = [...text.matchAll(/• https:\/\/example\.com\/blog\/post-\d+ \(HTTP status 200\)/g)];
+    expect(listed).toHaveLength(50);
+    expect(text).toContain("• https://example.com/blog/post-49 (HTTP status 200)");
+    expect(text).not.toContain("post-50 (HTTP status 200)");
+
+    expect(text).toMatch(/50 pages printed above, 43 more in this same group but not printed/);
+    // Not a purchase, and not a ranking — both stated, because both are easy to assume.
+    expect(text).toMatch(/nothing was charged for the ones left out/i);
+    expect(text).toMatch(/discovery order, not an order of importance/i);
+    // …and the sentence that bounds the whole group is still under it.
+    expect(text).toMatch(/not a statement that the page does not rank/i);
+  });
+
+  it("says nothing about an output limit when every crawl-side row fits", async () => {
+    const text = await answer(crawlOf(["https://example.com/about", "https://example.com/team"]));
+    expect(text).toContain("Fetched by that crawl, not named in this window (2)");
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text).not.toMatch(/but not printed/i);
+  });
+
   it("prints ONE count, and says it counts this window against that crawl", async () => {
     const text = await answer(crawlOf(["https://example.com/pricing"]));
     expect(text).toContain(
@@ -354,7 +393,17 @@ describe("the three populations are legible, and neither absence reads as a find
     expect(text).not.toMatch(/not found in that crawl/i);
   });
 
-  it("names the truncation when the crawl side hit its read cap", async () => {
+  /**
+   * A THRESHOLD IS PRINTED WITH ITS VALUE. The sentence used to read "Only the first pages of that
+   * crawl were compared", which names a limit without saying where it falls: a reader cannot tell
+   * a crawl that was clipped by one page from one that was mostly discarded, and the number is the
+   * entire content of the warning.
+   *
+   * The expected figure is DERIVED from the constant rather than typed in, so the spec follows the
+   * cap if the cap ever moves; the negative pin below is what actually catches the sentence going
+   * back to naming no number at all.
+   */
+  it("names the read cap BY VALUE when the crawl side hit it", async () => {
     const crawl: CrawlSide = {
       kind: "crawl",
       jobId: "job-1",
@@ -362,8 +411,27 @@ describe("the three populations are legible, and neither absence reads as a find
       truncated: true,
       pages: [toCrawledPage("https://example.com/about", 200)],
     };
-    expect(await answer(crawl)).toMatch(/only the first pages of that crawl were compared/i);
+    const text = await answer(crawl);
     expect(CRAWL_PAGE_READ_CAP).toBeGreaterThan(0);
+    expect(text).toMatch(
+      new RegExp(
+        `only the first ${exactCount(CRAWL_PAGE_READ_CAP)} pages of that crawl were compared`,
+        "i",
+      ),
+    );
+    expect(text).not.toMatch(/only the first pages of that crawl/i);
+  });
+
+  /** ...and a crawl that was NOT truncated makes no claim about a cap at all. */
+  it("says nothing about a read cap when the crawl side did not hit it", async () => {
+    const crawl: CrawlSide = {
+      kind: "crawl",
+      jobId: "job-1",
+      ranAt: "2026-08-18T09:00:00.000Z",
+      truncated: false,
+      pages: [toCrawledPage("https://example.com/about", 200)],
+    };
+    expect(await answer(crawl)).not.toMatch(/only the first/i);
   });
 
   it("holds unkeyable addresses in their own group, named as uncomparable rather than missed", () => {
@@ -389,12 +457,79 @@ describe("every printed figure is a named vendor field, and a silence is not a z
       our_join_key: "example.com/posts?page=2",
       metrics: { organic: THIN_METRICS },
     });
-    expect(rendered).toContain("etv not reported by DataForSEO");
-    expect(rendered).toContain("estimated_paid_traffic_cost not reported by DataForSEO");
+    // The two ESTIMATES are silent under their customer word AND their vendor key — the silence
+    // must survive the relabelling, or a reader could take "est. traffic" for a missing zero.
+    expect(rendered).toMatch(/est\. traffic not reported by DataForSEO \(etv\)/i);
+    expect(rendered).toMatch(
+      /est\. cost to buy that traffic not reported by DataForSEO \(estimated_paid_traffic_cost\)/i,
+    );
     expect(rendered).toContain("is_new not reported by DataForSEO");
     // ...and a vendor ZERO is an answer, printed as 0.
     expect(rendered).toContain("pos_81_90 0");
     expect(rendered).not.toMatch(/etv 0\b/);
+    expect(rendered).not.toMatch(/est\. traffic 0\b/);
+  });
+
+  /**
+   * THE MEASURED DEFECT (2026-08-25): live output read `etv 86.03599891066551`. Fourteen decimal
+   * places of a MODEL's opinion about one page's monthly traffic is a precision claim nobody can
+   * support, and it was printed under a vendor key no reader outside DataForSEO's docs can decode.
+   *
+   * Driven through the REAL renderer on a row shaped like the live one — a spec asserting against
+   * a string it assembled itself would prove nothing about what the tool prints.
+   */
+  it("prints a modelled estimate to a whole unit, not at raw float width", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: {
+        organic: {
+          ...THIN_METRICS,
+          etv: 86.03599891066551,
+          estimated_paid_traffic_cost: 5120.75,
+        },
+      },
+    });
+    // Not one decimal fraction survives anywhere in the row.
+    expect(rendered).not.toMatch(/\d\.\d/);
+    expect(rendered).toMatch(/est\. traffic 86\/mo \(DataForSEO etv\)/);
+    expect(rendered).toMatch(
+      /est\. cost to buy that traffic \$5,121\/mo \(DataForSEO estimated_paid_traffic_cost\)/,
+    );
+  });
+
+  /**
+   * THE REFERENCE this rounding was written against: `ranked_keywords` renders the vendor's `etv`
+   * of 116.64 as "est. traffic 117/mo" and is correct. One product, one answer for one quantity.
+   */
+  it("rounds an estimate the way ranked_keywords already rounds it: 116.64 becomes 117", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: { organic: { ...THIN_METRICS, etv: 116.64 } },
+    });
+    expect(rendered).toMatch(/est\. traffic 117\/mo/);
+  });
+
+  /**
+   * A COUNT LOSES NOTHING. `count` is SERPs DataForSEO counted, so every digit is real and the
+   * only transformation is grouping — the opposite decision from the two estimates above, made
+   * deliberately and pinned so a later sweep cannot round it "for consistency".
+   */
+  it("groups a counted field's digits and drops none of them", () => {
+    const rendered = renderVendorPage({
+      page_address: "https://example.com/blog",
+      our_join_key: "example.com/blog",
+      metrics: { organic: { ...THIN_METRICS, count: 5312, pos_11_20: 1204 } },
+    });
+    expect(rendered).toContain("organic: count 5,312");
+    expect(rendered).toContain("pos_11_20 1,204");
+  });
+
+  /** The precision rule is not only in the module: the answer itself says what was rounded away. */
+  it("tells the reader that the estimates are shown to a whole unit, and why", () => {
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/nearest whole visit and whole dollar/i);
+    expect(VENDOR_JUDGEMENT_NOTE).toMatch(/not precision it has/i);
   });
 
   it("counts the unreported position buckets instead of dropping or zeroing them", () => {
@@ -698,5 +833,505 @@ describe("the crawl card stored on the run row (migration 0031)", () => {
     const card = myPagesCrawlView(crawlOf(["https://example.com/only-crawled"]), result.window.rows);
     expect(JSON.stringify(card)).not.toContain("only-crawled");
     expect(JSON.stringify(card)).not.toContain("http");
+  });
+});
+
+
+// =============================================================================================
+// 5. THE DOUBLE PRINT, AND THE SIZE OF THE REPLY
+//
+// MEASURED on the real renderer, 2026-08-26, 1,000 organic-only rows:
+//   • no project named ............................... 404,171 characters
+//   • project named, crawl matched every page ........ 880,080 characters  (+118%)
+// A single page address occurred THREE times in one answer. The client that refused
+// `backlink_details` this same round refused 62,729 characters as "exceeds maximum allowed
+// tokens" — so BOTH of those replies were unreadable, and both cost the caller 40 credits and
+// DataForSEO $0.132 either way.
+//
+// AXES VARIED BELOW (signed lesson 14 — the list is written, not assumed):
+//   crawl state      × not_requested / none / crawl
+//   join population  × matched-only / vendorOnly-only / mixed / crawl-only / unkeyed on BOTH sides
+//   bound that binds × character budget / row cap / neither
+//   row width        × organic-only / organic+paid / no metrics at all
+//   window size      × 1 row / 100 rows / 1,000 rows (the schema's own ceiling)
+// =============================================================================================
+
+describe("no page is printed twice, and no reply is too big to read", () => {
+  const WIDE_METRICS: RelevantPageMetrics = {
+    pos_1: 3,
+    pos_2_3: 7,
+    pos_4_10: 21,
+    pos_11_20: 34,
+    pos_21_30: 18,
+    pos_31_40: 11,
+    pos_41_50: 6,
+    pos_51_60: 4,
+    pos_61_70: 2,
+    pos_71_80: 1,
+    pos_81_90: 0,
+    pos_91_100: 0,
+    etv: 1842.5,
+    count: 107,
+    estimated_paid_traffic_cost: 5120.75,
+    is_new: 9,
+    is_up: 21,
+    is_down: 14,
+    is_lost: 5,
+  };
+
+  /** `n` vendor rows at the width DataForSEO really sends — both item types, every bucket filled. */
+  function wideRows(n: number, prefix = "https://example.com/blog/post-"): RelevantPageRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      page_address: `${prefix}${i}`,
+      our_join_key: pageJoinKey(`${prefix}${i}`),
+      metrics: { organic: WIDE_METRICS, paid: WIDE_METRICS },
+    }));
+  }
+
+  function windowOf(rows: readonly RelevantPageRow[], limit = MAX_RELEVANT_PAGES_ROWS) {
+    const base = resultWith(rows);
+    return { ...base, window: { ...base.window, window_limit: limit } };
+  }
+
+  /** How many times a given page's OWN bullet line appears in the answer. */
+  function bulletCount(text: string, address: string): number {
+    return [...text.matchAll(new RegExp(`^• ${address.replace(/[.?*+^$[\]\\(){}|-]/g, "\\$&")}$`, "gm"))]
+      .length;
+  }
+
+  /**
+   * The row numbers of the vendor pages PRINTED in a block, **in the order they were printed**.
+   * Only a page's own bullet line matches: `renderMatchedPage`'s "your crawl fetched:" line is
+   * indented, so a crawled URL cannot be mistaken for a second printed page.
+   */
+  function printedRowNumbers(block: string): number[] {
+    return [...block.matchAll(/^• https:\/\/example\.com\/blog\/post-(\d+)$/gm)].map((m) =>
+      Number(m[1]),
+    );
+  }
+
+  /** The matched group's block, and everything from the vendor-only heading onward. */
+  function vendorBlocks(text: string): { readonly matched: string; readonly missed: string } {
+    const afterMatched = text.split("Reported by DataForSEO, and fetched by that crawl")[1] ?? "";
+    const [matched = "", missed = ""] = afterMatched.split(
+      "Reported by DataForSEO, not found in that crawl",
+    );
+    return { matched, missed };
+  }
+
+  /**
+   * THE DEFECT ITSELF. Every vendor row used to be printed once in a flat list of the window and
+   * again inside the comparison. Asserted per ROW rather than on the total length, because a
+   * length assertion alone would also go green if the duplicate survived and the budget merely cut
+   * it off — the two failures this slice fixes are separate and are pinned separately.
+   */
+  it("prints each vendor page ONCE when a comparison was made, across all three populations", () => {
+    const rows = wideRows(6);
+    // rows 0-2 matched, rows 3-5 vendor-only, plus one page only the crawl has.
+    const text = formatMyPages(
+      windowOf(rows),
+      LOCALE,
+      crawlOf([...rows.slice(0, 3).map((r) => r.page_address), "https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(text).toContain("Reported by DataForSEO, and fetched by that crawl (3)");
+    expect(text).toContain("Reported by DataForSEO, not found in that crawl (3)");
+    for (const row of rows) {
+      expect(bulletCount(text, row.page_address)).toBe(1);
+    }
+    // …and the answer says why there is no separate list of the window above the groups.
+    expect(text).toContain(PARTITION_NOTE);
+    expect(text).toMatch(/each one appears exactly once, in DataForSEO's own order/i);
+  });
+
+  /**
+   * THE OTHER DIRECTION, and it is the one that keeps the fix from being a deletion: with NO
+   * comparison there is no partition, so the flat list IS the answer and every row's FIGURES must
+   * still be there. A fix that dropped the list unconditionally would pass the spec above.
+   */
+  it.each(["not_requested", "none"] as const)(
+    "still prints the window with its figures when the crawl side is %s",
+    (kind) => {
+      const rows = wideRows(6);
+      const text = formatMyPages(windowOf(rows), LOCALE, { kind }, PROJECT);
+      for (const row of rows) {
+        expect(bulletCount(text, row.page_address)).toBe(1);
+      }
+      expect(text).toContain("organic: count 107");
+      expect(text).toContain("paid: count 107");
+      expect(text).not.toContain(PARTITION_NOTE);
+    },
+  );
+
+  /**
+   * THE SIZE BOUND, on the worst window the schema permits: the ceiling `limit`, rows at full
+   * width, the join split across BOTH vendor populations, a long crawl-only tail, and an unkeyable
+   * address on each side. Every sub-budget is loaded at once — this is the assertion that catches
+   * a later section being added with no bound of its own.
+   */
+  it("never renders more than MAX_RENDERED_OUTPUT_CHARS on the widest window the schema allows", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const unkeyableVendor: RelevantPageRow = { page_address: "::::", our_join_key: null, metrics: {} };
+    const crawled = [
+      // half the window matched…
+      ...rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address),
+      // …a crawl-only tail longer than both of its bounds…
+      ...Array.from({ length: 400 }, (_, i) => `https://example.com/docs/section/${i}`),
+      // …and an address our own crawl could not key either.
+      "::::",
+    ];
+    const text = formatMyPages(
+      windowOf([...rows, unkeyableVendor], MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(crawled),
+      PROJECT,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    // …and it is not small because it went silent: all four groups are present and counted.
+    expect(text).toContain("Reported by DataForSEO, and fetched by that crawl (500)");
+    expect(text).toContain("Reported by DataForSEO, not found in that crawl (500)");
+    expect(text).toContain("Fetched by that crawl, not named in this window (400)");
+    expect(text).toMatch(/could not be keyed, and so could not be compared either way \(2\)/i);
+  });
+
+  it("never renders more than MAX_RENDERED_OUTPUT_CHARS with no comparison either", () => {
+    const text = formatMyPages(
+      windowOf(wideRows(MAX_RELEVANT_PAGES_ROWS), MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * ==========================================================================================
+   * WHICH ROWS SURVIVE THE CUT — pinned ON THE RENDER SURFACE, which is the hole the judge found.
+   * ==========================================================================================
+   * `joinPages` preserves DataForSEO's order and one spec above pins that on its ARRAYS. That is
+   * not the same claim: reversing or sorting the rows at the two VENDOR CALL SITES
+   * (`budgetedVendorSection`, `vendorWindowList`) left all seventy specs green, because none of
+   * them read the order out of the PRINTED text.
+   *
+   * What that regression would ship, at 40 credits a call: of a 1,000-row window the caller is
+   * handed the ~11-23 rows DataForSEO ranked LAST, while `PARTITION_NOTE` and the docs page both
+   * say "in DataForSEO's own order". A truncated list is only honest if the part that survives is
+   * the FRONT of the order the answer claims to be in.
+   *
+   * So the assertion is a STRICT PREFIX of the vendor's own row numbering, read back out of the
+   * rendered string: rows 0..k-1 in that order, never a suffix, never a permutation, never a gap.
+   * Asserted on all three vendor surfaces, because they are three separate call sites.
+   */
+  it("prints the FRONT of DataForSEO's order in the flat list when it has to truncate", () => {
+    const text = formatMyPages(
+      windowOf(wideRows(MAX_RELEVANT_PAGES_ROWS), MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    const printed = printedRowNumbers(text);
+    expect(printed.length).toBeGreaterThan(0);
+    // The cut really happened — otherwise "the survivors are the front" is a vacuous claim.
+    expect(printed.length).toBeLessThan(MAX_RELEVANT_PAGES_ROWS);
+    expect(printed).toEqual(Array.from({ length: printed.length }, (_, i) => i));
+  });
+
+  it("prints the FRONT of DataForSEO's order in BOTH comparison groups when it has to truncate", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    // Interleaved on purpose: the two groups then carry INTERLEAVED row numbers, so a spec that
+    // merely checked "ascending" would pass on a block holding the wrong half of the window.
+    const evenRowNumbers = rows.map((_, i) => i).filter((i) => i % 2 === 0);
+    const oddRowNumbers = rows.map((_, i) => i).filter((i) => i % 2 === 1);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(evenRowNumbers.map((i) => rows[i]!.page_address)),
+      PROJECT,
+    );
+
+    const { matched, missed } = vendorBlocks(text);
+    const printedMatched = printedRowNumbers(matched);
+    const printedMissed = printedRowNumbers(missed);
+
+    expect(printedMatched.length).toBeGreaterThan(0);
+    expect(printedMissed.length).toBeGreaterThan(0);
+    expect(printedMatched.length).toBeLessThan(evenRowNumbers.length);
+    expect(printedMissed.length).toBeLessThan(oddRowNumbers.length);
+
+    expect(printedMatched).toEqual(evenRowNumbers.slice(0, printedMatched.length));
+    expect(printedMissed).toEqual(oddRowNumbers.slice(0, printedMissed.length));
+  });
+
+  /**
+   * A list that FITS must be in the vendor's order too, whole and unpermuted. The prefix specs
+   * above only look at truncated lists, so a reordering that happened after the cut — or one that
+   * only ever showed up on short windows — would slip past them.
+   */
+  it("prints the whole window in DataForSEO's order when nothing is cut", () => {
+    const rows = wideRows(6);
+    const all = rows.map((_, i) => i);
+    expect(printedRowNumbers(formatMyPages(windowOf(rows), LOCALE, { kind: "not_requested" }, null)))
+      .toEqual(all);
+
+    const text = formatMyPages(
+      windowOf(rows),
+      LOCALE,
+      crawlOf([rows[0]!.page_address, rows[2]!.page_address, rows[4]!.page_address]),
+      PROJECT,
+    );
+    expect(text).not.toMatch(/output limit reached/i);
+    const { matched, missed } = vendorBlocks(text);
+    expect(printedRowNumbers(matched)).toEqual([0, 2, 4]);
+    expect(printedRowNumbers(missed)).toEqual([1, 3, 5]);
+  });
+
+  /**
+   * AN EMPTY GROUP DOES NOT BURN ITS SHARE. Measured before this was fixed: with `matched` empty,
+   * its 9,000 characters evaporated and `vendorOnly` printed 11 rows of a window whose FLAT list
+   * printed 23 — so naming a project HALVED what the same 40 credits bought, with half the vendor
+   * budget unspent.
+   *
+   * The expectation is DERIVED from the flat list rather than typed, so it follows the constants:
+   * the same rows through the same renderer must reach the same depth whether or not a comparison
+   * was made. It is not a claim that the two answers are equal — the comparison carries its own
+   * groups and notes — only that the caller is not charged rows for using the feature.
+   */
+  it("hands an empty group's share to its filled sibling, so a comparison prints no fewer rows", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const flat = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    // A crawl that fetched NOTHING this window names: `matched` is empty, `vendorOnly` is all of it.
+    const compared = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(["https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(compared).not.toContain("Reported by DataForSEO, and fetched by that crawl");
+    expect(compared).toContain(
+      `Reported by DataForSEO, not found in that crawl (${exactCount(MAX_RELEVANT_PAGES_ROWS)}):`,
+    );
+
+    const flatPrinted = printedRowNumbers(flat);
+    const comparedPrinted = printedRowNumbers(compared);
+    expect(flatPrinted.length).toBeGreaterThan(0);
+    expect(comparedPrinted).toEqual(flatPrinted);
+    // …and the carried-over share still cannot push the reply past the ceiling.
+    expect(compared.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /** The mirror case: `vendorOnly` empty hands ITS share to `matched`. */
+  it("hands the share the other way when every page of the window was crawled", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const compared = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(rows.map((r) => r.page_address)),
+      PROJECT,
+    );
+    expect(compared).not.toContain("Reported by DataForSEO, not found in that crawl");
+    const printed = printedRowNumbers(compared);
+    // A matched row costs MORE than a flat one (it carries the crawled URL too), so this is not
+    // asserted against the flat list — only that the whole 18,000 was available to it.
+    expect(printed).toEqual(Array.from({ length: printed.length }, (_, i) => i));
+    expect(printed.length).toBeGreaterThan(
+      printedRowNumbers(
+        formatMyPages(
+          windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+          LOCALE,
+          crawlOf(rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address)),
+          PROJECT,
+        ).split("Reported by DataForSEO, not found in that crawl")[0] ?? "",
+      ).length,
+    );
+    expect(compared.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * TRUNCATION IS NEVER SILENT, and it never reads as a zero. The heading counts every row the
+   * window returned; the note says how many were printed, how many were not, that the omitted ones
+   * were CHARGED FOR (they were — the vendor billed the whole window), and what to do next.
+   */
+  it("says how many vendor rows it did not print, and that they were paid for", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    const printed = [...text.matchAll(/^• https:\/\/example\.com\/blog\/post-\d+$/gm)].length;
+    expect(printed).toBeGreaterThan(0);
+    expect(printed).toBeLessThan(MAX_RELEVANT_PAGES_ROWS);
+    expect(text).toContain(
+      `${exactCount(printed)} pages printed above, ` +
+        `${exactCount(MAX_RELEVANT_PAGES_ROWS - printed)} more fetched in this same group but ` +
+        "not printed",
+    );
+    expect(text).toMatch(/they were charged for either way/i);
+    expect(text).toMatch(/asking for fewer rows does not cost less/i);
+    // The WINDOW caption still reports every row that came back — the budget bounds the print,
+    // never the measurement.
+    expect(text).toContain(`${exactCount(MAX_RELEVANT_PAGES_ROWS)} pages in this window`);
+  });
+
+  it("says nothing about an output limit when the whole window fits", () => {
+    const text = formatMyPages(windowOf(wideRows(4)), LOCALE, { kind: "not_requested" }, null);
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text).not.toMatch(/but not printed/i);
+  });
+
+  /**
+   * BOTH vendor populations are bounded, and NEITHER starves the other. A single running budget
+   * spent matched-first would print 1,000 matches and zero misses; the even split means each group
+   * prints what it can and says what it could not.
+   */
+  it("bounds each vendor population separately, so one cannot starve the other", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address)),
+      PROJECT,
+    );
+    const [matchedBlock = "", missedBlock = ""] = [
+      text.split("Reported by DataForSEO, and fetched by that crawl")[1]?.split(
+        "Reported by DataForSEO, not found in that crawl",
+      )[0],
+      text.split("Reported by DataForSEO, not found in that crawl")[1],
+    ];
+    const matchedPrinted = [...matchedBlock.matchAll(/^• https:/gm)].length;
+    const missedPrinted = [...missedBlock.matchAll(/^• https:/gm)].length;
+    expect(matchedPrinted).toBeGreaterThan(0);
+    expect(missedPrinted).toBeGreaterThan(0);
+    // …and both said so when they stopped.
+    expect([...text.matchAll(/output limit reached/gi)].length).toBeGreaterThanOrEqual(2);
+
+    /**
+     * A HEADING COUNTS WHAT CAME BACK, NEVER WHAT FITTED. A heading that reported the printed
+     * number instead would make the truncation invisible — the reply would look complete and be
+     * short, which is the shape this whole slice exists to prevent.
+     */
+    const half = MAX_RELEVANT_PAGES_ROWS / 2;
+    expect(matchedPrinted).toBeLessThan(half);
+    expect(missedPrinted).toBeLessThan(half);
+    expect(text).toContain(
+      `Reported by DataForSEO, and fetched by that crawl (${exactCount(half)}):`,
+    );
+    expect(text).toContain(
+      `Reported by DataForSEO, not found in that crawl (${exactCount(half)}):`,
+    );
+  });
+
+  /**
+   * THE ROW CAP AND THE CHARACTER BOUND ARE BOTH REAL. 50 short rows fit the crawl-only character
+   * budget, so the ROW cap binds and the pinned 50/43 behaviour above is unchanged; long URLs
+   * exhaust the characters first and the same honest note fires on fewer rows.
+   */
+  it("bounds the crawl-side list by characters as well as by rows", () => {
+    const longUrls = Array.from(
+      { length: 60 },
+      (_, i) => `https://example.com/${"segment/".repeat(40)}${i}`,
+    );
+    const text = formatMyPages(
+      windowOf(wideRows(1)),
+      LOCALE,
+      crawlOf(longUrls),
+      PROJECT,
+    );
+    const listed = [...text.matchAll(/^• https:\/\/example\.com\/segment/gm)].length;
+    expect(listed).toBeGreaterThan(0);
+    expect(listed).toBeLessThan(MAX_CRAWL_ONLY_LISTED);
+    expect(text).toContain("Fetched by that crawl, not named in this window (60)");
+    expect(text).toMatch(/nothing was charged for the ones left out/i);
+  });
+
+  /**
+   * NOTHING IS LOST BY DELETING THE FLAT LIST. The uncomparable vendor rows used to be one bare
+   * address line each — survivable only because the flat list printed their figures a second time.
+   * With the duplicate gone this is the ONLY place they appear, so it carries the figures.
+   */
+  it("prints the figures of a vendor row that could not be keyed", () => {
+    const unkeyable: RelevantPageRow = {
+      page_address: "::::",
+      our_join_key: null,
+      metrics: { organic: { ...WIDE_METRICS, count: 4242 } },
+    };
+    const text = formatMyPages(
+      windowOf([...wideRows(1), unkeyable]),
+      LOCALE,
+      crawlOf(["https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(text).toContain("organic: count 4,242");
+    expect(text).toMatch(/from DataForSEO — this address could not be keyed/);
+    expect(text).toMatch(/rather than counted as misses on either side/i);
+  });
+
+  /**
+   * THE STORED ROW MEASURES THE WHOLE WINDOW, NOT THE PRINTED PART. `domain_lookup_runs` is the
+   * record the panel reads; a budget that silently shrank its counts would make the truncation
+   * retroactive and unmeasurable.
+   */
+  it("records the whole join on the run row even when the text was truncated", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const crawledUrls = rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(crawledUrls),
+      PROJECT,
+    );
+    expect(text).toMatch(/output limit reached/i);
+    const card = myPagesCrawlView(crawlOf(crawledUrls), rows);
+    expect(card.matched).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+    expect(card.vendor_only).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+    expect(card.pages_compared).toBe(MAX_RELEVANT_PAGES_ROWS / 2);
+  });
+});
+
+// =============================================================================================
+// S10d item 3 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// The schema used to say "DataForSEO bills per returned row, so this is the price control, not a
+// display preference — the flat price was signed against this ceiling." Half of that is true and
+// the half a CUSTOMER reads is not: my_pages costs a flat 40 credits at `limit` 1 and at `limit`
+// 1,000, so narrowing the window to save money pays the same and receives less.
+//
+// The vendor half IS true here, unlike on the Backlinks family where the identical sentence was
+// withdrawn outright this round. COMPUTED from the Labs tariff this repo declares (one request,
+// $0.012 + $0.00012 a row): $0.01212 at 1 row, $0.024 at 100, $0.132 at 1,000 — the per-row half
+// equals the per-request half at exactly 100 rows and is ten times it at the ceiling, where it is
+// 91% of the bill. So the row count controls the VENDOR's bill, which is what justifies the CAP,
+// and never the caller's.
+//
+// These specs read the description off the PUBLISHED JSON schema — what the customer's client is
+// handed — and assert the CLAIM with regexes rather than a copy of the source string.
+// =============================================================================================
+
+describe("S10d — my_pages' limit description states measured Labs behaviour", () => {
+  const schema = makeMyPagesTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("no longer tells the caller the row count is their price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+  });
+
+  it("names the flat credit price the caller pays whatever they ask for", () => {
+    expect(limit).toMatch(/40 credits/);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  /** The half that IS true on Labs, and the reason the ceiling exists at all. */
+  it("says the row count moves the VENDOR's bill, and how much", () => {
+    expect(limit).toMatch(/dataforseo'?s own bill/i);
+    expect(limit).toMatch(/ten times it at 1000/i);
   });
 });

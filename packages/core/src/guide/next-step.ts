@@ -19,8 +19,19 @@
  * with no GSC; connecting it is never a barrier).
  */
 
-/** Crawl / pull data newer than this many days counts as "fresh" for the all-set / refresh rungs. */
-export const FRESHNESS_WINDOW_DAYS = 30;
+import { DATA_FRESHNESS_DAYS, describeDataAge } from "./freshness.js";
+
+/**
+ * Crawl / pull data newer than this many days counts as "fresh" for the all-set / refresh rungs.
+ *
+ * AN ALIAS NOW, not a literal: the number lives once in `./freshness.js` (see that module for
+ * the three-independent-30s drift this closes). The NAME stays because apps/web imports it under
+ * this name and its own parity spec pins the import, and because "the freshness window" is what
+ * this ladder calls the threshold. The COMPARISON stays where it was too — both surfaces measure
+ * `now - createdAt <= FRESHNESS_WINDOW_DAYS * MS_PER_DAY` — so this is a re-home, not a
+ * re-decision, and every rung below decides byte-identically to before.
+ */
+export const FRESHNESS_WINDOW_DAYS = DATA_FRESHNESS_DAYS;
 
 /** The observable, tenant-scoped signals the ladder decides from. */
 export interface ProjectSignals {
@@ -41,6 +52,26 @@ export interface ProjectSignals {
    * projects whose connection is alive.
    */
   readonly gscTokenInvalid?: boolean;
+  /**
+   * The project's domain is KNOWN not to resolve — `true` only when a DNS lookup came back with
+   * "no such name", never when the lookup itself failed to run.
+   *
+   * OPTIONAL and read with `=== true`, exactly like `gscTokenInvalid` and for a sharper reason:
+   * `undefined` means "nobody checked", and a check that could not run must never be reported as
+   * a domain that does not exist. Getting that backwards would route every project to the
+   * dead-domain rung during a DNS blip — the ladder would stop recommending paid work for a whole
+   * account because one lookup timed out. The port that produces this signal decides the same way
+   * (see apps/mcp `tools/domain-reachability.ts`).
+   */
+  readonly domainUnreachable?: boolean;
+  /**
+   * Whole days since the latest crawl / pull, when the surface measured them. OPTIONAL: a caller
+   * that omits them gets the same recommendation with the age left out of the wording, so
+   * `crawlFresh` / `pullFresh` remain the only things the ladder DECIDES on. They exist so the
+   * router can quote the SAME number generate_report quotes instead of an unanchored "fresh".
+   */
+  readonly crawlAgeDays?: number | null;
+  readonly pullAgeDays?: number | null;
 }
 
 /** A single next-step recommendation: the primary action, why, and what follows. */
@@ -71,7 +102,50 @@ export interface NextStep {
  */
 const AUDIT_TRIO = ["audit_onpage", "audit_tech", "audit_schema"] as const;
 
+/**
+ * " (16 days ago)" for a measured age, "" for one the surface did not measure.
+ *
+ * WHY THE EMPTY STRING MATTERS. "fresh" with no number is the whole of defect card 12: the same
+ * 16-day-old crawl was `crawl from 2026-08-09` in audit_schema, `16 days ago` in generate_report
+ * and simply "fresh" here, and a reader had no way to line the three up. The age is quoted
+ * through `describeDataAge` — the SAME function the report's own age line goes through — so the
+ * two cannot word the same crawl differently.
+ *
+ * But it is a decoration, never a decision: a caller that omits the ages (apps/web's panel today)
+ * gets the sentence it got before, and `crawlFresh` / `pullFresh` remain the only inputs any rung
+ * branches on. `describeDataAge(null)` returns "age unknown", which is true but useless inside
+ * this sentence, so an unmeasured age produces no parenthetical at all.
+ */
+function agedClause(ageDays: number | null | undefined): string {
+  return ageDays === undefined || ageDays === null ? "" : ` (${describeDataAge(ageDays)})`;
+}
+
 export function decideProjectNextStep(s: ProjectSignals): NextStep {
+  // Rung 0 — the domain does not resolve. FIRST, above even the no-crawl foundation, because
+  // every rung below recommends work against a host that is not there: the measured case
+  // (2026-08-25) registered a nonsense domain and was told to run crawl_site, a 20-credit job
+  // whose first DNS lookup cannot succeed. Nothing offered here costs credits.
+  //
+  // It does NOT refuse or un-track anything — a pre-launch site is a legitimate project and the
+  // operator signed WARN, not block. It withholds the RECOMMENDATION to spend, and says why.
+  //
+  // `=== true`, never a truthy test: see ProjectSignals.domainUnreachable. An unchecked or
+  // unanswerable domain falls straight through to the ladder that existed before this rung.
+  if (s.domainUnreachable === true) {
+    return {
+      primary: "setup_project",
+      reason:
+        "This project's domain does not resolve — a DNS lookup found no such name, so a crawl " +
+        "would have nothing to fetch and the paid tools would have nothing to measure. If the " +
+        "site simply is not live yet, there is nothing to do until it is. If the domain was " +
+        "mistyped, run setup_project with the correct one; if it was retired, untrack_project " +
+        "removes it.",
+      // Free steps only. Naming any paid tool here would put the same recommendation back one
+      // line lower, which is the entire defect this rung exists to remove.
+      upcoming: ["list_projects", "untrack_project", "whats_next (once the domain is live)"],
+      allSet: false,
+    };
+  }
   // Rung 1 — no crawl: the GSC-less foundation (works without Search Console).
   if (!s.hasCrawl) {
     return {
@@ -96,7 +170,37 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       allSet: false,
     };
   }
-  // Rung 3 — the connection EXISTS but the credential behind it is dead. Every rung below this
+  // Rung 3 — rows WERE pulled once, but there is no connection now. Reaching this line already
+  // means `hasPull` is true: rung 2 consumed the `!gscConnected && !hasPull` case, so the only
+  // way past it without a connection is with a pull behind you.
+  //
+  // THE MEASURED WRONG (2026-08-25, dentnotion.com). Every rung below reads `hasPull` as if it
+  // stood for a LIVE Search Console link. It does not: it is the existence of a succeeded
+  // `pull_gsc_data` job, which survives a disconnect, an un-mapped property and an account
+  // deletion forever. That project had one such job from 2026-08-09 and NO connection — in the
+  // same session `list_gsc_properties` printed "not used by any project" and `connect_gsc` took
+  // its not-connected branch — and the router answered "You have a fresh crawl and fresh Search
+  // Console data — you're all set", then recommended generate_report at 15 credits. It skipped
+  // the FREE connect_gsc that was the actual next step, and it charged for the privilege.
+  //
+  // So the ladder now separates "rows exist" from "the link is live", and the two rungs that
+  // follow are the two ways a link can be not-live: never/no-longer connected (here), and
+  // connected-but-dead (below). Both answer connect_gsc, and neither is all set.
+  if (!s.gscConnected) {
+    return {
+      primary: "connect_gsc",
+      reason:
+        "This project has Search Console data from an earlier pull, but no live connection — " +
+        "so that data can never be refreshed and the tools that read it are working from a " +
+        "frozen snapshot. Reconnecting is free; do it before paying for anything that reads " +
+        "Search Console. Your crawl is ready to analyze either way.",
+      // Same discipline as the dead-credential rung below: nothing that reads a pull this
+      // project can no longer refresh. The audits need no Google account at all.
+      upcoming: [...AUDIT_TRIO, "generate_report"],
+      allSet: false,
+    };
+  }
+  // Rung 4 — the connection EXISTS but the credential behind it is dead. Every rung below this
   // one recommends pull_gsc_data, which cannot succeed until the user re-approves: the router
   // would be handing out a guaranteed failure and calling it the next step. Reconnect first.
   //
@@ -122,7 +226,7 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       allSet: false,
     };
   }
-  // Rung 4 — Search Console connected but nothing pulled yet: pull to unlock the discovery tools.
+  // Rung 5 — Search Console connected but nothing pulled yet: pull to unlock the discovery tools.
   if (s.gscConnected && !s.hasPull) {
     return {
       primary: "pull_gsc_data",
@@ -145,8 +249,9 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
     return {
       primary: "pull_gsc_data",
       reason:
-        `Your Search Console data is more than ${FRESHNESS_WINDOW_DAYS} days old. Refresh it before ` +
-        "acting on quick wins so the numbers reflect the current picture.",
+        `Your Search Console data${agedClause(s.pullAgeDays)} is more than ` +
+        `${FRESHNESS_WINDOW_DAYS} days old. Refresh it before acting on quick wins so the ` +
+        "numbers reflect the current picture.",
       upcoming: [
         "find_quick_wins",
         "detect_cannibalization",
@@ -161,8 +266,8 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
     return {
       primary: "crawl_site",
       reason:
-        `Your crawl is more than ${FRESHNESS_WINDOW_DAYS} days old. Re-crawl so the audits reflect ` +
-        "the current state of the site.",
+        `Your crawl${agedClause(s.crawlAgeDays)} is more than ${FRESHNESS_WINDOW_DAYS} days old. ` +
+        "Re-crawl so the audits reflect the current state of the site.",
       upcoming: ["audit_onpage", "audit_tech", "audit_schema", "generate_report"],
       allSet: false,
     };
@@ -172,8 +277,10 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
   return {
     primary: "generate_report",
     reason:
-      "You have a fresh crawl and fresh Search Console data — you're all set. Generate a shareable " +
-      "report, and use the monthly-routine prompt to keep everything up to date.",
+      `You have a fresh crawl${agedClause(s.crawlAgeDays)} and fresh Search Console data` +
+      `${agedClause(s.pullAgeDays)} — both inside the ${FRESHNESS_WINDOW_DAYS}-day freshness ` +
+      "window, so you're all set. Generate a shareable report, and use the monthly-routine " +
+      "prompt to keep everything up to date.",
     upcoming: [
       "find_quick_wins",
       "detect_cannibalization",

@@ -1,4 +1,8 @@
 import { z } from "zod";
+// A module with no imports of its own — a pure table of vendor spellings — so reading it here
+// leaves this free tool exactly where it was in the vendor-spend import graph
+// (credits/paid-balance.graph.test.ts), which is: nowhere near it.
+import { checkLocationName, locationRefusalMessage } from "../dfs/locations.ts";
 import { SERP_DEVICES, type TrackedDevice } from "./serp-devices.ts";
 import {
   loadOwnProject,
@@ -97,7 +101,10 @@ const inputSchema = z.object({
     .default(DEFAULT_LOCATION_NAME)
     .describe(
       `Where the search is measured, as DataForSEO names it (default "${DEFAULT_LOCATION_NAME}"). ` +
-        "It is part of what is tracked: the same keyword in two locations is two tracked keywords.",
+        "It is part of what is tracked: the same keyword in two locations is two tracked keywords. " +
+        "The vendor matches this name exactly and its spelling is sometimes not the usual English " +
+        'one (it calls Turkey "Turkiye"); a name it is known not to use is refused here, with the ' +
+        "right one named, rather than at the end of a paid SERP snapshot.",
     ),
   language_code: z
     .string()
@@ -231,6 +238,15 @@ export function makeTrackKeywordsTool(deps: TrackKeywordsDeps = {}): RegisteredT
       const keywords = normalizeKeywordList(input.keywords);
       if (keywords.length === 0) {
         return errorResult(NO_KEYWORDS_MESSAGE);
+      }
+      // THE LOCATION IS CHECKED HERE, AT REGISTRATION, AND NOWHERE CHEAPER. A name DataForSEO does
+      // not know is not refused when it is typed — it is refused at the END of the paid SERP call
+      // this registration is the standing request for, and the caller is charged for the refusal
+      // (measured 2026-08-25: "Türkiye" registered free, then cost 13 credits and $0.03 for zero
+      // data). This is a pure string check: no vendor call, no network, nothing charged.
+      const badLocation = checkLocationName(input.location_name);
+      if (badLocation !== null) {
+        return errorResult(`Nothing was tracked: ${locationRefusalMessage(badLocation)}`);
       }
       const identity = {
         projectId: input.project_id,

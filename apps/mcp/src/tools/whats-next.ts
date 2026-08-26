@@ -1,14 +1,23 @@
 import { z } from "zod";
 import {
+  dataAgeInDays,
   decideProjectNextStep,
   FRESHNESS_WINDOW_DAYS,
   type NextStep,
   type ProjectSignals,
 } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
+import {
+  CREDIT_UNITS,
+  TOOL_COSTS,
+  creditCostFor,
+  isPerUnitTool,
+  type ToolName,
+} from "../credits/costs.ts";
 import { forUser, getServiceClient, type ServiceClient } from "../db.ts";
 import { loadGscTokenStatus, type LoadTokenStatusFn } from "../gsc-data/index.ts";
 import { getLatestSucceededResult } from "../queue/boss.ts";
+import { checkDomainReachable, type CheckDomainFn } from "./domain-reachability.ts";
 import {
   ARCHIVED_PROJECT_MESSAGE,
   loadOwnProject,
@@ -69,12 +78,53 @@ export type WhatsNextState =
   | { readonly kind: "project_archived" }
   | { readonly kind: "project"; readonly domain: string; readonly signals: ProjectSignals };
 
+/**
+ * What one recommendation costs, in words — "free", "30 credits", or "" for anything that is not
+ * a priced tool ("monthly-routine (prompt)", "whats_next (once the domain is live)").
+ *
+ * WHY IT EXISTS. The router printed eight recommendations and not one credit cost (defect card 5,
+ * 2026-08-25): the same list named `generate_report` at 15 credits and `audit_onpage` at 30 with
+ * nothing to tell them apart, and a non-expert — the exact audience this tool is for — had to
+ * leave the router and go read the docs to find out what "next step" would charge them.
+ *
+ * IT READS TOOL_COSTS, IT NEVER RESTATES ONE. NEVER #6 forbids changing a price; SHOWING one is
+ * outside it. But a second literal would be a second price, so every number here comes from the
+ * signed table through `creditCostFor`, and a per-unit tool renders its real RANGE rather than a
+ * unit price no call ever costs (the reason CREDIT_UNITS exists at all). None of the ladder's
+ * current recommendations is per-unit; the branch is here so that adding one cannot quietly print
+ * "8 credits" for a call that bills 13 to 85.
+ *
+ * The name is taken as the FIRST token, because the ladder decorates some entries
+ * ("connect_gsc (optional)"). An unrecognised token yields "", never "free" — guessing that an
+ * unknown step is free is the one wrong answer this function could give.
+ */
+export function priceLabel(recommendation: string): string {
+  const name = recommendation.split(" ")[0] ?? "";
+  if (!(name in TOOL_COSTS)) return "";
+  const tool = name as ToolName;
+  if (isPerUnitTool(tool)) {
+    const rule = CREDIT_UNITS[tool];
+    const low = creditCostFor(tool, rule.min_units);
+    const high = creditCostFor(tool, rule.max_units);
+    return `${low}-${high} credits per call`;
+  }
+  return TOOL_COSTS[tool] === 0 ? "free" : `${TOOL_COSTS[tool]} credits`;
+}
+
+/** `item`, with its price appended when it has one. */
+function withPrice(item: string): string {
+  const label = priceLabel(item);
+  return label === "" ? item : `${item} — ${label}`;
+}
+
 /** Render a resolved project's next step as the tool's plain-text output (pure). */
 export function formatNextStep(domain: string, step: NextStep): string {
+  const price = priceLabel(step.primary);
+  const primary = price === "" ? step.primary : `${step.primary} (${price})`;
   const header = step.allSet
-    ? `You're all set for ${domain} — recommended next: run ${step.primary}.`
-    : `Next step for ${domain}: run ${step.primary}.`;
-  const then = step.upcoming.map((item) => `- ${item}`).join("\n");
+    ? `You're all set for ${domain} — recommended next: run ${primary}.`
+    : `Next step for ${domain}: run ${primary}.`;
+  const then = step.upcoming.map((item) => `- ${withPrice(item)}`).join("\n");
   return `${header}\n\nWhy: ${step.reason}\n\nThen:\n${then}`;
 }
 
@@ -83,18 +133,31 @@ export function renderWhatsNext(state: WhatsNextState): string {
   switch (state.kind) {
     case "no_projects":
       return (
-        "You have no projects yet. Next step: run setup_project with your website domain, e.g. " +
-        'setup_project { "domain": "example.com" }.\n\n' +
+        `You have no projects yet. Next step: run setup_project (${priceLabel("setup_project")}) ` +
+        'with your website domain, e.g. setup_project { "domain": "example.com" }.\n\n' +
         "Then:\n" +
-        "- crawl_site — crawl the site (works without Google Search Console)\n" +
-        "- audit_onpage, audit_tech, audit_schema — analyze the crawl\n" +
-        "- generate_report — produce a shareable report"
+        `- crawl_site (${priceLabel("crawl_site")}) — crawl the site (works without Google ` +
+        "Search Console)\n" +
+        `- audit_onpage (${priceLabel("audit_onpage")}), audit_tech (${priceLabel("audit_tech")}), ` +
+        `audit_schema (${priceLabel("audit_schema")}) — analyze the crawl\n` +
+        `- generate_report (${priceLabel("generate_report")}) — produce a shareable report`
       );
     case "choose_project": {
       const list = state.projects.map((p) => `- ${p.domain} (project_id: ${p.id})`).join("\n");
+      // WHY THIS ANSWERS INSTEAD OF ROUTING. The schema used to promise it would "route from your
+      // project list"; measured on an account with 15 projects it printed the same rows
+      // list_projects prints (defect card 5). Two honest options existed, and this is the one
+      // taken: routing N projects means running every project's signal reads — four tenant-scoped
+      // queries and a DNS lookup EACH — for a 0-credit tool, and then still picking one "next
+      // step" out of fifteen unrelated sites, which is a guess dressed as a recommendation. The
+      // description now says what this does. What changed here is that the answer states the RULE
+      // (one project routes itself; several need naming) rather than reading as a list that
+      // failed to become advice.
       return (
-        "You are tracking more than one project. Tell me which one to look at by calling whats_next " +
-        'with a project_id, e.g. whats_next { "project_id": "..." }.\n\n' +
+        `You are tracking ${state.projects.length} projects, so there is no single next step — ` +
+        "each site is at its own stage. Name one and whats_next will route it (still " +
+        `${priceLabel("whats_next")}): whats_next { "project_id": "..." }. With exactly one ` +
+        "project, whats_next routes it without being asked.\n\n" +
         `Your projects:\n${list}`
       );
     }
@@ -167,24 +230,39 @@ async function readProjectSignals(
   client: ServiceClient,
   userId: string,
   projectId: string,
+  domain: string,
   now: Date,
   loadTokenStatus: LoadTokenStatusFn,
+  checkDomain: CheckDomainFn,
 ): Promise<ProjectSignals> {
-  const [crawl, pull, gscConnected, tokenStatus] = await Promise.all([
+  const [crawl, pull, gscConnected, tokenStatus, reachability] = await Promise.all([
     getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" }),
     getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" }),
     readGscConnected(client, userId, projectId),
     loadTokenStatus(userId, projectId),
+    // BEST-EFFORT, and unlike the health read above that is not an inconsistency — it is this
+    // port's whole contract. "Unknown" is one of its three legitimate answers (see
+    // domain-reachability.ts), so a rejection collapsing to "unknown" says exactly what a
+    // timeout says: nobody found out. The health read throws because there "active" would be a
+    // FABRICATED answer; here there is a real value for "did not find out".
+    checkDomain(domain).catch(() => "unknown" as const),
   ]);
   return {
     hasCrawl: crawl !== null,
     crawlFresh: crawl !== null && isFresh(crawl.createdAt, now),
+    // The AGE, not just the verdict — measured through @pseo/core's `dataAgeInDays`, the same
+    // function generate_report's own age line goes through, so the router can no longer call a
+    // crawl "fresh" while the report calls it "16 days ago" and neither says what the other means.
+    crawlAgeDays: crawl === null ? null : dataAgeInDays(crawl.createdAt, now),
     gscConnected,
     hasPull: pull !== null,
     pullFresh: pull !== null && isFresh(pull.createdAt, now),
+    pullAgeDays: pull === null ? null : dataAgeInDays(pull.createdAt, now),
     // Only a stored 'invalid' is a death. A null status (no connection, no linked account) is
     // "nothing known to be wrong", which the ladder must treat as the pre-signal case.
     gscTokenInvalid: tokenStatus === "invalid",
+    // ONLY a positive "no such name" — never a check that failed to run. See the port.
+    domainUnreachable: reachability === "no_such_domain",
   };
 }
 
@@ -200,6 +278,7 @@ async function loadWhatsNextState(
   now: Date,
   loadProject: LoadProjectFn,
   loadTokenStatus: LoadTokenStatusFn,
+  checkDomain: CheckDomainFn,
 ): Promise<WhatsNextState> {
   if (input.projectId) {
     // The SHARED resolver, not a project read of its own — a per-tool read is a per-tool place
@@ -214,8 +293,10 @@ async function loadWhatsNextState(
       getServiceClient(),
       userId,
       input.projectId,
+      project.domain,
       now,
       loadTokenStatus,
+      checkDomain,
     );
     return { kind: "project", domain: project.domain, signals };
   }
@@ -237,7 +318,15 @@ async function loadWhatsNextState(
   const ordered = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const only = ordered[0];
   if (ordered.length === 1 && only) {
-    const signals = await readProjectSignals(client, userId, only.id, now, loadTokenStatus);
+    const signals = await readProjectSignals(
+      client,
+      userId,
+      only.id,
+      only.domain,
+      now,
+      loadTokenStatus,
+      checkDomain,
+    );
     return { kind: "project", domain: only.domain, signals };
   }
   return { kind: "choose_project", projects: ordered.map((r) => ({ id: r.id, domain: r.domain })) };
@@ -262,6 +351,14 @@ export interface WhatsNextDeps {
    * no seam has no test. Ignored when `loadState` is injected, which replaces the whole loader.
    */
   readonly loadTokenStatus?: LoadTokenStatusFn;
+  /**
+   * DNS reachability for the project's domain (default: the real capped lookup). A PORT because
+   * the DESIGN forbids a spec touching a resolver: a test that made a real lookup would be slow,
+   * flaky, and — for the case that matters, a name that does not exist — would be asserting
+   * something about the internet rather than about this code. Ignored when `loadState` is
+   * injected, which replaces the whole loader.
+   */
+  readonly checkDomain?: CheckDomainFn;
 }
 
 const inputSchema = z.object({
@@ -269,8 +366,8 @@ const inputSchema = z.object({
     .uuid()
     .optional()
     .describe(
-      "Optional project to route from (from setup_project / list_projects). Omit it to route from " +
-        "your project list.",
+      "Optional project to route from (from setup_project / list_projects). Omit it and whats_next " +
+        "routes your only project; if you track several, it lists them and asks which one.",
     ),
 });
 
@@ -280,16 +377,19 @@ export function makeWhatsNextTool(deps: WhatsNextDeps = {}): RegisteredTool {
   const now = deps.now ?? (() => new Date());
   const loadProject = deps.loadProject ?? loadOwnProject;
   const loadTokenStatus = deps.loadTokenStatus ?? loadGscTokenStatus;
+  const checkDomain = deps.checkDomain ?? checkDomainReachable;
   const loadState =
     deps.loadState ??
-    ((userId, input) => loadWhatsNextState(userId, input, now(), loadProject, loadTokenStatus));
+    ((userId, input) =>
+      loadWhatsNextState(userId, input, now(), loadProject, loadTokenStatus, checkDomain));
   return defineTool<WhatsNextInput>({
     name: "whats_next",
     description:
       "Not sure what to do next? whats_next looks at where your project stands — crawl, audits, " +
-      "Search Console, reports — and tells you the single best next step, with a short reason and " +
-      "what comes after. Free (0 credits). Optionally pass a project_id; omit it to route from your " +
-      "project list.",
+      "Search Console, reports — and tells you the single best next step, with a short reason, " +
+      "what each step costs, and what comes after. Free (0 credits). Pass a project_id to route " +
+      "that project; omit it and it routes your only project, or lists them and asks which one " +
+      "if you track several.",
     inputSchema,
     // charge defaults to "surface"; whats_next is 0 credits, so withCredits short-circuits (no ledger).
     handler: async (ctx: AuthContext, input): Promise<ToolResult> => {

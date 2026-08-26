@@ -9,10 +9,12 @@ import {
 import type { AuthContext } from "../auth.ts";
 import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
+import { isFreeVendorSpendLimit } from "../credits/free-vendor-calls.ts";
+import { NOT_CHARGED_SENTENCE, withNoChargeNote } from "../credits/free-refusal.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
-import { creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
+import { TOOL_COSTS, creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
 
 /**
  * Zod-based tool registry — the foundation the docs automation (D11) builds on: a
@@ -193,7 +195,7 @@ export function refundAssurance(charge: ChargeMode, error: unknown): string | nu
     // "unknown": the ledger read failed too. No promise — just the one path that can settle it.
     return "The final state of this call's credit reserve could not be confirmed — contact support if your balance looks short.";
   }
-  return "You were not charged.";
+  return NOT_CHARGED_SENTENCE;
 }
 
 /**
@@ -329,7 +331,13 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     async run(ctx, rawInput) {
       const parsed = spec.inputSchema.safeParse(rawInput ?? {});
       if (!parsed.success) {
-        return errorResult(`Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`);
+        // Free by construction — this returns before ANY charge mode runs, so the guard, the
+        // handler and the enqueue are all unreached and the ledger is never touched. Said out
+        // loud only for a PRICED tool: on a 0-credit tool "you were not charged" is noise about
+        // a charge that could never have happened, and the table is read directly rather than
+        // through creditCostFor, which throws for a per-unit tool when it is handed no count.
+        const refusal = `Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`;
+        return errorResult(TOOL_COSTS[spec.name] > 0 ? withNoChargeNote(refusal) : refusal);
       }
       // D17 confirmation threshold — the ONE cross-cutting credit concern, applied to every charge
       // mode BEFORE dispatch: a call whose estimate exceeds the threshold and did not set
@@ -401,6 +409,24 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       if (isPaidBalanceRequired(error)) {
         return errorResult(error.message);
       }
+      // The paid-balance gate's SIBLING, one axis over, and it lands in this catch for exactly the
+      // same mechanical reason: it lives inside withCredits, which is generic in T and can only
+      // exit by throwing. That gate asks whether an account may spend vendor money at all; this
+      // one asks how much vendor money an account may spend WITHOUT EVER PAYING for a call,
+      // because the $3.00/day vendor cap is fleet-wide and a single client stuck in a retry loop
+      // could spend the whole day's allowance for every other customer. It rations DOLLARS rather
+      // than calls: at the dearest tool's $1.65 a call, a ceiling on CALLS bounded nothing that
+      // mattered (credits/free-vendor-calls.ts).
+      //
+      // The sentence is written at the gate — what happened, why, when it clears, that nothing was
+      // charged — so it is passed through verbatim. It DOES get a log line, unlike paid-balance:
+      // an account burning its whole free allowance is exactly what an operator must be able to
+      // correlate with a vendor-budget complaint, and the gate's own line names the user but no
+      // tool call.
+      if (isFreeVendorSpendLimit(error)) {
+        console.error(`Tool "${tool.name}" refused — free vendor-spend allowance: ${error.message}`);
+        return errorResult(error.message);
+      }
       // The SECOND deliberate refusal with no exit but a throw: a pre-condition the project has
       // not met yet — no crawl, no Search Console pull. Same mechanics as above; here the throw
       // is what makes withCredits RELEASE, so returning an error result at the handler would
@@ -413,8 +439,22 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // The branch keys on the TYPE, never on the text: a plain Error carrying the same words is
       // still an unexplained throw and still belongs in the generic branch. A wider match here
       // would hide the 12 genuine failures that same campaign found wearing this disguise.
+      //
+      // THE FEE SENTENCE IS ADDED HERE, and this is the only place it could go without holes.
+      // Measured 2026-08-25 (review card 12): audit_schema on a project with no crawl did not
+      // charge — 5630 credits before, 5630 after — and did not say so, while keyword_positions
+      // in the same state ends its refusal with "you were not charged". The loaders' sentences
+      // were written one at a time and the reassurance was written into some of them and not
+      // others; appending it at each throw site would leave exactly that kind of hole again.
+      // Every typed pre-condition refusal in the app passes through THIS catch, so one call
+      // covers all fourteen throw sites and every one added later.
+      //
+      // withNoChargeNote adds nothing to a message that already says it in its own words (the
+      // pull_gsc_data property refusal says "No credits were charged"), and refundAssurance is
+      // what decides whether this request may promise anything at all — on charge:"worker" it
+      // may not, and the message goes through untouched.
       if (isPreconditionNotMet(error)) {
-        return errorResult(error.message);
+        return errorResult(withNoChargeNote(error.message, refundAssurance(tool.charge, error)));
       }
       // The THIRD deliberate refusal with no exit but a throw, and the only one whose cure is
       // entirely in the USER's hands: Google refused the stored refresh token (invalid_grant),
@@ -440,7 +480,7 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
         return errorResult(
           `Your Google Search Console connection for ${error.accountEmail} expired, so this data ` +
             `could not be refreshed. ${renderReconnectInstruction(error.reconnectUrl)}\n` +
-            "You were not charged.",
+            NOT_CHARGED_SENTENCE,
         );
       }
       // The FOURTH deliberate refusal with no exit but a throw, and the only one whose cause is

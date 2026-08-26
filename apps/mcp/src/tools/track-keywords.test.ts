@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { DEVICE_MEANS, type SerpDevice } from "../dfs/serp.ts";
+import { checkLocationName } from "../dfs/locations.ts";
 import { SERP_DEVICES, type TrackedDevice } from "./serp-devices.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { ARCHIVED_PROJECT_MESSAGE, projectNotFoundMessage, type ProjectRef } from "./project-target.ts";
@@ -20,6 +21,12 @@ import {
 const ctx: AuthContext = { userId: "user-1", keyId: "key-1" };
 
 const project: ProjectRef = { id: "p-1", domain: "example.test", archivedAt: null };
+
+/** The form a Turkish customer types. Measured 2026-08-25: registered free, then cost 13 credits. */
+const ACCENTED_LOCATION = "Türkiye";
+
+/** The pre-2022 English name, which is ASCII and still not what the vendor calls that country. */
+const RENAMED_LOCATION = "Turkey";
 
 interface Recorded {
   readonly identity: unknown;
@@ -281,11 +288,78 @@ describe("untracking", () => {
 });
 
 describe("the tool touches no vendor and no ledger", () => {
-  it("makes no network call of any kind", async () => {
+  /**
+   * BOTH PATHS, and the second one is the reason this test grew. Validating the location name
+   * against DataForSEO's own list is the one fix here that COULD have been built as a vendor
+   * lookup — and a lookup on every registration would end this tool's "no search engine was
+   * contacted" promise while adding vendor latency to a free write. The refusal path is exercised
+   * here so that a future "just ask the vendor" implementation turns this red instead of shipping.
+   */
+  it("makes no network call of any kind — on the success path or a refusal", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const { tool } = makeTool();
     await tool.run(ctx, ask());
+    await tool.run(ctx, ask({ location_name: ACCENTED_LOCATION }));
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  /**
+   * 0 credits AND registry-owned settlement together are what make "nothing was charged" true:
+   * the guard short-circuits a cost of 0 before it opens a reserve, so there is no ledger round
+   * trip at all (credits/guard.ts). A price change or a move to self-settling would land here.
+   */
+  it("is a 0-credit surface tool, so the guard never opens a reserve", () => {
+    const { tool } = makeTool();
+    expect(TOOL_COSTS.track_keywords).toBe(0);
+    expect(tool.charge).toBe("surface");
+  });
+});
+
+describe("a location name DataForSEO does not know is refused at REGISTRATION", () => {
+  it.each([ACCENTED_LOCATION, RENAMED_LOCATION])(
+    "refuses %s without reading or writing anything",
+    async (typed) => {
+      const { tool, tracked, reads } = makeTool();
+      const result = await tool.run(ctx, ask({ location_name: typed }));
+      expect(result.isError).toBe(true);
+      // Nothing was written, and storage was not even asked — the refusal is pure input.
+      expect(tracked).toHaveLength(0);
+      expect(reads).toHaveLength(0);
+    },
+  );
+
+  /**
+   * THE REFUSAL HAS TO CARRY THE FIX. Asserted as a property rather than against a copy of the
+   * string in locations.ts: whatever name the module offers must be one it then ACCEPTS, and it
+   * must not be the name that was just refused. A message that merely said "invalid" leaves the
+   * customer with the same guess that cost them a paid call.
+   */
+  it.each([ACCENTED_LOCATION, RENAMED_LOCATION])(
+    "hands back a spelling the tool accepts, for %s",
+    async (typed) => {
+      const suggestion = checkLocationName(typed)?.suggestion ?? "";
+      expect(suggestion).not.toBe("");
+      expect(suggestion).not.toBe(typed);
+      expect(checkLocationName(suggestion)).toBeNull();
+      const { tool } = makeTool();
+      expect(textOf(await tool.run(ctx, ask({ location_name: typed })))).toContain(suggestion);
+    },
+  );
+
+  it("accepts the name the refusal offered, and tracks under exactly that name", async () => {
+    const suggestion = checkLocationName(ACCENTED_LOCATION)?.suggestion ?? "";
+    const { tool, tracked } = makeTool();
+    const result = await tool.run(ctx, ask({ location_name: suggestion }));
+    expect(result.isError).toBeUndefined();
+    expect(tracked[0]?.identity).toMatchObject({ locationName: suggestion });
+    expect(textOf(result)).toContain(suggestion);
+  });
+
+  it("still accepts a location nobody has measured — this is not an allowlist", async () => {
+    const { tool, tracked } = makeTool();
+    const result = await tool.run(ctx, ask({ location_name: "United Kingdom" }));
+    expect(result.isError).toBeUndefined();
+    expect(tracked).toHaveLength(1);
   });
 });

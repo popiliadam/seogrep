@@ -16,8 +16,8 @@ import type { PullData } from "./types.ts";
  * WHAT IS STORED IS THE STRUCTURAL RESULT, not the rendered text. The text is prose for a human
  * and its wording is free to change; the numbers underneath are what a second surface can query.
  * Storing the text would force the panel to parse sentences to learn how many quick wins a run
- * found — and `formatQuickWins` already re-words itself for the singular case, so those sentences
- * are not even a stable grammar to parse.
+ * found — and `formatGroupedQuickWins` already re-words itself for the singular case, so those
+ * sentences are not even a stable grammar to parse.
  */
 
 /**

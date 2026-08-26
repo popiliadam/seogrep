@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import {
   DEFAULT_DISCOVER_ROWS,
+  DEFAULT_NOISY_MODE_MAX_VOLUME,
   DEFAULT_RELATED_DEPTH,
   DISCOVER_ENDPOINTS,
   MAX_DISCOVER_ROWS,
@@ -10,23 +11,35 @@ import {
   MAX_SEEDS,
   MIN_RELATED_DEPTH,
   MODE_MEANS,
+  NO_VOLUME_CEILING,
   createMockDiscoverKeywordsPort,
   disabledDiscoverKeywordsPort,
+  parseDiscoverResponse,
   type DiscoverKeywordRow,
   type DiscoverKeywordsPort,
   type DiscoverKeywordsResult,
   type DiscoverMode,
 } from "../dfs/discover-keywords.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS,
+  renderOutputLimitNote,
+} from "./backlink-details.ts";
+import {
+  MAX_RENDERED_OUTPUT_CHARS,
+  MAX_SEED_CHARS,
   MODE_INPUT_RULES,
   MODE_SPECIFIC_FIELDS,
   VENDOR_JUDGEMENT_NOTE,
   buildDiscoverQuery,
   describeSubject,
+  describeVolumeCeiling,
   formatDiscoverKeywords,
   makeDiscoverKeywordsTool,
+  relevanceWarningFor,
   renderDiscoveryCaption,
   renderKeywordRow,
+  TRUNCATION_ADVICE,
   vendorFunctionOf,
 } from "./discover-keywords.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
@@ -82,7 +95,10 @@ async function formattedFixtureAnswer(
     ...overrides,
   } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0];
   const answer = await mockPort().fetchDiscoverKeywords(query);
-  return formatDiscoverKeywords(answer, LOCALE);
+  // The ceiling INTENT travels to the renderer exactly as the handler passes it: the parsed input
+  // is BOTH the port's query and the criteria line's source, so a helper that dropped it here
+  // would prove a sentence the real tool never prints.
+  return formatDiscoverKeywords(answer, { ...LOCALE, max_volume: query.max_volume, min_volume: query.min_volume });
 }
 
 const FULL_ROW: DiscoverKeywordRow = {
@@ -292,6 +308,7 @@ describe("the price controls — the schema's maxima ARE the port's caps", () =>
       "limit",
       "location_code",
       "max_difficulty",
+      "max_volume",
       "min_volume",
       "mode",
       "offset",
@@ -534,8 +551,16 @@ describe("the output says WHICH question was answered, and over WHAT window", ()
   });
 
   it("prints the vendor filters exactly as they were sent, or says none were", async () => {
-    expect(await formattedFixtureAnswer()).toContain("No vendor filter was applied");
-    const filtered = await formattedFixtureAnswer({ min_volume: 500, max_difficulty: 40 });
+    // A CLEAN mode with no bounds is the only lookup that sends nothing at all — the two noisy
+    // modes carry their default ceiling, and this line is what tells them apart.
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("suggestions") })).toContain(
+      "No vendor filter was applied",
+    );
+    const filtered = await formattedFixtureAnswer({
+      ...minimalPortQuery("suggestions"),
+      min_volume: 500,
+      max_difficulty: 40,
+    });
     expect(filtered).toContain(
       '[["keyword_info.search_volume",">=",500],"and",["keyword_properties.keyword_difficulty","<=",40]]',
     );
@@ -588,6 +613,283 @@ describe("the output says WHICH question was answered, and over WHAT window", ()
       'Keyword discovery for your project "example.com"',
     );
     expect(formatDiscoverKeywords(forSite, LOCALE)).not.toContain("your project");
+  });
+});
+
+// =============================================================================================
+// THE NOISY-MODE WARNING AND THE VISIBLE CEILING (imza paketi madde 10, 2026-08-25).
+//
+// The measurement: for_site 0/15 relevant, ideas 0/5, suggestions 8/8 clean, related 5/5 clean.
+// The surface owes the reader TWO things — that the two noisy modes leave relevance to the vendor,
+// and that a default bound was applied to their answer at all. A ceiling nobody is told about is
+// a 40-credit answer trimmed behind the customer's back.
+// =============================================================================================
+describe("the noisy modes warn, and the ceiling they get is VISIBLE", () => {
+  const NOISY: readonly DiscoverMode[] = ["ideas", "for_site"];
+  const CLEAN: readonly DiscoverMode[] = ["suggestions", "related"];
+
+  it("warns on BOTH noisy modes, naming what was measured and what SeoGrep cannot do", async () => {
+    for (const mode of NOISY) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(text).toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+      expect(text).toMatch(/measured to be poor on this mode/i);
+      expect(text).toMatch(/SeoGrep does not read meaning/i);
+      // It points somewhere better rather than only complaining.
+      expect(text).toMatch(/"suggestions" and "related" stay anchored to a seed keyword YOU choose/);
+    }
+  });
+
+  it("reports the two measurements SEPARATELY — the two modes failed differently", async () => {
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("for_site") })).toMatch(
+      /none of its first 15 keywords about the site/i,
+    );
+    expect(await formattedFixtureAnswer({ ...minimalPortQuery("ideas") })).toMatch(
+      /at ordinary search volume rather than national-scale volume/i,
+    );
+  });
+
+  /**
+   * THE HONESTY THE CEILING ITSELF CANNOT PROVIDE (measured): the `ideas` noise was ORDINARY-volume
+   * and off-subject, so no upper bound on volume removes it. Claiming the ceiling fixed relevance
+   * would be exactly the invented verdict NEVER #7 forbids, so the warning says the opposite.
+   */
+  it("refuses to claim the ceiling fixed relevance", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas") });
+    expect(text).toMatch(/cannot remove an off-subject keyword of ordinary volume/i);
+    expect(relevanceWarningFor("ideas")).not.toMatch(/relevant results|now relevant|fixes/i);
+  });
+
+  it("says NOTHING of the kind on the two modes that measured clean", async () => {
+    for (const mode of CLEAN) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(relevanceWarningFor(mode)).toBe("");
+      expect(text).not.toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+    }
+  });
+
+  it("states WHICH ceiling was applied, and the literal argument that moves or removes it", async () => {
+    for (const mode of NOISY) {
+      const text = await formattedFixtureAnswer({ ...minimalPortQuery(mode) });
+      expect(text).toContain(
+        `A DEFAULT search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")} was applied`,
+      );
+      expect(text).toMatch(/Pass "max_volume" to move it, or "max_volume": 0 to remove it/);
+      // The filter really went out, in the vendor's own grammar, at this mode's carrier path.
+      expect(text).toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}]]`);
+    }
+  });
+
+  /**
+   * FOUND BY READING THE REAL OUTPUT, not by a spec. Before the ceiling existed, every clause in
+   * the filter list WAS the caller's, and the line said "bounds you chose" unconditionally. With a
+   * default clause in there that sentence tells the customer they made a choice SeoGrep made — the
+   * exact attribution error this file refuses everywhere else.
+   */
+  it("never attributes SeoGrep's DEFAULT ceiling to the caller as a bound they chose", async () => {
+    const defaulted = await formattedFixtureAnswer({ ...minimalPortQuery("for_site") });
+    expect(defaulted).toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}]]`);
+    expect(defaulted).not.toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+    expect(defaulted).toMatch(/the search-volume ceiling among them is SeoGrep's own default/);
+    // A caller's OWN bound on the same mode is still theirs, and is still said to be.
+    const chosen = await formattedFixtureAnswer({
+      ...minimalPortQuery("for_site"),
+      max_volume: 5_000,
+    });
+    expect(chosen).toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+  });
+
+  it("says a CALLER's own ceiling is theirs, not a default of ours", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas"), max_volume: 5_000 });
+    expect(text).toContain("Your own search-volume ceiling of 5,000 was applied");
+    expect(text).not.toContain("A DEFAULT search-volume ceiling");
+  });
+
+  it("says so when the caller switched the default OFF — silence would read as 'never applied'", async () => {
+    const text = await formattedFixtureAnswer({
+      ...minimalPortQuery("for_site"),
+      max_volume: NO_VOLUME_CEILING,
+    });
+    expect(text).toMatch(/NO search-volume ceiling was applied: you switched this mode's default/);
+    expect(text).toContain("No vendor filter was applied");
+  });
+
+  it("tells a clean mode's reader that no ceiling exists there at all", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("related") });
+    expect(text).toMatch(/No search-volume ceiling was applied — mode "related" has no default one/);
+  });
+
+  /** The empty answer is charged too, so it owes the reader the same two sentences. */
+  it("carries the warning and the ceiling onto the EMPTY answer as well", () => {
+    const empty: DiscoverKeywordsResult = {
+      mode: "for_site",
+      mode_means: MODE_MEANS.for_site,
+      subject: { mode: "for_site", target: "example.com", include_subdomains: true },
+      ordered_by_vendor_field: "keyword_info.search_volume",
+      vendor_filters_applied: [["keyword_info.search_volume", "<=", 100_000]],
+      window: {
+        window_offset: 0,
+        window_limit: 100,
+        window_row_count: 0,
+        vendor_total_count: 0,
+        rows: [],
+      },
+    };
+    const text = formatDiscoverKeywords(empty, LOCALE);
+    expect(text).toContain("No keywords for");
+    expect(text).toMatch(/RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT/);
+    expect(text).toContain("A DEFAULT search-volume ceiling of 100,000 was applied");
+  });
+
+  /** The warning is a caveat about the list; a caveat printed under it is decoration. */
+  it("prints the warning BEFORE the keyword rows, not after them", async () => {
+    const text = await formattedFixtureAnswer({ ...minimalPortQuery("ideas") });
+    const warning = text.indexOf("RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT");
+    const firstRow = text.indexOf("\n• ");
+    expect(warning).toBeGreaterThanOrEqual(0);
+    expect(firstRow).toBeGreaterThan(warning);
+  });
+
+  it("advertises both in the tool description, so a client sees them before it spends", () => {
+    const tool = makeDiscoverKeywordsTool();
+    expect(tool.description).toMatch(/measured returning off-subject national queries/i);
+    expect(tool.description).toContain(
+      `default search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")}`,
+    );
+    const schema = tool.inputJsonSchema as {
+      properties: Record<string, { description?: string; minimum?: number; type?: string }>;
+    };
+    expect(schema.properties.max_volume?.type).toBe("integer");
+    expect(schema.properties.max_volume?.minimum).toBe(NO_VOLUME_CEILING);
+    expect(schema.properties.max_volume?.description).toMatch(/0 to remove it entirely/);
+  });
+
+  /** UI copy is English in this product (signed lesson 4) — the emir dili is not. */
+  it("keeps every new sentence in English", () => {
+    for (const mode of NOISY) {
+      expect(relevanceWarningFor(mode)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+      expect(describeVolumeCeiling(mode, undefined, undefined)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+      expect(describeVolumeCeiling(mode, undefined, 999_999)).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+    }
+  });
+
+  /**
+   * THE HONESTY ASYMMETRY. The port's own DEFAULT_NOISY_MODE_MAX_VOLUME note says the number is
+   * "NOT a measured relevance threshold" and that the noisy rows' volumes were never captured. The
+   * customer text used to assert the opposite as fact — that the ceiling "holds back the very
+   * high-volume national queries" — publishing a measurement nobody made (NEVER #9). What the code
+   * admits and what the customer is told have to be the same thing.
+   */
+  it("never sells the ceiling to the customer as a MEASURED relevance remedy", async () => {
+    const surfaces = [
+      relevanceWarningFor("ideas"),
+      relevanceWarningFor("for_site"),
+      describeVolumeCeiling("for_site", NO_VOLUME_CEILING, undefined),
+      await formattedFixtureAnswer({ ...minimalPortQuery("for_site") }),
+    ];
+    for (const text of surfaces) {
+      expect(text).not.toMatch(/holds back the very high-volume national queries/i);
+    }
+    expect(relevanceWarningFor("for_site")).toMatch(
+      /a convention SeoGrep chose, NOT a measured relevance threshold/,
+    );
+    expect(describeVolumeCeiling("ideas", NO_VOLUME_CEILING, undefined)).toMatch(
+      /a convention SeoGrep chose, not a measured relevance threshold/i,
+    );
+  });
+
+  /**
+   * THE PUBLISHED HALF OF THE SAME CLAIM. `gen-tool-docs --check` only proves page and generator
+   * agree — neither knows what the code admits, which is exactly how the asymmetry got in. This
+   * spec lives here because the two discover-keywords test files are the only ones this task may
+   * write; a claim pinned on one surface and free on the other is not pinned.
+   */
+  it("keeps the published docs page at the same honesty as the code", () => {
+    const page = readFileSync(
+      new URL("../../../web/content/docs/tools-reference/discover-keywords.mdx", import.meta.url),
+      "utf8",
+    );
+    expect(page).not.toMatch(/holds back the very high-volume national queries/i);
+    expect(page).toMatch(/not a measured relevance threshold/i);
+    expect(page).toMatch(/the volume of those rows was never captured/i);
+  });
+});
+
+// =============================================================================================
+// THE MONEY AXIS — a contradictory pair of bounds must never reach a paid, empty lookup.
+//
+// MEASURED before the fix: `for_site` + `min_volume: 200000` put
+// `[[">=",200000],"and",["<=",100000]]` on the wire. DataForSEO SUCCEEDS at returning nothing,
+// the handler returns, and withCredits commits a handler that returns — 40 credits, zero rows,
+// caused by OUR default. On the base branch the same call returned real rows.
+// =============================================================================================
+describe("no contradictory bound pair is ever paid for", () => {
+  withoutSupabaseEnv();
+
+  it("tells the reader OUR ceiling stood down, naming both numbers", async () => {
+    for (const mode of ["for_site", "ideas"] as const) {
+      const text = await formattedFixtureAnswer({
+        ...minimalPortQuery(mode),
+        min_volume: 200_000,
+      });
+      expect(text).toContain(
+        `SeoGrep's default search-volume ceiling of ${DEFAULT_NOISY_MODE_MAX_VOLUME.toLocaleString("en-US")} was NOT applied here`,
+      );
+      expect(text).toContain('your own "min_volume" of 200,000 meets or exceeds it');
+      expect(text).toMatch(/a set that is empty whatever the vendor holds/);
+      // The wire agrees with the sentence: the caller's floor alone, no ceiling clause.
+      expect(text).toContain('[["keyword_info.search_volume",">=",200000]]');
+      expect(text).not.toContain(`"<=",${DEFAULT_NOISY_MODE_MAX_VOLUME}`);
+      // With our default gone, the only remaining bound really IS the caller's.
+      expect(text).toContain("bounds you chose, not ones SeoGrep or DataForSEO recommends");
+    }
+  });
+
+  /**
+   * THE CALLER-vs-CALLER CASE. Both bounds are theirs, so there is no default of ours to withdraw,
+   * and dropping one of theirs would run a different lookup than they asked for. Refused in the
+   * SCHEMA — before the handler, therefore before any reserve, the same place every other
+   * impossible input on this tool lands.
+   */
+  it("refuses min_volume above the caller's own max_volume, FREE, before any reserve", async () => {
+    const tool = makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
+    const refused = await tool.run(CTX, {
+      mode: "suggestions",
+      seed: "seo software",
+      min_volume: 900,
+      max_volume: 100,
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/invalid input/i);
+    expect(refused.content[0]?.text).toMatch(/no keyword could satisfy both/i);
+    // With no Supabase env, anything that REACHED the credit guard would say so instead.
+    expect(refused.content[0]?.text).not.toMatch(/SUPABASE/i);
+  });
+
+  /**
+   * The two NON-contradictions must still get through. Proven with this file's own credit-guard
+   * signal (no Supabase env -> the guard throws naming SUPABASE): reaching it means validation
+   * passed, which a `not.toMatch` on the refusal text could not tell apart from an early return.
+   */
+  it("allows EQUAL bounds — a one-value set is not an empty one", async () => {
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "suggestions",
+        seed: "seo software",
+        min_volume: 500,
+        max_volume: 500,
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  it("leaves max_volume 0 alone — the off switch is not a bound to contradict", async () => {
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "for_site",
+        target: "example.com",
+        min_volume: 900,
+        max_volume: NO_VOLUME_CEILING,
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
   });
 });
 
@@ -710,3 +1012,697 @@ function sampleFor(field: (typeof MODE_SPECIFIC_FIELDS)[number]): unknown {
       return true;
   }
 }
+
+// =============================================================================================
+// S1 — ABSENT IS NOT ZERO, PROVEN FROM THE VENDOR BODY AND NOT FROM A HAND-BUILT ROW.
+//
+// The specs above pin the RENDERER: given a row whose field is already null, it prints words.
+// That leaves the half of the path where a zero could actually be invented — the zod projection —
+// unpinned, and a hand-built row is exactly the test double that is kinder than the runtime
+// (signed lesson 12). These two run the REAL parser over a body shaped like the one measured on
+// 2026-08-25 (Labs keyword_suggestions, "diş beyazlatma", tr/Türkiye), where `keyword_properties`
+// carried four keys and `keyword_difficulty` was NOT among them, and `search_volume_trend` carried
+// `yearly` alone.
+//
+// The pair is the point: the SAME body with the SAME keys present-as-0 must print 0. A parser that
+// collapses absence to zero passes neither, and a parser that collapses zero to absence passes
+// neither. Absent and zero have to be distinguishable in the output, or the closing line this tool
+// family prints ("a field DataForSEO did not report is shown as unreported, never as a zero") is
+// a claim about nothing.
+// =============================================================================================
+
+/** The measured item shape, minus the two keys under test. `core_keyword` is the vendor's own. */
+function suggestionItem(overrides: {
+  readonly keyword_properties: Record<string, unknown>;
+  readonly search_volume_trend: Record<string, unknown>;
+}): unknown {
+  return {
+    keyword: "diş beyazlatma",
+    se_type: "google",
+    location_code: 2792,
+    language_code: "tr",
+    keyword_info: {
+      se_type: "google",
+      last_updated_time: "2026-08-01 00:00:00 +00:00",
+      competition: 0.14,
+      competition_level: "LOW",
+      cpc: 0.35,
+      search_volume: 2400,
+      search_volume_trend: overrides.search_volume_trend,
+    },
+    keyword_properties: overrides.keyword_properties,
+    search_intent_info: { se_type: "google", main_intent: "informational" },
+  };
+}
+
+/** Parse ONE suggestions body through the real parser and render its first row. */
+function renderedSuggestionRow(item: unknown): string {
+  const window = parseDiscoverResponse(envelopeOf({ total_count: 1, items: [item] }), "suggestions", {
+    offset: 0,
+    limit: 10,
+  });
+  const row = window.rows[0];
+  if (row === undefined) throw new Error("the parser dropped the row under test");
+  return renderKeywordRow(row);
+}
+
+/** The DFS envelope, local to these specs so they state the whole body they are about. */
+function envelopeOf(result: unknown): unknown {
+  return { status_code: 20000, tasks: [{ status_code: 20000, result: [result] }] };
+}
+
+describe("S1 — a field absent from the vendor body never becomes a 0", () => {
+  it("prints keyword_difficulty and the silent trend legs as words when the keys are ABSENT", () => {
+    const row = renderedSuggestionRow(
+      suggestionItem({
+        // The four keys the vendor actually sent. `keyword_difficulty` is not one of them — the
+        // key is ABSENT, which is the case under test; `keyword_difficulty: null` would be a
+        // different (and weaker) claim about what DataForSEO returned.
+        keyword_properties: {
+          se_type: "google",
+          synonym_clustering_algorithm: "text_processing",
+          detected_language: "tr",
+          words_count: 2,
+          core_keyword: "diş beyazlatma",
+        },
+        search_volume_trend: { yearly: -45 },
+      }),
+    );
+    expect(row).toContain("keyword_difficulty not reported by DataForSEO");
+    expect(row).toContain("search_volume_trend monthly not reported, quarterly not reported, yearly -45%");
+    expect(row).not.toMatch(/keyword_difficulty 0\b/);
+    expect(row).not.toMatch(/monthly 0%/);
+    expect(row).not.toMatch(/quarterly 0%/);
+    // The fields the vendor DID send are untouched by the rule — this is not a blanket silence.
+    expect(row).toContain("search_volume 2,400");
+    expect(row).toContain("competition_level LOW");
+  });
+
+  it("prints the very same fields as 0 when the vendor reports them AS 0", () => {
+    const row = renderedSuggestionRow(
+      suggestionItem({
+        keyword_properties: {
+          se_type: "google",
+          synonym_clustering_algorithm: "text_processing",
+          detected_language: "tr",
+          words_count: 2,
+          core_keyword: "diş beyazlatma",
+          keyword_difficulty: 0,
+        },
+        search_volume_trend: { monthly: 0, quarterly: 0, yearly: -45 },
+      }),
+    );
+    expect(row).toContain("keyword_difficulty 0");
+    expect(row).toContain("search_volume_trend monthly 0%, quarterly 0%, yearly -45%");
+    expect(row).not.toContain("keyword_difficulty not reported");
+    expect(row).not.toContain("monthly not reported");
+  });
+});
+
+// =============================================================================================
+// S10d item 3 — THE PRICE SENTENCE, PINNED BY MEANING. The same correction as my_pages, and the
+// same arithmetic, because both tools read Labs: one request at $0.012 plus $0.00012 a row, so
+// $0.01212 at 1 row, $0.024 at 100 and $0.132 at 1,000. The per-row half equals the per-request
+// half at exactly 100 rows and is TEN TIMES it at the ceiling — true, and the opposite of the
+// Backlinks family, where 19x the rows cost 13% more and the same sentence was withdrawn.
+//
+// What was false was the half a customer reads: discover_keywords costs a flat 40 credits at
+// `limit` 1 and at `limit` 1,000, so the row count is not their price control. Asserted on the
+// PUBLISHED schema and by meaning, never by a copy of the source string.
+// =============================================================================================
+
+describe("S10d — the limit description states measured Labs behaviour", () => {
+  const schema = makeDiscoverKeywordsTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("no longer tells the caller the row count is their price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+  });
+
+  it("names the flat credit price the caller pays whatever they ask for", () => {
+    expect(limit).toMatch(/40 credits/);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  it("says the row count moves the VENDOR's bill, and how much", () => {
+    expect(limit).toMatch(/dataforseo'?s own bill/i);
+    expect(limit).toMatch(/ten times it at 1000/i);
+  });
+});
+
+// =============================================================================================
+// THE OUTPUT CEILING (2026-08-26).
+//
+// MEASURED THROUGH THIS FORMATTER, before the ceiling existed: a 1,000-row answer rendered
+// 279,699 characters on "for_site", 292,168 on "suggestions", 292,885 on "related" and 309,942 on
+// "ideas" — roughly FIVE TIMES the 62,729-character reply a calling client refused outright on
+// 2026-08-25. The DEFAULT 100-row window already measured 30,566-33,640.
+//
+// A refused reply is the worst shape this product makes: 40 credits and DataForSEO's fee are both
+// spent and the customer sees an error instead of an answer. So the reply is bounded and says what
+// it left out — the rows are still fetched, still billed, and still recorded.
+//
+// The pins below vary FIVE axes, because a ceiling that holds on one mode with one prose block is
+// not a ceiling: mode (all four), window width, keyword length, the caller's own seed list (the
+// one block a caller can inflate without asking for a row), and the pathological single row that
+// is wider than the whole budget.
+// =============================================================================================
+
+/** A window of `count` rows built from one template, each keyword made distinct. */
+function grownRows(count: number, template: DiscoverKeywordRow = FULL_ROW): DiscoverKeywordRow[] {
+  return Array.from({ length: count }, (_, i) => ({
+    ...template,
+    keyword: `${template.keyword} variant ${i}`,
+  }));
+}
+
+/** A complete result for one mode, carrying the rows given. */
+function resultWith(
+  mode: DiscoverMode,
+  rows: readonly DiscoverKeywordRow[],
+  seeds: readonly string[] = ["seo software"],
+): DiscoverKeywordsResult {
+  const subject =
+    mode === "ideas"
+      ? ({ mode, seeds } as const)
+      : mode === "for_site"
+        ? ({ mode, target: "example.com", include_subdomains: true } as const)
+        : mode === "related"
+          ? ({ mode, seed: "seo software", depth: DEFAULT_RELATED_DEPTH } as const)
+          : ({ mode, seed: "seo software" } as const);
+  return {
+    mode,
+    mode_means: MODE_MEANS[mode],
+    subject,
+    ordered_by_vendor_field: "keyword_info.search_volume",
+    vendor_filters_applied: [],
+    window: {
+      window_offset: 0,
+      window_limit: MAX_DISCOVER_ROWS,
+      window_row_count: rows.length,
+      vendor_total_count: 128_400,
+      rows,
+    },
+  };
+}
+
+/** "78 keywords printed above" -> 78; "922 more fetched" -> 922. Read from the note, not assumed. */
+/** One mode's DEFAULT window, filled from that mode's OWN captured fixture rows, rendered. */
+async function defaultWindowRender(mode: DiscoverMode): Promise<string> {
+  const base = await mockPort().fetchDiscoverKeywords({
+    ...minimalPortQuery(mode),
+    limit: MAX_DISCOVER_ROWS,
+    offset: 0,
+    ...LOCALE,
+  } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0]);
+  const vendorRows = base.window.rows;
+  const rows = Array.from({ length: DEFAULT_DISCOVER_ROWS }, (_, i) => {
+    const src = vendorRows[i % vendorRows.length]!;
+    return { ...src, keyword: `${src.keyword} variant ${i}` };
+  });
+  return formatDiscoverKeywords(resultWith(mode, rows), LOCALE);
+}
+
+const MANY_SEEDS = Array.from({ length: MAX_SEEDS }, (_, i) => `enterprise seo platform ${i}`);
+
+function countsInNote(text: string): { printed: number; omitted: number } {
+  const printed = /([\d,]+) keywords? printed above/.exec(text);
+  const omitted = /([\d,]+) more fetched in this same window/.exec(text);
+  if (!printed || !omitted) throw new Error(`no output-limit note in:\n${text.slice(-1200)}`);
+  return {
+    printed: Number(printed[1]!.replace(/,/g, "")),
+    omitted: Number(omitted[1]!.replace(/,/g, "")),
+  };
+}
+
+describe("the reply is bounded, and says what it could not carry", () => {
+  const MODES: readonly DiscoverMode[] = ["ideas", "suggestions", "related", "for_site"];
+
+  /**
+   * THE CONSTANT ITSELF, pinned against numbers that are NOT it. Asserting a rendered reply against
+   * `MAX_RENDERED_OUTPUT_CHARS` alone is a tautology: raise the constant and the assertion follows
+   * it up. So the ceiling is pinned from OUTSIDE — against the measured refusal it is derived from,
+   * and against the sibling surface it deliberately diverges from.
+   */
+  it("keeps the ceiling under the reply size that was actually refused", () => {
+    // MEASURED 2026-08-25: a 62,729-character reply was refused by the calling client outright.
+    // The ceiling must be a clear fraction of it, not merely below it.
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBeLessThan(62_729 * 0.7);
+    // and it is deliberately ABOVE the sibling's, whose default window fits in 28,000 and whose
+    // rows are a different shape. The divergence is a decision; a silent return to 28,000 would
+    // truncate every default lookup, which the next test refuses.
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBeGreaterThan(BACKLINK_MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * THE DEFAULT LOOKUP RETURNS A WHOLE ANSWER (human decision, 2026-08-26). Truncation is for the
+   * caller who asked for a wide window; a customer who passed no `limit` at all pays 40 credits and
+   * must get every keyword the vendor filled the default window with.
+   *
+   * Measured on the REAL fixture rows of each mode, cycled to fill the window — the same rows the
+   * ceiling arithmetic was derived from, so this pin moves when that measurement moves.
+   */
+  it("prints the DEFAULT window WHOLE on all four modes — no note, nothing left out", async () => {
+    for (const mode of MODES) {
+      const text = await defaultWindowRender(mode);
+      expect(text, `${mode} truncated its DEFAULT window`).not.toMatch(/output limit reached/i);
+      expect(text.match(/^• /gm)?.length, `${mode} printed the wrong row count`).toBe(
+        DEFAULT_DISCOVER_ROWS,
+      );
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    }
+  });
+
+  /** The same guarantee with the caller's own seed list at its widest — the other prose axis. */
+  it("prints the DEFAULT window whole even under a 200-seed heading", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(DEFAULT_DISCOVER_ROWS), MANY_SEEDS),
+      LOCALE,
+    );
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text.match(/^• /gm)?.length).toBe(DEFAULT_DISCOVER_ROWS);
+    expect(text.length).toBeLessThanOrEqual(40_000);
+  });
+
+  /**
+   * THE ARITHMETIC IN THE SOURCE IS RE-MEASURED, AND READ BACK OUT OF THE SOURCE (signed lesson 11).
+   *
+   * The block above `MAX_RENDERED_OUTPUT_CHARS` is headed MEASURED and derives the ceiling from
+   * three numbers. A number in a comment is not measured by anyone after the day it was written —
+   * this file's first version carried a note reserve of 748 that was never the value the code
+   * reserves, sitting inside a MEASURED block where nothing questions it. So both halves are
+   * pinned: the values are re-measured here, and the DIGITS PRINTED IN THE COMMENT are parsed out
+   * and compared to them. Editing one without the other is red.
+   */
+  it("re-measures the ceiling arithmetic AND the digits the source prints for it", async () => {
+    const worstDefault = Math.max(
+      ...(await Promise.all(MODES.map(async (mode) => (await defaultWindowRender(mode)).length))),
+    );
+    const noteReserve =
+      renderOutputLimitNote(
+        "keyword",
+        DEFAULT_DISCOVER_ROWS,
+        DEFAULT_DISCOVER_ROWS,
+        TRUNCATION_ADVICE,
+      ).length + "\n\n".length;
+    const headroom = MAX_RENDERED_OUTPUT_CHARS - worstDefault - noteReserve;
+    // The sum is the ceiling, by construction.
+    expect(worstDefault + noteReserve + headroom).toBe(MAX_RENDERED_OUTPUT_CHARS);
+    // and the headroom is real room, not a rounding artefact: ~19 keyword rows at ~300 characters.
+    expect(headroom).toBeGreaterThan(15 * 300);
+
+    // NOW THE COMMENT ITSELF. Read off the arithmetic LINE that carries each term, not from
+    // anywhere in the file: the same digits also appear in the prose around the sum, and a pin that
+    // any occurrence satisfies would go green on a sum whose lines had gone stale.
+    const source = readFileSync(new URL("./discover-keywords.ts", import.meta.url), "utf8");
+    const term = (label: RegExp): number => {
+      const found = new RegExp(`${label.source}\\s+([\\d,]+)`).exec(source);
+      if (!found) throw new Error(`no arithmetic line in the source matches ${label}`);
+      return Number(found[1]!.replace(/,/g, ""));
+    };
+    expect(term(/worst DEFAULT render \(ideas, 100 rows\)/)).toBe(worstDefault);
+    expect(term(/\+ the output-limit note reserved at its widest/)).toBe(noteReserve);
+    expect(term(/what a default lookup must be allowed to print/)).toBe(worstDefault + noteReserve);
+    expect(term(/\+ headroom for longer keywords than the fixtures'/)).toBe(headroom);
+    expect(term(/\*   MAX_RENDERED_OUTPUT_CHARS/)).toBe(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * THE ONE AXIS THE ECHO BUDGET COULD NOT CLOSE, closed in the schema (2026-08-26).
+   *
+   * MEASURED with no per-seed bound: a 39,000-character seed rendered 42,666 characters carrying
+   * ZERO keywords, and a 60,000-character seed rendered 63,666 — past this ceiling AND past the
+   * 62,729 a client refused outright. The customer paid 40 credits and could not see one keyword.
+   * The first seed is echoed whole on purpose (half a quoted keyword is a different keyword), so
+   * the bound has to be on the INPUT.
+   */
+  it("refuses a seed longer than the bound, FREE, before any reserve — on every mode that takes one", async () => {
+    const monstrous = "y".repeat(60_000);
+    const tool = makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
+    for (const input of [
+      { mode: "suggestions", seed: monstrous },
+      { mode: "related", seed: monstrous },
+      { mode: "ideas", seeds: ["seo software", monstrous] },
+    ]) {
+      const refused = await tool.run(CTX, input);
+      expect(refused.isError, `${input.mode} accepted a 60,000-character seed`).toBe(true);
+      expect(refused.content[0]?.text).toMatch(/invalid input/i);
+      // With no Supabase env, anything that REACHED the credit guard would say so instead — so
+      // this is the proof the refusal is free, not merely that an error came back.
+      expect(refused.content[0]?.text).not.toMatch(/SUPABASE/i);
+    }
+  });
+
+  it("publishes the seed bound on the schema, and still accepts a seed at the bound", async () => {
+    const schema = makeDiscoverKeywordsTool().inputJsonSchema as {
+      properties: Record<string, { maxLength?: number; items?: { maxLength?: number } }>;
+    };
+    expect(schema.properties.seed?.maxLength).toBe(MAX_SEED_CHARS);
+    expect(schema.properties.seeds?.items?.maxLength).toBe(MAX_SEED_CHARS);
+    // A seed EXACTLY at the bound passes validation: proven by this file's credit-guard signal,
+    // which only a request that got past the schema can reach.
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "suggestions",
+        seed: "z".repeat(MAX_SEED_CHARS),
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  it("keeps the reply bounded when every seed is at the bound", () => {
+    const seeds = Array.from({ length: MAX_SEEDS }, () => "q".repeat(MAX_SEED_CHARS));
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(MAX_DISCOVER_ROWS), seeds),
+      LOCALE,
+    );
+    expect(text.length).toBeLessThanOrEqual(40_000);
+    expect(countsInNote(text).printed).toBeGreaterThan(20);
+  });
+
+  it("holds the ceiling on all four modes at the schema's widest window", () => {
+    for (const mode of MODES) {
+      const text = formatDiscoverKeywords(
+        resultWith(mode, grownRows(MAX_DISCOVER_ROWS)),
+        LOCALE,
+      );
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+      // The same bound as a LITERAL, so raising the constant cannot carry this assertion with it.
+      expect(text.length, `${mode} overflowed the literal bound`).toBeLessThanOrEqual(40_000);
+      // and it is not bounded by returning nothing: the answer still carries keyword rows.
+      expect(countsInNote(text).printed).toBeGreaterThan(20);
+    }
+  });
+
+  it("holds the ceiling when the KEYWORDS themselves are long", () => {
+    const long: DiscoverKeywordRow = { ...FULL_ROW, keyword: "x".repeat(400) };
+    for (const mode of MODES) {
+      const text = formatDiscoverKeywords(resultWith(mode, grownRows(500, long)), LOCALE);
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    }
+  });
+
+  it("holds the ceiling when the CALLER's own seed list is the thing inflating the reply", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(MAX_DISCOVER_ROWS), MANY_SEEDS),
+      LOCALE,
+    );
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    expect(text.length).toBeLessThanOrEqual(40_000);
+  });
+
+  /**
+   * The seed echo is the one block a caller can inflate without asking for a single extra keyword,
+   * and the budget above spends whatever the prose leaves — so an unbounded heading does not break
+   * the ceiling, it EATS the answer. MEASURED: 200 ordinary seeds quoted in full cost 19 of the 83
+   * keyword rows a one-seed lookup prints, at the same 40 credits.
+   */
+  it("summarises a long seed list instead of letting it eat the keywords that were paid for", () => {
+    const rows = grownRows(MAX_DISCOVER_ROWS);
+    const one = formatDiscoverKeywords(resultWith("ideas", rows, ["seo software"]), LOCALE);
+    const many = formatDiscoverKeywords(resultWith("ideas", rows, MANY_SEEDS), LOCALE);
+    expect(countsInNote(many).printed).toBeGreaterThanOrEqual(countsInNote(one).printed - 5);
+    // The COUNT is exact and the remainder is named, so a caller can tell their own input was not
+    // quietly shortened — and the first seed is still quoted whole.
+    expect(many).toContain(`${MAX_SEEDS} seed keywords`);
+    expect(many).toMatch(/and [\d,]+ more you sent that are not repeated here/);
+    expect(many).toContain('"enterprise seo platform 0"');
+  });
+
+  it("counts the cut EXACTLY — printed plus omitted is the window the vendor filled", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", grownRows(1_000)), LOCALE);
+    const { printed, omitted } = countsInNote(text);
+    expect(printed + omitted).toBe(1_000);
+    expect(omitted).toBeGreaterThan(0);
+    // The count the note reports is the count the reply really printed.
+    expect(text.match(/^• /gm)?.length).toBe(printed);
+  });
+
+  it("never lets the cut read as an absence: the note is loud and says it was paid for", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", grownRows(1_000)), LOCALE);
+    expect(text).toMatch(/output limit reached/i);
+    expect(text).toMatch(/more fetched in this same window but not printed/i);
+    expect(text).toMatch(/charged for either way/i);
+    // The whole-set count is untouched by the cut — the window is still a slice of the vendor's
+    // set, and the reply still says so rather than presenting the printed rows as the total.
+    expect(text).toContain("DataForSEO counts 128,400 keywords matching this lookup in total");
+    expect(text).toContain("1,000 keywords in this window");
+  });
+
+  it("says how to reach the rows that were paid for and not printed", () => {
+    const text = formatDiscoverKeywords(resultWith("related", grownRows(1_000)), LOCALE);
+    expect(text).toMatch(/advance "offset" by the number printed above/i);
+    expect(text).toContain(`${TOOL_COSTS.discover_keywords}-credit call`);
+    // and it refuses the two comforting readings that are false.
+    expect(text).toMatch(/SeoGrep does not hold them for you/i);
+    expect(text).toMatch(/asking for fewer rows does not cost less/i);
+  });
+
+  it("prints no output-limit note at all when the whole window fits", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", grownRows(5)), LOCALE);
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text.match(/^• /gm)?.length).toBe(5);
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  it("takes rows WHOLE — the last keyword printed is a complete row, never a cut one", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", grownRows(1_000)), LOCALE);
+    const { printed } = countsInNote(text);
+    const rowLines = text.split("\n").filter((line) => line.startsWith("• "));
+    // Every printed keyword is one of the keywords the window carried, in full.
+    expect(rowLines[rowLines.length - 1]!).toMatch(/^• seo tools variant \d+$/);
+    // A HALF-PRINTED ROW IS THE FAILURE THIS PIN IS FOR, and the keyword line alone cannot see it:
+    // a row cut anywhere after its first line still starts with a whole keyword. So the LAST field
+    // of the row is counted instead — it appears once per row and nowhere else in the reply, so
+    // one short count is one truncated row.
+    expect((text.match(/last_updated_time /g) ?? []).length).toBe(printed);
+    expect((text.match(/ main_intent /g) ?? []).length).toBe(printed);
+    expect(text).toContain("last_updated_time 2026-07-31 04:12:07 +00:00");
+  });
+
+  it("stays silent about NOTHING even when one row is wider than the whole budget", () => {
+    const monster: DiscoverKeywordRow = { ...FULL_ROW, keyword: "y".repeat(MAX_RENDERED_OUTPUT_CHARS) };
+    const text = formatDiscoverKeywords(resultWith("suggestions", [monster, monster]), LOCALE);
+    const { printed, omitted } = countsInNote(text);
+    expect(printed).toBe(0);
+    expect(omitted).toBe(2);
+    expect(text).not.toContain("• yyy");
+  });
+
+  it("keeps the whole reply in English (imzali ders 4)", () => {
+    const text = formatDiscoverKeywords(resultWith("for_site", grownRows(1_000)), LOCALE);
+    expect(text).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});
+
+// =============================================================================================
+// S23.1' — THE FLAT-ZERO READING NOTES (signed 2026-08-26, 0 credits; scope widened 2026-08-26
+// after a judge probe found the signal bound to keyword_difficulty ALONE while a flat `cpc 0`,
+// a flat `search_volume 0` and a flat `search_volume_trend 0%` went unremarked in the same reply).
+//
+// Measured on the live walkthrough: a "suggestions" lookup returned 13 of 13 rows at
+// `keyword_difficulty 0`. The PARSING was not at fault — a 0 reaches the reader only when
+// DataForSEO sent a 0 — and the vendor's own dedicated difficulty endpoint returns 12 for another
+// keyword in the SAME tr/TR market. What is left is a column with no signal in it.
+//
+// ALL SEVEN per-row numeric columns are bound: search_volume, cpc, competition,
+// keyword_difficulty and all three trend legs. See FLAT_ZERO_COLUMNS in the source.
+// =============================================================================================
+describe("S23.1' — the flat-zero notes on discover_keywords", () => {
+  const FLAT = 'READ THIS FLAT COLUMN AS "NO SIGNAL"';
+  /** Which columns spoke, in the order they spoke. Read from the notes, never assumed. */
+  const notedColumns = (text: string): string[] =>
+    [...text.matchAll(/DataForSEO reported (.+?) 0 for every one of/g)].map((m) => m[1]!);
+
+  const ALL_FLAT = {
+    search_volume: 0,
+    cpc: 0,
+    competition: 0,
+    keyword_difficulty: 0,
+    search_volume_trend: { monthly: 0, quarterly: 0, yearly: 0 },
+  } as const;
+  /** Every bound column, in the order FLAT_ZERO_COLUMNS declares them (= the row's print order). */
+  const EVERY_COLUMN = [
+    "search_volume",
+    "cpc",
+    "competition",
+    "keyword_difficulty",
+    "search_volume_trend monthly",
+    "search_volume_trend quarterly",
+    "search_volume_trend yearly",
+  ];
+
+  const rowsWith = (...overrides: Partial<DiscoverKeywordRow>[]): DiscoverKeywordRow[] =>
+    overrides.map((over, i) => ({ ...FULL_ROW, keyword: `kw ${i}`, ...over }));
+
+  it("(a) ONE flat column speaks, and only that one", () => {
+    const text = formatDiscoverKeywords(
+      resultWith(
+        "suggestions",
+        rowsWith({ keyword_difficulty: 0 }, { keyword_difficulty: 0, search_volume: 8100 }),
+      ),
+      LOCALE,
+    );
+    expect(notedColumns(text)).toEqual(["keyword_difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(1);
+    expect(text).toContain("every one of the 2 keywords above");
+  });
+
+  it("(b) TWO flat columns speak TWICE, in the order the row prints them", () => {
+    const text = formatDiscoverKeywords(
+      resultWith(
+        "suggestions",
+        rowsWith(
+          { cpc: 0, keyword_difficulty: 0 },
+          { cpc: 0, keyword_difficulty: 0, search_volume: 8100 },
+        ),
+      ),
+      LOCALE,
+    );
+    expect(notedColumns(text)).toEqual(["cpc", "keyword_difficulty"]);
+    expect(text.split(FLAT).length - 1).toBe(2);
+  });
+
+  it("(c) THREE flat columns speak three times, still in print order", () => {
+    const text = formatDiscoverKeywords(
+      resultWith(
+        "suggestions",
+        rowsWith(
+          { search_volume: 0, cpc: 0, keyword_difficulty: 0 },
+          { search_volume: 0, cpc: 0, keyword_difficulty: 0 },
+        ),
+      ),
+      LOCALE,
+    );
+    expect(notedColumns(text)).toEqual(["search_volume", "cpc", "keyword_difficulty"]);
+  });
+
+  it("(c) all SEVEN bound columns can speak at once, in the declared order", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", rowsWith({ ...ALL_FLAT }, { ...ALL_FLAT })),
+      LOCALE,
+    );
+    expect(notedColumns(text)).toEqual(EVERY_COLUMN);
+    // LAST — the notes sit after the block that used to end every answer.
+    expect(text.indexOf(FLAT)).toBeGreaterThan(text.indexOf(VENDOR_JUDGEMENT_NOTE));
+    expect(text.trimEnd().endsWith("before acting on search_volume_trend yearly.")).toBe(true);
+  });
+
+  it("(d) NOTHING is said when no column is flat", () => {
+    const text = formatDiscoverKeywords(
+      resultWith(
+        "suggestions",
+        rowsWith({ keyword_difficulty: 0 }, { keyword_difficulty: 12, search_volume: 2400 }),
+      ),
+      LOCALE,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("keyword_difficulty 0");
+    expect(text).toContain("keyword_difficulty 12");
+  });
+
+  it("says NOTHING on a single row — one value never varied from anything", () => {
+    const text = formatDiscoverKeywords(resultWith("suggestions", rowsWith({ ...ALL_FLAT })), LOCALE);
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("keyword_difficulty 0");
+  });
+
+  it("a null row neither breaks a column's pattern nor counts toward it", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", [
+        { ...FULL_ROW, keyword: "dis teli", keyword_difficulty: 0 },
+        { ...SILENT_ROW, keyword: "ortodonti" },
+        { ...FULL_ROW, keyword: "dis beyazlatma", keyword_difficulty: 0 },
+      ]),
+      LOCALE,
+    );
+    expect(notedColumns(text)).toEqual(["keyword_difficulty"]);
+    // TWO, not three: the silent row is not evidence of a zero and is not counted as one.
+    expect(text).toContain("every one of the 2 keywords above");
+    expect(text).toContain("keyword_difficulty not reported by DataForSEO");
+  });
+
+  it("does NOT suppress or rewrite the zeros it is talking about", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", rowsWith({ ...ALL_FLAT }, { ...ALL_FLAT })),
+      LOCALE,
+    );
+    expect(text.split("keyword_difficulty 0\n").length - 1).toBe(2);
+    expect(text.split("search_volume 0 ·").length - 1).toBe(2);
+    expect(text).not.toContain("keyword_difficulty not reported by DataForSEO");
+    expect(text.split("monthly 0%").length - 1).toBe(2);
+  });
+
+  it("claims no CAUSE for the zeros at the surface either", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", rowsWith({ ...ALL_FLAT }, { ...ALL_FLAT })),
+      LOCALE,
+    );
+    const notes = text.slice(text.indexOf(FLAT));
+    for (const claim of [/\bplans?\b/i, /\bunavailable\b/i, /\bnot available\b/i, /\babsent\b/i]) {
+      expect(notes, `a note claims a cause matching ${claim}`).not.toMatch(claim);
+    }
+  });
+
+  /**
+   * THE AXIS ONLY THIS TOOL HAS: the output ceiling truncates, and the notes say "above".
+   *
+   * The notes are RESERVED against the whole window (so the ceiling still holds when they appear)
+   * but PRINTED from the rows that survived — otherwise a 1,000-row window would tell the reader
+   * "every one of the 1,000 keywords above" over a table carrying a hundred of them.
+   */
+  it("counts the rows the reader can SEE, not the rows the window held, and still fits", () => {
+    const rows = grownRows(1_000, { ...FULL_ROW, ...ALL_FLAT });
+    const text = formatDiscoverKeywords(resultWith("ideas", rows), LOCALE);
+    expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    expect(text.length).toBeLessThanOrEqual(40_000);
+    const printed = text.split("\n").filter((line) => line.startsWith("• ")).length;
+    expect(printed).toBeGreaterThan(0);
+    expect(printed).toBeLessThan(rows.length);
+    expect(text).toContain(`every one of the ${printed} keywords above`);
+    expect(text).not.toContain("every one of the 1,000 keywords above");
+  });
+
+  /**
+   * THE MULTI-NOTE BUDGET, MEASURED ACROSS THE WHOLE PROSE SURFACE.
+   *
+   * The reserve is what the prose LEAVES, and the flat-zero notes are prose that only exists on
+   * some answers — so a reserve computed for one note is simply wrong once seven can appear. Every
+   * mode is crossed with every search-volume-ceiling variant (the criteria line's four shapes) at
+   * the schema's widest window, with all seven columns flat, which is the largest scaffold this
+   * renderer can build. Nothing may exceed the ceiling, and — the part a length assertion alone
+   * would miss — NO NOTE MAY BE CUT: each of the seven has to arrive whole.
+   */
+  const ALL_MODES: readonly DiscoverMode[] = ["ideas", "suggestions", "related", "for_site"];
+
+  it.each(ALL_MODES)("keeps %s under the ceiling with all seven notes, whole, on every ceiling variant", (mode) => {
+    const rows = grownRows(1_000, { ...FULL_ROW, ...ALL_FLAT });
+    const variants = [
+      { ...LOCALE },
+      { ...LOCALE, max_volume: 5_000 },
+      { ...LOCALE, max_volume: NO_VOLUME_CEILING },
+      { ...LOCALE, min_volume: 500_000 },
+    ];
+    for (const input of variants) {
+      const text = formatDiscoverKeywords(resultWith(mode, rows, MANY_SEEDS), input);
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+      expect(text.length, `${mode} overflowed the literal bound`).toBeLessThanOrEqual(40_000);
+      expect(notedColumns(text), `${mode} lost a note`).toEqual(EVERY_COLUMN);
+      // WHOLE, not merely present: every note carries its own closing sentence.
+      for (const column of EVERY_COLUMN) {
+        expect(text, `${mode}: the ${column} note was cut`).toContain(`before acting on ${column}.`);
+      }
+      expect(text.trimEnd().endsWith("before acting on search_volume_trend yearly.")).toBe(true);
+    }
+  });
+
+  it("keeps the notes in English (imzali ders 4)", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("suggestions", rowsWith({ ...ALL_FLAT }, { ...ALL_FLAT })),
+      LOCALE,
+    );
+    expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});

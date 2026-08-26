@@ -4,13 +4,17 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   DEFAULT_DISCOVER_ROWS,
+  DEFAULT_NOISY_MODE_MAX_VOLUME,
   DEFAULT_RELATED_DEPTH,
   DISCOVER_ENDPOINTS,
   MAX_DISCOVER_ROWS,
   MAX_RELATED_DEPTH,
   MAX_SEEDS,
   MIN_RELATED_DEPTH,
+  NO_VOLUME_CEILING,
+  isNoisyDiscoverMode,
   resolveDefaultDiscoverKeywordsPort,
+  resolveVolumeCeiling,
   type DiscoverKeywordRow,
   type DiscoverKeywordsPort,
   type DiscoverKeywordsQuery,
@@ -20,6 +24,12 @@ import {
   type DiscoverVolumeTrend,
 } from "../dfs/discover-keywords.ts";
 import type { VendorWindow } from "../dfs/backlink-details.ts";
+// The SAME sentence backlink_details prints when rows were fetched and not shown. It is imported
+// rather than re-written because it is already parameterised on noun and advice — the two things
+// that differ between a link list and a keyword list — and because a second wording of "you paid
+// for these and cannot see them" is a second place for that promise to drift.
+import { renderOutputLimitNote } from "./backlink-details.ts";
+import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -96,6 +106,32 @@ const DEFAULT_LOCATION_CODE = 2840;
  * filters on. Declared here because it bounds a CALLER's input; the value it filters is parsed
  * nullish by the port, so nothing here narrows what the vendor may return.
  */
+/**
+ * HOW LONG ONE SEED KEYWORD MAY BE.
+ *
+ * MEASURED 2026-08-26, and this bound exists because of the measurement. The heading quotes the
+ * caller's seeds back, and {@link renderSeedEcho} bounds the LIST but always echoes the FIRST seed
+ * whole — half a quoted keyword is a different keyword. With no per-seed bound, one seed was the
+ * whole reply: a 39,000-character seed produced a 42,666-character answer carrying ZERO keywords,
+ * and a 60,000-character seed produced 63,666 characters with zero keywords and all 1,000 rows
+ * reported as omitted. The second is not only past this file's own ceiling, it is LARGER than the
+ * 62,729-character reply a client refused outright — so the customer would pay 40 credits, the
+ * vendor would be paid, and no keyword would ever be seen.
+ *
+ * WHERE 200 COMES FROM. The longest keyword in ANY DataForSEO response captured in this repo is 29
+ * characters ("seo software comparison chart", across 33 keywords in the Labs fixtures), so 200 is
+ * roughly seven times the longest thing the vendor has ever been observed calling a keyword, and
+ * about thirty ordinary words. It is not a vendor-published limit — DataForSEO documents none that
+ * this repo has read — so it is stated as OUR bound and the rejection says so. What 200 buys is a
+ * heading that cannot displace the answer: the first seed at its longest plus the 600-character
+ * echo budget keeps the whole seed block under ~850 characters, which the row budget absorbs
+ * without dropping a measurable number of keywords.
+ *
+ * The rejection is a SCHEMA rejection, so it lands where every other impossible input on this tool
+ * lands: before the handler, therefore before the reserve, therefore free (NEVER #2).
+ */
+export const MAX_SEED_CHARS = 200;
+
 const VENDOR_DIFFICULTY_MIN = 0;
 const VENDOR_DIFFICULTY_MAX = 100;
 
@@ -179,22 +215,27 @@ const inputSchema = z
           "belongs to another mode is rejected, not ignored.",
       ),
     seeds: z
-      .array(z.string().min(1))
+      .array(z.string().min(1).max(MAX_SEED_CHARS))
       .min(1)
       .max(MAX_SEEDS)
       .optional()
       .describe(
         `MODE "ideas" ONLY: the seed keywords to draw ideas from (1-${MAX_SEEDS}, the vendor's ` +
-          "own documented ceiling). The keywords that come back are the vendor's, not yours — " +
-          "none of your seeds is guaranteed to appear in the answer.",
+          `own documented ceiling), each at most ${MAX_SEED_CHARS} characters — SeoGrep's bound, ` +
+          "not DataForSEO's, because the answer quotes your seeds back and one enormous seed " +
+          "would crowd out the keywords you paid for. The keywords that come back are the " +
+          "vendor's, not yours — none of your seeds is guaranteed to appear in the answer.",
       ),
     seed: z
       .string()
       .min(1)
+      .max(MAX_SEED_CHARS)
       .optional()
       .describe(
-        'MODES "suggestions" and "related" ONLY: exactly one seed keyword. Both endpoints take a ' +
-          "single keyword, not a list — pass one, and run the tool again for another.",
+        'MODES "suggestions" and "related" ONLY: exactly one seed keyword, at most ' +
+          `${MAX_SEED_CHARS} characters (SeoGrep's bound, not DataForSEO's — see "seeds"). Both ` +
+          "endpoints take a single keyword, not a list — pass one, and run the tool again for " +
+          "another.",
       ),
     depth: z
       .number()
@@ -218,6 +259,18 @@ const inputSchema = z
           "true). Sent to DataForSEO explicitly either way, so the answer never depends on a " +
           "vendor default that could move.",
       ),
+    // WHOSE PRICE — the same correction my_pages carries, and the same arithmetic, because both
+    // tools read Labs. The old sentence ("DataForSEO bills per returned row, so this is the price
+    // control, not a display preference") is half true, and the half a CUSTOMER reads is not: the
+    // call costs a flat 40 credits at `limit` 1 and at `limit` 1,000.
+    //
+    // Computed from the tariff this repo declares (dfs/discover-keywords.ts: $0.012 per request +
+    // $0.00012 per row, one request per lookup): $0.01212 at 1 row, $0.024 at 100, $0.132 at
+    // 1,000. The per-row half equals the per-request half at exactly 100 rows and is ten times it
+    // at the 1,000-row ceiling. So the row count controls the VENDOR's bill — which is what
+    // justifies the CEILING — and never the caller's. The 100 and the ten-times come from the
+    // tariff, not from our caps; moving MAX_DISCOVER_ROWS is a price change (NEVER #6) and would
+    // require recomputing them.
     limit: z
       .number()
       .int()
@@ -226,8 +279,14 @@ const inputSchema = z
       .default(DEFAULT_DISCOVER_ROWS)
       .describe(
         `How many keywords to return (1-${MAX_DISCOVER_ROWS}, default ${DEFAULT_DISCOVER_ROWS}). ` +
-          "DataForSEO bills per returned row, so this is the price control, not a display " +
-          "preference — the flat price was signed against this ceiling.",
+          `It does not change what YOU pay: this call costs ${TOOL_COSTS.discover_keywords} ` +
+          `credits whether you ask for one keyword or ${MAX_DISCOVER_ROWS}, and asking for fewer ` +
+          "rows costs the same. It does move DataForSEO's own bill, unlike SeoGrep's backlink " +
+          "tools where the row count barely shifts it: the Labs tariff is a flat fee per request " +
+          "plus a fee per row, and the per-row half catches the flat half at 100 rows and is ten " +
+          `times it at ${MAX_DISCOVER_ROWS}. That is what fixes the ceiling — the flat credit ` +
+          "price was signed against a full-width request — and it is not a reason to ask for " +
+          "less than you need.",
       ),
     offset: z
       .number()
@@ -249,6 +308,26 @@ const inputSchema = z
           "`keyword_info.search_volume` is at least this. Omitted by default — no filter is sent " +
           "at all, so nothing is dropped on your behalf. Filtering happens at DataForSEO, so it " +
           "changes which rows you are billed for.",
+      ),
+    // WHY THIS ONE HAS A DEFAULT AND ITS SIBLING DOES NOT. `min_volume` is a preference; this is a
+    // correction to a MEASURED defect (dfs/discover-keywords.ts: NOISY_DISCOVER_MODES). It is not
+    // a price control — the flat 40 credits and the `limit` ceiling own the price, and this moves
+    // WHICH rows come back, never how many are billed for.
+    max_volume: z
+      .number()
+      .int()
+      .min(NO_VOLUME_CEILING)
+      .optional()
+      .describe(
+        "OPTIONAL upper bound on DataForSEO `keyword_info.search_volume` — the one filter here " +
+          `that has a DEFAULT. On modes "for_site" and "ideas" a ceiling of ` +
+          `${DEFAULT_NOISY_MODE_MAX_VOLUME} monthly searches is applied when you pass nothing, ` +
+          "because those two modes ask DataForSEO to judge relevance and were measured returning " +
+          "national general-purpose queries that had nothing to do with the subject. The answer " +
+          'always states which ceiling was applied. Pass your own number to move it, or 0 to ' +
+          `remove it entirely. Modes "suggestions" and "related" get NO default ceiling — a ` +
+          "number here still applies to them if you want one. Filtering happens at DataForSEO, so " +
+          "it changes which rows you are billed for.",
       ),
     max_difficulty: z
       .number()
@@ -294,6 +373,31 @@ const inputSchema = z
         });
       }
     }
+    // A FLOOR ABOVE THE CALLER'S OWN CEILING IS AN EMPTY SET, AND THE PRICE IS FLAT. DataForSEO
+    // would SUCCEED at returning nothing, the handler would return, and the credit guard commits a
+    // handler that returns — 40 credits for a set that could not have held a row. Refused here, in
+    // the schema, so it lands with the other free rejections: before the reserve, ledger untouched.
+    //
+    // Only the caller-vs-caller case is refused. When the ceiling in the way is OURS, the port
+    // withdraws it instead (resolveVolumeCeiling) — refusing a sensible request because of a
+    // default we invented would be the wrong half to blame. `max_volume` 0 is the off switch, not
+    // a bound, so it never contradicts anything. Equal bounds are a one-value set, not an empty one.
+    if (
+      input.min_volume !== undefined &&
+      input.max_volume !== undefined &&
+      input.max_volume !== NO_VOLUME_CEILING &&
+      input.min_volume > input.max_volume
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["max_volume"],
+        message:
+          `"min_volume" (${input.min_volume}) is above "max_volume" (${input.max_volume}), so no ` +
+          "keyword could satisfy both and DataForSEO would return an empty list for the full " +
+          "price. Refused before anything was charged: raise max_volume, lower min_volume, or " +
+          'pass "max_volume": 0 to drop the ceiling entirely.',
+      });
+    }
   });
 
 type DiscoverKeywordsInput = z.infer<typeof inputSchema>;
@@ -304,7 +408,13 @@ const DESCRIPTION =
   `${MAX_SEEDS} seed keywords), "suggestions" (longer queries containing one seed), "related" ` +
   '(the "searches related to" keywords for one seed), or "for_site" (keywords DataForSEO ' +
   "considers relevant to a DOMAIN — pass target or project_id). Each mode takes its own input, " +
-  "and a field belonging to another mode is rejected rather than ignored. Returns each keyword " +
+  'and a field belonging to another mode is rejected rather than ignored. "for_site" and "ideas" ' +
+  "leave relevance to DataForSEO and were measured returning off-subject national queries, so " +
+  "their answers carry a warning and a default search-volume ceiling of " +
+  `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} that the answer names and max_volume can move or ` +
+  "remove; " +
+  '"suggestions" and "related" stay anchored to your seed and are left alone. Returns each ' +
+  "keyword " +
   "with DataForSEO's own search_volume, cpc, competition, competition_level, keyword_difficulty " +
   "and search intent, in the vendor's order by search volume — SeoGrep ranks nothing and " +
   "recommends nothing. Synchronous — everything comes back immediately. Costs " +
@@ -404,13 +514,50 @@ export function vendorFunctionOf(mode: DiscoverMode): string {
   return fn;
 }
 
+/**
+ * How much of the caller's OWN seed list is quoted back in the heading before it is summarised.
+ *
+ * `ideas` accepts up to MAX_SEEDS = 200 seeds of unbounded length, so the heading is the one block
+ * of this reply a caller can inflate without asking for a single extra row — 200 ordinary keywords
+ * echo back as several thousand characters. The output ceiling below spends whatever the prose
+ * leaves on keyword rows, so an unbounded heading does not break the ceiling; it silently EATS the
+ * answer, printing fewer of the keywords the 40 credits were spent on. Bounded here so the trade
+ * is made once, visibly, and the count of what was left out travels with it.
+ */
+const SEED_ECHO_CHAR_BUDGET = 600;
+
+/**
+ * The caller's seeds, quoted back until {@link SEED_ECHO_CHAR_BUDGET} is spent, then counted.
+ *
+ * A seed is echoed WHOLE or not at all — half of a caller's keyword, quoted, is a different
+ * keyword. The first seed is always echoed whatever its length, so this never reports a lookup
+ * without naming what it started from; a single absurdly long seed is therefore the one thing here
+ * that can still stretch the heading, and it is the caller's own text.
+ */
+function renderSeedEcho(seeds: readonly string[]): string {
+  const shown: string[] = [];
+  let used = 0;
+  for (const seed of seeds) {
+    const quoted = `"${seed}"`;
+    const cost = quoted.length + (shown.length === 0 ? 0 : 2); // + the ", " that joins it
+    if (shown.length > 0 && used + cost > SEED_ECHO_CHAR_BUDGET) break;
+    shown.push(quoted);
+    used += cost;
+  }
+  const omitted = seeds.length - shown.length;
+  return omitted === 0
+    ? shown.join(", ")
+    : `${shown.join(", ")}, and ${thousands(omitted)} more you sent that are not repeated here`;
+}
+
 /** WHAT WAS ASKED, narrowed on the subject's own discriminant — never on the caller's input. */
 export function describeSubject(subject: DiscoverSubject, project?: ProjectRef | null): string {
   switch (subject.mode) {
     case "ideas": {
-      const seeds = subject.seeds.map((seed) => `"${seed}"`).join(", ");
       const count = subject.seeds.length;
-      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${seeds})`;
+      return `${thousands(count)} seed ${count === 1 ? "keyword" : "keywords"} (${renderSeedEcho(
+        subject.seeds,
+      )})`;
     }
     case "suggestions":
       return `the seed keyword "${subject.seed}"`;
@@ -445,24 +592,138 @@ export function renderHeading(result: DiscoverKeywordsResult, project?: ProjectR
  * with the one the vendor actually received.
  */
 export function renderCriteria(result: DiscoverKeywordsResult, input: LookupLocale): string {
+  // WHOSE BOUNDS THESE ARE. Until the noisy-mode ceiling existed, every clause in this list was
+  // the caller's, and "bounds you chose" was simply true. It is not any more: on `for_site` and
+  // `ideas` a default clause can be in there that the caller never asked for, and attributing it
+  // to them would be the surface telling the customer they made a choice SeoGrep made.
+  const ceiling = resolveVolumeCeiling(result.mode, input.max_volume, input.min_volume);
+  const whose =
+    ceiling.kind === "default"
+      ? "the search-volume ceiling among them is SeoGrep's own default, described in the next " +
+        "line; any other bound there is one you chose. Neither is a recommendation."
+      : "bounds you chose, not ones SeoGrep or DataForSEO recommends.";
   const filters =
     result.vendor_filters_applied.length === 0
       ? "No vendor filter was applied, so nothing was dropped before you saw it."
       : `DataForSEO filtered the set, in the vendor's own grammar: ` +
-        `${JSON.stringify(result.vendor_filters_applied)} — bounds you chose, not ones SeoGrep or ` +
-        "DataForSEO recommends.";
+        `${JSON.stringify(result.vendor_filters_applied)} — ${whose}`;
   return (
     `What this mode returns: ${result.mode_means}\n` +
     `Asked in language ${input.language_code}, location ${input.location_code}. The rows are in ` +
     `DataForSEO's own order, by ${result.ordered_by_vendor_field}, highest first — SeoGrep does ` +
-    `not re-order them and computes no score of its own. ${filters}`
+    `not re-order them and computes no score of its own. ${filters}\n` +
+    // The ceiling is resolved against the RESULT's mode, never the caller's requested one, for the
+    // same reason the heading is: an answer built for a different mode must not wear this one's
+    // caption. `max_volume` is the caller's intent and has nowhere else to come from.
+    describeVolumeCeiling(result.mode, input.max_volume, input.min_volume)
   );
 }
 
-/** The locale echoed back into the criteria line — the caller's own two request facts. */
+/**
+ * The caller's own request facts, echoed back into the criteria line. The locale is two of them;
+ * `max_volume` is the third, and it is the caller's INTENT rather than the resolved ceiling — the
+ * resolution runs here through the port's own resolveVolumeCeiling, against the RESULT's mode, so
+ * the sentence a reader gets is produced by the same function that built the filter that was sent.
+ */
 export interface LookupLocale {
   readonly language_code: string;
   readonly location_code: number;
+  /** Undefined = no opinion (the noisy modes default); NO_VOLUME_CEILING (0) = no ceiling. */
+  readonly max_volume?: number;
+  /** The caller's FLOOR. Read here only to say whether our default ceiling stood down for it. */
+  readonly min_volume?: number;
+}
+
+/**
+ * WHICH SEARCH-VOLUME CEILING REALLY APPLIED, and how to move or remove it. Printed on every
+ * answer, including the empty one.
+ *
+ * A default the reader is not told about is the shape this whole file refuses everywhere else: at
+ * 40 credits a call, silently dropping the rows above a bound nobody mentioned is trimming a
+ * customer's paid answer behind their back. So the ceiling is named, the number is printed, and
+ * the two ways out of it are spelled with the literal argument that does it.
+ */
+export function describeVolumeCeiling(
+  mode: DiscoverMode,
+  requested: number | undefined,
+  minVolume: number | undefined,
+): string {
+  const ceiling = resolveVolumeCeiling(mode, requested, minVolume);
+  switch (ceiling.kind) {
+    // A withdrawal the reader is not told about is the same defect as a silent ceiling, read from
+    // the other side: they would see their own floor honoured and never learn a bound of ours had
+    // been in the way. It names OUR number and THEIR number, so the arithmetic is checkable.
+    case "withdrawn":
+      return (
+        `SeoGrep's default search-volume ceiling of ${thousands(ceiling.max_volume)} was NOT ` +
+        `applied here: your own "min_volume" of ${thousands(minVolume ?? 0)} meets or exceeds it, ` +
+        "and sending both would have asked DataForSEO for keywords above your floor AND below our " +
+        "ceiling — a set that is empty whatever the vendor holds, and you would have paid the " +
+        "flat price for it. Your floor stands alone; nothing was dropped for being high-volume."
+      );
+    case "default":
+      return (
+        `A DEFAULT search-volume ceiling of ${thousands(ceiling.max_volume)} was applied to this ` +
+        `lookup — mode "${mode}" has one because of the relevance note above. Keywords above ` +
+        "that volume were dropped at DataForSEO, so they are not in this window and not in the " +
+        `whole-set count either. Pass "max_volume" to move it, or "max_volume": ` +
+        `${NO_VOLUME_CEILING} to remove it and see the unfiltered set.`
+      );
+    case "caller":
+      return (
+        `Your own search-volume ceiling of ${thousands(ceiling.max_volume)} was applied: keywords ` +
+        `above it were dropped at DataForSEO. Pass "max_volume": ${NO_VOLUME_CEILING} to remove ` +
+        "it entirely."
+      );
+    // WHAT THIS SENTENCE MAY NOT CLAIM. It used to say the ceiling "holds back the very
+    // high-volume national queries", which states as fact something this repo never measured: no
+    // captured response carries those rows' volumes (see DEFAULT_NOISY_MODE_MAX_VOLUME's own note,
+    // "NOT a measured relevance threshold"). The customer text now says what the code says.
+    case "off":
+      return isNoisyDiscoverMode(mode)
+        ? `NO search-volume ceiling was applied: you switched this mode's default bound of ` +
+            `${thousands(DEFAULT_NOISY_MODE_MAX_VOLUME)} off, so nothing was dropped here for ` +
+            "being high-volume. That bound is a convention SeoGrep chose, not a measured " +
+            "relevance threshold — turning it off costs you no accuracy the vendor promised."
+        : `No search-volume ceiling was applied — mode "${mode}" has no default one, and you ` +
+            "asked for none.";
+  }
+}
+
+/**
+ * THE RELEVANCE WARNING for the two modes that were measured returning off-subject keywords —
+ * empty for the two that were not. Printed BEFORE the list, because a caveat under a hundred rows
+ * is not a caveat.
+ *
+ * It reports the measurement and refuses the cure it does not have: SeoGrep does not read meaning,
+ * so it cannot tell an off-topic row from an on-topic one, and it says so rather than implying the
+ * volume ceiling below fixed the problem. It also refuses to describe the ceiling as a MEASURED
+ * remedy — the volume of the walkthrough's noisy rows was never captured (see the port's
+ * DEFAULT_NOISY_MODE_MAX_VOLUME note), so calling it "the bound that holds back national queries"
+ * would publish a measurement nobody made. It is a chosen bound, and it says so.
+ */
+export function relevanceWarningFor(mode: DiscoverMode): string {
+  if (!isNoisyDiscoverMode(mode)) return "";
+  const measured =
+    mode === "for_site"
+      ? 'On a live walkthrough, a "for_site" lookup came back with none of its first 15 keywords ' +
+        "about the site at all — they were national general-purpose queries (weather, " +
+        "translation, government services) of the kind any domain in that country is handed."
+      : 'On a live walkthrough, an "ideas" lookup came back with none of its keywords about the ' +
+        "site — unrelated products and topics, at ordinary search volume rather than " +
+        "national-scale volume.";
+  return (
+    `RELEVANCE HERE IS DATAFORSEO'S JUDGEMENT, AND IT WAS MEASURED TO BE POOR ON THIS MODE. ` +
+    `"${mode}" does not start from a keyword you typed: it asks DataForSEO which keywords belong ` +
+    `to a ${mode === "for_site" ? "domain" : "category"}, and that answer is the vendor's alone. ` +
+    `${measured} SeoGrep does not read meaning and cannot tell you which rows below are about ` +
+    "your subject — it will not filter them for you, and it will not pretend they are all " +
+    'relevant. If they read as off-subject: modes "suggestions" and "related" stay anchored to a ' +
+    "seed keyword YOU choose (the first returns queries containing it, the second what Google " +
+    "itself lists beside it), and both came back clean on the same walkthrough. The volume bound " +
+    "described below is a convention SeoGrep chose, NOT a measured relevance threshold: it drops " +
+    "whatever sits above it, and it cannot remove an off-subject keyword of ordinary volume."
+  );
 }
 
 /**
@@ -513,12 +774,182 @@ function renderNoKeywords(
   return [
     `No keywords for ${describeSubject(result.subject, project)} — DataForSEO Labs ` +
       `${vendorFunctionOf(result.mode)} (mode "${result.mode}").`,
+    // Empty on the two clean modes; `filter(Boolean)` keeps the blank line out of the answer.
+    relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     `DataForSEO returned no keyword for this lookup in the window that was asked for (offset ` +
       `${thousands(offset)}, limit ${thousands(limit)}). That is an answer about this window and ` +
       "these filters — it is not a statement that no such keywords exist.",
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
+
+/**
+ * =====================================================================================
+ * THE OUTPUT CEILING — measured 2026-08-26, and the same defect backlink_details already had
+ * =====================================================================================
+ * MEASURED, by rendering real fixture rows through this very formatter, with the ceiling lifted:
+ *
+ *   mode          100 rows (the DEFAULT)   1,000 rows (the schema maximum)
+ *   ideas                 33,447 chars              309,749 chars
+ *   related               30,670 chars              292,872 chars
+ *   for_site              30,504 chars              279,506 chars
+ *   suggestions           30,566 chars              292,168 chars
+ *
+ * A keyword row costs ~277-307 characters, so a full-width lookup produced a reply roughly FIVE
+ * TIMES the 62,729 characters a calling client refused outright on 2026-08-25 ("exceeds maximum
+ * allowed tokens"). That refusal is the shape this ceiling exists to prevent, and it is the worst
+ * one this product can make: the 40 credits and DataForSEO's own fee are both spent, and the
+ * customer sees NOTHING — not a short answer, an error.
+ *
+ * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
+ *
+ *   worst DEFAULT render (ideas, 100 rows)               33,447
+ *   + the output-limit note reserved at its widest          805
+ *   ------------------------------------------------------------
+ *   what a default lookup must be allowed to print       34,252
+ *   + headroom for longer keywords than the fixtures'     5,748   (~19 more rows)
+ *   ------------------------------------------------------------
+ *   MAX_RENDERED_OUTPUT_CHARS                            40,000
+ *
+ * EVERY LINE OF THAT SUM IS MEASURED, and a test re-measures it and reads these very digits back
+ * out of this comment (signed lesson 11: a number nobody re-measures goes stale inside a block
+ * headed MEASURED, and is then never questioned again). 805 is `renderOutputLimitNote` at its
+ * widest for a 100-row window (803 characters) plus the blank line that separates it — the exact
+ * value {@link formatDiscoverKeywords} reserves.
+ *
+ * and 40,000 is 64% of the 62,729 that was actually refused — comfortably under the measurement
+ * this whole ceiling is derived from, with the rest of the distance kept as margin.
+ *
+ * WHY THIS IS NOT THE SIBLING'S 28,000. backlink_details set that number against the same refusal
+ * and it was right there, because its DEFAULT window (50 links, 20 pages) fits inside it whole and
+ * only the wide windows truncate. THE ROW SHAPE IS DIFFERENT HERE: a keyword row carries two
+ * competition fields, a difficulty score, an intent pair, a three-legged trend and a timestamp, and
+ * the signed default window is 100 of them — so at 28,000 the DEFAULT call truncated too, every
+ * time, printing 83-88 of its 100 keywords. A tool whose default path never returns a whole answer
+ * is not a bounded tool, it is a broken one: truncation is for the caller who asked for a wide
+ * window, not for the caller who asked for nothing in particular. Human decision, 2026-08-26.
+ *
+ * WHAT THIS NUMBER IS NOT: a token measurement. The refusal was reported in TOKENS and this bound
+ * is in CHARACTERS, because this repo has never tokenized keyword-and-timestamp text and will not
+ * publish a ratio it did not measure. The character figure is therefore held well under the one
+ * character count that is known to have been refused, rather than converted into a token estimate
+ * that would read as more precise than the evidence is. A client configured far below the default
+ * cap can still refuse a reply this size; that is a measurement nobody here has taken either.
+ *
+ * WHAT IS STILL BOUNDED. Every window wider than the default still truncates — a 1,000-row lookup
+ * prints 118-131 keywords (measured, by mode) and says so. The rows are FETCHED and BILLED either
+ * way: the vendor request is unchanged, and the run recorded in `subject_lookup_runs` is unchanged.
+ * Only the reply is bounded, and it says how many rows it could not carry.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 40_000;
+
+/** Blocks of the answer are joined by a blank line; the ceiling arithmetic counts those too. */
+const BLOCK_SEPARATOR = "\n\n";
+
+/**
+ * Render rows until the budget is spent. A row is taken ONLY if it fits whole — half a keyword row
+ * is a truncated keyword, which reads as a different keyword, and truncated vendor numbers.
+ */
+function renderWithinBudget(
+  rows: readonly DiscoverKeywordRow[],
+  budget: number,
+): { readonly block: string; readonly printed: number; readonly omitted: number } {
+  const taken: string[] = [];
+  let used = 0;
+  for (const row of rows) {
+    const line = renderKeywordRow(row);
+    const cost = line.length + 1; // + the newline that joins it to the block
+    if (used + cost > budget) break;
+    taken.push(line);
+    used += cost;
+  }
+  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
+}
+
+/**
+ * HOW TO REACH WHAT WAS PAID FOR AND NOT PRINTED. It names the only route that exists — another
+ * lookup at another offset — and refuses two comforting things that are not true: that the omitted
+ * rows are held somewhere for later (the run report keeps the first rows of a window, not all of
+ * them, and nothing re-serves them), and that a wider `limit` would help (the price is flat, so a
+ * bigger window buys rows no reply can carry).
+ */
+export const TRUNCATION_ADVICE =
+  "The rows are in DataForSEO's own order, highest first, so the ones left out are the lowest by " +
+  "that field in this window — absent from this reply, not absent from the vendor, and SeoGrep " +
+  'does not hold them for you. To read them, advance "offset" by the number printed above and ' +
+  `run the lookup again: that is a separate ${TOOL_COSTS.discover_keywords}-credit call, and ` +
+  'asking for fewer rows does not cost less — so raising "limit" past what one reply can carry ' +
+  'buys rows nobody can show you. Narrowing the set with "min_volume", "max_volume" or ' +
+  '"max_difficulty" changes WHICH rows DataForSEO returns, so the keywords you want arrive inside ' +
+  "the window that prints.";
+
+/**
+ * EVERY PER-ROW NUMERIC COLUMN {@link renderKeywordRow} PRINTS, in the order it prints them.
+ *
+ * `fieldLabel` is the vendor's own field name here, because that is what the rows themselves use:
+ * this surface prints `search_volume`, not "volume". The note has to name the column the reader
+ * can find above it, so the two files use different labels for the same vendor field ON PURPOSE.
+ *
+ * ALL THREE TREND LEGS ARE BOUND, not just the monthly one. The trend renders as three separate
+ * signed percentages and a reader acts on any of them, so a note under `monthly` while a flat
+ * `yearly 0%` sits unremarked beside it would teach exactly the wrong lesson about the silence.
+ *
+ * WHAT IS DELIBERATELY NOT HERE:
+ *
+ *   - `competition_level` — a vendor BAND ("HIGH"), a string, with no zero to print.
+ *   - `main_intent` / `foreign_intent` / `last_updated_time` / `keyword` — not numbers either.
+ *
+ * Every column below carries `nonEnglishEvidence: true`, and that is not an assumption:
+ * `fixtures/keyword-overview-tr.json` is a captured Turkish DataForSEO response and it holds
+ * non-zero values for search_volume, cpc, competition, keyword_difficulty AND all three trend
+ * legs. The tests read that file rather than trusting these flags.
+ */
+const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<DiscoverKeywordRow>[] = [
+  {
+    fieldLabel: "search_volume",
+    misreadAs: "that nobody searches for any of these",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume,
+  },
+  {
+    fieldLabel: "cpc",
+    misreadAs: "that none of these keywords are worth anything to advertisers",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.cpc,
+  },
+  {
+    fieldLabel: "competition",
+    misreadAs: "that no advertiser is bidding on any of these",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.competition,
+  },
+  {
+    fieldLabel: "keyword_difficulty",
+    misreadAs: "that every one of these keywords is easy to rank for",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.keyword_difficulty,
+  },
+  {
+    fieldLabel: "search_volume_trend monthly",
+    misreadAs: "that monthly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.monthly ?? null,
+  },
+  {
+    fieldLabel: "search_volume_trend quarterly",
+    misreadAs: "that quarterly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.quarterly ?? null,
+  },
+  {
+    fieldLabel: "search_volume_trend yearly",
+    misreadAs: "that yearly demand for every one of these is perfectly flat",
+    nonEnglishEvidence: true,
+    valueOf: (row) => row.search_volume_trend?.yearly ?? null,
+  },
+];
 
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
 export function formatDiscoverKeywords(
@@ -526,16 +957,60 @@ export function formatDiscoverKeywords(
   input: LookupLocale,
   project?: ProjectRef | null,
 ): string {
-  if (result.window.rows.length === 0) {
+  const rows = result.window.rows;
+  if (rows.length === 0) {
     return renderNoKeywords(result, input, project);
   }
-  return [
+  const before = [
     renderHeading(result, project),
+    // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
+    // trust the list at all. Empty on the two modes it does not apply to.
+    relevanceWarningFor(result.mode),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
-    result.window.rows.map(renderKeywordRow).join("\n"),
+  ].filter((block) => block.length > 0);
+  // RESERVED OVER THE WHOLE WINDOW, PRINTED OVER WHAT SURVIVED. The flat-zero notes are measured
+  // twice on purpose, and the two measurements cannot disagree in the dangerous direction:
+  //   - a window that is uniformly zero in a column has no subset that is not, so the reserve pass
+  //     can only ever find MORE flat columns than the printing pass, never fewer;
+  //   - its row count is at least the printed one, so `exactCount` gives it at least as many
+  //     digits, and each reserved note is at least as long as the one really printed.
+  // The notes the reader gets are therefore built from the rows the reader can SEE — they say
+  // "above" — while the room booked for them is the widest they could possibly have been. On a
+  // hard truncation that leaves fewer than MIN_FLAT_ZERO_ROWS printed values in a column, that
+  // column correctly says nothing at all and simply gives its reserved room back to the rows.
+  const flatReserve = flatZeroNotes(rows, FLAT_ZERO_COLUMNS, "keywords");
+  const after = [VENDOR_JUDGEMENT_NOTE, ...flatReserve];
+  // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
+  // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
+  // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
+  // and overflow on another. Measuring the scaffold makes the ceiling true on all four.
+  const scaffold = [...before, ...after].join(BLOCK_SEPARATOR).length + BLOCK_SEPARATOR.length;
+  // The note's own room, reserved at its WIDEST: both counts at the window's full row count is an
+  // upper bound on the digits the real note can carry. Reserved before the rows are laid out, so
+  // the sentence that explains the truncation can never be the thing that overflows the ceiling.
+  const noteReserve =
+    renderOutputLimitNote("keyword", rows.length, rows.length, TRUNCATION_ADVICE).length +
+    BLOCK_SEPARATOR.length;
+  const shown = renderWithinBudget(rows, MAX_RENDERED_OUTPUT_CHARS - scaffold - noteReserve);
+  const flat = flatZeroNotes(rows.slice(0, shown.printed), FLAT_ZERO_COLUMNS, "keywords");
+  return [
+    ...before,
+    // Empty only when one keyword row is itself wider than the whole budget; the note below still
+    // states how many rows the window held, so the reply never goes silent about them.
+    ...(shown.block === "" ? [] : [shown.block]),
+    // WHERE THE LIST STOPS is where the reader asks whether that was all of it, so the answer is
+    // there. It is not the relevance warning's job — that one decides whether to trust the list at
+    // all and must come first; this one explains an ending the reader has just reached.
+    ...(shown.omitted === 0
+      ? []
+      : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
     VENDOR_JUDGEMENT_NOTE,
-  ].join("\n\n");
+    // AT THE VERY END, one per flat column, in the order the columns are PRINTED on the rows —
+    // see format/flat-zero.ts for what was measured and what these sentences are forbidden to
+    // claim. They add a reading note beside the zeros and rewrite none of them.
+    ...flat,
+  ].join(BLOCK_SEPARATOR);
 }
 
 /**
@@ -566,6 +1041,10 @@ export function buildDiscoverQuery(
     language_code: input.language_code,
     location_code: input.location_code,
     min_volume: input.min_volume,
+    // The caller's INTENT is carried through untouched; the port's resolveVolumeCeiling is the one
+    // place the noisy-mode default is applied, so the filter sent and the sentence printed cannot
+    // be decided in two places.
+    max_volume: input.max_volume,
     max_difficulty: input.max_difficulty,
   };
   switch (input.mode) {

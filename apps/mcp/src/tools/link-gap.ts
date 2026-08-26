@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   DEFAULT_LINK_GAP_LIMIT,
   LINK_GAP_MAX_LIMIT,
@@ -67,8 +68,10 @@ const inputSchema = z.object({
     .default(DEFAULT_LINK_GAP_LIMIT)
     .describe(
       `How many referring domains to return (1–${LINK_GAP_MAX_LIMIT}, default ` +
-        `${DEFAULT_LINK_GAP_LIMIT}), strongest first by DataForSEO rank. The header always says ` +
-        "how many exist in total, so a shorter list never reads like the whole picture.",
+        `${DEFAULT_LINK_GAP_LIMIT}), strongest first by DataForSEO rank. Whenever DataForSEO ` +
+        "sends a count of the whole set, the header states it — as \"N of M\", or as a note that " +
+        "this list is all of them — and when the vendor sends no count the header says that too, " +
+        "so a shorter list never reads like the whole picture.",
     ),
 });
 
@@ -109,9 +112,40 @@ export function renderLinkGapHeader(gap: LinkGapResult, project?: ProjectRef | n
     total !== null && total > shown
       ? `${thousands(shown)} of ${thousands(total)} domains`
       : `${thousands(shown)} domain${shown === 1 ? "" : "s"}`;
-  return (
+  const lead =
     `Link gap for ${subject} against ${gap.competitor} — ${scope} that link to ` +
-    `${gap.competitor} and not to ${subject}, strongest first:`
+    `${gap.competitor} and not to ${subject}, strongest first`;
+  const note = renderLinkGapTotalNote(total, shown);
+  return note === "" ? `${lead}:` : `${lead}. ${note}:`;
+}
+
+/**
+ * WHAT THE WHOLE SET IS — stated on EVERY answer, including the two cases "N of M" cannot cover.
+ *
+ * The schema used to promise "the header always says how many exist in total". It did not: the
+ * total appeared ONLY when the vendor sent one AND it exceeded the window. The two silent cases
+ * are the ones that matter — a short list that IS the whole picture read like a truncation, and a
+ * vendor that sent no count at all read like a complete answer.
+ *
+ * `rows.length` is never promoted to a total: it is OUR count of what came back, not DataForSEO's
+ * count of what exists, and printing it as the whole set would be a measurement nobody made
+ * (NEVER #7). The keeping-able promise is "always says what is known about the whole set" — the
+ * sibling keyword_gap states the same three cases in its own words.
+ */
+export function renderLinkGapTotalNote(total: number | null, shown: number): string {
+  if (total === null) {
+    return (
+      "DataForSEO sent no count of the whole set for this request, so this list may not be all " +
+      "of them"
+    );
+  }
+  if (total > shown) return "";
+  if (total === shown) {
+    return `DataForSEO reports ${thousands(total)} in total, so this list is all of them`;
+  }
+  return (
+    `DataForSEO reports ${thousands(total)} in total, fewer than the ${thousands(shown)} rows it ` +
+    "returned"
   );
 }
 
@@ -142,6 +176,38 @@ export function renderLinkGapRow(row: LinkGapRow, competitor: string): string {
   return lines.join("\n");
 }
 
+/**
+ * =====================================================================================
+ * THE MISSING EXAMPLE URL — said out loud, because it cannot be supplied
+ * =====================================================================================
+ * The 2026-08-25 review asked for "one example source URL per candidate, the sibling tools
+ * already have it". The sibling tools have it because they read a DIFFERENT endpoint:
+ * disavow_candidates and backlink_details both go through /backlinks/backlinks, whose rows are
+ * individual LINKS and carry `url_from` / `url_to`. This tool's one paid request is
+ * /backlinks/domain_intersection, whose entry carries `target`, `rank`, `backlinks`,
+ * `first_seen`, `lost_date`, `backlinks_spam_score`, the broken/referring counters and the
+ * `referring_links_*` breakdowns — and NO page URL of any kind. Checked against the vendor's
+ * documented field list and against the parser in dfs/link-gap.ts, which throws nothing away.
+ *
+ * So there are exactly three ways to put a URL on a row, and two of them are forbidden:
+ *   • synthesise one from the domain ("https://<domain>") — a claim about a page nobody fetched,
+ *     which is the fabricated-measurement rule this product exists to keep (NEVER #7);
+ *   • buy a second vendor request per lookup — that moves what the signed 45 credits pay for,
+ *     which is a human's decision, not a renderer's (NEVER #6);
+ *   • say plainly that the endpoint does not name pages, and name the tool that does.
+ * The third is what the footer below does. It is not the example URL that was asked for, and it
+ * does not pretend to be one.
+ */
+export function renderNoExampleUrlNote(competitor: string): string {
+  return (
+    "No example linking page is shown above: the DataForSEO endpoint behind this tool " +
+    "(domain_intersection) reports these prospects at DOMAIN level and names no page URL at all, " +
+    "so any URL here would be one SeoGrep made up. To see which pages of these domains link to " +
+    `${competitor}, with the anchor text and the page linked to, run backlink_details on ` +
+    `${competitor} — a separate ${TOOL_COSTS.backlink_details}-credit lookup.`
+  );
+}
+
 /** The "nothing found" answer — a real result, not an error, and still charged for. */
 function renderNoLinkGap(gap: LinkGapResult, project?: ProjectRef | null): string {
   const subject = subjectLabel(gap.target, project);
@@ -159,6 +225,7 @@ export function formatLinkGap(gap: LinkGapResult, project?: ProjectRef | null): 
   return [
     renderLinkGapHeader(gap, project),
     ...gap.rows.map((row) => renderLinkGapRow(row, gap.competitor)),
+    renderNoExampleUrlNote(gap.competitor),
   ].join("\n\n");
 }
 
@@ -197,7 +264,9 @@ export function makeLinkGapTool(deps: LinkGapDeps = {}): RegisteredTool {
       // against the RESOLVED target so a project's own domain is caught too.
       const competitor = normalizeDomain(input.competitor);
       if (!competitor.ok) {
-        return errorResult(competitor.error);
+        // Free and pre-reserve like every gate around it, so it says so. normalizeDomain's
+        // wording is shared with 0-credit tools and is not edited at its source in packages/core.
+        return errorResult(withNoChargeNote(competitor.error));
       }
       if (competitor.domain === subject.domain) {
         return errorResult(SELF_COMPETITOR_MESSAGE);

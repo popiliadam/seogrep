@@ -7,6 +7,7 @@ import { getJob } from "../queue/boss.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import { NO_CRAWL_MESSAGE } from "../audit/load.ts";
+import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { auditOnpageTool } from "./audit-onpage.ts";
@@ -161,7 +162,11 @@ describe("audit_onpage sync charge against the local stack", () => {
     const result = await auditOnpageTool.run(ctx, { project_id: projectId });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain("missing meta description");
-    expect(result.content[0]?.text).toContain("thin content (50 words)");
+    // S10e: the thin-content finding now names the floor it broke as well as the count it
+    // measured. Kept as the FULL phrase rather than loosened to "thin content" — this assertion
+    // is what proves the reply the customer is charged 30 credits for reached them intact, and a
+    // prefix match would pass on a message that had lost its numbers entirely.
+    expect(result.content[0]?.text).toContain("thin content (50 words, minimum 200)");
 
     // ONE reserve+commit chain on the ledger, net -30.
     const rows = await ledgerRows(ctx.userId);
@@ -250,7 +255,9 @@ describe("audit tools with no crawl — what the CLIENT receives", () => {
         const result = await callThroughRegistry(ctx, tool, projectId);
 
         expect(result.isError).toBe(true);
-        expect(result.content[0]?.text).toBe(NO_CRAWL_MESSAGE);
+        // BYTE-EXACT, and the fee sentence is the imported constant rather than a copy of it:
+        // the loader's sentence, one space, the sentence the registry appends (2026-08-25, card 12).
+        expect(result.content[0]?.text).toBe(`${NO_CRAWL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
         expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
         expect(result.content[0]?.text).not.toMatch(/reference/i);
         // No operator log line for a designed refusal.
@@ -296,7 +303,7 @@ describe("audit tools with no crawl — what the CLIENT receives", () => {
       texts.push(result.content[0]?.text ?? "");
     }
 
-    expect(texts[0]).toBe(NO_CRAWL_MESSAGE);
+    expect(texts[0]).toBe(`${NO_CRAWL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(texts[1]).toBe(texts[0]);
     expect(texts[2]).toBe(texts[0]);
     // …and the other tenant's crawl was genuinely there to be leaked.
@@ -337,7 +344,7 @@ describe("audit tools over an ARCHIVED project — what the CLIENT receives", ()
         const result = await callThroughRegistry(ctx, tool, projectId);
 
         expect(result.isError).toBe(true);
-        expect(result.content[0]?.text).toBe(ARCHIVED_PROJECT_MESSAGE);
+        expect(result.content[0]?.text).toBe(`${ARCHIVED_PROJECT_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
         // The constant is shared with generate_report / crawl_site / connect_gsc / pull_gsc_data;
         // this pins that what arrives is the ARCHIVE sentence and not some other shared string.
         expect(result.content[0]?.text).toMatch(/archiv/i);
@@ -381,7 +388,7 @@ describe("audit tools over an ARCHIVED project — what the CLIENT receives", ()
     const stranger = await callThroughRegistry(ctx, auditOnpageTool, otherProjectId);
     const nowhere = await callThroughRegistry(ctx, auditOnpageTool, randomUUID());
 
-    expect(stranger.content[0]?.text).toBe(NO_CRAWL_MESSAGE);
+    expect(stranger.content[0]?.text).toBe(`${NO_CRAWL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(nowhere.content[0]?.text).toBe(stranger.content[0]?.text);
     expect(stranger.content[0]?.text).not.toMatch(/archiv/i);
   });

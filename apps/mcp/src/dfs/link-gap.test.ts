@@ -125,13 +125,17 @@ describe("parseLinkGapResponse", () => {
    */
   it("drops an entry with no referring domain — null AND empty-string alike", () => {
     const parsed = parseLinkGapResponse(linkGapFixture);
-    expect(linkGapFixture.tasks[0].result[0].items).toHaveLength(5);
+    // Read once, insisted upon once: an empty envelope means the FIXTURE was gutted, and saying
+    // so by name beats a TypeError three lines below (or an `!` that hides the difference).
+    const items = linkGapFixture.tasks[0]?.result[0]?.items;
+    if (items === undefined) {
+      throw new Error("fixture: link-gap.json no longer carries tasks[0].result[0].items");
+    }
+    expect(items).toHaveLength(5);
     expect(parsed.rows).toHaveLength(3);
     expect(parsed.rows.some((row) => row.domain === "")).toBe(false);
     // ...and the empty-string row is really in the fixture, not a comment about one.
-    const targets = linkGapFixture.tasks[0].result[0].items.map(
-      (item) => item.domain_intersection["1"].target,
-    );
+    const targets = items.map((item) => item.domain_intersection["1"].target);
     expect(targets).toContain(null);
     expect(targets).toContain("");
   });

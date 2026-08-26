@@ -6,6 +6,7 @@ import type { AuthContext } from "../auth.ts";
 import { createMockResearchPort, disabledPort } from "../dfs/client.ts";
 import { makeResearchKeywordsTool } from "./research-keywords.ts";
 import fixtureResponse from "../dfs/fixtures/keyword-overview.json";
+import emptyFixture from "../dfs/fixtures/keyword-overview-tr-empty.json";
 
 /**
  * DB-integration proof for research_keywords (25, SYNC self-settled surface charge) against
@@ -14,7 +15,10 @@ import fixtureResponse from "../dfs/fixtures/keyword-overview.json";
  *       LEDGER, touching NO jobs row (the reserve is ledger-only, keyed to a traceability
  *       uuid) — the exact surface shape;
  *   (b) the LIVE-DISABLED path returns its "not enabled" error BEFORE any reserve, so the
- *       ledger gets ZERO spend rows and the caller is not charged (NEVER #2 + #7).
+ *       ledger gets ZERO spend rows and the caller is not charged (NEVER #2 + #7);
+ *   (c) a lookup the vendor answered with NO metric for any keyword reserves and then RELEASES —
+ *       net 0, no spend_commit (operator decision 2026-08-25). It cannot be gated before the
+ *       reserve the way (b) is, so the ledger shape differs and both are pinned.
  * No real DataForSEO call happens here (NEVER #5): the serving path uses the fixture-backed
  * mock port; the disabled path never fetches at all.
  */
@@ -117,6 +121,29 @@ describe("research_keywords credit path against the local stack", () => {
 
     // Surface shape: no jobs row, and the reserve carries a fresh traceability uuid.
     expect(rows[1]?.job_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(await jobCount(ctx.userId)).toBe(0);
+  });
+
+  /**
+   * (c) OPERATOR DECISION 2026-08-25 — an empty answer is not charged. Unlike (b) this refusal
+   * CANNOT be made before the reserve: only DataForSEO's answer reveals that nothing was measured.
+   * So the reserve is taken, the body throws, and the guard RELEASES — a reserve/release pair that
+   * nets to zero rather than the absence of rows that (b) asserts. The distinction is the point:
+   * "not charged" here means refunded within the call, and the ledger is where that is visible.
+   */
+  it("(c) an empty vendor answer reserves and RELEASES — net 0, no commit row", async () => {
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 100);
+    const tool = makeResearchKeywordsTool({ port: createMockResearchPort(emptyFixture) });
+
+    const result = await tool.run(ctx, { keywords: ["diş beyazlatma", "ortodonti"], language_code: "tr", location_code: 2792 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/you were not charged/i);
+
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["purchase", "spend_reserve", "spend_release"]);
+    expect(rows.some((r) => r.kind === "spend_commit")).toBe(false);
+    expect(balanceOf(rows)).toBe(100); // net zero — the caller pays nothing for no answer
     expect(await jobCount(ctx.userId)).toBe(0);
   });
 

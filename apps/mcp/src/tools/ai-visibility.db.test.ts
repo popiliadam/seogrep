@@ -7,7 +7,7 @@ import type { AuthContext } from "../auth.ts";
 import {
   DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT,
   DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT,
-  MAX_INTERNAL_LIST_ROWS,
+  VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
   PLATFORM_MEANS,
   ROW_ORDER,
   ROW_ORDER_MEANS,
@@ -258,7 +258,7 @@ describe("ai_visibility credit path against the local stack", () => {
       subject: "domain",
       target: "example.com",
       platform: "chat_gpt",
-      internal_list_limit: MAX_INTERNAL_LIST_ROWS,
+      internal_list_limit: VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
       location_name: "United States",
       language_code: "en",
     });
@@ -275,12 +275,13 @@ describe("ai_visibility credit path against the local stack", () => {
     expect(seen[0]?.url.startsWith("https://api.dataforseo.com/")).toBe(true);
 
     /**
-     * THE ROW CAP IS THE PRICE. The signature makes `internal_list_limit <= 100` MANDATORY and
-     * measured the margin at that cap; what actually goes out on the wire is asserted here, not
-     * just the schema's maximum.
+     * THE WIRE VALUE IS THE VENDOR'S CEILING, not the pricing basis. WAS
+     * `MAX_INTERNAL_LIST_ROWS` (100) until 2026-08-25: DataForSEO publishes "maximum value: `20`"
+     * for this endpoint, rejected the task, and both AI tools failed 3/3 in production. What
+     * actually goes out on the wire is asserted here, not just the schema's maximum.
      */
     const asked = seen[0]?.body ?? {};
-    expect(asked.internal_list_limit).toBe(MAX_INTERNAL_LIST_ROWS);
+    expect(asked.internal_list_limit).toBe(VENDOR_MAX_INTERNAL_LIST_AGGREGATED);
     expect(asked.target).toEqual([{ domain: "example.com" }]);
     expect(asked.platform).toBe("chat_gpt");
     // The locale key this family takes is location_name (a STRING) — never the sibling's code.

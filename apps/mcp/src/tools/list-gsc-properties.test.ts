@@ -85,8 +85,17 @@ interface World {
   readonly tokenStatus?: "active" | "invalid" | null;
   /** A SECOND healthy account on the caller, for the failure-isolation spec. */
   readonly secondAccountSites?: readonly GscSite[];
-  /** Projects reading a property, defaulting to ACCOUNT_ID when no account is named. */
-  readonly mappings?: readonly { property: string; domain: string; accountId?: string }[];
+  /**
+   * Projects reading a property, defaulting to ACCOUNT_ID when no account is named. `property`
+   * is OPTIONAL because a project that reads NOTHING is a real and common state — five of them
+   * sat beside a matching property in the live account on 2026-08-25 — and the fixture could not
+   * express it before.
+   */
+  readonly mappings?: readonly {
+    property?: string | null;
+    domain: string;
+    accountId?: string;
+  }[];
   /** Call as somebody else — their own account lists their own property. */
   readonly asUser?: string;
 }
@@ -141,7 +150,7 @@ function toolFor(world: World) {
           ? (world.mappings ?? []).map((mapping) => ({
               domain: mapping.domain,
               accountId: mapping.accountId ?? ACCOUNT_ID,
-              property: mapping.property,
+              property: mapping.property ?? null,
             }))
           : [],
       ),
@@ -259,6 +268,109 @@ describe("list_gsc_properties", () => {
     );
     expect(out).toMatch(/rkturizm\.com/);
     expect(out).not.toMatch(/adstark/);
+  });
+
+  /**
+   * S4 — THE FIVE UNLINKED PAIRS, measured live 2026-08-25. Of 27 properties, five had a
+   * matching project that was NOT linked to them; the tool printed both sides and never said
+   * they belonged together, while linking them is one free call.
+   *
+   * The fifth pair is the `www.` one (`sc-domain:noraninsaat.com` ↔ `www.noraninsaat.com`), and
+   * it is here because a match that fails on `www.` is precisely how the split started.
+   */
+  describe("an unlinked property whose site the caller already has a project for", () => {
+    it("names the matching project and the call that links them", async () => {
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://dentnotion.com/", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "dentnotion.com" }],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).toContain('your project "dentnotion.com" is the same site');
+      expect(out).toMatch(/track_gsc_property/);
+    });
+
+    it("matches ACROSS a `www.` difference — the fifth measured pair", async () => {
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "sc-domain:noraninsaat.com", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "www.noraninsaat.com" }],
+        },
+      );
+      expect(out).toContain('your project "www.noraninsaat.com" is the same site');
+    });
+
+    it("does NOT match a subdomain project to the apex property", async () => {
+      // Only `www.` is cosmetic. Offering `blog.rkturizm.com` for the apex property would send
+      // the user to bind two different sites together.
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "blog.rkturizm.com" }],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).not.toMatch(/same site/);
+      expect(out).not.toMatch(/blog\.rkturizm/);
+    });
+
+    it("says nothing about a project that already reads a DIFFERENT property", async () => {
+      // That project is in a deliberate state; "link them" would mean REPOINT it, which is a
+      // different act with a different consequence.
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "rkturizm.com", property: "sc-domain:rkturizm.com" }],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).not.toMatch(/same site/);
+    });
+
+    it("stays silent when no project names that site", async () => {
+      // The negative control: a note that appears for every unread property says nothing.
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "adstark.com.tr" }],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).not.toMatch(/same site/);
+      expect(out).not.toMatch(/adstark/);
+    });
+
+    it("names both candidates, in byte order, when the tenant holds the pair", async () => {
+      // The live account really does hold `seogrep.com` AND `www.seogrep.com`.
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "sc-domain:seogrep.com", permissionLevel: "siteOwner" }],
+          mappings: [{ domain: "www.seogrep.com" }, { domain: "seogrep.com" }],
+        },
+      );
+      expect(out).toContain('your projects "seogrep.com", "www.seogrep.com" are the same site');
+    });
+
+    it("offers nothing for a property that names no website at all", async () => {
+      const out = await callTool(
+        {},
+        {
+          sites: [
+            { siteUrl: "android-app://com.zephyrbrook.reader/", permissionLevel: "siteOwner" },
+          ],
+          mappings: [{ domain: "zephyrbrook.com" }],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).not.toMatch(/same site/);
+    });
   });
 
   it("says an account has no properties only when it actually answered with none", async () => {

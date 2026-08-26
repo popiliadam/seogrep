@@ -892,7 +892,9 @@ describe("budget", () => {
   it("falls back to the TASK's cost when only the top-level one is missing", () => {
     const taskOnly = structuredClone(fixture) as { cost?: number; tasks: { cost: number }[] };
     delete taskOnly.cost;
-    expect(extractRelevantPagesCostUsd(taskOnly)).toBe(fixture.tasks[0].cost);
+    const taskCost = fixture.tasks[0]?.cost;
+    expect(taskCost).toBeDefined(); // the fixture really carries a task-level cost to fall back to
+    expect(extractRelevantPagesCostUsd(taskOnly)).toBe(taskCost);
   });
 
   it("refuses the call at the daily cap, and sends NO request", async () => {

@@ -51,7 +51,7 @@ The client will ask you to confirm before a wide comparison runs — see Billing
 | --- | --- | --- | --- |
 | `targets` | object[] | Yes | The targets to compare — 2 to 10, which is DataForSEO's own bound for this endpoint. Each one is a domain, a keyword or one of your project ids. THE PRICE IS PER COMPARED TARGET (90 credits each), so this list is what the call costs: comparing ten targets costs ten targets' worth of credits, and a comparison above the safety threshold asks you to confirm before it runs. |
 | `platform` | string | Yes | WHICH assistant DataForSEO is asked about — required, with no default, because a measurement of one says nothing about the other. "chat_gpt": mentions observed in ChatGPT answers. "google": mentions observed in Google's AI answers. There is no "all assistants" option here, and no answer covers an assistant the vendor did not query. |
-| `internal_list_limit` | integer | No | How many rows DataForSEO may return per compared target (1-100, default 100). DataForSEO bills per returned row on this family, so this is the price control rather than a display preference — the signed price was measured at the ceiling. Asking for fewer rows costs the same; asking for more is refused. |
+| `internal_list_limit` | integer | No | How many entries DataForSEO may put inside its internal `sources_domain` and `search_results_domain` arrays (1-10, default 10) — the vendor's own `internal_list_limit`, whose published ceiling is 10 on this endpoint. It controls how much supporting detail comes back, NOT what the lookup costs you. Asking for fewer rows costs the same; asking for more is refused. |
 | `location_name` | string | No | OPTIONAL DataForSEO `location_name` — a NAME, e.g. "United States", not the numeric location_code the other SeoGrep tools take (this vendor family publishes no code). Omitted by default, in which case DataForSEO applies its own default and the answer says the location was not specified rather than naming one nobody asked for. |
 | `language_code` | string | No | OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the answer says the language was not specified rather than naming one nobody asked for. |
 
@@ -67,15 +67,19 @@ A comparison set outside 2-10, a target naming none (or several) of `domain` / `
 
 **The price is per compared target**, not per call — this is the one tool in SeoGrep priced that way. Comparing ten targets costs ten targets' worth of credits and comparing two costs two, and the cost line above states both ends of that range. The reservation is opened before the DataForSEO request and is sized from the targets you actually passed; if the request fails, the whole reservation is released and **you are not charged**.
 
-Because a wide comparison can be expensive, one above SeoGrep's safety threshold **asks you first**: the call returns an estimate and charges nothing until you run it again with `"confirm": true`.
+A comparison above SeoGrep's safety threshold **asks you first**: the call returns an estimate and charges nothing until you run it again with `"confirm": true`. This is not a rare corner — it is the **usual** case. At the price above, only the two-target minimum runs straight through; **three targets and up cross the threshold and prompt**. Plan for the prompt rather than being surprised by it.
 
-`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+A failed lookup is not a lookup that found nothing. The refusal quotes DataForSEO's own status code and message, and says the half that "you were not charged" leaves out: the attempt did go out to DataForSEO and used part of SeoGrep's own daily third-party data allowance. That is our cost, not yours.
 
-The `internal_list_limit` ceiling is **part of the price** here too: DataForSEO bills per returned row on this family, and every compared target can contribute its own capped list.
+`ai_visibility_compare` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+
+**`internal_list_limit` is not a price control** here either. The vendor's own words for it are "maximum number of elements within internal arrays": it caps two nested arrays inside each aggregate, not the rows returned and not the rows billed. An earlier version of this page called it part of the price; that claim is withdrawn. Asking for fewer entries costs the same, and asking for more than the vendor's published ceiling is refused before anything is charged.
 
 ### Limitations
 
-Results are **not stored**. Each call returns its comparison to the conversation and nothing else keeps them — no saved comparison, no dashboard page, no "changed since last time". The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "changed since last time" — so to see the current picture, run it again.
 
 This is a measurement, **not a prediction** and not a verdict: it does not say which target is doing better, why an assistant mentioned one and not another, or what to change. A measurement on one platform does not carry over to another.
 

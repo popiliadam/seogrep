@@ -1,0 +1,48 @@
+{
+  "version": "0.1.20240801",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "0.2104 sec.",
+  "cost": 0.01224,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "08251201-0000-0000-0000-fixture0003",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "time": "0.2011 sec.",
+      "cost": 0.01224,
+      "result_count": 1,
+      "path": ["v3", "dataforseo_labs", "google", "keyword_overview", "live"],
+      "data": {
+        "api": "dataforseo_labs",
+        "function": "keyword_overview",
+        "se_type": "google",
+        "language_code": "tr",
+        "location_code": 2792
+      },
+      "result": [
+        {
+          "se_type": "google",
+          "location_code": 2792,
+          "language_code": "tr",
+          "total_count": 2,
+          "items_count": 2,
+          "items": [
+            {
+              "se_type": "google",
+              "keyword": "diş beyazlatma",
+              "location_code": 2792
+            },
+            {
+              "se_type": "google",
+              "keyword": "ortodonti",
+              "location_code": 2792
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

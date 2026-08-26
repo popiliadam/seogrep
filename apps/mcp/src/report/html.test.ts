@@ -50,11 +50,21 @@ const FULL_MODEL: ReportModel = {
     redirect3xx: 1,
     clientError4xx: 2,
     serverError5xx: 0,
+    // 39 + 1 + 2 + 0 = 42 = pageCount: every page classified, so the fifth bucket is empty and
+    // the report must say nothing at all about it. UNCLASSIFIED below is the other side.
+    other: 0,
     robotsConflicts: 1,
     clientErrorUrls: EMPTY,
     serverErrorUrls: EMPTY,
+    otherStatusUrls: EMPTY,
     slowPages: EMPTY,
     heavyPages: EMPTY,
+    // 0/0: this fixture is a crawl stored BEFORE the crawler recorded fetch time and HTML size,
+    // which is what makes its empty slow/heavy lists mean "never measured" rather than "fast".
+    // ENRICHED overrides both, because a fixture that HAS speed findings was measured by
+    // definition — the two cases must never be reachable from the same numbers.
+    pagesTimed: 0,
+    pagesSized: 0,
     redirectChains: EMPTY,
     xRobotsConflicts: EMPTY,
     deepPages: EMPTY,
@@ -261,6 +271,8 @@ const ENRICHED: ReportModel = {
     // 4xx list unpinnable: dropping it entirely left the URL on the page via the other block,
     // and the assertion passed anyway (measured — the mutation stayed green).
     clientErrorUrls: { items: ["https://example.com/notfound"], total: 1 },
+    pagesTimed: 42,
+    pagesSized: 42,
     slowPages: { items: [{ url: "https://example.com/slow", fetchMs: 9100 }], total: 1 },
     heavyPages: { items: [{ url: "https://example.com/fat", htmlBytes: 2_100_000 }], total: 1 },
     redirectChains: {
@@ -295,6 +307,111 @@ const ENRICHED: ReportModel = {
     truncatedPages: { items: [{ url: "https://example.com/big", dropped: 3 }], total: 1 },
   },
 };
+
+/**
+ * The fifth status bucket — pages the crawl could not classify at all.
+ *
+ * `pageCount` 42 against 39+1+2+0 = 42 in FULL_MODEL is a partition; UNCLASSIFIED breaks it on
+ * purpose (39+1+2+0 = 42 against a `pageCount` of 45) so the three pages are provably missing
+ * from every number the section prints. That is the live shape: a status a legacy crawl stored
+ * as missing or unreadable reads as 0 and lands here.
+ */
+const UNCLASSIFIED: ReportModel = {
+  ...FULL_MODEL,
+  crawl: { ...FULL_MODEL.crawl!, pageCount: 45 },
+  tech: {
+    ...FULL_MODEL.tech!,
+    pageCount: 45,
+    other: 3,
+    otherStatusUrls: {
+      items: ["https://example.com/no-status", "https://example.com/broken-status"],
+      total: 3,
+    },
+  },
+};
+
+/** Collapse runs of whitespace so an assertion pins the SENTENCE, not the source line wrapping. */
+function flat(html: string): string {
+  return html.replace(/\s+/g, " ");
+}
+
+/** Just the Technical health section, so "appears somewhere on the page" cannot pass for it. */
+function techBodyOf(html: string): string {
+  const start = html.indexOf("<h2>Technical health</h2>");
+  expect(start).toBeGreaterThan(-1);
+  return html.slice(start, html.indexOf("<h2>Page speed</h2>"));
+}
+
+describe("the fifth status bucket (pages with no usable status)", () => {
+  it("SAYS the four counts do not add up, naming both numbers", () => {
+    // The core of it: a list alone would show the pages without ever admitting that the four
+    // stat blocks above are short. The sentence must carry BOTH the missing count and the
+    // crawled total, because either number alone leaves the reader to do the subtraction.
+    expect(flat(techBodyOf(renderReportHtml(UNCLASSIFIED)))).toContain(
+      "3 page(s) carried no usable HTTP status and are in none of the four counts above, " +
+        "so those four do not add up to the 45 page(s) crawled.",
+    );
+  });
+
+  it("gives the shortfall the skimmable callout, not the small grey print", () => {
+    // A number that does not add up has to survive being skimmed; `.hint`/`.muted` are 12-13px
+    // grey chrome. Pins the CLASS, which is what decides whether a reader sees it at all.
+    expect(flat(techBodyOf(renderReportHtml(UNCLASSIFIED)))).toMatch(
+      /<p class="stale">3 page\(s\) carried no usable HTTP status/,
+    );
+  });
+
+  it("puts the shortfall AFTER the four counts its own words point back at", () => {
+    // The sentence says "the four counts ABOVE". A referee measured that the block could be moved
+    // anywhere inside Technical health — above the four stat blocks included, where that word
+    // points at nothing — and the whole suite stayed green (136/136). Section SCOPE was pinned;
+    // position INSIDE the section, and therefore the truth of "above", was not.
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    const lastOfFour = techBody.indexOf("Server errors (5xx)");
+    const shortfall = techBody.indexOf("no usable HTTP status");
+    expect(lastOfFour).toBeGreaterThan(-1);
+    expect(shortfall).toBeGreaterThan(-1);
+    expect(lastOfFour).toBeLessThan(shortfall);
+  });
+
+  it("names the URLs behind the count and says how many were not listed", () => {
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    expect(techBody).toContain("https://example.com/no-status");
+    expect(techBody).toContain("https://example.com/broken-status");
+    // total 3 vs 2 listed: the cap tail every other list in this file prints.
+    expect(flat(techBody)).toContain("… and 1 more");
+  });
+
+  it("leaves the four counts themselves untouched", () => {
+    // The shortfall is stated BESIDE the four numbers, never folded into them — a 4xx count
+    // quietly inflated to make the arithmetic work would be the invented number NEVER#7 forbids.
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    expect(techBody).toContain('<div class="n">39</div><div class="l">OK (2xx)</div>');
+    expect(techBody).toContain('<div class="n">2</div><div class="l">Client errors (4xx)</div>');
+    expect(techBody).not.toMatch(/<div class="n">(42|45)<\/div><div class="l">OK \(2xx\)/);
+  });
+
+  it("escapes the URLs — this document is served on a PUBLIC page", () => {
+    const evil = renderReportHtml({
+      ...UNCLASSIFIED,
+      tech: {
+        ...UNCLASSIFIED.tech!,
+        other: 1,
+        otherStatusUrls: { items: [`https://example.com/${XSS}`], total: 1 },
+      },
+    });
+    expect(evil).toContain(XSS_ESCAPED);
+    expect(evil).not.toContain("<img src=x");
+  });
+
+  it("says NOTHING about it when every page classified", () => {
+    // ABSENCE IS NOT A FINDING: FULL_MODEL's four counts do add up, so there is no shortfall to
+    // report and no "0 unclassified" line either.
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).not.toMatch(/no usable HTTP status/i);
+    expect(html).not.toMatch(/do not add up/i);
+  });
+});
 
 describe("enriched audit sections (R1-a)", () => {
   const html = renderReportHtml(ENRICHED);
@@ -368,6 +485,142 @@ describe("enriched audit sections (R1-a)", () => {
       },
     });
     expect(many).toContain("… and 27 more");
+  });
+});
+
+/**
+ * Page speed as its own findable section (signature item 9, 2026-08-26).
+ *
+ * The signals were always in the report — buried as two lists inside "Technical health", where a
+ * reader looking for speed had no reason to look. Lifting them out costs nothing (the crawl
+ * already stored them) and changes no price, but it creates a NEW honesty problem the buried
+ * version did not have: a section headed "Page speed" reads as a speed measurement, and ours is
+ * a fetch timer, not a browser. Both halves are pinned below.
+ */
+describe("Page speed section (imza 9)", () => {
+  const nSlow = SLOW_PAGE_MS.toLocaleString("en-US");
+  const nHeavy = HEAVY_PAGE_BYTES.toLocaleString("en-US");
+
+  /** Measured, and every page inside both thresholds — the only state that may print a zero. */
+  const CLEAN: ReportModel = {
+    ...FULL_MODEL,
+    tech: { ...FULL_MODEL.tech!, pagesTimed: 42, pagesSized: 40 },
+  };
+
+  it("gives speed its own heading instead of burying it in Technical health", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/<h2>Page speed<\/h2>/);
+
+    // POSITION, not mere presence: the findings must have LEFT the technical section. Asserting
+    // only that "Slow pages" appears somewhere would pass just as well if nothing had moved.
+    const techStart = html.indexOf("<h2>Technical health</h2>");
+    const speedStart = html.indexOf("<h2>Page speed</h2>");
+    expect(techStart).toBeGreaterThan(-1);
+    expect(speedStart).toBeGreaterThan(techStart);
+    const techBody = html.slice(techStart, speedStart);
+    expect(techBody).not.toMatch(/slow pages/i);
+    expect(techBody).not.toMatch(/heavy pages/i);
+    expect(html.slice(speedStart)).toMatch(/slow pages/i);
+    expect(html.slice(speedStart)).toMatch(/heavy pages/i);
+  });
+
+  it("says what the numbers ARE NOT — not lab Core Web Vitals, not field data", () => {
+    // NEVER #7: a section called "Page speed" that stayed silent about its provenance would be
+    // read as a Lighthouse score. The disclaimer ships in BOTH branches, so both are checked.
+    for (const html of [renderReportHtml(ENRICHED), renderReportHtml(FULL_MODEL)]) {
+      // WHITESPACE-TOLERANT: the copy wraps inside the template, so a literal-space regex would
+      // fail on the line break — and its negative twin in the unmeasured test would then pass
+      // vacuously, which is the failure mode that makes a green test worthless.
+      expect(html).toMatch(/not\S*\s+lab\s+core\s+web\s+vitals/is);
+      expect(html).toMatch(/not\S*\s+field\s+data\s+from\s+real\s+visitors/is);
+      expect(html).toMatch(/crawler measurements/i);
+      expect(html).toContain("audit_speed");
+    }
+  });
+
+  it("prints both thresholds from the RULE'S constants, in the speed section itself", () => {
+    const speed = renderReportHtml(ENRICHED).split("<h2>Page speed</h2>")[1]!;
+    expect(speed).toContain(`over ${nSlow} ms`);
+    expect(speed).toContain(`over ${nHeavy} bytes`);
+  });
+
+  it("reports an UNMEASURED crawl as unmeasured — never as a zero", () => {
+    // FULL_MODEL is pagesTimed/pagesSized 0: a crawl stored before the fields existed. Its empty
+    // lists are not evidence the site is fast, so the section may claim nothing about speed.
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/no fetch-time or HTML-size signal/i);
+    expect(html).toMatch(/unmeasured rather than as zero/i);
+    expect(html).toContain("crawl_site");
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).not.toMatch(/fetch time measured on/i);
+    expect(html).not.toMatch(/slow pages/i);
+    expect(html).not.toMatch(/heavy pages/i);
+  });
+
+  it("reports a MEASURED, clean crawl with its coverage and an honest zero", () => {
+    const html = renderReportHtml(CLEAN);
+    // Each axis reports its OWN coverage: 42 timed, 40 sized. One number for both would be a
+    // claim the model does not make.
+    expect(html).toMatch(/Fetch time measured on\s*<strong>42<\/strong>\s*of\s*42 crawled page\(s\)/);
+    expect(html).toMatch(/HTML size on\s*<strong>40<\/strong>/);
+    expect(html).toMatch(
+      new RegExp(`no measured page took longer than ${nSlow} ms.{0,80}${nHeavy} bytes`, "is"),
+    );
+    // Still no empty list headers: "clean" is said in a sentence, not as a "Slow pages (0)".
+    expect(html).not.toMatch(/slow pages \(/i);
+    expect(html).not.toMatch(/no fetch-time or HTML-size signal/i);
+  });
+
+  /**
+   * THE MIXED CASES. Every fixture above moves both axes together — ENRICHED has findings on
+   * both, CLEAN and FULL_MODEL have findings on neither — so both branch conditions could be
+   * flipped without a single test noticing. The model-layer "lopsided" spec pins the COUNTING;
+   * these two pin the SENTENCE the renderer picks from it, which is a different question.
+   */
+  it("treats a crawl measured on ONE axis as measured, not as unmeasured", () => {
+    // fetchMs recorded, htmlBytes not. Requiring BOTH would report a crawl that WAS timed with
+    // "no page here was measured on either axis" — a sentence that is simply false, and the
+    // exact zero-for-a-missing-measurement failure this section exists to prevent, inverted.
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      tech: { ...FULL_MODEL.tech!, pagesTimed: 42, pagesSized: 0 },
+    });
+    expect(html).toMatch(/Fetch time measured on\s*<strong>42<\/strong>/);
+    expect(html).not.toMatch(/no fetch-time or HTML-size signal/i);
+    // …and the axis nobody measured is reported as covering 0 pages, which is a COVERAGE fact,
+    // not a finding: "HTML size on 0" says nobody looked, where "Heavy pages: 0" would claim
+    // somebody looked and found nothing.
+    expect(html).toMatch(/HTML size on\s*<strong>0<\/strong>/);
+    expect(html).not.toMatch(/heavy pages \(/i);
+  });
+
+  it("does NOT call the site clean when only ONE axis is clean", () => {
+    // Slow findings, no heavy ones. If either empty list were enough to print the all-clear, the
+    // report would say "no measured page took longer than 3,000 ms" and then list the pages that
+    // did — a public document contradicting itself two lines apart.
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      tech: {
+        ...FULL_MODEL.tech!,
+        pagesTimed: 42,
+        pagesSized: 42,
+        slowPages: { items: [{ url: "https://example.com/slow", fetchMs: 9100 }], total: 3 },
+        heavyPages: EMPTY,
+      },
+    });
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).toMatch(/slow pages \(/i);
+    expect(html).toContain("https://example.com/slow");
+    // The heavy axis was measured and found nothing, so it stays SILENT rather than printing a 0.
+    expect(html).not.toMatch(/heavy pages \(/i);
+  });
+
+  it("does NOT claim everything is clean when there ARE findings", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/Fetch time measured on/i);
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).toContain("https://example.com/slow");
+    expect(html).toContain("https://example.com/fat");
   });
 });
 
@@ -490,6 +743,26 @@ describe("every dynamic value is escaped (R1-d)", () => {
     const html = renderReportHtml({
       ...ENRICHED,
       tech: { ...ENRICHED.tech!, slowPages: { items: [{ url: XSS, fetchMs: 9000 }], total: 1 } },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile crawled URL in the HEAVY pages list", () => {
+    // The TWIN of the slow-pages case above, and it was missing: dropping urlText from the heavy
+    // row left the whole suite green, because the only speed sink anyone had written a spec for
+    // was the slow one. Two sinks render the same untrusted crawled URL, so two specs pin them.
+    // This section is served verbatim on the public /r/<slug> page, whose own test stubs the
+    // report body — so nothing over there pins it either.
+    const html = renderReportHtml({
+      ...ENRICHED,
+      tech: {
+        ...ENRICHED.tech!,
+        // The slow list is emptied ON PURPOSE: sharing the payload with its twin is exactly how
+        // an unescaped sink hides, because the assertion would then pass on the OTHER list's
+        // escaping and say nothing at all about this one.
+        slowPages: EMPTY,
+        heavyPages: { items: [{ url: XSS, htmlBytes: 2_000_000 }], total: 1 },
+      },
     });
     expectNeutralised(html);
   });

@@ -5,17 +5,37 @@ description: "Crawl a project's website (async). Returns a job_id immediately; p
 
 **Cost:** 20 credits.
 
-`crawl_site` crawls the website behind one of your projects — following its sitemap and same-origin links, respecting `robots.txt` — and records the pages for later audits. It is **asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to finish, so the MCP request never times out on a large site. The crawl is charged only when it runs — a crawl that reaches no pages is not charged.
+`crawl_site` crawls the website behind one of your projects — following its sitemap and its own links, respecting `robots.txt` — and records the pages for later audits. It is **asynchronous**: the call returns a `job_id` immediately instead of waiting for the crawl to finish, so the MCP request never times out on a large site. The crawl is charged only when it runs — a crawl that reaches no pages is not charged.
 
 ## What it does
 
 Queues a crawl for the project's domain and hands you a `job_id`. A background worker runs the crawl and stores the result; you check progress with [`get_job_status`](/docs/tools-reference/get-job-status).
 
-## Large sites
+## What counts as the site
+
+A site's apex and its `www.` twin are **one scope**, not two. `example.com` and `www.example.com` are the same site to the crawler, in the sitemap and in every link it follows. Strict same-origin was the old rule, and on a www-canonical site it produced a crawl of **zero pages**: the seed redirected off-origin on the first hop. Only the leading `www.` label is folded — `blog.example.com` is a different site and is not crawled.
+
+Infrastructure paths are left out: `/cdn-cgi/` and `/.well-known/` are the CDN's and the protocol's plumbing, not the customer's pages, and counting them would inflate both the crawl and the page count quoted before it. They are excluded from the sitemap, from link following, and from the free size check alike.
+
+## Large sites, and why the page count is a floor
 
 Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with `include_paths` — for example `["/blog"]` — and run one focused crawl per section; this keeps every crawl within the cap and spends predictably.
 
-Before queuing, `crawl_site` runs a quick, **free** size check. If your site is very large, it first returns a **confirmation** — nothing is charged — that states this run's flat cost and, kept separate, an **informational projection** of what crawling the whole site would take at the current rate. The projection is never what you are charged; it just means a big site can't silently run up cost. Re-run with `"confirm": true` to proceed, or narrow the scope with `include_paths`.
+Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it quotes is a **lower bound** — "at least N pages", never "~N". Both ways of sizing a site are floors by construction: reading the sitemap is bounded by how much of it is read, and the fallback counts only the links on your homepage. On one measured site the check said 28 and the crawl's own queue found at least 222. A "~" reads as "approximately", i.e. as likely-high as likely-low, and it never is — so the wording says which direction it can be wrong in. Where the floor came from is named too, and the homepage-only case says outright that the real site is very likely larger.
+
+If your site is large, the call first returns a **confirmation** — nothing is charged — stating this run's flat cost and, kept separate, an **informational projection** of what crawling the whole site would take at the current rate. The projection is never what you are charged; it just means a big site can't silently run up cost. Re-run with `"confirm": true` to proceed, or narrow the scope with `include_paths`.
+
+## Starting the crawl from the pages that already rank
+
+A crawl seeds from your sitemap and your homepage, and stops at the page cap — and a sitemap is not ordered by importance. On one measured site that combination meant the single **highest-traffic page never entered the crawl at all**: it sat too deep in the sitemap to survive the cap, on every run.
+
+`seed_from_ranking_pages: true` starts the crawl from the pages DataForSEO reports as ranking for your domain, so they are fetched first — right after the homepage and ahead of the sitemap.
+
+**It is off by default, and it is a separate charge.** The ranking list is a paid DataForSEO lookup — the same one [`my_pages`](/docs/tools-reference/my-pages) makes — so it is billed at that tool's price, on its own line in your credit history, under the name `my_pages`. The crawl itself is unchanged: `crawl_site` costs what it has always cost, whether you seed or not. Like `my_pages`, seeding needs a paid credit balance.
+
+**If it produces nothing, you pay nothing.** A lookup that names no page this crawl can use — because it returned nothing, because the pages it named are on another host, or because they all fall outside your `include_paths` — is not charged, and the crawl is queued without the seeds. The same holds if the lookup cannot run at all. The reply always says which of those happened, how many pages were used as seeds, and how many were left out and why.
+
+Seeds buy no privileges. Each one is still checked against your `include_paths`, against `robots.txt` and against the same-site rule, and each counts towards the page cap like any other URL — a seed is a page the crawl starts from, not a page it may break its own rules for. The lookup runs with the same defaults as `my_pages` (United States, English); for another market, run `my_pages` yourself.
 
 ## Example
 
@@ -34,7 +54,8 @@ The tool replies with a `job_id`. Poll it until the job is done:
 | `project_id` | string (uuid) | Yes | The project_id from setup_project / list_projects. |
 | `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). |
 | `include_paths` | string[] | No | Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap). |
+| `seed_from_ranking_pages` | boolean | No | OPT-IN, off by default: start the crawl from the pages DataForSEO reports as ranking for this domain, so they are fetched before the 100-page cap is reached. This is a paid DataForSEO lookup and is charged SEPARATELY at the my_pages price (40 credits, its own ledger line); the crawl itself still costs 20. If the lookup returns nothing this crawl can use, or cannot run at all, the crawl runs without the seeds and the seeding is not charged. The lookup uses the same defaults as my_pages (United States, English) — for another market, run my_pages yourself. |
 
 ### Returns
 
-A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost. Feed the `job_id` to `get_job_status` to watch it finish and read the summary.
+A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — plus, when the free size check sized the site, how many pages it found **at least** and how many of them this one crawl covers. Feed the `job_id` to [`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports the pages crawled and skipped so far, so a job that is working and a job that is stuck no longer look alike, and when it finishes it carries the summary.

@@ -1,4 +1,9 @@
-import { boundCrawlResult, crawlSite, type CrawlResult } from "../../crawler/crawl.ts";
+import {
+  boundCrawlResult,
+  crawlSite,
+  type CrawlProgress,
+  type CrawlResult,
+} from "../../crawler/crawl.ts";
 import { getServiceClient, type Json, type JobRow } from "../../db.ts";
 import { writeCrawlPages, type CrawlPagesWriter } from "./crawl-pages.ts";
 import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "../../tools/project-target.ts";
@@ -26,7 +31,12 @@ import type { ToolHandler } from "../worker.ts";
 /** The crawl function the handler drives (default: the real fetch-based crawlSite). */
 export type CrawlFn = (
   origin: string,
-  opts: { maxUrls?: number; includePaths?: string[] },
+  opts: {
+    maxUrls?: number;
+    includePaths?: string[];
+    extraSeeds?: readonly string[];
+    onProgress?: (progress: CrawlProgress) => void;
+  },
 ) => Promise<CrawlResult>;
 
 /** Resolve the crawl origin for a job (default: the tenant's project domain). */
@@ -59,11 +69,176 @@ export function clampIncludePaths(raw: unknown): string[] | undefined {
   return paths.length > 0 ? paths : undefined;
 }
 
+/**
+ * The most seeds a queue message may carry. It is the crawler's own page cap: a seed the crawl
+ * could never reach is ballast, and an unbounded list from a message is a memory question nobody
+ * needs to have.
+ */
+export const MAX_SEED_URLS = 100;
+
+/**
+ * Coerce a queue-message `seed_urls` into the crawler's contract — `crawl_site`'s opt-in
+ * ranking-page seeding, carried from the surface that paid for it.
+ *
+ * It is a SHAPE gate, not a scope gate: it accepts only non-empty strings and caps the count. What
+ * makes a seed legitimate — same site, inside `include_paths`, not a reserved infrastructure path,
+ * normalized — is decided by `selectExtraSeeds` INSIDE the crawler, on this same list, so a
+ * tampered or stale message cannot widen a crawl by one URL. Anything else yields undefined, and
+ * the crawl seeds exactly as it always did.
+ */
+export function clampSeedUrls(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const urls = raw.filter((u): u is string => typeof u === "string" && u.trim().length > 0);
+  return urls.length > 0 ? urls.slice(0, MAX_SEED_URLS) : undefined;
+}
+
+// --- Live progress (what a poll of a RUNNING crawl can read) ------------------------------
+
+/**
+ * A crawl in flight, as `jobs.result` carries it while `status = "running"`.
+ *
+ * WHY jobs.result AND NOT A NEW COLUMN: `get_job_status` reads the job row and nothing else, and
+ * a running row's `result` is otherwise NULL for its whole life — the column is free, needs no
+ * migration, and is overwritten by the real CrawlResult the moment the run completes. The key
+ * below is what keeps the two apart: a summarizer looking for `{pages[], skipped[]}` finds
+ * neither here, so a progress snapshot can never be mistaken for a finished crawl.
+ */
+export interface CrawlProgressSnapshot {
+  readonly pagesCrawled: number;
+  readonly urlsSkipped: number;
+  /** When the counts were taken (ISO-8601) — the half that proves a poll is not frozen. */
+  readonly updatedAt: string;
+}
+
+/** The one key marking a jobs.result as an IN-FLIGHT snapshot rather than a finished result. */
+const PROGRESS_KEY = "crawl_progress";
+
+/** Serialize a snapshot into the stored jsonb. Pure — snake_case, like every stored shape. */
+export function crawlProgressPayload(snapshot: CrawlProgressSnapshot): Json {
+  return {
+    [PROGRESS_KEY]: {
+      pages_crawled: snapshot.pagesCrawled,
+      urls_skipped: snapshot.urlsSkipped,
+      updated_at: snapshot.updatedAt,
+    },
+  };
+}
+
+/**
+ * Read a progress snapshot back out of a stored jobs.result, or null when the value is
+ * anything else (a finished CrawlResult, another tool's result, a legacy row, garbage).
+ * Defensive for the same reason parseCrawlResult is: this is jsonb of unknown shape, and the
+ * status line must degrade to "no detail" rather than print a half-read number.
+ */
+export function readCrawlProgress(result: Json | null): CrawlProgressSnapshot | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const raw = result[PROGRESS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const pages = raw.pages_crawled;
+  const skipped = raw.urls_skipped;
+  const updatedAt = raw.updated_at;
+  if (typeof pages !== "number" || !Number.isFinite(pages)) return null;
+  if (typeof skipped !== "number" || !Number.isFinite(skipped)) return null;
+  if (typeof updatedAt !== "string") return null;
+  return { pagesCrawled: pages, urlsSkipped: skipped, updatedAt };
+}
+
+/** The job a progress write targets. Both columns are tenant keys (constitution NEVER #4). */
+export interface ProgressTarget {
+  readonly jobId: string;
+  readonly userId: string;
+}
+
+/** The progress write itself — injectable, so the ticker is testable without a database. */
+export type ProgressWriter = (
+  target: ProgressTarget,
+  snapshot: CrawlProgressSnapshot,
+) => Promise<void>;
+
+/**
+ * Minimum gap between two progress writes for one job. A 100-page crawl commits ~25 batches in
+ * up to 90 s; this bounds the extra writes at well under one per second while still moving the
+ * number faster than any human polls.
+ */
+export const PROGRESS_WRITE_INTERVAL_MS = 2_000;
+
+/**
+ * Store one snapshot on a job that is STILL RUNNING.
+ *
+ * `status = "running"` is not decoration — it is what makes a late write harmless. `completeJob`
+ * writes the finished CrawlResult into this same column, so a progress write that somehow
+ * arrived afterwards would overwrite a delivered, charged result with a counter. Matching on
+ * the running status means such a write updates ZERO rows instead. (The ticker also awaits its
+ * in-flight write before the handler returns, so the race should never open in the first place;
+ * this is the belt behind that.)
+ *
+ * NOT covered by the fast lane: the supabase call itself is exercised only where a database is
+ * (the *.db.test.ts lane). The two halves that decide what is written — the payload and the
+ * ticker's throttle — are pure and pinned in the fast lane.
+ */
+export const writeCrawlProgress: ProgressWriter = async (target, snapshot) => {
+  const { error } = await getServiceClient()
+    .from("jobs")
+    .update({ result: crawlProgressPayload(snapshot) })
+    .eq("id", target.jobId)
+    .eq("user_id", target.userId)
+    .eq("status", "running");
+  if (error) {
+    throw new Error(`crawl_site: progress write failed (${error.message})`);
+  }
+};
+
+/**
+ * Turn the crawler's synchronous progress ticks into throttled, NON-FATAL progress writes.
+ *
+ * Three rules, each with a reason:
+ *  - THROTTLED: at most one write per PROGRESS_WRITE_INTERVAL_MS, and never two in flight at
+ *    once — so writes cannot overtake each other and land out of order.
+ *  - NON-FATAL: a failing write is swallowed AND disables further attempts. Progress is
+ *    cosmetic; failing a 20-credit crawl because a counter could not be stored would be the
+ *    tail wagging the dog, and retrying against a broken database every batch helps nobody.
+ *  - SETTLED: `settle()` awaits whatever is in flight, so the handler cannot return (and
+ *    executeJob cannot write the real result) while a progress write is still on its way.
+ */
+export function makeProgressTicker(
+  target: ProgressTarget,
+  write: ProgressWriter,
+  now: () => number = Date.now,
+): { onProgress: (progress: CrawlProgress) => void; settle: () => Promise<void> } {
+  let lastWriteAt = Number.NEGATIVE_INFINITY;
+  let inFlight: Promise<void> | null = null;
+  let disabled = false;
+
+  const onProgress = (progress: CrawlProgress): void => {
+    if (disabled || inFlight !== null) return;
+    const at = now();
+    if (at - lastWriteAt < PROGRESS_WRITE_INTERVAL_MS) return;
+    lastWriteAt = at;
+    inFlight = write(target, {
+      pagesCrawled: progress.pagesCrawled,
+      urlsSkipped: progress.urlsSkipped,
+      updatedAt: new Date(at).toISOString(),
+    })
+      .catch(() => {
+        disabled = true;
+      })
+      .finally(() => {
+        inFlight = null;
+      });
+  };
+
+  return { onProgress, settle: async () => { await inFlight; } };
+}
+
 export interface CrawlHandlerDeps {
   readonly crawl?: CrawlFn;
   readonly resolveOrigin?: OriginResolver;
   /** The crawl_pages dual write (default: the real batch insert). Injected to make it fail. */
   readonly writePages?: CrawlPagesWriter;
+  /** The live-progress write (default: the real jobs.result update). Injected in specs. */
+  readonly writeProgress?: ProgressWriter;
+  /** The clock the progress throttle reads (default: Date.now). Test knob. */
+  readonly now?: () => number;
 }
 
 /**
@@ -126,6 +301,8 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
   const crawl = deps.crawl ?? crawlSite;
   const resolveOrigin = deps.resolveOrigin ?? resolveProjectOrigin;
   const writePages = deps.writePages ?? writeCrawlPages;
+  const writeProgress = deps.writeProgress ?? writeCrawlProgress;
+  const now = deps.now ?? Date.now;
 
   return async ({ jobId, userId, payload }): Promise<Json> => {
     // Re-read the job tenant-scoped to bind this run to its owner's project row.
@@ -145,10 +322,29 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
     // clampMaxUrls / clampIncludePaths).
     const maxUrls = clampMaxUrls(payload.max_urls);
     const includePaths = clampIncludePaths(payload.include_paths);
+    const extraSeeds = clampSeedUrls(payload.seed_urls);
 
-    // H-02: what reaches jobs.result is BOUNDED here rather than trusted from the crawl
-    // function (which is an injectable dep). On the real crawler this is the identity.
-    const result = boundCrawlResult(await crawl(origin, { maxUrls, includePaths }));
+    // LIVE PROGRESS. The crawl takes up to 90 s, and until now every poll of a running job read
+    // the same byte-identical line — a customer could not tell "working" from "stuck". The
+    // ticker turns the crawler's per-batch counts into a throttled jobs.result snapshot that
+    // get_job_status renders. `settle()` runs on BOTH paths (return and throw), so no progress
+    // write is ever still in flight when executeJob writes the real result.
+    const progress = makeProgressTicker({ jobId, userId }, writeProgress, now);
+    let result: CrawlResult;
+    try {
+      // H-02: what reaches jobs.result is BOUNDED here rather than trusted from the crawl
+      // function (which is an injectable dep). On the real crawler this is the identity.
+      result = boundCrawlResult(
+        await crawl(origin, {
+          maxUrls,
+          includePaths,
+          extraSeeds,
+          onProgress: progress.onProgress,
+        }),
+      );
+    } finally {
+      await progress.settle();
+    }
 
     // A crawl that fetched NOTHING (e.g. an unreachable robots.txt — RFC 9309
     // complete disallow) delivered no value. Throw so withCredits RELEASES the

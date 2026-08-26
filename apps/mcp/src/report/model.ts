@@ -1,3 +1,4 @@
+import { DATA_FRESHNESS_DAYS, dataAgeInDays } from "@pseo/core";
 import type {
   AuditCrawl,
   BrokenInternalLink,
@@ -61,7 +62,8 @@ import {
  * Lower than the audit tools' MAX_LISTED (50, audit/format.ts) on purpose: that reader ASKED for
  * the per-page breakdown, while a shared report is read by a client and often on paper. The
  * pre-cap total travels WITH the list (see CappedList) so a truncated list is never presented as
- * the whole answer — the silent-truncation rule formatQuickWins states.
+ * the whole answer — the silent-truncation rule `formatGroupedQuickWins` states
+ * (tools/find-quick-wins.ts).
  */
 export const REPORT_MAX_LISTED = 10;
 
@@ -108,10 +110,13 @@ export interface IssueCount {
  * opinion: past a month a crawl describes a site that has since been edited, redeployed or
  * restructured, which is the same "different period, not an older version of the same one"
  * argument the pull threshold is built on. Exported so a test can pin the number a user is given.
+ *
+ * AN ALIAS SINCE 2026-08-25. "Deliberately the same number" was true and was still a second
+ * literal: three packages each wrote 30 and each explained that it matched the others. The value
+ * now lives once in @pseo/core's `guide/freshness`; the name stays because it is what this
+ * surface calls the threshold.
  */
-export const STALE_CRAWL_DAYS = 30;
-
-const DAY_MS = 86_400_000;
+export const STALE_CRAWL_DAYS = DATA_FRESHNESS_DAYS;
 
 /**
  * Whole days between an ISO timestamp and the report's OWN generatedAt.
@@ -120,13 +125,13 @@ const DAY_MS = 86_400_000;
  * measured against the moment the report claims to have been made, not against whenever the
  * renderer happens to run. Null when either value will not parse, and a null age prints no
  * staleness claim at all: not knowing how old the data is is not evidence that it is fresh.
+ *
+ * A thin wrapper over @pseo/core's `dataAgeInDays` rather than a fourth copy of the arithmetic:
+ * this signature says `generatedAt` out loud, which is the property the paragraph above is
+ * about, while the floor-to-whole-days rule lives with the threshold it is compared against.
  */
 function ageInDays(iso: string | null, generatedAt: string): number | null {
-  if (iso === null) return null;
-  const at = Date.parse(iso);
-  const now = Date.parse(generatedAt);
-  if (Number.isNaN(at) || Number.isNaN(now)) return null;
-  return Math.floor((now - at) / DAY_MS);
+  return dataAgeInDays(iso, generatedAt);
 }
 
 /**
@@ -181,12 +186,50 @@ export interface TechSummary {
   readonly redirect3xx: number;
   readonly clientError4xx: number;
   readonly serverError5xx: number;
+  /**
+   * THE FIFTH BUCKET: pages in NONE of the four classes above, so those four do not add up to
+   * `pageCount` whenever this is non-zero.
+   *
+   * Carried since 2026-08-26. Before that `summarizeTech` took the four counts and dropped this
+   * one, so the report's own "Pages crawled" stat counted a page that then appeared NOWHERE in a
+   * document the tenant paid 15 credits for — the shortfall was silent, which is the failure mode
+   * NEVER#7 is about. The four counts themselves are unchanged; what does not add up is stated
+   * separately rather than folded into them.
+   *
+   * Reachable rather than theoretical, and the engine's `StatusCounts.other` says why: a page
+   * whose stored status is missing or non-numeric reads as 0 (audit/crawl-data.ts asFiniteNumber)
+   * and 0 falls through every branch into this bucket. A defective or legacy-stored page is
+   * exactly the page a reader most needs named.
+   */
+  readonly other: number;
   readonly robotsConflicts: number;
   /** The URLs behind the 4xx/5xx counts — the number alone tells nobody which page to fix. */
   readonly clientErrorUrls: CappedList<string>;
   readonly serverErrorUrls: CappedList<string>;
+  /**
+   * The URLs behind `other`, for the same reason the two lists above exist: a count with no URLs
+   * behind it tells the reader a page is missing without telling them WHICH — and this bucket's
+   * entire membership is pages the crawl could not classify.
+   */
+  readonly otherStatusUrls: CappedList<string>;
   readonly slowPages: CappedList<SlowPage>;
   readonly heavyPages: CappedList<HeavyPage>;
+  /**
+   * How many crawled pages actually CARRY the two speed signals. Both `fetchMs` and `htmlBytes`
+   * are OPTIONAL on an AuditPage (crawl-data.ts): `undefined` there means "the stored crawl
+   * predates the field, so this page was never measured on that axis" — deliberately not zero.
+   *
+   * LOAD-BEARING rather than decorative, for the same reason `pagesValidated` is below:
+   * `slowPages` and `heavyPages` come back EMPTY both for a fast site and for a crawl that
+   * recorded neither field, so emptiness alone cannot be rendered. These two counts are the only
+   * thing separating "measured, and nothing crossed the threshold" from "never measured", and the
+   * renderer needs that separation to avoid printing a zero for a measurement that never happened.
+   *
+   * Counted separately because the rule reads each field independently (audit/rules/tech.ts):
+   * a page could be timed without its body being sized, and the report must not claim otherwise.
+   */
+  readonly pagesTimed: number;
+  readonly pagesSized: number;
   readonly redirectChains: CappedList<PageRedirectChain>;
   readonly xRobotsConflicts: CappedList<XRobotsConflict>;
   readonly deepPages: CappedList<DeepPage>;
@@ -379,8 +422,9 @@ function summarizeOnpage(crawl: AuditCrawl): OnpageSummary {
 
 /**
  * Technical signals from the REAL engine (auditTech): the 2xx/3xx/4xx/5xx split and the conflict
- * count G1 kept, PLUS the nine sections it computed and dropped. Nothing here re-derives anything
- * — every field is the engine's, capped for the page.
+ * count G1 kept, PLUS the nine sections it computed and dropped, PLUS the fifth status bucket —
+ * `other` and the URLs behind it — that both of them dropped. Nothing here re-derives anything —
+ * every field is the engine's, capped for the page.
  */
 function summarizeTech(crawl: AuditCrawl): TechSummary {
   const report = auditTech(crawl);
@@ -392,11 +436,19 @@ function summarizeTech(crawl: AuditCrawl): TechSummary {
     redirect3xx: status.redirect3xx,
     clientError4xx: status.clientError4xx,
     serverError5xx: status.serverError5xx,
+    other: status.other,
     robotsConflicts: report.robotsConflicts.length,
     clientErrorUrls: cap(report.clientErrorUrls),
     serverErrorUrls: cap(report.serverErrorUrls),
+    otherStatusUrls: cap(report.otherStatusUrls),
     slowPages: cap(report.slowPages),
     heavyPages: cap(report.heavyPages),
+    // Counted over crawl.pages — the SAME population collectSignals iterates in audit/rules/tech.ts
+    // — so "measured on N of M page(s)" describes the set the rule actually looked at, and the
+    // presence test is the rule's own (`!== undefined`), not a truthiness check that would read a
+    // legitimately measured 0 as "never measured".
+    pagesTimed: crawl.pages.filter((page) => page.fetchMs !== undefined).length,
+    pagesSized: crawl.pages.filter((page) => page.htmlBytes !== undefined).length,
     redirectChains: cap(report.redirectChains),
     xRobotsConflicts: cap(report.xRobotsConflicts),
     deepPages: cap(report.deepPages),

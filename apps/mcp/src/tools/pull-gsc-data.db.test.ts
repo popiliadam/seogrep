@@ -11,6 +11,7 @@ import { CURRENT_ROWS, FIXTURE_WINDOWS, PREVIOUS_ROWS, rawGoogleResponse } from 
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makePullGscDataTool } from "./pull-gsc-data.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
+import { NOT_CHARGED_SENTENCE, statesNoCharge } from "../credits/free-refusal.ts";
 
 /**
  * DB-integration proof for the pull_gsc_data SYNC PRICED tool (5 credits) against a LOCAL
@@ -315,7 +316,13 @@ async function expectRefusal(
   errorSpy: MockInstance,
 ): Promise<void> {
   expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toBe(expected);
+  // Still BYTE-EXACT, against a longer expected string: the refusal's own sentence, one space,
+  // and the fee sentence the registry appends (2026-08-25, review card 12). All three callers
+  // pass a sentence that does NOT already state the fee, which is why the concatenation is exact;
+  // a caller passing one that does (pull_gsc_data's forbidden-property refusal says "No credits
+  // were charged") would need its own expectation, because the helper appends nothing to those.
+  expect(statesNoCharge(expected), `"${expected}" already states the fee`).toBe(false);
+  expect(result.content[0]?.text).toBe(`${expected} ${NOT_CHARGED_SENTENCE}`);
   expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
   expect(result.content[0]?.text).not.toMatch(/reference/i);
   expect(errorSpy).not.toHaveBeenCalled();

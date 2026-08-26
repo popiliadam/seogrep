@@ -102,7 +102,7 @@ describe("findQuickWins over #fragment rows", () => {
  * The shortlist cap, made visible. `findQuickWins` returns at most MAX_QUICK_WINS rows and used
  * to be the ONLY thing a caller got, so a site with hundreds of qualifying queries read "50 quick
  * wins" with nothing saying that was a slice. The pre-cap total is what the formatter needs to
- * say so (format.ts formatQuickWins).
+ * say so (tools/find-quick-wins.ts formatGroupedQuickWins).
  */
 describe("findQuickWinsResult carries the pre-cap total", () => {
   /** `count` distinct qualifying rows, all inside the bands. */

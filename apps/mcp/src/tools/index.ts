@@ -3,8 +3,10 @@ import { setupProjectTool } from "./setup-project.ts";
 import { connectGscTool } from "./connect-gsc.ts";
 import { listProjectsTool } from "./list-projects.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
+import { listCreditActivityTool } from "./list-credit-activity.ts";
 import { crawlSiteTool } from "./crawl-site.ts";
 import { getJobStatusTool } from "./get-job-status.ts";
+import { listJobsTool } from "./list-jobs.ts";
 import { pullGscDataTool } from "./pull-gsc-data.ts";
 import { findQuickWinsTool } from "./find-quick-wins.ts";
 import { detectCannibalizationTool } from "./detect-cannibalization.ts";
@@ -39,10 +41,40 @@ import { serpSnapshotTool } from "./serp-snapshot.ts";
 export * from "./registry.ts";
 export { setupProjectTool } from "./setup-project.ts";
 export { connectGscTool } from "./connect-gsc.ts";
-export { listProjectsTool } from "./list-projects.ts";
+export {
+  listProjectsTool,
+  formatProjectList,
+  NO_PROJECTS_MESSAGE,
+  NO_TRACKED_PROJECTS_MESSAGE,
+} from "./list-projects.ts";
+export type { ProjectListRow } from "./list-projects.ts";
 export { getCreditBalanceTool } from "./get-credit-balance.ts";
+export {
+  listCreditActivityTool,
+  makeListCreditActivityTool,
+  formatCreditActivity,
+  formatActivityLine,
+  formatDelta,
+  kindLabel,
+  listOwnCreditActivity,
+  DEFAULT_ACTIVITY_LIMIT,
+  MAX_ACTIVITY_LIMIT,
+  NO_ACTIVITY_MESSAGE,
+} from "./list-credit-activity.ts";
+export type { CreditActivityRow, ListCreditActivityFn } from "./list-credit-activity.ts";
 export { crawlSiteTool } from "./crawl-site.ts";
 export { getJobStatusTool } from "./get-job-status.ts";
+export {
+  listJobsTool,
+  makeListJobsTool,
+  formatJobList,
+  formatJobLine,
+  listOwnJobs,
+  DEFAULT_JOB_LIST_LIMIT,
+  MAX_JOB_LIST_LIMIT,
+  NO_JOBS_MESSAGE,
+} from "./list-jobs.ts";
+export type { JobListRow, ListJobsFn } from "./list-jobs.ts";
 export { pullGscDataTool } from "./pull-gsc-data.ts";
 export { findQuickWinsTool } from "./find-quick-wins.ts";
 export { detectCannibalizationTool } from "./detect-cannibalization.ts";
@@ -133,8 +165,15 @@ export const ALL_TOOLS: readonly RegisteredTool[] = [
   connectGscTool,
   listProjectsTool,
   getCreditBalanceTool,
+  // Beside get_credit_balance on purpose: that tool answers "how many credits do I have", this one
+  // answers "where did they go". Neighbours in tools/list, and therefore in the docs nav.
+  listCreditActivityTool,
   crawlSiteTool,
   getJobStatusTool,
+  // Beside get_job_status on purpose, and AFTER it: that tool answers about ONE job and needs its
+  // id, this one hands you the ids. The pair is what makes a paid job reachable from a sentence
+  // that carries no id at all. Neighbours in tools/list, and therefore in the docs nav.
+  listJobsTool,
   pullGscDataTool,
   findQuickWinsTool,
   detectCannibalizationTool,

@@ -2,7 +2,9 @@ import { z } from "zod";
 import {
   canQuerySearchAnalytics,
   cosmeticPropertyMatch,
+  normalizeDomain,
   propertyToDomain,
+  stripWwwLabel,
   type GscSite,
 } from "@pseo/core";
 import { getServiceClient } from "../db.ts";
@@ -41,6 +43,13 @@ import { defineTool, errorResult, textResult, type RegisteredTool } from "./regi
  * mapping. Steps 2 and 3 refuse BEFORE any project exists, because a project SeoGrep cannot
  * answer for is worse than no project — it reads as tracked and returns nothing (measured live
  * 2026-08-09 on bayder.com.tr and rkturizm.com).
+ *
+ * A BARE HOST IS RESOLVED, NEVER GUESSED (step 1b, 2026-08-25). `track_gsc_property("dentnotion.com")`
+ * used to be refused as "not listed" while `https://dentnotion.com/` was the single unambiguous
+ * candidate in the caller's own listing — a resolvable match left unresolved. It now resolves
+ * when exactly ONE listed property names that host (`www.` ignored on both sides) and OFFERS THE
+ * CHOICE when several do. Rule 2 is untouched by this: the resolution reads only what a live
+ * `sites.list` returned, so nothing in the input has become evidence.
  *
  * Every read and the write are tenant-scoped (NEVER #4); Google is reached through injected
  * ports, so tests run with zero network (NEVER #5).
@@ -188,6 +197,58 @@ function unqueryableMessage(property: string, level: string, email: string): str
   );
 }
 
+/**
+ * The input read as a BARE HOST — the form a customer speaks ("dentnotion.com") rather than the
+ * form Search Console prints ("https://dentnotion.com/"). Null when the string is any recognised
+ * PROPERTY form, so this never competes with the exact match or with the near-miss suggestion.
+ *
+ * The `[:/]` test is what draws that line, and it draws it wide on purpose: `sc-domain:x`,
+ * `https://x/` and a bare `x/` all carry one of those two characters, and every one of them is a
+ * property string the caller either got right or got cosmetically wrong. Only a string with
+ * neither is a host somebody typed from memory.
+ *
+ * Measured live 2026-08-25: `track_gsc_property("dentnotion.com")` was refused as "not listed on
+ * any Google account you have connected" while `https://dentnotion.com/` sat in
+ * `list_gsc_properties` as the single unambiguous match. A resolvable match was not being
+ * resolved.
+ */
+function bareHostInput(property: string): string | null {
+  const raw = property.trim();
+  if (/[:/]/.test(raw)) return null;
+  const normalized = normalizeDomain(raw);
+  return normalized.ok ? normalized.domain : null;
+}
+
+/**
+ * Whether a listed property names `host` — `www.` ignored on both sides, since one site's
+ * property may be `sc-domain:example.com` while its project is `www.example.com`.
+ *
+ * `propertyToDomain` answers null for a property that names no website (android-app://), and a
+ * null never matches: a host cannot resolve to something that is not a site.
+ */
+function propertyNamesHost(siteUrl: string, host: string): boolean {
+  const domain = propertyToDomain(siteUrl);
+  return domain !== null && stripWwwLabel(domain) === host;
+}
+
+/**
+ * One spoken host, several properties. `sc-domain:example.com` and `https://example.com/` are
+ * two DIFFERENT Search Console properties for one site — different data, different permissions —
+ * so the tool offers the choice instead of taking it.
+ *
+ * This is the same ruling the two-accounts branch makes and for the same reason: the pick binds
+ * a project to a source, and a wrong binding is only discovered when the data stops making
+ * sense. Silently choosing one of several is the one outcome that must not happen here.
+ */
+function hostChoiceMessage(host: string, properties: readonly string[]): string {
+  const named = properties.map((property) => `"${property}"`).join("; ");
+  return (
+    `"${host}" matches more than one Search Console property on your connected accounts — ` +
+    `${named}. Those are separate properties with separate data, so SeoGrep will not choose one ` +
+    "for you. Run this again with the one you want, spelled exactly as it is printed here."
+  );
+}
+
 function unrecognisedMessage(property: string): string {
   return (
     `SeoGrep does not recognise "${property}" as a Search Console property for a website, so ` +
@@ -241,15 +302,28 @@ function ambiguousMessage(property: string, matches: readonly PropertyMatch[]): 
   );
 }
 
+/**
+ * What happened, in one sentence per outcome.
+ *
+ * THE THIRD BRANCH USED TO BE UNGRAMMATICAL and it is customer-visible: "Project "x" was already
+ * tracked … and set it to read …" changes subject halfway through — the first clause is about
+ * the project, the second needs SeoGrep as its subject. Created and restored share a tail
+ * because their first clause really does take one ("Created project x … and set it to read y");
+ * the already-tracked clause does not, so it gets its own.
+ */
 function trackedMessage(project: TrackedProject, property: string, email: string): string {
+  const source = `${property} through ${email}`;
   const opened =
     project.outcome === "created"
-      ? `Created project "${project.domain}"`
+      ? `Created project "${project.domain}" (project_id: ${project.id}) and set it to read ` +
+        `${source}.`
       : project.outcome === "restored"
-        ? `Restored "${project.domain}" from your archive`
-        : `Project "${project.domain}" was already tracked`;
+        ? `Restored "${project.domain}" from your archive (project_id: ${project.id}) and set ` +
+          `it to read ${source}.`
+        : `Project "${project.domain}" was already tracked (project_id: ${project.id}); it now ` +
+          `reads ${source}.`;
   return (
-    `${opened} (project_id: ${project.id}) and set it to read ${property} through ${email}.\n\n` +
+    `${opened}\n\n` +
     "Run pull_gsc_data for that project to fetch its Search Console performance data, then " +
     "find_quick_wins, detect_cannibalization or analyze_content_decay."
   );
@@ -273,7 +347,10 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       property: z
         .string()
         .min(1)
-        .describe("The property exactly as list_gsc_properties reports it."),
+        .describe(
+          "The property exactly as list_gsc_properties reports it. A bare domain " +
+            '("example.com") also works when it matches exactly one of them.',
+        ),
       account_id: z
         .uuid()
         .optional()
@@ -299,6 +376,11 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       // Every property any account DID list, for the near-miss suggestion below. Read only from
       // accounts that answered — a property we never saw cannot be offered as a correction.
       const listedProperties: string[] = [];
+      // The input read as a bare host, and every listed property that names it. Collected in the
+      // same pass and consulted ONLY if the exact match came up empty, so a caller who spelled a
+      // property correctly is never re-interpreted.
+      const spokenHost = bareHostInput(property);
+      const hostMatches: PropertyMatch[] = [];
       for (const { account, sites } of answers) {
         if (sites === null) {
           unreadable.push(account.email);
@@ -311,6 +393,26 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
         if (site) {
           matches.push({ account, site });
         }
+        if (spokenHost !== null) {
+          // filter, not find: one account can hold BOTH `sc-domain:x` and `https://x/`, and
+          // taking the first would hide exactly the ambiguity that must be offered as a choice.
+          for (const named of sites.filter((c) => propertyNamesHost(c.siteUrl, spokenHost))) {
+            hostMatches.push({ account, site: named });
+          }
+        }
+      }
+      // STEP 1b — the customer spoke a host rather than a property string. Resolve it when the
+      // answer is unambiguous; offer the choice when it is not. A property that WAS matched
+      // exactly never reaches this, and neither does an unreadable-account run below.
+      if (matches.length === 0 && hostMatches.length > 0) {
+        const distinct = [...new Set(hostMatches.map((hit) => hit.site.siteUrl))].sort(
+          compareStrings,
+        );
+        const [only] = distinct;
+        if (distinct.length > 1 || only === undefined) {
+          return errorResult(hostChoiceMessage(property, distinct));
+        }
+        matches.push(...hostMatches);
       }
       const [match, alsoListedElsewhere] = matches;
       if (match === undefined) {
@@ -321,8 +423,13 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
             : notListedMessage(property, listedProperties),
         );
       }
+      // THE PROPERTY THIS CALL IS ABOUT, from here down. It is Google's own spelling of the
+      // matched listing rather than the caller's input, because a bare host resolved above is
+      // not a property string — binding, mapping and every sentence below must name the
+      // property Search Console actually holds. For an exact match the two are identical.
+      const subject = match.site.siteUrl;
       if (alsoListedElsewhere !== undefined) {
-        return errorResult(ambiguousMessage(property, matches));
+        return errorResult(ambiguousMessage(subject, matches));
       }
       // The ambiguity guard above can only weigh the accounts that ANSWERED. If one did not,
       // it might list this property too — see undecidableMessage for why that is a refusal
@@ -330,7 +437,7 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       // though the candidate filter above already implies it: when the caller names an account,
       // no other account is ever asked, so nothing can be left unread behind their back.
       if (unreadable.length > 0 && accountId === undefined) {
-        return errorResult(undecidableMessage(property, match.account.email, unreadable));
+        return errorResult(undecidableMessage(subject, match.account.email, unreadable));
       }
       const { account, site } = match;
 
@@ -338,14 +445,14 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
       // for looks tracked and returns nothing.
       if (!canQuerySearchAnalytics(site.permissionLevel)) {
         return errorResult(
-          unqueryableMessage(property, site.permissionLevel, account.email),
+          unqueryableMessage(subject, site.permissionLevel, account.email),
         );
       }
 
       // STEP 3 — does the property name a website at all? (android-app:// properties do not.)
-      const domain = propertyToDomain(property);
+      const domain = propertyToDomain(subject);
       if (domain === null) {
-        return errorResult(unrecognisedMessage(property));
+        return errorResult(unrecognisedMessage(subject));
       }
 
       // STEP 4 — setup_project's route, refusals included (see rule 1 in the header).
@@ -359,9 +466,9 @@ export function makeTrackGscPropertyTool(deps: TrackGscPropertyDeps = {}): Regis
         userId: ctx.userId,
         projectId: resolved.project.id,
         accountId: account.id,
-        property,
+        property: subject,
       });
-      return textResult(trackedMessage(resolved.project, property, account.email));
+      return textResult(trackedMessage(resolved.project, subject, account.email));
     },
   });
 }

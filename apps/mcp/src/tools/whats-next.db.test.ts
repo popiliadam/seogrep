@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
+import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { getServiceClient, type Json } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
-import { makeWhatsNextTool, whatsNextTool } from "./whats-next.ts";
+import type { DomainReachability } from "./domain-reachability.ts";
+import { makeWhatsNextTool } from "./whats-next.ts";
 
 /**
  * DB-integration proof for whats_next (0 credits, tenant-scoped state reads) against a LOCAL
@@ -16,6 +18,10 @@ import { makeWhatsNextTool, whatsNextTool } from "./whats-next.ts";
  *   (f) CROSS-TENANT: user A asking about user B's project id is indistinguishable from a missing
  *       one ("No project found") — the tenant guard on the RLS-bypassing service client (NEVER #4);
  *   (i) a connection whose ACCOUNT is dead (token_status='invalid') -> reconnect, never a pull;
+ *   (k) a project with a SUCCEEDED pull row and NO connection row -> the FREE connect_gsc, never
+ *       a paid tool — the 2026-08-25 dentnotion state, where "rows were once pulled" was read as
+ *       "the link is live";
+ *   (l) a project whose domain does not resolve -> no priced tool is recommended at all;
  *   and throughout, that a 0-credit router touches the ledger ZERO times (NEVER #2).
  */
 
@@ -175,8 +181,20 @@ const PULL_RESULT: Json = {
   previous: { start_date: "2026-05-25", end_date: "2026-06-21", rows: [] },
 };
 
+/**
+ * THE DNS PORT IS INJECTED IN EVERY CASE, and that is correctness rather than tidiness: these
+ * fixtures track `*.example.com` names, which really do not resolve, so a router wired to the
+ * live resolver would drop every project below onto the dead-domain rung and answer "this
+ * project's domain does not resolve" instead of the rung under test — and would make one
+ * uncapped DNS query per case. `"unknown"` is the "nobody found out" answer and routes
+ * byte-identically to the ladder that existed before the check did. The cases that care about
+ * the check state their own answer ((k) below).
+ */
+const routerWith = (reachability: DomainReachability) =>
+  makeWhatsNextTool({ checkDomain: async () => reachability });
+
 const runFor = async (ctx: AuthContext, projectId?: string): Promise<string> => {
-  const result = await whatsNextTool.run(ctx, projectId ? { project_id: projectId } : {});
+  const result = await routerWith("unknown").run(ctx, projectId ? { project_id: projectId } : {});
   expect(result.isError).toBeUndefined();
   return result.content[0]?.text ?? "";
 };
@@ -301,6 +319,59 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     // What the user CAN still do is untouched — the crawl needs no Google account.
     expect(text).toContain("audit_onpage");
     expect(await ledgerCount(user.userId)).toBe(0); // still a 0-credit router
+  });
+
+  /**
+   * (k) THE MEASURED STATE, reproduced against real rows — S18 item 3.
+   *
+   * dentnotion.com, 2026-08-25: a succeeded `pull_gsc_data` job dated 2026-08-09 and NO
+   * `gsc_connections` row at all (`list_gsc_properties` printed "not used by any project" and
+   * `connect_gsc` took its not-connected branch in the same session). The router read the
+   * surviving JOB as if it meant a live link and answered "you have a fresh crawl and fresh
+   * Search Console data — you're all set", recommending generate_report at 15 credits, past the
+   * free connect_gsc that was the actual next step.
+   *
+   * The seed is deliberately the FRESH one — crawl and pull both inside the window — because
+   * that is the state that reached the all-set rung. Nothing here is faked but the DNS answer.
+   */
+  it("(k) a succeeded pull with NO connection row -> the FREE connect_gsc, not a paid tool", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "pulled-then-disconnected.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+    // No seedConnection call — that absence IS the fixture.
+
+    const text = await runFor(user, projectId);
+    expect(text).toContain("connect_gsc");
+    expect(text).toMatch(/no live connection/i);
+    expect(text).not.toMatch(/all set/i);
+    // The money claim, on meaning rather than a copy of the sentence: the ONE thing it tells the
+    // user to run must cost nothing. generate_report — the old answer — costs 15.
+    const primary = /run ([a-z_]+)/.exec(text)?.[1] ?? "";
+    expect(TOOL_COSTS[primary as ToolName]).toBe(0);
+    expect(text).toContain("audit_onpage"); // the crawl still needs no Google account
+    expect(await ledgerCount(user.userId)).toBe(0);
+  });
+
+  /**
+   * (l) S18 item 6 / S17 — a domain that does not resolve gets no recommendation to spend. The
+   * project stays tracked and every tool stays callable (the operator signed WARN, not block);
+   * what is withheld is the ROUTER's advice to pay for work against a host that is not there.
+   */
+  it("(l) a project whose domain does not resolve is recommended no priced tool", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "bu-domain-yok-9f3a2c.example.com");
+
+    const result = await routerWith("no_such_domain").run(user, { project_id: projectId });
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/does not resolve/i);
+    for (const tool of (Object.keys(TOOL_COSTS) as ToolName[]).filter((t) => TOOL_COSTS[t] > 0)) {
+      expect(text, tool).not.toContain(tool);
+    }
+    // The same project, with the check unable to run, routes exactly as it always did.
+    expect(await runFor(user, projectId)).toContain("crawl_site");
+    expect(await ledgerCount(user.userId)).toBe(0);
   });
 
   /**

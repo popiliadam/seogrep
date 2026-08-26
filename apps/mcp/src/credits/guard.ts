@@ -6,6 +6,11 @@ import {
   paidBalanceRequiredMessage,
   requiresPaidBalance,
 } from "./paid-balance.ts";
+import {
+  assertFreeVendorSpendBudget,
+  createDbFreeVendorSpendCounter,
+  type FreeVendorSpendCounter,
+} from "./free-vendor-calls.ts";
 import { getServiceClient } from "../db.ts";
 import { optionalWebBaseUrl } from "../env.ts";
 import { setJobReserve } from "../queue/boss.ts";
@@ -76,6 +81,22 @@ export interface CreditMeta {
    * bare 90 for up to ten targets and stay green.
    */
   units?: number;
+}
+
+/**
+ * The guard's two PRE-RESERVE gates, as ports. Production omits this argument entirely and gets
+ * the real ledger-backed pair; every call site in apps/ omits it.
+ *
+ * It exists so both gates can be PROVEN without a database. Before it, the only instrument a unit
+ * test had was "strip SUPABASE_* and watch it die building a client", which proves that SOME
+ * database access happened and nothing about which gate decided what — and a gate whose decision
+ * is not measured is a gate this project has learned not to trust.
+ */
+export interface CreditGuardDeps {
+  /** Has this account ever paid? Defaults to the real ledger read (paid-balance.ts). */
+  readonly hasPaidBalance?: (userId: string) => Promise<boolean>;
+  /** Un-charged vendor SPEND today. Defaults to the real ledger read (free-vendor-calls.ts). */
+  readonly freeVendorSpend?: FreeVendorSpendCounter;
 }
 
 async function reserve(
@@ -245,7 +266,11 @@ export async function withCredits<T>(
   ctx: CreditContext,
   meta: CreditMeta,
   fn: () => Promise<T>,
+  deps: CreditGuardDeps = {},
 ): Promise<T> {
+  const readPaidBalance = deps.hasPaidBalance ?? hasPaidBalance;
+  const freeVendorSpendCounter = deps.freeVendorSpend ?? createDbFreeVendorSpendCounter();
+
   // Paid-balance gate — FIRST, ahead of the cost lookup and the reserve alike. It answers a
   // different question from price ("may this account spend real VENDOR money?"), which is why
   // it sits above the 0-credit short-circuit rather than inside the priced branch: a gated tool
@@ -253,12 +278,30 @@ export async function withCredits<T>(
   // refusal free — nothing is reserved, so nothing needs refunding, and `fn` (the vendor call)
   // never runs. It throws rather than returns because withCredits is generic in T and cannot
   // build a ToolResult; the registry recognises the typed error and prints the sentence.
-  if (requiresPaidBalance(meta.tool) && !(await hasPaidBalance(ctx.userId))) {
+  if (requiresPaidBalance(meta.tool) && !(await readPaidBalance(ctx.userId))) {
     throw new PaidBalanceRequiredError(
       meta.tool,
       paidBalanceRequiredMessage(meta.tool, optionalWebBaseUrl()),
     );
   }
+
+  // Free-vendor-SPEND allowance — SECOND, and for the same structural reason as the gate above:
+  // before the cost lookup, before the reserve, and therefore before `fn` (the vendor call) can
+  // run. Refusing HERE is what makes the refusal free — nothing is reserved, so nothing needs
+  // refunding, and the vendor is never reached.
+  //
+  // It sits BELOW paid-balance deliberately, and the reason is not style. A trial account is
+  // refused by that gate BEFORE any reserve, so it never writes a ledger row and can never
+  // accumulate a count here — running this gate first would therefore add a ledger read that can
+  // only ever answer zero, and add it on exactly the path an account farm hammers. The two are
+  // mutually exclusive in practice, so nothing is lost by letting the actionable "buy any credit
+  // pack" sentence win when both would apply.
+  //
+  // It applies to the fifteen vendor tools only (the check is inside the helper) and is scoped to
+  // calls this account was NOT charged for, so a customer running paid work all day never meets
+  // it. What it rations is DOLLARS, not calls — a ceiling on calls left the expensive tools
+  // effectively unbounded. See credits/free-vendor-calls.ts.
+  await assertFreeVendorSpendBudget(ctx.userId, meta.tool, freeVendorSpendCounter);
 
   const cost = creditCostFor(meta.tool, meta.units);
   if (cost === 0) {
