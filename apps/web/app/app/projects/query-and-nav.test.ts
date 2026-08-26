@@ -97,8 +97,15 @@ function bodyOf(source: string, name: string): string {
 }
 
 /**
- * The page component itself, from `function ProjectsPage` to the END OF THE FILE — and it has to be
- * written this way, which is worth stating because the reason is a live trap.
+ * The card composition and everything after it — from `function loadProjectCards` to the END OF
+ * THE FILE — and it has to be written this way, which is worth stating because the reason is a
+ * live trap.
+ *
+ * IT USED TO START AT `function ProjectsPage`. The three page-level reads and the card fan-out
+ * moved into `loadProjectCards` when /app/projects/[id] needed the same composition; slicing from
+ * the page component would now hand back a string with no query in it, and every pin below would
+ * be measured against nothing. Starting at the loader covers BOTH functions, since it is declared
+ * above the page.
  *
  * `bodyOf` above ends a function at the first `\n}`, i.e. the first brace in column 0. Every helper
  * read here has a one-line signature, so that is their closing brace. `ProjectsPage`'s signature is
@@ -111,11 +118,12 @@ function bodyOf(source: string, name: string): string {
  * the first one after this point — and it is deliberately not a general-purpose `bodyOf`.
  */
 function pageComponent(source: string): string {
-  const start = source.search(/function\s+ProjectsPage\b/);
+  const start = source.search(/function\s+loadProjectCards\b/);
   if (start === -1) {
     throw new Error(
-      "no `function ProjectsPage` in page.tsx. If the component was renamed, rename it here too; " +
-        "if it was deleted, /app/projects is being served by something this spec does not check.",
+      "no `function loadProjectCards` in page.tsx. If the composition was renamed, rename it here " +
+        "too; if it was inlined, /app/projects is building its cards somewhere this spec does " +
+        "not check.",
     );
   }
   return source.slice(start);
@@ -215,7 +223,10 @@ describe("the panel reads connection health without reaching for the credential"
    * per project against a table with single-digit rows.
    */
   it("reads every account once, outside the per-project fan-out", () => {
-    expect(PAGE).toMatch(/readAccountHealth\(supabase,\s*user\.id\)/);
+    // The caller id is now `loadProjectCards`'s own parameter rather than `user.id` spelled at the
+    // page — the composition moved so /app/projects/[id] could share it. What is pinned is
+    // unchanged: ONE call, taking a plain identifier, never anything derived from a project.
+    expect(PAGE).toMatch(/readAccountHealth\(supabase,\s*[A-Za-z_$][\w$.]*\)/);
     expect(PAGE).not.toMatch(/readAccountHealth\([^)]*project/);
   });
 
@@ -501,7 +512,29 @@ describe("the rows the page reads reach the cards it builds", () => {
     const health = reads.get("readAccountHealth");
     expect([projects, connections, health].filter((binding) => binding === undefined)).toEqual([]);
 
-    expect(PAGE_FN).toMatch(new RegExp(`\\b${projects}\\s*\\.map\\(`));
+    // ONE derivation step is allowed and is itself pinned: /app/projects/[id] narrows the list to
+    // a single project before building its card, so the map runs over a binding DERIVED from the
+    // read rather than over the read itself. What must still hold is that the mapped list comes
+    // from `listActiveProjects` — mapping something unrelated (a literal, another read, a fresh
+    // array) reddens exactly as it did before.
+    const mappedList = /\b([A-Za-z_$][\w$]*)\s*\.map\(\s*\(?\s*[A-Za-z_$][\w$]*\s*\)?\s*=>\s*cardInputFor\(/.exec(
+      PAGE_FN,
+    );
+    expect(mappedList, "nothing maps a list into cardInputFor any more").not.toBeNull();
+    const mappedName = (mappedList as RegExpExecArray)[1] as string;
+    if (mappedName !== projects) {
+      const declaration = new RegExp(`\\b(?:const|let)\\s+${mappedName}\\s*(?::[^=]*)?=([^;]*);`).exec(
+        PAGE_FN,
+      );
+      expect(
+        declaration,
+        `the card fan-out maps \`${mappedName}\`, which is neither the projects read nor declared here`,
+      ).not.toBeNull();
+      expect(
+        (declaration as RegExpExecArray)[1],
+        `\`${mappedName}\` is not derived from the projects this page read`,
+      ).toContain(projects as string);
+    }
     const args = /cardInputFor\(([^)]*)\)/
       .exec(PAGE_FN)?.[1]
       ?.split(",")

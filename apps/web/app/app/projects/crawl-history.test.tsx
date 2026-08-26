@@ -58,6 +58,7 @@ describe("the crawl trail — every state a run can be in", () => {
   it("renders queued, running, succeeded and failed", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({ id: "a", status: "queued", started_at: null, finished_at: null, created_at: "2026-08-14T11:00:00.000Z" }),
@@ -83,6 +84,7 @@ describe("the crawl trail — every state a run can be in", () => {
   it("lists the runs newest first", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({ id: "old", status: "succeeded", created_at: "2026-08-01T00:00:00.000Z" }),
@@ -104,14 +106,14 @@ describe("the crawl trail — every state a run can be in", () => {
    */
   it("shows a failed run's error message", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith([run({ id: "x", status: "failed", finished_at: null, error: "robots.txt blocked the crawl" })])]} />,
+      <ProjectList detail cards={[cardWith([run({ id: "x", status: "failed", finished_at: null, error: "robots.txt blocked the crawl" })])]} />,
     );
     expect(within(trail(container)).getByText(/robots\.txt blocked the crawl/i)).toBeDefined();
   });
 
   it("says something for a failed run that carries no message", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith([run({ id: "x", status: "failed", error: null })])]} />,
+      <ProjectList detail cards={[cardWith([run({ id: "x", status: "failed", error: null })])]} />,
     );
     expect(within(trail(container)).getByText(/unknown error/i)).toBeDefined();
   });
@@ -119,7 +121,7 @@ describe("the crawl trail — every state a run can be in", () => {
   /** A succeeded run's stale error column must not surface as a failure that did not happen. */
   it("shows no error text for a succeeded run", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith([run({ id: "x", status: "succeeded", error: "left over" })])]} />,
+      <ProjectList detail cards={[cardWith([run({ id: "x", status: "succeeded", error: "left over" })])]} />,
     );
     expect(within(trail(container)).queryByText(/left over/i)).toBeNull();
   });
@@ -130,6 +132,7 @@ describe("the crawl trail — the timestamps", () => {
   it("shows created, started and finished for a settled run", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({
@@ -156,6 +159,7 @@ describe("the crawl trail — the timestamps", () => {
   it("renders a queued run with only its created stamp", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[cardWith([run({ id: "x", status: "queued", started_at: null, finished_at: null })])]} />,
     );
     const section = trail(container);
@@ -168,7 +172,7 @@ describe("the crawl trail — the timestamps", () => {
   /** A RUNNING run has started and not settled. */
   it("renders a running run with created and started but no finish", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith([run({ id: "x", status: "running", finished_at: null })])]} />,
+      <ProjectList detail cards={[cardWith([run({ id: "x", status: "running", finished_at: null })])]} />,
     );
     const section = trail(container);
     expect(section.textContent).toMatch(/started 2026-08-14 10:00 UTC/);
@@ -183,7 +187,7 @@ describe("the crawl trail — when it is not there at all", () => {
    * saying the same thing is noise on the card of every brand-new project.
    */
   it("renders nothing for a project that has never been crawled", () => {
-    const { container } = render(<ProjectList cards={[cardWith([])]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith([])]} />);
     expect(container.querySelector("details")).toBeNull();
     expect(screen.queryByText(/recent crawls/i)).toBeNull();
   });
@@ -191,7 +195,7 @@ describe("the crawl trail — when it is not there at all", () => {
   /** Only crawl_site runs reach the trail; a project with only pulls has no crawl trail. */
   it("renders nothing when the project's only jobs are other tools", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith([run({ id: "p", tool: "pull_gsc_data" })])]} />,
+      <ProjectList detail cards={[cardWith([run({ id: "p", tool: "pull_gsc_data" })])]} />,
     );
     expect(container.querySelector("details")).toBeNull();
   });

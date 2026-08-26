@@ -419,6 +419,29 @@ describe("the crawl summary counts only crawls that succeeded", () => {
 describe("the page hands the reads the caller and the project it actually read", () => {
   const PAGE_FN = PAGE.slice(PAGE.search(/function\s+ProjectsPage\b/));
 
+  /**
+   * The three reads and the card fan-out moved into `loadProjectCards` when /app/projects/[id]
+   * needed the SAME composition (a second copy would be a second place for the tenant filters to
+   * be forgotten). The property being pinned did not change — it now spans two functions instead
+   * of one, so it is pinned across both hops rather than dropped: the page hands the loader the
+   * authenticated caller, and the loader hands that same parameter to every read.
+   *
+   * Sliced to the end of `loadProjectCards`, which ends at the first brace in column 0 after it.
+   */
+  const LOADER_FN = (() => {
+    const start = PAGE.search(/function\s+loadProjectCards\b/);
+    if (start === -1) {
+      throw new Error(
+        "no `function loadProjectCards` in page.tsx. If the composition was renamed, rename it " +
+          "here too; if it was inlined, this spec is measuring a function that no longer builds " +
+          "the cards.",
+      );
+    }
+    const rest = PAGE.slice(start);
+    const end = rest.search(/\n\}/);
+    return end === -1 ? rest : rest.slice(0, end);
+  })();
+
   /** The identifier `supabase.auth.getUser()` was destructured into — read, never spelled. */
   const AUTH_USER = (() => {
     const found = /data:\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*,?\s*\}\s*=\s*await\s+supabase\.auth\.getUser\(\)/.exec(
@@ -440,10 +463,30 @@ describe("the page hands the reads the caller and the project it actually read",
    * id in scope typechecks and returns nothing at all — a panel that reads successfully and shows
    * you no projects.
    */
+  /** HOP ONE: the page hands the loader the authenticated caller and nothing else in scope. */
+  it("hands loadProjectCards the authenticated caller", () => {
+    expect(PAGE_FN).toMatch(new RegExp(`loadProjectCards\\(\\s*supabase\\s*,\\s*${AUTH_USER}\\.id\\s*\\)`));
+  });
+
+  /** The loader's own caller parameter — read out of its signature, never spelled. */
+  const LOADER_USER = (() => {
+    const found = /function\s+loadProjectCards\(\s*[A-Za-z_$][\w$]*\s*:\s*Supabase\s*,\s*([A-Za-z_$][\w$]*)\s*:/.exec(
+      LOADER_FN,
+    );
+    if (found === null) {
+      throw new Error(
+        "loadProjectCards no longer takes (client, userId, …) — whatever its reads filter on now, " +
+          "this spec cannot tell you it is the caller the page authenticated.",
+      );
+    }
+    return found[1] as string;
+  })();
+
+  /** HOP TWO: all three reads get that same parameter. */
   it.each(["listActiveProjects", "readConnections", "readAccountHealth"])(
     "hands %s the authenticated caller",
     (fn) => {
-      expect(PAGE_FN).toMatch(new RegExp(`${fn}\\(\\s*supabase\\s*,\\s*${AUTH_USER}\\.id\\s*\\)`));
+      expect(LOADER_FN).toMatch(new RegExp(`${fn}\\(\\s*supabase\\s*,\\s*${LOADER_USER}\\s*\\)`));
     },
   );
 
@@ -453,18 +496,18 @@ describe("the page hands the reads the caller and the project it actually read",
    * binding survives and passing a different element does not.
    */
   it("hands the gatherer the caller and the project being mapped", () => {
-    const mapped = /\.map\(\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*cardInputFor\(/.exec(PAGE_FN);
+    const mapped = /\.map\(\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*cardInputFor\(/.exec(LOADER_FN);
     expect(
       mapped,
       "nothing maps a project straight into cardInputFor any more — what builds the cards now?",
     ).not.toBeNull();
 
     const args = /cardInputFor\(([^)]*)\)/
-      .exec(PAGE_FN)?.[1]
+      .exec(LOADER_FN)?.[1]
       ?.split(",")
       .map((argument) => argument.trim());
     expect(args, "nothing calls cardInputFor any more").toBeDefined();
-    expect(args?.[1]).toBe(`${AUTH_USER}.id`);
+    expect(args?.[1]).toBe(LOADER_USER);
     expect(args?.[2]).toBe((mapped as RegExpExecArray)[1]);
   });
 });

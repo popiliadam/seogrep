@@ -323,12 +323,34 @@ function PullLine({ card }: { card: ProjectCard }) {
   );
 }
 
-/** One project: what it is, what has been read for it, and the one thing to do next. */
-export function ProjectCardView({ card }: { card: ProjectCard }) {
+/**
+ * One project: what it is, what has been read for it, and the one thing to do next.
+ *
+ * TWO DEPTHS, ONE COMPONENT. In the list (`detail` false) the card carries the three facts and the
+ * next step, and its heading is the way into the project. On `/app/projects/[id]` (`detail` true)
+ * the audit, insight, lookup and crawl-history blocks come with it, and the heading is not a link
+ * — a page does not link to itself.
+ *
+ * Measured 2026-08-26: the list rendered fifteen full cards, every block expanded inline, and no
+ * project route existed to go to. Depth was the thing missing, not information: nothing here was
+ * deleted, it moved to where there is room for it.
+ */
+export function ProjectCardView({ card, detail = false }: { card: ProjectCard; detail?: boolean }) {
   return (
     <li className="border border-hairline bg-card">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-hairline px-7 py-5">
-        <h2 className="m-0 break-all font-mono text-[16px] font-semibold">{card.domain}</h2>
+        <h2 className="m-0 break-all font-mono text-[16px] font-semibold">
+          {detail ? (
+            card.domain
+          ) : (
+            <Link
+              href={`/app/projects/${card.projectId}`}
+              className="border-b border-transparent transition-colors duration-150 hover:border-accent hover:text-accent"
+            >
+              {card.domain}
+            </Link>
+          )}
+        </h2>
         <span className="font-mono text-[11px] text-faint">
           Added <time dateTime={card.createdAt}>{formatDate(card.createdAt)}</time>
         </span>
@@ -340,13 +362,17 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
         <PullLine card={card} />
       </div>
 
-      <AuditLines lines={card.audits} />
+      {detail ? (
+        <>
+          <AuditLines lines={card.audits} />
 
-      <InsightLines lines={card.insights} />
+          <InsightLines lines={card.insights} />
 
-      <DomainLookupLines lines={card.lookups} domain={card.domain} />
+          <DomainLookupLines lines={card.lookups} domain={card.domain} />
 
-      <CrawlHistory entries={card.recentCrawls} />
+          <CrawlHistory entries={card.recentCrawls} />
+        </>
+      ) : null}
 
       {/* The SAME recommendation whats_next gives, so the panel and the assistant never
           disagree — see lib/projects/parity.test.ts. */}
@@ -365,7 +391,13 @@ export function ProjectCardView({ card }: { card: ProjectCard }) {
  * creates a project. Nothing here invents a second creation path: the empty state names the MCP
  * call (setup_project) and the form above is the panel's single write.
  */
-export function ProjectList({ cards }: { cards: readonly ProjectCard[] }) {
+export function ProjectList({
+  cards,
+  detail = false,
+}: {
+  cards: readonly ProjectCard[];
+  detail?: boolean;
+}) {
   if (cards.length === 0) {
     return (
       <div className="border border-dashed border-hairline-mid bg-card px-8 py-14 text-center">
@@ -389,7 +421,7 @@ export function ProjectList({ cards }: { cards: readonly ProjectCard[] }) {
   return (
     <ul className="m-0 flex list-none flex-col gap-7 p-0">
       {cards.map((card) => (
-        <ProjectCardView key={card.projectId} card={card} />
+        <ProjectCardView key={card.projectId} card={card} detail={detail} />
       ))}
     </ul>
   );

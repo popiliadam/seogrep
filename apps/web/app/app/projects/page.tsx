@@ -1,5 +1,10 @@
 import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
-import { buildProjectCards, type ProjectCardInput, type ProjectRow } from "../../../lib/projects/card";
+import {
+  buildProjectCards,
+  type ProjectCard,
+  type ProjectCardInput,
+  type ProjectRow,
+} from "../../../lib/projects/card";
 import { CRAWL_HISTORY_LIMIT, type JobHistoryRow } from "../../../lib/projects/history";
 import { DISCOVERY_TOOLS, type DiscoveryRunRow } from "../../../lib/projects/insights";
 import { DOMAIN_LOOKUP_TOOLS, type DomainLookupRunRow } from "../../../lib/projects/lookups";
@@ -430,6 +435,43 @@ async function cardInputFor(
 }
 
 /**
+ * Every card this tenant has, oldest first — or just ONE of them when `onlyProjectId` names it.
+ *
+ * EXPORTED so `/app/projects/[id]` builds its card through the SAME reads, filters and card
+ * assembly as the list. The detail route owning a second copy would mean a second place for the
+ * tenant filters to be forgotten, and two surfaces that could disagree about one project.
+ *
+ * It stays IN THIS FILE rather than moving to lib/: six source-pin specs read `page.tsx` by path
+ * and match the shortest distinctive fragment of a reader's body (signed lesson 11). Moving those
+ * bodies would leave every one of them matching nothing — and a pin that matches nothing passes
+ * vacuously, which is the exact failure query-pins.ts exists to design out. So the composition is
+ * what became shared; the reads did not move an inch.
+ */
+export async function loadProjectCards(
+  supabase: Supabase,
+  userId: string,
+  onlyProjectId?: string,
+): Promise<ProjectCard[]> {
+  const [projects, connections, health] = await Promise.all([
+    listActiveProjects(supabase, userId),
+    readConnections(supabase, userId),
+    readAccountHealth(supabase, userId),
+  ]);
+  // Filtering HERE, after a tenant-scoped read, rather than by adding `.eq("id", …)` to that read:
+  // an id that is not this tenant's simply matches nothing, so an unknown project and another
+  // tenant's project are indistinguishable to the caller — the same property the by-id MCP tools
+  // hold (project-target.ts).
+  const wanted =
+    onlyProjectId === undefined
+      ? projects
+      : projects.filter((project) => project.id === onlyProjectId);
+  const inputs = await Promise.all(
+    wanted.map((project) => cardInputFor(supabase, userId, project, connections, health)),
+  );
+  return buildProjectCards(inputs, new Date());
+}
+
+/**
  * /app/projects — every site you track: what has been crawled, what Search Console reads, and
  * the one next step. It reads, and it does exactly ONE thing: add a domain. That single write
  * goes through `openTrackedProject` (@pseo/db/projects), the same route `setup_project` calls —
@@ -468,15 +510,7 @@ export default async function ProjectsPage({
     );
   }
 
-  const [projects, connections, health] = await Promise.all([
-    listActiveProjects(supabase, user.id),
-    readConnections(supabase, user.id),
-    readAccountHealth(supabase, user.id),
-  ]);
-  const inputs = await Promise.all(
-    projects.map((project) => cardInputFor(supabase, user.id, project, connections, health)),
-  );
-  const cards = buildProjectCards(inputs, new Date());
+  const cards = await loadProjectCards(supabase, user.id);
 
   return (
     <section>

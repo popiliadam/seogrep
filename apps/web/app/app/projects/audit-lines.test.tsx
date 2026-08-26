@@ -53,7 +53,7 @@ function audits(container: HTMLElement): HTMLElement {
 
 describe("the audits section lists every audit", () => {
   it("names all three tools even when none has ever run", () => {
-    const { container } = render(<ProjectList cards={[cardWith([])]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith([])]} />);
     const section = audits(container);
 
     expect(within(section).getByText("audit_onpage")).toBeDefined();
@@ -68,7 +68,7 @@ describe("the audits section lists every audit", () => {
    * move at all.
    */
   it("tells the user which tool to ask for when an audit has never run", () => {
-    const { container } = render(<ProjectList cards={[cardWith([])]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith([])]} />);
     const lines = [...audits(container).querySelectorAll("li")].map((li) => li.textContent ?? "");
 
     expect(lines[0]).toMatch(/not run yet/i);
@@ -80,6 +80,7 @@ describe("the audits section lists every audit", () => {
   it("keeps the never-run lines beside a run that exists", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({
@@ -103,6 +104,7 @@ describe("the audits section shows each run's date and numbers", () => {
   it("prints the date as a machine-readable time and the run's figures", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({
@@ -127,6 +129,7 @@ describe("the audits section shows each run's date and numbers", () => {
   it("shows the newest run of a tool, not an older one", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[
           cardWith([
             run({
@@ -160,6 +163,7 @@ describe("the audits section shows each run's date and numbers", () => {
   it("shows the date with no figures when the stored report cannot be read", () => {
     const { container } = render(
       <ProjectList
+        detail
         cards={[cardWith([run({ tool: "audit_onpage", created_at: "2026-08-13T09:00:00.000Z", page_count: null })])]}
       />,
     );
