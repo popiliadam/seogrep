@@ -11,10 +11,14 @@ import {
   stripCostSentences,
   truncateAtWord,
 } from "../scripts/gen-tool-docs.mjs";
-import { TOOL_COSTS } from "../../mcp/src/credits/costs";
+import { CREDIT_UNITS, TOOL_COSTS } from "../../mcp/src/credits/costs";
 import {
+  type PricedTool,
+  describeCreditAmountViolation,
   describeViolation,
+  findCreditAmountViolations,
   findPriceClaimViolations,
+  legitimateCreditAmounts,
   markToolReferences,
   toClauses,
 } from "./tool-docs-price-claims";
@@ -319,5 +323,241 @@ describe("no tool description calls a priced tool free", () => {
   it.each(ALL_TOOLS.map((tool) => [tool.name, tool.description]))("%s", (name, description) => {
     const violations = findPriceClaimViolations(description);
     expect(violations.map((v) => describeViolation(`${name}.description`, v)).join("\n")).toBe("");
+  });
+});
+
+/* ------------------------------------------------------------------------------------------------
+ * THE NUMERIC LANE — the same guard, on the axis the qualitative one left open.
+ *
+ * MEASURED BEFORE ANY OF THIS EXISTED (2026-08-26). A judge put one sentence into `audit_tech`'s
+ * DOC_PROSE, regenerated, and got a page that says two prices two lines apart:
+ *
+ *     6:**Cost:** 15 credits.
+ *     8:… Each run of `audit_tech` costs 5 credits.
+ *
+ * `node apps/web/scripts/gen-tool-docs.mjs --check` exited 0. `pnpm exec vitest run` in apps/web
+ * passed every file. The four probes below were reproduced the same way on the base commit, which
+ * is what makes this a hole rather than a regression — and `audit_tech`'s own `"Costs 15 credits."`
+ * lives in exactly one place in this repo, its source, with no test naming it at all.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** The judge's own probes, verbatim, with the price each one contradicts. */
+const WRONG_NUMBER_PROBES: [string, string, PricedTool][] = [
+  ["the probe that produced the two-price page", "Each run of `audit_tech` costs 5 credits.", "audit_tech"],
+  ["predicative, backticked", "`find_quick_wins` costs 5 credits.", "find_quick_wins"],
+  ["copula rather than a pricing verb", "Each call to `crawl_site` is 5 credits.", "crawl_site"],
+  ["`charges`, with a trailing per-phrase", "`research_keywords` charges 10 credits per lookup.", "research_keywords"],
+  ["singular `credit`, per-unit phrasing on a per-call tool", "`compare_competitors` costs 1 credit per competitor.", "compare_competitors"],
+];
+
+describe("the guard reddens on a wrong NON-ZERO figure", () => {
+  it.each(WRONG_NUMBER_PROBES)("%s", (_label, text, tool) => {
+    const violations = findCreditAmountViolations(text);
+    expect(violations.map((v) => v.tool)).toContain(tool);
+    // The signed figure is read from the table, never asserted as a literal here: a spec that
+    // hard-codes 15 is a second price table, and the first thing it would do is drift.
+    expect(violations.find((v) => v.tool === tool)?.allowed).toContain(TOOL_COSTS[tool]);
+  });
+
+  /**
+   * A FOUR-FIGURE PRICE IS READ, NOT SKIPPED — and the amount is what this asserts, because that is
+   * the only assertion that fails both ways this can break. Drop the thousands group and there is no
+   * match at all (a wrong price nobody reports); read `\d+` without the lookbehind and "1,000" is
+   * parsed as `000`, a claim of ZERO credits the sentence never made. Measured: with only a green
+   * "stays silent" fixture for this, deleting the lookbehind left all 270 specs green.
+   */
+  it("reads a thousands-separated figure as the number it is, not as the digits after the comma", () => {
+    const [violation] = findCreditAmountViolations("`audit_tech` costs 1,000 credits.");
+    expect(violation?.tool).toBe("audit_tech");
+    expect(violation?.claimed).toBe(1000);
+  });
+
+  it("names the tool, the wrong figure and the signed one in the failure message", () => {
+    const [violation] = findCreditAmountViolations("Each run of `audit_tech` costs 5 credits.");
+    expect(violation).toBeDefined();
+    const message = describeCreditAmountViolation("DOC_PROSE.audit_tech", violation!);
+    expect(message).toContain("audit_tech");
+    expect(message).toContain("5 credits");
+    expect(message).toContain(`${TOOL_COSTS.audit_tech} credits`);
+  });
+
+  /**
+   * THE FORMS A FIGURE IS WRITTEN IN. Each is a separate axis, and each is here because a binder
+   * that handles one does not automatically handle the next: markup lives between the number and
+   * the word, a spelled count is not a digit at all, and a hyphen is not a space.
+   */
+  it.each([
+    ["bold around the whole claim", "`audit_tech` costs **5 credits**."],
+    ["bold around the number only", "`audit_tech` costs **5** credits."],
+    ["italic around the number", "`audit_tech` costs *5* credits."],
+    ["backticks around the claim", "`audit_tech` costs `5 credits`."],
+    ["spelled-out count", "`audit_tech` costs five credits."],
+    ["hyphenated attributive", "`audit_tech` is a 5-credit run."],
+    ["singular `credit`", "`audit_tech` costs 1 credit."],
+    ["inside one table cell", "| `mode` | string | No | Running `audit_tech` costs 5 credits. |"],
+    // A PRICE-TABLE ROW, where the tool is in one cell and the figure in another. The first version
+    // of this lane split on `|` and could not bind this at all; the split was measured to catch no
+    // false positive anywhere in the corpus, so it was removed and this row is the pin that says so.
+    ["across cells of a price-table row", "| `audit_tech` | each run | 5 credits |"],
+  ])("reddens when the figure is written as: %s", (_label, text) => {
+    expect(findCreditAmountViolations(text).map((v) => v.tool)).toContain("audit_tech");
+  });
+});
+
+/**
+ * THE SUBJECT ROUTE — the surface the judge measured as completely unguarded.
+ *
+ * A tool description's cost sentence never names its tool ("Costs 15 credits."), so the named route
+ * binds nothing and the whole description surface stays open. Inside a description the subject is
+ * not a guess: there is exactly one tool it is about. This route is therefore STRICTER than prose —
+ * an unbound figure is a violation rather than silence — and the three cases below pin all three
+ * halves of that: it fires, it does not fire when the clause names a tool of its own, and it does
+ * not exist at all without a subject.
+ */
+describe("a description's own figure is checked against its own tool", () => {
+  it("reddens `Costs 5 credits.` in the description of a 15-credit tool", () => {
+    const violations = findCreditAmountViolations("Costs 5 credits.", "audit_tech");
+    expect(violations.map((v) => v.tool)).toEqual(["audit_tech"]);
+    expect(violations[0]?.boundBy).toBe("subject");
+    expect(violations[0]?.allowed).toEqual([TOOL_COSTS.audit_tech]);
+  });
+
+  it("stays green when the figure is the tool's real price", () => {
+    expect(findCreditAmountViolations(`Costs ${TOOL_COSTS.audit_tech} credits.`, "audit_tech")).toEqual([]);
+  });
+
+  it("yields to the named route rather than blaming the subject", () => {
+    // audit_tech's description really does name crawl_site. A subject route that fired anyway would
+    // report the wrong tool for a sentence that is true.
+    const text = "Needs a crawl on record — `crawl_site` costs 20 credits.";
+    expect(findCreditAmountViolations(text, "audit_tech")).toEqual([]);
+    expect(findCreditAmountViolations(text.replace("20", "5"), "audit_tech").map((v) => v.tool))
+      .toEqual(["crawl_site"]);
+  });
+
+  it("does not exist without a subject — prose stays conservative", () => {
+    // The same sentence in a docs page binds to nothing, on purpose: outside a description there is
+    // no single tool a bare figure belongs to, and guessing is how a guard starts reporting noise.
+    expect(findCreditAmountViolations("Costs 5 credits.")).toEqual([]);
+  });
+});
+
+/**
+ * PER-UNIT PRICES — the family of true figures TOOL_COSTS alone cannot express.
+ *
+ * `serp_snapshot` is signed at 5 per call plus 8 per keyword over 1-10 keywords; `ai_visibility_compare`
+ * at 90 per compared target over 2-10. Every figure those rules can produce is a TRUE statement about
+ * the same signed price, and both tools' own descriptions quote several of them. A guard that knew
+ * only TOOL_COSTS would redden the shipped text of both tools on its first run — which is why the
+ * whole family is derived from CREDIT_UNITS, and why both ends of the boundary are pinned here.
+ */
+describe("a per-unit price is a family of true figures, not one", () => {
+  const perUnitTools = Object.keys(CREDIT_UNITS) as (keyof typeof CREDIT_UNITS)[];
+
+  it("covers both signed per-unit tools (a loop over an empty list is not a test)", () => {
+    expect(perUnitTools).toEqual(["ai_visibility_compare", "serp_snapshot"]);
+  });
+
+  /**
+   * The figures are derived HERE, from CREDIT_UNITS and TOOL_COSTS, and deliberately NOT from
+   * `legitimateCreditAmounts` — a loop that asks the function under test which inputs to feed it is
+   * green by construction. Measured: with the per-unit branch deleted this spec sailed through
+   * while three others turned red, because the family it was looping over had shrunk with the bug.
+   */
+  function signedFamily(tool: keyof typeof CREDIT_UNITS): number[] {
+    const rule: { base?: number; min_units: number; max_units: number } = CREDIT_UNITS[tool];
+    const base = rule.base ?? 0;
+    const amounts = new Set<number>([TOOL_COSTS[tool]]);
+    if (base > 0) amounts.add(base);
+    for (let n = rule.min_units; n <= rule.max_units; n += 1) amounts.add(base + TOOL_COSTS[tool] * n);
+    return [...amounts].sort((a, b) => a - b);
+  }
+
+  it.each(perUnitTools)("%s: every figure the rule can produce stays green", (tool) => {
+    expect(signedFamily(tool).length).toBeGreaterThan(2);
+    for (const amount of signedFamily(tool)) {
+      expect(findCreditAmountViolations(`\`${tool}\` costs ${amount} credits.`)).toEqual([]);
+    }
+  });
+
+  it.each(perUnitTools)("%s: the family is the unit price, the base, and every call total", (tool) => {
+    expect([...legitimateCreditAmounts(tool)].sort((a, b) => a - b)).toEqual(signedFamily(tool));
+  });
+
+  it.each(perUnitTools)("%s: a figure OUTSIDE the family still reddens", (tool) => {
+    const family = legitimateCreditAmounts(tool);
+    // The first figure the rule cannot produce, found rather than guessed, so this stays true if a
+    // signed price ever moves.
+    let stranger = 1;
+    while (family.has(stranger)) stranger += 1;
+    const violations = findCreditAmountViolations(`\`${tool}\` costs ${stranger} credits.`);
+    expect(violations.map((v) => v.tool)).toEqual([tool]);
+  });
+
+  it("a per-CALL tool has exactly one true figure, and it is TOOL_COSTS'", () => {
+    // If the amounts were ever produced from a literal instead of the table, this loop is what says
+    // so — it compares 36 different prices against the table entry each one was derived from.
+    for (const tool of Object.keys(TOOL_COSTS) as PricedTool[]) {
+      if (tool in CREDIT_UNITS) continue;
+      expect([...legitimateCreditAmounts(tool)]).toEqual([TOOL_COSTS[tool]]);
+    }
+  });
+});
+
+/**
+ * THE CLEAN SIDE OF THE NUMERIC LANE — the sentences that must never redden.
+ *
+ * Every one of these is live text, and the first four are the reason "call" is not a pricing verb:
+ * three shipped pages say "this call costs 40 credits" about a LIMIT parameter, and a binder loose
+ * enough to walk over one page-supplied noun would redden all of them on day one.
+ */
+describe("the numeric lane stays silent on true and unattributed figures", () => {
+  it.each([
+    ["a noun the page supplied breaks the binding", "A display control, NOT a price control: this call costs 40 credits whatever you ask for."],
+    ["another tool's price, named and correct", "This is a paid DataForSEO lookup and is charged SEPARATELY at the my_pages price (40 credits, its own ledger line)."],
+    ["a threshold, not a price", "Before a run estimated above 200 credits, SeoGrep returns the estimate and asks."],
+    ["a bookkeeping marker", "A tool run is recorded internally as a charge and a matching settlement marker worth zero credits."],
+    ["a zero-credit line in backticks", "because a `0 credits` line next to the real charge for the same tool reads as an error"],
+    ["the tool's own correct price", "`audit_tech` costs 15 credits."],
+    ["a thousands-separated balance, attributed to nobody", "Your balance is 1,000 credits and `audit_tech` is still one run away."],
+    // The ordinary input-table row: the cell before the figure is a noun the page supplied, and the
+    // walk stops at a noun. This is what makes the price-table row above safe to bind.
+    ["an input-table row stops at the noun in the cell before it", "| `crawl_site` | integer | No | 5 credits |"],
+    ["a vendor cost in dollars is not a credit price", "`crawl_site` costs $0.02 per request at the vendor."],
+  ])("stays green on: %s", (_label, text) => {
+    expect(findCreditAmountViolations(text)).toEqual([]);
+  });
+});
+
+/**
+ * THE LIVE CORPUS, ON THE NUMERIC AXIS. Same three surfaces as the free-claim lane above, and the
+ * description surface is where the judge's named hole was: `audit_tech`'s `"Costs 15 credits."`
+ * appears in this repo exactly once, in its source, and until this lane existed nothing compared it
+ * to anything.
+ */
+describe("no live text names a credit figure the signed table does not charge", () => {
+  it.each(Object.entries(DOC_PROSE))("DOC_PROSE.%s", (tool, prose) => {
+    const violations = findCreditAmountViolations(JSON.stringify(prose));
+    expect(violations.map((v) => describeCreditAmountViolation(`DOC_PROSE.${tool}`, v)).join("\n")).toBe("");
+  });
+
+  it.each(handWrittenDocPages().map((p) => [p.path, p.text]))("%s", (path, text) => {
+    const violations = findCreditAmountViolations(text);
+    expect(violations.map((v) => describeCreditAmountViolation(String(path), v)).join("\n")).toBe("");
+  });
+
+  it.each(ALL_TOOLS.map((tool) => [tool.name, tool.description]))("%s.description", (name, description) => {
+    const violations = findCreditAmountViolations(description, name as PricedTool);
+    expect(violations.map((v) => describeCreditAmountViolation(`${name}.description`, v)).join("\n")).toBe("");
+  });
+
+  it("every description carrying a figure is really being checked against its own tool", () => {
+    // The lane above is `it.each` over 38 descriptions; if the subject route ever stopped binding,
+    // all 38 would go green and say nothing. This counts the ones a mutation would have to keep
+    // reddening, and it is derived from the corpus rather than typed: 34 today.
+    const withFigures = ALL_TOOLS.filter(
+      (tool) => findCreditAmountViolations(tool.description, "audit_content").length > 0,
+    );
+    expect(withFigures.length).toBeGreaterThan(30);
   });
 });

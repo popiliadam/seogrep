@@ -1,4 +1,4 @@
-import { TOOL_COSTS } from "../../mcp/src/credits/costs";
+import { CREDIT_UNITS, TOOL_COSTS } from "../../mcp/src/credits/costs";
 
 /**
  * THE PRICE-CLAIM GUARD: no docs page may call a tool free unless the signed table says it is.
@@ -20,6 +20,25 @@ import { TOOL_COSTS } from "../../mcp/src/credits/costs";
  * has, and a scan for credit digits reports a clean bill of health while sitting right next to one.
  * That is the gap this file closes, and it is worth stating plainly: a passing scan is not coverage
  * of an axis it never looked at.
+ *
+ * AND THE SAME SENTENCE APPLIES TO THIS FILE'S FIRST VERSION. It guarded the QUALITATIVE claim and
+ * left the WRONG-NUMBER claim to `stripCostSentences` and the derived `**Cost:**` line — a handover
+ * that was never measured. It was measured on 2026-08-26, by a fresh judge, and it does not hold:
+ * two lines apart on the same generated page,
+ *
+ *     6:**Cost:** 15 credits.                     ← derived from TOOL_COSTS, correct
+ *     8:… Each run of `audit_tech` costs 5 credits. ← prose, false, and CUSTOMER-FACING
+ *
+ * `gen-tool-docs --check` exited 0 and apps/web's whole vitest suite passed. `stripCostSentences`
+ * only ever touched a tool DESCRIPTION, the derived line only ever states its own number, and
+ * `--check` has no credit-number check at all — so nothing in the pipeline ever compares a number a
+ * HUMAN typed against the table. Four more probes on four more tools were green the same way, on the
+ * base commit as well, which makes this not a regression but a hole that was always open.
+ *
+ * "free" is the `cost = 0` special case of that hole. The general case is worse, because a wrong
+ * non-zero number is the shape a reader BELIEVES: it looks derived. {@link findCreditAmountViolations}
+ * closes it, against the same single source of truth — TOOL_COSTS, plus CREDIT_UNITS for the two
+ * per-unit prices, and no second table anywhere.
  *
  * WHERE TOOL_COSTS COMES FROM, AND WHY NOT `dist`. From `apps/mcp/src/credits/costs` — the same
  * import `tool-docs-gen.test.ts` next door already uses. The `--check` CLI reads `dist` because it
@@ -281,5 +300,256 @@ export function describeViolation(source: string, violation: PriceClaimViolation
   return (
     `${source}: calls \`${violation.tool}\` "${violation.claim}", but it costs ` +
     `${violation.cost} credits. Being ungated is not the same as being free.\n    ${violation.clause}`
+  );
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * THE NUMERIC LANE — a number a human typed, checked against the number the operator signed.
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * EVERY credit figure a truthful sentence about `tool` may name.
+ *
+ * TOOL_COSTS is the only source, and CREDIT_UNITS is the only thing that turns one entry into more
+ * than one legitimate number. No price is written here; every member of the returned set is
+ * ARITHMETIC over the signed tables, which is what makes an edited price fail in costs.test.ts
+ * before it can ever make a docs page green.
+ *
+ * A per-call tool has exactly one truthful figure. A PER-UNIT tool has a whole family of them, and
+ * refusing to model that would make this guard a false-positive machine on its first sentence:
+ * `serp_snapshot` is signed at 5 credits per call PLUS 8 per keyword over 1-10 keywords, so 5, 8,
+ * 13, 21 … 85 are all true statements about the same signed price, and its own description says
+ * three of them in one sentence. `ai_visibility_compare` is 90 per compared target over 2-10, so 90
+ * and 180 … 900 are all true. The set is therefore:
+ *
+ *   • the TOOL_COSTS figure (the per-call price, or the per-UNIT price for a per-unit tool);
+ *   • the rule's `base`, when it has one — the fixed part of a call, which is a signed price of its
+ *     own (costs.ts says so in as many words) and is quoted on its own in the wild;
+ *   • every call total the rule can produce, `base + unit x n` for n in min_units..max_units.
+ *
+ * WHAT THIS BUYS AND WHAT IT FORFEITS, named rather than discovered. It catches every figure that is
+ * not a number of this price at all — the whole class the judge probed. It does NOT check that a
+ * true figure plays the right ROLE in its sentence: "`serp_snapshot` costs 5 credits per keyword"
+ * names a real part of the price (the base) in the wrong place, and this guard passes it. Pinning
+ * roles would mean parsing "per <unit>" against the rule's unit noun, which is a second, larger
+ * guess about English; the two per-unit tools are pinned red on out-of-family numbers and green on
+ * every in-family one instead, so the boundary is measured rather than assumed.
+ */
+export function legitimateCreditAmounts(tool: PricedTool): ReadonlySet<number> {
+  const unitOrFlat = TOOL_COSTS[tool];
+  const rule: { base?: number; min_units: number; max_units: number } | undefined =
+    tool in CREDIT_UNITS ? CREDIT_UNITS[tool as keyof typeof CREDIT_UNITS] : undefined;
+  if (rule === undefined) return new Set([unitOrFlat]);
+  const base = rule.base ?? 0;
+  const amounts = new Set<number>([unitOrFlat]);
+  if (base > 0) amounts.add(base);
+  for (let units = rule.min_units; units <= rule.max_units; units += 1) {
+    amounts.add(base + unitOrFlat * units);
+  }
+  return amounts;
+}
+
+/**
+ * Spelled-out counts a price sentence realistically uses. Deliberately stops at ten: past that,
+ * prices in this corpus are written in digits, and every word added here is a word that could
+ * collide with ordinary prose. "eleven credits" is NOT covered, and that is stated rather than
+ * hoped — see the coverage note on {@link findCreditAmountViolations}.
+ */
+const SPELLED_AMOUNTS: ReadonlyMap<string, number> = new Map([
+  ["zero", 0], ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5],
+  ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9], ["ten", 10],
+]);
+
+/**
+ * A credit figure, in the forms this corpus writes one: `15 credits`, `1 credit`, `one credit`,
+ * `15-credit`, `1,000 credits`, and the same inside bold or backticks (stripped before this runs).
+ *
+ * THE THOUSANDS GROUP IS THE FIRST ALTERNATIVE, AND THE LOOKBEHIND GUARDS IT. A naive digit run on
+ * "1,000 credits" matches `000 credits` — a claim of ZERO credits, invented by the regex itself,
+ * out of a sentence that said nothing of the kind. Refusing to match it at all was the first fix,
+ * and it was worse than it looked: "`audit_tech` costs 1,000 credits" is a wrong figure on a
+ * 15-credit tool, and a guard that declines to read the number cannot say so. So four-figure
+ * prices are READ (1,000 → 1000) rather than skipped, and the lookbehind keeps the naive
+ * mid-number match from ever happening. Both halves are pinned in the spec by asserting the
+ * AMOUNT is 1000 — the only assertion that fails both ways this can break.
+ */
+const CREDIT_AMOUNT_PATTERN =
+  /(?<![\d.,$])\b(\d{1,3}(?:,\d{3})+|\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten)\b[ \t -]+credits?\b/gi;
+
+function readAmount(token: string): number | undefined {
+  const spelled = SPELLED_AMOUNTS.get(token.toLowerCase());
+  if (spelled !== undefined) return spelled;
+  const digits = Number.parseInt(token.replace(/,/g, ""), 10);
+  return Number.isInteger(digits) ? digits : undefined;
+}
+
+/**
+ * Emphasis and code marks, removed AFTER tool marking so the sentinels are untouched.
+ *
+ * A number's markup is not part of its claim: "costs **15** credits", "costs `15 credits`" and
+ * "costs 15 credits" are the same sentence to a reader and must be the same sentence here. Only
+ * `*` and backticks are stripped — NOT `_`, which is inside every tool name this file works with.
+ */
+function stripEmphasis(text: string): string {
+  return text.replace(/[*`]/g, "");
+}
+
+/**
+ * A MARKDOWN TABLE CELL IS NOT A CLAUSE BOUNDARY HERE, and that was a deliberate reversal.
+ *
+ * The first version of this lane split every clause on `|` so a figure could not borrow a tool from
+ * the cell next door. Two things were then measured. First, the split bought NOTHING: the whole
+ * corpus — 38 DOC_PROSE blocks, every hand-written page, every generated page, 38 descriptions — is
+ * byte-for-byte as green without it, because the cell before a figure is always a short noun
+ * ("integer", "No", "string") and the backward walk stops at a noun anyway. Second, it COST
+ * something real: a price table row — "| `crawl_site` | each run | 5 credits |" — is exactly where
+ * a wrong figure would live, and the split made that row unbindable. A precision measure that
+ * catches no false positive and drops a true one is a weakening with a good story attached, so the
+ * numeric lane uses {@link toClauses} unchanged and the row above is pinned RED in the spec.
+ */
+
+/**
+ * The filler of {@link BINDING_FILLER}, plus the verbs that state a price.
+ *
+ * "`find_quick_wins` costs 5 credits" and "Each run of `audit_tech` costs 5 credits" both put a
+ * pricing verb between the tool and the figure, so without these words the backward walk stops
+ * before it reaches the tool and the judge's probes stay green. Everything here ASSERTS A PRICE;
+ * nothing here is a noun. That distinction is what keeps "this call costs 40 credits" — the
+ * sentence three live pages use about a limit parameter — bound to nothing: the walk stops dead at
+ * "call", because "call" is a noun the page supplied, not a tool it named. Adding one convenient
+ * noun would redden three shipped pages, which is exactly how a guard gets deleted.
+ */
+const PRICE_BINDING_FILLER: ReadonlySet<string> = new Set([
+  ...BINDING_FILLER,
+  "costs", "cost", "charges", "charge", "charged", "bills", "bill", "billed",
+  "price", "prices", "priced", "free",
+  // The two articles, and they are the only nouns' company allowed through: a figure is routinely
+  // written as "is a 5-credit run" or "Free (0 credits)", and an article carries no subject of its
+  // own for the claim to attach to. Every noun stays out — that is the line "call" is on.
+  "a", "an",
+]);
+
+/** Tools a figure is attributed to, and whether the walk ran out of clause before it stopped. */
+interface AmountBinding {
+  readonly tools: readonly string[];
+  readonly reachedClauseStart: boolean;
+}
+
+/** Walks back from a figure over pricing verbs and connectives, collecting the tools it names. */
+function bindAmountBackward(clause: string, claimStart: number): AmountBinding {
+  const tools: string[] = [];
+  for (const token of tokensBefore(clause.slice(0, claimStart))) {
+    if (token.startsWith(MARK)) {
+      tools.push(token.slice(MARK.length, -MARK.length));
+      continue;
+    }
+    if (PRICE_BINDING_FILLER.has(token.toLowerCase())) continue;
+    return { tools, reachedClauseStart: false };
+  }
+  return { tools, reachedClauseStart: true };
+}
+
+/** One text's claim that a named tool costs a number of credits the signed table does not say. */
+export interface CreditAmountViolation {
+  /** The tool the figure was attributed to. */
+  readonly tool: string;
+  /** The figure the text named. */
+  readonly claimed: number;
+  /** Every figure a truthful sentence about this tool could have named. */
+  readonly allowed: readonly number[];
+  /** The words that made the claim ("5 credits"). */
+  readonly claim: string;
+  /** Whether the tool was named in the clause, or supplied as the text's subject. */
+  readonly boundBy: "named" | "subject";
+  /** The clause it was made in, for the failure message. */
+  readonly clause: string;
+}
+
+/**
+ * Every credit figure in `text` that is attributed to a tool the signed table prices differently.
+ *
+ * TWO WAYS A FIGURE GETS A SUBJECT, and they are not equally permissive on purpose.
+ *
+ *  1. NAMED — the clause names the tool and the walk back from the figure crosses only pricing
+ *     verbs and connectives. This is the only route for prose (DOC_PROSE, hand-written pages), and
+ *     it is as conservative as the free-claim lane above it for the same reason: a figure that
+ *     binds to nothing is not reported, because reddening a true sentence is how a guard dies.
+ *
+ *  2. SUBJECT — `subject` is given, and the clause names NO tool at all. Then the figure is the
+ *     subject's own. This route exists for TOOL DESCRIPTIONS, where it is not a guess: a
+ *     description is about exactly one tool, and its cost sentence — "Costs 15 credits." — never
+ *     names it. That sentence is the judge's own example of what nothing measures: `audit_tech`'s
+ *     `"Costs 15 credits."` exists only in source, and a typo in it reached the customer through
+ *     `renderToolPage`'s frontmatter with every gate green. Without this route the whole
+ *     description surface stays exactly as unguarded as it was.
+ *
+ *     It is STRICTER than route 1 — inside a description, an unbound figure is a violation rather
+ *     than silence — and that strictness is scoped to descriptions alone, never to prose. The cost:
+ *     a description that names a credit figure for some reason other than its own price will redden.
+ *     That is the intended trade, not an oversight: a description is where the price claim lives,
+ *     and the fix is one word — name the tool the figure belongs to, and route 1 takes over.
+ *
+ * FORMS COVERED: digits and words to ten; `credit` and `credits`; `15-credit`; bold, italic and
+ * backticked figures (markup is stripped first); a figure inside a markdown table cell, including a
+ * price-table row whose tool sits in an earlier cell (see the note on table cells above).
+ *
+ * FORMS NOT COVERED, named so the boundary is measured rather than assumed: a spelled count above
+ * ten; a decimal figure ("2.5 credits" — no signed price has ever had one); a figure that PRECEDES
+ * its tool ("5 credits for `audit_tech`" — there is no forward binder in this lane, only the
+ * backward walk); a figure separated from its tool by ANY word the page supplied that is neither a
+ * pricing verb nor a connective — a noun ("this call costs 40 credits") or an adverb ("Run
+ * `crawl_site` first — it costs 20 credits", measured while writing the spec next door); a currency
+ * figure, which is a vendor cost and not a price this table signs; and the ROLE a true figure plays
+ * in a per-unit sentence (see {@link legitimateCreditAmounts}).
+ */
+export function findCreditAmountViolations(
+  text: string,
+  subject?: PricedTool,
+): CreditAmountViolation[] {
+  const violations: CreditAmountViolation[] = [];
+  for (const clause of toClauses(stripEmphasis(markToolReferences(text)))) {
+    for (const match of clause.matchAll(CREDIT_AMOUNT_PATTERN)) {
+      const claimed = readAmount(match[1] ?? "");
+      if (claimed === undefined) continue;
+      const { tools } = bindAmountBackward(clause, match.index ?? 0);
+      const named = [...new Set(tools)].filter((tool) => tool in TOOL_COSTS);
+      const clauseNamesATool = new RegExp(`${MARK}[a-z_]+${MARK}`).test(clause);
+      const bound: { tool: string; boundBy: "named" | "subject" }[] =
+        named.length > 0
+          ? named.map((tool) => ({ tool, boundBy: "named" as const }))
+          : subject !== undefined && !clauseNamesATool
+            ? [{ tool: subject, boundBy: "subject" as const }]
+            : [];
+      for (const { tool, boundBy } of bound) {
+        const allowed = legitimateCreditAmounts(tool as PricedTool);
+        if (allowed.has(claimed)) continue;
+        violations.push({
+          tool,
+          claimed,
+          allowed: [...allowed].sort((a, b) => a - b),
+          claim: match[0],
+          boundBy,
+          clause: clause.replace(new RegExp(MARK, "g"), "`"),
+        });
+      }
+    }
+  }
+  return violations;
+}
+
+/** A one-line failure message naming the tool, the wrong figure, the signed one, and the sentence. */
+export function describeCreditAmountViolation(
+  source: string,
+  violation: CreditAmountViolation,
+): string {
+  const allowed =
+    violation.allowed.length === 1
+      ? `${violation.allowed[0]}`
+      : `${violation.allowed[0]}, ${violation.allowed[1]} … ${violation.allowed[violation.allowed.length - 1]}`;
+  const how =
+    violation.boundBy === "subject" ? " (this text's own tool)" : "";
+  return (
+    `${source}: says \`${violation.tool}\`${how} costs "${violation.claim}", but the signed price ` +
+    `table charges ${allowed} credits. A price is not a number you may type twice.\n    ${violation.clause}`
   );
 }
