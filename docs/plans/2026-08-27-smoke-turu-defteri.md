@@ -1467,3 +1467,28 @@ veriyordu. **Saf fonksiyon pini kendi kablolamasını göremez.** Tool'un kendis
 koşan bir pin eklendi; aynı mutasyon şimdi kırmızı.
 
 **Kapı:** `verify.sh` **PASS** — mcp **3557** (3553→, +4).
+
+### D-7 · D-8 · D-9 CANLIDA (2026-08-26 19:4xZ)
+
+PR [#183](https://github.com/popiliadam/seogrep/pull/183) `716fa30` · PR
+[#184](https://github.com/popiliadam/seogrep/pull/184) — ikisi de merge-commit, CI 6/6,
+Deploy MCP ✅, `/status` `ok:true errorsSinceBoot:0 schema:ready`.
+
+Canlı çıktı (aynı müşteri sorusu, düzeltmeden sonra):
+
+```
+- 2026-08-26T10:36:21 · -20 credits · charge · crawl_site · project not recorded
+… 509 older entries not shown — call again with `before_id: 785` for the next page.
+Entries marked "project not recorded" are older than the day the ledger began storing which
+project a spend was for … they cannot be filled in afterwards.
+Spent so far: 7081 credits, net of refunds, across 24 tools.
+Top: ranked_keywords 1430 · compare_competitors 1170 · analyze_backlinks 980 ·
+audit_onpage 720 · crawl_site 540 — 2241 across 19 other tools.
+```
+
+Sayfalama, doğrudan uçtan iki JSON-RPC çağrısıyla: **imleç 787 → 2. sayfa tam kaldığı yerden**,
+ve başlık artık `Continuing from your cursor: 2 of 510 older credit entries`.
+
+**Bu tur şefin kendi eserinde ÜÇ kez aynı deliği buldu** (D-6 · D-9 · D-9'un pin deliği):
+*bir düzeltmeyi N eksende varyantlayıp N+1'inciyi hiç sormamak.* Üçünde de yakalayan şey
+**düzeltmenin kendi çıktısını canlıda okumak** oldu — testler değil.
