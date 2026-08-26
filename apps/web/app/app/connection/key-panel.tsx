@@ -100,6 +100,20 @@ export function KeyPanel({
         )}
       </div>
 
+      {activeKeyId ? (
+        // SAID BEFORE THE CLICK, not after. The one-time reveal already warns you will not see
+        // the new key again; what it cannot tell you is what breaks the moment you press Rotate.
+        // This is the only key — `Generate key` renders only when there is none — so a rotation
+        // is not a spare, it is a replacement, and every client already pointed at this account
+        // stops working until the new URL reaches it. An operator was one click from finding
+        // that out the hard way (2026-08-26).
+        <p className="m-0 max-w-[68ch] font-serif text-[13.5px] leading-[1.6] text-muted">
+          Rotating replaces this key: every MCP client, script or CI job already using the URL
+          above will stop working until you paste the new one into it. You see the new key once,
+          so copy it before you close the box.
+        </p>
+      ) : null}
+
       {error ? (
         <p role="alert" className="text-sm text-negative">
           {error}
