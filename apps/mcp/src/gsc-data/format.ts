@@ -93,7 +93,19 @@ export function renderRowCapCaveat(pull: PullData): string | null {
 }
 
 /**
- * Render the quick-win shortlist (or a friendly empty message).
+ * Render the quick-win shortlist as a FLAT list (or a friendly empty message).
+ *
+ * NOT THE TOOL'S RENDERER ANY MORE, and this sentence is here because its absence already cost a
+ * deterministic red: `find_quick_wins` groups its findings by page (find-quick-wins.ts
+ * `formatGroupedQuickWins`), and a db-lane byte-pin went on naming THIS function as "what the
+ * tool prints" long after it stopped being true. A second renderer that merely LOOKS like the
+ * tool's is a second source of truth, and the lane that would have caught the drift is not the
+ * one the unit gate runs.
+ *
+ * What is left is a stand-in: the three sibling specs that need SOME renderer behind a FAKE
+ * 0-credit discovery tool (gsc-discovery-shared.test.ts, gsc-discovery-runs.test.ts) use it, and
+ * format.test.ts pins it directly. Nothing in production calls it. Anything asserting what
+ * find_quick_wins PRINTS must go through `formatGroupedQuickWins` instead.
  *
  * `total` is how many opportunities cleared the bands BEFORE the shortlist cap
  * (quick-wins.ts findQuickWinsResult). It defaults to the shortlist's own length so a caller

@@ -3,7 +3,7 @@ import { analyzeTitleQueryMatch } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
 import type { AuditCrawl, AuditPage, CrawlLoad } from "../audit/index.ts";
 import { NO_CRAWL_MESSAGE } from "../audit/index.ts";
-import { NO_PULL_MESSAGE, type PullData, type PullLoad } from "../gsc-data/index.ts";
+import { NO_PULL_MESSAGE, type GscRow, type PullData, type PullLoad } from "../gsc-data/index.ts";
 import { gscRow, pullData } from "../gsc-data/fixtures.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { makeContentAuditTool } from "./audit-content.ts";
@@ -116,6 +116,25 @@ async function textOf(written: Written[] = [], options: BuildOptions = {}): Prom
   return result.content[0]?.text ?? "";
 }
 
+/**
+ * The delivered text for an arbitrary demand/supply pair, through the REAL tool.
+ *
+ * Every case below drives the whole path — engine, brand gate, function-word gate, formatter —
+ * rather than calling a renderer with a row built by hand. A spec that assembles its own row
+ * proves what the spec can build, not what the customer reads.
+ */
+function textFor(rows: GscRow[], pages: AuditPage[], property: string): Promise<string> {
+  return textOf([], {
+    pull: {
+      ok: true,
+      pull: pullData(rows, [], 90, property),
+      pulledAt: PULLED_AT,
+      jobId: PULL_JOB_ID,
+    },
+    crawl: { ok: true, crawl: { ...CRAWL, pages }, jobId: CRAWL_JOB_ID },
+  });
+}
+
 describe("the tool surface", () => {
   it("is registered in ALL_TOOLS under its own name and price", () => {
     expect(auditContentTool.name).toBe("audit_content");
@@ -204,13 +223,14 @@ describe("preconditions — every refusal throws, so the reserve is released", (
 });
 
 describe("the delivered report", () => {
-  it("lists the mismatching queries, biggest demand first, and names the missing words", async () => {
+  it("lists the mismatching queries under their page, biggest demand first, with the missing words", async () => {
     const text = await textOf();
-    expect(text).toContain('"waterproof trail shoes" → https://shop.test/trail');
-    expect(text).toContain('missing "waterproof"');
-    expect(text).toContain('"leather boots" → https://shop.test/boots');
+    // The page heads its own block and carries the title ONCE; the query sits under it.
+    expect(text).toMatch(/^• https:\/\/shop\.test\/trail — .*Current title: "Trail shoes"$/m);
+    expect(text).toMatch(/^\s+- "waterproof trail shoes" — .*missing "waterproof"/m);
+    expect(text).toMatch(/^• https:\/\/shop\.test\/boots — /m);
     // Impressions order (900 then 200), NOT clicks order (30 then 2).
-    expect(text.indexOf("waterproof trail shoes")).toBeLessThan(text.indexOf("leather boots"));
+    expect(text.indexOf("shop.test/trail")).toBeLessThan(text.indexOf("shop.test/boots"));
   });
 
   it("does not report a query whose words are carried by the page's h1", async () => {
@@ -370,7 +390,7 @@ describe("the customer's own brand is never a missing word", () => {
   it("does not swallow a common-word domain's real finding", async () => {
     const text = await brandedTools("dental implants", "Our winter range", "dental.com");
     expect(text).toContain('missing "implants"');
-    expect(text).toContain("1 query whose words are missing");
+    expect(text).toMatch(/^1 page with queries whose words are missing from them/m);
   });
 
   it("prints no exclusion note when the brand excluded nothing", async () => {
@@ -447,5 +467,228 @@ describe("a run that cannot be recorded is not delivered", () => {
     const tool = buildTool(written, options);
     await expect(tool.run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/no job id/i);
     expect(written).toEqual([]);
+  });
+});
+
+/**
+ * S10b — THE SAME PAGE, OVER AND OVER.
+ *
+ * Measured on dentnotion.com 2026-08-25: fifty rows, THIRTY-THREE of them the same url
+ * (`/zirkonyum-vs-porselen-kaplama`). Two thirds of a twelve-credit report spent re-listing one
+ * page, and the customer left to group it by hand before it meant anything.
+ */
+describe("the report is grouped by page", () => {
+  const CROWDED = "https://shop.test/zirkonyum";
+  const SINGLE = "https://shop.test/porselen";
+  const CROWDED_QUERIES = ["alfa", "beta", "gama", "delta", "epsilon", "zeta", "eta", "teta"];
+
+  /**
+   * The crowded page's rows are individually SMALLER than the other page's single row (100 down
+   * to 93, against 500) but sum to far more (772). Ordering by page total therefore disagrees
+   * with ordering by biggest row — which is what makes this fixture measure the change of unit
+   * rather than agreeing with the old order by accident.
+   */
+  const CROWDED_ROWS: GscRow[] = [
+    ...CROWDED_QUERIES.map((word, index) =>
+      gscRow({
+        query: `zirkonyum ${word}`,
+        page: CROWDED,
+        impressions: 100 - index,
+        clicks: 1,
+        position: 10,
+      }),
+    ),
+    gscRow({ query: "porselen kaplama", page: SINGLE, impressions: 500, clicks: 4, position: 9 }),
+  ];
+
+  const CROWDED_PAGES: AuditPage[] = [
+    crawlPage({ url: CROWDED, title: "Kaplama" }),
+    crawlPage({ url: SINGLE, title: "Kaplama" }),
+  ];
+
+  const crowdedText = (): Promise<string> =>
+    textFor(CROWDED_ROWS, CROWDED_PAGES, "sc-domain:shop.test");
+
+  it("prints each page ONCE, not once per query", async () => {
+    const text = await crowdedText();
+    expect(text.split(CROWDED).length - 1).toBe(1);
+    expect(text.split(SINGLE).length - 1).toBe(1);
+  });
+
+  it("says how many of the page's queries mismatch, and puts them under it", async () => {
+    const text = await crowdedText();
+    expect(text).toMatch(new RegExp(`^• ${CROWDED} — 8 queries missing words,`, "m"));
+    // Indented query lines, all belonging to the crowded page.
+    expect(text.match(/^\s+- "zirkonyum /gm)).toHaveLength(5);
+  });
+
+  it("counts the queries it did not print instead of printing them", async () => {
+    expect(await crowdedText()).toMatch(/…and 3 more of this page's queries/);
+  });
+
+  /**
+   * The page worth opening first is the one leaking the most demand IN TOTAL — one title edit
+   * serves every query under it. A row-ordered list would have put /porselen (500 in one row)
+   * above /zirkonyum (772 across eight).
+   */
+  it("orders pages by the demand the PAGE leaks, not by its biggest single row", async () => {
+    const text = await crowdedText();
+    expect(text.indexOf(CROWDED)).toBeLessThan(text.indexOf(SINGLE));
+  });
+
+  it("headlines the count of PAGES, the unit the reader acts on", async () => {
+    expect(await crowdedText()).toMatch(/^2 pages with queries whose words are missing/m);
+  });
+
+  /**
+   * The page cap gets the same treatment as every other cap in this file: what it left out is
+   * COUNTED, never silently dropped.
+   */
+  it("counts the pages the page cap left out", async () => {
+    const many = Array.from({ length: 13 }, (_unused, index) =>
+      gscRow({
+        query: `zirkonyum ${index}`,
+        page: `https://shop.test/p-${index}`,
+        impressions: 100 - index,
+        clicks: 0,
+        position: 10,
+      }),
+    );
+    const pages = many.map((row) => crawlPage({ url: row.page, title: "Kaplama" }));
+    const text = await textFor(many, pages, "sc-domain:shop.test");
+    expect(text).toMatch(/^13 pages with queries whose words are missing/m);
+    expect(text.match(/^• https/gm)).toHaveLength(12);
+    expect(text).toMatch(/…and 1 more page with mismatching queries\./);
+  });
+});
+
+/**
+ * S10c — THE FOLDED SPELLING WAS SHOWN TO THE CUSTOMER.
+ *
+ * Verbatim from the same report, with the query the customer actually typed in brackets:
+ *   missing "dis"                  [diş]
+ *   missing "agrımayan", "curuk"   [ağrımayan çürük]
+ *   missing "saglıgı"              [sağlığı]
+ *   missing "kulubu"               [kulübü]
+ *   missing "mavisehir"            [Mavişehir]
+ * The engine's match fold strips combining marks but leaves the dotless ı, so the customer was
+ * reading words that exist in no language.
+ */
+describe("the customer reads the spelling they typed", () => {
+  const PAGE = "https://dentnotion.com/zirkonyum-vs-porselen-kaplama";
+  const TURKISH_ROWS: GscRow[] = [
+    gscRow({ query: "diş ağrımayan çürük", page: PAGE, impressions: 300, clicks: 1, position: 9 }),
+    gscRow({ query: "diş sağlığı", page: PAGE, impressions: 200, clicks: 1, position: 9 }),
+    gscRow({ query: "mavişehir kulübü", page: PAGE, impressions: 100, clicks: 1, position: 9 }),
+  ];
+  const turkishText = (): Promise<string> =>
+    textFor(TURKISH_ROWS, [crawlPage({ url: PAGE, title: "Kaplama" })], "sc-domain:dentnotion.com");
+
+  it("prints the original spelling of every missing word", async () => {
+    const text = await turkishText();
+    expect(text).toMatch(/missing "diş", "ağrımayan", "çürük"/);
+    expect(text).toMatch(/missing "diş", "sağlığı"/);
+    expect(text).toMatch(/missing "mavişehir", "kulübü"/);
+  });
+
+  /**
+   * The half-folded forms, each measured live. None of them may reach the reply again — and this
+   * is the assertion that fails if the display ever falls back to the engine's matching form.
+   */
+  it.each([["agrımayan"], ["curuk"], ["saglıgı"], ["kulubu"], ["mavisehir"]])(
+    "never shows the half-folded %s",
+    async (folded) => {
+      expect(await turkishText()).not.toContain(folded);
+    },
+  );
+
+  /**
+   * The fold is for MATCHING and nothing else: the counts under a row are the engine's, so
+   * restoring the spelling must not disturb what the row claims about the page.
+   */
+  it("leaves the engine's own arithmetic alone", async () => {
+    expect(await turkishText()).toMatch(/missing "diş", "sağlığı" \(0\/2 words present\)/);
+  });
+});
+
+/**
+ * S10c, second half — THE MISSING WORDS WERE FUNCTION WORDS.
+ *
+ * Thirteen of the fifty measured rows said nothing but `missing "daha", "iyi"` ("more", "good").
+ * Telling somebody to put "mı" in a title is not an action.
+ */
+describe("a finding with nothing to say is dropped, not printed empty", () => {
+  const PAGE = "https://dentnotion.com/dis-beyazlatma";
+  const PROPERTY = "sc-domain:dentnotion.com";
+  const crawled = [crawlPage({ url: PAGE, title: "Diş beyazlatma" })];
+
+  const forQuery = (query: string): Promise<string> =>
+    textFor(
+      [gscRow({ query, page: PAGE, impressions: 300, clicks: 1, position: 9 })],
+      crawled,
+      PROPERTY,
+    );
+
+  it("drops the measured row whose only missing words were 'daha' and 'iyi'", async () => {
+    const text = await forQuery("diş beyazlatma daha iyi");
+    expect(text).toContain("No title/h1 mismatches found");
+    expect(text).not.toMatch(/missing "daha"/);
+  });
+
+  it("says how many it dropped and why, rather than dropping them silently", async () => {
+    const text = await forQuery("diş beyazlatma daha iyi");
+    expect(text).toMatch(/Excluded 1 query whose only missing words were function words/);
+  });
+
+  /**
+   * THE ASCII SPELLING, and the one place the ı→i half of the shared fold is load-bearing:
+   * Turkish searchers type "nasil" as often as "nasıl", and the list is written the way Turkish
+   * writes it. A fold that stopped at diacritics would catch one spelling and miss the other.
+   */
+  it("drops the row whose only missing word is an ASCII-typed question word", async () => {
+    const text = await forQuery("dis beyazlatma nasil");
+    expect(text).toContain("No title/h1 mismatches found");
+  });
+
+  /**
+   * THE BOUNDARY, and the whole reason this gate filters FINDINGS and not WORDS: "iyi" carries
+   * nothing in "daha iyi" and everything in "en iyi diş hekimi", a commercial query whose page
+   * really should say "diş hekimi". The row survives WHOLE — "iyi" still printed — because one
+   * of its words is content. A word filter could not tell the two rows apart.
+   */
+  it("keeps a row that has one content word, and keeps its function words too", async () => {
+    const text = await forQuery("en iyi diş hekimi");
+    expect(text).toMatch(/missing "en", "iyi", "hekimi"/);
+    expect(text).not.toMatch(/function words/);
+  });
+
+  it("prints no function-word note when nothing was excluded", async () => {
+    expect(await textOf()).not.toMatch(/function words/);
+  });
+
+  /**
+   * THE GATE ORDER, which is a rule and not an accident — and was unpinned until a fresh-context
+   * referee swapped the two gates and watched the whole suite stay green (2026-08-26).
+   *
+   * `dentnotion daha iyi` is the shape that separates them. Brand-first: the brand gate strips
+   * "dentnotion", the row is left holding "daha" and "iyi", and the function gate drops it.
+   * Function-first: the row still contains "dentnotion" when the function gate looks at it, so
+   * it is NOT all function words, it survives — and the customer is handed back
+   * `missing "daha", "iyi"` on their own brand name, which is both measured defects at once.
+   *
+   * Nothing about the two gates in isolation says which runs first, so only a query that needs
+   * BOTH of them, in one order, can pin it.
+   */
+  it("runs the brand gate FIRST, so a branded query left holding function words still drops", async () => {
+    const branded = `${PAGE}?x=1`;
+    const text = await textFor(
+      [gscRow({ query: "dentnotion daha iyi", page: branded, impressions: 400, clicks: 1, position: 9 })],
+      [crawlPage({ url: branded, title: "Diş beyazlatma" })],
+      PROPERTY,
+    );
+    expect(text).toContain("No title/h1 mismatches found");
+    expect(text).not.toMatch(/missing "daha"/);
+    // It leaves by the FUNCTION-word door, not the brand one: the brand gate only thinned it.
+    expect(text).toMatch(/Excluded 1 query whose only missing words were function words/);
   });
 });

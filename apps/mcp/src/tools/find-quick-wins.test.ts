@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { findQuickWins, formatQuickWins, type LoadTokenStatusFn } from "../gsc-data/index.ts";
-import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
+import type { GscRow, LoadTokenStatusFn, PullData } from "../gsc-data/index.ts";
+import { gscRow, pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
+import { renderQuickWins } from "./find-quick-wins.ts";
 import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
 
 /**
@@ -12,13 +13,19 @@ import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
  *
  * Built through makeDiscoveryTool directly under a 0-CREDIT name ("get_job_status"), the same
  * trick precondition.test.ts uses, so withCredits short-circuits before opening a DB client —
- * this is a DB-less unit test by construction. find-quick-wins.ts's OWN render (findQuickWins +
- * formatQuickWins) is exercised for real; only the tool NAME is swapped so no ledger write is
- * attempted. The paid "find_quick_wins" name is exercised for real in gsc-discovery.db.test.ts.
+ * this is a DB-less unit test by construction. The paid "find_quick_wins" name is exercised for
+ * real in gsc-discovery.db.test.ts.
+ *
+ * IT DRIVES THE TOOL'S OWN `renderQuickWins`, and that is a correction rather than a detail: this
+ * file used to REBUILD the render from its parts (`formatQuickWins(findQuickWins(pull))`) while
+ * claiming in this very comment to be exercising the real one. A spec that reassembles the
+ * expression under test pins its own arithmetic — the tool could have changed renderers under it
+ * without a single red line, which is exactly what happened when the grouping defect was fixed.
  */
 
 const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 const PROJECT_ID = "0e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7";
+const PULL_JOB_ID = "11112222-3333-4444-5555-666677778888";
 
 /** The web base URL the reconnect link is built from (gscConnectUrl reads it fail-closed). */
 const WEB_BASE_URL = "https://app.test.seogrep.example";
@@ -34,13 +41,24 @@ afterAll(() => {
   else process.env.WEB_BASE_URL = priorWebBaseUrl;
 });
 
-function buildFindQuickWins(pulledAt: string, loadTokenStatus: LoadTokenStatusFn = async () => "active") {
+function buildFindQuickWins(
+  pulledAt: string,
+  loadTokenStatus: LoadTokenStatusFn = async () => "active",
+  pull: PullData = SAMPLE_PULL,
+) {
   return makeDiscoveryTool(
     "get_job_status",
     "d",
-    (pull) => formatQuickWins(findQuickWins(pull)),
+    // The REAL render — engine, formatter and stored report, exactly as the paid tool builds it.
+    renderQuickWins,
     {
-      loadPull: async () => ({ ok: true, pull: SAMPLE_PULL, pulledAt }),
+      // The job id is REQUIRED now, and its absence is itself evidence: the real render returns
+      // a report, the shared builder fails closed when it has nowhere to point the row, and the
+      // rebuilt render this file used to pass never reached that branch at all.
+      loadPull: async () => ({ ok: true, pull, pulledAt, jobId: PULL_JOB_ID }),
+      // The recorder is on this path for the same reason — stubbed here to keep the lane
+      // DB-less. The row itself is measured against a live stack in gsc-discovery-runs.db.test.ts.
+      writeRun: async () => undefined,
       loadTokenStatus,
       // The archive gate's project port, stubbed to "this id did not resolve" so this lane stays
       // DB-less (the real reader opens a service client). The gate itself is measured over the
@@ -170,5 +188,137 @@ describe("find_quick_wins staleness warning", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+});
+
+/**
+ * S10b — FIFTY ROWS, SIXTEEN PAGES.
+ *
+ * Measured on dentnotion.com 2026-08-25. The data is genuinely valuable; the presentation made
+ * the customer group it by hand before it meant anything, because the unit of the list was a ROW
+ * while the unit of the work is a PAGE — one on-page push serves every query under it.
+ */
+describe("the quick-win list is grouped by page", () => {
+  const CROWDED = "https://shop.test/zirkonyum";
+  const SINGLE = "https://shop.test/porselen";
+  const WORDS = ["alfa", "beta", "gama", "delta", "epsilon", "zeta", "eta"];
+
+  /**
+   * The crowded page's rows are individually SMALLER than the other page's single row (100 down
+   * to 94, against 500) and sum to far more (679), so page-total ordering disagrees with
+   * biggest-row ordering. Without that disagreement the fixture would pass under either rule.
+   */
+  const ROWS: GscRow[] = [
+    ...WORDS.map((word, index) =>
+      gscRow({
+        query: `zirkonyum ${word}`,
+        page: CROWDED,
+        clicks: 1,
+        impressions: 100 - index,
+        ctr: 0.01,
+        position: 12,
+      }),
+    ),
+    gscRow({
+      query: "porselen kaplama",
+      page: SINGLE,
+      clicks: 5,
+      impressions: 500,
+      ctr: 0.01,
+      position: 9,
+    }),
+  ];
+
+  const CROWDED_PULL: PullData = pullData(ROWS, []);
+
+  async function groupedText(): Promise<string> {
+    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", CROWDED_PULL);
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+    expect(result.isError).toBeUndefined();
+    return result.content[0]?.text ?? "";
+  }
+
+  it("prints each page ONCE, not once per query", async () => {
+    const text = await groupedText();
+    expect(text.split(CROWDED).length - 1).toBe(1);
+    expect(text.split(SINGLE).length - 1).toBe(1);
+  });
+
+  it("says how many quick wins the page carries and puts them under it", async () => {
+    const text = await groupedText();
+    expect(text).toMatch(new RegExp(`^• ${CROWDED} — 7 quick-win queries,`, "m"));
+    expect(text.match(/^\s+- "zirkonyum /gm)).toHaveLength(5);
+  });
+
+  it("counts the queries it did not print instead of printing them", async () => {
+    expect(await groupedText()).toMatch(/…and 2 more of this page's queries/);
+  });
+
+  /**
+   * The page worth opening first is the one carrying the most nearly-won demand IN TOTAL. A
+   * row-ordered list would have put /porselen (500 in one row) above /zirkonyum (679 over seven).
+   */
+  it("orders pages by the demand the PAGE carries, not by its biggest single row", async () => {
+    const text = await groupedText();
+    expect(text.indexOf(CROWDED)).toBeLessThan(text.indexOf(SINGLE));
+  });
+
+  it("headlines the count of PAGES, the unit the reader acts on", async () => {
+    expect(await groupedText()).toMatch(/^2 pages with quick-win queries/m);
+  });
+
+  /** Every row still carries what a push needs: how close it is, and how much demand is on it. */
+  it("keeps position, impressions, clicks and CTR on each query", async () => {
+    expect(await groupedText()).toMatch(
+      /^\s+- "zirkonyum alfa" — position 12\.0, 100 impressions, 1 clicks, CTR 1\.0%$/m,
+    );
+  });
+
+  /**
+   * THE TWO CAPS ABOVE THE PAGE BLOCKS, both untested until a fresh-context referee said so
+   * (2026-08-26): the only "cleared the bands" pins in the repo sat on the flat renderer this
+   * tool no longer uses, and the 12-page cap had no pin at all on this side.
+   *
+   * ONE fixture reaches both, because the engine's own 50-row cap and the renderer's page cap
+   * stack: 52 qualifying rows on 52 distinct pages become 50 wins (2 cut by the engine) on 50
+   * pages (38 cut by the renderer). Every row that does not reach the reader is counted in one
+   * of the two sentences, which is the whole rule.
+   */
+  it("counts what BOTH caps left out — the pages, and the rows the engine cut", async () => {
+    const many: GscRow[] = Array.from({ length: 52 }, (_unused, index) =>
+      gscRow({
+        query: `zirkonyum ${index}`,
+        page: `https://shop.test/p-${index}`,
+        clicks: 1,
+        impressions: 100 - index,
+        ctr: 0.01,
+        position: 10,
+      }),
+    );
+    const tool = buildFindQuickWins(
+      "2026-08-06T09:00:00.000Z",
+      async () => "active",
+      pullData(many, []),
+    );
+    const text = (await tool.run(CTX, { project_id: PROJECT_ID })).content[0]?.text ?? "";
+
+    expect(text).toMatch(/^50 pages with quick-win queries/m);
+    expect(text.match(/^• https/gm)).toHaveLength(12);
+    expect(text).toMatch(/…and 38 more pages with quick wins\./);
+    expect(text).toMatch(/…and 2 more cleared the bands\./);
+  });
+
+  /** The remainder is never claimed when nothing was cut — a shortlist that IS the answer. */
+  it("claims no remainder when neither cap bit", async () => {
+    const text = await groupedText();
+    expect(text).not.toMatch(/cleared the bands/);
+    expect(text).not.toMatch(/more pages with quick wins/);
+  });
+
+  it("still says so when there is nothing to report", async () => {
+    const empty = pullData([gscRow({ query: "x", page: "https://shop.test/x", position: 2 })], []);
+    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", empty);
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+    expect(result.content[0]?.text).toContain("No quick wins found");
   });
 });
