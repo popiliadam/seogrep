@@ -583,7 +583,10 @@ describe("DOC_PROSE ranks nothing it has no number for (NEVER #7)", () => {
  * never wanted one.
  */
 describe("the domain-addressable tool list", () => {
-  const tool = (name, props) => ({ name, inputJsonSchema: { properties: props } });
+  const tool = (name: string, props: Record<string, unknown>) => ({
+    name,
+    inputJsonSchema: { properties: props },
+  });
 
   it("names exactly the tools that declare a target parameter", () => {
     const rendered = domainAddressableTools([
