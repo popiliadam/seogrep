@@ -26,6 +26,7 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 
 function entry(overrides: Partial<CreditActivityRow> = {}): CreditActivityRow {
   return {
+    project_id: null,
     id: 1,
     delta: -20,
     kind: "spend_reserve",
@@ -42,7 +43,14 @@ function recordingPort(rows: readonly CreditActivityRow[]) {
     calls.push({ userId, limit });
     return rows;
   };
-  return { calls, tool: makeListCreditActivityTool({ listActivity }) };
+  // The domain port is stubbed EMPTY rather than left to its default: the default reaches
+  // getServiceClient, which needs the full prod env, and these specs are about the limit the read
+  // port is asked for and the wording around it. An empty map changes no assertion below — every
+  // scope clause they exercise renders from the row's own project_id.
+  return {
+    calls,
+    tool: makeListCreditActivityTool({ listActivity, listDomains: async () => new Map() }),
+  };
 }
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? "";
@@ -169,5 +177,70 @@ describe("list_credit_activity rendering", () => {
     const text = formatCreditActivity([entry()]);
     expect(text).toMatch(/get_credit_balance/);
     expect(text).toMatch(/newest first/i);
+  });
+});
+
+
+/**
+ * G11 — "which of my sites did my credits go to?" Measured 2026-08-26: unanswerable. The ledger
+ * had no project column and its job_id pointed at a real jobs row in 4 of 82 cases, so 96.6% of a
+ * 1,176-credit window could not be attributed to a site. Migration 0033 added the column; this is
+ * where a customer reads it.
+ */
+describe("the project a charge was for", () => {
+  const domains = new Map([["p-1", "dentnotion.com"]]);
+
+  it("names the project on a charge", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -65, tool: "ranked_keywords", project_id: "p-1" }),
+      domains,
+    );
+    expect(line).toMatch(/dentnotion\.com/);
+  });
+
+  it("names it on the refund of that charge too", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_release", delta: 65, tool: "ranked_keywords", project_id: "p-1" }),
+      domains,
+    );
+    expect(line).toMatch(/dentnotion\.com/);
+  });
+
+  /**
+   * THE NEGATIVE IS PRINTED, not left blank. A keyword set, a seed and a subject that is nobody's
+   * tracked site are legitimately project-less, and a silent line would read as "the tool forgot"
+   * rather than as "there was no site". It is also the answer to the customer's question for that
+   * row — the same rule the tour applied to unreported numbers.
+   */
+  it("says so, in words, when a charge had no project scope", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -25, tool: "research_keywords", project_id: null }),
+      domains,
+    );
+    expect(line).toMatch(/no project scope/i);
+  });
+
+  /**
+   * A project the ledger names but the tenant no longer has. 0033 keeps no foreign key on
+   * purpose, so this is reachable — and the id is TRUE where a blank would be a shrug.
+   */
+  it("falls back to the id when the project is gone", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -20, tool: "crawl_site", project_id: "p-vanished" }),
+      domains,
+    );
+    expect(line).toMatch(/p-vanished/);
+    expect(line).not.toMatch(/no project scope/i);
+  });
+
+  /**
+   * Grants and purchases are not spends. "Which project was this grant for?" is not a question
+   * anybody has, and answering it on every row would bury the ones where it matters.
+   */
+  it("says nothing about scope on a grant or a purchase", () => {
+    for (const kind of ["grant", "purchase"]) {
+      const line = formatActivityLine(entry({ kind, delta: 200, project_id: null }), domains);
+      expect(line).not.toMatch(/project/i);
+    }
   });
 });

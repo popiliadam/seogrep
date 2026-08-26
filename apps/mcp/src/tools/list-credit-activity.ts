@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getServiceClient } from "../db.ts";
+import { forUser, getServiceClient } from "../db.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
@@ -52,6 +52,12 @@ export interface CreditActivityRow {
   readonly kind: string;
   readonly reason: string | null;
   readonly tool: string | null;
+  /**
+   * The project this spend was for (migration 0033), or null when the call had no project scope.
+   * NULL IS AN ANSWER — a keyword set, a seed, a subject that is nobody's tracked site — and the
+   * line says so in words rather than leaving a blank that reads as an omission.
+   */
+  readonly project_id: string | null;
   readonly created_at: string;
 }
 
@@ -67,8 +73,12 @@ export const DEFAULT_ACTIVITY_LIMIT = 10;
 /** The most entries one call may return — the same readability ceiling list_jobs carries. */
 export const MAX_ACTIVITY_LIMIT = 50;
 
+/** Read this tenant's project ids and domains, for naming the scope on a spend line. */
+export type ListProjectDomainsFn = (userId: string) => Promise<ReadonlyMap<string, string>>;
+
 export interface ListCreditActivityDeps {
   readonly listActivity?: ListCreditActivityFn;
+  readonly listDomains?: ListProjectDomainsFn;
 }
 
 /**
@@ -96,7 +106,7 @@ export async function listOwnCreditActivity(
 ): Promise<readonly CreditActivityRow[]> {
   const { data, error } = await getServiceClient()
     .from("credit_ledger")
-    .select("id, delta, kind, reason, tool, created_at")
+    .select("id, delta, kind, reason, tool, project_id, created_at")
     // The tenant guard on an RLS-bypassing client (NEVER #4). Not decorative: proven load-bearing
     // in list-credit-activity.db.test.ts by calling this function with the wrong tenant's id.
     .eq("user_id", userId)
@@ -108,6 +118,29 @@ export async function listOwnCreditActivity(
     throw new Error(`credit activity list failed: ${error.message}`);
   }
   return (data ?? []) as readonly CreditActivityRow[];
+}
+
+/**
+ * The tenant's projects as id -> domain, for turning a stored project_id into a name.
+ *
+ * ARCHIVED PROJECTS ARE INCLUDED, deliberately: the spend happened while the project was tracked,
+ * and untracking it later does not make the history unreadable. Filtering them out would push
+ * every such row onto the id fallback for no reason.
+ *
+ * Tenant-scoped through `forUser` (NEVER #4). A failure THROWS rather than degrading to an empty
+ * map: an empty map is indistinguishable from "this tenant has no projects", and the whole answer
+ * would quietly fall back to printing uuids.
+ */
+export async function listOwnProjectDomains(userId: string): Promise<ReadonlyMap<string, string>> {
+  const { data, error } = await forUser(getServiceClient(), userId).selectOwn(
+    "projects",
+    "id, domain",
+  );
+  if (error) {
+    throw new Error(`project domain lookup failed: ${error.message}`);
+  }
+  const rows = (data ?? []) as unknown as { id: string; domain: string }[];
+  return new Map(rows.map((row) => [row.id, row.domain]));
 }
 
 /**
@@ -139,13 +172,42 @@ export function formatDelta(delta: number): string {
   return delta > 0 ? `+${delta}` : String(delta);
 }
 
+/** The ledger kinds for which "which project?" is a question anybody actually has. */
+const SPEND_KINDS: ReadonlySet<string> = new Set(["spend_reserve", "spend_release"]);
+
+/**
+ * The scope clause for one line, or null when the row is not a spend.
+ *
+ * Three outcomes, and the middle one is the point (migration 0033):
+ *   • a known project  -> its domain
+ *   • no project scope -> those words, printed. A blank would read as "the tool forgot" rather
+ *     than as "there was no site", and it is the ANSWER for that row, not an absence.
+ *   • an id the tenant no longer has -> the id itself. 0033 keeps no foreign key on purpose, so
+ *     this is reachable, and an id is TRUE where a shrug is not.
+ *
+ * Grants and purchases get nothing: they are not spends, nobody asks which project a grant was
+ * for, and annotating every row would bury the ones where the question is real.
+ */
+export function scopeClause(
+  row: CreditActivityRow,
+  domains: ReadonlyMap<string, string>,
+): string | null {
+  if (!SPEND_KINDS.has(row.kind)) return null;
+  if (row.project_id === null) return "no project scope";
+  return `project: ${domains.get(row.project_id) ?? row.project_id}`;
+}
+
 /** One ledger entry, on one line. */
-export function formatActivityLine(row: CreditActivityRow): string {
+export function formatActivityLine(
+  row: CreditActivityRow,
+  domains: ReadonlyMap<string, string> = new Map(),
+): string {
   const parts = [
     `- ${row.created_at}`,
     `${formatDelta(row.delta)} credits`,
     kindLabel(row.kind),
     row.tool,
+    scopeClause(row, domains),
     row.reason,
   ];
   return parts.filter((part): part is string => Boolean(part)).join(" · ");
@@ -160,9 +222,12 @@ export const NO_ACTIVITY_MESSAGE =
  * Render the whole answer. Pure, so every wording is pinned in the fast lane while the DB lane
  * proves the read underneath it.
  */
-export function formatCreditActivity(rows: readonly CreditActivityRow[]): string {
+export function formatCreditActivity(
+  rows: readonly CreditActivityRow[],
+  domains: ReadonlyMap<string, string> = new Map(),
+): string {
   if (rows.length === 0) return NO_ACTIVITY_MESSAGE;
-  const lines = rows.map(formatActivityLine).join("\n");
+  const lines = rows.map((row) => formatActivityLine(row, domains)).join("\n");
   return (
     `Your ${rows.length} most recent credit entries, newest first:\n${lines}\n` +
     "These are the entries that moved your balance, so a refunded run shows both its charge and " +
@@ -173,11 +238,12 @@ export function formatCreditActivity(rows: readonly CreditActivityRow[]): string
 /** Build the tool. The read port is injectable, so the fast lane drives it with no database. */
 export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): RegisteredTool {
   const listActivity = deps.listActivity ?? listOwnCreditActivity;
+  const listDomains = deps.listDomains ?? listOwnProjectDomains;
   return defineTool({
     name: "list_credit_activity",
     description:
       "List your most recent credit ledger entries, newest first — what was granted, what you " +
-      "bought, and which tool charged what. Costs 0 credits.",
+      "bought, and which tool charged what, for which project. Costs 0 credits.",
     inputSchema: z.object({
       limit: z
         .int()
@@ -189,8 +255,13 @@ export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): R
         ),
     }),
     handler: async (ctx, { limit }) => {
-      const rows = await listActivity(ctx.userId, limit);
-      return textResult(formatCreditActivity(rows));
+      // In parallel: the two reads are independent, and the domain map is small (one row per
+      // project) however long the requested page is.
+      const [rows, domains] = await Promise.all([
+        listActivity(ctx.userId, limit),
+        listDomains(ctx.userId),
+      ]);
+      return textResult(formatCreditActivity(rows, domains));
     },
   });
 }
