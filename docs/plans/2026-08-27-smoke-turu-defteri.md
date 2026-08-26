@@ -1373,3 +1373,72 @@ Tool bazında net harcama (ilk 8): `ranked_keywords` 1430 · `compare_competitor
 Projeye bağlanabilen (job_id join'i): `adstark.com.tr` 160 · `www.bigcattr.com` 80 ·
 `seogrep.com` 80 · `dentnotion.com` 60 · `katrenur.com` 40 · `bayder.com.tr` 40 ·
 `rkturizm.com` 40 · `www.noraninsaat.com` 20 · `noraninsaat.com` 20 → **540**.
+
+---
+
+## §D4 — D-7 + D-8 DÜZELTİLDİ (2026-08-26 19:0xZ)
+
+### D-7 — bir `null`, iki anlam, ve ayıran tek şey saat
+
+`LEDGER_PROJECT_SCOPE_SINCE_MS = 2026-08-26T17:48:00Z` — `project_id`'yi **YAZAN** deploy'un
+canlıya çıktığı an (`deploy-mcp`, `642804c`; migration on iki dakika önce inmişti). Eşikten
+**önceki** `null` = **`project not recorded`**, sonraki `null` = **`no project scope`**.
+
+Neden sabit, neden join değil: ledger **append-only**, o 778 satır **asla** doldurulamaz
+(0002 hem tetikleyiciyle `UPDATE`'i reddediyor hem her role'den revoke ediyor). Yani belirsizlik
+kalıcı ve her okumada, sonsuza kadar cevaplanmak zorunda. Ayrıştırılamayan bir tarih **daha zayıf**
+iddiaya düşüyor (`not_recorded`): "kaydedilmemiş" cehaleti itiraf eder, "kapsam yok" müşterinin
+çağrısı hakkında bir olgu iddia eder — ve bir olgu, okunamayan bir tarihe dayanamaz.
+
+Açıklama cümlesi **yalnız ekranda öyle bir satır varsa** ve **bir kez** basılıyor.
+`list_jobs` DEĞİŞMEDİ: `jobs.project_id` tablo kadar eski, oradaki `null`un hep tek anlamı vardı.
+
+### D-8 — çıkmaz sokak yerine imleç, ve nihayet bir toplam
+
+**① Sayfalama.** `before_id` (opsiyonel, pozitif tam sayı) → `.lt("id", …)`. Cevap sonraki sayfanın
+değerini **adıyla** veriyor: *"call again with `before_id: 511`"*. **İmleç `created_at` DEĞİL `id`**
+— modülün kendi başlığı "bir rezervasyon ve iadesi aynı milisaniyeye düşebilir" diye uyarıyor;
+zaman damgalı imleç ya satır atlar ya tekrarlar. `id` append-only tablonun monotonik ekleme sırası.
+
+**② Toplam.** `summarizeOwnSpend` + tek satırlık özet:
+*"Spent so far: 7081 credits, net of refunds, across 24 tools. Top: ranked_keywords 1430 · … — 2141 across 19 other tools."*
+**Net**, brüt değil: iade edilen rezervasyon hiçbir şeye mal olmaz, bu yüzden `audit_onpage`
+36 çağrının 1080'i değil **720** okunuyor. Tavan `SUMMARY_ROW_CAP = 2000` ve **sesi var** — kap
+ısırırsa cümle "en yeni N / M" diyor; sessiz kesme bu turun tekrar tekrar bulduğu arıza.
+
+### Mutasyon kanıtı — dört eksen
+
+| mutasyon | sonuç |
+|---|---|
+| eşik kaldırıldı (her `null` → "no project scope") | **2 kırmızı** |
+| imleç **en yeni** id'yi veriyor (sonsuz döngü) | **1 kırmızı** |
+| özet **brüt** sayıyor (iadeleri yok sayar) | **2 kırmızı** |
+| kap sessizce kesiyor (`rowsCovered` gizleniyor) | **1 kırmızı** |
+
+DB şeridinde ayrıca **gerçek sorguya karşı** iki pin: dört kayıtlı defter ikişerli sayfalanıyor ve
+birleşim **tam olarak** dört kayıt (atlama yok, tekrar yok) · iade edilen rezervasyon özetten
+düşüyor.
+
+### Kapının yakaladığı iki şey (ikisi de gerçek)
+
+1. **`credit_ledger_spend_reserve_id_present`** — DB şeridi ilk koşuda kırmızı: elle kurduğum
+   `spend_reserve` satırı `reserve_id` taşımıyordu. **Harcamaya benzeyen bir satır harcama
+   değildir**; tablo bunu benim yerime söyledi.
+2. **`gen-tool-docs --check`** — tool açıklamasını değiştirdim, üretilen MDX bayat kaldı, kapı
+   kırmızı verdi. Ayrıca açıklama 155 karakter tavanını aşınca `per…` diye **kesiliyordu**;
+   154'e indirildi. Bayat `dist` de ayrıca reddedildi ("stale dist compares today's MDX with
+   yesterday's code and passes for the wrong reason").
+
+### Kapılar
+
+`TURBO_FORCE=1 bash guardrails/verify.sh` **PASS** — mcp **3553** (3545→, +8) · core 339 ·
+web 1975 · db 12 · 38 doküman senkron · `dist` taze.
+`bash guardrails/verify-db.sh` **PASS** — db 165 · mcp **493** (491→, +2) · web 48.
+**NE ÖLÇMEZLER:** secret taraması · canlı uç (henüz deploy edilmedi).
+
+### ⚠️ Operasyonel not — migration defteri ile şema ayrıştı
+
+0033 Supabase SQL Editor'dan elle koşuldu, bu yüzden `supabase_migrations.schema_migrations`'ta
+**kaydı yok** (son kayıt `0032_subject_lookup_runs`). Şema doğru, defter eksik. İleride
+`supabase db push` 0033'ü **yeniden uygulamayı deneyip** "column already exists" ile düşebilir.
+Kaydı elle eklemek operatörün işi; şef ortamda migration yazamıyor.
