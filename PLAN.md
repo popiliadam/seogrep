@@ -5,7 +5,35 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 📋 2026-08-26 — SIRADAKİ OTURUM: TOOL REVİZYONU **DÜZELTME** (91 bulgu, 22 dilim)
+### 📋 2026-08-26 — DÜZELTME TURU **KOŞULDU** · %100 DEĞİL, kalanlar ölçüldü
+
+**22/22 dilim birleşti ve taze-bağlamlı hakemden geçti.** Dal `integration/duzeltme-dalga-ab`
+(`main @8668ff2` üzerine **136 commit**) — **PUSH EDİLMEDİ**, PR açılmadı.
+
+Üç kapı yeşil: `verify.sh` (mcp **129/3184** · web **118/1724** · core 17/316 · **38** doküman
+senkron) · `verify-db.sh` (21/165 · **51/481** · 7/48) · `make goals` (**16/16, 5 SKIP** — hepsi
+canlı uç; `no-secrets` gerçekten geçti). **Kredi fiyatı değişikliği: SIFIR.** Yüzey **36 → 38**
+(imza md.15: `list_jobs` + `list_credit_activity`, ikisi de 0 kredi).
+Vendor: $1,647896 → **$1,660616** (tek harcama: S1 canlı doğrulaması).
+
+> **⚠️ TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-26-KALAN-IS-taze-oturum.md`
+> — **beş onaylı ekleme hiç yapılmadı** (imza md. **3, 4, 9, 10, 12** — kodda sıfır iz, ölçüldü) ·
+> üç **canlı doğrulama borcu** (S2 · S3 · S21) · ölçülüp düzeltilmeyen **çıktı boyutu + çift basım** ·
+> **10 chip** · temizlik borcu · ve insan kararı bekleyen **S20** / **S23** / **deploy**.
+>
+> **DEPLOY KURALI: S4 ile S21 AYNI trende binmeli.** `www.` normalizasyonu tek başına giderse
+> apex→`www` yönlendiren siteler için YENİ projelerde crawl komple çalışmaz.
+
+**Turun asıl bulgusu:** defterin **ölçüm** satırları sağlamdı, **teşhisleri beş kez yanlıştı** —
+ve beşinde de iş emrini şef yazmıştı (S1 · S12 · S13 · S14/3 · S21). Şef ayrıca **üç kez** kendi
+kararını geri aldı. Sekiz vakalık imza adayı ders kapanış handoff'unda.
+
+Kapanış: `docs/plans/2026-08-26-duzeltme-turu-kapanis-handoff.md` ·
+durum defteri: `docs/plans/2026-08-26-duzeltme-turu-durum.md`
+
+---
+
+### 📋 2026-08-26 (ARŞİV) — bu turun İŞ EMRİ olan handoff (91 bulgu, 22 dilim)
 
 **Tur BİTTİ: 36/36 tool gezildi.** Defter `docs/plans/2026-08-25-tool-revizyon-defteri.md` —
 **120 satır** (91 gerçek bulgu + 29 "bakıldı, bulgu yok"), kapsama tablosu **36/36 ☑**,
