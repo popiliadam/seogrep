@@ -11,11 +11,14 @@ import {
   findQuickWinsResult,
   formatCannibalization,
   formatContentDecay,
-  formatQuickWins,
   pullResultToJson,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
-import { makeFindQuickWinsTool, findQuickWinsTool } from "./find-quick-wins.ts";
+import {
+  formatGroupedQuickWins,
+  makeFindQuickWinsTool,
+  findQuickWinsTool,
+} from "./find-quick-wins.ts";
 import { detectCannibalizationTool } from "./detect-cannibalization.ts";
 import { analyzeContentDecayTool } from "./analyze-content-decay.ts";
 import type { RegisteredTool } from "./registry.ts";
@@ -270,9 +273,17 @@ describe("the recorded run and the delivered text are the same measurement", () 
     {
       name: "find_quick_wins" as ToolName,
       tool: findQuickWinsTool,
+      /**
+       * THROUGH THE TOOL'S OWN RENDERER, and the reason is a defect this pin caught by going red:
+       * it used to name `formatQuickWins`, the flat renderer find_quick_wins no longer uses. A
+       * byte-pin that names a renderer BY HAND is a second source of truth for what the tool
+       * prints, and it stops agreeing the moment the tool changes its mind — silently, in a lane
+       * the unit gate never runs. It still recomputes rather than reading the row back, so this
+       * compares two renderings of one pull instead of comparing a value with itself.
+       */
       expected: (() => {
         const result = findQuickWinsResult(SAMPLE_PULL);
-        return formatQuickWins(result.wins, result.total);
+        return formatGroupedQuickWins(result.wins, result.total);
       })(),
     },
     {

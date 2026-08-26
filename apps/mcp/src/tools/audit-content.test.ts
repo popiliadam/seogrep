@@ -665,4 +665,30 @@ describe("a finding with nothing to say is dropped, not printed empty", () => {
   it("prints no function-word note when nothing was excluded", async () => {
     expect(await textOf()).not.toMatch(/function words/);
   });
+
+  /**
+   * THE GATE ORDER, which is a rule and not an accident — and was unpinned until a fresh-context
+   * referee swapped the two gates and watched the whole suite stay green (2026-08-26).
+   *
+   * `dentnotion daha iyi` is the shape that separates them. Brand-first: the brand gate strips
+   * "dentnotion", the row is left holding "daha" and "iyi", and the function gate drops it.
+   * Function-first: the row still contains "dentnotion" when the function gate looks at it, so
+   * it is NOT all function words, it survives — and the customer is handed back
+   * `missing "daha", "iyi"` on their own brand name, which is both measured defects at once.
+   *
+   * Nothing about the two gates in isolation says which runs first, so only a query that needs
+   * BOTH of them, in one order, can pin it.
+   */
+  it("runs the brand gate FIRST, so a branded query left holding function words still drops", async () => {
+    const branded = `${PAGE}?x=1`;
+    const text = await textFor(
+      [gscRow({ query: "dentnotion daha iyi", page: branded, impressions: 400, clicks: 1, position: 9 })],
+      [crawlPage({ url: branded, title: "Diş beyazlatma" })],
+      PROPERTY,
+    );
+    expect(text).toContain("No title/h1 mismatches found");
+    expect(text).not.toMatch(/missing "daha"/);
+    // It leaves by the FUNCTION-word door, not the brand one: the brand gate only thinned it.
+    expect(text).toMatch(/Excluded 1 query whose only missing words were function words/);
+  });
 });

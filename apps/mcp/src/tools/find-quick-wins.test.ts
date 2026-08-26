@@ -274,6 +274,47 @@ describe("the quick-win list is grouped by page", () => {
     );
   });
 
+  /**
+   * THE TWO CAPS ABOVE THE PAGE BLOCKS, both untested until a fresh-context referee said so
+   * (2026-08-26): the only "cleared the bands" pins in the repo sat on the flat renderer this
+   * tool no longer uses, and the 12-page cap had no pin at all on this side.
+   *
+   * ONE fixture reaches both, because the engine's own 50-row cap and the renderer's page cap
+   * stack: 52 qualifying rows on 52 distinct pages become 50 wins (2 cut by the engine) on 50
+   * pages (38 cut by the renderer). Every row that does not reach the reader is counted in one
+   * of the two sentences, which is the whole rule.
+   */
+  it("counts what BOTH caps left out — the pages, and the rows the engine cut", async () => {
+    const many: GscRow[] = Array.from({ length: 52 }, (_unused, index) =>
+      gscRow({
+        query: `zirkonyum ${index}`,
+        page: `https://shop.test/p-${index}`,
+        clicks: 1,
+        impressions: 100 - index,
+        ctr: 0.01,
+        position: 10,
+      }),
+    );
+    const tool = buildFindQuickWins(
+      "2026-08-06T09:00:00.000Z",
+      async () => "active",
+      pullData(many, []),
+    );
+    const text = (await tool.run(CTX, { project_id: PROJECT_ID })).content[0]?.text ?? "";
+
+    expect(text).toMatch(/^50 pages with quick-win queries/m);
+    expect(text.match(/^• https/gm)).toHaveLength(12);
+    expect(text).toMatch(/…and 38 more pages with quick wins\./);
+    expect(text).toMatch(/…and 2 more cleared the bands\./);
+  });
+
+  /** The remainder is never claimed when nothing was cut — a shortlist that IS the answer. */
+  it("claims no remainder when neither cap bit", async () => {
+    const text = await groupedText();
+    expect(text).not.toMatch(/cleared the bands/);
+    expect(text).not.toMatch(/more pages with quick wins/);
+  });
+
   it("still says so when there is nothing to report", async () => {
     const empty = pullData([gscRow({ query: "x", page: "https://shop.test/x", position: 2 })], []);
     const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", empty);
