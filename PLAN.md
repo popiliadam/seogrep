@@ -5,6 +5,32 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🚀 2026-08-26 — **TUR CANLIDA**: 40 dilim `main`'e bindi ve deploy edildi
+
+**PR [#178](https://github.com/popiliadam/seogrep/pull/178) merge edildi** (merge-commit, squash DEĞİL — gitleaks parmak izleri sağlam).
+`main` = `ea8cfa3`, `main @8668ff2` üzerine **212 commit**. `deploy-mcp` ✅ · `mcp.seogrep.com/status`
+`ok:true` `errorsSinceBoot:0` `schema:ready` · `seogrep.com` HTTP 200. CI `main`'de **6/6**.
+
+Üç kapı (UTC 10:00–10:02): `verify.sh` mcp **137/3494** (tur başı 129/3184) · web **119/1952** ·
+**`typecheck-tests` 188/188 — bu kapı ÖNCEDEN YOKTU** · `verify-db.sh` 21/165 · 51/482 · 7/48 ·
+`make goals` **16/16 (5 SKIP)** · `gitleaks` 1.382 commit, sızıntı yok.
+**Kredi fiyatı değişikliği: SIFIR.** Vendor: **$0,101 / $3,00**.
+
+**B bölümü 2/3 kapandı:**
+- ✅ **S3 + S20.1** — AI ailesi çalışıyor. `dfs_spend`: `estimated $0,300` vs **`actual $0,101`**,
+  `status: settled`. Turun "maliyet" sandığı rakam **kapatılmamış rezervasyondu**; gerçek maliyet üçte biri.
+  Marj canlı fiyatlarla **9,3×–20×** → imza **S20.2'nin koşulu gerçekleşmedi**, 90 kredi yerinde kalır.
+- ✅ **S21** — apex→www crawl: `noraninsaat.com` **26 sayfa** (turda 0), ledger tam 20 kredi, **vendor $0**.
+- ⛔ **S2 BU İSTEMCİDEN YAPILAMADI** — `seogrep` MCP bağlantısı şemaları `properties` olmadan verdi,
+  dizi parametresi dizgiye dönüyor. **Ürün sağlam** (`registry.ts:385-390` `inputSchema` servis ediyor).
+  Şema gören bir istemciden tek kelimelik bir çağrı gerekiyor.
+
+**F temizliği turun KENDİ kuralıyla bloke:** 3 `not_measured` satır S2 kanıtı, silinmedi. Hiçbir silme yapılmadı.
+
+Kapanış kaydı: `docs/plans/2026-08-26-TUR-KAPANISI-canli.md` — açık maddeler §6, imza adayı ders §7.
+
+---
+
 ### 📋 2026-08-26 (SON) — **A BÖLÜMÜ KAPANDI**: imza paketinin beş yapılmayan maddesi canlı kodda
 
 **5/5 dilim PASS.** İmza md. **3 · 4 · 9 · 10 · 12** artık kodda (defterin "kodda sıfır iz" ölçümü kapandı).
