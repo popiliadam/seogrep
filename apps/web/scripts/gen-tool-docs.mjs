@@ -464,7 +464,12 @@ export const DOC_PROSE = {
           "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data). Audits, keyword and backlink " +
           "lookups run synchronously and are not jobs, so a project can read `none yet` and still " +
           "have been analysed — the reply says so, under the list, rather than leaving the line to " +
-          "be read as \"nothing has ever happened here\".",
+          "be read as \"nothing has ever happened here\".\n\n" +
+          "**If two tracked projects are mapped to the same Search Console property**, the reply " +
+          "names that property and both projects underneath the list. Each pull fetches one set " +
+          "of rows and is billed once per project, so the pair costs credits twice for the same " +
+          "data. Nothing is deduplicated for you — which of the two to keep is a decision only " +
+          "you can make.",
       },
       {
         heading: "The archive",
@@ -567,17 +572,17 @@ export const DOC_PROSE = {
           "trial credits are left. The reply says so, because the balance alone reads as " +
           "permission — a trial account seeing a healthy number concluded \"mine is not zero, so " +
           "it works\", and it did not.\n\n" +
-          "Buying any credit pack clears it. The reply states the rule but does **not** say " +
-          "whether your own account has paid: that would be a second ledger read on a free tool, " +
-          "and the sentence exists to make the rule knowable before it fires, not to pre-answer " +
-          "it. Which tools are gated is on each tool's own page and in " +
+          "Buying any credit pack clears it, and **the reply says which side of the rule your " +
+          "own account is on**: an account that has bought credits is told the vendor tools are " +
+          "unlocked, one that has not is told what unlocks them. Both wordings name the rule, so " +
+          "it stays knowable either way. Which tools are gated is on each tool's own page and in " +
           "[Billing & Credits](/docs/billing-and-credits).",
       },
     ],
     example: "Ask your MCP client in plain language:\n\n> How many credits do I have left?",
     returns:
-      "Your available credit balance, followed by the paid-balance rule above — stated every " +
-      "time, whether or not it currently applies to you.",
+      "Your available credit balance, followed by the paid-balance rule above, worded for the " +
+      "side of it your account is on.",
   },
 
   crawl_site: {
@@ -2842,6 +2847,11 @@ export const DOC_PROSE = {
       "- **Connected, but the credential is dead** → " +
       "[`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are " +
       "deliberately withheld: they read a pull this project cannot take.\n" +
+      "- **Connected, but no property is mapped** → " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties), then " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property). Both are free. The " +
+      "Google account works, so this rung does **not** send you round another OAuth loop — what " +
+      "is missing is the mapping, and until it exists a Search Console pull cannot run.\n" +
       "- **Connected, nothing pulled** → run " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
       "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +

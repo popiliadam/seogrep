@@ -23,6 +23,8 @@ Beside the domain and its `project_id`, every tracked line carries two facts, be
 
 **Last job** names the tool that ran and the day it ran. A *job* is a background run — [`crawl_site`](/docs/tools-reference/crawl-site) or [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data). Audits, keyword and backlink lookups run synchronously and are not jobs, so a project can read `none yet` and still have been analysed — the reply says so, under the list, rather than leaving the line to be read as "nothing has ever happened here".
 
+**If two tracked projects are mapped to the same Search Console property**, the reply names that property and both projects underneath the list. Each pull fetches one set of rows and is billed once per project, so the pair costs credits twice for the same data. Nothing is deduplicated for you — which of the two to keep is a decision only you can make.
+
 ## The archive
 
 Archived projects are listed separately, most recently archived first, each with its `project_id` and the date it was archived. They are **not** counted as tracked and never appear in the tracked list — but they are visible, which is what makes them recoverable: you do not have to remember the exact domain to bring one back.
