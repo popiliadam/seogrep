@@ -2576,8 +2576,14 @@ export const DOC_PROSE = {
       "- **On-page issues** — the full finding breakdown from `audit_onpage`, plus duplicate-content " +
       "groups.\n" +
       "- **Technical health** — the HTTP status split and the pages behind it, plus broken internal " +
-      "links, slow and heavy pages, redirect chains, `X-Robots-Tag` conflicts, deep and orphaned " +
-      "pages, skipped-page categories, and the sitemap-vs-crawl comparison.\n" +
+      "links, redirect chains, `X-Robots-Tag` conflicts, deep and orphaned pages, skipped-page " +
+      "categories, and the sitemap-vs-crawl comparison.\n" +
+      "- **Page speed** — slow and heavy pages, from how long **our crawler's** fetch of each page " +
+      "took and how large the HTML it returned was. These are **not** lab Core Web Vitals and " +
+      "**not** field data from real visitors — no browser renders the page, so nothing here " +
+      "measures LCP, INP or CLS. Use [`audit_speed`](/docs/tools-reference/audit-speed) for Core " +
+      "Web Vitals. A crawl stored before SeoGrep recorded these signals says so, instead of " +
+      "reporting an unmeasured site as a fast one.\n" +
       "- **Structured data** — coverage and declared types, plus missing required fields, " +
       "unparseable JSON-LD, and partly-stored blocks.\n" +
       "- **Search performance** — the current window's total clicks and impressions, plus your top " +

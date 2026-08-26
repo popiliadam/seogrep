@@ -55,6 +55,12 @@ const FULL_MODEL: ReportModel = {
     serverErrorUrls: EMPTY,
     slowPages: EMPTY,
     heavyPages: EMPTY,
+    // 0/0: this fixture is a crawl stored BEFORE the crawler recorded fetch time and HTML size,
+    // which is what makes its empty slow/heavy lists mean "never measured" rather than "fast".
+    // ENRICHED overrides both, because a fixture that HAS speed findings was measured by
+    // definition — the two cases must never be reachable from the same numbers.
+    pagesTimed: 0,
+    pagesSized: 0,
     redirectChains: EMPTY,
     xRobotsConflicts: EMPTY,
     deepPages: EMPTY,
@@ -261,6 +267,8 @@ const ENRICHED: ReportModel = {
     // 4xx list unpinnable: dropping it entirely left the URL on the page via the other block,
     // and the assertion passed anyway (measured — the mutation stayed green).
     clientErrorUrls: { items: ["https://example.com/notfound"], total: 1 },
+    pagesTimed: 42,
+    pagesSized: 42,
     slowPages: { items: [{ url: "https://example.com/slow", fetchMs: 9100 }], total: 1 },
     heavyPages: { items: [{ url: "https://example.com/fat", htmlBytes: 2_100_000 }], total: 1 },
     redirectChains: {
@@ -368,6 +376,98 @@ describe("enriched audit sections (R1-a)", () => {
       },
     });
     expect(many).toContain("… and 27 more");
+  });
+});
+
+/**
+ * Page speed as its own findable section (signature item 9, 2026-08-26).
+ *
+ * The signals were always in the report — buried as two lists inside "Technical health", where a
+ * reader looking for speed had no reason to look. Lifting them out costs nothing (the crawl
+ * already stored them) and changes no price, but it creates a NEW honesty problem the buried
+ * version did not have: a section headed "Page speed" reads as a speed measurement, and ours is
+ * a fetch timer, not a browser. Both halves are pinned below.
+ */
+describe("Page speed section (imza 9)", () => {
+  const nSlow = SLOW_PAGE_MS.toLocaleString("en-US");
+  const nHeavy = HEAVY_PAGE_BYTES.toLocaleString("en-US");
+
+  /** Measured, and every page inside both thresholds — the only state that may print a zero. */
+  const CLEAN: ReportModel = {
+    ...FULL_MODEL,
+    tech: { ...FULL_MODEL.tech!, pagesTimed: 42, pagesSized: 40 },
+  };
+
+  it("gives speed its own heading instead of burying it in Technical health", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/<h2>Page speed<\/h2>/);
+
+    // POSITION, not mere presence: the findings must have LEFT the technical section. Asserting
+    // only that "Slow pages" appears somewhere would pass just as well if nothing had moved.
+    const techStart = html.indexOf("<h2>Technical health</h2>");
+    const speedStart = html.indexOf("<h2>Page speed</h2>");
+    expect(techStart).toBeGreaterThan(-1);
+    expect(speedStart).toBeGreaterThan(techStart);
+    const techBody = html.slice(techStart, speedStart);
+    expect(techBody).not.toMatch(/slow pages/i);
+    expect(techBody).not.toMatch(/heavy pages/i);
+    expect(html.slice(speedStart)).toMatch(/slow pages/i);
+    expect(html.slice(speedStart)).toMatch(/heavy pages/i);
+  });
+
+  it("says what the numbers ARE NOT — not lab Core Web Vitals, not field data", () => {
+    // NEVER #7: a section called "Page speed" that stayed silent about its provenance would be
+    // read as a Lighthouse score. The disclaimer ships in BOTH branches, so both are checked.
+    for (const html of [renderReportHtml(ENRICHED), renderReportHtml(FULL_MODEL)]) {
+      // WHITESPACE-TOLERANT: the copy wraps inside the template, so a literal-space regex would
+      // fail on the line break — and its negative twin in the unmeasured test would then pass
+      // vacuously, which is the failure mode that makes a green test worthless.
+      expect(html).toMatch(/not\S*\s+lab\s+core\s+web\s+vitals/is);
+      expect(html).toMatch(/not\S*\s+field\s+data\s+from\s+real\s+visitors/is);
+      expect(html).toMatch(/crawler measurements/i);
+      expect(html).toContain("audit_speed");
+    }
+  });
+
+  it("prints both thresholds from the RULE'S constants, in the speed section itself", () => {
+    const speed = renderReportHtml(ENRICHED).split("<h2>Page speed</h2>")[1]!;
+    expect(speed).toContain(`over ${nSlow} ms`);
+    expect(speed).toContain(`over ${nHeavy} bytes`);
+  });
+
+  it("reports an UNMEASURED crawl as unmeasured — never as a zero", () => {
+    // FULL_MODEL is pagesTimed/pagesSized 0: a crawl stored before the fields existed. Its empty
+    // lists are not evidence the site is fast, so the section may claim nothing about speed.
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/no fetch-time or HTML-size signal/i);
+    expect(html).toMatch(/unmeasured rather than as zero/i);
+    expect(html).toContain("crawl_site");
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).not.toMatch(/fetch time measured on/i);
+    expect(html).not.toMatch(/slow pages/i);
+    expect(html).not.toMatch(/heavy pages/i);
+  });
+
+  it("reports a MEASURED, clean crawl with its coverage and an honest zero", () => {
+    const html = renderReportHtml(CLEAN);
+    // Each axis reports its OWN coverage: 42 timed, 40 sized. One number for both would be a
+    // claim the model does not make.
+    expect(html).toMatch(/Fetch time measured on\s*<strong>42<\/strong>\s*of\s*42 crawled page\(s\)/);
+    expect(html).toMatch(/HTML size on\s*<strong>40<\/strong>/);
+    expect(html).toMatch(
+      new RegExp(`no measured page took longer than ${nSlow} ms.{0,80}${nHeavy} bytes`, "is"),
+    );
+    // Still no empty list headers: "clean" is said in a sentence, not as a "Slow pages (0)".
+    expect(html).not.toMatch(/slow pages \(/i);
+    expect(html).not.toMatch(/no fetch-time or HTML-size signal/i);
+  });
+
+  it("does NOT claim everything is clean when there ARE findings", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/Fetch time measured on/i);
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).toContain("https://example.com/slow");
+    expect(html).toContain("https://example.com/fat");
   });
 });
 
