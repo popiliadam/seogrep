@@ -786,3 +786,38 @@ yazıldı — sayıyı sessizce artırmak bulguyu silmek olurdu.
 
 SKIP'ten gerçek ölçüme dönen dört kalem: **`mcp-alive`** · **`trial-flow-e2e`** ·
 **`landing-live`** · **`purchase-flow-live`**. Kalan tek SKIP `dfs-budget-guard` (`DFS_LIVE`, kasıtlı).
+
+
+---
+
+## §4 — PUSH + PR (2026-08-26 16:0xZ)
+
+**Dal push edildi, PR açıldı:** [#180](https://github.com/popiliadam/seogrep/pull/180) — 24 commit,
+`mergeable: MERGEABLE`, çalışma ağacı temiz.
+
+Push öncesi son kapı: `verify.sh` **PASS** (mcp 3544 · web 1967 · core 323 · db 12 · 38 doküman
+senkron · `dist` taze 133/133).
+
+### ⛔ CI KOŞMADI — GitHub Actions kesintide
+
+Ölçüm zinciri:
+1. `gh pr checks 180` → yalnız **Netlify** kontrolleri (3 pass, 1 neutral). Actions yok.
+2. `gh api actions/runs?branch=fix/smoke-turu-dalga-1` → **`total_count: 0`**, push'tan 10 dk sonra.
+3. Repo **PUBLIC**, `actions/permissions` → `enabled: true`, `CI` workflow `state: active`,
+   `ci.yml` `on: pull_request` (filtre yok) → yapılandırma sağlam.
+4. PR kapatılıp açıldı (olayı yeniden tetiklemek için) → **yine 0 koşu**.
+5. **`githubstatus.com` → `Actions: major_outage`**, genel durum *Partial System Outage*.
+
+→ **Dalla ilgili bir sorun değil.** Actions toparlayınca CI kendiliğinden koşmalı; koşmazsa PR'ı
+kapatıp açmak yeter.
+
+### Ayrı madde — `main` CI'ı ZATEN kırmızı (bu daldan önce)
+
+`main @499a2a0` (PR #179 merge'ü, 11:14Z) koşusu **`verify-db` job'ında** kırmızı. Loglar okundu:
+`failed to pull docker image: toomanyrequests: Rate exceeded` (Docker Hub limiti) → yerel stack
+imajları çekilemedi → ardından `An invalid response was received from the upstream server`.
+**Kod kusuru değil, altyapı** — bu turda yerelde iki kez kovalanan 502 sınıfının CI'daki hâli.
+Diğer beş job (`verify`, `gitleaks`, `static-guards`, `licenses`, `lighthouse`) **yeşil**.
+
+→ Actions dönünce `main`'in o koşusu **yeniden çalıştırılmalı**; kırmızı bırakılırsa `deploy-mcp`'nin
+`require-ci` job'ı bir sonraki deploy'da 25 dakika bekleyip kırmızıya düşer.
