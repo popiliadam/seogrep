@@ -7,6 +7,7 @@ import {
   SLOW_PAGE_MS,
 } from "./rules/tech.ts";
 import type { SchemaReport } from "./rules/schema.ts";
+import type { AuditSkipped } from "./crawl-data.ts";
 
 /**
  * Text renderers for the three audit reports. Kept apart from the (pure, structured) rule
@@ -115,6 +116,66 @@ export function formatOnpageReport(report: OnpageReport, fetchedAt: string | nul
 
 // --- technical -------------------------------------------------------------------
 
+/**
+ * THE SKIPPED LIST WAS FIFTY COPIES OF ONE SENTENCE. Measured 2026-08-25 on a live audit: the
+ * section printed 50 rows shaped `url (reason)` and the reason was IDENTICAL on all fifty, because
+ * a crawl is skipped in bulk — one robots rule, one budget, one host that stopped answering. The
+ * repetition was not merely long: it hid the only thing worth reading, which is HOW MANY were
+ * skipped for EACH reason. So the reason is now stated ONCE per group with its own count, and the
+ * URLs beneath it are examples of that group rather than the group itself.
+ *
+ * TWO CAPS, and both exist because either axis alone can run away:
+ *
+ *   - URLS PER REASON. Ten is enough to recognise a pattern (a path prefix, a query parameter, a
+ *     subdomain) and short enough that one reason cannot fill the reply. This is the axis the
+ *     measurement found.
+ *   - REASONS PER CATEGORY. Grouping ALONE would have made the opposite case worse: `fetch failed:
+ *     ${message}` and `off-origin redirect to ${target}` embed a variable, so fifty of those are
+ *     fifty DISTINCT reasons, and printing each as its own group would have turned 50 lines into
+ *     100. Groups are therefore ordered by size — biggest first, so the reason that explains most
+ *     of the damage is the one the reader gets — and only the first five are printed.
+ *
+ * NOTHING IS DROPPED IN SILENCE. Each cap prints what it withheld and why: how many URLs share
+ * the reason above, and how many further reasons cover how many further URLs. `skippedCount` in
+ * the header is unchanged and still counts every skip, so the totals reconcile.
+ */
+const MAX_SKIP_REASONS_PER_CATEGORY = 5;
+const MAX_SKIP_URLS_PER_REASON = 10;
+
+/** One category's skips grouped by exact reason, biggest group first (reason as tie-break). */
+function groupSkipsByReason(skips: readonly AuditSkipped[]): { reason: string; urls: string[] }[] {
+  const byReason = new Map<string, string[]>();
+  for (const skip of skips) {
+    const urls = byReason.get(skip.reason);
+    if (urls === undefined) byReason.set(skip.reason, [skip.url]);
+    else urls.push(skip.url);
+  }
+  return [...byReason]
+    .map(([reason, urls]) => ({ reason, urls }))
+    .sort((a, b) => b.urls.length - a.urls.length || a.reason.localeCompare(b.reason));
+}
+
+/** The lines under one `category: N` header — see the two caps documented above. */
+function renderSkippedCategory(skips: readonly AuditSkipped[]): string[] {
+  const groups = groupSkipsByReason(skips);
+  const listed = groups.slice(0, MAX_SKIP_REASONS_PER_CATEGORY);
+  const lines = listed.flatMap(({ reason, urls }) => {
+    const hidden = urls.length - MAX_SKIP_URLS_PER_REASON;
+    return [
+      `    ${reason} — ${urls.length} URL(s):`,
+      ...urls.slice(0, MAX_SKIP_URLS_PER_REASON).map((url) => `      · ${url}`),
+      ...(hidden > 0 ? [`      … and ${hidden} more URL(s) with this reason, not listed`] : []),
+    ];
+  });
+  const restGroups = groups.slice(MAX_SKIP_REASONS_PER_CATEGORY);
+  if (restGroups.length === 0) return lines;
+  const restUrls = restGroups.reduce((total, group) => total + group.urls.length, 0);
+  return [
+    ...lines,
+    `    … and ${restGroups.length} more reason(s) here, covering ${restUrls} URL(s), not listed`,
+  ];
+}
+
 export function formatTechReport(report: TechReport, fetchedAt: string | null): string {
   const { status } = report;
   const lines = [
@@ -133,8 +194,7 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
 
   lines.push("", `Not crawled (skipped): ${report.skippedCount}`);
   for (const [category, skips] of Object.entries(report.skippedByCategory).sort()) {
-    lines.push(`  ${category}: ${skips.length}`);
-    lines.push(bulletList(skips.map((s) => `${s.url} (${s.reason})`), "    "));
+    lines.push(`  ${category}: ${skips.length}`, ...renderSkippedCategory(skips));
   }
 
   lines.push("", `Robots conflicts (noindex but internally linked): ${report.robotsConflicts.length}`);

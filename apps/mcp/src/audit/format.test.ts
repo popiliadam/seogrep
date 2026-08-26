@@ -52,6 +52,70 @@ describe("audit formatters", () => {
 });
 
 // =====================================================================================
+// THE SKIPPED LIST SAYS THE REASON ONCE, NOT ONCE PER ROW.
+//
+// Measured 2026-08-25 on a live audit: 50 rows of skipped URLs, every one carrying the SAME
+// reason string. What a reader needs there is how many were skipped for each reason; the URLs are
+// examples. Both caps below are asserted through the REAL renderer, and both print what they
+// withheld — a silent truncation would be worse than the long list it replaces.
+// =====================================================================================
+
+function skippedCrawl(skipped: { url: string; reason: string }[]): AuditCrawl {
+  return { pages: [page({ url: "https://e/" })], skipped, fetchedAt: AT };
+}
+
+describe("the skipped list groups by reason and bounds what it prints", () => {
+  /** Sixty URLs, ONE reason — the shape the live audit produced, at the size that hides it. */
+  const oneReason = Array.from({ length: 60 }, (_, i) => ({
+    url: `https://e/private/${i}`,
+    reason: "blocked by robots.txt",
+  }));
+
+  it("prints one reason line with its own count, not one reason per URL", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(oneReason)), AT);
+    expect(text).toContain("blocked by robots.txt — 60 URL(s):");
+    // The reason appears ONCE: as the group header, never again as a per-row suffix.
+    expect(text.match(/blocked by robots\.txt/g)).toHaveLength(1);
+  });
+
+  it("lists ten example URLs and says how many more share that reason", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(oneReason)), AT);
+    expect(text).toContain("      · https://e/private/9");
+    expect(text).not.toContain("https://e/private/10");
+    expect(text).toMatch(/… and 50 more URL\(s\) with this reason, not listed/);
+    // …and the header still counts every one of them, so the totals reconcile.
+    expect(text).toContain("Not crawled (skipped): 60");
+  });
+
+  /**
+   * THE OPPOSITE FAILURE, and the one grouping ALONE would have made worse: `fetch failed: X`
+   * embeds a variable, so many skips can carry many DISTINCT reasons. Ordered biggest-first, only
+   * the first five groups print, and the tail names both what it left out and how big it was.
+   */
+  const manyReasons = [
+    ...Array.from({ length: 4 }, (_, i) => ({ url: `https://e/a${i}`, reason: "fetch failed: ECONNRESET" })),
+    ...Array.from({ length: 3 }, (_, i) => ({ url: `https://e/b${i}`, reason: "fetch failed: ETIMEDOUT" })),
+    { url: "https://e/c", reason: "fetch failed: EHOSTUNREACH" },
+    { url: "https://e/d", reason: "fetch failed: ECONNREFUSED" },
+    { url: "https://e/e", reason: "fetch failed: EAI_AGAIN" },
+    { url: "https://e/f", reason: "fetch failed: EPROTO" },
+    { url: "https://e/g", reason: "fetch failed: socket hang up" },
+  ];
+
+  it("orders the reasons biggest-first so the one explaining most of the damage is printed", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(manyReasons)), AT);
+    const order = [...text.matchAll(/fetch failed: (\S+) — (\d+) URL\(s\):/g)].map((m) => m[2]);
+    expect(order).toEqual(["4", "3", "1", "1", "1"]);
+  });
+
+  it("counts the reasons it did not print, and the URLs they cover", () => {
+    const text = formatTechReport(auditTech(skippedCrawl(manyReasons)), AT);
+    expect(text).toMatch(/… and 2 more reason\(s\) here, covering 2 URL\(s\), not listed/);
+    expect(text).toContain("Not crawled (skipped): 12");
+  });
+});
+
+// =====================================================================================
 // THE SUMMARY LINE MUST AGREE WITH THE BULLETS UNDER IT.
 //
 // `formatOnpageReport` builds its summary by walking ONPAGE_ORDER — the key order of
