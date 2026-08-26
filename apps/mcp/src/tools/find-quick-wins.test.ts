@@ -322,3 +322,134 @@ describe("the quick-win list is grouped by page", () => {
     expect(result.content[0]?.text).toContain("No quick wins found");
   });
 });
+
+/**
+ * THE RECOMMENDATION LAYER, through the TOOL — never through `formatQuickWins`.
+ *
+ * That distinction is the whole reason this block lives here. `formatQuickWins` (gsc-data/
+ * format.ts) is a stand-in nothing in production calls, so advice asserted against it would be a
+ * green suite proving a customer-facing line that never ships. These drive `renderQuickWins`, the
+ * real render `makeFindQuickWinsTool` passes, so what is asserted here is what a caller reads.
+ *
+ * The gap being closed (measured 2026-08-25): the list told the reader which queries were nearly
+ * won and never once said what to do about any of them.
+ */
+describe("each quick-win page carries what to do about it", () => {
+  const CROWDED = "https://shop.test/zirkonyum";
+  const SINGLE = "https://shop.test/porselen";
+
+  /**
+   * The grouping fixture rebuilt locally: one page carrying SEVEN quick wins beside one carrying
+   * a single query, so both halves of the widen/tighten split are reachable from one render. The
+   * crowded page's rows are individually smaller and collectively larger, which is also what puts
+   * it first in the list.
+   */
+  const MIXED_PULL: PullData = pullData(
+    [
+      ...["alfa", "beta", "gama", "delta", "epsilon", "zeta", "eta"].map((word, index) =>
+        gscRow({
+          query: `zirkonyum ${word}`,
+          page: CROWDED,
+          clicks: 1,
+          impressions: 100 - index,
+          ctr: 0.01,
+          position: 12,
+        }),
+      ),
+      gscRow({
+        query: "porselen kaplama",
+        page: SINGLE,
+        clicks: 5,
+        impressions: 500,
+        ctr: 0.01,
+        position: 9,
+      }),
+    ],
+    [],
+  );
+
+  /**
+   * The two axes DISAGREE on this page on purpose: its biggest-demand query sits at 19 while its
+   * best-positioned one sits at 8. An advice line built from the group's `bestPosition` would
+   * name the top-5 band for a query on page two; one that anchored on the closest query instead
+   * of the biggest would name the wrong query entirely. Neither is visible on a fixture where
+   * every row shares a position.
+   */
+  const SPLIT = "https://shop.test/split";
+  const SPLIT_PULL: PullData = pullData(
+    [
+      gscRow({ query: "big demand", page: SPLIT, clicks: 4, impressions: 900, ctr: 0.004, position: 19 }),
+      gscRow({ query: "close one", page: SPLIT, clicks: 3, impressions: 100, ctr: 0.03, position: 8 }),
+    ],
+    [],
+  );
+
+  async function textFor(pull: PullData): Promise<string> {
+    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", pull);
+    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+    expect(result.isError).toBeUndefined();
+    return result.content[0]?.text ?? "";
+  }
+
+  it("names the page's BIGGEST-DEMAND query, with its own position and impressions", async () => {
+    const text = await textFor(SPLIT_PULL);
+    expect(text).toContain('→ Push "big demand" (position 19.0, 900 impressions)');
+    expect(text).not.toContain('→ Push "close one"');
+  });
+
+  /** The band comes from THAT query's position — a page-two query is told to reach page one. */
+  it("aims a page-two query at the top 10, not the top 5", async () => {
+    expect(await textFor(SPLIT_PULL)).toContain('"big demand" (position 19.0, 900 impressions) into the top 10');
+  });
+
+  it("aims a query already on page one at the top 5", async () => {
+    const text = await textFor(SAMPLE_PULL);
+    // SAMPLE_PULL's only quick win sits at 11.2 — page two.
+    expect(text).toContain("into the top 10");
+
+    const onPageOne = pullData(
+      [gscRow({ query: "porselen kaplama", page: SINGLE, clicks: 5, impressions: 500, ctr: 0.01, position: 9 })],
+      [],
+    );
+    expect(await textFor(onPageOne)).toContain('"porselen kaplama" (position 9.0, 500 impressions) into the top 5');
+  });
+
+  /**
+   * A page holding seven near-miss queries and a page holding one are opposite jobs — widen
+   * versus tighten — and the query count is the only thing in the data that tells them apart. One
+   * sentence serving both would be the boilerplate this layer is not allowed to be.
+   */
+  it("tells a multi-query page to widen, naming how many queries one pass serves", async () => {
+    const text = await textFor(MIXED_PULL);
+    expect(text).toMatch(/one on-page pass serves all 7 of this page's quick-win queries/);
+    expect(text).toMatch(/widen it/);
+  });
+
+  it("tells a single-query page to tighten around that phrase instead", async () => {
+    const text = await textFor(MIXED_PULL);
+    expect(text).toMatch(/it is this page's only quick-win query, so tighten the page around that phrase/);
+    expect(text).not.toMatch(/one on-page pass serves all 1 /);
+  });
+
+  /** One recommendation per page printed — not one for the list, and not one per query row. */
+  it("gives every printed page exactly one recommendation", async () => {
+    const text = await textFor(MIXED_PULL);
+    expect(text.match(/^• https/gm)).toHaveLength(2);
+    expect(text.match(/^ {4}→ Push /gm)).toHaveLength(2);
+  });
+
+  /** It sits UNDER the page's evidence, below even the "…and N more" line. */
+  it("puts the recommendation last in the page's block", async () => {
+    const lines = (await textFor(MIXED_PULL)).split("\n");
+    const moreLine = lines.findIndex((line) => line.includes("more of this page's queries"));
+    expect(moreLine).toBeGreaterThan(-1);
+    expect(lines[moreLine + 1]).toMatch(/^ {4}→ Push /);
+  });
+
+  it("recommends nothing when there is nothing to recommend", async () => {
+    const empty = pullData([gscRow({ query: "x", page: "https://shop.test/x", position: 2 })], []);
+    const text = await textFor(empty);
+    expect(text).toContain("No quick wins found");
+    expect(text).not.toContain("→ Push");
+  });
+});

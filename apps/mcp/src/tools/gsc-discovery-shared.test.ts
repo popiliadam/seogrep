@@ -182,3 +182,52 @@ describe("a month-old pull is called stale in the tool's own output", () => {
     expect(fresh.content[0]?.text ?? "").not.toMatch(/stale/i);
   });
 });
+
+/**
+ * THE RECOMMENDATION LAYER REACHES THE CALLER — asserted through the tool, over the two cases
+ * whose `render` IS the expression their production module passes (detect-cannibalization.ts and
+ * analyze-content-decay.ts both call `format*(engine(pull))` directly, verbatim as written above).
+ *
+ * find_quick_wins is DELIBERATELY ABSENT from this block. CASES[0] renders through
+ * `formatQuickWins`, the flat renderer the tool stopped using, so an advice assertion here would
+ * pass while the shipped tool printed nothing — the exact shape that let the grouping defect
+ * survive a green suite. Its recommendation is pinned against the real `renderQuickWins` in
+ * find-quick-wins.test.ts.
+ */
+describe("the discovery tools deliver a recommendation, not just a finding", () => {
+  /**
+   * A CLEAR-CUT cannibalization group, which SAMPLE_PULL is not: its two pages sit at 6.4 and 9.1,
+   * inside the gap where naming a keeper would be a coin flip. Here one page leads by 26
+   * positions and also earns the clicks, so the advice is supported.
+   */
+  const CONTESTED: PullData = {
+    ...SAMPLE_PULL,
+    current: {
+      ...SAMPLE_PULL.current,
+      rows: [
+        { query: "trail shoes", page: "https://shop.test/trail", clicks: 40, impressions: 900, ctr: 0.044, position: 4 },
+        { query: "trail shoes", page: "https://shop.test/trail-guide", clicks: 2, impressions: 300, ctr: 0.007, position: 30 },
+      ],
+    },
+  };
+
+  it("detect_cannibalization tells the caller which page to keep and which to fold in", async () => {
+    const text = await textOf(CASES[1]!.render, CONTESTED);
+    expect(text).toContain("→ Keep https://shop.test/trail (position 4.0, 40 clicks)");
+    expect(text).toMatch(/canonicalize or merge https:\/\/shop\.test\/trail-guide \(position 30\.0\)/);
+  });
+
+  /** …and says nothing when the same tool's data cannot support a keeper. */
+  it("detect_cannibalization stays silent on a near tie rather than guessing", async () => {
+    const text = await textOf(CASES[1]!.render, SAMPLE_PULL);
+    expect(text).toContain('"trail shoes"'); // the finding is still delivered
+    expect(text).not.toContain("→");
+  });
+
+  it("analyze_content_decay tells the caller what to do about each decaying page", async () => {
+    const text = await textOf(CASES[2]!.render, SAMPLE_PULL);
+    // /trail went 60 → 30: it still ranks, so this is the refresh case and not the verify one.
+    expect(text).toContain("→ Partial slide: 30 of 60 clicks left");
+    expect(text).toMatch(/refresh the content and add internal links/i);
+  });
+});

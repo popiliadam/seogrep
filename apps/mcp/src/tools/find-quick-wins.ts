@@ -89,6 +89,46 @@ function groupQuickWins(wins: readonly QuickWin[]): QuickWinPage[] {
   );
 }
 
+/**
+ * The best position that is still page one. Above it the nearest band worth naming is the top 5;
+ * below it, simply getting onto page one is the whole of the next move, and telling a page at
+ * 17.4 to aim for the top 5 skips the step that actually pays.
+ */
+const PAGE_ONE_LAST_POSITION = 10;
+
+/**
+ * What to DO with one page's quick wins, derived from that page's own rows.
+ *
+ * THE ANCHOR IS THE PAGE'S FIRST SHOWN ROW, which is its highest-impression win: the engine
+ * orders within a page by impressions desc (quick-wins.ts), and this deliberately reuses that
+ * ordering rather than inventing a second notion of "the important query" that would disagree
+ * with the list printed directly above it.
+ *
+ * TWO AXES, both read off the data, so this is not one sentence with the numbers swapped in:
+ *
+ *   - WHICH BAND, from the ANCHOR's own position and not the group's best. The sentence names one
+ *     query, so it has to be that query's next band or it is describing a different row.
+ *   - WHICH KIND OF PAGE, from how many wins it carries. A page holding seven near-miss queries
+ *     and a page holding one are not the same job: the first is a coverage problem (one on-page
+ *     pass lifts all seven, and narrowing the page to the anchor would waste the other six), the
+ *     second is a focus problem. Opposite instructions, and the count is what tells them apart.
+ *
+ * Null only for a group with no rows, which groupQuickWins cannot produce — it is here so the
+ * impossible case cannot print half a sentence.
+ */
+function quickWinAdvice(group: QuickWinPage): string | null {
+  const anchor = group.shown[0];
+  if (anchor === undefined) return null;
+  const band = anchor.position > PAGE_ONE_LAST_POSITION ? "the top 10" : "the top 5";
+  const push =
+    `    → Push "${anchor.query}" (position ${pos(anchor.position)}, ` +
+    `${grouped(anchor.impressions)} impressions) into ${band}`;
+  return group.queries === 1
+    ? `${push} — it is this page's only quick-win query, so tighten the page around that phrase.`
+    : `${push} — one on-page pass serves all ${grouped(group.queries)} of this page's quick-win ` +
+        "queries, so widen it to cover them rather than chasing the one.";
+}
+
 function renderQuickWinPage(group: QuickWinPage): string {
   const head =
     `• ${group.page} — ${grouped(group.queries)} quick-win ` +
@@ -103,7 +143,11 @@ function renderQuickWinPage(group: QuickWinPage): string {
     group.hidden === 0
       ? []
       : [`    …and ${grouped(group.hidden)} more of this page's queries in this shortlist.`];
-  return [head, ...rows, ...more].join("\n");
+  // The recommendation goes LAST in the page's block, under the evidence it was derived from —
+  // and omitted rather than blanked in the (unreachable) empty case, so a block never ends on a
+  // stray arrow.
+  const advice = quickWinAdvice(group);
+  return [head, ...rows, ...more, ...(advice === null ? [] : [advice])].join("\n");
 }
 
 /**
