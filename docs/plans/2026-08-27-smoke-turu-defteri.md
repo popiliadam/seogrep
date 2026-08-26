@@ -1266,3 +1266,56 @@ Search Console, son iş, apex/www ve çift-property uyarılarını basıyor — 
 yolundan görüldü.
 
 ### Sıradaki tool: `whats_next` — operatörün "okey"i bekleniyor
+
+---
+
+## §D2 — DEPLOY SONRASI KÜÇÜK SMOKE (ilk üç tool, 2026-08-26 18:2xZ)
+
+Operatör: *"ilk 3 tool'u aktifleştirmek için hangi komutlar gerekiyor, küçük smoke test yapalım."*
+Bu üç tool dalga 1'de **deploy'dan ÖNCE** ölçülmüştü; düzeltmeleri müşteri yolundan ilk kez görülüyor.
+
+| tool | müşteri cümlesi | canlı sonuç |
+|---|---|---|
+| `list_projects` | *"list my projects"* · *"hangi siteleri takip ediyorum"* | 18 aktif + 1 arşiv · üç durumlu Search Console · son iş · apex/www ve çift-property uyarıları — **G1/G4/G5/G7 canlıda** |
+| `get_credit_balance` | *"how many credits do I have"* · *"kredi bakiyem ne"* | **G10 canlıda:** artık genel kural paragrafı değil, **hesaba özel** cümle: *"Your account has a paid balance, so … unlocked"* |
+| `list_credit_activity` | *"what have I spent credits on"* · *"kredilerim nereye gitti"* (`limit` 1-50, varsayılan 10) | **G13 canlıda:** *"5 most recent of 512"* + *"507 older entries not shown — raise limit (max 50)"* |
+
+### 🔴 BULGU D-7 — VERİ · sahip: kod · **YÜKSEK (para dürüstlüğü)**
+
+`list_credit_activity` bugünkü crawl satırı için **`no project scope`** basıyor. Ölçüm:
+
+```
+- 2026-08-26T10:36:21 · -20 credits · charge · crawl_site · no project scope
+```
+
+Aynı satır SQL'de:
+
+| ledger.project_id | job_id | işin gerçek projesi |
+|---|---|---|
+| `null` | `af7a2925…` | **`ea77221c…` = `noraninsaat.com`** |
+
+**O çağrının bir projesi VARDI.** `project_id`'nin null olmasının sebebi "kapsam yoktu" değil,
+**kolon o gün henüz yoktu** — migration 0033 bugün 17:36Z'de uygulandı, satır 10:36Z'de yazıldı.
+
+Bu, turun çekirdek vaadinin ihlali — *"unreported, never as a zero"*: kaydedilmemiş bir değer,
+**pozitif bir iddia** olarak sunuluyor. Migration'ın kendi yorumu da `NULL`'ı "gerçek bir cevap"
+diye tanımlıyor (`research_keywords` gibi projesi olmayan çağrılar için) — o tanım **yalnız
+0033'ten SONRAKİ satırlar** için doğru.
+
+**Neden geri doldurulamaz:** `credit_ledger` append-only — `UPDATE` hem 0002'nin tetikleyicisiyle
+koşulsuz reddediliyor hem de her role'den revoke edilmiş (bugün canlıda doğrulandı). Yani eski
+satırlara `project_id` yazmak **imkânsız, ve öyle olmalı**.
+
+**Önerilen düzeltme:** okuma tarafında bir eşik. 0033'ün uygulandığı andan ÖNCE yazılmış satırlar
+için `no project scope` yerine **`project not recorded`** (ve tek seferlik bir not: bu satırlar
+proje kapsamı deftere eklenmeden önce yazıldı). Eşikten sonraki `NULL` ise gerçekten "kapsam yok".
+
+**Kapsam:** `projectLabel` `list_jobs` tarafından da kullanılıyor, ama orada `project_id` `jobs`
+tablosundan geliyor ve o kolon hep vardı — **bu delik yalnız ledger'a özgü**.
+
+### Ek gözlem — istemcinin tool listesi yine bayat (A1'in tekrarı)
+
+Deploy edilmiş `list_credit_activity` açıklaması `"… which tool charged what, for which project."`
+diyor (`list-credit-activity.ts:243-245`); asistanın istemcisinde görünen şema hâlâ eski metni
+taşıyor. **Çağrılar canlı sunucuya gidiyor** (sonuçlar yeni kodun çıktısı), yalnız şema/açıklama
+önbelleği bayat. Yeni açıklamaları görmek için bağlantı yenilenmeli.
