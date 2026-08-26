@@ -11,11 +11,19 @@ description: "Measure where a domain appears in Google's organic results for up 
 
 Pass a `project_id` (or any `target` domain) and up to **10** keywords. Each keyword is a **separate live search**, so the list is what the call costs — that is why the price has a per-keyword part. Duplicates are refused rather than quietly removed, and the list is never trimmed to fit: a shorter answer to a longer question is not the answer you asked for.
 
+## Who can run it
+
+`serp_snapshot` needs a **paid credit balance**. Each keyword is a separate live search bought from a paid third-party provider, so it is not available on trial credits, however many are left; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away — your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+
+This is the one part of the rank tracker that is **gated**, and gating is a separate question from price. [`track_keywords`](/docs/tools-reference/track-keywords) is free; [`keyword_positions`](/docs/tools-reference/keyword-positions) charges for the analysis but contacts no search engine. Neither is gated — both run on a trial account, and each page states its own cost.
+
+If live DataForSEO access is unavailable on this deployment, the tool says so and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder positions as if a search engine had really returned them.
+
 ## Three answers, and none of them is a number you can misread
 
 A keyword comes back as exactly one of three things, and they are never collapsed:
 
-- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and `rank_absolute` (its rank among every element on the page, including featured snippets and ad blocks). Both are reported, because they disagree whenever a SERP feature sits above the result, and that gap is itself the finding.
+- **Found** — with DataForSEO's own `rank_group` (its rank among organic results) and `rank_absolute` (its rank among every element on the page, including featured snippets and ad blocks). Both are reported where the vendor sent them, because they disagree whenever a SERP feature sits above the result and that gap is itself the finding; either one the vendor left out is stated as not reported rather than filled in.
 - **Searched for and not found** — together with **how many organic results were actually examined**. That is the scope of the claim: it is not position 0, and it says nothing about results beyond the ones counted.
 - **Not measured** — the request or the response failed, so the position is unknown. Nothing was examined, so this is not a statement that the domain is absent.
 

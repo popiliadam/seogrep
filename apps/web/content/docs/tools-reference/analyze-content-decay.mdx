@@ -11,6 +11,8 @@ description: "Find decaying pages from your latest Search Console pull: pages wh
 
 It sums each page's clicks across both windows (a page can rank for many queries) and flags a page when it lost **at least 5 clicks** AND **at least 30%** of its previous clicks. Both thresholds must be met, so a tiny wobble or a large-but-proportionally-small dip is left out. Results are ordered by clicks lost, biggest bleed first.
 
+Two rules sit alongside those thresholds. A page with **no clicks at all** in the previous window is skipped outright — with no baseline there is nothing that could have decayed, whatever the arithmetic says. And a "page" is a **document**: rows differing only by a `#fragment` are summed together in **both** windows first, because Google routinely moves an article's clicks between its bare URL and its anchors, and reading those as two pages manufactures a decay on one and a rise on the other.
+
 ## Example
 
 Ask your MCP client in plain language:
@@ -25,7 +27,9 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A list of decaying pages — each with its previous and current clicks, the clicks lost, and the drop as a percentage — biggest loss first. If nothing is decaying, it says so (and you are still charged for the delivered analysis).
+A list of decaying pages — each with its previous and current clicks, the clicks lost, and the drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so (and you are still charged for the delivered analysis).
+
+Every reply ends with the same footer: the window that was analyzed against the one before it, a caveat when either window hit the row cap, when the pull was taken plus a sentence once that is old, and — when your Search Console credential has stopped working — a warning to reconnect.
 
 ### Inherited limits
 

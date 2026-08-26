@@ -11,6 +11,12 @@ description: "List the Search Console properties on your connected Google accoun
 
 For each connected Google account it asks Google for that account's property list, then lines each property up against your projects. A property your account cannot query is **still listed**, marked `NOT QUERYABLE` with its permission level, so a property is never silently missing. Nothing is cached: the list is read live, every time.
 
+## It names the project a property plainly belongs to
+
+A property no project reads is not left as a bare "not used by any project". If one of your projects names the **same site** and reads no property yet, the line names that project and tells you to run [`track_gsc_property`](/docs/tools-reference/track-gsc-property) to link them. Both sides used to be printed with nothing to say they belonged together, which left one free call undone for as long as nobody noticed.
+
+The match ignores a leading `www.` on either side and **nothing else**. A subdomain is a different site and is never offered: `blog.example.com` is not `example.com`. And only a project that reads **no** property qualifies — a project already bound to a different property is in a deliberate state, and offering to link it would really be offering to repoint it.
+
 ## When an account cannot be read
 
 If Google refuses — an expired connection, an outage — that account is reported as **could not be read**, never as an account with no properties. An absence we did not observe is not an absence, and the difference is what tells you to reconnect rather than to go and verify a property that was there all along. The other accounts are still listed.

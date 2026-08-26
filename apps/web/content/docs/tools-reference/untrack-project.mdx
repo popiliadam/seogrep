@@ -34,3 +34,5 @@ Run [`list_projects`](/docs/tools-reference/list-projects) first if you need the
 ### Returns
 
 Confirmation that the project was archived — its domain and `project_id` — together with how to bring it back. A project that is already archived says so and nothing changes. A `project_id` that is not yours is reported exactly like an id that does not exist.
+
+There is a fourth answer, and it is the one that must not be silent: if the archive write matches no row — the project changed while the call was running — you are told **nothing was changed** and that the project is still tracked. Reporting "stopped tracking" for a write that changed nothing would be the worst of the four.

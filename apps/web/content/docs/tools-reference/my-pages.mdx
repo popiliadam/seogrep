@@ -85,7 +85,7 @@ A lookup that matched nothing says so plainly, naming the window and the filters
 
 One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO request. If it fails, the whole call fails and **you are not charged**. Reading your own crawl costs nothing extra — it is data you have already paid for.
 
-`my_pages` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`my_pages` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 The `limit` ceiling is **part of the price** rather than a display preference: DataForSEO bills **per returned row**, and that cap is what holds the flat price inside the margin it was signed against. Asking for fewer rows costs the same; asking for more than the ceiling is refused before anything is charged.
 
@@ -93,8 +93,12 @@ The `limit` ceiling is **part of the price** rather than a display preference: D
 
 **No keywords.** Worth repeating, because the name invites the assumption: this endpoint reports how a page is distributed across result positions, not which searches put it there. Use [`ranked_keywords`](/docs/tools-reference/ranked-keywords) with a page URL for that.
 
-**Results are not stored.** Each call returns its window to the conversation and nothing else keeps them — there is no saved page list, no dashboard page and no "new since last time", so run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
 
-**The crawl side is one crawl.** The comparison uses your project's most recent completed `crawl_site` run and only the pages that run actually fetched — URLs it skipped are not counted as crawled. A project with no completed crawl gets DataForSEO's half and a sentence saying so; a bare `target` gets no comparison at all, because there is no project to compare it against.
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
+
+**The crawl side is one crawl, and a bounded read of it.** The comparison uses your project's most recent completed `crawl_site` run and only the pages that run actually fetched — URLs it skipped are not counted as crawled. It also reads only the first pages of that crawl, up to a fixed ceiling; past it the answer says the crawl side was truncated and the list may be incomplete. So "reported by DataForSEO, not found in that crawl" is bounded twice over — by what the crawl fetched, and by how much of it was read.
+
+A project with no completed crawl gets DataForSEO's half and a sentence saying so; a bare `target` gets no comparison at all, because there is no project to compare it against.
 
 **Clickstream data is not bought.** DataForSEO offers a clickstream option on this endpoint that doubles the cost of the request; SeoGrep does not enable it, and every answer states that rather than leaving you to wonder why no clickstream figures appear.

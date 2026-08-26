@@ -9,7 +9,19 @@ description: "Connect Google Search Console to a project. Returns a secure Googl
 
 ## What it does
 
-Given one of your projects, it returns a secure Google sign-in link. Opening the link takes you to Google's consent screen, where SeoGrep requests **read-only** Search Console access — it never asks for write access to your property. After you approve, SeoGrep stores an encrypted token and matches your project's domain to a verified Search Console property.
+Given one of your projects, it returns a secure Google sign-in link. Opening the link takes you to Google's consent screen, where SeoGrep requests **read-only** Search Console access — it never asks for write access to your property. Approving stores an encrypted token for the **Google account**; which property the project reads is a separate, later choice.
+
+## Approving connects an account, not a property
+
+The consent screen grants SeoGrep access to a Google account and nothing more. It does not decide which of that account's Search Console properties your project reads — you pick that afterwards, on the **Connection page** in your dashboard, or in one call with [`track_gsc_property`](/docs/tools-reference/track-gsc-property).
+
+This is worth stating plainly because the obvious repair is the wrong one: **approving again does not change which property a project reads.** A fresh consent re-grants the account, which is the right move only when access was withdrawn on Google's side. If the project is reading the wrong property — or none — the consent round trip cannot fix it, and the answers this tool gives say which route can.
+
+## What it says on a project that is already connected
+
+It does not hand out a fresh consent link and pretend nothing happened. A project that already reads a property is told which one, and pointed at [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
+
+A project whose account connected but whose domain matched **no** verified property is the case that used to look identical to success. It now says outright that nothing was stored and that the Search Console tools cannot run yet, then names what to verify in Search Console — a URL-prefix property or a domain property for that domain. A domain property named for a **parent** domain is not used: SeoGrep drops a leading `www.` label and no other subdomain label, because a subdomain can belong to someone else.
 
 ## How it stays safe
 
@@ -23,7 +35,7 @@ Ask your MCP client in plain language:
 
 > Connect Search Console for my example.com project.
 
-The tool replies with a link. Open it, approve read-only access, and you land back on your dashboard with the connection in place.
+The tool replies with a link. Open it, approve read-only access, and you land back on your dashboard with the Google account connected — then choose the property for this project on the Connection page, or with [`track_gsc_property`](/docs/tools-reference/track-gsc-property).
 
 ### Input
 
@@ -33,4 +45,4 @@ The tool replies with a link. Open it, approve read-only access, and you land ba
 
 ### Returns
 
-A Google sign-in link for the project, plus a reminder that the connection is optional and read-only. If your account has no property matching the project's domain, the connection is still saved — just without a matched property; you can reconnect to retry matching once the property is verified in Search Console.
+For a project with no connection yet: a Google sign-in link, plus a reminder that the connection is optional and read-only. For a project that is already connected: the property it reads (or a plain statement that none matched), where to change it, and the re-approval link for the one case that needs it. An archived project is refused rather than handed a link, and a `project_id` that is not yours is reported exactly like an id that does not exist.

@@ -62,7 +62,11 @@ Or narrow it to followed links on one of your projects:
 
 ### Returns
 
-A header naming the site — or, when you passed a `project_id`, the project it came from — then the refusal, then a plain statement of **how the list was built**: the threshold you chose, whether nofollowed links were kept, and which vendor field ordered which list. After that the **filtered backlinks** you were billed for, each with its own vendor score; the **candidate referring domains** with their per-domain score and how many links in **this window** each accounted for; the **referring networks**; the **disavow file text**; and the note naming all three vendor fields.
+A header naming the site — or, when you passed a `project_id`, the project it came from — then the refusal, then a plain statement of **how the list was built**: the threshold you chose, whether nofollowed links were kept, and which vendor field ordered which list. After that the **filtered backlinks** you were billed for, each with its own vendor score; the **candidate referring domains**; the **referring networks**; the **disavow file text**; and the note naming all three vendor fields.
+
+Every candidate carries **both** vendor scores, each labelled with the level it describes: DataForSEO's per-**domain** score, and the worst per-**link** score in this window. They are not blended into one number, because they are two measurements from two endpoints and they disagree routinely — real rows scored 0 and 1 per domain beside domains whose worst link scored 60, and the printed number was the wrong one for the decision on that line. The row also names how many links in this window it accounted for, how many of those DataForSEO marked **dofollow**, and one example `from → to` pair.
+
+A candidate whose links are **none of them marked dofollow** is **marked, never removed**: the line says so, because Google does not count a nofollowed link and disavowing that domain may change nothing. It stays in the list because which links are worth naming is your judgement, and dropping rows would hide candidates you paid to see. The wording is careful: "none is marked dofollow" is what was measured — a link the vendor never marked either way is not a link the vendor called nofollow. Both score levels and this marking are repeated as comment lines above each entry **inside the file itself**, so they survive the file leaving this conversation.
 
 Both vendor lists are captioned as **windows** — the rows you got, the offset and limit they were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, followed by the sentence that stops the arithmetic: _this window is a slice of that set, not a count of it_. The candidate list is **derived** from those rows rather than fetched, so it carries no vendor total at all — only a count of the window and the cap it was built under.
 
@@ -72,13 +76,15 @@ A lookup that matched nothing says so plainly, naming **the window and the thres
 
 One call is one **flat price**, charged **once**. Behind it are **three** DataForSEO requests, and if any of them fails the whole call fails and **you are not charged** — a half-built candidate list is never billed. When the filtered window names no domain at all, the second request is not sent: there would be nothing to ask it about.
 
-`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid third-party provider — three requests per call, **every one of them billed** — so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`disavow_candidates` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits, and the refusal says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 The `limit` and `network_limit` ceilings, and the cap on how many candidate domains are scored, are **part of the price** rather than stylistic limits: DataForSEO bills **per returned row**, and these caps are what hold the flat price inside the margin it was signed against. Asking for fewer rows costs the same; asking for more than a ceiling is refused before anything is charged.
 
 ### Limitations
 
-Results are **not stored**. Each call returns its lists and its file text to the conversation and nothing else keeps them — there is no saved disavow file, no dashboard page and no "new since last time", so run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which criteria, and a capped summary of the candidates. The **Lookups** page of your dashboard lists them. The **file text itself is deliberately not kept** — everything it is derived from is, so it can be rebuilt, but a saved disavow file is a document that would go stale in place while still looking authoritative.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
 
 The candidate domains come from **the filtered window you paid for**, not from the whole link profile: raise `limit` to examine more rows, and read the window caption for how far the slice sits from DataForSEO's whole-set count. Only **live** links are counted and subdomains are included, both pinned explicitly rather than left to a vendor default that could move.
 

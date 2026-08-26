@@ -20,17 +20,21 @@ Each row carries:
 - **Backlink spam score** — the average spam score of those links, so a prospect worth avoiding is visible before you spend a morning on it.
 - **First seen** — when DataForSEO's crawler first found a link from that domain.
 
+Rank is the only one of those that is always there. Each of the other four is printed **only when DataForSEO returned a value for it**, and left out entirely otherwise — so a row with no spam column is a domain the vendor did not score, not a domain it scored clean. That distinction is the whole reason the clause is dropped rather than zeroed, and it is worth reading rows accordingly.
+
 Only **live** backlinks are counted — links that have since been lost are excluded.
 
 ## What the list does and does not claim
 
 These are the domains that link to your competitor and have **no link to you today**. That is a fact about the link graph, not a prediction: a site that covered your rival is a plausible place to be covered, but nothing here says it would link to you, and the spam-score column is printed precisely because some of them are places you should not want a link from.
 
+**It names no example linking page, and says so rather than inventing one.** The DataForSEO endpoint behind this tool reports these prospects at **domain level only** — it returns no page URL at all — so any URL printed here would be one SeoGrep made up. Every non-empty answer ends with that sentence and points at the tool that does have linking pages: run [`backlink_details`](/docs/tools-reference/backlink-details) on the competitor to see which of their pages carry the links, with the anchor text and the page linked to. That is a separate, separately-priced lookup.
+
 One competitor per call, deliberately. Running it against each rival in turn gives you the same picture and keeps every list traceable to the domain it came from.
 
 ## Who can run it
 
-`link_gap` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits — buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`link_gap` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 If live DataForSEO access is unavailable on this deployment, the tool returns a clear _"link gap analysis is not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data.
 

@@ -9,7 +9,13 @@ description: "Show your available credit balance (the running total of your cred
 
 ## What it does
 
-Sums your credit ledger, scoped to your account, and returns the available balance. Paid tools debit credits when they run; a balance of 0 blocks paid tools until you top up.
+Sums your credit ledger, scoped to your account, and returns the available balance. Paid tools debit credits when they run, and a balance of 0 blocks them until you top up.
+
+## Having credits is not always enough
+
+The tools that read live data from a paid third-party SEO provider need a **paid** balance: they are refused on an account that has never bought anything, however many trial credits are left. The reply says so, because the balance alone reads as permission — a trial account seeing a healthy number concluded "mine is not zero, so it works", and it did not.
+
+Buying any credit pack clears it. The reply states the rule but does **not** say whether your own account has paid: that would be a second ledger read on a free tool, and the sentence exists to make the rule knowable before it fires, not to pre-answer it. Which tools are gated is on each tool's own page and in [Billing & Credits](/docs/billing-and-credits).
 
 ## Example
 
@@ -23,4 +29,4 @@ No parameters.
 
 ### Returns
 
-Your available credit balance.
+Your available credit balance, followed by the paid-balance rule above — stated every time, whether or not it currently applies to you.

@@ -11,6 +11,14 @@ description: "Detect keyword cannibalization from your latest Search Console pul
 
 From the pull's current window, it groups rows by query and flags a query when **two or more of its pages** each clear both floors: at least **10 impressions** and at least a **10% share** of that query's impressions. A dominant page plus a negligible straggler is not flagged — only genuine competition. Groups are ordered by total impressions, biggest query first.
 
+Rows for the same page that differ only by a `#fragment` are folded into one page **before** any of that is read, so a page competing with its own section anchors is not a group.
+
+## Queries for your own brand are excluded, and counted
+
+Several of your pages ranking for your own brand name is **normal** — it is what Google's sitelinks look like in this data — and consolidating those pages would be self-harm. So branded queries are taken out of the list.
+
+They are not taken out silently. The reply names how many were excluded and which queries they were, because your biggest query disappearing without explanation is its own problem. **This matters most when the list ends up empty**: "no cannibalization found" can mean nothing was contested, or that everything contested was branded — the exclusion line under it is what tells you which, so read it before concluding the site is clean.
+
 ## Example
 
 Ask your MCP client in plain language:
@@ -25,7 +33,9 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A list of cannibalized queries, each with its competing pages and their impressions, clicks, and average position (main contender first). If no query is contested, it says so (and you are still charged for the delivered analysis).
+A list of cannibalized queries, each with its competing pages and their impressions, clicks, and average position (main contender first), followed by the branded-query exclusion line when there was one. If no query is contested, it says so (and you are still charged for the delivered analysis).
+
+Every reply ends with the same four-line footer the other two discovery tools carry: the window that was analyzed against the one before it, a caveat when either window hit the row cap, when the pull was taken plus a sentence once that is old, and — when your Search Console credential has stopped working — a warning to reconnect.
 
 ### Inherited limits
 

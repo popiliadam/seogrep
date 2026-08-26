@@ -9,7 +9,13 @@ description: "Check the status and result summary of an async job (e.g. a crawl_
 
 ## What it does
 
-Looks up the job under your account and returns its current status, its lifecycle timestamps, and — once it succeeds — a short summary of the result. A job that does not belong to you is reported as not found, the same as an unknown id.
+Looks up the job under your account and returns its current status, its lifecycle timestamps, how long it has taken, and — once it succeeds — a short summary of the result. A job that does not belong to you is reported as not found, the same as an unknown id. It is not crawl-only: a [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) job is summarized here too, and which summary you get is decided by the **shape of the stored result**, not by the tool's name.
+
+## A running job says how far it has got
+
+While a crawl is running, each poll reports the pages crawled and skipped **so far**, with the moment that count was taken. Before this, every poll of a 90-second job returned the same string, so a job that was working and a job that was stuck looked exactly alike — and the only way to tell them apart was to wait and find out.
+
+Every status line also carries a duration. When a job's stored timestamps contradict each other, the line says **timing unavailable** rather than printing a figure; a negative or impossible duration is not a measurement, and rows written before that was fixed still exist.
 
 ## Example
 
@@ -27,4 +33,4 @@ Repeat until the status is `succeeded`. A finished crawl summarizes how many pag
 
 ### Returns
 
-The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / finished timestamps, and — on success — a result summary, or the error message on failure.
+The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / finished timestamps and elapsed time, a live page count while a crawl runs, and — on success — a result summary, or the error message on failure. A crawl summary also names the **dominant reason** pages were skipped, and says outright when the **homepage** was among them: "0 issues found" must not be readable as "clean" while the homepage never got fetched.

@@ -12,14 +12,14 @@ description: "Analyze a domain's backlink profile — total backlinks, referring
 Name the site in **one of two ways** — pass a `target` domain (a bare host or a full URL — it is canonicalized for you), or pass the `project_id` of one of your own projects and the domain is taken from it. Exactly one of the two: passing both is rejected rather than resolved by precedence, because the two can name different sites and guessing would bill you for a lookup of the one you did not mean. Either way you get three sections:
 
 - **Profile summary** — total backlinks, referring domains (with the share that link **exclusively with dofollow** links), referring main domains, broken backlinks, the aggregate backlink spam score, and the domain's rank on DataForSEO's 0–1,000 scale.
-- **Top referring domains** — the domains linking to the target, most backlinks first, each with its own rank.
+- **Top referring domains** — the domains linking to the target, most backlinks first, each with its own rank **and DataForSEO's spam score for that domain**. A domain the vendor did not score says so in words rather than showing a number, because an unscored domain and a domain scored clean are different findings.
 - **Top anchors** — the anchor texts those links use, most backlinks first. Links that carry no anchor text (image links) are labelled as such rather than hidden.
 
 Only **live** backlinks are counted — links that have since been lost are excluded. Each list header says how many rows you got and, when there are more than the `limit` you asked for, how many exist in total, so a truncated list never reads like the whole picture.
 
 ## Who can run it
 
-`analyze_backlinks` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits — buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`analyze_backlinks` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away. Your trial credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 If live DataForSEO access is unavailable on this deployment, the tool returns a clear _"backlink lookups are not yet enabled on this deployment"_ message and **charges you nothing** — no credits are reserved or spent. SeoGrep never returns sample or placeholder figures dressed up as real data.
 
@@ -43,7 +43,7 @@ Or keep it short:
 
 ### Returns
 
-The profile summary, then the top referring domains (domain, backlink count, rank), then the top anchors (anchor text, backlink count) — each list headed by how many of the total are shown. A metric DataForSEO has no value for is shown as `n/a` rather than as a zero. When you looked the site up by `project_id`, the heading names that project.
+The profile summary, then the top referring domains (domain, backlink count, rank, spam score), then the top anchors (anchor text, backlink count) — each list headed by how many of the total are shown. A summary metric or a count DataForSEO has no value for is shown as `n/a` rather than as a zero; an unreported referring-domain spam score is stated in words instead, naming the vendor field it would have come from. When you looked the site up by `project_id`, the heading names that project.
 
 An input that is not a public domain, a call naming neither `target` nor `project_id` (or both), and a `project_id` that is not yours are all rejected before anything is charged; while live data is off you get the "not yet enabled" message instead — also free.
 

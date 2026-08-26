@@ -9,7 +9,9 @@ description: "Find quick-win keyword opportunities from your latest Search Conso
 
 ## What it does
 
-From the pull's current window, it selects queries where your page ranks in **positions 8–20** with **at least 20 impressions**, then prioritizes them by impressions (biggest opportunity first). Already-winning queries (position under 8) and near-zero-demand long-tail queries are left out, so the list stays a focused shortlist rather than a dump.
+From the pull's current window, it selects queries where your page ranks in **positions 8–20** with **at least 20 impressions**, then prioritizes them by impressions (biggest opportunity first, ties broken by the better position). Already-winning queries (position under 8) and near-zero-demand long-tail queries are left out, so the list stays a focused shortlist rather than a dump.
+
+A "page" here is a **document**: rows that differ only by a `#fragment` are added together before the bands are read. That changes outcomes in both directions — two anchor rows below the impression floor can clear it as one page, and no `#anchor` URL is ever printed as the page to go and fix.
 
 ## Example
 
@@ -25,7 +27,9 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A prioritized list of quick-win opportunities — each with its query, page, average position, impressions, clicks, and CTR — best opportunity first. If nothing clears the bands, it says so (and you are still charged for the delivered analysis).
+A prioritized list of quick-win opportunities — each with its query, page, average position, impressions, clicks, and CTR — best opportunity first. The list is capped; past the cap the reply says how many more pairs cleared the bands, so a shortlist is never mistaken for the whole set. If nothing clears the bands, it says so (and you are still charged for the delivered analysis).
+
+Every reply ends with the same footer: the window that was analyzed against the one before it, a caveat when either window hit the row cap, when the pull was taken plus a sentence once that is old, and — when your Search Console credential has stopped working — a warning to reconnect.
 
 ### Inherited limits
 

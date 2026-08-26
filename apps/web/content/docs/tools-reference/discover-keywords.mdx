@@ -80,13 +80,15 @@ A lookup that matched nothing says so plainly, naming the window and the filters
 
 One call is one **flat price**, charged **once**, and behind it is **one** DataForSEO request. If it fails, the whole call fails and **you are not charged**.
 
-`discover_keywords` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
+`discover_keywords` needs a **paid credit balance**. It reads live data from a paid third-party provider, so it is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged. Buy any credit pack and it unlocks straight away; your existing credits are untouched and keep working for crawls, audits, reports and Search Console tools.
 
 The `limit` ceiling is **part of the price** rather than a display preference: DataForSEO bills **per returned row**, and that cap is what holds the flat price inside the margin it was signed against. Asking for fewer rows costs the same; asking for more than the ceiling is refused before anything is charged.
 
 ### Limitations
 
-Results are **not stored**. Each call returns its window to the conversation and nothing else keeps them — there is no saved keyword list, no dashboard page and no "new since last time", so run it again for a fresh read. The lookup-history table that backs the other domain tools is bound to those tools by design and does not accept this one.
+Every delivered lookup is **recorded**: SeoGrep keeps a row saying what was looked up, when, under which settings, and a capped summary of what came back. The **Lookups** page of your dashboard lists them, so a lookup you paid for an hour ago is still something you can point at.
+
+That record is history, not a live surface. No call here reads a previous run, nothing is refreshed for you, and there is no "new since last time" — so to see the current picture, run it again.
 
 The keywords are **the vendor's, not yours**: none of your seeds is guaranteed to appear in the answer, and a set of many thousands is normal — read the window caption for how far your slice sits from DataForSEO's whole-set count, and page through it with `offset`.
 
