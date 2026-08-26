@@ -191,6 +191,22 @@ export interface TechSummary {
   readonly serverErrorUrls: CappedList<string>;
   readonly slowPages: CappedList<SlowPage>;
   readonly heavyPages: CappedList<HeavyPage>;
+  /**
+   * How many crawled pages actually CARRY the two speed signals. Both `fetchMs` and `htmlBytes`
+   * are OPTIONAL on an AuditPage (crawl-data.ts): `undefined` there means "the stored crawl
+   * predates the field, so this page was never measured on that axis" — deliberately not zero.
+   *
+   * LOAD-BEARING rather than decorative, for the same reason `pagesValidated` is below:
+   * `slowPages` and `heavyPages` come back EMPTY both for a fast site and for a crawl that
+   * recorded neither field, so emptiness alone cannot be rendered. These two counts are the only
+   * thing separating "measured, and nothing crossed the threshold" from "never measured", and the
+   * renderer needs that separation to avoid printing a zero for a measurement that never happened.
+   *
+   * Counted separately because the rule reads each field independently (audit/rules/tech.ts):
+   * a page could be timed without its body being sized, and the report must not claim otherwise.
+   */
+  readonly pagesTimed: number;
+  readonly pagesSized: number;
   readonly redirectChains: CappedList<PageRedirectChain>;
   readonly xRobotsConflicts: CappedList<XRobotsConflict>;
   readonly deepPages: CappedList<DeepPage>;
@@ -401,6 +417,12 @@ function summarizeTech(crawl: AuditCrawl): TechSummary {
     serverErrorUrls: cap(report.serverErrorUrls),
     slowPages: cap(report.slowPages),
     heavyPages: cap(report.heavyPages),
+    // Counted over crawl.pages — the SAME population collectSignals iterates in audit/rules/tech.ts
+    // — so "measured on N of M page(s)" describes the set the rule actually looked at, and the
+    // presence test is the rule's own (`!== undefined`), not a truthiness check that would read a
+    // legitimately measured 0 as "never measured".
+    pagesTimed: crawl.pages.filter((page) => page.fetchMs !== undefined).length,
+    pagesSized: crawl.pages.filter((page) => page.htmlBytes !== undefined).length,
     redirectChains: cap(report.redirectChains),
     xRobotsConflicts: cap(report.xRobotsConflicts),
     deepPages: cap(report.deepPages),

@@ -274,16 +274,6 @@ function techSection(tech: TechSummary): string {
       (l) => `${urlText(l.from)} → ${urlText(l.to)} (${fmtNum(l.status)})`,
     )}
     ${listBlock(
-      `Slow pages (over ${fmtNum(SLOW_PAGE_MS)} ms)`,
-      tech.slowPages,
-      (p) => `${urlText(p.url)} — ${fmtNum(p.fetchMs)} ms`,
-    )}
-    ${listBlock(
-      `Heavy pages (HTML over ${fmtNum(HEAVY_PAGE_BYTES)} bytes)`,
-      tech.heavyPages,
-      (p) => `${urlText(p.url)} — ${fmtNum(p.htmlBytes)} bytes`,
-    )}
-    ${listBlock(
       `Redirect chains (${fmtNum(REDIRECT_CHAIN_MIN)}+ hops)`,
       tech.redirectChains,
       (c) => [...c.chain, c.url].map(urlText).join(" → "),
@@ -320,6 +310,81 @@ function techSection(tech: TechSummary): string {
     ${sitemapBlock(tech)}
     ${auditHint("audit_tech")}
   </section>`;
+}
+
+/**
+ * WHAT THIS SECTION IS NOT, stated in the copy because its own name invites the wrong reading.
+ *
+ * Every figure here is OUR crawler's: how long SeoGrep's fetch of a page took, and how many bytes
+ * of HTML came back. Both fall out of a crawl the reader already paid for, which is why the
+ * section costs nothing extra. Neither is a lab Core Web Vitals score and neither is field data
+ * from real visitors — no browser rendered anything, so LCP/INP/CLS are not measured here at all.
+ * Presenting these as "page speed" without saying so would be exactly the invented metric NEVER #7
+ * forbids, so the provenance line ships with the section and points Core Web Vitals questions at
+ * `audit_speed`, the tool that actually runs Lighthouse.
+ *
+ * Both thresholds are INTERPOLATED FROM THE RULE'S OWN CONSTANTS (audit/rules/tech.ts), never
+ * retyped: when a constant moves, the prose moves with it instead of quietly becoming a lie.
+ */
+function speedSection(tech: TechSummary): string {
+  // Either axis being present is enough to have something honest to say; the body then reports
+  // each axis's own coverage rather than implying one number covers both.
+  const measured = tech.pagesTimed > 0 || tech.pagesSized > 0;
+  return `<section class="rpt">
+    <h2>Page speed</h2>
+    ${measured ? speedMeasured(tech) : speedUnmeasured()}
+    ${speedProvenance()}
+  </section>`;
+}
+
+/**
+ * The "nobody looked" sentence. `fetchMs`/`htmlBytes` are optional on a stored page, and a crawl
+ * taken before they shipped carries neither — which produces empty slow/heavy lists that are
+ * INDISTINGUISHABLE from a genuinely fast site. Saying "Slow pages: 0" here would report a
+ * measurement that never took place, so the section says the measurement is missing instead.
+ */
+function speedUnmeasured(): string {
+  return `<p class="muted">This crawl carries no fetch-time or HTML-size signal: it was stored
+    before SeoGrep recorded them, so no page here was measured on either axis. That is reported as
+    unmeasured rather than as zero — a clean result and an absent one are not the same finding.
+    Re-run <code>crawl_site</code> to measure it.</p>`;
+}
+
+/**
+ * The measured body. The coverage line comes FIRST because it is what licenses everything after
+ * it, and the "nothing crossed the threshold" sentence is printed only in this branch — it is a
+ * real claim about a real measurement, which is precisely why the unmeasured branch may not make
+ * it. The lists themselves stay silent when empty (listBlock's own rule).
+ */
+function speedMeasured(tech: TechSummary): string {
+  const clean = tech.slowPages.total === 0 && tech.heavyPages.total === 0;
+  return `<p class="muted">Fetch time measured on <strong>${fmtNum(tech.pagesTimed)}</strong> of
+    ${fmtNum(tech.pageCount)} crawled page(s); HTML size on
+    <strong>${fmtNum(tech.pagesSized)}</strong>.</p>
+    ${
+      clean
+        ? `<p class="muted">No measured page took longer than ${fmtNum(SLOW_PAGE_MS)} ms to fetch
+    or returned more than ${fmtNum(HEAVY_PAGE_BYTES)} bytes of HTML.</p>`
+        : ""
+    }
+    ${listBlock(
+      `Slow pages (fetch over ${fmtNum(SLOW_PAGE_MS)} ms)`,
+      tech.slowPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.fetchMs)} ms`,
+    )}
+    ${listBlock(
+      `Heavy pages (HTML over ${fmtNum(HEAVY_PAGE_BYTES)} bytes)`,
+      tech.heavyPages,
+      (p) => `${urlText(p.url)} — ${fmtNum(p.htmlBytes)} bytes`,
+    )}`;
+}
+
+/** The provenance disclaimer — shipped in BOTH branches, because both invite the same misreading. */
+function speedProvenance(): string {
+  return `<p class="hint">These are SeoGrep's own crawler measurements — how long our fetch of each
+    page took and how large the HTML it returned was. They are <strong>not</strong> lab Core Web
+    Vitals and <strong>not</strong> field data from real visitors: no browser rendered these pages,
+    so nothing here measures LCP, INP or CLS. Run <code>audit_speed</code> for Core Web Vitals.</p>`;
 }
 
 /**
@@ -540,6 +605,7 @@ export function renderReportHtml(model: ReportModel): string {
     ${model.crawl ? crawlSection(model.crawl) : crawlAbsentSection()}
     ${model.onpage ? onpageSection(model.onpage) : ""}
     ${model.tech ? techSection(model.tech) : ""}
+    ${model.tech ? speedSection(model.tech) : ""}
     ${model.schema ? schemaSection(model.schema) : ""}
     ${model.gsc ? gscSection(model.gsc) : gscAbsentSection(model.gscConnected)}
     ${model.opportunities ? opportunitySection(model.opportunities) : ""}

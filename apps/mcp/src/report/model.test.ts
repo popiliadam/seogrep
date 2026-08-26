@@ -210,6 +210,11 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
       serverErrorUrls: capOf(tech.serverErrorUrls),
       slowPages: capOf(tech.slowPages),
       heavyPages: capOf(tech.heavyPages),
+      // Derived from the crawl rather than from `tech`: the engine reports the findings, not how
+      // many pages were eligible to produce one. KNOWN_ISSUES predates both fields, so 0/0 here
+      // is "nobody looked", which is exactly what the renderer must not print as a clean result.
+      pagesTimed: 0,
+      pagesSized: 0,
       redirectChains: capOf(tech.redirectChains),
       xRobotsConflicts: capOf(tech.xRobotsConflicts),
       deepPages: capOf(tech.deepPages),
@@ -346,6 +351,51 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     expect(model.tech?.redirectChains.total).toBe(1);
   });
 
+  /**
+   * Speed COVERAGE (imza 9). slowPages/heavyPages come back empty for a fast site AND for a crawl
+   * that never recorded the fields, so the lists alone cannot tell the renderer which sentence to
+   * print. These counts are that distinction — the only thing standing between the report and a
+   * "Slow pages: 0" that claims a measurement nobody made.
+   */
+  it("counts how many pages carry EACH speed signal, per axis", () => {
+    // Only "/" carries fetchMs and htmlBytes in SIGNAL_CRAWL; the other four predate them.
+    expect(model.tech?.pagesTimed).toBe(1);
+    expect(model.tech?.pagesSized).toBe(1);
+    expect(model.tech?.pageCount).toBe(5);
+  });
+
+  it("counts each axis independently — a timed page is not automatically a sized one", () => {
+    // One number for both axes would be a claim the crawl does not support. Two pages, one signal
+    // each: any single shared counter reads 2 for an axis that actually saw 1.
+    const lopsided = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([
+        page({ url: "https://example.com/timed", fetchMs: 120 }),
+        page({ url: "https://example.com/sized", htmlBytes: 4_096 }),
+      ]),
+      pull: null,
+    });
+    expect(lopsided.tech?.pagesTimed).toBe(1);
+    expect(lopsided.tech?.pagesSized).toBe(1);
+  });
+
+  it("counts a MEASURED ZERO as measured (0 bytes is a reading, not a missing field)", () => {
+    // The crawler stores htmlBytes: 0 for a response that carried no HTML body (crawler/crawl.ts).
+    // A truthiness test would file that page under "never measured" and send the report silent
+    // about a crawl it did measure — the undefined/null/0 confusion crawl-data.ts warns about.
+    const zeroBytes = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([page({ url: "https://example.com/empty", fetchMs: 0, htmlBytes: 0 })]),
+      pull: null,
+    });
+    expect(zeroBytes.tech?.pagesTimed).toBe(1);
+    expect(zeroBytes.tech?.pagesSized).toBe(1);
+  });
+
   it("carries the 4xx URLs and the broken internal links behind the status counts", () => {
     expect(model.tech?.clientError4xx).toBe(1);
     expect(model.tech?.clientErrorUrls.items).toEqual(["https://example.com/gone"]);
@@ -412,6 +462,9 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     });
     expect(legacy.tech?.slowPages.total).toBe(0);
     expect(legacy.tech?.heavyPages.total).toBe(0);
+    // …and the coverage counts say WHY those two are empty: nobody looked.
+    expect(legacy.tech?.pagesTimed).toBe(0);
+    expect(legacy.tech?.pagesSized).toBe(0);
     expect(legacy.tech?.deepPages.total).toBe(0);
     expect(legacy.tech?.orphanSignals.total).toBe(0);
     expect(legacy.tech?.xRobotsConflicts.total).toBe(0);
