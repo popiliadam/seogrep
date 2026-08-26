@@ -24,6 +24,13 @@ import type { Json } from "../db.ts";
  *    lines it does not mention, which is the only way this could break. So it is a whole-string
  *    equality on the WHOLE output of all three renderers.
  *
+ *    RE-CUT ONCE, DELIBERATELY (S10e). Five finding lines below now carry the threshold they
+ *    broke — `title too long (65 chars, limit 60)` where it said `(65 chars)` — because a breach
+ *    reported without its bound cannot be acted on. Those five suffixes are the ONLY edit, and
+ *    that is a measurement rather than a claim: the same change moved format-graph.test.ts's
+ *    sha256 pin of this report by exactly +60 bytes, which is those five suffixes and not one
+ *    byte more. Summary line, section order, page order, every other finding: untouched.
+ *
  * 2. THE NEW SECTIONS. Each is APPENDED and prints only when it has something, so the same
  *    fixture with signals attached must grow — the second half asserts the sections appear, name
  *    their threshold, and show the data.
@@ -116,10 +123,10 @@ Findings by page:
 - https://legacy.test/
     · duplicate title (shared with another page)
     · missing meta description
-    · thin content (40 words)
+    · thin content (40 words, minimum 200)
 - https://legacy.test/a
-    · title too long (65 chars)
-    · meta description too short (9 chars)
+    · title too long (65 chars, limit 60)
+    · meta description too short (9 chars, minimum 50)
     · missing h1
     · missing canonical
 - https://legacy.test/b
@@ -127,9 +134,9 @@ Findings by page:
     · duplicate meta description (shared with another page)
     · multiple h1 (2)
     · canonical points elsewhere (https://legacy.test/elsewhere)
-    · thin content (10 words)
+    · thin content (10 words, minimum 200)
 - https://legacy.test/c
-    · title too short (2 chars)
+    · title too short (2 chars, minimum 10)
     · duplicate meta description (shared with another page)`;
 
 const LEGACY_TECH = `Technical audit — 5 page(s), 4 skipped (crawl from 2026-08-14T00:00:00.000Z).

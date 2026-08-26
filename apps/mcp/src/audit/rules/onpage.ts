@@ -20,6 +20,20 @@ const META_MIN = 50;
 // Pages under ~200 words seldom carry enough substance to rank or satisfy intent.
 const THIN_CONTENT_WORDS = 200;
 
+/**
+ * EVERY THRESHOLD FINDING CARRIES ITS THRESHOLD. "title too long (62 chars)" tells the reader they
+ * broke a rule but not which one, so they cannot tell 2 over from 30 over — and in a 30-credit
+ * report that is the difference between "trim two words" and "rewrite it". The measured value and
+ * the bound it broke are therefore rendered together, from the constants above, so the two can
+ * never drift apart in the prose.
+ */
+function overLimit(measured: number, unit: string, limit: number): string {
+  return `(${measured} ${unit}, limit ${limit})`;
+}
+function underMinimum(measured: number, unit: string, minimum: number): string {
+  return `(${measured} ${unit}, minimum ${minimum})`;
+}
+
 export interface OnpageFinding {
   readonly type: string;
   readonly text: string;
@@ -57,6 +71,100 @@ export interface OnpageReport {
    * printing a "0 groups" line a legacy crawl never measured.
    */
   readonly duplicateGroups: DuplicateContentGroup[];
+}
+
+/**
+ * STRAY EDGE CHARACTERS — the rule that catches a title nobody wrote.
+ *
+ * The case it exists for was measured on a live page: the title
+ * `` `İzmirde Diş Beyazlatma Merkezleri 2026… `` opens with a BACKTICK — the remains of a code
+ * fence the author pasted through — and every length, duplicate and absence rule called that page
+ * clean. What is broken about it is not its length; it is that a character of MARKUP SYNTAX
+ * survived into the words a searcher sees.
+ *
+ * THE FALSE-POSITIVE SIDE IS THE WHOLE RISK, and it is why this is an explicit list of code
+ * points rather than a "punctuation" character class. Real titles open and close with punctuation
+ * constantly — `The "Best" Dentist in Izmir`, `10 Ways to Whiten Teeth`, `[2026] Guide`,
+ * `Teeth Whitening (2026)`, an em dash, an ellipsis, a trailing `?` or `!`, `%`, an emoji. A rule
+ * that flagged those would put noise into a 30-credit report, which is worse than the gap it
+ * closes. So NONE of `" ' “ ” ‘ ’ ( ) [ ] . … ? ! : % » →` appears below, and neither does any
+ * letter or digit in any script: the test is per-CODE-POINT membership in these sets, never
+ * "is this ASCII", so a Turkish, Greek, Arabic or CJK title is judged exactly like an English one.
+ *
+ * Three sets, each with a reason:
+ *
+ * 1. STRAY_EDGE — syntax in Markdown, HTML or a template engine, and never how a human opens or
+ *    closes a title. `<` and `>` belong here because a correct CMS escapes them inside `<title>`;
+ *    a bare one at an edge means raw markup leaked. This does flag a CTA string like
+ *    `Learn More >`, and that is KEPT ON PURPOSE: a call to action sitting in a `<title>` is
+ *    itself body copy that leaked into the tag, which is worth seeing. Trailing `,` and `;` are
+ *    kept for the same reason — `Izmir Dentist, Whitening, Implants,` was severed mid-list, not
+ *    written that way.
+ * 2. STRAY_TRAILING_ONLY — the dashes. A title may OPEN with a dash for effect (`-50% Off …`);
+ *    one that ENDS with a dash is a separator whose second half never arrived
+ *    (`Dentist in Izmir -`). That asymmetry is PINNED on both sides rather than merely asserted
+ *    here: moving these code points into STRAY_EDGE turns the leading-dash spec red.
+ * 3. LEADING_MARKER — a list or heading marker, which only counts as one when a space follows.
+ *    `#DisBeyazlatma` is a hashtag and stays clean; `# Dis Beyazlatma` is a Markdown heading.
+ *    Same for `- ` and `• ` against a leading hyphen inside a word.
+ *
+ * `+` WAS IN SET 1 AND WAS REMOVED. It produced false positives on ordinary editorial titles:
+ * `Affordable Dental Care for Ages 50+`, `Learn C++ Programming Basics`, and — the one that
+ * decides it for this product — `+90 232 000 00 00 Diş Kliniği İzmir`, because a phone-led title
+ * is a common local-SEO shape in Turkey. What the removal costs is the `+ ` Markdown bullet, the
+ * rarest of the three bullet forms, while `-` and `*` still cover the other two. That is a trade
+ * of a rare true positive for three common false ones. All three titles are pinned clean.
+ */
+const STRAY_EDGE = new Set([...'`*_~|\\{}<>^,;&/=']);
+const STRAY_TRAILING_ONLY = new Set([..."-–—"]);
+const LEADING_MARKER = /^(?:#{2,}|#[ \t]|[-•][ \t])/u;
+
+/** The offending first / last CODE POINT of `value`, or null when that edge is clean. */
+function strayEdges(value: string): { lead: string | null; tail: string | null } {
+  const points = [...value];
+  const first = points[0] ?? "";
+  const last = points.at(-1) ?? "";
+  const lead = STRAY_EDGE.has(first) || LEADING_MARKER.test(value) ? first : null;
+  // A one-code-point value is ONE problem, reported at the leading edge, not two.
+  if (points.length < 2) return { lead, tail: null };
+  const tail = STRAY_EDGE.has(last) || STRAY_TRAILING_ONLY.has(last) ? last : null;
+  return { lead, tail };
+}
+
+/**
+ * `field` is the customer-facing noun ("title" / "meta description"); `type` the finding key.
+ *
+ * OPEN FOLLOW-UP — `title_stray_chars` and `meta_stray_chars` are NOT YET IN `ONPAGE_LABELS`
+ * (audit/format.ts), and until they are the report contradicts itself: a page whose only defect
+ * is a stray edge character renders
+ *
+ *     Summary: no on-page issues found.
+ *     1 page(s) with findings; 0 clean.
+ *     …
+ *         · title starts with "`" — stray markup or template character, not part of the text
+ *
+ * because `formatOnpageReport` builds its summary by walking ONPAGE_ORDER, which is that map's
+ * key order, and drops any type the map does not name. `report.counts` is correct and the panel's
+ * finding total already includes these, so this is a rendering gap and not a data defect — but it
+ * is a self-contradicting page and must not be left to be rediscovered.
+ *
+ * THE FIX IS TWO KEYS, APPENDED: `title_stray_chars: "title has stray markup"` and
+ * `meta_stray_chars: "meta description has stray markup"` at the END of ONPAGE_LABELS. Appended,
+ * never interleaved — that map's key order IS the summary line's order, so inserting higher up
+ * would reorder a line that has already shipped. It was not done in this slice because format.ts
+ * was owned by a parallel slice; report/model.ts inherits the fix for free from the same map.
+ */
+function strayFinding(field: string, type: string, value: string): OnpageFinding | null {
+  const { lead, tail } = strayEdges(value);
+  if (lead === null && tail === null) return null;
+  const where =
+    lead !== null && tail !== null
+      ? `starts with "${lead}" and ends with "${tail}"`
+      : lead !== null
+        ? `starts with "${lead}"`
+        : `ends with "${tail}"`;
+  const noun = lead !== null && tail !== null ? "characters" : "character";
+  return { type, text: `${field} ${where} — stray markup or template ${noun}, not part of the text` };
 }
 
 /** Compare two URLs ignoring a trailing slash and fragment (self-canonical tolerance). */
@@ -98,16 +206,20 @@ function findingsFor(
 
   if (!title) out.push({ type: "missing_title", text: "missing title" });
   else {
-    if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long (${title.length} chars)` });
-    else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short (${title.length} chars)` });
+    if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long ${overLimit(title.length, "chars", TITLE_MAX)}` });
+    else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short ${underMinimum(title.length, "chars", TITLE_MIN)}` });
     if (dupTitles.has(title)) out.push({ type: "duplicate_title", text: "duplicate title (shared with another page)" });
+    const stray = strayFinding("title", "title_stray_chars", title);
+    if (stray) out.push(stray);
   }
 
   if (!meta) out.push({ type: "missing_meta", text: "missing meta description" });
   else {
-    if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long (${meta.length} chars)` });
-    else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short (${meta.length} chars)` });
+    if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long ${overLimit(meta.length, "chars", META_MAX)}` });
+    else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short ${underMinimum(meta.length, "chars", META_MIN)}` });
     if (dupMetas.has(meta)) out.push({ type: "duplicate_meta", text: "duplicate meta description (shared with another page)" });
+    const stray = strayFinding("meta description", "meta_stray_chars", meta);
+    if (stray) out.push(stray);
   }
 
   if (page.h1s.length === 0) out.push({ type: "missing_h1", text: "missing h1" });
@@ -119,7 +231,10 @@ function findingsFor(
   }
 
   if (page.wordCount < THIN_CONTENT_WORDS) {
-    out.push({ type: "thin_content", text: `thin content (${page.wordCount} words)` });
+    out.push({
+      type: "thin_content",
+      text: `thin content ${underMinimum(page.wordCount, "words", THIN_CONTENT_WORDS)}`,
+    });
   }
 
   // --- rules over the newer page signals ------------------------------------------
