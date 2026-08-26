@@ -1,6 +1,11 @@
 import { z } from "zod";
-import { forUser, getServiceClient } from "../db.ts";
+import { getServiceClient } from "../db.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
+import {
+  listOwnProjectDomains,
+  projectLabel,
+  type ListProjectDomainsFn,
+} from "./project-domains.ts";
 
 /**
  * list_credit_activity — the tenant's most recent credit-ledger movements, newest first.
@@ -84,9 +89,6 @@ export const DEFAULT_ACTIVITY_LIMIT = 10;
 /** The most entries one call may return — the same readability ceiling list_jobs carries. */
 export const MAX_ACTIVITY_LIMIT = 50;
 
-/** Read this tenant's project ids and domains, for naming the scope on a spend line. */
-export type ListProjectDomainsFn = (userId: string) => Promise<ReadonlyMap<string, string>>;
-
 export interface ListCreditActivityDeps {
   readonly listActivity?: ListCreditActivityFn;
   readonly listDomains?: ListProjectDomainsFn;
@@ -129,29 +131,6 @@ export async function listOwnCreditActivity(
     throw new Error(`credit activity list failed: ${error.message}`);
   }
   return { rows: (data ?? []) as readonly CreditActivityRow[], total: count ?? 0 };
-}
-
-/**
- * The tenant's projects as id -> domain, for turning a stored project_id into a name.
- *
- * ARCHIVED PROJECTS ARE INCLUDED, deliberately: the spend happened while the project was tracked,
- * and untracking it later does not make the history unreadable. Filtering them out would push
- * every such row onto the id fallback for no reason.
- *
- * Tenant-scoped through `forUser` (NEVER #4). A failure THROWS rather than degrading to an empty
- * map: an empty map is indistinguishable from "this tenant has no projects", and the whole answer
- * would quietly fall back to printing uuids.
- */
-export async function listOwnProjectDomains(userId: string): Promise<ReadonlyMap<string, string>> {
-  const { data, error } = await forUser(getServiceClient(), userId).selectOwn(
-    "projects",
-    "id, domain",
-  );
-  if (error) {
-    throw new Error(`project domain lookup failed: ${error.message}`);
-  }
-  const rows = (data ?? []) as unknown as { id: string; domain: string }[];
-  return new Map(rows.map((row) => [row.id, row.domain]));
 }
 
 /**
@@ -204,8 +183,10 @@ export function scopeClause(
   domains: ReadonlyMap<string, string>,
 ): string | null {
   if (!SPEND_KINDS.has(row.kind)) return null;
-  if (row.project_id === null) return "no project scope";
-  return `project: ${domains.get(row.project_id) ?? row.project_id}`;
+  // The SAME three answers list_jobs gives, from the same function — the two surfaces cannot
+  // describe one project differently.
+  const label = projectLabel(row.project_id, domains);
+  return row.project_id === null ? label : `project: ${label}`;
 }
 
 /** One ledger entry, on one line. */

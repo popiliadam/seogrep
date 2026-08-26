@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { forUser, getServiceClient, type JobStatus } from "../db.ts";
 import { jobTiming } from "./get-job-status.ts";
+import { listOwnProjectDomains, projectLabel, type ListProjectDomainsFn } from "./project-domains.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
@@ -73,6 +74,7 @@ export const MAX_JOB_LIST_LIMIT = 50;
 
 export interface ListJobsDeps {
   readonly listJobs?: ListJobsFn;
+  readonly listDomains?: ListProjectDomainsFn;
 }
 
 /**
@@ -133,7 +135,7 @@ const INCONSISTENT_STAMPS_NOTE = "timestamps out of order — this job's stamps 
  * between one rule and two that can drift: that function also treats an unparseable stamp and a
  * `started_at` out of sequence as contradictions, and a local comparison would quietly miss both.
  */
-function detailsOf(job: JobListRow): string {
+function detailsOf(job: JobListRow, domains: ReadonlyMap<string, string>): string {
   // jobTiming reads only the three lifecycle stamps; the rest of JobRow is filled with the
   // "absent" values its rule skips, so this projection is classified exactly as the full row.
   const timing = jobTiming({
@@ -148,15 +150,18 @@ function detailsOf(job: JobListRow): string {
     `created ${job.created_at}`,
     job.finished_at ? `finished ${job.finished_at}` : null,
     timing.kind === "inconsistent" ? INCONSISTENT_STAMPS_NOTE : null,
-    job.project_id ? `project_id: ${job.project_id}` : null,
+    `project: ${projectLabel(job.project_id, domains)}`,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
 }
 
 /** One job, on one line: what ran, how it went, when, and the id to ask about. */
-export function formatJobLine(job: JobListRow): string {
-  return `- ${job.tool} — ${job.status} · ${detailsOf(job)} · job_id: ${job.id}`;
+export function formatJobLine(
+  job: JobListRow,
+  domains: ReadonlyMap<string, string> = new Map(),
+): string {
+  return `- ${job.tool} — ${job.status} · ${detailsOf(job, domains)} · job_id: ${job.id}`;
 }
 
 /**
@@ -166,10 +171,13 @@ export function formatJobLine(job: JobListRow): string {
  * The closing sentence is the LOAD-BEARING half of this tool: without it the list is a set of ids
  * with no stated way to turn one into the result the customer paid for.
  */
-export function formatJobList(page: JobListPage): string {
+export function formatJobList(
+  page: JobListPage,
+  domains: ReadonlyMap<string, string> = new Map(),
+): string {
   const { rows, total } = page;
   if (rows.length === 0) return NO_JOBS_MESSAGE;
-  const lines = rows.map(formatJobLine).join("\n");
+  const lines = rows.map((job) => formatJobLine(job, domains)).join("\n");
   // WHAT WAS LEFT OUT, said out loud. "Your 10 most recent" is true and reads as the whole
   // history; a reader with no way to know a list was cut has no reason to ask for more. The
   // `limit` that would show them is named, so the sentence is actionable rather than an apology.
@@ -187,6 +195,7 @@ export function formatJobList(page: JobListPage): string {
 /** Build the tool. The read port is injectable, so the fast lane drives it with no database. */
 export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
   const listJobs = deps.listJobs ?? listOwnJobs;
+  const listDomains = deps.listDomains ?? listOwnProjectDomains;
   return defineTool({
     name: "list_jobs",
     description:
@@ -203,7 +212,13 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
         ),
     }),
     handler: async (ctx, { limit }) => {
-      return textResult(formatJobList(await listJobs(ctx.userId, limit)));
+      // In parallel: independent reads, and the domain map is one row per project however long
+      // the requested page is.
+      const [page, domains] = await Promise.all([
+        listJobs(ctx.userId, limit),
+        listDomains(ctx.userId),
+      ]);
+      return textResult(formatJobList(page, domains));
     },
   });
 }

@@ -41,7 +41,11 @@ function recordingPort(rows: readonly JobListRow[]) {
     calls.push({ userId, limit });
     return { rows: rows, total: rows.length };
   };
-  return { calls, tool: makeListJobsTool({ listJobs }) };
+  // The domain port is stubbed EMPTY rather than left to its default: the default reaches
+  // getServiceClient, which needs the full prod env. These specs are about the limit the read
+  // port is asked for and the wording around it; an empty map changes none of their assertions,
+  // since every line they exercise resolves from the row's own project_id.
+  return { calls, tool: makeListJobsTool({ listJobs, listDomains: async () => new Map() }) };
 }
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? "";
@@ -125,9 +129,21 @@ describe("list_jobs rendering", () => {
     expect(line).not.toMatch(/finished/i);
   });
 
-  it("shows the project_id when a job has one and omits the clause when it does not", () => {
-    expect(formatJobLine(job({ project_id: "proj-9" }))).toMatch(/project_id:\s*proj-9/);
-    expect(formatJobLine(job({ project_id: null }))).not.toMatch(/project_id/);
+  /**
+   * THE CONTRACT MOVED ON 2026-08-26 AND THE MOVE IS SIGNED. This used to pin the raw
+   * `project_id: <uuid>` clause and its ABSENCE when null. The clause is now a project LABEL —
+   * a domain where one is known — and the null case is named rather than dropped, because a
+   * missing clause read as "the tool forgot" rather than as "there was no site".
+   *
+   * Both halves assert MORE than they did: the identity still has to reach the line when nothing
+   * can resolve it, and the null case now has to say something TRUE instead of nothing at all.
+   */
+  it("carries the project through, and names the null case instead of dropping it", () => {
+    expect(formatJobLine(job({ project_id: "proj-9" }))).toMatch(/project:\s*proj-9/);
+    const none = formatJobLine(job({ project_id: null }));
+    expect(none).toMatch(/no project scope/i);
+    // …and it must not invent an id for a job that has none.
+    expect(none).not.toMatch(/project:\s*[0-9a-f-]{8,}/i);
   });
 
   /**
@@ -238,5 +254,45 @@ describe("what the job list leaves out", () => {
 
   it("says nothing about a cut when the page IS the whole history", () => {
     expect(formatJobList({ rows, total: 1 })).not.toMatch(/not shown/i);
+  });
+});
+
+
+/**
+ * G15 — measured live 2026-08-26: every job line ended `project_id: ea77221c-819b-…`, a raw uuid
+ * and nothing a person can read. `list_credit_activity` had the same gap and closed it in the same
+ * wave; this is the sibling surface, and the two must give the SAME three answers about one
+ * project or the panel and the assistant describe one account differently.
+ */
+describe("the site a job ran against", () => {
+  const domains = new Map([["p-1", "dentnotion.com"]]);
+  const base: JobListRow = {
+    id: "j-1",
+    tool: "crawl_site",
+    status: "succeeded",
+    project_id: "p-1",
+    created_at: "2026-08-26T10:00:00.000Z",
+    finished_at: "2026-08-26T10:01:00.000Z",
+  };
+
+  it("names the domain instead of the bare id", () => {
+    const line = formatJobLine(base, domains);
+    expect(line).toContain("dentnotion.com");
+    expect(line).not.toContain("p-1");
+  });
+
+  it("falls back to the id when the project is gone", () => {
+    const line = formatJobLine({ ...base, project_id: "p-vanished" }, domains);
+    expect(line).toContain("p-vanished");
+  });
+
+  /** A job with no project on it says so, rather than leaving the clause off silently. */
+  it("says a job had no project scope", () => {
+    const line = formatJobLine({ ...base, project_id: null }, domains);
+    expect(line).toMatch(/no project/i);
+  });
+
+  it("still resolves nothing when no map is supplied", () => {
+    expect(formatJobLine(base)).toContain("p-1");
   });
 });

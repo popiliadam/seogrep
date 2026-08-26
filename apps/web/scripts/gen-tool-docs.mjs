@@ -548,8 +548,9 @@ export const DOC_PROSE = {
       "how many it did not show, so a cut list never reads as your whole history.",
     whatItDoes:
       "Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what " +
-      "state it is in, when it was created and finished, its `project_id` when it has one, and the " +
-      "`job_id` to ask about.\n\n" +
+      "state it is in, when it was created and finished, which of your sites it ran against, and " +
+      "the `job_id` to ask about. The site is named by DOMAIN; a job with no project scope says " +
+      "so, and a project you have since removed falls back to the id it was recorded with.\n\n" +
       "A job whose stored stamps contradict each other — a `finished` earlier than its `created` — " +
       "is marked **timestamps out of order** rather than printed as an ordinary timeline. Both " +
       "stamps are still shown, because both are real: some rows were written with `created_at` " +
