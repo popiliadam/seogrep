@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  duplicatePropertyNotes,
+  sameSiteNotes,
+  JOB_SCOPE_NOTE,
   NO_PROJECTS_MESSAGE,
   NO_TRACKED_PROJECTS_MESSAGE,
   formatProjectList,
@@ -21,6 +24,8 @@ function project(overrides: Partial<ProjectListRow> = {}): ProjectListRow {
     domain: "example.com",
     created_at: "2026-01-01T00:00:00.000Z",
     archived_at: null,
+    gsc: { kind: "not_connected" },
+    lastJob: null,
     ...overrides,
   };
 }
@@ -63,7 +68,11 @@ describe("the tracked section", () => {
    */
   it("renders nothing about an archive when there is none", () => {
     const text = formatProjectList([project()]);
-    expect(text).toBe("You are tracking 1 project(s):\n- example.com (project_id: p-1)");
+    expect(text).toBe(
+      "You are tracking 1 project(s):\n" +
+        "- example.com (project_id: p-1) — Search Console: not connected · last job: none yet\n" +
+        JOB_SCOPE_NOTE,
+    );
   });
 });
 
@@ -134,5 +143,250 @@ describe("the tool description", () => {
     expect(listProjectsTool.description).toMatch(/archiv/i);
     // …and it does NOT put a restore verb here: that competes with the tools that restore.
     expect(listProjectsTool.description).not.toMatch(/bring .* back|restore/i);
+  });
+});
+
+
+/**
+ * G5 + G7 (operator-signed 2026-08-26). Every tracked line now carries the two facts a customer
+ * with fifteen identical-looking domains actually needs: whether Search Console can be read for
+ * it, and whether anything has ever run against it.
+ *
+ * THE POINT OF THESE SPECS IS THAT "CONNECTED" IS NOT A BOOLEAN. Live measurement on 2026-08-26
+ * found a project (example.net) holding a gsc_connections row with a NULL gsc_property: a boolean
+ * column would have printed a tick beside a project that can pull nothing at all. That is the
+ * "unreported, never as a zero" promise on the connection axis, and it is pinned here as a
+ * POSITION (a distinct third sentence), not as an absence.
+ */
+describe("the Search Console state on each tracked line", () => {
+  it("names a live property", () => {
+    const text = formatProjectList([
+      project({ domain: "dentnotion.com", gsc: { kind: "connected", property: "sc-domain:dentnotion.com", expired: false } }),
+    ]);
+    expect(text).toMatch(/Search Console: sc-domain:dentnotion\.com/);
+  });
+
+  it("says a connection with no property selected is NOT usable, in its own words", () => {
+    const text = formatProjectList([
+      project({ domain: "example.net", gsc: { kind: "connected", property: null, expired: false } }),
+    ]);
+    expect(text).toMatch(/connected, no property selected/i);
+    // …and it must not read like a working connection.
+    expect(text).not.toMatch(/Search Console: example\.net/);
+  });
+
+  it("says plainly when there is no connection at all", () => {
+    const text = formatProjectList([project({ domain: "seogrep.com" })]);
+    expect(text).toMatch(/Search Console: not connected/i);
+  });
+
+  /**
+   * Health is a DIFFERENT fact from the mapping: the property is still the right one, the
+   * credential behind it is dead. It is appended to the mapping rather than replacing it, so a
+   * reconnect does not look like a re-mapping.
+   */
+  it("flags a dead credential without hiding which property it belongs to", () => {
+    const text = formatProjectList([
+      project({ gsc: { kind: "connected", property: "https://a.com/", expired: true } }),
+    ]);
+    expect(text).toMatch(/https:\/\/a\.com\//);
+    expect(text).toMatch(/reconnect/i);
+  });
+
+  it("never calls an unconnected project expired", () => {
+    const text = formatProjectList([project({ gsc: { kind: "not_connected" } })]);
+    expect(text).not.toMatch(/reconnect/i);
+  });
+});
+
+describe("the last-job fact on each tracked line", () => {
+  it("names the tool and the day, not a bare timestamp", () => {
+    const text = formatProjectList([
+      project({ lastJob: { tool: "crawl_site", at: "2026-08-26T10:36:21.643Z" } }),
+    ]);
+    expect(text).toMatch(/last job: crawl_site 2026-08-26/);
+  });
+
+  it("says none yet rather than printing a zero or an empty date", () => {
+    const text = formatProjectList([project({ lastJob: null })]);
+    expect(text).toMatch(/last job: none yet/);
+    expect(text).not.toMatch(/last job: (0|-|null|undefined)/);
+  });
+
+  /**
+   * KAPSAM: `jobs` holds background runs only — measured 2026-08-26, its `tool` column carries
+   * exactly crawl_site and pull_gsc_data. A project audited ten times and never crawled reads
+   * "none yet", which is TRUE of jobs and FALSE of activity, so the answer says which one it
+   * means — once, under the list, rather than on every line.
+   */
+  it("states what a job is, once, under the tracked list", () => {
+    const text = formatProjectList([project(), project({ id: "p-2", domain: "b.com" })]);
+    expect(text).toContain(JOB_SCOPE_NOTE);
+    expect(text.split(JOB_SCOPE_NOTE).length - 1).toBe(1);
+    expect(JOB_SCOPE_NOTE).toMatch(/crawl_site/);
+    expect(JOB_SCOPE_NOTE).toMatch(/pull_gsc_data/);
+  });
+
+  it("puts no job note on an account that tracks nothing", () => {
+    expect(formatProjectList([])).not.toContain(JOB_SCOPE_NOTE);
+  });
+});
+
+describe("A4 — the description states the price", () => {
+  /**
+   * Measured 2026-08-26: list_gsc_properties, track_keywords and untrack_project all say
+   * "Costs 0 credits." in their tools/list sentence; list_projects did not. A customer reading
+   * the surface should not have to open the docs to learn a read is free.
+   */
+  it("says the read is free", () => {
+    expect(listProjectsTool.description).toMatch(/costs 0 credits/i);
+  });
+});
+
+
+/**
+ * G6 — measured live on 2026-08-26: `noraninsaat.com` and `www.noraninsaat.com` are two separate
+ * projects mapped to the SAME `sc-domain:noraninsaat.com`. Every Search Console pull for them
+ * fetches one set of data and is billed twice, and nothing anywhere said so. Naming the property
+ * once, under the list, is the smallest thing that makes the duplication visible without
+ * pretending to know which of the two the customer meant to keep.
+ */
+describe("two projects mapped to one Search Console property", () => {
+  const mapped = (id: string, domain: string, property: string): ProjectListRow =>
+    project({ id, domain, gsc: { kind: "connected", property, expired: false } });
+
+  it("names the shared property and both projects", () => {
+    const text = formatProjectList([
+      mapped("p-1", "noraninsaat.com", "sc-domain:noraninsaat.com"),
+      mapped("p-2", "www.noraninsaat.com", "sc-domain:noraninsaat.com"),
+    ]);
+    expect(text).toMatch(/same Search Console property/i);
+    expect(text).toMatch(/sc-domain:noraninsaat\.com/);
+    expect(text).toMatch(/noraninsaat\.com, www\.noraninsaat\.com/);
+  });
+
+  it("says what the duplication costs, so it reads as a warning and not as trivia", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      mapped("p-2", "b.com", "sc-domain:x.com"),
+    ]);
+    expect(text).toMatch(/twice|billed|credits/i);
+  });
+
+  it("stays silent when every mapped property is distinct", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:a.com"),
+      mapped("p-2", "b.com", "sc-domain:b.com"),
+      project({ id: "p-3", domain: "c.com" }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
+  });
+
+  /**
+   * The unmapped state is NOT a shared value. Three projects each holding a connection with no
+   * property would otherwise group under "null" and be reported as reading one property — a
+   * warning invented out of an absence, which is the same fault as printing a zero for a fact
+   * nobody reported.
+   */
+  it("does not treat several unmapped connections as one shared property", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com", gsc: { kind: "connected", property: null, expired: false } }),
+      project({ id: "p-2", domain: "b.com", gsc: { kind: "connected", property: null, expired: false } }),
+      project({ id: "p-3", domain: "c.com" }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
+  });
+
+  it("reports each shared property once, on its own line", () => {
+    const notes = duplicatePropertyNotes([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      mapped("p-2", "b.com", "sc-domain:x.com"),
+      mapped("p-3", "c.com", "sc-domain:y.com"),
+      mapped("p-4", "d.com", "sc-domain:y.com"),
+    ]);
+    expect(notes).toHaveLength(2);
+  });
+
+  /** An archived project is not being pulled for, so it cannot be paying twice. */
+  it("ignores archived projects", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      project({
+        id: "p-2",
+        domain: "b.com",
+        archived_at: "2026-08-01T00:00:00.000Z",
+        gsc: { kind: "connected", property: "sc-domain:x.com", expired: false },
+      }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
+  });
+});
+
+
+/**
+ * G4, CORRECTED BY MEASUREMENT. The item asked for a warning in setup_project. That would be dead
+ * code: `normalizeDomain` has stripped a leading `www.` since 3b0009e (2026-08-25 21:27), so a new
+ * call can no longer open an apex/www pair — it resolves onto the existing row. The pairs that DO
+ * exist were created before that commit (www.seogrep.com at 08:25 the same day), they are not
+ * going away on their own, and no surface names them.
+ *
+ * So the warning belongs where the pair is visible — the tracked list — and it is deliberately
+ * INDEPENDENT of the shared-property note: two apex/www projects with no Search Console at all
+ * are still two projects, two crawls and two audits over one site.
+ */
+describe("apex and www. tracked as two projects", () => {
+  it("names both halves of the pair and the site they share", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "noraninsaat.com" }),
+      project({ id: "p-2", domain: "www.noraninsaat.com" }),
+    ]);
+    expect(text).toMatch(/same site/i);
+    expect(text).toMatch(/noraninsaat\.com, www\.noraninsaat\.com/);
+  });
+
+  it("fires with no Search Console involved at all", () => {
+    const notes = sameSiteNotes([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com" }),
+    ]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).not.toMatch(/Search Console/i);
+  });
+
+  it("says the pair can no longer be created, so the reader knows this is cleanup", () => {
+    const notes = sameSiteNotes([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com" }),
+    ]);
+    expect(notes[0]).toMatch(/untrack_project/);
+  });
+
+  it("stays silent on unrelated domains that merely look similar", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "a.com.tr" }),
+      project({ id: "p-3", domain: "wwwa.com" }),
+    ]);
+    expect(text).not.toMatch(/same site/i);
+  });
+
+  it("reports each pair once, however many members it has", () => {
+    expect(
+      sameSiteNotes([
+        project({ id: "p-1", domain: "a.com" }),
+        project({ id: "p-2", domain: "www.a.com" }),
+        project({ id: "p-3", domain: "b.com" }),
+        project({ id: "p-4", domain: "www.b.com" }),
+      ]),
+    ).toHaveLength(2);
+  });
+
+  /** An archived half is not being crawled or audited, so the pair is not costing twice. */
+  it("ignores archived projects", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com", archived_at: "2026-08-01T00:00:00.000Z" }),
+    ]);
+    expect(text).not.toMatch(/same site/i);
   });
 });

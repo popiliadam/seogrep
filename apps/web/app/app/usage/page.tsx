@@ -20,6 +20,30 @@ function parsePage(raw: string | undefined): number {
  * result's `page` is the SERVED page, so "Page X of Y" renders straight from it and a
  * user-crafted URL can never produce a PostgREST 416 error page.
  */
+
+/**
+ * This tenant's projects as id -> domain, for naming the Site column on a spend row
+ * (migration 0033). ARCHIVED ONES INCLUDED: the spend happened while the project was tracked, and
+ * untracking it later must not turn readable history into a uuid.
+ *
+ * The caller's authenticated client (RLS is the real gate) with an explicit user_id filter beside
+ * it, like every other read on this page (constitution NEVER #4). A failure degrades to an empty
+ * map rather than throwing: the ledger itself is what this page is for, and losing a name column
+ * is a worse trade than losing the page — the rows still render, with their ids.
+ */
+async function readProjectDomains(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<ReadonlyMap<string, string>> {
+  const { data, error } = await supabase.from("projects").select("id, domain").eq("user_id", userId);
+  if (error) {
+    console.error("project domain lookup failed:", error.message);
+    return new Map();
+  }
+  const rows = (data ?? []) as unknown as { id: string; domain: string }[];
+  return new Map(rows.map((row) => [row.id, row.domain]));
+}
+
 export default async function UsagePage({
   searchParams,
 }: {
@@ -41,11 +65,12 @@ export default async function UsagePage({
     );
   }
 
-  const [{ entries, total, page: currentPage, pageSize }, chartWindow] = await Promise.all([
+  const [{ entries, total, page: currentPage, pageSize }, chartWindow, domains] = await Promise.all([
     listLedgerEntries(supabase, user.id, { page, pageSize: PAGE_SIZE }),
     // A wider, page-independent window purely for the 14-day spend chart, so the bars sum to
     // the ledger's committed spend whatever page of the table is being read.
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 200 }),
+    readProjectDomains(supabase, user.id),
   ]);
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const hasPrev = currentPage > 1;
@@ -64,7 +89,7 @@ export default async function UsagePage({
       <SpendChart entries={chartWindow.entries} />
 
       <div className="animate-[rise_0.5s_ease-out_0.06s_both]">
-        <LedgerTable entries={entries} />
+        <LedgerTable entries={entries} domains={domains} />
       </div>
 
       {total > 0 ? (

@@ -166,3 +166,53 @@ describe("setup_project — the domain-does-not-resolve warning", () => {
     expect(seen).toEqual([]);
   });
 });
+
+/**
+ * THE RECEIPT'S OWN TWO CLAIMS — added 2026-08-26 (smoke turu dalga 2, bulgular D-2 · D-4).
+ *
+ * Measured on the live tool: a registration answered `Created project for "xn--rnek-4qa.com"` to
+ * a customer who typed `örnek.com`, and then said nothing at all about what to do with the id it
+ * had just minted. Neither is a wording preference — the first shows a name the customer cannot
+ * recognise as their own site, and the second ends the setup path in silence.
+ */
+describe("setup_project — the receipt names the site and points somewhere", () => {
+  const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
+
+  function toolWith(outcome: "created" | "existing" | "restored") {
+    return makeSetupProjectTool({
+      openProject: async (_userId, raw) => {
+        const normalized = normalizeDomain(raw);
+        if (!normalized.ok) return { ok: false, error: normalized.error };
+        return { ok: true, project: { id: "p-1", domain: normalized.domain, outcome } };
+      },
+      checkDomain: async () => "resolves",
+    });
+  }
+
+  async function textOf(outcome: "created" | "existing" | "restored", domain: string) {
+    const result = await toolWith(outcome).run(CTX, { domain });
+    expect(result.isError).toBeUndefined();
+    return result.content[0]?.text ?? "";
+  }
+
+  it("shows an IDN project as the customer typed it, WITH the stored A-label", async () => {
+    const text = await textOf("created", "örnek.com");
+    expect(text).toContain("örnek.com");
+    // The A-label is not hidden: it is what a DNS panel and every join downstream will show.
+    expect(text).toContain("xn--rnek-4qa.com");
+  });
+
+  it("leaves an ASCII domain exactly as it is — no parenthesis, no second spelling", async () => {
+    const text = await textOf("created", "seogrep.com");
+    expect(text).toContain('"seogrep.com"');
+    expect(text).not.toContain("(seogrep.com)");
+  });
+
+  it("points at whats_next on ALL THREE outcomes, not just a fresh project", async () => {
+    // The outcome axis is the one that matters here: a customer who re-runs setup_project on a
+    // site they already have, or brings one back from the archive, is at exactly the same fork.
+    for (const outcome of ["created", "existing", "restored"] as const) {
+      expect(await textOf(outcome, "seogrep.com"), outcome).toMatch(/whats_next/);
+    }
+  });
+});

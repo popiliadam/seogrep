@@ -122,7 +122,7 @@ describe("list_jobs against the local stack", () => {
     const middle = await makeJob(ctx.userId, { created_at: "2026-08-21T00:00:00.000Z" });
     const newest = await makeJob(ctx.userId, { created_at: "2026-08-22T00:00:00.000Z" });
 
-    const rows = await listOwnJobs(ctx.userId, 2);
+    const rows = (await listOwnJobs(ctx.userId, 2)).rows;
     expect(rows.map((row) => row.id)).toEqual([newest, middle]);
     expect(rows.map((row) => row.id)).not.toContain(oldest);
   });
@@ -149,7 +149,7 @@ describe("list_jobs against the local stack", () => {
     expect(text).not.toContain(marker);
 
     // …and the column is not even selected, so the megabyte never crosses the wire.
-    const rows = await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT);
+    const rows = (await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT)).rows;
     expect(rows).toHaveLength(1);
     expect(Object.keys(rows[0] as object)).not.toContain("result");
   });
@@ -176,7 +176,7 @@ describe("list_jobs against the local stack", () => {
     expect(asB).not.toContain(aJob);
 
     // Head-on: the read port itself, with B's tenant id, cannot reach A's row.
-    const bRows = await listOwnJobs(b.userId, MAX_JOB_LIST_LIMIT);
+    const bRows = (await listOwnJobs(b.userId, MAX_JOB_LIST_LIMIT)).rows;
     expect(bRows.map((row) => row.id)).toContain(bJob);
     expect(bRows.map((row) => row.id)).not.toContain(aJob);
   });
@@ -191,10 +191,10 @@ describe("list_jobs against the local stack", () => {
     const stranger = await makeCtx();
     const ownerJob = await makeJob(owner.userId);
 
-    const strangerRows = await listOwnJobs(stranger.userId, MAX_JOB_LIST_LIMIT);
+    const strangerRows = (await listOwnJobs(stranger.userId, MAX_JOB_LIST_LIMIT)).rows;
     expect(strangerRows).toHaveLength(0);
     // The row really is there — the empty answer above is the filter working, not an empty table.
-    expect((await listOwnJobs(owner.userId, MAX_JOB_LIST_LIMIT)).map((r) => r.id)).toContain(
+    expect((await listOwnJobs(owner.userId, MAX_JOB_LIST_LIMIT)).rows.map((r) => r.id)).toContain(
       ownerJob,
     );
   });

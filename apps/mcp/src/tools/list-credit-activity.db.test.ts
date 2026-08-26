@@ -107,7 +107,7 @@ describe("list_credit_activity against the local stack", () => {
       { delta: 0, kind: "spend_commit", tool: "crawl_site", reserve_id: reserveId },
     ]);
 
-    const rows = await listOwnCreditActivity(ctx.userId, MAX_ACTIVITY_LIMIT);
+    const rows = (await listOwnCreditActivity(ctx.userId, MAX_ACTIVITY_LIMIT)).rows;
     expect(rows.map((row) => row.kind).sort()).toEqual(["purchase", "spend_reserve"]);
     // The marker really is in the table — the absence above is the filter, not a failed seed.
     const all = await service.from("credit_ledger").select("kind").eq("user_id", ctx.userId);
@@ -147,7 +147,7 @@ describe("list_credit_activity against the local stack", () => {
       { delta: 25, kind: "purchase", reason: "newest-entry" },
     ]);
 
-    const rows = await listOwnCreditActivity(ctx.userId, 2);
+    const rows = (await listOwnCreditActivity(ctx.userId, 2)).rows;
     expect(rows.map((row) => row.reason)).toEqual(["newest-entry", "middle-entry"]);
   });
 
@@ -171,7 +171,7 @@ describe("list_credit_activity against the local stack", () => {
     expect(asB).not.toContain("belongs-to-a");
 
     // Head-on: B's tenant id against A's rows selects nothing of A's.
-    const bRows = await listOwnCreditActivity(b.userId, MAX_ACTIVITY_LIMIT);
+    const bRows = (await listOwnCreditActivity(b.userId, MAX_ACTIVITY_LIMIT)).rows;
     expect(bRows.map((row) => row.reason)).toEqual(["belongs-to-b"]);
   });
 
@@ -180,8 +180,10 @@ describe("list_credit_activity against the local stack", () => {
     const stranger = await makeCtx();
     await seedLedger(owner.userId, [{ delta: 10, kind: "purchase", reason: "owner-only" }]);
 
-    expect(await listOwnCreditActivity(stranger.userId, MAX_ACTIVITY_LIMIT)).toHaveLength(0);
-    expect((await listOwnCreditActivity(owner.userId, MAX_ACTIVITY_LIMIT)).length).toBe(1);
+    expect((await listOwnCreditActivity(stranger.userId, MAX_ACTIVITY_LIMIT)).rows).toHaveLength(
+      0,
+    );
+    expect((await listOwnCreditActivity(owner.userId, MAX_ACTIVITY_LIMIT)).rows.length).toBe(1);
   });
 
   /**

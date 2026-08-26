@@ -313,6 +313,23 @@ export function toInputJsonSchema(schema: z.ZodType<unknown>): Record<string, un
  * price (90) instead of the call price (up to 900) and waving a 900-credit call through
  * unconfirmed — a silent under-estimate rather than a loud failure.
  */
+/**
+ * The `project_id` a tool's own validated input declares, or undefined when it declares none.
+ *
+ * Only a tool that TAKES a project_id can name one, and by the time this runs zod has already
+ * accepted it — every such schema constrains the field to a uuid — so this neither validates nor
+ * guesses. It does not fall back to `target`: a domain is not a project id, several tools accept
+ * a competitor's domain that is nobody's project, and resolving one to a project here would
+ * attribute a competitor lookup to whichever of the tenant's sites happened to match.
+ *
+ * Undefined means "no project scope", which is a real answer the ledger stores as null.
+ */
+export function declaredProjectId(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const value = (input as Record<string, unknown>).project_id;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
 export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
   if (isPerUnitTool(spec.name) && spec.units === undefined) {
     throw new Error(
@@ -359,8 +376,18 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
       if (charge === "surface") {
         // Registry-owned settlement: charge at the surface. No jobId — the guard uses a
         // traceability uuid for the ledger and never writes a jobs row (credits/guard.ts).
-        return withCredits({ userId: ctx.userId }, { tool: spec.name }, () =>
-          spec.handler(ctx, parsed.data, rawInput),
+        //
+        // The project scope is read GENERICALLY off the parsed input (migration 0033). Doing it
+        // here rather than tool by tool is the whole point: the registry opens the reserve before
+        // the handler runs, so a per-tool value could only arrive by threading an argument
+        // through every surface tool — thirty-odd call sites, each of which could forget, and a
+        // forgotten one writes a project-less row indistinguishable from an honestly
+        // project-less one. Reading the declared `project_id` parameter cannot be forgotten
+        // because it is not a call site at all.
+        return withCredits(
+          { userId: ctx.userId },
+          { tool: spec.name, projectId: declaredProjectId(parsed.data) },
+          () => spec.handler(ctx, parsed.data, rawInput),
         );
       }
       // "handler" or "worker": settlement is the handler's (sync self-settle) or the worker's

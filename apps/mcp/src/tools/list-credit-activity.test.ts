@@ -26,6 +26,7 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 
 function entry(overrides: Partial<CreditActivityRow> = {}): CreditActivityRow {
   return {
+    project_id: null,
     id: 1,
     delta: -20,
     kind: "spend_reserve",
@@ -40,9 +41,18 @@ function recordingPort(rows: readonly CreditActivityRow[]) {
   const calls: { userId: string; limit: number }[] = [];
   const listActivity: ListCreditActivityFn = async (userId, limit) => {
     calls.push({ userId, limit });
-    return rows;
+    // `total` equals what the port hands back, so these specs describe an UNCUT page and none of
+    // their wordings change; the cut sentence has its own specs below.
+    return { rows, total: rows.length };
   };
-  return { calls, tool: makeListCreditActivityTool({ listActivity }) };
+  // The domain port is stubbed EMPTY rather than left to its default: the default reaches
+  // getServiceClient, which needs the full prod env, and these specs are about the limit the read
+  // port is asked for and the wording around it. An empty map changes no assertion below — every
+  // scope clause they exercise renders from the row's own project_id.
+  return {
+    calls,
+    tool: makeListCreditActivityTool({ listActivity, listDomains: async () => new Map() }),
+  };
 }
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? "";
@@ -154,10 +164,10 @@ describe("list_credit_activity rendering", () => {
    * refund would sum to something other than the balance beside it.
    */
   it("renders a charge and its refund as two entries, and says the entries are the movements", () => {
-    const text = formatCreditActivity([
+    const text = formatCreditActivity({ rows: [
       entry({ id: 2, delta: 20, kind: "spend_release", created_at: "2026-08-25T10:03:00.000Z" }),
       entry({ id: 1, delta: -20, kind: "spend_reserve" }),
-    ]);
+    ], total: 1 });
     const rows = text.split("\n").filter((line) => line.startsWith("- "));
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatch(/refund/);
@@ -166,8 +176,102 @@ describe("list_credit_activity rendering", () => {
   });
 
   it("points at the tool that owns the running total instead of restating it", () => {
-    const text = formatCreditActivity([entry()]);
+    const text = formatCreditActivity({ rows: [entry()], total: 1 });
     expect(text).toMatch(/get_credit_balance/);
     expect(text).toMatch(/newest first/i);
+  });
+});
+
+
+/**
+ * G11 — "which of my sites did my credits go to?" Measured 2026-08-26: unanswerable. The ledger
+ * had no project column and its job_id pointed at a real jobs row in 4 of 82 cases, so 96.6% of a
+ * 1,176-credit window could not be attributed to a site. Migration 0033 added the column; this is
+ * where a customer reads it.
+ */
+describe("the project a charge was for", () => {
+  const domains = new Map([["p-1", "dentnotion.com"]]);
+
+  it("names the project on a charge", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -65, tool: "ranked_keywords", project_id: "p-1" }),
+      domains,
+    );
+    expect(line).toMatch(/dentnotion\.com/);
+  });
+
+  it("names it on the refund of that charge too", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_release", delta: 65, tool: "ranked_keywords", project_id: "p-1" }),
+      domains,
+    );
+    expect(line).toMatch(/dentnotion\.com/);
+  });
+
+  /**
+   * THE NEGATIVE IS PRINTED, not left blank. A keyword set, a seed and a subject that is nobody's
+   * tracked site are legitimately project-less, and a silent line would read as "the tool forgot"
+   * rather than as "there was no site". It is also the answer to the customer's question for that
+   * row — the same rule the tour applied to unreported numbers.
+   */
+  it("says so, in words, when a charge had no project scope", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -25, tool: "research_keywords", project_id: null }),
+      domains,
+    );
+    expect(line).toMatch(/no project scope/i);
+  });
+
+  /**
+   * A project the ledger names but the tenant no longer has. 0033 keeps no foreign key on
+   * purpose, so this is reachable — and the id is TRUE where a blank would be a shrug.
+   */
+  it("falls back to the id when the project is gone", () => {
+    const line = formatActivityLine(
+      entry({ kind: "spend_reserve", delta: -20, tool: "crawl_site", project_id: "p-vanished" }),
+      domains,
+    );
+    expect(line).toMatch(/p-vanished/);
+    expect(line).not.toMatch(/no project scope/i);
+  });
+
+  /**
+   * Grants and purchases are not spends. "Which project was this grant for?" is not a question
+   * anybody has, and answering it on every row would bury the ones where it matters.
+   */
+  it("says nothing about scope on a grant or a purchase", () => {
+    for (const kind of ["grant", "purchase"]) {
+      const line = formatActivityLine(entry({ kind, delta: 200, project_id: null }), domains);
+      expect(line).not.toMatch(/project/i);
+    }
+  });
+});
+
+
+/**
+ * KAPSAM — measured live 2026-08-26: 512 balance-moving rows behind an answer that said "your 50
+ * most recent credit entries" and nothing else. True, and read as the whole ledger by a customer
+ * with no way to tell it was cut.
+ */
+describe("what the answer leaves out", () => {
+  const rows = [entry({ id: 1 }), entry({ id: 2 })];
+
+  it("says how many entries exist and how many are not shown", () => {
+    const text = formatCreditActivity({ rows, total: 512 });
+    expect(text).toMatch(/2 most recent credit entries of 512/i);
+    expect(text).toMatch(/510 older entries not shown/i);
+  });
+
+  it("names the argument that shows more, so the sentence is actionable", () => {
+    expect(formatCreditActivity({ rows, total: 512 })).toMatch(/limit/);
+  });
+
+  it("says nothing about a cut when the page IS the whole ledger", () => {
+    const text = formatCreditActivity({ rows, total: rows.length });
+    expect(text).not.toMatch(/not shown/i);
+  });
+
+  it("counts one leftover entry in the singular", () => {
+    expect(formatCreditActivity({ rows, total: 3 })).toMatch(/1 older entry not shown/i);
   });
 });

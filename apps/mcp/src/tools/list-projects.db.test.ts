@@ -66,6 +66,76 @@ async function archiveProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * Give one of the tenant's projects a Search Console connection, against REAL rows.
+ * `property` null reproduces the state live measurement found on 2026-08-26: an account is
+ * linked, no property is matched, and nothing can be pulled — the state a boolean column
+ * renders as a tick. `tokenStatus` drives the health half.
+ *
+ * THROWS on a no-op insert: a fixture that quietly wrote nothing would turn every assertion
+ * below into a green that proves the opposite of what it claims.
+ */
+async function connectGsc(
+  userId: string,
+  projectId: string,
+  property: string | null,
+  tokenStatus: "active" | "invalid" = "active",
+): Promise<void> {
+  const { data: account, error: accountError } = await service
+    .from("gsc_accounts")
+    .insert({
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `gsc-${randomUUID()}@example.test`,
+      encrypted_refresh_token: `enc-${randomUUID()}`,
+      token_status: tokenStatus,
+    })
+    .select("id")
+    .single();
+  if (accountError || !account) {
+    throw new Error(`gsc_accounts seed failed: ${accountError?.message ?? "no row"}`);
+  }
+  const { error } = await service
+    .from("gsc_connections")
+    .insert({
+      user_id: userId,
+      project_id: projectId,
+      account_id: account.id,
+      gsc_property: property,
+    })
+    .select("id")
+    .single();
+  if (error) {
+    throw new Error(`gsc_connections seed failed: ${error.message}`);
+  }
+}
+
+/** Record a finished background job for one project — what `last job` reads. */
+async function seedJob(userId: string, projectId: string, tool: string): Promise<void> {
+  const { error } = await service
+    .from("jobs")
+    .insert({ user_id: userId, project_id: projectId, tool, status: "succeeded" })
+    .select("id")
+    .single();
+  if (error) {
+    throw new Error(`jobs seed failed: ${error.message}`);
+  }
+}
+
+/** The tenant's project id for one domain — the handle the seeds above need. */
+async function projectIdFor(userId: string, domain: string): Promise<string> {
+  const { data, error } = await service
+    .from("projects")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("domain", domain)
+    .single();
+  if (error || !data) {
+    throw new Error(`project lookup failed for ${domain}: ${error?.message ?? "no row"}`);
+  }
+  return data.id;
+}
+
 beforeAll(async () => {
   const { error } = await service.from("projects").select("id").limit(1);
   if (error) {
@@ -145,5 +215,92 @@ describe("list_projects against the local stack", () => {
     expect(text).toContain(archivedId);
     expect(text).toMatch(/setup_project/);
     expect(text).toMatch(/track_gsc_property/);
+  });
+});
+
+/**
+ * G5 + G7 against REAL rows. The fast lane pins the sentences from hand-built inputs; these prove
+ * the three reads underneath them — projects, the gsc_connections/gsc_accounts pair, and jobs —
+ * are tenant-scoped and land on the right project.
+ */
+describe("what each tracked line reports, against real rows", () => {
+  it("names a connected property, and reports an unconnected project as unconnected", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "wired.com" });
+    await setupProjectTool.run(ctx, { domain: "bare.com" });
+    await connectGsc(ctx.userId, await projectIdFor(ctx.userId, "wired.com"), "sc-domain:wired.com");
+
+    const text = (await listProjectsTool.run(ctx, {})).content[0]?.text ?? "";
+    const wired = text.split("\n").find((line) => line.includes("wired.com")) ?? "";
+    const bare = text.split("\n").find((line) => line.includes("bare.com")) ?? "";
+    expect(wired).toContain("sc-domain:wired.com");
+    expect(bare).toMatch(/Search Console: not connected/i);
+  });
+
+  /**
+   * THE STATE A BOOLEAN GETS WRONG, driven from a real gsc_connections row with a NULL
+   * gsc_property. The line must not read as a working connection.
+   */
+  it("reports a connection with no property as unusable, not as connected", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "half.com" });
+    await connectGsc(ctx.userId, await projectIdFor(ctx.userId, "half.com"), null);
+
+    const line =
+      ((await listProjectsTool.run(ctx, {})).content[0]?.text ?? "")
+        .split("\n")
+        .find((row) => row.includes("half.com")) ?? "";
+    expect(line).toMatch(/connected, no property selected/i);
+  });
+
+  it("flags a dead credential on the project that holds it", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "stale.com" });
+    await connectGsc(
+      ctx.userId,
+      await projectIdFor(ctx.userId, "stale.com"),
+      "https://stale.com/",
+      "invalid",
+    );
+
+    const line =
+      ((await listProjectsTool.run(ctx, {})).content[0]?.text ?? "")
+        .split("\n")
+        .find((row) => row.includes("stale.com")) ?? "";
+    expect(line).toContain("https://stale.com/");
+    expect(line).toMatch(/reconnect needed/i);
+  });
+
+  it("reports the last job on the project that ran it, and none yet on the one that did not", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "ran.com" });
+    await setupProjectTool.run(ctx, { domain: "idle.com" });
+    await seedJob(ctx.userId, await projectIdFor(ctx.userId, "ran.com"), "crawl_site");
+
+    const text = (await listProjectsTool.run(ctx, {})).content[0]?.text ?? "";
+    const ran = text.split("\n").find((line) => line.includes("ran.com")) ?? "";
+    const idle = text.split("\n").find((line) => line.includes("idle.com")) ?? "";
+    expect(ran).toMatch(/last job: crawl_site \d{4}-\d{2}-\d{2}/);
+    expect(idle).toMatch(/last job: none yet/);
+  });
+
+  /**
+   * NEVER #4 on the two NEW reads. Another tenant's connection and job must not colour this
+   * tenant's lines — the failure mode a service-role client makes possible and the `forUser`
+   * filter is the guard against.
+   */
+  it("does not read another tenant's connection or job", async () => {
+    const a = await makeCtx();
+    const b = await makeCtx();
+    await setupProjectTool.run(a, { domain: "shared-name.com" });
+    await setupProjectTool.run(b, { domain: "shared-name.com" });
+    const bProject = await projectIdFor(b.userId, "shared-name.com");
+    await connectGsc(b.userId, bProject, "sc-domain:shared-name.com");
+    await seedJob(b.userId, bProject, "crawl_site");
+
+    const aText = (await listProjectsTool.run(a, {})).content[0]?.text ?? "";
+    expect(aText).toMatch(/Search Console: not connected/i);
+    expect(aText).not.toContain("sc-domain:shared-name.com");
+    expect(aText).toMatch(/last job: none yet/);
   });
 });

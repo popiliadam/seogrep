@@ -5,11 +5,13 @@ description: "List your recent background jobs — crawls and Search Console pul
 
 **Cost:** Free (0 credits).
 
-`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run in the background — newest first, each with its `job_id`. It is the tool to reach for when you **do not have a `job_id` to hand**.
+`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run in the background — newest first, each with its `job_id`. It is the tool to reach for when you **do not have a `job_id` to hand**. The reply says how many jobs you have in total and how many it did not show, so a cut list never reads as your whole history.
 
 ## What it does
 
-Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what state it is in, when it was created and finished, its `project_id` when it has one, and the `job_id` to ask about.
+Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what state it is in, when it was created and finished, which of your sites it ran against, and the `job_id` to ask about. The site is named by DOMAIN; a job with no project scope says so, and a project you have since removed falls back to the id it was recorded with.
+
+A job whose stored stamps contradict each other — a `finished` earlier than its `created` — is marked **timestamps out of order** rather than printed as an ordinary timeline. Both stamps are still shown, because both are real: some rows were written with `created_at` stamped at insert time, after the work they record. No duration is derived from such a pair; a contradiction does not describe a short run, it describes an unknown one, and [`get_job_status`](/docs/tools-reference/get-job-status) makes the same refusal.
 
 ## What the list shows, and what needs a second call
 

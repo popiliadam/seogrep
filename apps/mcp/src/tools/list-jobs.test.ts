@@ -39,9 +39,13 @@ function recordingPort(rows: readonly JobListRow[]) {
   const calls: { userId: string; limit: number }[] = [];
   const listJobs: ListJobsFn = async (userId, limit) => {
     calls.push({ userId, limit });
-    return rows;
+    return { rows: rows, total: rows.length };
   };
-  return { calls, tool: makeListJobsTool({ listJobs }) };
+  // The domain port is stubbed EMPTY rather than left to its default: the default reaches
+  // getServiceClient, which needs the full prod env. These specs are about the limit the read
+  // port is asked for and the wording around it; an empty map changes none of their assertions,
+  // since every line they exercise resolves from the row's own project_id.
+  return { calls, tool: makeListJobsTool({ listJobs, listDomains: async () => new Map() }) };
 }
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? "";
@@ -125,9 +129,21 @@ describe("list_jobs rendering", () => {
     expect(line).not.toMatch(/finished/i);
   });
 
-  it("shows the project_id when a job has one and omits the clause when it does not", () => {
-    expect(formatJobLine(job({ project_id: "proj-9" }))).toMatch(/project_id:\s*proj-9/);
-    expect(formatJobLine(job({ project_id: null }))).not.toMatch(/project_id/);
+  /**
+   * THE CONTRACT MOVED ON 2026-08-26 AND THE MOVE IS SIGNED. This used to pin the raw
+   * `project_id: <uuid>` clause and its ABSENCE when null. The clause is now a project LABEL —
+   * a domain where one is known — and the null case is named rather than dropped, because a
+   * missing clause read as "the tool forgot" rather than as "there was no site".
+   *
+   * Both halves assert MORE than they did: the identity still has to reach the line when nothing
+   * can resolve it, and the null case now has to say something TRUE instead of nothing at all.
+   */
+  it("carries the project through, and names the null case instead of dropping it", () => {
+    expect(formatJobLine(job({ project_id: "proj-9" }))).toMatch(/project:\s*proj-9/);
+    const none = formatJobLine(job({ project_id: null }));
+    expect(none).toMatch(/no project scope/i);
+    // …and it must not invent an id for a job that has none.
+    expect(none).not.toMatch(/project:\s*[0-9a-f-]{8,}/i);
   });
 
   /**
@@ -135,12 +151,12 @@ describe("list_jobs rendering", () => {
    * the result the customer paid for — which is the entire gap this tool was added to close.
    */
   it("tells the reader which tool turns one of these ids into the full result", () => {
-    const text = formatJobList([job()]);
+    const text = formatJobList({ rows: [job()], total: 1 });
     expect(text).toMatch(/get_job_status/);
   });
 
   it("counts what it rendered and says the order it rendered it in", () => {
-    const text = formatJobList([job({ id: "a" }), job({ id: "b" }), job({ id: "c" })]);
+    const text = formatJobList({ rows: [job({ id: "a" }), job({ id: "b" }), job({ id: "c" })], total: 1 });
     expect(text).toMatch(/\b3\b[^\n]*job/i);
     expect(text).toMatch(/newest first/i);
     expect(text.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(3);
@@ -155,5 +171,128 @@ describe("list_jobs rendering", () => {
   it("prints no stored result payload, even when a row smuggles one in", () => {
     const withResult = { ...job(), result: { pages: ["SECRET-PAYLOAD-MARKER"] } } as JobListRow;
     expect(formatJobLine(withResult)).not.toMatch(/SECRET-PAYLOAD-MARKER/);
+  });
+});
+
+
+/**
+ * MEASURED LIVE 2026-08-26, from the customer path: two of this tenant's 27 `pull_gsc_data` rows
+ * print as `created …16:14:18 · finished …16:14:17` — a job that finished 13.9 seconds BEFORE it
+ * was created. The stamps are real; `created_at` was written at INSERT time, i.e. after the work
+ * it records (get-job-status.ts says so in as many words).
+ *
+ * `get_job_status` already refuses to derive anything from such a pair — `jobTiming` returns
+ * `inconsistent` and it prints no figure, on the stated grounds that a violating pair does not
+ * describe a short run but an UNKNOWN one. `list_jobs`, born in the same deploy, printed both
+ * stamps raw and left the reader to conclude that time ran backwards.
+ *
+ * The rule is NOT re-implemented here: get-job-status.ts calls itself the only place it lives,
+ * and a second copy is a second thing to drift.
+ */
+describe("a job whose stored stamps contradict each other", () => {
+  const backwards: JobListRow = {
+    id: "j-1",
+    tool: "pull_gsc_data",
+    status: "succeeded",
+    project_id: "p-1",
+    created_at: "2026-08-25T16:14:18.768Z",
+    finished_at: "2026-08-25T16:14:17.299Z",
+  };
+
+  it("does not present the pair as an ordinary timeline", () => {
+    const line = formatJobLine(backwards);
+    expect(line).toMatch(/inconsisten|not reliable|out of order/i);
+  });
+
+  it("still shows both stored stamps — they are the facts, and neither is invented", () => {
+    const line = formatJobLine(backwards);
+    expect(line).toContain("2026-08-25T16:14:18.768Z");
+    expect(line).toContain("2026-08-25T16:14:17.299Z");
+  });
+
+  it("says nothing of the sort about an ordered job", () => {
+    const line = formatJobLine({
+      ...backwards,
+      created_at: "2026-08-25T16:14:17.299Z",
+      finished_at: "2026-08-25T16:14:18.768Z",
+    });
+    expect(line).not.toMatch(/inconsisten|not reliable|out of order/i);
+  });
+
+  it("says nothing of the sort about a job that has not finished", () => {
+    const line = formatJobLine({ ...backwards, status: "running", finished_at: null });
+    expect(line).not.toMatch(/inconsisten|not reliable|out of order/i);
+  });
+});
+
+
+/**
+ * KAPSAM — measured live 2026-08-26: 56 jobs behind an answer that said "Your 10 most recent
+ * job(s)" and stopped.
+ */
+describe("what the job list leaves out", () => {
+  const rows: JobListRow[] = [
+    {
+      id: "j-1",
+      tool: "crawl_site",
+      status: "succeeded",
+      project_id: "p",
+      created_at: "2026-08-26T10:00:00.000Z",
+      finished_at: "2026-08-26T10:01:00.000Z",
+    },
+  ];
+
+  it("says how many jobs exist and how many are not shown", () => {
+    const text = formatJobList({ rows, total: 56 });
+    expect(text).toMatch(/1 most recent job\(s\) of 56/i);
+    expect(text).toMatch(/55 older job\(s\) not shown/i);
+  });
+
+  it("names the argument that shows more", () => {
+    expect(formatJobList({ rows, total: 56 })).toMatch(/limit/);
+  });
+
+  it("says nothing about a cut when the page IS the whole history", () => {
+    expect(formatJobList({ rows, total: 1 })).not.toMatch(/not shown/i);
+  });
+});
+
+
+/**
+ * G15 — measured live 2026-08-26: every job line ended `project_id: ea77221c-819b-…`, a raw uuid
+ * and nothing a person can read. `list_credit_activity` had the same gap and closed it in the same
+ * wave; this is the sibling surface, and the two must give the SAME three answers about one
+ * project or the panel and the assistant describe one account differently.
+ */
+describe("the site a job ran against", () => {
+  const domains = new Map([["p-1", "dentnotion.com"]]);
+  const base: JobListRow = {
+    id: "j-1",
+    tool: "crawl_site",
+    status: "succeeded",
+    project_id: "p-1",
+    created_at: "2026-08-26T10:00:00.000Z",
+    finished_at: "2026-08-26T10:01:00.000Z",
+  };
+
+  it("names the domain instead of the bare id", () => {
+    const line = formatJobLine(base, domains);
+    expect(line).toContain("dentnotion.com");
+    expect(line).not.toContain("p-1");
+  });
+
+  it("falls back to the id when the project is gone", () => {
+    const line = formatJobLine({ ...base, project_id: "p-vanished" }, domains);
+    expect(line).toContain("p-vanished");
+  });
+
+  /** A job with no project on it says so, rather than leaving the clause off silently. */
+  it("says a job had no project scope", () => {
+    const line = formatJobLine({ ...base, project_id: null }, domains);
+    expect(line).toMatch(/no project/i);
+  });
+
+  it("still resolves nothing when no map is supplied", () => {
+    expect(formatJobLine(base)).toContain("p-1");
   });
 });

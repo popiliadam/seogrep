@@ -5,21 +5,32 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 🧪 SIRADAKİ OTURUM — **SMOKE TURU** (38/38, tool tool, operatör onayıyla)
+### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 2** (sırada `setup_project`, 4/38 gezildi)
 
-> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff.md`
+> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga2.md`
 
-Deploy sonrası tam tur. **Neredeyse her tool yüzeyi bu turda değişti**, o yüzden nokta kontrolü
-değil **38/38**. Protokol operatörün koyduğu hâliyle: **tek tool test edilir, deftere yazılır, ve
-operatör "okey" demeden sıradakine GEÇİLMEZ.** Her tool için iki kanal — asistanın çağrısı **ve**
-operatörün kendi manuel testi; çelişirlerse çelişki yazılır. **Bu tur ölçüm turudur, kod değişmez.**
+Dalga 1 bitti: **4 tool gezildi** (`list_projects`, `get_credit_balance`, `list_credit_activity`,
+`list_jobs`), bulunan **20 madde kapatıldı**, **26 commit**, PR
+[#180](https://github.com/popiliadam/seogrep/pull/180) açık ve `MERGEABLE`.
 
-**İlk iş şema kontrolü:** önceki oturumda `seogrep` MCP bağlantısı şemaları `properties` olmadan
-verdi ve dizi/sayı parametreli tool'lar test edilemedi (**S2 bu yüzden açık kaldı**). Ürün sağlam —
-`registry.ts:385-390` `inputSchema` servis ediyor. Şema bozuk gelirse o tool'lar **operatörün
-istemcisinden** test edilir, "yapıldı" diye yazılmaz.
+**Üç kapı yeşil:** `verify.sh` PASS (mcp **3544** · web **1967** · core **323**) ·
+`verify-db.sh` PASS (165 · 491 · 48) · `make goals` **16/16 (1 skip)** — env yüklüyken, ilk kez
+15 hedef canlıdan ölçüldü. **Kredi fiyatı değişikliği: SIFIR. Vendor: $0,00** (hiç paralı çağrı yok).
 
-Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` (yeni). Dokunulmaz kanıt listesi handoff §7.
+**Kapanan öne çıkanlar:** `list_projects` üç durumlu Search Console + son iş · `whats_next` artık
+koşamayacak bir pull önermiyor · **migration 0033** — defter hangi projeye harcandığını biliyor ·
+`/app/projects/[id]` detay rotası · `list_jobs` çelişkili zaman damgasını işaretliyor ·
+**G17** — `trial-flow-e2e` 36-tool pini iki gündür üretim yüzeyini saymıyordu.
+
+**⚠️ Dalga 1 CANLIDA DEĞİL.** Merge + deploy sırası bağlayıcı: ① migration 0033 cloud'a →
+② `mcp` → ③ `web`. Merge **merge-commit** ile.
+
+**Açık:** G12 (`keyword_gap`/`link_gap` okuma kaydı — o tool'lar F bölümünde gezilecek) ·
+G16b (panel tek anahtara zorluyor — **operatör kararı**) · I-1 PR CI'ı GitHub Actions kesintisinde
+koşmadı · I-2 `main` CI kırmızı (Docker Hub limiti, **re-run** gerek).
+
+Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — sonundaki **KAPANIŞ DURUMU** tablosu tek
+yetkili kaynaktır.
 
 ---
 

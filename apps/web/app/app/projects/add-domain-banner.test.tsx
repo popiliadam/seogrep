@@ -14,12 +14,15 @@ import { addedUrl, errorUrl } from "./add-domain-contract";
  */
 
 /** Read a redirect URL the way the page does: `searchParams`, first value only. */
-function paramsOf(url: string): { added?: string; domain?: string; error?: string } {
+function paramsOf(
+  url: string,
+): { added?: string; domain?: string; error?: string; dns?: string } {
   const query = new URLSearchParams(url.slice(url.indexOf("?") + 1));
   return {
     added: query.get("added") ?? undefined,
     domain: query.get("domain") ?? undefined,
     error: query.get("error") ?? undefined,
+    dns: query.get("dns") ?? undefined,
   };
 }
 
@@ -121,5 +124,52 @@ describe("nothing off the query string is echoed", () => {
       expect(screen.getByText("Now tracking that domain."), `${domain} was echoed`).toBeTruthy();
       unmount();
     }
+  });
+});
+
+/**
+ * BULGU D-1 · D-4 (2026-08-26, smoke turu dalga 2) — what the banner now owes the reader.
+ *
+ * D-1: the panel registered a domain that does not resolve and said only "Now tracking …".
+ * D-4: an IDN project was named by its A-label, so a customer who typed `örnek.com` was shown
+ *      `xn--rnek-4qa.com` — a string they cannot recognise as their own site.
+ */
+describe("AddDomainBanner — the DNS finding and the IDN name", () => {
+  it("appends the warning to the success line, never replaces it", () => {
+    render(<AddDomainBanner {...paramsOf(addedUrl("created", "example.com", "no_such_domain"))} />);
+    const text = screen.getByRole("status").textContent ?? "";
+    // Both halves: the project EXISTS...
+    expect(text).toContain("Now tracking example.com.");
+    // ...and the answer no longer reads as an unqualified success.
+    expect(text).toMatch(/does not resolve/i);
+    expect(text).toMatch(/not live|mistyped/i);
+  });
+
+  it("stays silent for a domain that resolves and for a lookup that could not run", () => {
+    for (const quiet of ["resolves", "unknown"] as const) {
+      const { unmount } = render(
+        <AddDomainBanner {...paramsOf(addedUrl("created", "example.com", quiet))} />,
+      );
+      expect(screen.getByRole("status").textContent, quiet).toBe("Now tracking example.com.");
+      unmount();
+    }
+  });
+
+  /**
+   * The query string is attacker-controlled — a link is enough. An unrecognised `dns` value must
+   * render like a missing one, exactly as an unrecognised `added` renders nothing at all.
+   */
+  it("renders nothing extra for a dns value it does not know", () => {
+    render(
+      <AddDomainBanner added="created" domain="example.com" dns="<script>alert(1)</script>" />,
+    );
+    expect(screen.getByRole("status").textContent).toBe("Now tracking example.com.");
+  });
+
+  it("names an IDN project the way the customer typed it", () => {
+    // The URL carries the STORED A-label (that is what the action writes); the banner decodes it
+    // after its own shape gate has accepted it.
+    render(<AddDomainBanner {...paramsOf(addedUrl("created", "xn--rnek-4qa.com"))} />);
+    expect(screen.getByRole("status").textContent).toBe("Now tracking örnek.com.");
   });
 });

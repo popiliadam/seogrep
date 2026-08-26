@@ -179,14 +179,20 @@ function isFresh(createdAt: string, now: Date): boolean {
 }
 
 /**
- * Is Search Console connected for (userId, projectId)? Connected = a gsc_connections row exists
+ * What Search Console link does (userId, projectId) have? Connected = a gsc_connections row exists
  * with a non-null account_id (migration 0021 — the web OAuth callback sets it once a token is
  * stored on gsc_accounts). Scoped to the tenant by an explicit user_id filter (constitution
  * NEVER #4) AND project_id — the literal table gives the specific row type, so the project_id
  * filter type-checks (forUser's selectOwn narrows filters to the columns common to ALL tenant
  * tables, which excludes project_id). Same reader shape as pull_gsc_data's loadConnection. A
  * missing / another tenant's connection / a null account_id all read as not-connected — this
- * read needs only the boolean, never the token itself, so it stops at gsc_connections.
+ * read needs no token itself, so it stops at gsc_connections.
+ *
+ * IT RETURNS TWO FACTS, NOT ONE, since 2026-08-26. `gsc_property` can be NULL on a row whose
+ * account_id is set — an account linked, no property mapped — and the old boolean reported that
+ * project as plainly "connected", which routed it to pull_gsc_data: a pull that cannot succeed.
+ * `list_projects` names this state on its own line, so a boolean here would also make the two
+ * tools disagree about the same project. The column was already one `select` away.
  *
  * "Connected" is deliberately NOT "usable": the account behind this row can be dead. That is a
  * SEPARATE signal, read by loadGscTokenStatus in readProjectSignals below — kept separate because
@@ -194,21 +200,25 @@ function isFresh(createdAt: string, now: Date): boolean {
  * credential expired look like one that never connected (which would route it to
  * "connect_gsc (optional)" beside the audits, hiding that its Search Console data is frozen).
  */
-async function readGscConnected(
+async function readGscLink(
   client: ServiceClient,
   userId: string,
   projectId: string,
-): Promise<boolean> {
+): Promise<{ connected: boolean; propertyMissing: boolean }> {
   const { data, error } = await client
     .from("gsc_connections")
-    .select("account_id")
+    .select("account_id, gsc_property")
     .eq("user_id", userId)
     .eq("project_id", projectId)
     .maybeSingle();
   if (error) {
     throw new Error(`whats_next: gsc_connections read failed: ${error.message}`);
   }
-  return data?.account_id != null;
+  const connected = data?.account_id != null;
+  // `propertyMissing` is only meaningful WITH a connection: an unconnected project has no
+  // mapping to be missing, and reporting one would put the pick-a-property rung on a card whose
+  // answer is connect_gsc.
+  return { connected, propertyMissing: connected && data?.gsc_property == null };
 }
 
 /**
@@ -235,10 +245,10 @@ async function readProjectSignals(
   loadTokenStatus: LoadTokenStatusFn,
   checkDomain: CheckDomainFn,
 ): Promise<ProjectSignals> {
-  const [crawl, pull, gscConnected, tokenStatus, reachability] = await Promise.all([
+  const [crawl, pull, gscLink, tokenStatus, reachability] = await Promise.all([
     getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" }),
     getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" }),
-    readGscConnected(client, userId, projectId),
+    readGscLink(client, userId, projectId),
     loadTokenStatus(userId, projectId),
     // BEST-EFFORT, and unlike the health read above that is not an inconsistency — it is this
     // port's whole contract. "Unknown" is one of its three legitimate answers (see
@@ -254,7 +264,10 @@ async function readProjectSignals(
     // function generate_report's own age line goes through, so the router can no longer call a
     // crawl "fresh" while the report calls it "16 days ago" and neither says what the other means.
     crawlAgeDays: crawl === null ? null : dataAgeInDays(crawl.createdAt, now),
-    gscConnected,
+    gscConnected: gscLink.connected,
+    // A live account with no property mapped to it. Reported so the ladder can send the user to
+    // pick one instead of to a pull that cannot run (rung 4b).
+    gscPropertyMissing: gscLink.propertyMissing,
     hasPull: pull !== null,
     pullFresh: pull !== null && isFresh(pull.createdAt, now),
     pullAgeDays: pull === null ? null : dataAgeInDays(pull.createdAt, now),

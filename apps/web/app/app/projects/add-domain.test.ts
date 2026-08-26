@@ -26,6 +26,19 @@ const revalidatePath = vi.hoisted(() => vi.fn());
 const getUser = vi.hoisted(() => vi.fn());
 const serviceClient = vi.hoisted(() => vi.fn());
 
+/**
+ * The DNS port, injectable — no spec here reaches a resolver (`net/reachability.ts`'s own rule).
+ * Default "unknown" is the silent answer, so every pre-existing assertion in this file keeps
+ * describing a registration with nothing extra attached; the two specs that care set it.
+ */
+const checkDomainReachable = vi.hoisted(() =>
+  vi.fn(async (): Promise<"resolves" | "no_such_domain" | "unknown"> => "unknown"),
+);
+
+vi.mock("@pseo/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pseo/core")>();
+  return { ...actual, checkDomainReachable };
+});
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath }));
 vi.mock("next/navigation", () => ({
@@ -319,5 +332,61 @@ describe("addDomain writes through the shared project route", () => {
 
     await expect(submit("example.com")).rejects.toThrow(/not authenticated/i);
     expect(store.rows).toEqual([]);
+  });
+});
+
+/**
+ * BULGU D-1 (2026-08-26) — the panel asks the DNS question too.
+ *
+ * Measured live: `setup_project("smoke-dalga2-yok-4e91.com")` answered with a "does not resolve"
+ * paragraph, and the SAME domain through this form answered "Now tracking …" and nothing else.
+ * One shared route, two different levels of honesty — on the surface a human types into.
+ */
+describe("addDomain — the reachability finding reaches the page", () => {
+  let store: ReturnType<typeof makeProjectsStore>;
+
+  beforeEach(() => {
+    checkDomainReachable.mockResolvedValue("unknown");
+    store = makeProjectsStore();
+    serviceClient.mockReturnValue(store.client);
+  });
+
+  it("carries a positive 'no such name' into the redirect", async () => {
+    checkDomainReachable.mockResolvedValue("no_such_domain");
+    expect(await submit("bu-domain-kesinlikle-yok-9f3a2c.com")).toContain("dns=no_such_domain");
+  });
+
+  it("says NOTHING when the domain resolves or when the lookup could not run", async () => {
+    // The second half is the one that matters: a resolver that timed out must never reach the
+    // page as a claim about the customer's domain. Both answers must produce the SAME URL.
+    checkDomainReachable.mockResolvedValue("resolves");
+    const resolves = await submit("seogrep.com");
+    // A FRESH store for the second run: the same store would answer `existing` the second time
+    // and the two URLs would differ for a reason that has nothing to do with DNS.
+    serviceClient.mockReturnValue(makeProjectsStore().client);
+    checkDomainReachable.mockResolvedValue("unknown");
+    const unknown = await submit("seogrep.com");
+    expect(resolves).toBe(unknown);
+    expect(resolves).not.toContain("dns=");
+  });
+
+  it("asks about the CANONICAL domain, not the raw input", async () => {
+    // The name checked has to be the name a crawl will later fetch: the route strips the scheme,
+    // the path and the `www.` label, and the lookup happens after that — not on what was pasted.
+    await submit("https://WWW.Seogrep.com/pricing?x=1");
+    expect(checkDomainReachable).toHaveBeenLastCalledWith("seogrep.com");
+  });
+
+  it("asks AFTER the row is written — a hanging resolver cannot cost a project", async () => {
+    // The ordering is the whole answer to "can this block registration?". If the check ran first,
+    // a rejected/slow lookup would sit between the customer and their project; here the row is
+    // already committed, so the worst case is a slower redirect.
+    let projectRowsWhenAsked = -1;
+    checkDomainReachable.mockImplementation(async () => {
+      projectRowsWhenAsked = store.rows.length;
+      return "no_such_domain";
+    });
+    await submit("bu-domain-kesinlikle-yok-9f3a2c.com");
+    expect(projectRowsWhenAsked).toBe(1);
   });
 });

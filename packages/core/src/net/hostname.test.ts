@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DOMAIN_RE,
+  foldDottedCapitalI,
   nonPublicHostnameReason,
   normalizeDomain,
   sameSiteDomains,
@@ -189,5 +190,57 @@ describe("normalizeDomain (devam)", () => {
       ok: false,
       error: expect.stringContaining("not a valid domain") as unknown as string,
     });
+  });
+});
+
+/**
+ * BÜYÜK HARFLE YAZILMIŞ TÜRKÇE ALAN ADI — canlıda ölçüldü (2026-08-26, smoke turu dalga 2).
+ *
+ * JS'in yerelden bağımsız küçültmesi `İ`yi (U+0130) İKİ kod noktasına açar: `i` + U+0307. O
+ * birleşen nokta ASCII olmadığı için URL ayrıştırıcısının IDNA adımı bütün etiketi punycode'a
+ * çevirir — ve tek başına BÜYÜK HARF, bir siteyi iki projeye böler. Aşağıdaki çiftlerin sol
+ * tarafı doğru, sağ tarafı düzeltme olmadan var olmayan bir ada gidiyordu.
+ *
+ * Bu blok, düzeltmenin KENDİSİNİ ölçer: `foldDottedCapitalI` çağrısı `normalizeDomain`'den
+ * çıkarıldığında beş iddianın beşi de kırmızıya döner (mutasyon koşuldu, 2026-08-26).
+ */
+describe("normalizeDomain — Türkçe büyük harf (dotted İ)", () => {
+  it("BÜYÜK ile küçük yazımı AYNI alan adına indirir", () => {
+    for (const [lower, upper] of [
+      ["sigorta.com.tr", "SİGORTA.COM.TR"],
+      ["kiralikaraç.com", "KİRALIKARAÇ.COM"],
+      ["ihtiyaç.com.tr", "İHTİYAÇ.COM.TR"],
+      ["çiçek.com", "ÇİÇEK.COM"],
+    ] as const) {
+      const a = normalizeDomain(lower);
+      const b = normalizeDomain(upper);
+      expect(a.ok && b.ok && a.domain === b.domain).toBe(true);
+    }
+  });
+
+  it("saf ASCII bir .com.tr adını punycode'a çevirmez", () => {
+    // Turun bulduğu en pahalı vaka: küçük harfte HİÇ özel karakter yok, yalnız büyük harf
+    // yazıldığı için `xn--sigorta-7he.com.tr` üretiliyordu — çözülmeyen bir ad.
+    expect(normalizeDomain("SİGORTA.COM.TR")).toEqual({ ok: true, domain: "sigorta.com.tr" });
+    expect(normalizeDomain("HTTPS://WWW.SİGORTA.COM.TR/iletisim")).toEqual({
+      ok: true,
+      domain: "sigorta.com.tr",
+    });
+  });
+
+  it("noktasız `ı`ya DOKUNMAZ — o geçerli bir IDN karakteri", () => {
+    // Kapsam kaymasının sınırı: `ı` (U+0131) IDNA'da izinli ve sahibi tam olarak o harfi
+    // kastediyor. Fold yalnız U+0130'u hedefler, "Türkçe harfleri sadeleştirmek" değildir.
+    const dotless = normalizeDomain("ıspanak.com");
+    const folded = normalizeDomain(foldDottedCapitalI("ıspanak.com"));
+    expect(dotless).toEqual(folded);
+    // ...ve ASCII `i` ile yazılan ad ONDAN FARKLI bir sitedir; fold ikisini birleştirmez.
+    expect(dotless.ok && dotless.domain).not.toBe("ispanak.com");
+  });
+
+  it("ayrışmış `i`+U+0307 dizisini de aynı yere indirir (NFC önce)", () => {
+    // Kopyala-yapıştır ayrışmış biçimi getirebilir; NFC onu U+0130'a birleştirir, fold da `i`ye.
+    expect(foldDottedCapitalI("i\u0307")).toBe("i");
+    expect(normalizeDomain("si\u0307gorta.com.tr")).toEqual({ ok: true, domain: "sigorta.com.tr" });
   });
 });

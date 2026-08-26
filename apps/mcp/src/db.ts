@@ -692,6 +692,9 @@ export type Database = {
           tool: string | null;
           job_id: string | null;
           reserve_id: string | null;
+          // Which project this spend was for, or null when the call had no project scope
+          // (migration 0033). Null is a real answer, not a missing one.
+          project_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -702,6 +705,7 @@ export type Database = {
           tool?: string | null;
           job_id?: string | null;
           reserve_id?: string | null;
+          project_id?: string | null;
         };
         Update: {
           [_ in never]: never;
@@ -726,7 +730,17 @@ export type Database = {
     // (reserve/commit/release under a per-user advisory lock). No direct ledger writes.
     Functions: {
       reserve_credits: {
-        Args: { p_user_id: string; p_amount: number; p_tool: string; p_job_id: string };
+        Args: {
+          p_user_id: string;
+          p_amount: number;
+          p_tool: string;
+          p_job_id: string;
+          // 0033. Null is the project-less answer; the settlement RPCs read it back off the
+          // reserve row rather than taking it again. OPTIONAL because the SQL parameter carries
+          // `default null` — a caller that omits it reserves without a scope, which is the honest
+          // shape for the tools that have none.
+          p_project_id?: string | null;
+        };
         Returns: string;
       };
       commit_reserve: { Args: { p_reserve_id: string }; Returns: undefined };
@@ -1018,9 +1032,20 @@ export async function markGscAccountTokenInvalid(
 export function forUser(client: ServiceClient, userId: string) {
   return {
     userId,
-    /** A SELECT over `table`, pre-filtered to this tenant's rows. */
-    selectOwn(table: TenantTable, columns = "*") {
-      return client.from(table).select(columns).eq("user_id", userId);
+    /**
+     * A SELECT over `table`, pre-filtered to this tenant's rows.
+     *
+     * `options` is passed straight to supabase-js, which is how a caller asks for
+     * `{ count: "exact" }`. A paged list needs it to say how many rows it did NOT show, and
+     * counting through a second query would be a second place for the tenant filter to be
+     * forgotten — the one thing this wrapper exists to make impossible.
+     */
+    selectOwn(
+      table: TenantTable,
+      columns = "*",
+      options?: { count?: "exact" | "planned" | "estimated"; head?: boolean },
+    ) {
+      return client.from(table).select(columns, options).eq("user_id", userId);
     },
     /**
      * Tenant-scoped single-row read by id, returning the caller-declared projection

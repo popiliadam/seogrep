@@ -447,3 +447,92 @@ describe("age wording", () => {
     }
   });
 });
+
+
+/**
+ * G9 — the state the ladder could not see (measured live 2026-08-26).
+ *
+ * A project can hold a gsc_connections row with a NULL `gsc_property`: an account is linked, no
+ * property is mapped, and `pull_gsc_data` cannot succeed. Every rung below the dead-credential
+ * one recommends exactly that pull — the SAME class of wrong the rung-3 comment records, one
+ * field over. `list_projects` names this state on its own line; without this rung the router
+ * would contradict it and charge for the disagreement.
+ */
+describe("a connection with no property mapped", () => {
+  const linkedButUnmapped = {
+    hasCrawl: true,
+    crawlFresh: true,
+    gscConnected: true,
+    gscPropertyMissing: true,
+    hasPull: false,
+    pullFresh: false,
+  } as const;
+
+  it("does not recommend a pull that cannot succeed", () => {
+    const step = decideProjectNextStep(linkedButUnmapped, new Date("2026-08-26T00:00:00.000Z"));
+    expect(step.primary).not.toBe("pull_gsc_data");
+    expect(step.upcoming).not.toContain("pull_gsc_data");
+  });
+
+  it("sends the user to pick a property, and says why", () => {
+    const step = decideProjectNextStep(linkedButUnmapped, new Date("2026-08-26T00:00:00.000Z"));
+    expect(step.primary).toBe("list_gsc_properties");
+    expect(step.upcoming).toContain("track_gsc_property");
+    expect(step.reason).toMatch(/propert/i);
+    expect(step.allSet).toBe(false);
+  });
+
+  it("still offers the audits, which need no Google account at all", () => {
+    const step = decideProjectNextStep(linkedButUnmapped, new Date("2026-08-26T00:00:00.000Z"));
+    expect(step.upcoming).toContain("audit_onpage");
+  });
+
+  /**
+   * A dead credential outranks an unmapped property: you cannot list the properties to choose
+   * from until the account works again. Position, not preference.
+   */
+  it("yields to the dead-credential rung when both are true", () => {
+    const step = decideProjectNextStep(
+      { ...linkedButUnmapped, gscTokenInvalid: true },
+      new Date("2026-08-26T00:00:00.000Z"),
+    );
+    expect(step.primary).toBe("connect_gsc");
+  });
+
+  /**
+   * `undefined` is "this surface does not measure it", never "there is a property" — the same
+   * discipline gscTokenInvalid carries, so the web panel keeps deciding byte-identically until
+   * it adopts the signal.
+   */
+  it("decides exactly as before when the signal is not measured", () => {
+    const withoutSignal = { ...linkedButUnmapped, gscPropertyMissing: undefined };
+    const step = decideProjectNextStep(withoutSignal, new Date("2026-08-26T00:00:00.000Z"));
+    expect(step.primary).toBe("pull_gsc_data");
+  });
+
+  /**
+   * THE AXIS THE FIRST ROUND OF SPECS DID NOT VARY, found by mutation: removing the
+   * `gscConnected &&` guard from the rung changed nothing, because nothing here had ever paired
+   * `gscPropertyMissing: true` with `gscConnected: false`. This ladder is a PUBLIC pure function
+   * in @pseo/core and the MCP reader is not its only caller, so the pair has to be refused here
+   * rather than upstream — a project with no connection at all must never be sent to pick a
+   * property from an account it does not have.
+   */
+  it("never sends an UNCONNECTED project to pick a property, whatever the flag says", () => {
+    const at = new Date("2026-08-26T00:00:00.000Z");
+    const disconnected = { ...linkedButUnmapped, gscConnected: false };
+    expect(decideProjectNextStep(disconnected, at).primary).not.toBe("list_gsc_properties");
+    // …and with a pull behind it, the answer is the reconnect rung, not the mapping one.
+    expect(decideProjectNextStep({ ...disconnected, hasPull: true }, at).primary).toBe(
+      "connect_gsc",
+    );
+  });
+
+  it("is not reached by a project that has no crawl yet", () => {
+    const step = decideProjectNextStep(
+      { ...linkedButUnmapped, hasCrawl: false, crawlFresh: false },
+      new Date("2026-08-26T00:00:00.000Z"),
+    );
+    expect(step.primary).toBe("crawl_site");
+  });
+});

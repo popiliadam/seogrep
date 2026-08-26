@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { buildProjectCard } from "../../../lib/projects/card";
 import type { ProjectCardInput } from "../../../lib/projects/card";
-import { ProjectList } from "./project-list";
+import { ProjectCardView, ProjectList } from "./project-list";
 
 /**
  * The RENDER, driven through the real card builder rather than hand-written card objects: a
@@ -169,5 +169,55 @@ describe("ProjectList — several projects", () => {
       "example.com",
       "later.example",
     ]);
+  });
+});
+
+
+/**
+ * G2 — the list is a SUMMARY and the detail lives on its own page.
+ *
+ * Measured 2026-08-26: /app/projects rendered fifteen full cards on one page — three fact lines,
+ * audit / insight / lookup blocks and two collapsibles each — and there was no project route at
+ * all (no `[id]` segment existed anywhere under /app). At that size the page stops being readable
+ * and there is nowhere to go for one site.
+ */
+describe("the list card is a summary that links to the project", () => {
+  const card = cardFor({
+    ...BARE,
+    auditRuns: [
+      {
+        tool: "audit_tech",
+        created_at: ago(1),
+        page_count: 10,
+        finding_counts: null,
+        status: { ok: 8, redirect: 1, client_error: 1, server_error: 0 },
+        pages_with_schema: null,
+      },
+    ],
+  });
+
+  it("links the domain to that project's own page", () => {
+    render(<ProjectList cards={[card]} />);
+    const link = screen.getByRole("link", { name: /example\.com/ });
+    expect(link.getAttribute("href")).toBe("/app/projects/p-1");
+  });
+
+  it("keeps the facts and the next step on the list", () => {
+    render(<ProjectList cards={[card]} />);
+    // "Search Console" appears on both the connection fact and the pull fact — the summary keeps
+    // BOTH, which is the assertion.
+    expect(screen.getAllByText(/Search Console/i).length).toBeGreaterThan(1);
+    expect(screen.getByText(/Next step/i)).toBeTruthy();
+  });
+
+  it("moves the audit detail off the list", () => {
+    render(<ProjectList cards={[card]} />);
+    expect(screen.queryByText(/audit_tech/)).toBeNull();
+  });
+
+  it("shows that same detail on the project page, with no link out of its own heading", () => {
+    render(<ProjectCardView card={card} detail />);
+    expect(screen.getByText(/audit_tech/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /example\.com/ })).toBeNull();
   });
 });

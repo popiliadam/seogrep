@@ -18,6 +18,14 @@ export * from "./keys/api-key.js";
 // action could not reach it and was opening projects the MCP tools refused — and a second copy
 // of a reserved-TLD list is worse than the gap it closes.
 export * from "./net/hostname.js";
+// "Does this domain exist?" — the DNS port, promoted from apps/mcp on 2026-08-26 for the same
+// reason the hostname gate was: the panel's Add domain form shares the project-opening route but
+// could not reach the check, so a mistyped domain warned through the MCP tool and passed in
+// SILENCE through the panel. Each surface still owns its own wording.
+export * from "./net/reachability.js";
+// Punycode -> the name the customer typed. Storage stays ASCII (DNS, crawls and vendor joins all
+// want that); this is the display half, so an IDN project stops reading as `xn--rnek-4qa.com`.
+export * from "./net/idn.js";
 
 // GSC at-rest token crypto + the bare-fetch Google Search Console client. Promoted here
 // from apps/mcp so the web OAuth routes consume one BUILT implementation (no @pseo/mcp

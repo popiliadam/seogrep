@@ -44,7 +44,7 @@ function lookups(container: HTMLElement): HTMLElement {
 
 describe("the domain lookups section lists every lookup", () => {
   it("names all three tools even when none has ever run", () => {
-    const { container } = render(<ProjectList cards={[cardWith({})]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({})]} />);
     const section = lookups(container);
 
     expect(within(section).getByText("ranked_keywords")).toBeDefined();
@@ -64,7 +64,7 @@ describe("the domain lookups section lists every lookup", () => {
    * survive a rewording that dropped the other.
    */
   it("says NOT RUN FOR THIS DOMAIN, never a bare 'not run yet'", () => {
-    const section = lookups(render(<ProjectList cards={[cardWith({})]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[cardWith({})]} />).container);
     const line = within(section).getAllByText(/ask your assistant to run ranked_keywords/i)[0];
 
     expect(line?.textContent).toMatch(/for this domain/i);
@@ -75,7 +75,7 @@ describe("the domain lookups section lists every lookup", () => {
 
   /** All three empty lines carry the qualifier, not just the first one. */
   it("qualifies every never-run line, not only the first", () => {
-    const section = lookups(render(<ProjectList cards={[cardWith({})]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[cardWith({})]} />).container);
     const empties = [...section.querySelectorAll("li")].map((item) => item.textContent ?? "");
     expect(empties).toHaveLength(3);
     for (const text of empties) {
@@ -89,7 +89,7 @@ describe("the domain lookups section lists every lookup", () => {
    * above while making the audits line claim a distinction that does not exist there.
    */
   it("leaves the audits and insights sections unqualified", () => {
-    const { container } = render(<ProjectList cards={[cardWith({})]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({})]} />);
 
     /**
      * BOTH siblings, because this test named both and used to inspect only Audits — so
@@ -122,7 +122,7 @@ describe("the domain lookups section lists every lookup", () => {
         }),
       ],
     });
-    const section = lookups(render(<ProjectList cards={[card]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[card]} />).container);
 
     expect(within(section).getByText(/1420 ranked keywords/)).toBeDefined();
     expect(within(section).getByText(/running shoes/)).toBeDefined();
@@ -137,7 +137,7 @@ describe("the domain lookups section lists every lookup", () => {
         run({ tool: "analyze_backlinks", created_at: "2026-08-16T00:00:00.000Z", total: 4 }),
       ],
     });
-    const section = lookups(render(<ProjectList cards={[card]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[card]} />).container);
 
     expect(within(section).getByText(/4 backlinks/)).toBeDefined();
     expect(within(section).queryByText(/99 backlinks/)).toBeNull();
@@ -154,7 +154,7 @@ describe("the domain lookups section lists every lookup", () => {
         run({ tool: "ranked_keywords", created_at: "2026-08-16T00:00:00.000Z", total: null }),
       ],
     });
-    const section = lookups(render(<ProjectList cards={[card]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[card]} />).container);
 
     expect(section.querySelector("time")).not.toBeNull();
     expect(within(section).queryByText(/ranked keyword/i)).toBeNull();
@@ -168,7 +168,7 @@ describe("the domain lookups section lists every lookup", () => {
         run({ tool: "analyze_backlinks", created_at: "2026-08-16T00:00:00.000Z", total: 0 }),
       ],
     });
-    const section = lookups(render(<ProjectList cards={[card]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[card]} />).container);
     const line = [...section.querySelectorAll("li")].find((item) =>
       item.textContent?.includes("analyze_backlinks"),
     );
@@ -179,7 +179,7 @@ describe("the domain lookups section lists every lookup", () => {
 
   /** The panel STARTS nothing: no button, no form, no link into a lookup anywhere in the section. */
   it("offers no control that would start a lookup", () => {
-    const section = lookups(render(<ProjectList cards={[cardWith({})]} />).container);
+    const section = lookups(render(<ProjectList detail cards={[cardWith({})]} />).container);
     expect(section.querySelectorAll("button, form, input, a")).toHaveLength(0);
   });
 });

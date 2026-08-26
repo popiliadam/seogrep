@@ -5,6 +5,7 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CONFIRMATION_THRESHOLD_CREDITS,
   confirmationGate,
+  declaredProjectId,
   defineTool,
   evaluateConfirmation,
   readConfirmFlag,
@@ -530,5 +531,44 @@ describe("D17 threshold — confirmationGate (dispatch gate)", () => {
   it("returns null (proceed) for a sub-threshold estimate — the only path real tools hit today", () => {
     expect(confirmationGate("crawl_site", 20, {})).toBeNull();
     expect(confirmationGate("whats_next", 0, {})).toBeNull();
+  });
+});
+
+
+/**
+ * G11 — the project scope the registry stamps on a surface tool's ledger rows (migration 0033).
+ * Read generically off the validated input, because the registry opens the reserve BEFORE the
+ * handler runs: a per-tool value could only arrive by threading an argument through thirty-odd
+ * call sites, and a forgotten one writes a project-less row indistinguishable from an honestly
+ * project-less one.
+ */
+describe("declaredProjectId", () => {
+  it("takes the project_id a tool's own input declares", () => {
+    expect(declaredProjectId({ project_id: "11111111-2222-4333-8444-555555555555" })).toBe(
+      "11111111-2222-4333-8444-555555555555",
+    );
+  });
+
+  it("is undefined for a tool that declares none — a real answer, not a failure", () => {
+    expect(declaredProjectId({ keywords: ["a", "b"] })).toBeUndefined();
+    expect(declaredProjectId({})).toBeUndefined();
+  });
+
+  /**
+   * IT DOES NOT FALL BACK TO `target`. Thirteen tools accept a bare domain, including a
+   * COMPETITOR'S, and resolving one to a project here would bill a competitor lookup against
+   * whichever of the tenant's own sites happened to match the name. An honest blank beats an
+   * invented scope, because a scope is a number somebody adds up.
+   */
+  it("never infers a project from a target domain", () => {
+    expect(declaredProjectId({ target: "competitor.com" })).toBeUndefined();
+  });
+
+  it("treats a blank or non-string as no scope rather than as a scope", () => {
+    expect(declaredProjectId({ project_id: "" })).toBeUndefined();
+    expect(declaredProjectId({ project_id: 42 })).toBeUndefined();
+    expect(declaredProjectId({ project_id: null })).toBeUndefined();
+    expect(declaredProjectId(null)).toBeUndefined();
+    expect(declaredProjectId("not-an-object")).toBeUndefined();
   });
 });

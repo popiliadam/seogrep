@@ -1,15 +1,37 @@
 ---
 title: list_projects
-description: "List the website domains you are tracking (oldest first), plus any projects you have archived."
+description: "List the website domains you are tracking (oldest first), each with its Search Console state and last job, plus any projects you have archived."
 ---
 
 **Cost:** Free (0 credits).
 
-`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` — and, below them, anything you have **archived**. If you have neither yet, it points you to `setup_project`.
+`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`, its Search Console state and its last background job — and, below them, anything you have **archived**. If you have neither yet, it points you to `setup_project`.
 
 ## What it does
 
 Reads your projects, scoped to your account, and returns them as two lists: the ones you are tracking, and the ones you archived with [`untrack_project`](/docs/tools-reference/untrack-project).
+
+## What each tracked line tells you
+
+Beside the domain and its `project_id`, every tracked line carries two facts, because a list of fifteen identical-looking domains answers neither question a customer actually has: can Search Console be read for this one, and has anything ever run against it.
+
+**Search Console** is reported in three states, never as a tick:
+
+- `not connected` — no Google account is linked to this project.
+- `connected, no property selected` — an account is linked but no property has been matched to it. Nothing can be pulled yet. This state is named rather than folded into "connected" precisely because it looks like a working connection and is not.
+- the property itself (for example `sc-domain:example.com`) — the mapping that pulls will use. If the stored credential behind it has died, `(reconnect needed)` is appended: the property is still right, the credential is not.
+
+**Last job** names the tool that ran and the day it ran. A *job* is a background run — [`crawl_site`](/docs/tools-reference/crawl-site) or [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data). Audits, keyword and backlink lookups run synchronously and are not jobs, so a project can read `none yet` and still have been analysed — the reply says so, under the list, rather than leaving the line to be read as "nothing has ever happened here".
+
+**If two tracked projects are mapped to the same Search Console property**, the reply names that property and both projects underneath the list. Each pull fetches one set of rows and is billed once per project, so the pair costs credits twice for the same data. Nothing is deduplicated for you — which of the two to keep is a decision only you can make.
+
+## You do not always need the project_id
+
+The `project_id` is what most tools use to know which of your sites they are working on, and this is where you get it. But a large part of the surface will also take a plain domain instead, passed as `target` — including a competitor's, which is the point: those tools answer questions about any public site, not only your own.
+
+Pass `target` OR `project_id`, never both. These tools accept either: [`ai_visibility`](/docs/tools-reference/ai-visibility), [`analyze_backlinks`](/docs/tools-reference/analyze-backlinks), [`backlink_changes`](/docs/tools-reference/backlink-changes), [`backlink_details`](/docs/tools-reference/backlink-details), [`compare_competitors`](/docs/tools-reference/compare-competitors), [`disavow_candidates`](/docs/tools-reference/disavow-candidates), [`discover_keywords`](/docs/tools-reference/discover-keywords), [`keyword_gap`](/docs/tools-reference/keyword-gap), [`keyword_positions`](/docs/tools-reference/keyword-positions), [`link_gap`](/docs/tools-reference/link-gap), [`my_pages`](/docs/tools-reference/my-pages), [`ranked_keywords`](/docs/tools-reference/ranked-keywords), [`serp_snapshot`](/docs/tools-reference/serp-snapshot).
+
+Everything else needs the `project_id`, because it reads data stored against YOUR project — your crawls, your audits, your Search Console pulls — and a domain does not identify those.
 
 ## The archive
 
@@ -33,4 +55,4 @@ No parameters.
 
 ### Returns
 
-One line per tracked project (`domain` and `project_id`), oldest first; then an archive section, most recently archived first, with each archived project's `domain`, `project_id`, archive date, and how to restore it. Guidance to create your first project when you have nothing at all.
+One line per tracked project (`domain`, `project_id`, Search Console state, last job), oldest first, followed by one line saying what counts as a job; then an archive section, most recently archived first, with each archived project's `domain`, `project_id`, archive date, and how to restore it. Guidance to create your first project when you have nothing at all.

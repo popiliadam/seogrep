@@ -4,8 +4,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const getUser = vi.fn();
 const listLedgerEntries = vi.fn();
 
+/**
+ * The client now also answers a `projects` read — the Site column names the project a charge was
+ * for (migration 0033). Stubbed to an empty list rather than removed from the page: these specs
+ * are about paging and the empty state, and an empty map changes none of their assertions (rows
+ * fall back to printing the id, which none of them reads).
+ */
 vi.mock("../../../lib/supabase/server", () => ({
-  createClient: async () => ({ auth: { getUser } }),
+  createClient: async () => ({
+    auth: { getUser },
+    from: () => ({ select: () => ({ eq: async () => ({ data: [], error: null }) }) }),
+  }),
 }));
 vi.mock("@pseo/db/ledger-read", () => ({
   listLedgerEntries: (...args: unknown[]) => listLedgerEntries(...args),
@@ -23,6 +32,7 @@ function makeEntries(n: number) {
     createdAt: "2026-07-01T00:00:00.000Z",
     delta: i % 2 === 0 ? i + 1 : -(i + 1),
     kind: i % 2 === 0 ? "grant" : "spend_reserve",
+    projectId: null,
     reason: null,
     tool: "audit",
   }));

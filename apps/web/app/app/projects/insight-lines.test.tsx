@@ -45,7 +45,7 @@ function insights(container: HTMLElement): HTMLElement {
 
 describe("the insights section lists every analysis", () => {
   it("names all three tools even when none has ever run", () => {
-    const { container } = render(<ProjectList cards={[cardWith({})]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({})]} />);
     const section = insights(container);
 
     expect(within(section).getByText("find_quick_wins")).toBeDefined();
@@ -60,7 +60,7 @@ describe("the insights section lists every analysis", () => {
    * next move at all.
    */
   it("tells the user which tool to ask for when an analysis has never run", () => {
-    const { container } = render(<ProjectList cards={[cardWith({})]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({})]} />);
     expect(
       within(insights(container)).getByText(/ask your assistant to run find_quick_wins/i),
     ).toBeDefined();
@@ -77,7 +77,7 @@ describe("the insights section lists every analysis", () => {
         }),
       ],
     });
-    const section = insights(render(<ProjectList cards={[card]} />).container);
+    const section = insights(render(<ProjectList detail cards={[card]} />).container);
 
     expect(within(section).getByText(/12 quick wins/)).toBeDefined();
     expect(within(section).getByText(/running shoes/)).toBeDefined();
@@ -92,7 +92,7 @@ describe("the insights section lists every analysis", () => {
         run({ tool: "analyze_content_decay", created_at: "2026-08-12T00:00:00.000Z", total: 4 }),
       ],
     });
-    const section = insights(render(<ProjectList cards={[card]} />).container);
+    const section = insights(render(<ProjectList detail cards={[card]} />).container);
 
     expect(within(section).getByText(/4 decaying pages/)).toBeDefined();
     expect(within(section).queryByText(/99 decaying pages/)).toBeNull();
@@ -105,7 +105,7 @@ describe("the insights section lists every analysis", () => {
         run({ tool: "find_quick_wins", created_at: "2026-08-12T00:00:00.000Z", total: "many" }),
       ],
     });
-    const section = insights(render(<ProjectList cards={[card]} />).container);
+    const section = insights(render(<ProjectList detail cards={[card]} />).container);
 
     expect(section.querySelector("time")).not.toBeNull();
     expect(within(section).queryByText(/quick win/i)).toBeNull();
@@ -123,7 +123,7 @@ describe("the pull line says what the pull covered", () => {
   };
 
   it("prints the window beside the date", () => {
-    const { container } = render(<ProjectList cards={[cardWith({ pull })]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({ pull })]} />);
     expect(within(container).getByText("2026-04-19..2026-07-17 (90 days)")).toBeDefined();
   });
 
@@ -132,27 +132,27 @@ describe("the pull line says what the pull covered", () => {
    * would mean nothing.
    */
   it("says nothing about a cap when neither window hit it", () => {
-    const { container } = render(<ProjectList cards={[cardWith({ pull })]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({ pull })]} />);
     expect(within(container).queryByText(/row cap/i)).toBeNull();
   });
 
   it.each(["window_capped", "previous_capped"] as const)("warns when the %s window hit the cap", (field) => {
     const { container } = render(
-      <ProjectList cards={[cardWith({ pull: { ...pull, [field]: true } })]} />,
+      <ProjectList detail cards={[cardWith({ pull: { ...pull, [field]: true } })]} />,
     );
     expect(within(container).getByText(/row cap — this data may be partial/i)).toBeDefined();
   });
 
   it("still says the date alone when the stored window is unreadable", () => {
     const { container } = render(
-      <ProjectList cards={[cardWith({ pull: { created_at: pull.created_at } })]} />,
+      <ProjectList detail cards={[cardWith({ pull: { created_at: pull.created_at } })]} />,
     );
     expect(within(container).queryByText(/\(90 days\)/)).toBeNull();
     expect(within(container).queryByText("No pull yet")).toBeNull();
   });
 
   it("says so when the project has never been pulled", () => {
-    const { container } = render(<ProjectList cards={[cardWith({})]} />);
+    const { container } = render(<ProjectList detail cards={[cardWith({})]} />);
     expect(within(container).getByText("No pull yet")).toBeDefined();
   });
 });

@@ -1,3 +1,4 @@
+import type { DomainReachability } from "@pseo/core";
 import type { ProjectOutcome } from "@pseo/db/projects";
 
 /**
@@ -35,9 +36,20 @@ export type AddDomainError = "invalid_domain" | "not_restored" | "failed";
  * `domain` is the NORMALIZED one the route returned, not the raw input — the banner names it in
  * the copy, and what the user typed may be a URL, uppercase, or carry a port.
  */
-export function addedUrl(outcome: ProjectOutcome, domain: string): string {
-  return `${PROJECTS_PATH}?added=${outcome}&domain=${encodeURIComponent(domain)}`;
+export function addedUrl(
+  outcome: ProjectOutcome,
+  domain: string,
+  reachability: DomainReachability = "unknown",
+): string {
+  const base = `${PROJECTS_PATH}?added=${outcome}&domain=${encodeURIComponent(domain)}`;
+  // ONLY the positive finding travels. `resolves` and `unknown` are both "nothing to say" — a
+  // lookup that timed out must never reach the page as a claim about the customer's domain — so
+  // they add no parameter at all and the banner has nothing to render.
+  return reachability === "no_such_domain" ? `${base}&dns=no_such_domain` : base;
 }
+
+/** The one reachability value the page reacts to. A CODE, like every other value in this URL. */
+export const DNS_NO_SUCH_DOMAIN = "no_such_domain";
 
 /** Where the page lands after a refusal. */
 export function errorUrl(code: AddDomainError): string {

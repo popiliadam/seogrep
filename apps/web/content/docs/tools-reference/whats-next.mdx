@@ -17,6 +17,7 @@ Pass a `project_id` to route that project; omit it and it routes your **only** p
 - **Crawl ready, Search Console never used** → run the audits: [`audit_onpage`](/docs/tools-reference/audit-onpage), [`audit_tech`](/docs/tools-reference/audit-tech), [`audit_schema`](/docs/tools-reference/audit-schema). Connecting Search Console with [`connect_gsc`](/docs/tools-reference/connect-gsc) is **optional** and never a barrier.
 - **Old Search Console data but no live connection** → [`connect_gsc`](/docs/tools-reference/connect-gsc), which is free. Frozen rows cannot be refreshed, so nothing that reads them is offered.
 - **Connected, but the credential is dead** → [`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are deliberately withheld: they read a pull this project cannot take.
+- **Connected, but no property is mapped** → [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties), then [`track_gsc_property`](/docs/tools-reference/track-gsc-property). Both are free. The Google account works, so this rung does **not** send you round another OAuth loop — what is missing is the mapping, and until it exists a Search Console pull cannot run.
 - **Connected, nothing pulled** → run [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
 - **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe the site as it is now.
 - **Everything fresh** → you're all set: [`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the `monthly-routine` prompt to keep it up to date.

@@ -243,8 +243,34 @@ export function dayPhrase(days) {
  * Fail-closed: a non-integer constant, or a token nobody substitutes, throws instead of rendering a
  * page that states a wrong (or literally "undefined") limit.
  */
+/**
+ * The tools that accept a bare `target` domain INSTEAD of a `project_id`, as doc links, derived
+ * from the registry rather than typed out.
+ *
+ * A hand-written list here would be a second place for the answer to live, and it would go stale
+ * the first time a tool gained or lost the parameter — which is exactly how a customer ends up
+ * believing they need a uuid for a call that never wanted one (finding G1, 2026-08-26).
+ *
+ * Fail-closed: an empty list throws rather than rendering a sentence promising tools it cannot
+ * name, which is what a renamed `target` property would otherwise produce.
+ */
+export function domainAddressableTools(allTools) {
+  const names = (allTools || [])
+    .filter((tool) => tool?.inputJsonSchema?.properties?.target !== undefined)
+    .map((tool) => tool.name)
+    .sort();
+  if (names.length === 0) {
+    throw new Error(
+      "{{DOMAIN_TOOLS}}: no tool in the registry declares a `target` property — either the " +
+        "parameter was renamed or the registry did not load.",
+    );
+  }
+  return names.map((name) => `[\`${name}\`](/docs/tools-reference/${deriveSlug(name)})`).join(", ");
+}
+
 export function substituteProseTokens(text, constants) {
-  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords } = constants || {};
+  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords, domainTools } =
+    constants || {};
   const out = String(text)
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
@@ -262,7 +288,13 @@ export function substituteProseTokens(text, constants) {
     // publish a bound the code no longer charges for.
     .replace(/\{\{MAX_SERP_KEYWORDS\}\}/g, () =>
       groupThousands(positiveInteger(maxSerpKeywords, "{{MAX_SERP_KEYWORDS}}", "maxSerpKeywords")),
-    );
+    )
+    .replace(/\{\{DOMAIN_TOOLS\}\}/g, () => {
+      if (typeof domainTools !== "string" || domainTools === "") {
+        throw new Error("{{DOMAIN_TOOLS}} needs the derived tool list, got nothing.");
+      }
+      return domainTools;
+    });
   // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
   // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
   // convention. The narrow `[A-Z0-9_]+` version this replaces let four near-misses — `{{max_rows}}`,
@@ -437,14 +469,53 @@ export const DOC_PROSE = {
 
   list_projects: {
     lead:
-      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` " +
-      "— and, below them, anything you have **archived**. If you have neither yet, it points you to " +
-      "`setup_project`.",
+      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`, " +
+      "its Search Console state and its last background job — and, below them, anything you have " +
+      "**archived**. If you have neither yet, it points you to `setup_project`.",
     whatItDoes:
       "Reads your projects, scoped to your account, and returns them as two lists: the ones you are " +
       "tracking, and the ones you archived with " +
       "[`untrack_project`](/docs/tools-reference/untrack-project).",
     preExampleSections: [
+      {
+        heading: "What each tracked line tells you",
+        body:
+          "Beside the domain and its `project_id`, every tracked line carries two facts, because a " +
+          "list of fifteen identical-looking domains answers neither question a customer actually " +
+          "has: can Search Console be read for this one, and has anything ever run against it.\n\n" +
+          "**Search Console** is reported in three states, never as a tick:\n\n" +
+          "- `not connected` — no Google account is linked to this project.\n" +
+          "- `connected, no property selected` — an account is linked but no property has been " +
+          "matched to it. Nothing can be pulled yet. This state is named rather than folded into " +
+          "\"connected\" precisely because it looks like a working connection and is not.\n" +
+          "- the property itself (for example `sc-domain:example.com`) — the mapping that pulls " +
+          "will use. If the stored credential behind it has died, `(reconnect needed)` is appended: " +
+          "the property is still right, the credential is not.\n\n" +
+          "**Last job** names the tool that ran and the day it ran. A *job* is a background run — " +
+          "[`crawl_site`](/docs/tools-reference/crawl-site) or " +
+          "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data). Audits, keyword and backlink " +
+          "lookups run synchronously and are not jobs, so a project can read `none yet` and still " +
+          "have been analysed — the reply says so, under the list, rather than leaving the line to " +
+          "be read as \"nothing has ever happened here\".\n\n" +
+          "**If two tracked projects are mapped to the same Search Console property**, the reply " +
+          "names that property and both projects underneath the list. Each pull fetches one set " +
+          "of rows and is billed once per project, so the pair costs credits twice for the same " +
+          "data. Nothing is deduplicated for you — which of the two to keep is a decision only " +
+          "you can make.",
+      },
+      {
+        heading: "You do not always need the project_id",
+        body:
+          "The `project_id` is what most tools use to know which of your sites they are working " +
+          "on, and this is where you get it. But a large part of the surface will also take a " +
+          "plain domain instead, passed as `target` — including a competitor's, which is the " +
+          "point: those tools answer questions about any public site, not only your own.\n\n" +
+          "Pass `target` OR `project_id`, never both. These tools accept either: " +
+          "{{DOMAIN_TOOLS}}.\n\n" +
+          "Everything else needs the `project_id`, because it reads data stored against YOUR " +
+          "project — your crawls, your audits, your Search Console pulls — and a domain does not " +
+          "identify those.",
+      },
       {
         heading: "The archive",
         body:
@@ -462,21 +533,30 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Which sites am I tracking?\n\nor\n\n" +
       "> What did I archive?",
     returns:
-      "One line per tracked project (`domain` and `project_id`), oldest first; then an archive " +
-      "section, most recently archived first, with each archived project's `domain`, `project_id`, " +
-      "archive date, and how to restore it. Guidance to create your first project when you have " +
-      "nothing at all.",
+      "One line per tracked project (`domain`, `project_id`, Search Console state, last job), " +
+      "oldest first, followed by one line saying what counts as a job; then an archive section, " +
+      "most recently archived first, with each archived project's `domain`, `project_id`, archive " +
+      "date, and how to restore it. Guidance to create your first project when you have nothing " +
+      "at all.",
   },
 
   list_jobs: {
     lead:
       "`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run " +
       "in the background — newest first, each with its `job_id`. It is the tool to reach for when " +
-      "you **do not have a `job_id` to hand**.",
+      "you **do not have a `job_id` to hand**. The reply says how many jobs you have in total and " +
+      "how many it did not show, so a cut list never reads as your whole history.",
     whatItDoes:
       "Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what " +
-      "state it is in, when it was created and finished, its `project_id` when it has one, and the " +
-      "`job_id` to ask about.",
+      "state it is in, when it was created and finished, which of your sites it ran against, and " +
+      "the `job_id` to ask about. The site is named by DOMAIN; a job with no project scope says " +
+      "so, and a project you have since removed falls back to the id it was recorded with.\n\n" +
+      "A job whose stored stamps contradict each other — a `finished` earlier than its `created` — " +
+      "is marked **timestamps out of order** rather than printed as an ordinary timeline. Both " +
+      "stamps are still shown, because both are real: some rows were written with `created_at` " +
+      "stamped at insert time, after the work they record. No duration is derived from such a " +
+      "pair; a contradiction does not describe a short run, it describes an unknown one, and " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status) makes the same refusal.",
     preExampleSections: [
       {
         heading: "What the list shows, and what needs a second call",
@@ -545,17 +625,17 @@ export const DOC_PROSE = {
           "trial credits are left. The reply says so, because the balance alone reads as " +
           "permission — a trial account seeing a healthy number concluded \"mine is not zero, so " +
           "it works\", and it did not.\n\n" +
-          "Buying any credit pack clears it. The reply states the rule but does **not** say " +
-          "whether your own account has paid: that would be a second ledger read on a free tool, " +
-          "and the sentence exists to make the rule knowable before it fires, not to pre-answer " +
-          "it. Which tools are gated is on each tool's own page and in " +
+          "Buying any credit pack clears it, and **the reply says which side of the rule your " +
+          "own account is on**: an account that has bought credits is told the vendor tools are " +
+          "unlocked, one that has not is told what unlocks them. Both wordings name the rule, so " +
+          "it stays knowable either way. Which tools are gated is on each tool's own page and in " +
           "[Billing & Credits](/docs/billing-and-credits).",
       },
     ],
     example: "Ask your MCP client in plain language:\n\n> How many credits do I have left?",
     returns:
-      "Your available credit balance, followed by the paid-balance rule above — stated every " +
-      "time, whether or not it currently applies to you.",
+      "Your available credit balance, followed by the paid-balance rule above, worded for the " +
+      "side of it your account is on.",
   },
 
   crawl_site: {
@@ -2820,6 +2900,11 @@ export const DOC_PROSE = {
       "- **Connected, but the credential is dead** → " +
       "[`connect_gsc`](/docs/tools-reference/connect-gsc) again, and the discovery tools are " +
       "deliberately withheld: they read a pull this project cannot take.\n" +
+      "- **Connected, but no property is mapped** → " +
+      "[`list_gsc_properties`](/docs/tools-reference/list-gsc-properties), then " +
+      "[`track_gsc_property`](/docs/tools-reference/track-gsc-property). Both are free. The " +
+      "Google account works, so this rung does **not** send you round another OAuth loop — what " +
+      "is missing is the mapping, and until it exists a Search Console pull cannot run.\n" +
       "- **Connected, nothing pulled** → run " +
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
       "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +
@@ -3255,6 +3340,8 @@ async function loadRegistry() {
         // EQUAL to the port's MAX_SERP_KEYWORDS), and reading it here keeps this generator's
         // imports to the two modules it already loads — the registry and the prices.
         maxSerpKeywords: costs.CREDIT_UNITS.serp_snapshot.max_units,
+        // Derived from the registry itself — see domainAddressableTools for why it is not a list.
+        domainTools: domainAddressableTools(tools.ALL_TOOLS),
       },
     };
   } catch (error) {

@@ -117,6 +117,40 @@ export function sameSiteDomains(domain: string): readonly string[] {
 }
 
 /**
+ * Turkish dotted capital `İ` (U+0130), folded to a plain `i` BEFORE anything else sees it.
+ *
+ * WHY THIS FUNCTION EXISTS (measured live 2026-08-26, Turkish market). JavaScript's
+ * locale-independent lowercasing maps U+0130 to TWO code points — `i` + U+0307 COMBINING DOT
+ * ABOVE — and that combining dot is not ASCII, so the URL parser's IDNA step punycodes the
+ * whole label. The result is that CASE ALONE forks one site into two:
+ *
+ *     "sigorta.com.tr"  ->  sigorta.com.tr                 (correct)
+ *     "SİGORTA.COM.TR"  ->  xn--sigorta-7he.com.tr         (a name that does not exist)
+ *
+ * The second one is not a spelling of the first: it is registered as a separate project, it
+ * does not resolve, and every crawl and audit aimed at it fetches nothing. A domain typed in
+ * capitals is not an exotic input in this market — it is how domains appear on signage, on
+ * business cards and in logos, and the panel's own hint invites it ("A domain or a URL").
+ *
+ * THE FOLD IS SAFE, and that is a claim about IDNA rather than about taste: U+0130 is
+ * DISALLOWED in domain names by UTS-46, so no registrable name contains it and nothing that
+ * resolves today can be reached by this replacement. `ı` (U+0131, dotless i) is deliberately
+ * NOT touched — it is a permitted IDN character, and `ıspanak.com` is a real name whose owner
+ * means exactly that letter.
+ *
+ * THE DECOMPOSED SEQUENCE NEEDS ITS OWN REPLACEMENT, and that is a correction of this
+ * function's first draft rather than a flourish: the draft normalized to NFC and assumed a
+ * pasted `i` + U+0307 would compose back into U+0130. IT DOES NOT — measured, red test —
+ * because U+0130 is a composition exclusion, so NFC leaves the pair exactly as it found it.
+ * The same lowercasing that produced the pair is the one the whole bug is made of, so the pair
+ * is folded head-on. NFC still runs first, for the accented letters around it (`ç`, `ö`) where
+ * it IS the normal form UTS-46 expects.
+ */
+export function foldDottedCapitalI(raw: string): string {
+  return raw.normalize("NFC").replace(/İ/g, "i").replace(/i̇/gi, "i");
+}
+
+/**
  * Canonicalize a domain input. Accepts a bare host or a full URL; extracts the host,
  * lowercases it, drops any trailing dot (FQDN) and a leading `www.` label — the
  * scheme/path/port/query fall away with the URL parse. Returns a descriptive English error for
@@ -127,7 +161,10 @@ export function sameSiteDomains(domain: string): readonly string[] {
  * customer actually pastes; see {@link stripWwwLabel} for the rule and its limits.
  */
 export function normalizeDomain(raw: string): NormalizedDomain {
-  const trimmed = raw.trim();
+  // The dotted-`İ` fold runs BEFORE the URL parse, because the parse is where the damage was
+  // done: by the time `new URL()` has returned a hostname, the combining dot is already inside
+  // a punycode label and no lowercasing afterwards can undo it. See {@link foldDottedCapitalI}.
+  const trimmed = foldDottedCapitalI(raw).trim();
   if (trimmed === "") {
     return { ok: false, error: "Domain is required (received an empty value)." };
   }

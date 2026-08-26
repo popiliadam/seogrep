@@ -10,6 +10,20 @@ vi.mock("../db.ts", () => ({
   getServiceClient: () => ({}),
 }));
 
+/**
+ * Only `hasPaidBalance` is faked, through importOriginal: `paidBalanceRequiredMessage` and
+ * `PAID_BALANCE_TOOLS` stay REAL, because the specs below cross-check the answer against the
+ * enforcing module's own words and a faked refusal would let both drift together.
+ *
+ * The default is an account that has NOT paid — the branch every spec written before 2026-08-26
+ * was measuring — so none of them changes meaning here.
+ */
+const paid = vi.fn(async () => false);
+vi.mock("../credits/paid-balance.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../credits/paid-balance.ts")>()),
+  hasPaidBalance: async () => paid(),
+}));
+
 import type { AuthContext } from "../auth.ts";
 import { PAID_BALANCE_TOOLS, paidBalanceRequiredMessage } from "../credits/paid-balance.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
@@ -81,5 +95,66 @@ describe("get_credit_balance names the condition the code really enforces", () =
 
   it("is free to read", () => {
     expect(getCreditBalanceTool.name).toBe("get_credit_balance");
+  });
+});
+
+
+/**
+ * G10 — measured 2026-08-26: 327 of the answer's 356 characters were a rule that did not apply
+ * to the reader. The operator's account holds two `purchase` rows, so the paragraph warning that
+ * trial credits will not unlock the vendor tools was, for them, about somebody else.
+ *
+ * The fix is NOT to delete the rule. It is to answer the question the rule raises — does it
+ * apply to ME — which the old answer deliberately refused to do on a cost argument. That cost was
+ * measured: the check is one `limit(1)` existence probe, 0.082 ms on a paid account and 0.287 ms
+ * on the worst case (a full scan for an account with no purchase row at all).
+ */
+describe("the answer says whether the paid-balance gate applies to THIS account", () => {
+  it("tells a paid account the vendor tools are unlocked, and still names the rule", async () => {
+    paid.mockResolvedValueOnce(true);
+    balance.mockResolvedValueOnce(4519);
+    const text = await answer();
+    expect(text).toMatch(/balance:\s*4519\s+credits/i);
+    // The rule is still named — a customer must be able to learn it from this answer…
+    expect(text).toMatch(PAID_BALANCE_REQUIRED);
+    expect(text).toMatch(TRIAL_IS_NOT_ENOUGH);
+    // …but it is now stated as SETTLED for them, not as a warning hanging over them.
+    expect(text).toMatch(/unlocked|available to you/i);
+    expect(text).not.toMatch(/buying any credit pack unlocks them/i);
+  });
+
+  it("still tells an unpaid account how to unlock them", async () => {
+    paid.mockResolvedValueOnce(false);
+    const text = await answer();
+    expect(text).toMatch(/buying any credit pack unlocks them/i);
+    expect(text).not.toMatch(/unlocked for you|available to you/i);
+  });
+
+  /**
+   * The two branches must not both be renderable at once: an answer carrying the "you are
+   * unlocked" sentence AND the "buy a pack to unlock" sentence would be telling the reader both
+   * that the gate is settled and that it is not.
+   */
+  it("never renders both branches in one answer", async () => {
+    for (const isPaid of [true, false]) {
+      paid.mockResolvedValueOnce(isPaid);
+      const text = await answer();
+      const settled = /are unlocked|available to you/i.test(text);
+      const pitch = /buying any credit pack unlocks them/i.test(text);
+      expect(settled).not.toBe(pitch);
+    }
+  });
+
+  /**
+   * The paid answer is the one that used to be mostly irrelevant, so it must actually be
+   * shorter than the answer it replaced — 356 characters, measured on the live tool.
+   */
+  it("is shorter for the account the old paragraph was not about", async () => {
+    // The 356 was measured with THIS balance printed. Leaving the balance to the 200-credit
+    // default made the comparison pass on two fewer digits rather than on fewer words — a green
+    // for the wrong reason, caught before it was believed.
+    paid.mockResolvedValueOnce(true);
+    balance.mockResolvedValueOnce(4519);
+    expect((await answer()).length).toBeLessThan(356);
   });
 });

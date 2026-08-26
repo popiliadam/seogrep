@@ -118,3 +118,42 @@ describe("KeyPanel — header auth alternative", () => {
     expect(screen.queryByText(/x-api-key/i)).toBeNull();
   });
 });
+
+
+/**
+ * G16a — measured 2026-08-26, from an operator about to click it. Rotating REVOKES the key that is
+ * live in every MCP client already pointed at this account, and the button said nothing about
+ * that. The panel offers no second key either (`Generate key` renders only when there is none),
+ * so a rotation is not a spare — it is the only key, replaced.
+ *
+ * The one-time reveal already warns you will not see the key again. It does NOT say what breaks
+ * the moment you press the button, which is the half a person needs BEFORE pressing it.
+ */
+describe("KeyPanel — what rotating costs", () => {
+  it("warns, before the click, that existing clients stop working", () => {
+    render(
+      <KeyPanel
+        activeKeyId="key-1"
+        createKeyAction={vi.fn()}
+        rotateKeyAction={vi.fn()}
+        revokeKeyAction={vi.fn()}
+        headerEndpoint="https://mcp.seogrep.com/mcp"
+      />,
+    );
+    const warning = screen.getByText(/stop working|until you paste|replaces/i);
+    expect(warning).toBeTruthy();
+  });
+
+  it("says nothing of the sort to an account that has no key to lose", () => {
+    render(
+      <KeyPanel
+        activeKeyId={null}
+        createKeyAction={vi.fn()}
+        rotateKeyAction={vi.fn()}
+        revokeKeyAction={vi.fn()}
+        headerEndpoint="https://mcp.seogrep.com/mcp"
+      />,
+    );
+    expect(screen.queryByText(/stop working/i)).toBeNull();
+  });
+});

@@ -63,6 +63,18 @@ export interface CreditContext {
 export interface CreditMeta {
   tool: ToolName;
   /**
+   * WHICH PROJECT this spend was for, written onto the ledger row (migration 0033) so the
+   * question "which of my sites did my credits go to?" has an answer for every spend rather than
+   * for the tools that happen to keep a run table.
+   *
+   * UNDEFINED IS A REAL ANSWER — "this call had no project scope" — not a missing one, and the
+   * surfaces are required to say so rather than attribute the row to something. A keyword set, a
+   * seed keyword and a subject that is nobody's tracked site are all legitimately project-less.
+   * Never guess one here: an invented scope is worse than an honest blank, because it is a number
+   * somebody will add up.
+   */
+  projectId?: string;
+  /**
    * The real queued jobs.id for the ASYNC worker path. Omit on the SYNC surface path
    * (no jobs row): the reserve is then ledger-only, with a traceability uuid for
    * p_job_id, and no jobs row is written.
@@ -104,12 +116,17 @@ async function reserve(
   tool: ToolName,
   jobId: string,
   amount: number,
+  projectId?: string,
 ): Promise<string> {
   const { data, error } = await getServiceClient().rpc("reserve_credits", {
     p_user_id: userId,
     p_amount: amount,
     p_tool: tool,
     p_job_id: jobId,
+    // The settlement rows do not repeat this: commit_reserve and release_reserve READ it back
+    // off the reserve row (0033), so a settlement cannot be scoped differently from the spend
+    // it settles.
+    p_project_id: projectId ?? null,
   });
   if (error) {
     throw new Error(`reserve_credits failed: ${error.message}`);
@@ -311,7 +328,7 @@ export async function withCredits<T>(
   // p_job_id on the ledger: the real jobs row (async) or a fresh traceability uuid
   // (sync surface). Either way every spend_reserve row carries a job_id.
   const ledgerJobId = meta.jobId ?? randomUUID();
-  const reserveId = await reserve(ctx.userId, meta.tool, ledgerJobId, cost);
+  const reserveId = await reserve(ctx.userId, meta.tool, ledgerJobId, cost, meta.projectId);
 
   // Record the reserve on the jobs row ONLY on the async path. setJobReserve asserts it
   // touched a row, so a broken reserve trace (0 rows) throws here instead of silently

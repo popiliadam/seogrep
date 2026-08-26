@@ -363,3 +363,71 @@ describe("withCredits against the local stack", () => {
     expect(job?.reserve_id).toBeNull();
   });
 });
+
+/**
+ * MIGRATION 0033 — the project scope, against real rows.
+ *
+ * The gap this closes was measured on 2026-08-26: of 82 ledger rows in a three-day window, only
+ * four could be traced to a project (via the handful with a real jobs row), so 96.6% of a
+ * 1,176-credit window could not be attributed to a site at all.
+ *
+ * These specs drive `withCredits` itself rather than the ladder above it, because the fault would
+ * live in the RPC's column list: a reserve that accepted the argument and dropped it would leave
+ * every unit test green and every ledger row null.
+ */
+describe("the project scope on a spend (migration 0033)", () => {
+  async function ledgerRows(userId: string) {
+    const { data, error } = await service
+      .from("credit_ledger")
+      .select("kind, project_id, reserve_id")
+      .eq("user_id", userId)
+      .order("id", { ascending: true });
+    if (error) throw new Error(`ledger read failed: ${error.message}`);
+    return data ?? [];
+  }
+
+  it("writes the scope on the reserve AND copies it onto the commit", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 500);
+    const projectId = randomUUID();
+
+    await withCredits({ userId }, { tool: "audit_onpage", projectId }, async () => "ok");
+
+    const rows = (await ledgerRows(userId)).filter((row) => row.kind !== "grant");
+    expect(rows.map((row) => row.kind)).toEqual(["spend_reserve", "spend_commit"]);
+    // The commit does not take the scope as an argument — it reads it back off the reserve, so
+    // the two CANNOT disagree about which project the spend was for.
+    expect(rows.every((row) => row.project_id === projectId)).toBe(true);
+  });
+
+  it("copies the scope onto a RELEASE too, so a refund is attributable", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 500);
+    const projectId = randomUUID();
+
+    await expect(
+      withCredits({ userId }, { tool: "audit_onpage", projectId }, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    const rows = (await ledgerRows(userId)).filter((row) => row.kind !== "grant");
+    expect(rows.map((row) => row.kind)).toEqual(["spend_reserve", "spend_release"]);
+    expect(rows.every((row) => row.project_id === projectId)).toBe(true);
+  });
+
+  /**
+   * A call with no project scope stores NULL, and that is the answer — not a placeholder, and
+   * not the tenant's first project. research_keywords takes a keyword set with no domain in it.
+   */
+  it("stores null for a call that has no project scope", async () => {
+    const userId = await makeUserId();
+    await seedGrant(userId, 500);
+
+    await withCredits({ userId }, { tool: "audit_onpage" }, async () => "ok");
+
+    const rows = (await ledgerRows(userId)).filter((row) => row.kind !== "grant");
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.project_id === null)).toBe(true);
+  });
+});
