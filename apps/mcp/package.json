@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && node scripts/typecheck-tests.mjs",
     "lint": "eslint src",
     "test": "vitest run",
     "test:db": "vitest run --config vitest.db.config.ts",

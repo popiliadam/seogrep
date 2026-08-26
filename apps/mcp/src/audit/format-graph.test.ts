@@ -174,7 +174,6 @@ describe("a legacy crawl renders byte-for-byte what main rendered", () => {
 
 function page(p: Partial<AuditPage> & { url: string }): AuditPage {
   return {
-    url: p.url,
     status: 200,
     title: null,
     metaDescription: null,

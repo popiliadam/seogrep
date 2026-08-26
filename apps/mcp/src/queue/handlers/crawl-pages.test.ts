@@ -15,6 +15,12 @@ const TARGET: CrawlPagesTarget = {
   projectId: "project-1",
 };
 
+/**
+ * A COMPLETE PageRecord. The free per-page signals below carry NON-ZERO values on purpose: none
+ * of them has a column in `crawl_pages`, so the exact-shape assertion in the first spec is what
+ * proves they do not leak into the write. Until the test files were type-checked this fixture
+ * simply omitted them, and that spec could not have told a dropped column from an absent field.
+ */
 function page(url: string, over: Partial<PageRecord> = {}): PageRecord {
   return {
     url,
@@ -27,7 +33,26 @@ function page(url: string, over: Partial<PageRecord> = {}): PageRecord {
     links: [`${url}#link`],
     wordCount: 42,
     jsonLdTypes: ["Article"],
+    jsonLdBlocks: ['{"@type":"Article"}'],
+    jsonLdTruncated: 0,
     issues: ["thin-content"],
+    fetchMs: 12,
+    htmlBytes: 2_048,
+    h2Count: 3,
+    h3Count: 1,
+    imgCount: 4,
+    imgMissingAlt: 1,
+    hreflangs: [],
+    ogTitle: "OG",
+    ogDescription: null,
+    ogImage: null,
+    twitterCard: "summary",
+    htmlLang: "en",
+    xRobotsTag: null,
+    redirectChain: [],
+    contentHash: "a".repeat(64),
+    depth: 0,
+    inLinkCount: 2,
     ...over,
   };
 }

@@ -8,11 +8,13 @@ import {
   formatCannibalization,
   formatContentDecay,
   type PullData,
-  type RenderDiscovery,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
 import { renderQuickWins } from "./find-quick-wins.ts";
-import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
+// `RenderDiscovery` is declared BESIDE makeDiscoveryTool, not in gsc-data — importing it from
+// gsc-data resolved to nothing, which made `Case.render` an `any` and silently un-typed every
+// inline render below (the sibling gsc-discovery-runs.test.ts already imports it from here).
+import { makeDiscoveryTool, type RenderDiscovery } from "./gsc-discovery-shared.ts";
 
 /**
  * THE FOOTER the three discovery tools print under their findings — the lines that are about the

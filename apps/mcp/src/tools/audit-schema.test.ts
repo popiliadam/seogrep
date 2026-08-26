@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_COSTS } from "../credits/costs.ts";
-import { formatSchemaReport } from "../audit/index.ts";
 import { auditSchemaTool, renderSchemaAudit } from "./audit-schema.ts";
 
 /**
@@ -40,8 +39,14 @@ const JSONLD_ONLY = /\bmicrodata\b|\bRDFa\b/i;
 
 const DESCRIPTION = auditSchemaTool.description;
 
-/** A crawl whose pages carry stored JSON-LD bodies, so the engine really validates. */
-function validatedReport() {
+/**
+ * The note the tool ACTUALLY SERVES for a crawl whose pages carry stored JSON-LD bodies, so the
+ * engine really validates. Read off `renderSchemaAudit(...).text` rather than re-formatting
+ * `.report`: the rendering's own text IS `formatSchemaReport(report, crawl.fetchedAt)` with the
+ * timestamp below, so the string is identical — and taking it from the render means this spec
+ * measures the bytes the customer receives instead of a second, parallel formatting call.
+ */
+function validatedNote(): string {
   return renderSchemaAudit({
     pages: [
       {
@@ -60,7 +65,7 @@ function validatedReport() {
     ],
     skipped: [],
     fetchedAt: "2026-08-26T00:00:00.000Z",
-  }).report;
+  }).text;
 }
 
 describe("audit_schema describes BOTH what it measures and what it validates", () => {
@@ -87,7 +92,7 @@ describe("audit_schema describes BOTH what it measures and what it validates", (
   });
 
   it("agrees with the engine's report on the VALIDATED branch — the branch the old spec never ran", () => {
-    const note = formatSchemaReport(validatedReport(), "2026-08-26T00:00:00.000Z");
+    const note = validatedNote();
     // Ground truth: the engine says it checked required fields against stored bodies.
     expect(note).toMatch(CLAIMS_FIELD_VALIDATION);
     expect(note).toMatch(BODIES_BOUND);
@@ -97,10 +102,11 @@ describe("audit_schema describes BOTH what it measures and what it validates", (
   });
 
   it("also covers the legacy branch, where a pre-bodies crawl earns no validation", () => {
-    const note = formatSchemaReport(
-      renderSchemaAudit({ pages: [], skipped: [], fetchedAt: "2026-08-26T00:00:00.000Z" }).report,
-      "2026-08-26T00:00:00.000Z",
-    );
+    const note = renderSchemaAudit({
+      pages: [],
+      skipped: [],
+      fetchedAt: "2026-08-26T00:00:00.000Z",
+    }).text;
     // The engine correctly disclaims on this branch...
     expect(note).toMatch(/only @type names are analyzed/i);
     // ...and the description must have told the reader this branch exists.

@@ -231,7 +231,6 @@ describe("a legacy crawl renders exactly what it rendered before the Faz 1 rules
 
 function page(p: Partial<AuditPage> & { url: string }): AuditPage {
   return {
-    url: p.url,
     status: p.status ?? 200,
     title: p.title ?? null,
     metaDescription: p.metaDescription ?? null,

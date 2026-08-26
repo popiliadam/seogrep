@@ -116,7 +116,10 @@ function sectionLabels(text: string): string[] {
   const lines = text.split("\n");
   return lines.flatMap((line, index) => {
     if (index === 0 || lines[index - 1] !== "" || line === "" || line.startsWith(" ")) return [];
-    return [line.split(/[(:]/)[0].trim()];
+    // `split` on a non-empty string always yields at least one element, so index 0 is total
+    // here — but `noUncheckedIndexedAccess` cannot see that. Take the head off the front instead
+    // of asserting it away: the label is the text before the first `(` or `:`, or the whole line.
+    return [line.replace(/[(:][\s\S]*$/u, "").trim()];
   });
 }
 
@@ -125,6 +128,21 @@ const EVERY_SECTION = sectionLabels(renderTechAudit(LOADED_CRAWL).text);
 const ONLY_WHEN_PRESENT = EVERY_SECTION.filter((label) => !ALWAYS_PRINTED.includes(label));
 
 // --- parsing the description back into the two lists it claims ---------------------
+
+/**
+ * Capture group `n` of a match that already succeeded. Every group this file reads is MANDATORY
+ * in its own pattern, so `undefined` here cannot mean "this input had no such part" — it can only
+ * mean the PATTERN was edited into something that no longer captures. That is worth a named
+ * error: a `!` would hand the assertion below an `undefined` and report the failure as a missing
+ * section, blaming the prose for a broken parser.
+ */
+function group(match: RegExpMatchArray, n: number): string {
+  const value = match[n];
+  if (value === undefined) {
+    throw new Error(`This file's pattern no longer captures group ${n} (matched: ${match[0]})`);
+  }
+  return value;
+}
 
 /** Split a prose enumeration on its commas, ignoring commas inside a parenthetical gloss. */
 function splitEnumeration(clause: string): string[] {
@@ -153,7 +171,7 @@ function describedSections(): { always: string[]; conditional: string[] } {
   if (match === null) {
     throw new Error("The description no longer carries its two labelled section lists.");
   }
-  return { always: splitEnumeration(match[1]), conditional: splitEnumeration(match[2]) };
+  return { always: splitEnumeration(group(match, 1)), conditional: splitEnumeration(group(match, 2)) };
 }
 
 // --- the docs page, parsed the same way --------------------------------------------
@@ -165,7 +183,7 @@ function docsBulletLabels(): string[] {
     .split("\n")
     .flatMap((line) => {
       const match = line.match(/^- \*\*(.+?)\*\*\s+—/u);
-      return match ? [match[1].trim()] : [];
+      return match ? [group(match, 1).trim()] : [];
     });
 }
 
@@ -175,7 +193,7 @@ function docsGuaranteedLabels(): string[] {
   if (match === null) {
     throw new Error("The docs page no longer says which sections print on every run.");
   }
-  return [...match[1].matchAll(/\*\*(.+?)\*\*/gu)].map((bold) => bold[1].trim());
+  return [...group(match, 1).matchAll(/\*\*(.+?)\*\*/gu)].map((bold) => group(bold, 1).trim());
 }
 
 describe("audit_tech — the ground truth the prose has to match", () => {

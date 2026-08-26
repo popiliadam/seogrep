@@ -5,6 +5,7 @@ import {
   MAX_SITEMAP_URLS_STORED,
   normalizeUrl,
   type CrawlResult,
+  type PageRecord,
 } from "./crawl.ts";
 import { MAX_FIELD_CHARS } from "./page-signals.ts";
 import { startFixtureSite } from "./fixtures/site-server.ts";
@@ -20,7 +21,11 @@ import { startFixtureSite } from "./fixtures/site-server.ts";
  */
 
 const AT = "2026-08-14T00:00:00.000Z";
-const page = (i: number) => ({
+// A COMPLETE PageRecord — the free per-page signals included. They were missing here until the
+// test files were brought under a type checker, which meant this fixture built a page narrower
+// than anything the crawler can produce. None of the specs below reads them; the point is that
+// the record handed to boundCrawlResult is the record production hands it.
+const page = (i: number): PageRecord => ({
   url: `https://x.test/${i}`,
   status: 200,
   title: "t",
@@ -34,6 +39,23 @@ const page = (i: number) => ({
   jsonLdBlocks: [],
   jsonLdTruncated: 0,
   issues: [],
+  fetchMs: 1,
+  htmlBytes: 0,
+  h2Count: 0,
+  h3Count: 0,
+  imgCount: 0,
+  imgMissingAlt: 0,
+  hreflangs: [],
+  ogTitle: null,
+  ogDescription: null,
+  ogImage: null,
+  twitterCard: null,
+  htmlLang: null,
+  xRobotsTag: null,
+  redirectChain: [],
+  contentHash: "",
+  depth: 0,
+  inLinkCount: 0,
 });
 
 describe("crawlSite records what the sitemap advertised", () => {

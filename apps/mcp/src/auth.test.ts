@@ -5,6 +5,7 @@ import {
   hasValidKeyFormat,
   safeKeyPrefix,
   type AuthDecision,
+  type KeyLookup,
   type KeyRecord,
   type RateLimiter,
 } from "./auth.ts";
@@ -41,7 +42,9 @@ describe("createAuthenticator", () => {
   });
 
   it("hashes the key with sha256 before lookup (plaintext never passed to storage)", async () => {
-    const lookup = vi.fn(async () => RECORD);
+    // Typed as the real port: a bare `async () => RECORD` is a ZERO-ARITY mock, so `mock.calls`
+    // is a tuple of length 0 and the argument this spec exists to read is not even declared.
+    const lookup = vi.fn<KeyLookup>(async () => RECORD);
     await createAuthenticator({ lookup, rateLimiter: ALLOW })("sg_validbody");
     const passed = lookup.mock.calls[0]?.[0];
     expect(passed).toMatch(/^[0-9a-f]{64}$/);

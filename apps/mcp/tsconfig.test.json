@@ -1,0 +1,25 @@
+{
+  // Type gate for the TEST files. `tsconfig.json` excludes `src/**/*.test.ts` — it has to, because
+  // the same config is the BUILD config (`tsc -p tsconfig.json --noEmit false --outDir dist`), and
+  // dropping the exclude there would ship every spec and fixture into the runtime image. The cost
+  // of that exclude was that `pnpm typecheck` had never read a single test file: measured
+  // 2026-08-26, the specs held 48 type errors, six of them a `url` silently overwritten by a spread
+  // in an audit fixture, and one an import of a type the named module does not export (which made
+  // three renders implicitly `any`). None of it was visible to any gate.
+  //
+  // `exclude: []` is REQUIRED: `extends` inherits the parent's exclude, and an inherited
+  // `src/**/*.test.ts` would empty this include again and turn the gate into a green no-op.
+  //
+  // The include deliberately spans BOTH lanes — `src/**/*.test.ts` matches `*.db.test.ts` too. That
+  // overlaps tsconfig.dbtest.json, and the overlap is wanted: both configs extend this same parent
+  // with NO compilerOptions of their own, so a doubly-checked file is checked with identical
+  // settings, and it means the fast gate (guardrails/verify.sh, no Docker) now sees the DB specs'
+  // types as well — verify-db.sh's own type gate stays where it is, since it must run before
+  // `supabase db reset` and its file-count assertion pins that lane's coverage independently.
+  //
+  // Run by `pnpm --filter @pseo/mcp typecheck`, i.e. by turbo's `typecheck` task, i.e. by
+  // verify.sh. A config no required gate invokes would be documentation, not a gate.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}

@@ -1018,15 +1018,16 @@ describe("row cap and the signed 40-credit margin", () => {
     expect(clampDepth(99)).toBe(MAX_RELATED_DEPTH);
     expect(clampDepth(-1)).toBe(0);
     expect(clampDepth(Number.NaN)).toBe(DEFAULT_RELATED_DEPTH);
-    // ...and the seed cap really reaches the wire.
-    const body = buildDiscoverRequestBody({
-      ...queryFor("ideas"),
-      seeds: new Array(500).fill("k"),
-    });
+    // ...and the seed cap really reaches the wire. `queryFor` returns the WHOLE union, so each
+    // query is narrowed to its own branch before being extended — spreading the union and adding
+    // `seeds`/`depth` builds an object no single branch admits.
+    const ideas = queryFor("ideas");
+    if (ideas.mode !== "ideas") throw new Error("unreachable: queryFor(\"ideas\")");
+    const body = buildDiscoverRequestBody({ ...ideas, seeds: new Array(500).fill("k") });
     expect((body.keywords as string[]).length).toBe(MAX_SEEDS);
-    expect(buildDiscoverRequestBody({ ...queryFor("related"), depth: 99 }).depth).toBe(
-      MAX_RELATED_DEPTH,
-    );
+    const related = queryFor("related");
+    if (related.mode !== "related") throw new Error("unreachable: queryFor(\"related\")");
+    expect(buildDiscoverRequestBody({ ...related, depth: 99 }).depth).toBe(MAX_RELATED_DEPTH);
   });
 
   /**
@@ -1147,7 +1148,9 @@ describe("budget", () => {
   it("falls back to the TASK's cost when only the top-level one is missing", () => {
     const taskOnly = structuredClone(ideasFixture) as { cost?: number; tasks: { cost: number }[] };
     delete taskOnly.cost;
-    expect(extractDiscoverCostUsd(taskOnly)).toBe(ideasFixture.tasks[0].cost);
+    const taskCost = ideasFixture.tasks[0]?.cost;
+    expect(taskCost).toBeDefined(); // the fixture really carries a task-level cost to fall back to
+    expect(extractDiscoverCostUsd(taskOnly)).toBe(taskCost);
   });
 
   it("refuses the call at the daily cap, and sends NO request", async () => {
