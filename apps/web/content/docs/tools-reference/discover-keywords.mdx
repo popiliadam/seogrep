@@ -36,6 +36,14 @@ The ceiling also **stands down** when it would contradict you: give `for_site` o
 
 `suggestions` and `related` are **left alone** — no warning, no ceiling. They stay anchored to a seed keyword you choose (the first returns queries that contain it, the second what Google itself lists beside it), and both measured clean on the same walkthrough. If a `for_site` or `ideas` answer reads as noise, those two are the narrower question.
 
+## How long a seed may be
+
+A seed keyword is capped at **200 characters** — `seed` on `suggestions` and `related`, and every entry of `seeds` on `ideas`. That is **SeoGrep's bound, not DataForSEO's**: the vendor publishes none we have read, and the longest keyword we have ever seen come back from it is 29 characters.
+
+It exists because the answer **quotes your seeds back** in its heading, and one enormous seed would crowd out the keywords you paid for: measured, a 60,000-character seed produced a reply too large for any client to show, carrying **zero keywords**. Two hundred characters is about thirty ordinary words — far more than a real search query — and a longer one is refused **before anything is charged**.
+
+A long seed **list** is handled differently, because there the cap would lose information: `ideas` takes up to 200 seeds and the heading quotes as many as it can, then says how many more you sent. The count is always exact.
+
 ## A field from another mode is rejected, not ignored
 
 Pass `seed` with `mode: "for_site"` and the call is **refused** — it is not quietly dropped. That is deliberate: `for_site` looks up a domain, so a silently ignored seed would run a different lookup than the one you asked for, and bill you for it. The error names the field and says what the mode does take, so it is a one-step fix.
@@ -69,8 +77,8 @@ Or start from a domain instead of a keyword:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `mode` | string | Yes | WHICH QUESTION to ask — required, with no default, because the four modes answer four different questions and take four different inputs. "ideas": keywords from the same product/service categories as your seed keywords (takes "seeds"). "suggestions": longer search queries that CONTAIN your seed keyword (takes "seed"). "related": the keywords Google lists under "searches related to" for your seed (takes "seed", and optionally "depth"). "for_site": keywords DataForSEO considers relevant to a DOMAIN, with no seed keyword involved (takes "target" or "project_id"). Passing a field that belongs to another mode is rejected, not ignored. |
-| `seeds` | string[] | No | MODE "ideas" ONLY: the seed keywords to draw ideas from (1-200, the vendor's own documented ceiling). The keywords that come back are the vendor's, not yours — none of your seeds is guaranteed to appear in the answer. |
-| `seed` | string | No | MODES "suggestions" and "related" ONLY: exactly one seed keyword. Both endpoints take a single keyword, not a list — pass one, and run the tool again for another. |
+| `seeds` | string[] | No | MODE "ideas" ONLY: the seed keywords to draw ideas from (1-200, the vendor's own documented ceiling), each at most 200 characters — SeoGrep's bound, not DataForSEO's, because the answer quotes your seeds back and one enormous seed would crowd out the keywords you paid for. The keywords that come back are the vendor's, not yours — none of your seeds is guaranteed to appear in the answer. |
+| `seed` | string | No | MODES "suggestions" and "related" ONLY: exactly one seed keyword, at most 200 characters (SeoGrep's bound, not DataForSEO's — see "seeds"). Both endpoints take a single keyword, not a list — pass one, and run the tool again for another. |
 | `depth` | integer | No | MODE "related" ONLY: how many times DataForSEO follows "searches related to" outward from your seed (0-4, the vendor's own range; default 1 when omitted). A deeper search drifts further from the seed; it does not change the price. |
 | `target` | string | No | The domain to discover keywords for, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
 | `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |

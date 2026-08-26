@@ -1320,6 +1320,22 @@ export const DOC_PROSE = {
           "narrower question.",
       },
       {
+        heading: "How long a seed may be",
+        body:
+          "A seed keyword is capped at **200 characters** — `seed` on `suggestions` and `related`, " +
+          "and every entry of `seeds` on `ideas`. That is **SeoGrep's bound, not DataForSEO's**: " +
+          "the vendor publishes none we have read, and the longest keyword we have ever seen come " +
+          "back from it is 29 characters.\n\n" +
+          "It exists because the answer **quotes your seeds back** in its heading, and one " +
+          "enormous seed would crowd out the keywords you paid for: measured, a 60,000-character " +
+          "seed produced a reply too large for any client to show, carrying **zero keywords**. " +
+          "Two hundred characters is about thirty ordinary words — far more than a real search " +
+          "query — and a longer one is refused **before anything is charged**.\n\n" +
+          "A long seed **list** is handled differently, because there the cap would lose " +
+          "information: `ideas` takes up to 200 seeds and the heading quotes as many as it can, " +
+          "then says how many more you sent. The count is always exact.",
+      },
+      {
         heading: "A field from another mode is rejected, not ignored",
         body:
           "Pass `seed` with `mode: \"for_site\"` and the call is **refused** — it is not quietly " +

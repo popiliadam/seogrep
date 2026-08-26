@@ -105,6 +105,32 @@ const DEFAULT_LOCATION_CODE = 2840;
  * filters on. Declared here because it bounds a CALLER's input; the value it filters is parsed
  * nullish by the port, so nothing here narrows what the vendor may return.
  */
+/**
+ * HOW LONG ONE SEED KEYWORD MAY BE.
+ *
+ * MEASURED 2026-08-26, and this bound exists because of the measurement. The heading quotes the
+ * caller's seeds back, and {@link renderSeedEcho} bounds the LIST but always echoes the FIRST seed
+ * whole — half a quoted keyword is a different keyword. With no per-seed bound, one seed was the
+ * whole reply: a 39,000-character seed produced a 42,666-character answer carrying ZERO keywords,
+ * and a 60,000-character seed produced 63,666 characters with zero keywords and all 1,000 rows
+ * reported as omitted. The second is not only past this file's own ceiling, it is LARGER than the
+ * 62,729-character reply a client refused outright — so the customer would pay 40 credits, the
+ * vendor would be paid, and no keyword would ever be seen.
+ *
+ * WHERE 200 COMES FROM. The longest keyword in ANY DataForSEO response captured in this repo is 29
+ * characters ("seo software comparison chart", across 33 keywords in the Labs fixtures), so 200 is
+ * roughly seven times the longest thing the vendor has ever been observed calling a keyword, and
+ * about thirty ordinary words. It is not a vendor-published limit — DataForSEO documents none that
+ * this repo has read — so it is stated as OUR bound and the rejection says so. What 200 buys is a
+ * heading that cannot displace the answer: the first seed at its longest plus the 600-character
+ * echo budget keeps the whole seed block under ~850 characters, which the row budget absorbs
+ * without dropping a measurable number of keywords.
+ *
+ * The rejection is a SCHEMA rejection, so it lands where every other impossible input on this tool
+ * lands: before the handler, therefore before the reserve, therefore free (NEVER #2).
+ */
+export const MAX_SEED_CHARS = 200;
+
 const VENDOR_DIFFICULTY_MIN = 0;
 const VENDOR_DIFFICULTY_MAX = 100;
 
@@ -188,22 +214,27 @@ const inputSchema = z
           "belongs to another mode is rejected, not ignored.",
       ),
     seeds: z
-      .array(z.string().min(1))
+      .array(z.string().min(1).max(MAX_SEED_CHARS))
       .min(1)
       .max(MAX_SEEDS)
       .optional()
       .describe(
         `MODE "ideas" ONLY: the seed keywords to draw ideas from (1-${MAX_SEEDS}, the vendor's ` +
-          "own documented ceiling). The keywords that come back are the vendor's, not yours — " +
-          "none of your seeds is guaranteed to appear in the answer.",
+          `own documented ceiling), each at most ${MAX_SEED_CHARS} characters — SeoGrep's bound, ` +
+          "not DataForSEO's, because the answer quotes your seeds back and one enormous seed " +
+          "would crowd out the keywords you paid for. The keywords that come back are the " +
+          "vendor's, not yours — none of your seeds is guaranteed to appear in the answer.",
       ),
     seed: z
       .string()
       .min(1)
+      .max(MAX_SEED_CHARS)
       .optional()
       .describe(
-        'MODES "suggestions" and "related" ONLY: exactly one seed keyword. Both endpoints take a ' +
-          "single keyword, not a list — pass one, and run the tool again for another.",
+        'MODES "suggestions" and "related" ONLY: exactly one seed keyword, at most ' +
+          `${MAX_SEED_CHARS} characters (SeoGrep's bound, not DataForSEO's — see "seeds"). Both ` +
+          "endpoints take a single keyword, not a list — pass one, and run the tool again for " +
+          "another.",
       ),
     depth: z
       .number()
@@ -774,12 +805,18 @@ function renderNoKeywords(
  * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
  *
  *   worst DEFAULT render (ideas, 100 rows)               33,447
- *   + the output-limit note reserved at its widest          748
+ *   + the output-limit note reserved at its widest          805
  *   ------------------------------------------------------------
- *   what a default lookup must be allowed to print       34,195
- *   + headroom for longer keywords than the fixtures'     5,805   (~19 more rows)
+ *   what a default lookup must be allowed to print       34,252
+ *   + headroom for longer keywords than the fixtures'     5,748   (~19 more rows)
  *   ------------------------------------------------------------
  *   MAX_RENDERED_OUTPUT_CHARS                            40,000
+ *
+ * EVERY LINE OF THAT SUM IS MEASURED, and a test re-measures it and reads these very digits back
+ * out of this comment (signed lesson 11: a number nobody re-measures goes stale inside a block
+ * headed MEASURED, and is then never questioned again). 805 is `renderOutputLimitNote` at its
+ * widest for a 100-row window (803 characters) plus the blank line that separates it — the exact
+ * value {@link formatDiscoverKeywords} reserves.
  *
  * and 40,000 is 64% of the 62,729 that was actually refused — comfortably under the measurement
  * this whole ceiling is derived from, with the rest of the distance kept as margin.
@@ -837,7 +874,7 @@ function renderWithinBudget(
  * them, and nothing re-serves them), and that a wider `limit` would help (the price is flat, so a
  * bigger window buys rows no reply can carry).
  */
-const TRUNCATION_ADVICE =
+export const TRUNCATION_ADVICE =
   "The rows are in DataForSEO's own order, highest first, so the ones left out are the lowest by " +
   "that field in this window — absent from this reply, not absent from the vendor, and SeoGrep " +
   'does not hold them for you. To read them, advance "offset" by the number printed above and ' +

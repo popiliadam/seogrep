@@ -21,9 +21,13 @@ import {
   type DiscoverMode,
 } from "../dfs/discover-keywords.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
-import { MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS } from "./backlink-details.ts";
+import {
+  MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS,
+  renderOutputLimitNote,
+} from "./backlink-details.ts";
 import {
   MAX_RENDERED_OUTPUT_CHARS,
+  MAX_SEED_CHARS,
   MODE_INPUT_RULES,
   MODE_SPECIFIC_FIELDS,
   VENDOR_JUDGEMENT_NOTE,
@@ -35,6 +39,7 @@ import {
   relevanceWarningFor,
   renderDiscoveryCaption,
   renderKeywordRow,
+  TRUNCATION_ADVICE,
   vendorFunctionOf,
 } from "./discover-keywords.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
@@ -1205,6 +1210,22 @@ function resultWith(
 }
 
 /** "78 keywords printed above" -> 78; "922 more fetched" -> 922. Read from the note, not assumed. */
+/** One mode's DEFAULT window, filled from that mode's OWN captured fixture rows, rendered. */
+async function defaultWindowRender(mode: DiscoverMode): Promise<string> {
+  const base = await mockPort().fetchDiscoverKeywords({
+    ...minimalPortQuery(mode),
+    limit: MAX_DISCOVER_ROWS,
+    offset: 0,
+    ...LOCALE,
+  } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0]);
+  const vendorRows = base.window.rows;
+  const rows = Array.from({ length: DEFAULT_DISCOVER_ROWS }, (_, i) => {
+    const src = vendorRows[i % vendorRows.length]!;
+    return { ...src, keyword: `${src.keyword} variant ${i}` };
+  });
+  return formatDiscoverKeywords(resultWith(mode, rows), LOCALE);
+}
+
 const MANY_SEEDS = Array.from({ length: MAX_SEEDS }, (_, i) => `enterprise seo platform ${i}`);
 
 function countsInNote(text: string): { printed: number; omitted: number } {
@@ -1246,18 +1267,7 @@ describe("the reply is bounded, and says what it could not carry", () => {
    */
   it("prints the DEFAULT window WHOLE on all four modes — no note, nothing left out", async () => {
     for (const mode of MODES) {
-      const base = await mockPort().fetchDiscoverKeywords({
-        ...minimalPortQuery(mode),
-        limit: MAX_DISCOVER_ROWS,
-        offset: 0,
-        ...LOCALE,
-      } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0]);
-      const vendorRows = base.window.rows;
-      const rows = Array.from({ length: DEFAULT_DISCOVER_ROWS }, (_, i) => {
-        const src = vendorRows[i % vendorRows.length]!;
-        return { ...src, keyword: `${src.keyword} variant ${i}` };
-      });
-      const text = formatDiscoverKeywords(resultWith(mode, rows), LOCALE);
+      const text = await defaultWindowRender(mode);
       expect(text, `${mode} truncated its DEFAULT window`).not.toMatch(/output limit reached/i);
       expect(text.match(/^• /gm)?.length, `${mode} printed the wrong row count`).toBe(
         DEFAULT_DISCOVER_ROWS,
@@ -1275,6 +1285,101 @@ describe("the reply is bounded, and says what it could not carry", () => {
     expect(text).not.toMatch(/output limit reached/i);
     expect(text.match(/^• /gm)?.length).toBe(DEFAULT_DISCOVER_ROWS);
     expect(text.length).toBeLessThanOrEqual(40_000);
+  });
+
+  /**
+   * THE ARITHMETIC IN THE SOURCE IS RE-MEASURED, AND READ BACK OUT OF THE SOURCE (signed lesson 11).
+   *
+   * The block above `MAX_RENDERED_OUTPUT_CHARS` is headed MEASURED and derives the ceiling from
+   * three numbers. A number in a comment is not measured by anyone after the day it was written —
+   * this file's first version carried a note reserve of 748 that was never the value the code
+   * reserves, sitting inside a MEASURED block where nothing questions it. So both halves are
+   * pinned: the values are re-measured here, and the DIGITS PRINTED IN THE COMMENT are parsed out
+   * and compared to them. Editing one without the other is red.
+   */
+  it("re-measures the ceiling arithmetic AND the digits the source prints for it", async () => {
+    const worstDefault = Math.max(
+      ...(await Promise.all(MODES.map(async (mode) => (await defaultWindowRender(mode)).length))),
+    );
+    const noteReserve =
+      renderOutputLimitNote(
+        "keyword",
+        DEFAULT_DISCOVER_ROWS,
+        DEFAULT_DISCOVER_ROWS,
+        TRUNCATION_ADVICE,
+      ).length + "\n\n".length;
+    const headroom = MAX_RENDERED_OUTPUT_CHARS - worstDefault - noteReserve;
+    // The sum is the ceiling, by construction.
+    expect(worstDefault + noteReserve + headroom).toBe(MAX_RENDERED_OUTPUT_CHARS);
+    // and the headroom is real room, not a rounding artefact: ~19 keyword rows at ~300 characters.
+    expect(headroom).toBeGreaterThan(15 * 300);
+
+    // NOW THE COMMENT ITSELF. Read off the arithmetic LINE that carries each term, not from
+    // anywhere in the file: the same digits also appear in the prose around the sum, and a pin that
+    // any occurrence satisfies would go green on a sum whose lines had gone stale.
+    const source = readFileSync(new URL("./discover-keywords.ts", import.meta.url), "utf8");
+    const term = (label: RegExp): number => {
+      const found = new RegExp(`${label.source}\\s+([\\d,]+)`).exec(source);
+      if (!found) throw new Error(`no arithmetic line in the source matches ${label}`);
+      return Number(found[1]!.replace(/,/g, ""));
+    };
+    expect(term(/worst DEFAULT render \(ideas, 100 rows\)/)).toBe(worstDefault);
+    expect(term(/\+ the output-limit note reserved at its widest/)).toBe(noteReserve);
+    expect(term(/what a default lookup must be allowed to print/)).toBe(worstDefault + noteReserve);
+    expect(term(/\+ headroom for longer keywords than the fixtures'/)).toBe(headroom);
+    expect(term(/\*   MAX_RENDERED_OUTPUT_CHARS/)).toBe(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * THE ONE AXIS THE ECHO BUDGET COULD NOT CLOSE, closed in the schema (2026-08-26).
+   *
+   * MEASURED with no per-seed bound: a 39,000-character seed rendered 42,666 characters carrying
+   * ZERO keywords, and a 60,000-character seed rendered 63,666 — past this ceiling AND past the
+   * 62,729 a client refused outright. The customer paid 40 credits and could not see one keyword.
+   * The first seed is echoed whole on purpose (half a quoted keyword is a different keyword), so
+   * the bound has to be on the INPUT.
+   */
+  it("refuses a seed longer than the bound, FREE, before any reserve — on every mode that takes one", async () => {
+    const monstrous = "y".repeat(60_000);
+    const tool = makeDiscoverKeywordsTool({ port: mockPort(), loadProject });
+    for (const input of [
+      { mode: "suggestions", seed: monstrous },
+      { mode: "related", seed: monstrous },
+      { mode: "ideas", seeds: ["seo software", monstrous] },
+    ]) {
+      const refused = await tool.run(CTX, input);
+      expect(refused.isError, `${input.mode} accepted a 60,000-character seed`).toBe(true);
+      expect(refused.content[0]?.text).toMatch(/invalid input/i);
+      // With no Supabase env, anything that REACHED the credit guard would say so instead — so
+      // this is the proof the refusal is free, not merely that an error came back.
+      expect(refused.content[0]?.text).not.toMatch(/SUPABASE/i);
+    }
+  });
+
+  it("publishes the seed bound on the schema, and still accepts a seed at the bound", async () => {
+    const schema = makeDiscoverKeywordsTool().inputJsonSchema as {
+      properties: Record<string, { maxLength?: number; items?: { maxLength?: number } }>;
+    };
+    expect(schema.properties.seed?.maxLength).toBe(MAX_SEED_CHARS);
+    expect(schema.properties.seeds?.items?.maxLength).toBe(MAX_SEED_CHARS);
+    // A seed EXACTLY at the bound passes validation: proven by this file's credit-guard signal,
+    // which only a request that got past the schema can reach.
+    await expect(
+      makeDiscoverKeywordsTool({ port: mockPort(), loadProject }).run(CTX, {
+        mode: "suggestions",
+        seed: "z".repeat(MAX_SEED_CHARS),
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  it("keeps the reply bounded when every seed is at the bound", () => {
+    const seeds = Array.from({ length: MAX_SEEDS }, () => "q".repeat(MAX_SEED_CHARS));
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(MAX_DISCOVER_ROWS), seeds),
+      LOCALE,
+    );
+    expect(text.length).toBeLessThanOrEqual(40_000);
+    expect(countsInNote(text).printed).toBeGreaterThan(20);
   });
 
   it("holds the ceiling on all four modes at the schema's widest window", () => {
