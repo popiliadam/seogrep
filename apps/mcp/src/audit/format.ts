@@ -186,6 +186,19 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
   ];
   if (report.clientErrorUrls.length > 0) lines.push("  4xx pages:", bulletList(report.clientErrorUrls, "  "));
   if (report.serverErrorUrls.length > 0) lines.push("  5xx pages:", bulletList(report.serverErrorUrls, "  "));
+  // THE FIFTH BUCKET, printed only when it has members — and it is the reason the sentence above
+  // is not a partition. A page whose stored status is missing or unreadable reads as 0 here
+  // (crawl-data.ts asFiniteNumber) and falls into `other`, so before this block existed such a
+  // page appeared NOWHERE in the report while the header still counted it among the pages
+  // crawled. The four counts are left byte-for-byte as they were, and what does not add up is
+  // stated in its own line rather than folded into theirs (NEVER#7).
+  if (status.other > 0) {
+    lines.push(
+      `  ${status.other} page(s) carried no usable status and are in none of the four counts ` +
+        `above, so those four do not add up to the ${report.pageCount} page(s) crawled:`,
+      bulletList(report.otherStatusUrls, "  "),
+    );
+  }
 
   lines.push("", `Redirects surfaced: ${report.redirects.length}`);
   if (report.redirects.length > 0) {

@@ -918,7 +918,10 @@ export const DOC_PROSE = {
       "exact heading it carries in the reply, so what you read here is what you can search for " +
       "in the output:\n\n" +
       "- **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
-      "page URLs listed.\n" +
+      "page URLs listed. A page whose stored status is missing or unreadable belongs to none " +
+      "of those four, and where there is one the section says how many and names them — so " +
+      "the four counts and the page total in the heading are never quietly different " +
+      "numbers.\n" +
       "- **Redirects surfaced** — the redirects the crawler surfaced (off-origin redirects, " +
       "redirect loops, and redirects onto an already-crawled URL).\n" +
       "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked " +
@@ -938,10 +941,14 @@ export const DOC_PROSE = {
       "crawled and is absent from the sitemap.\n" +
       "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
       "from.\n\n" +
-      "Redirects appear twice, on purpose and in two shapes. The crawler follows a successful " +
-      "redirect and records the destination, so a redirect surfaces as a **skip reason** rather " +
-      "than a duplicate page; separately, a page's own hop trail is read back as a **chain** " +
-      "when it took more than one hop.\n\n" +
+      "Redirects appear in three places, on purpose, and only one of the three is a repeat. The " +
+      "crawler follows a successful redirect and records the destination, so a redirect never " +
+      "becomes a duplicate page — it surfaces as a **skip reason**. **Redirects surfaced** is " +
+      "that one skip category promoted to a section of its own, which is the repeat: the same " +
+      "URL is printed there with its reason, and again under **Not crawled** inside the full " +
+      "skip ledger, whose per-reason grouping is what lets the skip counts reconcile. The " +
+      "third is different data rather than a repeat — a page's own hop trail, read back as a " +
+      "**chain** when it took more than one hop.\n\n" +
       "Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, " +
       "**Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a " +
       "count this engine always takes, so a zero there is a measurement rather than a silence. " +

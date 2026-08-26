@@ -53,6 +53,52 @@ describe("audit formatters", () => {
 });
 
 // =====================================================================================
+// THE FIFTH STATUS BUCKET — the pages the four printed counts leave out.
+//
+// Measured 2026-08-26 on a real render: a three-page crawl printed "3 page(s)" in its header and
+// four status counts summing to TWO. The third page was in `status.other` and appeared NOWHERE in
+// the report, because the renderer never printed that bucket. The route there is ordinary, not
+// exotic: crawl-data.ts reads `status` through `asFiniteNumber`, which yields 0 for a missing or
+// non-numeric value, and 0 matches none of the four branches — so every legacy or defective row
+// vanished from a report the tenant paid 15 credits for (NEVER#7).
+//
+// The three specs below pin the three halves of the fix: the count, the URLs behind it, and the
+// silence when the bucket is empty (a "0 page(s) carried no usable status" line on every clean
+// crawl would be noise, and the four counts DO partition the pages there).
+// =====================================================================================
+
+/** A page carrying a status the crawl could not read, exactly as `asFiniteNumber` leaves it. */
+const UNREADABLE_STATUS = 0;
+
+describe("a page in no status class is counted and named, never dropped", () => {
+  const mixed = crawl([
+    page({ url: "https://e/ok" }),
+    page({ url: "https://e/gone", status: 404 }),
+    page({ url: "https://e/unknown", status: UNREADABLE_STATUS }),
+  ]);
+
+  it("says how many pages the four counts leave out, against the header's own total", () => {
+    const text = formatTechReport(auditTech(mixed), AT);
+    expect(text).toContain("Technical audit — 3 page(s)");
+    expect(text).toContain(
+      "1 page(s) carried no usable status and are in none of the four counts above, " +
+        "so those four do not add up to the 3 page(s) crawled:",
+    );
+  });
+
+  it("names the page itself, so the reader can go look at it", () => {
+    // The count alone would say a page is missing without saying WHICH — the same reason the
+    // 4xx and 5xx counts are followed by their URLs.
+    expect(formatTechReport(auditTech(mixed), AT)).toContain("https://e/unknown");
+  });
+
+  it("stays silent when every page fell into one of the four", () => {
+    const clean = crawl([page({ url: "https://e/ok" }), page({ url: "https://e/gone", status: 404 })]);
+    expect(formatTechReport(auditTech(clean), AT)).not.toMatch(/no usable status/);
+  });
+});
+
+// =====================================================================================
 // THE SKIPPED LIST SAYS THE REASON ONCE, NOT ONCE PER ROW.
 //
 // Measured 2026-08-25 on a live audit: 50 rows of skipped URLs, every one carrying the SAME
@@ -64,6 +110,46 @@ describe("audit formatters", () => {
 function skippedCrawl(skipped: { url: string; reason: string }[]): AuditCrawl {
   return { pages: [page({ url: "https://e/" })], skipped, fetchedAt: AT };
 }
+
+/**
+ * ONE REDIRECT SKIP, PRINTED IN TWO PLACES — measured 2026-08-26 on a real render.
+ *
+ * `TechReport.redirects` is not a second computation: it is literally `skippedByCategory.redirect`
+ * (rules/tech.ts), promoted to a section of its own. So the same skip record is rendered twice, in
+ * two different SHAPES — `url — reason` under **Redirects surfaced**, and the reason-grouped
+ * listing under **Not crawled** — and the two are not the same line, which is why a reader meeting
+ * them can reasonably wonder whether the crawler hit the URL twice.
+ *
+ * It is kept, and both halves are load-bearing: **Redirects surfaced** is one of the four sections
+ * the tool DESCRIPTION and the docs page promise on every run, and dropping the category from the
+ * skip ledger would break the reconciliation the block below pins ("the header still counts every
+ * one of them"). What was WRONG was the docs page, which explained a different duplication — skip
+ * reason vs. redirect chain — and never mentioned this one. The prose now names all three places;
+ * this spec is what keeps that prose true.
+ */
+describe("a redirect skip is printed in both places the docs page names", () => {
+  const AWAY = "https://e/away";
+  const REASON = "off-origin redirect to https://other.test/";
+  const text = formatTechReport(auditTech(skippedCrawl([{ url: AWAY, reason: REASON }])), AT);
+
+  it("promotes it to its own section, with its reason on one line", () => {
+    expect(text).toContain("Redirects surfaced: 1");
+    expect(text).toContain(`· ${AWAY} — ${REASON}`);
+  });
+
+  it("still counts it in the skip ledger, under its reason group", () => {
+    expect(text).toContain("Not crawled (skipped): 1");
+    expect(text).toContain("  redirect: 1");
+    expect(text).toContain(`    ${REASON} — 1 URL(s):`);
+  });
+
+  it("prints the URL exactly twice — not once, and not once per section that could claim it", () => {
+    // The number is the point: if a later change drops either section, this reads 1 and the docs
+    // page's "three places, one of them a repeat" becomes a false sentence with nothing else to
+    // catch it.
+    expect(text.split(AWAY).length - 1).toBe(2);
+  });
+});
 
 describe("the skipped list groups by reason and bounds what it prints", () => {
   /** Sixty URLs, ONE reason — the shape the live audit produced, at the size that hides it. */
