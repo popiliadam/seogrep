@@ -166,32 +166,49 @@ function bindBackward(clause: string, claimStart: number): string[] {
  * ordinary prose. Contrast is normal, good writing about two tools with different prices, and a
  * guard that punished it would be a guard nobody keeps.
  *
- * THE RUN MUST BE ENTIRELY TOOLS, NOT MERELY BEGIN WITH THEM — `listIsClosed`. The paragraph above
- * claims a purity test the first version did not actually perform: it only required the delimited
- * run to START with tool references and let the sentence continue however it liked afterwards. On a
- * parenthesis that is harmless, because a `(` is nearly always closed right after the list. On an
- * em dash it is a LATENT FALSE POSITIVE, measured 2026-08-26 before this line existed:
+ * WHAT THE DELIMITER OPENS: A LIST, OR A REMARK? The first version of this binder never asked. It
+ * required the delimited run to START with tool references and let the sentence continue however it
+ * liked afterwards, which made two opposite sentences indistinguishable:
  *
- *     "The refusal is free — `research_keywords` charges only when it delivers."
+ *     "The refusal is free — `research_keywords` charges only when it delivers."   ← TRUE, a remark
+ *     "…the two free halves of the rank tracker (`a` and `b`, which both run…)."   ← FALSE, a list
  *
- * is a TRUE sentence — the dash introduces a contrast, not an enumeration — and the guard reported
- * `research_keywords` at 25 credits for it. Nothing in today's corpus is written that way, so it
- * never fired; it was one contrast sentence away from being the false positive that gets a guard
- * deleted. Requiring the run to reach its closer distinguishes the two shapes structurally: an
- * enumeration ENDS at the delimiter that closed it, a contrast runs on into a predicate.
+ * The first was reported at 25 credits (measured 2026-08-26). Nothing in today's corpus is written
+ * that way, so it never fired — it was one contrast sentence away from being the false positive
+ * that gets a guard deleted. A FIRST FIX required the run to reach its closer, and a judge measured
+ * what that cost: five shapes stopped binding, and the first of them is measured defect #2 with one
+ * relative clause added. A guard that catches a shipped defect but not the same defect plus ", which
+ * both run on any account" is not a guard, so closure alone is not the test. Two are:
+ *
+ *  1. THE RUN REACHES ITS CLOSER (`listIsClosed`) — "…the rank tracker (`a` and `b`)." The
+ *     parenthetical holds the list and nothing else, so it identifies whatever the claim modified,
+ *     however many tools it names.
+ *  2. THE RUN ENUMERATES, AND THE CLAIM IS ATTRIBUTIVE — two or more DISTINCT tools joined by
+ *     connectives, after a claim that has a head noun in front of the delimiter. "the two free
+ *     halves of the rank tracker — `a` and `b`, which both run on any account" is an enumeration
+ *     under an adjective; "The refusal is free — `research_keywords` charges…" is one tool being
+ *     predicated about, after a claim that is already the sentence's own predicate.
+ *
+ * Both discriminators are structural, and each is pinned red AND green in the spec next door. The
+ * shape deliberately left unbound is a SINGLE tool after an unclosed delimiter — "the free tier —
+ * `research_keywords` is excluded" — which reads as a remark far more often than as a one-item list,
+ * and which the conservative direction of this file (see `findPriceClaimViolations`) forfeits on
+ * purpose. That, too, is pinned, so the forfeit is visible rather than discovered.
  */
 function bindForward(clause: string, claimEnd: number): string[] {
   const after = clause.slice(claimEnd);
   const match = after.match(
-    new RegExp(`^(?:\\s+[A-Za-z']+){0,6}\\s*([(—–])\\s*((?:${MARK}[a-z_]+${MARK}|and|or|,|\\s)+)`),
+    new RegExp(`^((?:\\s+[A-Za-z']+){0,6})\\s*([(—–])\\s*((?:${MARK}[a-z_]+${MARK}|and|or|,|\\s)+)`),
   );
   if (match === null) return [];
-  const [whole, opener, list] = match;
-  if (opener === undefined || list === undefined) return [];
-  if (!listIsClosed(opener, after.slice(whole.length))) return [];
-  return (list.match(new RegExp(`${MARK}[a-z_]+${MARK}`, "g")) ?? []).map((token) =>
+  const [whole, headNoun, opener, list] = match;
+  if (headNoun === undefined || opener === undefined || list === undefined) return [];
+  const tools = (list.match(new RegExp(`${MARK}[a-z_]+${MARK}`, "g")) ?? []).map((token) =>
     token.slice(MARK.length, -MARK.length),
   );
+  const closed = listIsClosed(opener, after.slice(whole.length));
+  const enumerated = new Set(tools).size >= 2 && headNoun.trim() !== "";
+  return closed || enumerated ? tools : [];
 }
 
 /**
@@ -202,10 +219,9 @@ function bindForward(clause: string, claimEnd: number): string[] {
  * A `(` closes with its `)`. A dash has no partner, so it closes at the end of the clause, at the
  * clause's own punctuation, or at a second dash bracketing the aside.
  *
- * THE PRICE OF THIS, stated rather than discovered later: a list whose closer is separated from it
- * by a relative clause — "the two free halves — `a` and `b`, which both run on any account" — no
- * longer binds. That is the conservative direction this file already chose (see
- * `findPriceClaimViolations`), and neither measured defect is written that way.
+ * This is only the FIRST of the binder's two tests. A list whose closer is separated from it by a
+ * relative clause — "the two free halves — `a` and `b`, which both run on any account" — fails here
+ * and is caught by the enumeration test instead; `bindForward`'s header has both.
  */
 function listIsClosed(opener: string, rest: string): boolean {
   if (opener === "(") return rest.startsWith(")");

@@ -82,6 +82,45 @@ describe("the guard reddens on both measured defects", () => {
     expect(violations.map((v) => v.tool)).toContain("keyword_positions");
   });
 
+  /**
+   * THE OTHER HALF OF THE BINDER — the shapes only `listIsClosed` catches, pinned after a mutation
+   * measured 2026-08-26: with the enumeration test added and nothing here, `closed = false` left all
+   * 133 specs green. The closure test had quietly become dead weight, and deleting it would have
+   * dropped these three without a word — the same "one unpinned half" the em-dash class was in a
+   * round earlier. A closed list needs neither two tools nor a head noun to be a list.
+   */
+  it.each([
+    ["closed bracket, one tool", "…the free half of the rank tracker (`keyword_positions`)."],
+    ["closed dash, one tool", "…the free half of the rank tracker — `keyword_positions`."],
+    ["closed bracket, no head noun", "Both halves are free (`track_keywords` and `keyword_positions`)."],
+  ])("binds a list that closes where it stops: %s", (_label, text) => {
+    expect(findPriceClaimViolations(text).map((v) => v.tool)).toContain("keyword_positions");
+  });
+
+  /**
+   * THE FIVE SHAPES A CLOSURE-ONLY FIX LOST, each measured by a judge on 2026-08-26 as
+   * `base RED → GREEN` and each now bound again by the enumeration test. The first is measured
+   * defect #2 with one relative clause added, which is the whole reason closure alone was not
+   * enough: a guard that reddens a shipped sentence but not that sentence plus ", which both run on
+   * any account" is a guard that a rewrite walks straight past.
+   *
+   * They are pinned by SHAPE, not by allowlist: the bracket variants differ from the dash variants
+   * in the delimiter, the run's tail (relative clause / predicate / apposition / "plus …"), and the
+   * head-noun length, so a binder that recovers only one of them turns the rest red.
+   */
+  it.each([
+    ["bracket, tail is a relative clause", "…the two free halves of the rank tracker (`track_keywords` and `keyword_positions`, which both run on any account)."],
+    ["bracket, tail is a predicate", "SeoGrep ships a free pair (`track_keywords` and `keyword_positions` are both ungated)."],
+    ["bracket, tail is a dashed apposition", "…the two free halves of the rank tracker (`track_keywords` and `keyword_positions` — registration and read-back)."],
+    ["em dash, tail adds a non-tool item", "…the free halves — `track_keywords` and `keyword_positions`, plus the panel."],
+    ["em dash, tail is a relative clause", "…the two free halves of the rank tracker — `track_keywords` and `keyword_positions`, which both run on any account."],
+  ])("binds an enumeration whose list runs on: %s", (_label, text) => {
+    const violations = findPriceClaimViolations(text);
+    expect(violations.map((v) => v.tool)).toContain("keyword_positions");
+    // …and still not the tool that really is 0 credits.
+    expect(violations.map((v) => v.tool)).not.toContain("track_keywords");
+  });
+
   it("names the tool, its real price and the fix in the failure message", () => {
     const [violation] = findPriceClaimViolations(DEFECT_1_SERP_SNAPSHOT);
     expect(violation).toBeDefined();
@@ -130,6 +169,16 @@ describe("the guard stays silent on true claims", () => {
     ["parenthetical that continues into prose", "The size check is free (`crawl_site` charges only once the crawl is queued)."],
     // …and with an en dash, the third character in the opening class.
     ["en-dash contrast", "The dry run is free – `serp_snapshot` bills per keyword once it searches."],
+    // THE DELIBERATE FORFEIT, pinned so the trade-off is visible instead of discovered. A SINGLE
+    // tool after an unclosed delimiter reads as a remark far more often than as a one-item list,
+    // so the enumeration test requires two. Tightening this to one turns these two green cases red
+    // — which is the point: the cost of catching them is named here, not hidden.
+    ["one tool, unclosed dash, attributive claim", "The free tier — `research_keywords` is excluded from it."],
+    ["one tool, unclosed bracket, attributive claim", "The free tier (`research_keywords` is excluded) covers everything else."],
+    // The OTHER half of the enumeration test: two tools, but the claim is the sentence's own
+    // predicate, so there is no head noun for the list to identify. Without this case the head-noun
+    // condition could be deleted and nothing here would notice.
+    ["two tools, unclosed, predicative claim", "The trial is free — `track_keywords` and `keyword_positions` are metered separately."],
   ])("stays green on: %s", (_label, text) => {
     expect(findPriceClaimViolations(text)).toEqual([]);
   });
