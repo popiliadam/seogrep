@@ -544,11 +544,18 @@ export const DOC_PROSE = {
     lead:
       "`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run " +
       "in the background — newest first, each with its `job_id`. It is the tool to reach for when " +
-      "you **do not have a `job_id` to hand**.",
+      "you **do not have a `job_id` to hand**. The reply says how many jobs you have in total and " +
+      "how many it did not show, so a cut list never reads as your whole history.",
     whatItDoes:
       "Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what " +
       "state it is in, when it was created and finished, its `project_id` when it has one, and the " +
-      "`job_id` to ask about.",
+      "`job_id` to ask about.\n\n" +
+      "A job whose stored stamps contradict each other — a `finished` earlier than its `created` — " +
+      "is marked **timestamps out of order** rather than printed as an ordinary timeline. Both " +
+      "stamps are still shown, because both are real: some rows were written with `created_at` " +
+      "stamped at insert time, after the work they record. No duration is derived from such a " +
+      "pair; a contradiction does not describe a short run, it describes an unknown one, and " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status) makes the same refusal.",
     preExampleSections: [
       {
         heading: "What the list shows, and what needs a second call",
