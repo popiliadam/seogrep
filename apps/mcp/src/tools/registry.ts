@@ -9,6 +9,7 @@ import {
 import type { AuthContext } from "../auth.ts";
 import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
+import { isFreeVendorCallLimit } from "../credits/free-vendor-calls.ts";
 import { NOT_CHARGED_SENTENCE, withNoChargeNote } from "../credits/free-refusal.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
@@ -406,6 +407,22 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // reference 3f9c1a20" and turn a working gate into a support ticket. No log line either:
       // an operator has nothing to diagnose here.
       if (isPaidBalanceRequired(error)) {
+        return errorResult(error.message);
+      }
+      // The paid-balance gate's SIBLING, one axis over, and it lands in this catch for exactly the
+      // same mechanical reason: it lives inside withCredits, which is generic in T and can only
+      // exit by throwing. That gate asks whether an account may spend vendor money at all; this
+      // one asks how many vendor calls an account may make WITHOUT EVER PAYING for one, because
+      // the $3.00/day vendor cap is fleet-wide and a single client stuck in a retry loop could
+      // spend the whole day's allowance for every other customer (credits/free-vendor-calls.ts).
+      //
+      // The sentence is written at the gate — what happened, why, when it clears, that nothing was
+      // charged — so it is passed through verbatim. It DOES get a log line, unlike paid-balance:
+      // an account burning its whole free allowance is exactly what an operator must be able to
+      // correlate with a vendor-budget complaint, and the gate's own line names the user but no
+      // tool call.
+      if (isFreeVendorCallLimit(error)) {
+        console.error(`Tool "${tool.name}" refused — free vendor-call allowance: ${error.message}`);
         return errorResult(error.message);
       }
       // The SECOND deliberate refusal with no exit but a throw: a pre-condition the project has
