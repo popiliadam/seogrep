@@ -28,9 +28,14 @@ pnpm turbo run typecheck lint test build
 #
 # SIRA ARTIK GÜVENLİĞİN TEK DAYANAĞI DEĞİL. 2026-08-26'da ÖLÇÜLDÜ: bayat bir `dist` ile tek başına
 # koşulduğunda bu kontrol "38 tool pages in sync" deyip 0 dönüyordu — dünkü registry'yi bugünkü
-# MDX'le karşılaştıran, hiçbir şey ölçmeyen bir yeşil. Kontrol artık KENDİ girdisinin tazeliğini
-# doğruluyor (apps/web/scripts/dist-freshness.mjs) ve bayat/eksik `dist`'te İngilizce gerekçeyle
-# kırmızı verir. Yukarıdaki `build` satırı hâlâ doğru sıradır — kontrolü yeşil YAPAN odur; artık
-# güvenli YAPAN o değil.
+# MDX'le karşılaştıran, hiçbir şey ölçmeyen bir yeşil. Anlamsız yeşili alan yollar, ÖNÜNDE build
+# ADIMI OLMAYANLARDI: `apps/web`'in kendi `docs:tools:check` script'i, CLI'ı elle koşan geliştirici,
+# build'i atlayan herhangi bir CI job'ı — ve en kötüsü, aynı eksik adımla `docs:tools`: yazma modu
+# dünkü sayfaları bugünkülerin üzerine geri yazardı. (Yukarıdaki 25. satırın andığı `make goals` bu
+# kümede DEĞİLDİ: docs-schema-sync predicate'i önce @pseo/mcp'yi build ediyor — hem merge-base'de
+# hem HEAD'de ÖLÇÜLDÜ, hakem turunda.) Kontrol artık KENDİ girdisinin tazeliğini doğruluyor
+# (apps/web/scripts/dist-freshness.mjs) ve bayat/eksik `dist`'te İngilizce gerekçeyle kırmızı verir.
+# Yukarıdaki `build` satırı hâlâ doğru sıradır — kontrolü yeşil YAPAN odur; artık güvenli YAPAN o
+# değil.
 node apps/web/scripts/gen-tool-docs.mjs --check
 echo "VERIFY: PASS"

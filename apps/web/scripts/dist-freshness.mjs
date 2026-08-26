@@ -5,8 +5,13 @@
 // YESTERDAY's code and prints "38 tool pages in sync" — a green that measures nothing. Measured
 // canary: a tool `description` edited in `apps/mcp/src` and deliberately NOT rebuilt still produced
 //   `gen-tool-docs --check OK — 38 tool pages in sync …`  exit 0.
-// The repo gate was safe only by accident (verify.sh happens to run the check after `build`); every
-// standalone run — `make goals`, a developer, a CI job that skips build — got the meaningless green.
+// The repo gate was safe only by accident (verify.sh happens to run the check after `build`). The
+// runs that really got the meaningless green are the ones with NO build step in front of them:
+// `apps/web`'s own `docs:tools:check` script (package.json), a developer running the CLI by hand,
+// and any CI job that skips the build. `docs:tools` — the WRITE mode, same missing build step — is
+// the worse half: from a stale dist it would have written YESTERDAY's pages back over today's.
+// (`make goals` was never in this set. The docs-schema-sync predicate builds @pseo/mcp first, on
+// both the merge-base and HEAD — MEASURED, after this comment first named it as a victim.)
 //
 // THE CRITERION, and what it does NOT measure.
 //
@@ -39,8 +44,19 @@
 // the very same dist that were already verified. Different bytes, or a dist that has changed since,
 // void the memo and the run goes red.
 //
-// The memo is a CACHE inside the build output (gitignored, safe to delete, best-effort write). It
-// can never turn a real drift green: a changed source changes the fingerprint.
+// The memo is a CACHE inside the build output (gitignored, safe to delete, best-effort write). It is
+// written ONLY by a run that already passed on timestamps — a FAILING run must never certify itself,
+// and that is pinned by test ("a red run writes no memo", "a red run does not overwrite the memo").
+// Unless the memo file is rewritten from outside, then, it cannot turn drift green: a changed source
+// changes the fingerprint, and the red run that meets the change leaves no record behind.
+//
+// The claim stops exactly there, because the measurement does. A memo forged by hand — the CURRENT
+// source fingerprint against the CURRENT distStamp — does buy a green on drifted sources (MEASURED
+// by the reviewer, exit 0). That is forgery, not drift: it takes deliberately hashing all 130
+// sources with this module's own helpers, and anyone who can do that can edit this file or
+// verify.sh just as easily. It is recorded rather than defended against — but the sentence here
+// stays inside what was measured, because an absolute claim a five-minute experiment falsifies is
+// worse than a narrow true one.
 
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";

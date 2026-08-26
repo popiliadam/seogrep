@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -213,6 +213,32 @@ describe("fingerprint memo", () => {
     t.output("tools/extra.js", "export const extra = 1;\n", BASE + 20);
     t.source("tools/index.ts", "export const ALL_TOOLS = [];\n", BASE + 500);
 
+    expect(() => t.check()).toThrow(/is STALE/i);
+  });
+
+  // The memo's whole safety rests on ONE premise: it is written only by a run that PASSED on
+  // timestamps. Nothing pinned that premise until the reviewer mutated a memo write in front of the
+  // throw (M1) — the suite stayed 27/27 green while the REAL gate turned a red run into a green one
+  // on its second invocation. These two tests are that missing pin.
+  it("a red run writes no memo — a failure must never certify itself", () => {
+    const t = freshTree();
+    t.source("tools/index.ts", "export const ALL_TOOLS = ['drifted'];\n", BASE + 60);
+
+    expect(() => t.check()).toThrow(/is STALE/i);
+    expect(existsSync(join(t.dist, MEMO_BASENAME))).toBe(false);
+    // …so running it again cannot launder the same drift into a pass.
+    expect(() => t.check()).toThrow(/is STALE/i);
+  });
+
+  it("a red run does not overwrite an existing memo with the drifted state", () => {
+    const t = freshTree();
+    t.check(); // an honest pass records the pairing that was really built
+    const recorded = t.memo();
+
+    t.source("tools/index.ts", "export const ALL_TOOLS = ['drifted'];\n", BASE + 60);
+
+    expect(() => t.check()).toThrow(/is STALE/i);
+    expect(t.memo()).toEqual(recorded); // still describes the sources that were actually compiled
     expect(() => t.check()).toThrow(/is STALE/i);
   });
 

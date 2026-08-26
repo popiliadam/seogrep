@@ -22,8 +22,12 @@
 // otherwise (dist-freshness.mjs). Reading a stale dist made `--check` compare today's MDX with
 // yesterday's registry and print "N tool pages in sync" — a green measuring nothing (MEASURED
 // 2026-08-26 with a tool description edited in src and deliberately not rebuilt: exit 0). The repo
-// gate was safe only because verify.sh happens to run this after `build`; every standalone run —
-// `make goals`, a developer, any CI job that skips the build — got the meaningless green.
+// gate was safe only because verify.sh happens to run this after `build`; the meaningless green went
+// to every path with NO build step in front of it — this package's own `docs:tools:check` script,
+// a developer running the CLI by hand, any CI job that skips the build, and worst of all
+// `docs:tools`, whose write mode would have put yesterday's pages back on disk. (`make goals` was
+// never exposed: the docs-schema-sync predicate builds @pseo/mcp first — MEASURED on the merge-base
+// and on HEAD, after this comment first named it as a victim.)
 //
 // The pure functions below are exported and unit-tested (apps/web/lib/tool-docs-gen.test.ts); the
 // registry is imported lazily inside main(), so importing this module for tests is side-effect free.
