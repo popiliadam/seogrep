@@ -23,6 +23,12 @@ export interface LedgerEntry {
   readonly kind: string;
   readonly reason: string | null;
   readonly tool: string | null;
+  /**
+   * The project this spend was for (migration 0033), or null when the call had no project scope.
+   * Null is an ANSWER for a spend — a keyword set, a seed, a subject that is nobody's site — and
+   * meaningless on a grant or a purchase, which is a distinction the renderer makes, not this row.
+   */
+  readonly projectId: string | null;
 }
 
 /** 1-based paging request. Both values are clamped to a positive integer. */
@@ -45,10 +51,10 @@ export interface LedgerPage {
 
 type EntryColumns = Pick<
   Database["public"]["Tables"]["credit_ledger"]["Row"],
-  "id" | "created_at" | "delta" | "kind" | "reason" | "tool"
+  "id" | "created_at" | "delta" | "kind" | "reason" | "tool" | "project_id"
 >;
 
-const ENTRY_COLUMNS = "id, created_at, delta, kind, reason, tool";
+const ENTRY_COLUMNS = "id, created_at, delta, kind, reason, tool, project_id";
 
 function toEntry(row: EntryColumns): LedgerEntry {
   return {
@@ -58,6 +64,7 @@ function toEntry(row: EntryColumns): LedgerEntry {
     kind: row.kind,
     reason: row.reason,
     tool: row.tool,
+    projectId: row.project_id,
   };
 }
 

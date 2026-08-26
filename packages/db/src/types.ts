@@ -251,6 +251,7 @@ export type Database = {
           id: number
           job_id: string | null
           kind: string
+          project_id: string | null
           reason: string | null
           reserve_id: string | null
           tool: string | null
@@ -262,6 +263,7 @@ export type Database = {
           id?: never
           job_id?: string | null
           kind: string
+          project_id?: string | null
           reason?: string | null
           reserve_id?: string | null
           tool?: string | null
@@ -273,6 +275,7 @@ export type Database = {
           id?: never
           job_id?: string | null
           kind?: string
+          project_id?: string | null
           reason?: string | null
           reserve_id?: string | null
           tool?: string | null
@@ -959,6 +962,7 @@ export type Database = {
         Args: {
           p_amount: number
           p_job_id: string
+          p_project_id?: string
           p_tool: string
           p_user_id: string
         }
