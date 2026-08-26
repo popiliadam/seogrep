@@ -872,3 +872,135 @@ Bu tablo defterin üstündeki bölüm başlıklarını **geçersiz kılar**; bir
 
 **4 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs`.
 Kalan **34 tool** bu defterin kapsamında **değil**; smoke turu devam ediyor.
+
+---
+
+# 🌊 DALGA 2 — 2026-08-26 16:44Z'de başladı
+
+> Yukarıdaki **🔒 KAPANIŞ DURUMU** tablosu **dalga 1'in** tek yetkili kaydıdır ve değişmez.
+> Dalga 2 kendi bulgularını buraya, **D** önekiyle yazar (dalga 1'in G/A/I önekleriyle karışmasın).
+> Handoff: `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga2.md`.
+
+## §D0 — dalga 2 açılış ölçümleri
+
+| ne | ölçüm |
+|---|---|
+| yerel dal | `fix/smoke-turu-dalga-1` @ **`974e599`** (temiz, `origin` ile eşit) |
+| canlı kod | `origin/main` @ **`499a2a0`** — dalga 1 hâlâ deploy EDİLMEDİ |
+| `mcp.seogrep.com/status` | `ok:true` · `uptime 22496s` · `errorsSinceBoot:0` · `pendingJobs:0` · `schema:ready` |
+| istemci bağlantısı | ✅ `get_credit_balance` cevap verdi (dalga 1'deki `requires authentication` tekrarlamadı) |
+| kredi bakiyesi | **4519** (dalga 1 kapanışıyla aynı) |
+| `credit_ledger` | **783 satır**, son satır `2026-08-26 10:37:53Z` |
+| vendor tabanı | `dfs_spend_today_usd()` = **$0,101** / $3,00 |
+| ölçüm saati | 2026-08-26 **16:44 UTC** (UTC takvim günü hâlâ 08-26) |
+| şema kontrolü (handoff §2) | ✅ `setup_project` şeması **`properties` İÇERİYOR**, açıklama gerçek metin (`"The website to track, e.g. …"`). Tuzak bu istemcide tekrarlamadı |
+
+---
+
+## §D1 — `setup_project` — 0 kredi ✅ ÖLÇÜLDÜ
+
+### Çalışma prensibi (kod okunarak, tahminle değil)
+
+`apps/mcp/src/tools/setup-project.ts` **rotanın kendisini taşımıyor**; tek rota
+`packages/db/src/projects.ts` → `openTrackedProject(client, userId, rawDomain)`. Sıra:
+
+1. **`normalizeDomain`** (`packages/core/src/net/hostname.ts`) — şema/yol/port/query/fragment düşer,
+   küçük harfe iner, sondaki nokta ve **tek bir baştaki `www.`** etiketi atılır (`www.com` istisnası
+   korunur), `DOMAIN_RE` şekil kapısı, sonra **`nonPublicHostnameReason`** (12 rezerve TLD +
+   `home.arpa` + tek etiket) reddi. Bu kapı **rotanın İÇİNDE** — çağıran onu atlayamaz.
+2. **`findSameSiteProject`** — `sameSiteDomains(domain)` sırasıyla iki tenant-scoped okuma:
+   önce **kanonik**, sonra **`www.` ikizi**. Tercih `.in(...)` ile değil **kontrol akışıyla** ifade
+   edilmiş; iki satırı da olan kiracı her çağrıda kanonik olana düşer.
+3. Satır yoksa **`upsert … onConflict:"user_id,domain", ignoreDuplicates`** — yarış güvenli:
+   satır dönerse `created:true`, boş dönerse kazananı geri okur ve `created:false` der.
+4. Satır **arşivdeyse** `restoreOwnProject` ile `archived_at` temizlenir (`outcome:"restored"`);
+   UPDATE `.select().maybeSingle()` ile geri okunur, yani "hata yoktu" ile "yazıldı" karıştırılmaz.
+5. **Erişilebilirlik kontrolü YAZMADAN SONRA** koşar (`checkDomainReachable`, `node:dns.lookup`,
+   tavan **2000 ms**, `unref`'li). `ENOTFOUND`/`EAI_NODATA` → `no_such_domain`; **diğer HER kod**
+   → `unknown` = sessizlik. Yalnız `no_such_domain` uyarı basar; **hiçbir durumda kaydı engellemez.**
+
+`credit_ledger`'a **dokunmuyor** (NEVER#2), her okuma/yazma **açık `user_id` filtresi** taşıyor (NEVER#4).
+
+> **Canlı ile dal FARKI YOK:** `git log origin/main..HEAD -- apps/mcp/src/tools/setup-project.ts
+> packages/db/src/projects.ts apps/mcp/src/tools/domain-reachability.ts` → **boş**. Bu tool'da
+> "dalda düzeltildi mi" tuzağı yok; ölçülen şey canlının kendisi.
+
+### Panelde/sitede nasıl göründüğü
+
+`/app/projects` sayfasındaki **Add domain** formu (`add-domain-form.tsx`) → server action
+`addDomain` (`actions.ts`) → **AYNI** `openTrackedProject`. Form JavaScript'siz çalışır (native
+`<form>` + server action), POST-redirect-GET ile `?added=created|existing|restored&domain=…`
+ya da `?error=invalid_domain|not_restored|failed` döner; `add-domain-banner.tsx` her mesajı
+**literal** basar (query string saldırgan kontrollü; bilinmeyen kod hiç render edilmez).
+
+### Hangi komutlar tetikler
+
+- Müşteri cümlesi: *"track example.com"*, *"add my site"*, *"start tracking seogrep.com"*.
+- **Zincirin kapısı:** `crawl_site` `project_id` **zorunlu** (`"The project_id from setup_project /
+  list_projects."`), dolayısıyla B bölümünün tamamı buradan geçiyor. `ranked_keywords` /
+  `compare_competitors` / `analyze_backlinks` `project_id` **veya** `target` alıyor.
+- Aynı rotayı çağıran diğer iki yüzey: **panel Add domain formu** ve **`track_gsc_property`**
+  (GSC property'sinden alan adı türetip proje açar).
+
+### Çağrılar (asistan) — 9 çağrı, hepsi canlı `mcp.seogrep.com`
+
+| # | girdi | cevap | ne kanıtladı |
+|---|---|---|---|
+| 1 | `bigcattr.com` | `Project already exists for "www.bigcattr.com" (project_id: 26b95c84…, created: false).` | **`www.` ikiz probu canlıda çalışıyor** — kanonik girdi, eski `www.` satırını buldu; **7. satır açılmadı** |
+| 2 | `https://WWW.NoranInsaat.com:443/iletisim?utm=x#frag` | `… exists for "noraninsaat.com" (ea77221c…, created: false).` | şema+port+yol+query+fragment+BÜYÜK harf+`www.` hepsi düştü; **iki satırı olan kiracı kanoniğe düştü** |
+| 3 | `metadata.google.internal` | ✖ `"…" is not a public domain — internal or reserved names cannot be tracked.` | rezerve-ad kapısı |
+| 4 | `seogrep` | ✖ `"seogrep" is not a valid domain — expected a host like "example.com".` | tek etiket; **şekil reddi ayrı cümle** |
+| 5 | `iki kelime` | ✖ `"iki kelime" is not a valid domain or URL.` | ayrıştırılamayan girdi; **üç ret üç FARKLI cümle** |
+| 6 | `example.org` | `Created project for "example.org" (5a67bc3f…, created: true).` | çözülen alan adı → uyarı **YOK** (doğru) |
+| 7 | `smoke-dalga2-yok-4e91.com` | `Created …(4809a33f…, created: true).` + **`Heads up: … does not resolve …`** | **ölü alan adı uyarısı canlıda** — kayıt yine de başarılı |
+| 8 | `smoke-dalga2-yok-4e91.com` (tekrar) | `… already exists …` + **aynı uyarı** | uyarı "yalnız yaratılışta" değil; **her çağrıda** yeniden ölçülüyor |
+| 9 | `http://example.org/blog/post-1` | `… already exists for "example.org" (5a67bc3f…, created: false).` | idempotency **URL biçiminden de** geçiyor |
+
+### Para ve yan etki muhasebesi
+
+| ne | önce | sonra | fark |
+|---|---|---|---|
+| kredi bakiyesi | 4519 | 4519 | **0** |
+| `credit_ledger` satır | 783 | **783** | **0 satır** — 9 çağrının hiçbiri defter yazmadı (NEVER#2) |
+| `dfs_spend_today_usd()` | $0,101 | **$0,101** | **$0,00** — paralı uç yok |
+| `projects` satır | 17 | **19** | **+2**, tam olarak `created:true` diyen iki çağrı kadar |
+
+**Yeni iki satır** (dalga 2'nin kendi kanıtı, silinmedi):
+`example.org` → `5a67bc3f-9728-4237-a3f6-4d9b7826fadb` (çözülüyor) ·
+`smoke-dalga2-yok-4e91.com` → `4809a33f-6ab9-4f79-a6ce-0d0d7be73ea6` (çözülmüyor).
+**Önerilen kullanım:** A bölümünün sonundaki **`untrack_project`** turunun fikstürü olsunlar —
+arşivle, sonra `setup_project` ile geri çağır; böylece **`restored` yolu** (tek ölçülmemiş outcome)
+`bu-domain-kesinlikle-yok-9f3a2c.com`'a (§7 dokunulmaz arşiv probu) hiç dokunmadan ölçülür.
+
+> **`restored` neden bu turda ölçülmedi:** tek arşivli satır §7'de dokunulmaz olarak listeli ve
+> `setup_project` çağırmak onu **arşivden çıkarırdı** — kanıtın kendisini bozmak olurdu.
+
+### BULGULAR
+
+- **BULGU D-1 — KAPSAM (sahip: kod, orta):** **Panel "Add domain" DNS kontrolünü hiç koşmuyor.**
+  Aynı rotayı paylaşan iki yüzeyden yalnız MCP tarafı uyarıyor: `actions.ts`'te
+  `checkDomainReachable` çağrısı **yok**, `add-domain-contract.ts`'in query-string sözleşmesinde
+  DNS kalemi **yok**, `add-domain-banner.tsx` üç outcome + üç hata literali taşıyor ve içlerinde
+  erişilebilirlik cümlesi **yok**. Yani panelden yanlış yazılmış bir alan adı
+  **"Now tracking exmaple.com."** ile sessizce kabul ediliyor — ve `domain-reachability.ts`'in kendi
+  başlığındaki var oluş gerekçesi tam olarak bu: ölü alan adı kaydedildi, ardından **20 kredilik
+  `crawl_site` önerildi**. Panel insanın **birincil** yüzeyi; uyarının yalnız ajan yolunda olması
+  gerekçeyi yarım karşılıyor.
+- **BULGU D-2 — ÇIKTI (sahip: kod/operatör kararı, düşük):** `Created project …` cümlesi **bir
+  sonraki adımı söylemiyor.** Ürün `whats_next`'i tam bu iş için taşıyor (dalga 1'de G9 ile
+  düzeltildi); kurulumun hemen ardından tek satırlık işaret, müşteri yolunun en ucuz kazancı.
+  Karşı argüman: her tool'a "sonra şunu çağır" eklemek gürültü üretir — bu yüzden **öneri**, dayatma değil.
+- **BULGU: YOK** — SEÇİM · ARGÜMAN · ÜCRET DÜRÜSTLÜĞÜ · VERİ · DEĞER eksenlerinde kusur görülmedi.
+  Açıklama tek cümlede tool'u seçtiriyor, tek parametre var ve **her biçimi** kabul ediyor, üç ret
+  üç farklı ve yol gösterici cümle, 0 kredi iddiası **ledger'da 0 satırla** doğrulandı.
+
+### Bilinen madde (yeni bulgu DEĞİL)
+
+`www.noraninsaat.com` satırı artık `setup_project` ile **açılamıyor** — kanonik `noraninsaat.com`
+satırı varken kontrol akışı her zaman ona düşüyor. Bu **tasarım gereği** (rota başlığı bunu açıkça
+yazıyor) ve apex/www çifti uyarısı dalga 1'de **G4**'te kapandı; ama o düzeltme **dalda**, canlıda
+değil. Canlı `list_projects` bu çifti hâlâ uyarısız listeliyor.
+
+### Operatörün notu
+
+*(manuel test bekleniyor — operatör kendi istemcisinden/panelinden çağırınca buraya yazılır)*
