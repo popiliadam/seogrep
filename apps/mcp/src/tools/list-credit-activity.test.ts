@@ -387,3 +387,45 @@ describe("paging and the not-recorded note", () => {
     expect(formatCreditActivity({ rows: [newer], total: 1 })).not.toMatch(/cannot be filled in/i);
   });
 });
+
+/**
+ * D-9 — what the SECOND page calls itself. Measured live 2026-08-26, minutes after paging
+ * shipped: page two answered "Your 2 most recent credit entries of 510". They were not the most
+ * recent — page one was — and 510 is what remains past the cursor, not the size of the ledger.
+ */
+describe("the heading a paged answer carries", () => {
+  const rows = [entry({ id: 400 }), entry({ id: 399 })];
+
+  it("says 'most recent' only on the first page", () => {
+    expect(formatCreditActivity({ rows, total: 512 })).toMatch(/2 most recent credit entries of 512/);
+  });
+
+  it("calls a continued page what it is, and names the remainder rather than a total", () => {
+    const text = formatCreditActivity({ rows, total: 510 }, new Map(), undefined, true);
+    expect(text).toMatch(/Continuing from your cursor: 2 of 510 older credit entries/);
+    expect(text).not.toMatch(/most recent/i);
+  });
+
+  it("still hands back the next cursor from a continued page", () => {
+    const text = formatCreditActivity({ rows, total: 510 }, new Map(), undefined, true);
+    expect(text).toMatch(/before_id: 399/);
+  });
+
+  /**
+   * THROUGH THE TOOL, not through the formatter — and this spec exists because its absence was
+   * MEASURED. Deleting the handler's `before_id !== undefined` argument left all three pins above
+   * green: they call the pure function and hand it the flag themselves, so nothing was asserting
+   * that the HANDLER computes it. A pure-function pin cannot see its own wiring.
+   */
+  it("the tool itself tells the renderer a cursor was used", async () => {
+    const port = recordingPort(rows);
+    const ctx = { userId: "u-1", keyId: "k-1" };
+
+    const first = textOf(await port.tool.run(ctx, { limit: 2 }));
+    expect(first).toMatch(/most recent/i);
+
+    const next = textOf(await port.tool.run(ctx, { limit: 2, before_id: 401 }));
+    expect(next).toMatch(/Continuing from your cursor/);
+    expect(next).not.toMatch(/most recent/i);
+  });
+});
