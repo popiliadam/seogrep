@@ -5,6 +5,43 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 📋 2026-08-26 (SON) — **A BÖLÜMÜ KAPANDI**: imza paketinin beş yapılmayan maddesi canlı kodda
+
+**5/5 dilim PASS.** İmza md. **3 · 4 · 9 · 10 · 12** artık kodda (defterin "kodda sıfır iz" ölçümü kapandı).
+Dal `integration/duzeltme-dalga-ab` — `main @8668ff2` üzerine **159 commit** (136 → +23), **PUSH EDİLMEDİ**.
+
+Üç kapı yeşil: `verify.sh` (mcp **130/3312** · web 118/1724 · core 17/316 · **38 doküman senkron**) ·
+`verify-db.sh` (db 21/165 · mcp 51/**482** · web 7/48, UTC 06:21) · `make goals` **16/16 (5 SKIP, hepsi canlı uç)**.
+**Kredi fiyatı değişikliği: SIFIR. Vendor harcaması: $0,00** (hiç canlı DFS çağrısı yapılmadı).
+
+**5 hakem turu (2'si Fable) · 4 FAIL · yanlış alarm 0 · 27 mutasyon kanıtı.** Dört FAIL'in dördü de
+aynı şekil: *işçi N ekseni varyantladı, N+1'inci eksen hiç ölçülmemişti.*
+
+En pahalı iki bulgu — ikisi de **para**:
+- **md.10 regresyonu:** çağıranın `min_volume`'u bizim varsayılan tavanımızla çarpışınca vendor'a
+  boş küme gidiyordu; **40 kredi alınır, 0 satır teslim edilir.** Tavan artık geri çekiliyor;
+  çağıranın kendi çelişkisi rezervasyon öncesi **ücretsiz** reddediliyor.
+- **`joinWithAnd`:** üç sınırda çıplak dizi üretiyordu = geçersiz vendor grameri = **ücretli
+  başarısız çağrı**. Latent'ti, tavan onu erişilebilir yapıyordu.
+
+**md.12 fiyat kararı (imzanın kendi sınırından türedi):** varsayılan-açık tohumlama `crawl_site`'ı
+20→60 yapardı; imza *"mevcut hiçbir tool'un fiyatını değiştirmek"* der → **OPT-IN, varsayılan KAPALI**,
+ek 40 mevcut `my_pages` fiyatıyla ayrı ledger kalemi, **yeni `TOOL_COSTS` satırı YOK**.
+
+> **⚠️ YENİ ÖLÇÜM HİJYENİ KURALI (imzalı ders 8'e yeni mekanizma):** `turbo --filter` worktree
+> izolasyonu VERMEZ — bir worktree'den koşulan kapı **başka bir dalın ağacını** ölçebiliyor
+> (11 koşunun 3'ü, log başlığı kanıtladı). `cd <wt>/apps/mcp && pnpm exec vitest run` kullan ve
+> **her koşuda `RUN  v… <yol>` satırını OKU** (`RUN` sonrası iki boşluk).
+
+Kapanış: `docs/plans/2026-08-26-A-bolumu-kapanis.md` · kalan iş: `docs/plans/2026-08-26-KALAN-IS-taze-oturum.md` **§B/C/D/E/F**
+
+**SIRADAKİ:** C bölümü (çıktı boyutu + `my_pages` çift basım) tek dilim · B bölümü (S2/S3/S21 canlı
+doğrulama) **deploy sonrası** · D bölümündeki üç karar (**S20 · S23 · deploy/push**) **insanda**.
+Yeni açık madde: **md.12 ledger telafi penceresi** — seeding commit edildikten sonra `enqueueJob`
+çökerse net -40 ve crawl yok; telafi satırı append-only deftere makine sokar, **operatör kararı**.
+
+---
+
 ### 📋 2026-08-26 — DÜZELTME TURU **KOŞULDU** · %100 DEĞİL, kalanlar ölçüldü
 
 **22/22 dilim birleşti ve taze-bağlamlı hakemden geçti.** Dal `integration/duzeltme-dalga-ab`

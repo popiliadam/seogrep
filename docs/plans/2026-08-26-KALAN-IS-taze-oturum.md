@@ -10,9 +10,19 @@
 
 ---
 
-## A. YAPILMAYAN ONAYLI İŞ — beş madde, ölçüldü
+## A. ~~YAPILMAYAN ONAYLI İŞ~~ — **KAPANDI 2026-08-26**
 
 İmza paketi (`2026-08-26-imza-paketi-onay.md`) bunları **onayladı**, fiyat sabit. **Hiçbiri kodda yok.**
+
+> **✅ BEŞİ DE CANLI KODDA.** Kapanış kaydı: `2026-08-26-A-bolumu-kapanis.md`.
+> 5/5 PASS · 5 hakem turu (2'si Fable) · **4 FAIL, yanlış alarm 0** · 27 mutasyon kanıtı.
+> Üç kapı yeşil: `verify.sh` (mcp **130/3312**) · `verify-db.sh` (mcp 51/**482**) · `make goals` **16/16 (5 SKIP)**.
+> **Kredi fiyatı değişikliği: SIFIR. Vendor harcaması: $0,00.** Dal artık `main` üzerine **159 commit**.
+>
+> Aşağıdaki tablo tarihsel kayıttır — teşhislerinin **üçü hipotezdi ve ikisi yanlış çıktı**
+> (md.9 tamamen, md.10 kısmen). Ayrıntı kapanış kaydının §4'ünde.
+
+
 
 | md. | ne | ölçüm (2026-08-26) |
 |---|---|---|
@@ -22,7 +32,7 @@
 | **10** | `discover_keywords`'ün gürültülü modlarına (`for_site`, `ideas`) **uyarı + hacim tavanı** | `noisy/unrelated/irrelevant/national` → **0** |
 | **12** | Crawl'ın **DFS sıralayan-sayfa listesinden tohumlanması** (ek maliyet `my_pages` ≈ 40 kredi, onaylı) | `my_pages/ranked page/seed from` → **0** |
 
-**Bunlar `[kod]` ve imzalı — taze oturum doğrudan dispatch edebilir.**
+~~**Bunlar `[kod]` ve imzalı — taze oturum doğrudan dispatch edebilir.**~~ → **YAPILDI.**
 
 ### Her biri için iş emri notu
 - **md.3** en büyüğü: üç tool, üç ayrı veri şekli. Kredi **artmıyor**. Ölçülen boşluk şuydu —
@@ -58,6 +68,10 @@ Her çağrının önü/sonu `select dfs_spend_today_usd()`.
 | `my_pages` **her vendor sayfasını İKİ KEZ** basıyor | `project_id` verilince: hakem tam örtüşmede **863.363** karakter ölçtü (**+%111**) |
 
 **Birlikte düzeltilmeli:** çift basım, kapağın tutması gereken boyutu ikiye katlıyor.
+
+> **A turundan gelen YENİ ölçüm (2026-08-26):** `analyze_content_decay` tavsiye katmanıyla
+> 30 sayfada **2.109 → 6.289 karakter (+%198)** ve **listesi kapaksız**. C dilimi bunu da kapsamalı.
+> Saklanan bulgu büyümüyor (`writeRun` yapısal raporu yazıyor, render metnini değil).
 Emsal: `backlink_details`'in 28.000 karakterlik bütçesi + dürüst kesme notu (bu turda indi).
 
 ---
