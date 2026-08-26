@@ -250,6 +250,39 @@ function sitemapBlock(tech: TechSummary): string {
 }
 
 /**
+ * THE FOUR STAT BLOCKS ARE NOT A PARTITION, and this block is the sentence that says so.
+ *
+ * A page whose stored status is missing or unreadable reads as 0 (audit/crawl-data.ts
+ * asFiniteNumber) and lands in the engine's fifth bucket, `status.other`. Until 2026-08-26 the
+ * report model dropped that bucket, so such a page was counted by "Pages crawled" at the top of
+ * the document and then appeared in none of the four numbers and on none of the lists below them
+ * — silently, on a public page a tenant paid 15 credits for. A missing page that reads as no page
+ * at all is the invented zero NEVER#7 forbids.
+ *
+ * The four counts are left byte-for-byte as they were and the shortfall is STATED IN ITS OWN
+ * SENTENCE, naming both numbers, exactly as formatTechReport states it in audit_tech's plain
+ * text. Same fact, same honesty, rendered for this medium: a callout plus the same escaped,
+ * non-linking URL list every other finding here uses.
+ *
+ * TWO DELIBERATE SHAPES:
+ * - Returns "" when the bucket is empty, and carries its OWN leading newline so that the empty
+ *   case leaves the surrounding template byte-identical to what it rendered before this existed.
+ *   Every already-stored report re-renders unchanged.
+ * - Reuses the `.stale` callout rather than introducing a class, because a new selector would
+ *   change the inline stylesheet — which ships in EVERY document, including the ones with no
+ *   unclassified page, and would break exactly that byte-identity. `.stale` is this document's
+ *   one "must survive being skimmed" treatment, which is what a count that does not add up needs.
+ */
+function unclassifiedStatusBlock(tech: TechSummary): string {
+  if (tech.other === 0) return "";
+  return `
+    <p class="stale">${fmtNum(tech.other)} page(s) carried no usable HTTP status and are in none of
+    the four counts above, so those four do not add up to the ${fmtNum(tech.pageCount)} page(s)
+    crawled.</p>
+    ${listBlock("Pages with no usable HTTP status", tech.otherStatusUrls, urlText)}`;
+}
+
+/**
  * Technical health from the REAL engine. G1 printed the four status counts and a robots-conflict
  * number; the engine had already computed nine more sections and the report threw them away.
  *
@@ -264,7 +297,7 @@ function techSection(tech: TechSummary): string {
       ${statBlock(tech.redirect3xx, "Redirects (3xx)")}
       ${statBlock(tech.clientError4xx, "Client errors (4xx)")}
       ${statBlock(tech.serverError5xx, "Server errors (5xx)")}
-    </div>
+    </div>${unclassifiedStatusBlock(tech)}
     <p class="muted">Robots conflicts (noindex but internally linked): <strong>${fmtNum(tech.robotsConflicts)}</strong></p>
     ${listBlock("Client error pages (4xx)", tech.clientErrorUrls, urlText)}
     ${listBlock("Server error pages (5xx)", tech.serverErrorUrls, urlText)}

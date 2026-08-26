@@ -50,9 +50,13 @@ const FULL_MODEL: ReportModel = {
     redirect3xx: 1,
     clientError4xx: 2,
     serverError5xx: 0,
+    // 39 + 1 + 2 + 0 = 42 = pageCount: every page classified, so the fifth bucket is empty and
+    // the report must say nothing at all about it. UNCLASSIFIED below is the other side.
+    other: 0,
     robotsConflicts: 1,
     clientErrorUrls: EMPTY,
     serverErrorUrls: EMPTY,
+    otherStatusUrls: EMPTY,
     slowPages: EMPTY,
     heavyPages: EMPTY,
     // 0/0: this fixture is a crawl stored BEFORE the crawler recorded fetch time and HTML size,
@@ -303,6 +307,98 @@ const ENRICHED: ReportModel = {
     truncatedPages: { items: [{ url: "https://example.com/big", dropped: 3 }], total: 1 },
   },
 };
+
+/**
+ * The fifth status bucket — pages the crawl could not classify at all.
+ *
+ * `pageCount` 42 against 39+1+2+0 = 42 in FULL_MODEL is a partition; UNCLASSIFIED breaks it on
+ * purpose (39+1+2+0 = 42 against a `pageCount` of 45) so the three pages are provably missing
+ * from every number the section prints. That is the live shape: a status a legacy crawl stored
+ * as missing or unreadable reads as 0 and lands here.
+ */
+const UNCLASSIFIED: ReportModel = {
+  ...FULL_MODEL,
+  crawl: { ...FULL_MODEL.crawl!, pageCount: 45 },
+  tech: {
+    ...FULL_MODEL.tech!,
+    pageCount: 45,
+    other: 3,
+    otherStatusUrls: {
+      items: ["https://example.com/no-status", "https://example.com/broken-status"],
+      total: 3,
+    },
+  },
+};
+
+/** Collapse runs of whitespace so an assertion pins the SENTENCE, not the source line wrapping. */
+function flat(html: string): string {
+  return html.replace(/\s+/g, " ");
+}
+
+/** Just the Technical health section, so "appears somewhere on the page" cannot pass for it. */
+function techBodyOf(html: string): string {
+  const start = html.indexOf("<h2>Technical health</h2>");
+  expect(start).toBeGreaterThan(-1);
+  return html.slice(start, html.indexOf("<h2>Page speed</h2>"));
+}
+
+describe("the fifth status bucket (pages with no usable status)", () => {
+  it("SAYS the four counts do not add up, naming both numbers", () => {
+    // The core of it: a list alone would show the pages without ever admitting that the four
+    // stat blocks above are short. The sentence must carry BOTH the missing count and the
+    // crawled total, because either number alone leaves the reader to do the subtraction.
+    expect(flat(techBodyOf(renderReportHtml(UNCLASSIFIED)))).toContain(
+      "3 page(s) carried no usable HTTP status and are in none of the four counts above, " +
+        "so those four do not add up to the 45 page(s) crawled.",
+    );
+  });
+
+  it("gives the shortfall the skimmable callout, not the small grey print", () => {
+    // A number that does not add up has to survive being skimmed; `.hint`/`.muted` are 12-13px
+    // grey chrome. Pins the CLASS, which is what decides whether a reader sees it at all.
+    expect(flat(techBodyOf(renderReportHtml(UNCLASSIFIED)))).toMatch(
+      /<p class="stale">3 page\(s\) carried no usable HTTP status/,
+    );
+  });
+
+  it("names the URLs behind the count and says how many were not listed", () => {
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    expect(techBody).toContain("https://example.com/no-status");
+    expect(techBody).toContain("https://example.com/broken-status");
+    // total 3 vs 2 listed: the cap tail every other list in this file prints.
+    expect(flat(techBody)).toContain("… and 1 more");
+  });
+
+  it("leaves the four counts themselves untouched", () => {
+    // The shortfall is stated BESIDE the four numbers, never folded into them — a 4xx count
+    // quietly inflated to make the arithmetic work would be the invented number NEVER#7 forbids.
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    expect(techBody).toContain('<div class="n">39</div><div class="l">OK (2xx)</div>');
+    expect(techBody).toContain('<div class="n">2</div><div class="l">Client errors (4xx)</div>');
+    expect(techBody).not.toMatch(/<div class="n">(42|45)<\/div><div class="l">OK \(2xx\)/);
+  });
+
+  it("escapes the URLs — this document is served on a PUBLIC page", () => {
+    const evil = renderReportHtml({
+      ...UNCLASSIFIED,
+      tech: {
+        ...UNCLASSIFIED.tech!,
+        other: 1,
+        otherStatusUrls: { items: [`https://example.com/${XSS}`], total: 1 },
+      },
+    });
+    expect(evil).toContain(XSS_ESCAPED);
+    expect(evil).not.toContain("<img src=x");
+  });
+
+  it("says NOTHING about it when every page classified", () => {
+    // ABSENCE IS NOT A FINDING: FULL_MODEL's four counts do add up, so there is no shortfall to
+    // report and no "0 unclassified" line either.
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).not.toMatch(/no usable HTTP status/i);
+    expect(html).not.toMatch(/do not add up/i);
+  });
+});
 
 describe("enriched audit sections (R1-a)", () => {
   const html = renderReportHtml(ENRICHED);
