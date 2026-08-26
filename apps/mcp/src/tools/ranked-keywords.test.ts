@@ -1297,3 +1297,112 @@ describe("S19 — the health card names the DataForSEO measurement it came from"
     expect(text).not.toContain(WHOLE_DOMAIN_MEASUREMENT_NOTE);
   });
 });
+
+/**
+ * S23.1' — THE FLAT-ZERO READING NOTE (signed 2026-08-26, 0 credits).
+ *
+ * Measured on the live walkthrough: 10/10 and then 6/6 ranked keywords came back at
+ * `difficulty 0/100` on volumes of 2,400-14,800. The parsing was NOT at fault — a 0 reaches the
+ * reader only when DataForSEO sent a 0, and the vendor's own dedicated endpoint proves the field
+ * works and varies in that market. What the reader still gets is a column with no signal in it
+ * that reads as "easy". See format/flat-zero.ts for the whole measurement and the forbidden
+ * sentence; these are the four cases at the surface.
+ */
+describe("S23.1' — the flat-zero note on ranked_keywords", () => {
+  const FLAT = 'READ THESE ZEROS AS "NO SIGNAL"';
+  const zeroRows = [
+    row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
+    row({ keyword: "zirkonyum diş", position: 7, search_volume: 8100, keyword_difficulty: 0 }),
+    row({ keyword: "diş beyazlatma", position: 11, search_volume: 6600, keyword_difficulty: 0 }),
+  ];
+
+  it("(a) speaks ONCE, at the very end, when every reported difficulty is 0", () => {
+    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
+    expect(text).toContain(FLAT);
+    // ONCE. The output budget of this whole round exists because a per-row caveat is how a reply
+    // gets refused for length; a note repeated on 1,000 rows is the defect, not the fix.
+    expect(text.split(FLAT).length - 1).toBe(1);
+    // AT THE END: the reader reaches it after the table it is about, not before.
+    expect(text.trimEnd().endsWith("before treating any of them as easy.")).toBe(true);
+    expect(text).toContain("every one of the 3 keywords above");
+  });
+
+  it("(a) does NOT suppress or rewrite the zeros it is talking about", () => {
+    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
+    // NEVER: the value still prints exactly as the vendor sent it, on every row.
+    expect(text.split("difficulty 0/100").length - 1).toBe(3);
+    expect(text).not.toContain("difficulty not reported");
+  });
+
+  it("(b) says NOTHING when the column varies — one 12 beside a 0 is a working column", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
+          row({
+            keyword: "implant diş fiyatları",
+            position: 9,
+            search_volume: 2400,
+            keyword_difficulty: 12,
+          }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("difficulty 0/100");
+    expect(text).toContain("difficulty 12/100");
+  });
+
+  it("(c) says NOTHING on a single row — one value never varied from anything", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 })],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(FLAT);
+    expect(text).toContain("difficulty 0/100");
+  });
+
+  it("(d) a null row neither breaks the pattern nor counts toward it", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "diş teli", position: 4, search_volume: 14800, keyword_difficulty: 0 }),
+          row({ keyword: "ortodonti", position: 22, keyword_difficulty: null }),
+          row({ keyword: "diş beyazlatma", position: 11, search_volume: 6600, keyword_difficulty: 0 }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(FLAT);
+    // TWO, not three: the silent row is not evidence of a zero and is not counted as one.
+    expect(text).toContain("every one of the 2 keywords above");
+    // and the silent row still prints no difficulty at all, exactly as it always did.
+    const silent = text.split("\n").find((line) => line.startsWith("• ortodonti")) ?? "";
+    expect(silent).not.toContain("difficulty");
+  });
+
+  it("(d) a single zero drowned in nulls is not a pattern", () => {
+    const text = formatRankedKeywords(
+      result({
+        rows: [
+          row({ keyword: "diş teli", position: 4, keyword_difficulty: 0 }),
+          row({ keyword: "ortodonti", position: 22, keyword_difficulty: null }),
+          row({ keyword: "diş beyazlatma", position: 11, keyword_difficulty: null }),
+        ],
+      }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(FLAT);
+  });
+
+  it("claims no CAUSE for the zeros at the surface either", () => {
+    const text = formatRankedKeywords(result({ rows: zeroRows }), RENDER_INPUT);
+    const note = text.slice(text.indexOf(FLAT));
+    for (const claim of [/\bplans?\b/i, /\bunavailable\b/i, /\bnot available\b/i, /\babsent\b/i]) {
+      expect(note, `the note claims a cause matching ${claim}`).not.toMatch(claim);
+    }
+  });
+});

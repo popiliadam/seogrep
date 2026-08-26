@@ -26,6 +26,7 @@ import {
   writeDomainLookupRun,
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
+import { flatZeroNote } from "../format/flat-zero.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -412,7 +413,16 @@ export function formatRankedKeywords(
   const table = card === null ? `${heading}\n${body}` : `${heading}\n\n${card}\n\n${body}`;
   // total_count, NOT rows.length: a 2-row page of a 5,312-keyword domain is TRUNCATED, not thin,
   // and its locale is obviously fine. Only the domain's real ranking count can say otherwise.
-  return table + localeHint(result.target, result.total_count ?? result.rows.length, input);
+  const withHint = table + localeHint(result.target, result.total_count ?? result.rows.length, input);
+  // ONCE, AT THE END, and only when this answer's difficulty column never moved off 0 — see
+  // format/flat-zero.ts for what was measured and what the sentence is forbidden to claim. It is
+  // named `difficulty` here because that is the word the rows above print; the rows themselves are
+  // untouched, and the `!== null` test in renderRow still decides whether a number appears at all.
+  const flat = flatZeroNote(
+    result.rows.map((row) => row.keyword_difficulty),
+    { fieldLabel: "difficulty", rowsNoun: "keywords" },
+  );
+  return flat === null ? withHint : `${withHint}\n\n${flat}`;
 }
 
 /**
