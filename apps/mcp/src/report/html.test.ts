@@ -462,6 +462,50 @@ describe("Page speed section (imza 9)", () => {
     expect(html).not.toMatch(/no fetch-time or HTML-size signal/i);
   });
 
+  /**
+   * THE MIXED CASES. Every fixture above moves both axes together — ENRICHED has findings on
+   * both, CLEAN and FULL_MODEL have findings on neither — so both branch conditions could be
+   * flipped without a single test noticing. The model-layer "lopsided" spec pins the COUNTING;
+   * these two pin the SENTENCE the renderer picks from it, which is a different question.
+   */
+  it("treats a crawl measured on ONE axis as measured, not as unmeasured", () => {
+    // fetchMs recorded, htmlBytes not. Requiring BOTH would report a crawl that WAS timed with
+    // "no page here was measured on either axis" — a sentence that is simply false, and the
+    // exact zero-for-a-missing-measurement failure this section exists to prevent, inverted.
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      tech: { ...FULL_MODEL.tech!, pagesTimed: 42, pagesSized: 0 },
+    });
+    expect(html).toMatch(/Fetch time measured on\s*<strong>42<\/strong>/);
+    expect(html).not.toMatch(/no fetch-time or HTML-size signal/i);
+    // …and the axis nobody measured is reported as covering 0 pages, which is a COVERAGE fact,
+    // not a finding: "HTML size on 0" says nobody looked, where "Heavy pages: 0" would claim
+    // somebody looked and found nothing.
+    expect(html).toMatch(/HTML size on\s*<strong>0<\/strong>/);
+    expect(html).not.toMatch(/heavy pages \(/i);
+  });
+
+  it("does NOT call the site clean when only ONE axis is clean", () => {
+    // Slow findings, no heavy ones. If either empty list were enough to print the all-clear, the
+    // report would say "no measured page took longer than 3,000 ms" and then list the pages that
+    // did — a public document contradicting itself two lines apart.
+    const html = renderReportHtml({
+      ...FULL_MODEL,
+      tech: {
+        ...FULL_MODEL.tech!,
+        pagesTimed: 42,
+        pagesSized: 42,
+        slowPages: { items: [{ url: "https://example.com/slow", fetchMs: 9100 }], total: 3 },
+        heavyPages: EMPTY,
+      },
+    });
+    expect(html).not.toMatch(/no measured page took longer/i);
+    expect(html).toMatch(/slow pages \(/i);
+    expect(html).toContain("https://example.com/slow");
+    // The heavy axis was measured and found nothing, so it stays SILENT rather than printing a 0.
+    expect(html).not.toMatch(/heavy pages \(/i);
+  });
+
   it("does NOT claim everything is clean when there ARE findings", () => {
     const html = renderReportHtml(ENRICHED);
     expect(html).toMatch(/Fetch time measured on/i);
@@ -590,6 +634,26 @@ describe("every dynamic value is escaped (R1-d)", () => {
     const html = renderReportHtml({
       ...ENRICHED,
       tech: { ...ENRICHED.tech!, slowPages: { items: [{ url: XSS, fetchMs: 9000 }], total: 1 } },
+    });
+    expectNeutralised(html);
+  });
+
+  it("neutralises a hostile crawled URL in the HEAVY pages list", () => {
+    // The TWIN of the slow-pages case above, and it was missing: dropping urlText from the heavy
+    // row left the whole suite green, because the only speed sink anyone had written a spec for
+    // was the slow one. Two sinks render the same untrusted crawled URL, so two specs pin them.
+    // This section is served verbatim on the public /r/<slug> page, whose own test stubs the
+    // report body — so nothing over there pins it either.
+    const html = renderReportHtml({
+      ...ENRICHED,
+      tech: {
+        ...ENRICHED.tech!,
+        // The slow list is emptied ON PURPOSE: sharing the payload with its twin is exactly how
+        // an unescaped sink hides, because the assertion would then pass on the OTHER list's
+        // escaping and say nothing at all about this one.
+        slowPages: EMPTY,
+        heavyPages: { items: [{ url: XSS, htmlBytes: 2_000_000 }], total: 1 },
+      },
     });
     expectNeutralised(html);
   });
