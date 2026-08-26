@@ -1237,10 +1237,35 @@ export const DOC_PROSE = {
       "Each row carries DataForSEO's own `search_volume`, `cpc`, `competition`, " +
       "`competition_level`, `keyword_difficulty`, search intent, search-volume trend and the date " +
       "the vendor last refreshed the row.\n\n" +
-      "Two optional filters, `min_volume` and `max_difficulty`, are applied **at DataForSEO** " +
-      "rather than after the fact. Neither is sent unless you ask for it, so by default nothing is " +
-      "dropped before you see it.",
+      "Three filters — `min_volume`, `max_volume` and `max_difficulty` — are applied **at " +
+      "DataForSEO** rather than after the fact. `min_volume` and `max_difficulty` are never sent " +
+      "unless you ask for them. `max_volume` is the one exception: on `for_site` and `ideas` it " +
+      "has a **default ceiling**, for the reason in the next section, and every answer says which " +
+      "ceiling it used.",
     preExampleSections: [
+      {
+        heading: "`for_site` and `ideas` leave relevance to DataForSEO — and it measured poorly",
+        body:
+          "Two of the four modes do **not** start from a keyword you typed. `for_site` asks " +
+          "DataForSEO which keywords belong to a domain; `ideas` asks which belong to a category. " +
+          "Both answers are the vendor's judgement alone, and on a live walkthrough both came " +
+          "back off-subject: `for_site` returned **none of its first 15 keywords about the site** " +
+          "— national general-purpose queries (weather, translation, government services) of the " +
+          "kind any domain in that country is handed — and `ideas` returned unrelated products " +
+          "and topics at ordinary search volume.\n\n" +
+          "So those two modes carry a **warning** above their results, and a **default " +
+          "search-volume ceiling** that holds back the very high-volume national queries. The " +
+          "answer always names the ceiling it applied; pass `max_volume` to move it, or " +
+          "`max_volume: 0` to remove it and see the unfiltered set.\n\n" +
+          "The ceiling is a **partial** remedy and is described as one: a volume bound cannot " +
+          "remove an off-subject keyword of ordinary volume, which is exactly what `ideas` " +
+          "returned. SeoGrep does not read meaning and will not filter rows by it.\n\n" +
+          "`suggestions` and `related` are **left alone** — no warning, no ceiling. They stay " +
+          "anchored to a seed keyword you choose (the first returns queries that contain it, the " +
+          "second what Google itself lists beside it), and both measured clean on the same " +
+          "walkthrough. If a `for_site` or `ideas` answer reads as noise, those two are the " +
+          "narrower question.",
+      },
       {
         heading: "A field from another mode is rejected, not ignored",
         body:
@@ -1284,10 +1309,13 @@ export const DOC_PROSE = {
       "software\".\n\nOr start from a domain instead of a keyword:\n\n> What keywords does " +
       "DataForSEO consider relevant to example.com? Skip anything under 500 monthly searches.",
     returns:
-      "A heading naming **which mode ran** and the DataForSEO Labs function behind it, then what " +
-      "that mode means in the vendor's own terms, then the locale, the vendor field the rows are " +
-      "ordered by, and the filters that were actually sent — printed in DataForSEO's own " +
-      "`[field, operator, value]` grammar, so what you read is what the vendor received.\n\n" +
+      "A heading naming **which mode ran** and the DataForSEO Labs function behind it, then — on " +
+      "`for_site` and `ideas` only — the relevance warning, then what that mode means in the " +
+      "vendor's own terms, then the locale, the vendor field the rows are ordered by, the filters " +
+      "that were actually sent (printed in DataForSEO's own `[field, operator, value]` grammar, " +
+      "so what you read is what the vendor received) and a plain sentence naming **which " +
+      "search-volume ceiling applied** — a default one, your own, or none — and the argument that " +
+      "changes it.\n\n" +
       "The keyword list is captioned as a **window**: the rows you got, the `offset` and `limit` " +
       "they were fetched under, and DataForSEO's whole-set count attributed to the vendor by name, " +
       "followed by the sentence that stops the arithmetic — _this window is a slice of that set, " +

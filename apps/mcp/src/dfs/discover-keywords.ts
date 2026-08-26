@@ -72,8 +72,11 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  * `null` — "the vendor did not say" — instead of taking a paid lookup down or becoming a 0.
  *
  * FILTERS ARE OPT-IN for the same reason: an `order_by` or `filters` path the vendor rejects costs
- * a PAID failure, so a default lookup sends neither `min_volume` nor `max_difficulty` and the body
- * carries no `filters` key at all.
+ * a PAID failure, so a default lookup sends neither `min_volume` nor `max_difficulty`.
+ *
+ * ONE filter is NOT opt-in — see {@link DEFAULT_NOISY_MODE_MAX_VOLUME}. It reuses the EXACT field
+ * path this request already sorts by (`order_by`, sent on every call to all four endpoints since
+ * this port shipped), so it introduces no path the vendor has not already been asked to address.
  *
  * =====================================================================================
  * PAGINATION IS A CLAIM
@@ -149,6 +152,97 @@ export const MODE_ITEM_CARRIER: Readonly<Record<DiscoverMode, "item" | "keyword_
 /** The vendor field path for `path` as THIS mode's items address it (see MODE_ITEM_CARRIER). */
 export function modeFieldPath(mode: DiscoverMode, path: string): string {
   return MODE_ITEM_CARRIER[mode] === "keyword_data" ? `keyword_data.${path}` : path;
+}
+
+// --- Relevance: which modes were MEASURED noisy, and the default ceiling ------------------------
+
+/**
+ * WHICH MODES ANSWER WITH KEYWORDS THAT ARE OFTEN NOT ABOUT THE SUBJECT.
+ *
+ * MEASURED, on the customer-path walkthrough of 2026-08-25 (a real Turkish site, live DataForSEO):
+ *
+ *   for_site     0 of 15 returned keywords were about the site. The window was the TOP 15 by
+ *                `keyword_info.search_volume` — the one order this port asks for — and all 15 were
+ *                national general-purpose queries (translation, weather, e-government, prayer
+ *                times) that any Turkish domain would be handed.
+ *   ideas        0 of 5 returned keywords were about the site (an infant-formula product, a drug
+ *                class), at ORDINARY volume rather than national-head volume.
+ *   suggestions  8 of 8 clean. The endpoint only returns queries that CONTAIN the caller's seed.
+ *   related      5 of 5 clean. The endpoint only returns what Google itself lists beside the seed.
+ *
+ * The two clean modes are clean for a STRUCTURAL reason, not by luck: their result set is anchored
+ * to a seed string the caller typed. The two noisy ones ask DataForSEO to decide what is relevant
+ * — to a domain, or to a category — and that decision is the vendor's alone. So this table is a
+ * property of the endpoints, not a snapshot of one site, and it is keyed by DiscoverMode so a new
+ * mode cannot be added without stating which kind it is.
+ */
+export const NOISY_DISCOVER_MODES: Readonly<Record<DiscoverMode, boolean>> = {
+  ideas: true,
+  suggestions: false,
+  related: false,
+  for_site: true,
+};
+
+/** True when this mode's relevance is the VENDOR's judgement (see NOISY_DISCOVER_MODES). */
+export function isNoisyDiscoverMode(mode: DiscoverMode): boolean {
+  return NOISY_DISCOVER_MODES[mode];
+}
+
+/**
+ * THE DEFAULT SEARCH-VOLUME CEILING for the two noisy modes, in monthly searches.
+ *
+ * WHAT IS MEASURED AND WHAT IS NOT (NEVER #9, signed lesson 11). Measured: the 2026-08-25
+ * walkthrough above — `for_site`'s whole first window, ordered by search volume descending, was
+ * national general-purpose queries. NOT measured: the search volume of those particular rows. No
+ * captured response in this repo carries them, so this number is NOT a measured relevance
+ * threshold and is not presented as one.
+ *
+ * What it IS: a disclosed convention, chosen so that it sits above what a single site could
+ * plausibly own and below the national-utility class the walkthrough found. Its DIRECTION is the
+ * load-bearing part — an upper bound, because the measured noise sat at the TOP of the volume
+ * ordering — and 100,000 is the round figure under that direction. It is printed on every answer
+ * and the caller can move it or switch it off (NO_VOLUME_CEILING).
+ *
+ * WHAT IT DOES NOT DO, stated because the same walkthrough measured it: it cannot remove an
+ * off-topic keyword of ORDINARY volume, which is exactly what `ideas` returned. A volume bound is
+ * a proxy for relevance and a partial one; the surface's warning, not this number, is what carries
+ * the honesty there.
+ *
+ * NOT a price control. The price is flat (40 credits) and the row cap — MAX_DISCOVER_ROWS — is
+ * what holds the signed margin up; moving this ceiling changes WHICH rows come back, never how
+ * many are billed for.
+ */
+export const DEFAULT_NOISY_MODE_MAX_VOLUME = 100_000;
+
+/**
+ * The value that switches the ceiling OFF. Zero is used as the off switch rather than a second
+ * field because a ceiling of zero would ask DataForSEO for keywords nobody searches — it has no
+ * other honest meaning, so it cannot collide with a bound a caller actually wants.
+ */
+export const NO_VOLUME_CEILING = 0;
+
+/** Which ceiling really applied, and whose decision it was. Printed by the surface, verbatim. */
+export type VolumeCeiling =
+  | { readonly kind: "default"; readonly max_volume: number }
+  | { readonly kind: "caller"; readonly max_volume: number }
+  | { readonly kind: "off" };
+
+/**
+ * Resolve the caller's ceiling INTENT into the ceiling that is really sent. The ONE place the
+ * default is applied, so the filter that goes to the vendor and the sentence the reader sees are
+ * decided by the same function and cannot disagree.
+ */
+export function resolveVolumeCeiling(
+  mode: DiscoverMode,
+  requested: number | undefined,
+): VolumeCeiling {
+  if (requested === NO_VOLUME_CEILING) return { kind: "off" };
+  if (requested !== undefined && Number.isFinite(requested)) {
+    return { kind: "caller", max_volume: Math.trunc(requested) };
+  }
+  return isNoisyDiscoverMode(mode)
+    ? { kind: "default", max_volume: DEFAULT_NOISY_MODE_MAX_VOLUME }
+    : { kind: "off" };
 }
 
 // --- Price, caps and the budget estimate --------------------------------------------------------
@@ -253,6 +347,12 @@ interface DiscoverQueryBase {
   readonly min_volume?: number;
   /** OPT-IN vendor filter on `keyword_properties.keyword_difficulty`. Omitted when undefined. */
   readonly max_difficulty?: number;
+  /**
+   * The caller's UPPER bound on `keyword_info.search_volume` — their INTENT, not the resolved
+   * bound. `undefined` means "no opinion", which is where the noisy modes' default ceiling comes
+   * in; NO_VOLUME_CEILING (0) means "no ceiling at all". Resolved by resolveVolumeCeiling.
+   */
+  readonly max_volume?: number;
 }
 
 /**
@@ -351,24 +451,41 @@ export const DIFFICULTY_FILTER_VENDOR_FIELD = "keyword_properties.keyword_diffic
 const DFS_OK = 20000;
 
 /**
- * The vendor-side filters, in DataForSEO's `[field, operator, value]` grammar joined by a literal
- * "and". Both are OPT-IN: an absent bound contributes nothing, and when neither is supplied the
- * request body carries no `filters` key at all (a filter path the vendor rejects costs a PAID
- * failure, so the default path sends none).
+ * Interleave DataForSEO's literal "and" between clauses. THREE bounds are now reachable in one
+ * request (`min_volume`, the volume ceiling, `max_difficulty`), and the vendor's grammar wants the
+ * joiner between EVERY adjacent pair — a bare array of three clauses is not that grammar, and a
+ * `filters` value the vendor rejects costs a PAID failure (module header). Written as a fold over
+ * any number of clauses rather than a case for two, so a fourth bound cannot reintroduce the bug.
  */
-export function buildDiscoverFilters(
-  mode: DiscoverMode,
-  minVolume: number | undefined,
-  maxDifficulty: number | undefined,
-): readonly unknown[] {
+function joinWithAnd(clauses: readonly unknown[]): readonly unknown[] {
+  return clauses.flatMap((clause, index) => (index === 0 ? [clause] : ["and", clause]));
+}
+
+/**
+ * The vendor-side filters, in DataForSEO's `[field, operator, value]` grammar joined by a literal
+ * "and". Takes the WHOLE query rather than loose bounds, so the mode a clause is addressed for and
+ * the bounds it carries can never come from two different requests.
+ *
+ * `min_volume` and `max_difficulty` are OPT-IN: an absent bound contributes nothing. The volume
+ * CEILING is the one clause that can appear without being asked for — on the two modes
+ * NOISY_DISCOVER_MODES names — and it addresses the very field this request already sorts by.
+ * On `suggestions` and `related` an untouched query still produces NO clause at all, so those two
+ * requests carry no `filters` key, exactly as before.
+ */
+export function buildDiscoverFilters(query: DiscoverKeywordsQuery): readonly unknown[] {
+  const { mode } = query;
   const clauses: unknown[] = [];
-  if (minVolume !== undefined && Number.isFinite(minVolume)) {
-    clauses.push([modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", minVolume]);
+  if (query.min_volume !== undefined && Number.isFinite(query.min_volume)) {
+    clauses.push([modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), ">=", query.min_volume]);
   }
-  if (maxDifficulty !== undefined && Number.isFinite(maxDifficulty)) {
-    clauses.push([modeFieldPath(mode, DIFFICULTY_FILTER_VENDOR_FIELD), "<=", maxDifficulty]);
+  const ceiling = resolveVolumeCeiling(mode, query.max_volume);
+  if (ceiling.kind !== "off") {
+    clauses.push([modeFieldPath(mode, VOLUME_FILTER_VENDOR_FIELD), "<=", ceiling.max_volume]);
   }
-  return clauses.length === 2 ? [clauses[0], "and", clauses[1]] : clauses;
+  if (query.max_difficulty !== undefined && Number.isFinite(query.max_difficulty)) {
+    clauses.push([modeFieldPath(mode, DIFFICULTY_FILTER_VENDOR_FIELD), "<=", query.max_difficulty]);
+  }
+  return joinWithAnd(clauses);
 }
 
 /** What was asked, normalized and clamped — the single place a subject is built. */
@@ -398,7 +515,7 @@ export function buildDiscoverSubject(query: DiscoverKeywordsQuery): DiscoverSubj
  */
 export function buildDiscoverRequestBody(query: DiscoverKeywordsQuery): Record<string, unknown> {
   const bounds = discoverBounds(query);
-  const filters = buildDiscoverFilters(query.mode, query.min_volume, query.max_difficulty);
+  const filters = buildDiscoverFilters(query);
   const base: Record<string, unknown> = {
     limit: bounds.limit,
     offset: bounds.offset,
@@ -616,11 +733,9 @@ function assemble(
     mode_means: MODE_MEANS[subject.mode],
     subject,
     ordered_by_vendor_field: modeFieldPath(subject.mode, ORDER_VENDOR_FIELD),
-    vendor_filters_applied: buildDiscoverFilters(
-      subject.mode,
-      query.min_volume,
-      query.max_difficulty,
-    ),
+    // The SAME call the request body makes, from the SAME query — so what the answer says was
+    // filtered is what the vendor was really sent, not a second description of it.
+    vendor_filters_applied: buildDiscoverFilters(query),
     window,
   };
 }
