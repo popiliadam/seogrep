@@ -1004,3 +1004,109 @@ değil. Canlı `list_projects` bu çifti hâlâ uyarısız listeliyor.
 ### Operatörün notu
 
 *(manuel test bekleniyor — operatör kendi istemcisinden/panelinden çağırınca buraya yazılır)*
+
+---
+
+## §D1b — `setup_project` DERİNLEŞTİRME — operatör "başka eksik var mı?" diye sordu (2026-08-26 17:0xZ)
+
+**Hangi ekseni varyantladığım yazılır (imzalı ders 14).** §D1'de varyantlanan eksenler:
+girdi biçimi (şema/port/yol/query/fragment/`www.`) · ret sınıfları · idempotency · para.
+**Varyantlanmayan ve bu turda açılan eksenler:** ① **karakter kümesi** (IDN / Türkçe / homoglif)
+② **ölçek** (proje sayısı tavanı) ③ **görüntüleme** (depolanan ad ≠ okunan ad) ④ **IP/şema
+literalleri** ⑤ **etiket uzunluğu sınırları**.
+
+Girdi süpürmesi **canlıya hiç dokunmadan**, `packages/core/dist` üzerinden saf fonksiyonla
+koşuldu (32 vaka) — sıfır satır, sıfır kredi, sıfır DNS.
+
+### 🔴 BULGU D-3 — VERİ · sahip: kod · **YÜKSEK** · ✅ **BU TURDA DÜZELTİLDİ**
+
+**Büyük harfle yazılmış Türkçe alan adı, tek başına siteyi ikiye bölüyordu.**
+
+JS'in yerelden bağımsız `toLowerCase()`'i `İ`yi (U+0130) **iki** kod noktasına açıyor:
+`i` + U+0307 (COMBINING DOT ABOVE). Birleşen nokta ASCII olmadığı için URL ayrıştırıcısının
+IDNA adımı bütün etiketi punycode'a çeviriyor. Ölçüm:
+
+| girdi | üretilen alan adı | gerçek site |
+|---|---|---|
+| `sigorta.com.tr` | `sigorta.com.tr` | ✅ |
+| **`SİGORTA.COM.TR`** | **`xn--sigorta-7he.com.tr`** | ❌ **var olmayan ad** |
+| `kiralikaraç.com` | `xn--kiralikara-x6a.com` | ✅ |
+| **`KİRALIKARAÇ.COM`** | **`xn--kiralikara-x6a336d.com`** | ❌ ayrı proje |
+| `ihtiyaç.com.tr` / **`İHTİYAÇ.COM.TR`** | `xn--ihtiya-1ua.com.tr` / **`xn--ihtiya-1ua064bda.com.tr`** | ❌ ayrı proje |
+| `örnek.com` / `ÖRNEK.COM` | ikisi de `xn--rnek-4qa.com` | ✅ (içinde `İ` yok) |
+
+**En pahalı vakanın şekli:** `sigorta.com.tr` küçük harfte **saf ASCII** — hiç özel karakter yok.
+Yalnız BÜYÜK yazıldığı için punycode'a düşüyor. Bu pazarda alan adı tabelada, kartvizitte ve
+logoda büyük harfle yazılıdır; panelin kendi ipucu da bunu davet ediyor ("A domain or a URL").
+
+**Sonucu:** ikinci bir proje açılıyor, **çözülmüyor** (uyarı basılıyor — o kısım dürüst), ve o
+projeye yöneltilen her crawl/audit hiçbir şey getirmiyor. Müşteri 20 kredilik crawl'ı doğru
+sandığı bir projeye harcıyor.
+
+**Düzeltme:** `packages/core/src/net/hostname.ts` → yeni saf fonksiyon **`foldDottedCapitalI`**,
+`normalizeDomain`'in **ilk** adımı (URL ayrıştırmasından ÖNCE — sonrasında birleşen nokta zaten
+punycode etiketinin içinde ve geri alınamaz).
+
+**Kapsam kaymasının sınırı yazılı:** yalnız U+0130 hedefleniyor. **`ı` (U+0131) dokunulmuyor** —
+IDNA'da izinli, `ıspanak.com` gerçek bir ad ve sahibi tam olarak o harfi kastediyor. U+0130 ise
+UTS-46'da **domain'lerde yasak**, yani bu değişimle erişilemez hâle gelen kayıtlı hiçbir ad yok.
+
+**Kendi hipotezim ölçümle çürüdü (imzalı ders 13):** ilk taslak "NFC, ayrışmış `i`+U+0307'yi
+U+0130'a geri birleştirir" varsayıyordu. **Birleştirmiyor** — U+0130 bir *composition exclusion*.
+Test kırmızı verdi, ikinci `replace` eklendi, gerekçe koda yazıldı.
+
+**Mutasyon kanıtı — İKİ eksen (ders 14: varlık yetmez, KONUM da):**
+
+| mutasyon | sonuç |
+|---|---|
+| `foldDottedCapitalI` çağrısı kaldırıldı | **3 test kırmızı** ✅ |
+| fold, URL ayrıştırmasından **SONRAYA** taşındı (`stripWwwLabel(fold(host))`) | **3 test kırmızı** ✅ |
+
+Yani pinlenen şey "bir fold var" değil, **"fold ayrıştırmadan önce koşuyor"**.
+
+**Kapı:** `TURBO_FORCE=1 bash guardrails/verify.sh` → **PASS**, 16/16 task.
+core **327** (dalga 1 tabanı 323, +4 yeni pin) · mcp **3544** · web **1967** · db **12** ·
+38 doküman senkron. **NE ÖLÇMEZ:** secret taraması yok · DB şeritleri yok · **canlı uç yok —
+bu düzeltme deploy EDİLMEDİ**, canlı `mcp.seogrep.com` hâlâ eski davranışta.
+
+### 🟡 BULGU D-4 — ÇIKTI · sahip: kod (karar gerek) · orta
+
+**IDN projeler müşteriye punycode olarak gösteriliyor.** `örnek.com` kaydeden müşteri
+`list_projects`'te, panelde, raporlarda **`xn--rnek-4qa.com`** görüyor. Depolamanın ASCII olması
+**doğru** (DNS, crawl, vendor join'leri onu ister); kusur **görüntüleme** katmanında.
+
+Ürünün hiçbir yerinde punycode'u ele alan kod yok (`grep -r "xn--\|domainToUnicode"` →
+yalnız bir test fixture'ı). Node'un `url.domainToUnicode()`'u tam bu iş için var.
+Mevcut davranış **pinli**: `add-domain-banner.test.tsx:62` `xn--80ak6aa92e.com`'un aynen
+basıldığını iddia ediyor — yani düzeltme o pini de **repoint** etmeyi gerektirir (softening değil).
+
+**Neden karar:** dokunacağı yüzey `setup_project` değil — `list_projects`, panel proje listesi,
+proje detayı, raporlar. Tek tool'un dilimine sığmaz.
+
+### 🟡 BULGU D-5 — KAPSAM · sahip: **operatör/ürün** · orta
+
+**Proje sayısında hiçbir tavan yok.** `MAX_PROJECTS` / `project_limit` diye bir şey yok
+(`apps/mcp/src`, `packages/db/src`, `apps/web/app` tarandı). `setup_project` 0 kredi, açık
+self-servis kayıt canlı, ve tek çağrı bir satır yazıyor: bir hesap sınırsız proje açabilir.
+Bugün somut zarar küçük (satır ufak, crawl parayı ayrıca kapıyor) ama **ücretsiz ve sınırsız
+yazma** ekseni bugüne kadar hiç adlandırılmamıştı. Karar operatörün: tavan koymak mı, ölçüp
+beklemek mi.
+
+### Bakıldı, kusur YOK — bu eksenlerde temiz
+
+| eksen | ölçüm |
+|---|---|
+| IP literalleri | `1.2.3.4` · `[::1]` · **`2130706433`** (ondalık IPv4 gizlemesi) → üçü de **reddedildi** |
+| tehlikeli şemalar | `javascript:` · `file:///etc/passwd` → reddedildi |
+| URL'de kimlik bilgisi | `user:pass@example.com` → `example.com` (kimlik bilgisi **düştü**) |
+| etiket uzunluğu | 64 karakterlik etiket reddedildi · 253 sınırındaki ad kabul edildi |
+| bozuk şekiller | `example..com` · `-example.com` · `example-.com` · `exam ple.com` → reddedildi |
+| `www.com` istisnası | korunuyor (tek etikete düşürülmüyor) |
+| `www.www.example.com` | **bir kez** soyuluyor → `www.example.com` |
+| kiracı izolasyonu | canlıya satır yazmadan doğrulandı: `setup-project.db.test.ts:155` + `:225` yabancı `user_id`'yi head-on sürüyor |
+| rezerve TLD listesi | 12 üyenin **hepsi** `hostname.test.ts`'te tek tek pinli |
+
+### Açık kalan küçük not
+
+`checkDomainReachable` **her** çağrıda koşuyor — zaten var olan bir projeyi ikinci kez kurarken
+de. En kötü hâlde 2 sn ekliyor, kaydı engellemiyor; kozmetik, düzeltilmedi.
