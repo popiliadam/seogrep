@@ -417,6 +417,53 @@ describe("cannibalizationAdvice names a keeper only when the data supports one",
     expect(lines.filter((line) => line.startsWith("    - "))).toHaveLength(2);
   });
 
+  /**
+   * POSITION, ACROSS TWO GROUPS — and it has to be two, which is the whole point of this case.
+   * The single-group position test above cannot see this axis at all: with one group, "inside the
+   * group block" and "collected at the very end" produce byte-identical output, so it stays green
+   * however far the recommendation drifts from the query it belongs to.
+   *
+   * A referee measured exactly that (2026-08-26): moving every group's advice into one block after
+   * all the groups left the FULL suite at 3213/3213. Counting arrows does not measure adjacency.
+   */
+  it("keeps each query's recommendation INSIDE its own group block, not pooled at the end", () => {
+    const LEADER_A = "https://x.test/keep-a";
+    const LEADER_B = "https://x.test/keep-b";
+    const text = formatCannibalization([
+      competing(
+        [
+          { page: LEADER_A, position: 4, impressions: 900, clicks: 40 },
+          { page: "https://x.test/fold-a", position: 30, impressions: 300, clicks: 1 },
+        ],
+        "implant tedavisi",
+      ),
+      competing(
+        [
+          { page: LEADER_B, position: 6, impressions: 700, clicks: 25 },
+          { page: "https://x.test/fold-b", position: 40, impressions: 200, clicks: 0 },
+        ],
+        "zirkonyum kaplama",
+      ),
+    ]);
+    const lines = text.split("\n");
+    const headA = lines.findIndex((l) => l.startsWith('• "implant tedavisi"'));
+    const headB = lines.findIndex((l) => l.startsWith('• "zirkonyum kaplama"'));
+    const keepA = lines.findIndex((l) => l.includes(`→ Keep ${LEADER_A}`));
+    const keepB = lines.findIndex((l) => l.includes(`→ Keep ${LEADER_B}`));
+    expect(headA).toBeGreaterThan(-1);
+    expect(headB).toBeGreaterThan(headA);
+    expect(keepA).toBeGreaterThan(-1);
+    expect(keepB).toBeGreaterThan(-1);
+
+    // A's recommendation sits between A's header and B's — i.e. still inside A's block.
+    expect(keepA).toBeGreaterThan(headA);
+    expect(keepA).toBeLessThan(headB);
+    // …and it is the LAST line of that block, directly above the next query's header.
+    expect(keepA).toBe(headB - 1);
+    // B's belongs to B, below B's header.
+    expect(keepB).toBeGreaterThan(headB);
+  });
+
   it("prints no arrow at all for a group with no supported keeper", () => {
     const text = formatCannibalization([
       competing([
@@ -527,6 +574,39 @@ describe("contentDecayAdvice differentiates by HOW the page fell", () => {
     expect(text).toContain("→ Nothing left:");
     expect(text).toContain("→ Severe:");
     expect(text).toContain("→ Partial slide:");
+  });
+
+  /**
+   * ADJACENCY IS THE ONLY THING BINDING A DECAY RECOMMENDATION TO ITS PAGE.
+   *
+   * Unlike the cannibalization line, this one names no URL — it says "it", because the page it is
+   * about is the line directly above it. That makes its POSITION load-bearing rather than
+   * cosmetic: pooled at the end of the list, three arrows would sit under thirty pages with
+   * nothing saying which is which, and the docs' promise ("each page carries what to do about it")
+   * would be false while the suite stayed green.
+   *
+   * A referee measured that exact mutation (2026-08-26) and every decay test passed: the counting
+   * pins above assert THAT there are three arrows and three distinct labels, which a pooled block
+   * satisfies perfectly. This asserts WHERE each one is, per page, by its own branch label.
+   */
+  it("puts each page's recommendation on the line directly under THAT page", () => {
+    const text = formatContentDecay([
+      decayed(100, 0, "https://x.test/gone"),
+      decayed(100, 10, "https://x.test/severe"),
+      decayed(60, 30, "https://x.test/partial"),
+    ]);
+    const lines = text.split("\n");
+    const pairs: readonly (readonly [string, string])[] = [
+      ["https://x.test/gone", "→ Nothing left:"],
+      ["https://x.test/severe", "→ Severe:"],
+      ["https://x.test/partial", "→ Partial slide:"],
+    ];
+    for (const [page, label] of pairs) {
+      const index = lines.findIndex((line) => line.startsWith(`• ${page} `));
+      expect(index).toBeGreaterThan(-1);
+      // The VERY NEXT line, and it must be the branch belonging to THIS page's numbers.
+      expect(lines[index + 1]).toContain(label);
+    }
   });
 
   it("adds no recommendation when nothing decayed", () => {
