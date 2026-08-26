@@ -243,8 +243,34 @@ export function dayPhrase(days) {
  * Fail-closed: a non-integer constant, or a token nobody substitutes, throws instead of rendering a
  * page that states a wrong (or literally "undefined") limit.
  */
+/**
+ * The tools that accept a bare `target` domain INSTEAD of a `project_id`, as doc links, derived
+ * from the registry rather than typed out.
+ *
+ * A hand-written list here would be a second place for the answer to live, and it would go stale
+ * the first time a tool gained or lost the parameter — which is exactly how a customer ends up
+ * believing they need a uuid for a call that never wanted one (finding G1, 2026-08-26).
+ *
+ * Fail-closed: an empty list throws rather than rendering a sentence promising tools it cannot
+ * name, which is what a renamed `target` property would otherwise produce.
+ */
+export function domainAddressableTools(allTools) {
+  const names = (allTools || [])
+    .filter((tool) => tool?.inputJsonSchema?.properties?.target !== undefined)
+    .map((tool) => tool.name)
+    .sort();
+  if (names.length === 0) {
+    throw new Error(
+      "{{DOMAIN_TOOLS}}: no tool in the registry declares a `target` property — either the " +
+        "parameter was renamed or the registry did not load.",
+    );
+  }
+  return names.map((name) => `[\`${name}\`](/docs/tools-reference/${deriveSlug(name)})`).join(", ");
+}
+
 export function substituteProseTokens(text, constants) {
-  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords } = constants || {};
+  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords, domainTools } =
+    constants || {};
   const out = String(text)
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
@@ -262,7 +288,13 @@ export function substituteProseTokens(text, constants) {
     // publish a bound the code no longer charges for.
     .replace(/\{\{MAX_SERP_KEYWORDS\}\}/g, () =>
       groupThousands(positiveInteger(maxSerpKeywords, "{{MAX_SERP_KEYWORDS}}", "maxSerpKeywords")),
-    );
+    )
+    .replace(/\{\{DOMAIN_TOOLS\}\}/g, () => {
+      if (typeof domainTools !== "string" || domainTools === "") {
+        throw new Error("{{DOMAIN_TOOLS}} needs the derived tool list, got nothing.");
+      }
+      return domainTools;
+    });
   // The leftover guard matches ANY `{{…}}`, not just the SCREAMING_CASE shape the two live tokens
   // happen to use: a typo is exactly the case this must catch, and a typo does not respect the
   // convention. The narrow `[A-Z0-9_]+` version this replaces let four near-misses — `{{max_rows}}`,
@@ -470,6 +502,19 @@ export const DOC_PROSE = {
           "of rows and is billed once per project, so the pair costs credits twice for the same " +
           "data. Nothing is deduplicated for you — which of the two to keep is a decision only " +
           "you can make.",
+      },
+      {
+        heading: "You do not always need the project_id",
+        body:
+          "The `project_id` is what most tools use to know which of your sites they are working " +
+          "on, and this is where you get it. But a large part of the surface will also take a " +
+          "plain domain instead, passed as `target` — including a competitor's, which is the " +
+          "point: those tools answer questions about any public site, not only your own.\n\n" +
+          "Pass `target` OR `project_id`, never both. These tools accept either: " +
+          "{{DOMAIN_TOOLS}}.\n\n" +
+          "Everything else needs the `project_id`, because it reads data stored against YOUR " +
+          "project — your crawls, your audits, your Search Console pulls — and a domain does not " +
+          "identify those.",
       },
       {
         heading: "The archive",
@@ -3287,6 +3332,8 @@ async function loadRegistry() {
         // EQUAL to the port's MAX_SERP_KEYWORDS), and reading it here keeps this generator's
         // imports to the two modules it already loads — the registry and the prices.
         maxSerpKeywords: costs.CREDIT_UNITS.serp_snapshot.max_units,
+        // Derived from the registry itself — see domainAddressableTools for why it is not a list.
+        domainTools: domainAddressableTools(tools.ALL_TOOLS),
       },
     };
   } catch (error) {

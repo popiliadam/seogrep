@@ -9,6 +9,7 @@ import {
   checkToolsMetaSync,
   dayPhrase,
   deriveSlug,
+  domainAddressableTools,
   findConfirmFields,
   frontmatterDescription,
   groupThousands,
@@ -571,5 +572,49 @@ describe("DOC_PROSE ranks nothing it has no number for (NEVER #7)", () => {
     for (const pattern of UNCHECKABLE) {
       expect(text, `${tool}: uncheckable superlative matching ${pattern}`).not.toMatch(pattern);
     }
+  });
+});
+
+
+/**
+ * G1 — the docs claim about which tools take a bare domain is DERIVED from the registry, because
+ * a hand-typed list is a second home for the answer and goes stale the first time a tool gains or
+ * loses `target`. That is how a customer comes to believe a uuid is required for a call that
+ * never wanted one.
+ */
+describe("the domain-addressable tool list", () => {
+  const tool = (name, props) => ({ name, inputJsonSchema: { properties: props } });
+
+  it("names exactly the tools that declare a target parameter", () => {
+    const rendered = domainAddressableTools([
+      tool("ranked_keywords", { target: { type: "string" }, project_id: { type: "string" } }),
+      tool("crawl_site", { project_id: { type: "string" } }),
+      tool("my_pages", { target: { type: "string" } }),
+    ]);
+    expect(rendered).toContain("ranked_keywords");
+    expect(rendered).toContain("my_pages");
+    expect(rendered).not.toContain("crawl_site");
+  });
+
+  it("renders each as a link to its own page", () => {
+    expect(domainAddressableTools([tool("keyword_gap", { target: {} })])).toBe(
+      "[`keyword_gap`](/docs/tools-reference/keyword-gap)",
+    );
+  });
+
+  /**
+   * FAIL-CLOSED, like every other prose token here. If `target` were renamed, an empty list would
+   * otherwise render a sentence that promises tools it cannot name.
+   */
+  it("throws rather than promising a list it cannot produce", () => {
+    expect(() => domainAddressableTools([tool("crawl_site", { project_id: {} })])).toThrow(
+      /target/i,
+    );
+    expect(() => domainAddressableTools([])).toThrow();
+  });
+
+  it("refuses to substitute the token without the derived list", () => {
+    expect(() => substituteProseTokens("x {{DOMAIN_TOOLS}} y", {})).toThrow(/DOMAIN_TOOLS/);
+    expect(substituteProseTokens("x {{DOMAIN_TOOLS}} y", { domainTools: "A, B" })).toBe("x A, B y");
   });
 });

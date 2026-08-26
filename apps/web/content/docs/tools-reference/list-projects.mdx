@@ -25,6 +25,14 @@ Beside the domain and its `project_id`, every tracked line carries two facts, be
 
 **If two tracked projects are mapped to the same Search Console property**, the reply names that property and both projects underneath the list. Each pull fetches one set of rows and is billed once per project, so the pair costs credits twice for the same data. Nothing is deduplicated for you — which of the two to keep is a decision only you can make.
 
+## You do not always need the project_id
+
+The `project_id` is what most tools use to know which of your sites they are working on, and this is where you get it. But a large part of the surface will also take a plain domain instead, passed as `target` — including a competitor's, which is the point: those tools answer questions about any public site, not only your own.
+
+Pass `target` OR `project_id`, never both. These tools accept either: [`ai_visibility`](/docs/tools-reference/ai-visibility), [`analyze_backlinks`](/docs/tools-reference/analyze-backlinks), [`backlink_changes`](/docs/tools-reference/backlink-changes), [`backlink_details`](/docs/tools-reference/backlink-details), [`compare_competitors`](/docs/tools-reference/compare-competitors), [`disavow_candidates`](/docs/tools-reference/disavow-candidates), [`discover_keywords`](/docs/tools-reference/discover-keywords), [`keyword_gap`](/docs/tools-reference/keyword-gap), [`keyword_positions`](/docs/tools-reference/keyword-positions), [`link_gap`](/docs/tools-reference/link-gap), [`my_pages`](/docs/tools-reference/my-pages), [`ranked_keywords`](/docs/tools-reference/ranked-keywords), [`serp_snapshot`](/docs/tools-reference/serp-snapshot).
+
+Everything else needs the `project_id`, because it reads data stored against YOUR project — your crawls, your audits, your Search Console pulls — and a domain does not identify those.
+
 ## The archive
 
 Archived projects are listed separately, most recently archived first, each with its `project_id` and the date it was archived. They are **not** counted as tracked and never appear in the tracked list — but they are visible, which is what makes them recoverable: you do not have to remember the exact domain to bring one back.
