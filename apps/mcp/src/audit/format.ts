@@ -58,6 +58,17 @@ export const ONPAGE_LABELS: Record<string, string> = {
   og_missing: "no OpenGraph title/description",
   lang_missing: "missing html lang",
   heading_gap: "heading hierarchy gap",
+  // The stray-edge rule (rules/onpage.ts, strayFinding). APPENDED for the reason stated above and
+  // NOT interleaved beside the other title/meta keys, tempting as that reads: this map's key order
+  // IS the summary line's order, so moving these up would reorder a line that already ships.
+  //
+  // Until these two keys existed the report CONTRADICTED ITSELF — a page whose only defect was a
+  // stray edge character printed "Summary: no on-page issues found." directly above the finding,
+  // because the summary walks ONPAGE_ORDER and drops any type this map does not name. `counts`
+  // was right the whole time; only the naming was missing. report/model.ts reads the same map and
+  // inherits the fix.
+  title_stray_chars: "title has stray markup",
+  meta_stray_chars: "meta description has stray markup",
 };
 /** The canonical finding-type order (semantic, not by count) — stable tie-break for summaries. */
 export const ONPAGE_ORDER = Object.keys(ONPAGE_LABELS);
