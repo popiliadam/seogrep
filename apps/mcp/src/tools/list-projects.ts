@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stripWwwLabel } from "@pseo/core";
 import { forUser, getServiceClient } from "../db.ts";
 import { defineTool, textResult } from "./registry.ts";
 
@@ -124,6 +125,40 @@ export function duplicatePropertyNotes(active: readonly ProjectListRow[]): strin
     );
 }
 
+/**
+ * One line per SITE that this tenant is tracking under more than one domain — today that means an
+ * apex and its `www.` twin, which is what `stripWwwLabel` collapses.
+ *
+ * WHY HERE AND NOT IN setup_project, which is where the item asked for it. Measured: the shared
+ * normalizer has stripped a leading `www.` since 3b0009e (2026-08-25 21:27), so a new
+ * setup_project call CANNOT open a second project for the same site — it resolves onto the
+ * existing row. A warning on that path would be a branch that can never fire. The pairs that
+ * exist were opened before that commit, they do not expire, and until now nothing named them.
+ * This is therefore a cleanup prompt about rows already in the table, not a guard on new ones.
+ *
+ * DELIBERATELY INDEPENDENT of duplicatePropertyNotes: that one is about paying twice for one set
+ * of Search Console rows, this one is about two crawls, two audits and two of everything else
+ * over one site — a pair with no Google account at all still has this problem.
+ */
+export function sameSiteNotes(active: readonly ProjectListRow[]): string[] {
+  const bySite = new Map<string, string[]>();
+  for (const project of active) {
+    const site = stripWwwLabel(project.domain);
+    const domains = bySite.get(site) ?? [];
+    domains.push(project.domain);
+    bySite.set(site, domains);
+  }
+  return [...bySite.values()]
+    .filter((domains) => domains.length > 1)
+    .map(
+      (domains) =>
+        `Heads up: ${domains.length} of your projects are the same site — ` +
+        `${domains.join(", ")}. Each is crawled, audited and billed separately. New projects can ` +
+        "no longer split this way, so this pair is left over; untrack_project archives the one " +
+        "you do not want, and nothing it holds is deleted.",
+    );
+}
+
 /** The Search Console half of a tracked line. */
 function renderGsc(gsc: ProjectGscState): string {
   if (gsc.kind === "not_connected") return "Search Console: not connected";
@@ -153,7 +188,7 @@ function trackedSection(active: readonly ProjectListRow[]): string {
       `- ${project.domain} (project_id: ${project.id}) — ${renderGsc(project.gsc)} · ` +
       renderLastJob(project.lastJob),
   );
-  const notes = duplicatePropertyNotes(ordered);
+  const notes = [...duplicatePropertyNotes(ordered), ...sameSiteNotes(ordered)];
   return [`You are tracking ${ordered.length} project(s):`, ...lines, JOB_SCOPE_NOTE, ...notes].join(
     "\n",
   );

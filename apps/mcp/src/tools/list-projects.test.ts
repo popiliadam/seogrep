@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
   duplicatePropertyNotes,
+  sameSiteNotes,
   JOB_SCOPE_NOTE,
   NO_PROJECTS_MESSAGE,
   NO_TRACKED_PROJECTS_MESSAGE,
@@ -318,5 +319,74 @@ describe("two projects mapped to one Search Console property", () => {
       }),
     ]);
     expect(text).not.toMatch(/same Search Console property/i);
+  });
+});
+
+
+/**
+ * G4, CORRECTED BY MEASUREMENT. The item asked for a warning in setup_project. That would be dead
+ * code: `normalizeDomain` has stripped a leading `www.` since 3b0009e (2026-08-25 21:27), so a new
+ * call can no longer open an apex/www pair — it resolves onto the existing row. The pairs that DO
+ * exist were created before that commit (www.seogrep.com at 08:25 the same day), they are not
+ * going away on their own, and no surface names them.
+ *
+ * So the warning belongs where the pair is visible — the tracked list — and it is deliberately
+ * INDEPENDENT of the shared-property note: two apex/www projects with no Search Console at all
+ * are still two projects, two crawls and two audits over one site.
+ */
+describe("apex and www. tracked as two projects", () => {
+  it("names both halves of the pair and the site they share", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "noraninsaat.com" }),
+      project({ id: "p-2", domain: "www.noraninsaat.com" }),
+    ]);
+    expect(text).toMatch(/same site/i);
+    expect(text).toMatch(/noraninsaat\.com, www\.noraninsaat\.com/);
+  });
+
+  it("fires with no Search Console involved at all", () => {
+    const notes = sameSiteNotes([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com" }),
+    ]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).not.toMatch(/Search Console/i);
+  });
+
+  it("says the pair can no longer be created, so the reader knows this is cleanup", () => {
+    const notes = sameSiteNotes([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com" }),
+    ]);
+    expect(notes[0]).toMatch(/untrack_project/);
+  });
+
+  it("stays silent on unrelated domains that merely look similar", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "a.com.tr" }),
+      project({ id: "p-3", domain: "wwwa.com" }),
+    ]);
+    expect(text).not.toMatch(/same site/i);
+  });
+
+  it("reports each pair once, however many members it has", () => {
+    expect(
+      sameSiteNotes([
+        project({ id: "p-1", domain: "a.com" }),
+        project({ id: "p-2", domain: "www.a.com" }),
+        project({ id: "p-3", domain: "b.com" }),
+        project({ id: "p-4", domain: "www.b.com" }),
+      ]),
+    ).toHaveLength(2);
+  });
+
+  /** An archived half is not being crawled or audited, so the pair is not costing twice. */
+  it("ignores archived projects", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com" }),
+      project({ id: "p-2", domain: "www.a.com", archived_at: "2026-08-01T00:00:00.000Z" }),
+    ]);
+    expect(text).not.toMatch(/same site/i);
   });
 });
