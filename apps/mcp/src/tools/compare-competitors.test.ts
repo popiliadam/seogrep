@@ -580,6 +580,26 @@ describe("S4 — compare_competitors states the target-vs-competitor difference"
     );
     // …and the paid-equivalent gap the whole section exists to make visible.
     expect(section).toContain("rival-one.example $91,044 · difference +$42,923");
+
+    /*
+     * THE ROUNDING SOURCE. renderDifferenceValue subtracts the ROUNDED figures — the two numbers
+     * actually printed on the line — so the difference is exactly what a reader subtracting them
+     * gets. Subtracting the raw floats instead would keep the printed columns identical and move
+     * the difference by one, which is the worst shape this whole round is about: a line that
+     * contradicts itself in the customer's own arithmetic.
+     *
+     * These two lines are the ONLY ones in the fixture where the two methods disagree, and they
+     * are the reason they are asserted. example.com's etv is 15234.5, rival-two's 8402.1 and
+     * rival-three's 1180.3: rounded-first gives -6,833 / -14,055, raw-first gives -6,832 /
+     * -14,054. Every other line in this fixture rounds the same either way and proves nothing
+     * about the rule — the ETV line above (28110.9 - 15234.5) among them.
+     */
+    expect(section).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) 15,235 · rival-two.example 8,402 · difference -6,833",
+    );
+    expect(section).toContain(
+      "  - Estimated monthly organic traffic (ETV): example.com (target) 15,235 · rival-three.example 1,180 · difference -14,055",
+    );
   });
 });
 
