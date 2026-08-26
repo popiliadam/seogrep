@@ -757,41 +757,55 @@ function renderNoKeywords(
  * =====================================================================================
  * THE OUTPUT CEILING — measured 2026-08-26, and the same defect backlink_details already had
  * =====================================================================================
- * MEASURED, by rendering real fixture rows through this very formatter:
+ * MEASURED, by rendering real fixture rows through this very formatter, with the ceiling lifted:
  *
  *   mode          100 rows (the DEFAULT)   1,000 rows (the schema maximum)
- *   ideas                 33,640 chars              309,942 chars
- *   related               30,683 chars              292,885 chars
+ *   ideas                 33,447 chars              309,749 chars
+ *   related               30,670 chars              292,872 chars
+ *   for_site              30,504 chars              279,506 chars
  *   suggestions           30,566 chars              292,168 chars
- *   for_site              30,697 chars              279,699 chars
  *
- * A row costs ~277-307 characters, so a full-width lookup produces a reply roughly FIVE TIMES the
- * 62,729 characters a calling client refused outright on 2026-08-25 ("exceeds maximum allowed
- * tokens"). That refusal is the shape this ceiling exists to prevent, and it is the worst one this
- * product can make: the 40 credits and DataForSEO's own fee are both spent, and the customer sees
- * NOTHING — not a short answer, an error.
+ * A keyword row costs ~277-307 characters, so a full-width lookup produced a reply roughly FIVE
+ * TIMES the 62,729 characters a calling client refused outright on 2026-08-25 ("exceeds maximum
+ * allowed tokens"). That refusal is the shape this ceiling exists to prevent, and it is the worst
+ * one this product can make: the 40 credits and DataForSEO's own fee are both spent, and the
+ * customer sees NOTHING — not a short answer, an error.
  *
- * WHY THE NUMBER IS THE SIBLING'S NUMBER. backlink_details set 28,000 characters against that
- * refusal: measured in tokens, bounded with the worst ratio dense ASCII can have (~2 characters a
- * token), so ~14,000 tokens — inside the 25,000-token default that rejected 62,729, with room for
- * a client configured lower. Nothing about that reasoning is specific to backlinks: the constraint
- * belongs to the CLIENT, not to the tool, and two different guesses at one client's cap would be
- * two numbers where the evidence supports one. This repo has never measured the token ratio of
- * keyword-and-timestamp text, and inventing a friendlier one to buy a wider reply is exactly the
- * unmeasured claim this file refuses everywhere else.
+ * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
  *
- * WHAT IT COSTS, STATED PLAINLY: at ~300 characters a row a DEFAULT `limit` 100 lookup does NOT
- * fit either — roughly 80 of its 100 keywords print, and the note says so. That is a worse default
- * experience than the sibling's (whose default window fits whole), and it is the direction to be
- * wrong in: a truncated answer that names what it left out is recoverable, a refused reply is a
- * total loss. Raising this number is a judgement about a client's token cap and belongs to a human
- * with a real measurement, not to this file.
+ *   worst DEFAULT render (ideas, 100 rows)               33,447
+ *   + the output-limit note reserved at its widest          748
+ *   ------------------------------------------------------------
+ *   what a default lookup must be allowed to print       34,195
+ *   + headroom for longer keywords than the fixtures'     5,805   (~19 more rows)
+ *   ------------------------------------------------------------
+ *   MAX_RENDERED_OUTPUT_CHARS                            40,000
  *
- * The rows are FETCHED and BILLED either way — the vendor request is unchanged, and the run
- * recorded in `subject_lookup_runs` is unchanged. Only the reply is bounded, and it says how many
- * rows it could not carry.
+ * and 40,000 is 64% of the 62,729 that was actually refused — comfortably under the measurement
+ * this whole ceiling is derived from, with the rest of the distance kept as margin.
+ *
+ * WHY THIS IS NOT THE SIBLING'S 28,000. backlink_details set that number against the same refusal
+ * and it was right there, because its DEFAULT window (50 links, 20 pages) fits inside it whole and
+ * only the wide windows truncate. THE ROW SHAPE IS DIFFERENT HERE: a keyword row carries two
+ * competition fields, a difficulty score, an intent pair, a three-legged trend and a timestamp, and
+ * the signed default window is 100 of them — so at 28,000 the DEFAULT call truncated too, every
+ * time, printing 83-88 of its 100 keywords. A tool whose default path never returns a whole answer
+ * is not a bounded tool, it is a broken one: truncation is for the caller who asked for a wide
+ * window, not for the caller who asked for nothing in particular. Human decision, 2026-08-26.
+ *
+ * WHAT THIS NUMBER IS NOT: a token measurement. The refusal was reported in TOKENS and this bound
+ * is in CHARACTERS, because this repo has never tokenized keyword-and-timestamp text and will not
+ * publish a ratio it did not measure. The character figure is therefore held well under the one
+ * character count that is known to have been refused, rather than converted into a token estimate
+ * that would read as more precise than the evidence is. A client configured far below the default
+ * cap can still refuse a reply this size; that is a measurement nobody here has taken either.
+ *
+ * WHAT IS STILL BOUNDED. Every window wider than the default still truncates — a 1,000-row lookup
+ * prints 118-131 keywords (measured, by mode) and says so. The rows are FETCHED and BILLED either
+ * way: the vendor request is unchanged, and the run recorded in `subject_lookup_runs` is unchanged.
+ * Only the reply is bounded, and it says how many rows it could not carry.
  */
-export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
+export const MAX_RENDERED_OUTPUT_CHARS = 40_000;
 
 /** Blocks of the answer are joined by a blank line; the ceiling arithmetic counts those too. */
 const BLOCK_SEPARATOR = "\n\n";

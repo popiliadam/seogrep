@@ -1223,14 +1223,58 @@ describe("the reply is bounded, and says what it could not carry", () => {
   /**
    * THE CONSTANT ITSELF, pinned against numbers that are NOT it. Asserting a rendered reply against
    * `MAX_RENDERED_OUTPUT_CHARS` alone is a tautology: raise the constant and the assertion follows
-   * it up. So the ceiling is pinned twice from outside — to the sibling surface that set it against
-   * a real refusal, and to that refusal's own measured size.
+   * it up. So the ceiling is pinned from OUTSIDE — against the measured refusal it is derived from,
+   * and against the sibling surface it deliberately diverges from.
    */
-  it("keeps the ceiling where the measured refusal put it", () => {
-    expect(MAX_RENDERED_OUTPUT_CHARS).toBe(BACKLINK_MAX_RENDERED_OUTPUT_CHARS);
+  it("keeps the ceiling under the reply size that was actually refused", () => {
     // MEASURED 2026-08-25: a 62,729-character reply was refused by the calling client outright.
-    // The ceiling must be a fraction of it, not merely below it.
-    expect(MAX_RENDERED_OUTPUT_CHARS).toBeLessThan(62_729 / 2);
+    // The ceiling must be a clear fraction of it, not merely below it.
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBeLessThan(62_729 * 0.7);
+    // and it is deliberately ABOVE the sibling's, whose default window fits in 28,000 and whose
+    // rows are a different shape. The divergence is a decision; a silent return to 28,000 would
+    // truncate every default lookup, which the next test refuses.
+    expect(MAX_RENDERED_OUTPUT_CHARS).toBeGreaterThan(BACKLINK_MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * THE DEFAULT LOOKUP RETURNS A WHOLE ANSWER (human decision, 2026-08-26). Truncation is for the
+   * caller who asked for a wide window; a customer who passed no `limit` at all pays 40 credits and
+   * must get every keyword the vendor filled the default window with.
+   *
+   * Measured on the REAL fixture rows of each mode, cycled to fill the window — the same rows the
+   * ceiling arithmetic was derived from, so this pin moves when that measurement moves.
+   */
+  it("prints the DEFAULT window WHOLE on all four modes — no note, nothing left out", async () => {
+    for (const mode of MODES) {
+      const base = await mockPort().fetchDiscoverKeywords({
+        ...minimalPortQuery(mode),
+        limit: MAX_DISCOVER_ROWS,
+        offset: 0,
+        ...LOCALE,
+      } as Parameters<DiscoverKeywordsPort["fetchDiscoverKeywords"]>[0]);
+      const vendorRows = base.window.rows;
+      const rows = Array.from({ length: DEFAULT_DISCOVER_ROWS }, (_, i) => {
+        const src = vendorRows[i % vendorRows.length]!;
+        return { ...src, keyword: `${src.keyword} variant ${i}` };
+      });
+      const text = formatDiscoverKeywords(resultWith(mode, rows), LOCALE);
+      expect(text, `${mode} truncated its DEFAULT window`).not.toMatch(/output limit reached/i);
+      expect(text.match(/^• /gm)?.length, `${mode} printed the wrong row count`).toBe(
+        DEFAULT_DISCOVER_ROWS,
+      );
+      expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+    }
+  });
+
+  /** The same guarantee with the caller's own seed list at its widest — the other prose axis. */
+  it("prints the DEFAULT window whole even under a 200-seed heading", () => {
+    const text = formatDiscoverKeywords(
+      resultWith("ideas", grownRows(DEFAULT_DISCOVER_ROWS), MANY_SEEDS),
+      LOCALE,
+    );
+    expect(text).not.toMatch(/output limit reached/i);
+    expect(text.match(/^• /gm)?.length).toBe(DEFAULT_DISCOVER_ROWS);
+    expect(text.length).toBeLessThanOrEqual(40_000);
   });
 
   it("holds the ceiling on all four modes at the schema's widest window", () => {
@@ -1241,7 +1285,7 @@ describe("the reply is bounded, and says what it could not carry", () => {
       );
       expect(text.length, `${mode} overflowed`).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
       // The same bound as a LITERAL, so raising the constant cannot carry this assertion with it.
-      expect(text.length, `${mode} overflowed the literal bound`).toBeLessThanOrEqual(28_000);
+      expect(text.length, `${mode} overflowed the literal bound`).toBeLessThanOrEqual(40_000);
       // and it is not bounded by returning nothing: the answer still carries keyword rows.
       expect(countsInNote(text).printed).toBeGreaterThan(20);
     }
@@ -1261,7 +1305,7 @@ describe("the reply is bounded, and says what it could not carry", () => {
       LOCALE,
     );
     expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
-    expect(text.length).toBeLessThanOrEqual(28_000);
+    expect(text.length).toBeLessThanOrEqual(40_000);
   });
 
   /**
