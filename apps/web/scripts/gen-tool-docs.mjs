@@ -720,11 +720,14 @@ export const DOC_PROSE = {
     example:
       "Ask your MCP client in plain language:\n\n> What are the quick wins for my example.com project?",
     returns:
-      "A prioritized list of quick-win opportunities — each with its query, page, average position, " +
-      "impressions, clicks, and CTR — best opportunity first. The list is capped; past the cap the " +
-      "reply says how many more pairs cleared the bands, so a shortlist is never mistaken for the " +
-      "whole set. If nothing clears the bands, it says so (and you are still charged for the " +
-      "delivered analysis).\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "A prioritized list of quick-win opportunities, **grouped by page** — each page with its " +
+      "queries, their average positions, impressions, clicks, and CTR — best opportunity first. " +
+      "The list is capped; past the cap the reply says how many more pairs cleared the bands, so a " +
+      "shortlist is never mistaken for the whole set. If nothing clears the bands, it says so (and " +
+      "you are still charged for the delivered analysis).\n\nEach page also carries **one recommended " +
+      "next move**, derived from that page's own rows: which of its queries to push, from its current " +
+      "position into the nearest band above it, and whether to widen the page to cover all the " +
+      "near-miss queries riding on it or tighten it around the single one.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",
@@ -775,7 +778,12 @@ export const DOC_PROSE = {
       "A list of cannibalized queries, each with its competing pages and their impressions, clicks, and " +
       "average position (main contender first), followed by the branded-query exclusion line when " +
       "there was one. If no query is contested, it says so (and you are still charged for the " +
-      "delivered analysis).\n\nEvery reply ends with the same four-line footer the other two " +
+      "delivered analysis).\n\nWhere the data supports it, a query also carries a **consolidation " +
+      "recommendation**: which URL to keep and which to canonicalize or merge into it, with the " +
+      "positions and impressions that decision was read from. It is deliberately **omitted** when the " +
+      "competing pages are within about half a SERP page of each other, or when a lower-ranking page " +
+      "is earning more clicks than the better-ranked one — naming a keeper there would be a guess, and " +
+      "the wrong keeper means consolidating away the page that was working.\n\nEvery reply ends with the same four-line footer the other two " +
       "discovery tools carry: the window that was analyzed against the one before it, a caveat " +
       "when either window hit the row cap, when the pull was taken plus a sentence once that is " +
       "old, and — when your Search Console credential has stopped working — a warning to " +
@@ -815,7 +823,12 @@ export const DOC_PROSE = {
     returns:
       "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
       "drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so " +
-      "(and you are still charged for the delivered analysis).\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "(and you are still charged for the delivered analysis).\n\nEach page carries **what to do about " +
+      "it**, and which of three instructions you get depends on how the page fell. A page down to no " +
+      "clicks at all is told to verify it is still indexed, reachable and not redirected **before** " +
+      "rewriting anything — that is also the shape a truncated pull manufactures. A page that lost " +
+      "most of its clicks but not all is told to re-target rather than tweak. A page in the middle " +
+      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",
