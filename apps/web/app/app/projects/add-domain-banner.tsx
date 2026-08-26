@@ -17,6 +17,9 @@
  * text either way; the gate is about what the page is willing to SAY, not about markup.
  */
 
+import { displayDomain } from "@pseo/core";
+import { DNS_NO_SUCH_DOMAIN } from "./add-domain-contract";
+
 type BannerTone = "success" | "notice" | "error";
 
 /** Manpage callout: 2px left border on the card surface; tone shows in the border + text. */
@@ -35,9 +38,19 @@ const TONE_STYLES: Readonly<Record<BannerTone, string>> = {
  */
 const DOMAIN_SHAPE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
-/** The domain to name in the copy, or null when the param is missing or not domain-shaped. */
+/**
+ * The domain to name in the copy, or null when the param is missing or not domain-shaped.
+ *
+ * THE GATE STAYS ASCII AND THE DECODE HAPPENS AFTER IT (2026-08-26, bulgu D-4). An IDN project
+ * is stored, and travels in this URL, as its A-label — so `DOMAIN_SHAPE` keeps judging exactly
+ * the alphabet it was written for, and `displayDomain` turns the ALREADY-ACCEPTED string into
+ * the name the customer typed. Widening the shape to Unicode would have been the other way
+ * round: loosening the rule that decides what this page is willing to SAY in order to fix how
+ * it reads. React escapes the text either way; this keeps the judgement narrow.
+ */
 function namedDomain(domain?: string): string | null {
-  return domain !== undefined && domain.length <= 253 && DOMAIN_SHAPE.test(domain) ? domain : null;
+  if (domain === undefined || domain.length > 253 || !DOMAIN_SHAPE.test(domain)) return null;
+  return displayDomain(domain);
 }
 
 /** One outcome's copy, with and without a usable domain to name. */
@@ -94,6 +107,24 @@ const ERRORS: ReadonlyMap<string, string> = new Map([
   ["failed", "Could not add that domain. Please try again."],
 ]);
 
+/**
+ * THE PANEL'S OWN SENTENCE for "that domain does not resolve" — added 2026-08-26 (bulgu D-1).
+ *
+ * The form shares its whole route with `setup_project`, and until this line existed it shared
+ * everything EXCEPT the warning: the tool said "Heads up: … does not resolve", the panel said
+ * "Now tracking exmaple.com." and stopped. The check exists because a dead domain was registered
+ * in that silence and a 20-credit crawl was then recommended against it.
+ *
+ * A SEPARATE literal rather than the tool's string, for the reason every other message on this
+ * page is one: same verdict, surface-appropriate sentence — and nothing the server writes into
+ * the URL is echoed into the document. It is appended to a SUCCESS message, never substituted
+ * for one, and it names the innocent explanation first: the ordinary reason a domain does not
+ * resolve is a site that has not launched.
+ */
+const DNS_WARNING =
+  " Heads up: it does not resolve yet — a DNS lookup found no such name. If the site is not " +
+  "live, that is expected; if the domain was mistyped, add the correct one.";
+
 interface BannerMessage {
   readonly tone: BannerTone;
   readonly text: string;
@@ -104,6 +135,7 @@ export function addDomainMessage(
   added?: string,
   domain?: string,
   error?: string,
+  dns?: string,
 ): BannerMessage | null {
   if (added !== undefined) {
     const copy = OUTCOMES.get(added);
@@ -111,7 +143,12 @@ export function addDomainMessage(
       return null;
     }
     const named = namedDomain(domain);
-    return { tone: copy.tone, text: named === null ? copy.withoutDomain : copy.withDomain(named) };
+    // The warning rides on the OUTCOME, so it can only ever follow a message that says the
+    // project exists. An unknown `dns` value (the query string is attacker-controlled) matches
+    // nothing and renders nothing, exactly like an unknown `added`.
+    const warning = dns === DNS_NO_SUCH_DOMAIN ? DNS_WARNING : "";
+    const text = named === null ? copy.withoutDomain : copy.withDomain(named);
+    return { tone: warning === "" ? copy.tone : "notice", text: text + warning };
   }
   if (error !== undefined) {
     const text = ERRORS.get(error);
@@ -125,12 +162,14 @@ export function AddDomainBanner({
   added,
   domain,
   error,
+  dns,
 }: {
   added?: string;
   domain?: string;
   error?: string;
+  dns?: string;
 }) {
-  const message = addDomainMessage(added, domain, error);
+  const message = addDomainMessage(added, domain, error, dns);
   if (message === null) {
     return null;
   }

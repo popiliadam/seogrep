@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { stripWwwLabel } from "@pseo/core";
+import { displayDomain, stripWwwLabel } from "@pseo/core";
 import { forUser, getServiceClient } from "../db.ts";
 import { defineTool, textResult } from "./registry.ts";
 
@@ -185,7 +185,7 @@ function trackedSection(active: readonly ProjectListRow[]): string {
   const ordered = [...active].sort((a, b) => a.created_at.localeCompare(b.created_at));
   const lines = ordered.map(
     (project) =>
-      `- ${project.domain} (project_id: ${project.id}) — ${renderGsc(project.gsc)} · ` +
+      `- ${displayDomain(project.domain)} (project_id: ${project.id}) — ${renderGsc(project.gsc)} · ` +
       renderLastJob(project.lastJob),
   );
   const notes = [...duplicatePropertyNotes(ordered), ...sameSiteNotes(ordered)];
@@ -200,7 +200,8 @@ function archiveSection(archived: readonly ProjectListRow[]): string {
     String(b.archived_at).localeCompare(String(a.archived_at)),
   );
   const lines = ordered.map(
-    (project) => `- ${project.domain} (project_id: ${project.id}, archived ${project.archived_at})`,
+    (project) =>
+      `- ${displayDomain(project.domain)} (project_id: ${project.id}, archived ${project.archived_at})`,
   );
   return (
     `Archived — ${ordered.length} project(s), most recently archived first:\n${lines.join("\n")}\n` +

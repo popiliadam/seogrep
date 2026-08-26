@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { displayDomain } from "@pseo/core";
 import type { AuditLine } from "../../../lib/projects/audits";
 import type { ProjectCard } from "../../../lib/projects/card";
 import type { InsightLine } from "../../../lib/projects/insights";
@@ -339,15 +340,21 @@ export function ProjectCardView({ card, detail = false }: { card: ProjectCard; d
   return (
     <li className="border border-hairline bg-card">
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-hairline px-7 py-5">
+        {/*
+          The HEADING is the one place the customer reads their site's NAME, so it carries the
+          U-label: an IDN project registered as `örnek.com` was rendering here as
+          `xn--rnek-4qa.com`. `card.domain` itself stays the stored A-label — it is what the
+          lookup lines key on and what a caller would paste into a tool.
+        */}
         <h2 className="m-0 break-all font-mono text-[16px] font-semibold">
           {detail ? (
-            card.domain
+            displayDomain(card.domain)
           ) : (
             <Link
               href={`/app/projects/${card.projectId}`}
               className="border-b border-transparent transition-colors duration-150 hover:border-accent hover:text-accent"
             >
-              {card.domain}
+              {displayDomain(card.domain)}
             </Link>
           )}
         </h2>

@@ -26,6 +26,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const openTrackedProject = vi.hoisted(() => vi.fn());
+/**
+ * The DNS port, stubbed — NO SPEC TOUCHES A RESOLVER (the rule `net/reachability.ts` states and
+ * the reason setup_project injects the same check). Caught here on 2026-08-26: the moment the
+ * action started asking, this file went red because `sentinel.example` was being looked up for
+ * real, and a spec about IMPORT IDENTITY had quietly acquired a network dependency whose answer
+ * decides the asserted URL.
+ */
+const checkDomainReachable = vi.hoisted(() => vi.fn(async () => "unknown" as const));
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -38,6 +46,10 @@ vi.mock("@pseo/db/server", () => ({ createServiceClient: () => ({ marker: "servi
 vi.mock("../../../lib/supabase/server", () => ({
   createClient: () => Promise.resolve({ auth: { getUser: () => ({ data: { user: { id: "u-1" } } }) } }),
 }));
+vi.mock("@pseo/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@pseo/core")>();
+  return { ...actual, checkDomainReachable };
+});
 vi.mock("@pseo/db/projects", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@pseo/db/projects")>();
   return { ...actual, openTrackedProject };

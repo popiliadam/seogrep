@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { normalizeDomain, type NormalizedDomain } from "@pseo/core";
+import { displayDomainWithAscii, normalizeDomain, type NormalizedDomain } from "@pseo/core";
 import {
   openTrackedProject as openTrackedProjectWith,
   restoreOwnProject as restoreOwnProjectWith,
@@ -88,18 +88,42 @@ export async function restoreOwnProject(userId: string, projectId: string): Prom
   return await restoreOwnProjectWith(projectsClient(), userId, projectId);
 }
 
-/** setup_project's own wording for each outcome — unchanged, and its alone. */
+/**
+ * What to do with a project that was just opened.
+ *
+ * ONE POINTER, NOT A MENU. `whats_next` is the tool that reads a project's actual state and
+ * decides — it was taught in this same review not to recommend a pull the account cannot run —
+ * so naming it costs one clause and never goes stale, while listing crawl_site / connect_gsc
+ * here would be a second, dumber copy of that ranking which cannot see the project it is
+ * describing. Appended to the outcome line rather than replacing anything: the receipt (domain,
+ * project_id, created flag) is what a caller parses.
+ */
+const NEXT_STEP_HINT = " Run whats_next with this project_id for the next step.";
+
+/**
+ * setup_project's own wording for each outcome — its alone.
+ *
+ * The domain is rendered with {@link displayDomainWithAscii}, so an IDN project reads as
+ * `örnek.com (xn--rnek-4qa.com)` instead of the A-label on its own. This is the registration
+ * receipt, which is exactly the surface that owes BOTH forms: the customer needs to recognise
+ * the name they typed, and the stored spelling is what they will see in a DNS panel and what
+ * every join downstream uses.
+ */
 function renderSetupOutcome(project: TrackedProject): string {
+  const shown = displayDomainWithAscii(project.domain);
   if (project.outcome === "created") {
-    return `Created project for "${project.domain}" (project_id: ${project.id}, created: true).`;
+    return `Created project for "${shown}" (project_id: ${project.id}, created: true).${NEXT_STEP_HINT}`;
   }
   if (project.outcome === "restored") {
     return (
-      `Restored "${project.domain}" from your archive — it is tracked again ` +
-      `(project_id: ${project.id}, created: false).`
+      `Restored "${shown}" from your archive — it is tracked again ` +
+      `(project_id: ${project.id}, created: false).${NEXT_STEP_HINT}`
     );
   }
-  return `Project already exists for "${project.domain}" (project_id: ${project.id}, created: false).`;
+  return (
+    `Project already exists for "${shown}" (project_id: ${project.id}, created: false).` +
+    NEXT_STEP_HINT
+  );
 }
 
 /** Dependencies — both ports exist so the fast lane can run this handler with no DB and no DNS. */

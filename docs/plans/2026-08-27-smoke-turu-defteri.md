@@ -1110,3 +1110,71 @@ beklemek mi.
 
 `checkDomainReachable` **her** çağrıda koşuyor — zaten var olan bir projeyi ikinci kez kurarken
 de. En kötü hâlde 2 sn ekliyor, kaydı engellemiyor; kozmetik, düzeltilmedi.
+
+---
+
+## §D1c — `setup_project`'in BÜTÜN maddeleri kapatıldı (operatör talimatı, 2026-08-26 17:2xZ)
+
+Operatör: *"setup_project tool'undaki bütün hataları düzeltelim, defterde olan tespit edilen."*
+D-1 · D-2 · D-3 · D-4 kapatıldı. **D-5 kasten açık** — gerekçesi aşağıda.
+
+| # | madde | durum | nerede |
+|---|---|---|---|
+| D-1 | panel "Add domain" DNS uyarısı basmıyordu | ✅ KAPANDI | `actions.ts` + `add-domain-contract.ts` + `add-domain-banner.tsx` + `page.tsx` |
+| D-2 | kurulum cevabı sonraki adımı söylemiyordu | ✅ KAPANDI | `setup-project.ts` → `NEXT_STEP_HINT` |
+| D-3 | Türkçe büyük harf `İ` siteyi ikiye bölüyordu | ✅ KAPANDI (`3812166`) | `hostname.ts` → `foldDottedCapitalI` |
+| D-4 | IDN projeler punycode gösteriliyordu | ✅ KAPANDI | yeni `packages/core/src/net/idn.ts` + 5 yüzey |
+| D-5 | proje sayısında tavan yok | ⛔ **AÇIK — operatör kararı** | aşağı bak |
+
+### D-1 — DNS portu core'a taşındı, cümle taşınmadı
+
+`apps/mcp/src/tools/domain-reachability.ts` → **`packages/core/src/net/reachability.ts`**.
+Taşınan: lookup + 2000 ms tavanı + `classifyLookupFailure` (ters çevrilmemesi gereken tek yargı).
+**Taşınmayan: cümle.** MCP kendi `reachabilityWarning`'ini tutuyor, panel kendi banner literalini
+yazıyor — kod tabanının yerleşik ayrımı (`ARCHIVED_PROJECT` ↔ `ARCHIVED_PROJECT_MESSAGE`).
+Eski dosya taşınanları **re-export** ediyor, yani `whats-next.ts` ve dört süit hiç değişmedi.
+
+Panel akışı artık: rota yazar → **yazmadan SONRA** DNS sorulur → redirect'e `&dns=no_such_domain`
+eklenir (yalnız POZİTİF bulgu yolculuk eder; `resolves` ve `unknown` **hiçbir parametre üretmez**)
+→ banner cümleyi **başarı mesajının SONUNA** ekler, yerine geçmez.
+
+**Bu düzeltme koşarken bir kapı boşluğu yakaladı:** `add-domain-route-identity.test.ts` kırmızıya
+döndü çünkü action DNS'i sormaya başlayınca spec **gerçek resolver'a çıkıyordu** (`sentinel.example`
+canlı olarak sorgulanıyordu). Tasarımın kendi kuralı "hiçbir spec resolver'a dokunmaz" diyor;
+port iki süite de enjekte edildi.
+
+### D-4 — punycode yalnız GÖRÜNTÜLEMEDE çözülür, depolama ASCII kalır
+
+Yeni `displayDomain` / `displayDomainWithAscii`. Depolanan değer, join anahtarları ve tool
+argümanları **A-label** kalıyor; yalnız insana basılan yer çözülüyor. Uygulandığı beş yüzey:
+`setup_project` makbuzu (her iki biçim) · `list_projects` iki bölümü · `projectLabel`
+(`list_jobs` + `list_credit_activity`) · panel proje başlığı · Add-domain banner'ı.
+
+**Banner'ın şekil kapısı ASCII kaldı, çözme kapıdan SONRA yapılıyor.** Kapıyı Unicode'a
+genişletmek, "bu sayfa neyi SÖYLEMEYE razı" kuralını okunabilirlik için gevşetmek olurdu.
+
+**🔒 VE BURADA GERÇEK BİR GÜVENLİK SORUSU ÇIKTI — var olan bir pin yakaladı.**
+`add-domain-banner.test.tsx` zaten `xn--80ak6aa92e.com`'u pinliyordu; çözülünce **`аррӏе.com`**
+oluyor — beş **KİRİL** harfiyle yazılmış "apple". Yani script kuralı olmayan bir çözücü, bir adı
+göstermez, bir **kılık** çizer. Kural daraltıldı: `displayDomain` yalnız **Latin** script'i
+gösteriyor; Latin dışı ve **karışık script** etiketler A-label'da kalıyor (tarayıcı adres
+çubuğunun aynı adla yaptığı şey). Bu pazarın bütün alfabesi (`ö ç ı ü ğ ş`) Latin'dir.
+**Var olan pin değişmedi** — daralttığım kural onu aynen geçiriyor.
+
+### D-5 — NEDEN AÇIK BIRAKILDI
+
+Proje tavanı **kod hatası değil, paket kararı**: bir sayı seçmek "bir müşteri kaç site takip
+edebilir"i belirler ve bu, fiyat/paket sınırına komşudur (NEVER#6'nın ruhu). Sessizce koyulan bir
+tavan, operatörün kendi hesabını (16 proje) da bağlar. **Öneri:** hesap başına 50 aktif proje
+(arşivlenenler sayılmaz) — bugünkü en yoğun kullanımın 3 katı, ve bir betiğin sınırsız satır
+açmasını durdurur. **İmza bekliyor.**
+
+### Kapılar — bu dilimin sonunda, NE ölçtükleriyle
+
+| kapı | sonuç | değişim |
+|---|---|---|
+| `TURBO_FORCE=1 bash guardrails/verify.sh` | **PASS** (16/16 task) | core **339** (327→, +12) · web **1975** (1967→, +8) · mcp **3543** (3544→, −1: 4 sınıflandırıcı testi core'a taşındı, 3 yeni makbuz pini eklendi) · db 12 · 38 doküman senkron |
+| `bash guardrails/verify-db.sh` | **PASS** | db 165 · mcp 491 · web 48 — taban ile birebir |
+
+**NE ÖLÇMEZLER:** secret taraması yok · **canlı uç yok**. D-1/D-2/D-4 canlıda **görülmedi**;
+`mcp.seogrep.com` hâlâ `499a2a0`. Deploy'dan sonra §D1'deki dokuz çağrı tekrarlanmalı.

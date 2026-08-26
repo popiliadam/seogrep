@@ -1,3 +1,4 @@
+import { displayDomain } from "@pseo/core";
 import { forUser, getServiceClient } from "../db.ts";
 
 /**
@@ -46,5 +47,9 @@ export function projectLabel(
   domains: ReadonlyMap<string, string>,
 ): string {
   if (projectId === null) return "no project scope";
-  return domains.get(projectId) ?? projectId;
+  const domain = domains.get(projectId);
+  // `displayDomain` on the way OUT, never into the map: the map is data (its values are stored
+  // A-labels, and a caller may key or compare on them), this is the one place it becomes a
+  // sentence. An IDN project otherwise reads as `xn--rnek-4qa.com` in every job and ledger line.
+  return domain === undefined ? projectId : displayDomain(domain);
 }

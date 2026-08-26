@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { normalizeDomain } from "@pseo/core";
+import { checkDomainReachable, normalizeDomain } from "@pseo/core";
 import { createServiceClient } from "@pseo/db/server";
 import { openTrackedProject, type ProjectResolution } from "@pseo/db/projects";
 import { requireUserId } from "../connection/action-support";
@@ -52,9 +52,18 @@ export async function addDomain(formData: FormData): Promise<void> {
       : "invalid_domain"));
   }
 
+  // THE SAME DNS QUESTION setup_project asks, and asked in the same PLACE: after the write.
+  // Until 2026-08-26 only the MCP tool asked it, so one mistyped domain produced a warning
+  // through a tool and total silence through this form — the surface a human actually types
+  // into. The row is already committed when this runs, so a resolver that hangs can delay this
+  // redirect by at most DOMAIN_LOOKUP_TIMEOUT_MS and can never cost the customer their project.
+  // It is asked about the CANONICAL domain the route returned, which is the name a crawl will
+  // later fetch, not whatever was pasted into the field.
+  const reachability = await checkDomainReachable(resolved.project.domain);
+
   revalidatePath(PROJECTS_PATH);
   // `redirect` throws by design (Next's NEXT_REDIRECT), so it is deliberately NOT inside the
   // try above — a catch would swallow the navigation and leave the user on a POST that did
   // nothing visible.
-  redirect(addedUrl(resolved.project.outcome, resolved.project.domain));
+  redirect(addedUrl(resolved.project.outcome, resolved.project.domain, reachability));
 }

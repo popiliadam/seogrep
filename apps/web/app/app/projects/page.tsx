@@ -532,6 +532,7 @@ export default async function ProjectsPage({
           added={firstValue(params.added)}
           domain={firstValue(params.domain)}
           error={firstValue(params.error)}
+          dns={firstValue(params.dns)}
         />
       </div>
 
