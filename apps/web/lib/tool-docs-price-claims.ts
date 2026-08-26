@@ -64,10 +64,21 @@ const MARK = "§";
  *
  *  • `free`          — the word that produced BOTH defects. Nothing else in this list has a
  *                      measured failure behind it; this one has two.
- *  • `costs nothing` / `charges nothing` / `at no cost` / `no charge`
+ *  • `costs nothing` / `charges nothing` / `(carries|comes) (at) no cost|charge`
  *                    — the same assertion in the wordings this corpus actually uses. They are here
  *                      so a future author cannot route around `free` by paraphrase, which is the
  *                      obvious way this guard would otherwise be defeated without anyone meaning to.
+ *                      THE BEARING VERB IS PART OF THE CLAIM, and that is the whole of the
+ *                      2026-08-26 widening. It was measured: "`find_quick_wins` carries no charge."
+ *                      and "… comes at no charge." both passed the guard. The claim matched at
+ *                      "no charge", and the backward walk then hit "carries" / "at", neither of
+ *                      which is BINDING_FILLER, so it stopped one word short of the tool and bound
+ *                      nothing. Swallowing the verb into the claim puts the tool immediately before
+ *                      it, where `bindBackward` already looks; widening BINDING_FILLER instead
+ *                      would have let "carries" — a word this corpus uses ~40 times — be stepped
+ *                      over in every clause, which buys reach at the cost of the precision the
+ *                      filler list exists to hold. `at` became optional in the same edit, so a
+ *                      bare "no cost" is now a claim too; the corpus has none, measured.
  *  • `included`      — "included" means "you do not pay extra for it". Weaker than the rest and
  *                      kept only because the binder below protects its common innocent use
  *                      ("subdomains are **included**" binds no tool, so it cannot fire).
@@ -87,8 +98,7 @@ const FREE_CLAIM_PATTERNS: readonly RegExp[] = [
   /\bfree\b/gi,
   /\bcosts?\s+nothing\b/gi,
   /\bcharges?\s+(?:you\s+)?nothing\b/gi,
-  /\bat\s+no\s+cost\b/gi,
-  /\bno\s+charge\b/gi,
+  /\b(?:(?:carr(?:y|ies)|comes?)\s+)?(?:at\s+)?no\s+(?:cost|charge)\b/gi,
   /\bincluded\b/gi,
 ];
 

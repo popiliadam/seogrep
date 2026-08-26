@@ -333,6 +333,17 @@ describe("the quick-win list is grouped by page", () => {
  * been deleted; the guarantees it carried have not, so they are re-asserted here against
  * `formatGroupedQuickWins` — the renderer `renderQuickWins` actually passes to the tool.
  *
+ * FIVE OF THE SIX STILL DISCRIMINATE HERE. The sixth does not, and naming it is the only way this
+ * note stays true: "carries the query, its page and its position" pinned the FLAT renderer, where
+ * the query line was the only line there was. The grouped renderer prints those same three strings
+ * in the page HEADING and again in the recommendation, so the assertion survives the loss of every
+ * per-query row — measured 2026-08-26 by emptying `...rows` in `renderQuickWinPage`: it stayed
+ * GREEN while exactly two specs went red, both in the block above. Those two are the guarantee's
+ * real keepers, and they are named here so nobody has to re-derive them: "keeps position,
+ * impressions, clicks and CTR on each query" and "says how many quick wins the page carries and
+ * puts them under it". The sixth is kept for what it does still pin — that the three facts reach
+ * the reader AT ALL — and it is not evidence about the rows.
+ *
  * READ DIRECTLY rather than through the tool, unlike everything else in this file, and
  * deliberately so: `total` is the PRE-CAP count the ENGINE computes, so reaching a remainder of
  * 4,000 through the tool would mean fabricating 4,002 qualifying rows to assert one thousands
@@ -348,6 +359,8 @@ describe("the flat renderer's pins, moved onto the live one", () => {
     expect(formatGroupedQuickWins([])).toMatch(/no quick wins/i);
   });
 
+  // Passes on the heading and the recommendation alone — see the block note. The per-query rows
+  // are pinned by the two specs it names, not by this one.
   it("carries the query, its page and its position", () => {
     const text = formatGroupedQuickWins(wins);
     expect(text).toContain('"running shoes"');

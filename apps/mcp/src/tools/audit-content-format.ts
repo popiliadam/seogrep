@@ -215,7 +215,8 @@ function renderPageBlock(group: ContentPageGroup): string {
  * queries it does not name).
  *
  * THREE REMAINDERS, each counting something different, because a truncated list presented as a
- * whole answer is this file's oldest trap (`formatQuickWins`' rule):
+ * whole answer is this file's oldest trap (the rule `formatGroupedQuickWins` states, in
+ * tools/find-quick-wins.ts):
  *   - per page, how many of that page's queries are in the shortlist but not printed;
  *   - how many pages the page cap left out;
  *   - `total`, the count BEFORE the engine's row cap — a site with 400 mismatches must not read

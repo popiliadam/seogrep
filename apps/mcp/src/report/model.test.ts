@@ -187,6 +187,24 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
 
     // On-page: the report's findings are exactly the engine's per-type counts (>0), each mapped
     // through the SAME ONPAGE_LABELS vocabulary audit_onpage prints, sorted by count desc.
+    //
+    // THE EXPRESSION BELOW RESTATES THE PRODUCTION ONE, and that reads like a tautology, so it was
+    // measured rather than argued (2026-08-26, four mutations in report/model.ts's summarizeOnpage):
+    //   • `> 0` → `>= 0`                       → RED here. The filter is really asserted.
+    //   • `ONPAGE_LABELS[type]!` → `type`      → RED here. The label mapping is really asserted.
+    //   • `.sort(desc)` → `.sort(asc)`         → green.
+    //   • `ONPAGE_ORDER` → `Object.keys(counts)` → green.
+    // It is not a tautology: the copy here is FIXED, so production moving away from it reddens. The
+    // two greens are this FIXTURE's reach, not the assertion's — KNOWN_ISSUES yields exactly one
+    // finding type (`{"missing_canonical": 2}`), and neither a sort direction nor a tie-break order
+    // is observable in a one-element list. A second finding type at a different count would close
+    // both, and is the change to make here if this spec is ever extended.
+    //
+    // The axis where both sides WOULD move together — the shared vocabulary itself — is not silent
+    // either, and that was measured too: relabelling `missing_canonical` in ONPAGE_LABELS keeps
+    // this file green but reddens three byte-for-byte legacy specs elsewhere, and swapping two of
+    // its keys reddens format.test.ts's SHIPPED_ORDER pin. Running only this file would have
+    // reported that axis unpinned (signed lesson 11).
     const expectedFindings = ONPAGE_ORDER.filter((type) => (onpage.counts[type] ?? 0) > 0)
       .map((type) => ({ label: ONPAGE_LABELS[type]!, count: onpage.counts[type]! }))
       .sort((a, b) => b.count - a.count);
