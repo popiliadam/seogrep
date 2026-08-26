@@ -1221,3 +1221,48 @@ turdaki ikinci vakası — ve bu kez ölçüm, düzeltmenin kendi çıktısını
 `reachabilityWarning` artık `displayDomain` ile açıyor; iki pin eklendi (IDN + ASCII).
 **Kapı:** `verify.sh` **PASS** · mcp **3545** (3543→, +2). Bu düzeltme **ayrı bir dalda**
 (`fix/idn-warning-name`) — canlı henüz eski cümleyi basıyor.
+
+### D-6 canlıda kapandı (18:0xZ)
+
+PR [#181](https://github.com/popiliadam/seogrep/pull/181) merge-commit `642804c` · CI **6/6** ·
+Deploy MCP ✅ · `/status` `ok:true errorsSinceBoot:0 schema:ready`. Aynı çağrının canlı cevabı:
+
+```
+Project already exists for "smoke-dalga2-örnek.com (xn--smoke-dalga2-rnek-c0b.com)" … 
+Heads up: smoke-dalga2-örnek.com does not resolve …
+```
+
+Makbuz her iki biçimi, uyarı okunabilir biçimi basıyor — **tek cevap, tutarlı ad**.
+
+## §D1e — `setup_project` KAPANIŞ TABLOSU
+
+| # | madde | durum | canlıda mı |
+|---|---|---|---|
+| D-1 | panel Add domain DNS uyarısı yoktu | ✅ düzeltildi | **canlıda, ama ÖLÇÜLMEDİ** — tarayıcı oturumu gerek, operatörün manuel testi |
+| D-2 | sonraki adım söylenmiyordu | ✅ düzeltildi | ✅ ölçüldü |
+| D-3 | Türkçe büyük harf `İ` siteyi ikiye bölüyordu | ✅ düzeltildi | ✅ **iki tanıkla** ölçüldü |
+| D-4 | IDN punycode gösteriliyordu | ✅ düzeltildi | ✅ makbuz + liste ölçüldü |
+| D-6 | uyarı paragrafı hâlâ A-label basıyordu | ✅ düzeltildi | ✅ ölçüldü |
+| **D-5** | proje sayısı tavanı yok | ⛔ **AÇIK** | **operatör imzası bekliyor** (öneri: hesap başına 50 aktif proje) |
+
+### Turun para muhasebesi — bu tool için
+
+| ne | başlangıç | şimdi | fark |
+|---|---|---|---|
+| kredi bakiyesi | 4519 | 4519 | **0** |
+| `credit_ledger` | 783 | **783** | **0 satır** — 13 canlı `setup_project` çağrısı, tek defter satırı yok |
+| `dfs_spend_today_usd()` | $0,101 | **$0,101** | **$0,00** |
+| `projects` | 17 | **20** | **+3**, hepsi kasıtlı kanıt satırı |
+
+**Üç yeni satır** (`untrack_project` turunun fikstürü olacaklar):
+`example.org` · `smoke-dalga2-yok-4e91.com` · `smoke-dalga2-örnek.com` (`e5095cf9…`).
+§7'nin dokunulmaz arşiv probuna (`bu-domain-kesinlikle-yok-9f3a2c.com`) **dokunulmadı**.
+
+### Şu an canlıda olanlar (dalga 1 + bu dilim)
+
+`main` = **`642804c`** · migration **0033 uygulandı** · MCP ve web deploy edildi.
+Dalga 1'in 20 maddesi + D-1/D-2/D-3/D-4/D-6 **canlıda**. `list_projects` canlı çıktısı üç durumlu
+Search Console, son iş, apex/www ve çift-property uyarılarını basıyor — hepsi ilk kez müşteri
+yolundan görüldü.
+
+### Sıradaki tool: `whats_next` — operatörün "okey"i bekleniyor

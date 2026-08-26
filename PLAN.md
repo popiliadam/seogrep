@@ -5,32 +5,39 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 2** (sırada `setup_project`, 4/38 gezildi)
+### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 2** (sırada `whats_next`, 5/38 gezildi)
 
 > **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga2.md`
+> Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — sonundaki **§D1e KAPANIŞ TABLOSU**.
 
-Dalga 1 bitti: **4 tool gezildi** (`list_projects`, `get_credit_balance`, `list_credit_activity`,
-`list_jobs`), bulunan **20 madde kapatıldı**, **26 commit**, PR
-[#180](https://github.com/popiliadam/seogrep/pull/180) açık ve `MERGEABLE`.
+**Dalga 1 CANLIDA.** PR [#180](https://github.com/popiliadam/seogrep/pull/180) merge-commit
+`3ade3f2` · **migration 0033 cloud'a uygulandı ve doğrulandı** (`project_id` kolonu, iki indeks,
+`reserve_credits` 5-arg, `execute` yalnız `service_role`, ledger 783 satır değişmedi,
+`credit_ledger`'da hiçbir role'de UPDATE/DELETE yok) · CI **6/6** · Deploy MCP ✅ ·
+`seogrep.com` 200. **I-1 ve I-2 kapandı** (Actions döndü, `main` CI yeşil).
 
-**Üç kapı yeşil:** `verify.sh` PASS (mcp **3544** · web **1967** · core **323**) ·
-`verify-db.sh` PASS (165 · 491 · 48) · `make goals` **16/16 (1 skip)** — env yüklüyken, ilk kez
-15 hedef canlıdan ölçüldü. **Kredi fiyatı değişikliği: SIFIR. Vendor: $0,00** (hiç paralı çağrı yok).
+**`setup_project` gezildi ve BÜTÜN maddeleri kapatıldı** — PR
+[#181](https://github.com/popiliadam/seogrep/pull/181) `642804c`, `main` = **`642804c`**:
 
-**Kapanan öne çıkanlar:** `list_projects` üç durumlu Search Console + son iş · `whats_next` artık
-koşamayacak bir pull önermiyor · **migration 0033** — defter hangi projeye harcandığını biliyor ·
-`/app/projects/[id]` detay rotası · `list_jobs` çelişkili zaman damgasını işaretliyor ·
-**G17** — `trial-flow-e2e` 36-tool pini iki gündür üretim yüzeyini saymıyordu.
+- **D-3 (yüksek):** Türkçe büyük harf `İ` siteyi ikiye bölüyordu — `SİGORTA.COM.TR` →
+  `xn--sigorta-7he.com.tr`, çözülmeyen bir ad. Küçük harfte saf ASCII olan bir alan adı, **sırf
+  büyük yazıldığı için** punycode'a düşüyordu. Canlıda iki tanıkla doğrulandı.
+- **D-1:** panel "Add domain" DNS uyarısını hiç basmıyordu; DNS portu `@pseo/core`'a taşındı,
+  cümleler yüzeylerde kaldı. *(canlıda, ama tarayıcı ölçümü operatörde)*
+- **D-4 + D-6:** IDN projeler punycode gösteriliyordu; `displayDomain` beş yüzeyde. Var olan bir
+  pin **homograf riskini** yakaladı (`xn--80ak6aa92e.com` → Kiril "apple") → yalnız Latin script
+  gösteriliyor. D-6, D-4'ün kendi çıktısını canlıda okuyunca çıktı.
+- **D-2:** kurulum makbuzu `whats_next`'i işaret ediyor.
 
-**⚠️ Dalga 1 CANLIDA DEĞİL.** Merge + deploy sırası bağlayıcı: ① migration 0033 cloud'a →
-② `mcp` → ③ `web`. Merge **merge-commit** ile.
+**Kapılar:** `verify.sh` PASS (core **339** · mcp **3545** · web **1975** · db 12) ·
+`verify-db.sh` PASS (165 · 491 · 48) · CI 6/6. **Kredi fiyatı değişikliği: SIFIR.**
+13 canlı çağrı, **0 defter satırı**, vendor **$0,00** ($0,101/$3 sabit).
 
-**Açık:** G12 (`keyword_gap`/`link_gap` okuma kaydı — o tool'lar F bölümünde gezilecek) ·
-G16b (panel tek anahtara zorluyor — **operatör kararı**) · I-1 PR CI'ı GitHub Actions kesintisinde
-koşmadı · I-2 `main` CI kırmızı (Docker Hub limiti, **re-run** gerek).
+**⛔ İMZA BEKLEYEN TEK MADDE — D-5:** proje sayısında tavan yok (0 kredi + açık kayıt = bir hesap
+sınırsız proje açabilir). Kod hatası değil **paket kararı**; öneri **hesap başına 50 aktif proje**.
 
-Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — sonundaki **KAPANIŞ DURUMU** tablosu tek
-yetkili kaynaktır.
+**Açık (devreden):** G12 (`keyword_gap`/`link_gap` okuma kaydı — F bölümünde) · G16b (panel tek
+anahtara zorluyor — operatör kararı).
 
 ---
 
