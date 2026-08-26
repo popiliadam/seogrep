@@ -7,9 +7,9 @@ import {
   requiresPaidBalance,
 } from "./paid-balance.ts";
 import {
-  assertFreeVendorCallBudget,
-  createDbFreeVendorCallCounter,
-  type FreeVendorCallCounter,
+  assertFreeVendorSpendBudget,
+  createDbFreeVendorSpendCounter,
+  type FreeVendorSpendCounter,
 } from "./free-vendor-calls.ts";
 import { getServiceClient } from "../db.ts";
 import { optionalWebBaseUrl } from "../env.ts";
@@ -95,8 +95,8 @@ export interface CreditMeta {
 export interface CreditGuardDeps {
   /** Has this account ever paid? Defaults to the real ledger read (paid-balance.ts). */
   readonly hasPaidBalance?: (userId: string) => Promise<boolean>;
-  /** Un-charged vendor calls today. Defaults to the real ledger read (free-vendor-calls.ts). */
-  readonly freeVendorCalls?: FreeVendorCallCounter;
+  /** Un-charged vendor SPEND today. Defaults to the real ledger read (free-vendor-calls.ts). */
+  readonly freeVendorSpend?: FreeVendorSpendCounter;
 }
 
 async function reserve(
@@ -269,7 +269,7 @@ export async function withCredits<T>(
   deps: CreditGuardDeps = {},
 ): Promise<T> {
   const readPaidBalance = deps.hasPaidBalance ?? hasPaidBalance;
-  const freeVendorCallCounter = deps.freeVendorCalls ?? createDbFreeVendorCallCounter();
+  const freeVendorSpendCounter = deps.freeVendorSpend ?? createDbFreeVendorSpendCounter();
 
   // Paid-balance gate — FIRST, ahead of the cost lookup and the reserve alike. It answers a
   // different question from price ("may this account spend real VENDOR money?"), which is why
@@ -285,7 +285,7 @@ export async function withCredits<T>(
     );
   }
 
-  // Free-vendor-call allowance — SECOND, and for the same structural reason as the gate above:
+  // Free-vendor-SPEND allowance — SECOND, and for the same structural reason as the gate above:
   // before the cost lookup, before the reserve, and therefore before `fn` (the vendor call) can
   // run. Refusing HERE is what makes the refusal free — nothing is reserved, so nothing needs
   // refunding, and the vendor is never reached.
@@ -299,8 +299,9 @@ export async function withCredits<T>(
   //
   // It applies to the fifteen vendor tools only (the check is inside the helper) and is scoped to
   // calls this account was NOT charged for, so a customer running paid work all day never meets
-  // it. See credits/free-vendor-calls.ts for what it counts and what it deliberately does not.
-  await assertFreeVendorCallBudget(ctx.userId, meta.tool, freeVendorCallCounter);
+  // it. What it rations is DOLLARS, not calls — a ceiling on calls left the expensive tools
+  // effectively unbounded. See credits/free-vendor-calls.ts.
+  await assertFreeVendorSpendBudget(ctx.userId, meta.tool, freeVendorSpendCounter);
 
   const cost = creditCostFor(meta.tool, meta.units);
   if (cost === 0) {

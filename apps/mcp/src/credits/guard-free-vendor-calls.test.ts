@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withCredits } from "./guard.ts";
 import {
-  FREE_VENDOR_CALL_DAILY_LIMIT,
-  isFreeVendorCallLimit,
-  type FreeVendorCallCounter,
+  FREE_VENDOR_CALL_ESTIMATE_USD,
+  FREE_VENDOR_SPEND_DAILY_USD,
+  MAX_COUNTED_ROWS,
+  isFreeVendorSpendLimit,
+  type FreeVendorSpendCounter,
 } from "./free-vendor-calls.ts";
 
 /**
@@ -45,14 +47,14 @@ afterEach(() => {
   consoleError.mockRestore();
 });
 
-/** A counter port that always answers `used`, recording what it was asked. */
-function counterAt(used: number): FreeVendorCallCounter & { calls: [string, number][] } {
+/** A counter port that always answers `usedUsd`, recording what it was asked. */
+function counterAt(usedUsd: number): FreeVendorSpendCounter & { calls: [string, number][] } {
   const calls: [string, number][] = [];
   return {
     calls,
-    async countToday(userId, ceiling) {
-      calls.push([userId, ceiling]);
-      return used;
+    async spentTodayUsd(userId, maxRows) {
+      calls.push([userId, maxRows]);
+      return usedUsd;
     },
   };
 }
@@ -63,7 +65,7 @@ const PAID = async (): Promise<boolean> => true;
 describe("withCredits enforces the free-vendor-call allowance", () => {
   it("refuses a vendor tool once the allowance is spent — before any reserve, and fn never runs", async () => {
     let ran = 0;
-    const counter = counterAt(FREE_VENDOR_CALL_DAILY_LIMIT);
+    const counter = counterAt(FREE_VENDOR_SPEND_DAILY_USD);
     const thrown = await withCredits(
       { userId: "tenant-a" },
       { tool: "research_keywords" },
@@ -71,14 +73,14 @@ describe("withCredits enforces the free-vendor-call allowance", () => {
         ran += 1;
         return "vendor data";
       },
-      { hasPaidBalance: PAID, freeVendorCalls: counter },
+      { hasPaidBalance: PAID, freeVendorSpend: counter },
     ).catch((error: unknown) => error);
 
-    expect(isFreeVendorCallLimit(thrown)).toBe(true);
+    expect(isFreeVendorSpendLimit(thrown)).toBe(true);
     // The vendor body never ran, so no DataForSEO reservation was booked: the refusal is free to
     // BOTH sides, which is the entire point of placing the gate above the reserve.
     expect(ran).toBe(0);
-    expect(counter.calls).toEqual([["tenant-a", FREE_VENDOR_CALL_DAILY_LIMIT]]);
+    expect(counter.calls).toEqual([["tenant-a", MAX_COUNTED_ROWS]]);
   });
 
   it("does NOT refuse the same tool while the allowance is unspent", async () => {
@@ -89,10 +91,26 @@ describe("withCredits enforces the free-vendor-call allowance", () => {
       { userId: "tenant-a" },
       { tool: "research_keywords" },
       async () => "vendor data",
-      { hasPaidBalance: PAID, freeVendorCalls: counterAt(FREE_VENDOR_CALL_DAILY_LIMIT - 1) },
+      { hasPaidBalance: PAID, freeVendorSpend: counterAt(FREE_VENDOR_SPEND_DAILY_USD - 0.01) },
     ).catch((error: unknown) => error);
 
-    expect(isFreeVendorCallLimit(thrown)).toBe(false);
+    expect(isFreeVendorSpendLimit(thrown)).toBe(false);
+  });
+
+  it("admits the FIRST call to the dearest tool even though it costs more than the budget", async () => {
+    // The `used < budget` rule, seen from the guard: a fresh account must be able to hit one
+    // failure on any tool. A `used + estimate <= budget` rule would refuse this call outright.
+    expect(FREE_VENDOR_CALL_ESTIMATE_USD.ai_visibility_compare).toBeGreaterThan(
+      FREE_VENDOR_SPEND_DAILY_USD,
+    );
+    const thrown = await withCredits(
+      { userId: "tenant-a" },
+      { tool: "ai_visibility_compare", units: 2 },
+      async () => "compared",
+      { hasPaidBalance: PAID, freeVendorSpend: counterAt(0) },
+    ).catch((error: unknown) => error);
+
+    expect(isFreeVendorSpendLimit(thrown)).toBe(false);
   });
 
   it("never rations a 0-credit, non-vendor tool", async () => {
@@ -100,7 +118,7 @@ describe("withCredits enforces the free-vendor-call allowance", () => {
     await expect(
       withCredits({ userId: "tenant-a" }, { tool: "whats_next" }, async () => "advice", {
         hasPaidBalance: PAID,
-        freeVendorCalls: counter,
+        freeVendorSpend: counter,
       }),
     ).resolves.toBe("advice");
     expect(counter.calls).toEqual([]);
@@ -114,15 +132,15 @@ describe("withCredits enforces the free-vendor-call allowance", () => {
       { userId: "tenant-a" },
       { tool: "generate_report" },
       async () => "report",
-      { hasPaidBalance: PAID, freeVendorCalls: counterAt(9999) },
+      { hasPaidBalance: PAID, freeVendorSpend: counterAt(9999) },
     ).catch((error: unknown) => error);
 
-    expect(isFreeVendorCallLimit(thrown)).toBe(false);
+    expect(isFreeVendorSpendLimit(thrown)).toBe(false);
   });
 
   it("refuses fail-closed when the allowance cannot be counted", async () => {
-    const broken: FreeVendorCallCounter = {
-      countToday: async () => {
+    const broken: FreeVendorSpendCounter = {
+      spentTodayUsd: async () => {
         throw new Error("connection reset");
       },
     };
@@ -130,9 +148,9 @@ describe("withCredits enforces the free-vendor-call allowance", () => {
       { userId: "tenant-a" },
       { tool: "serp_snapshot" },
       async () => "snapshot",
-      { hasPaidBalance: PAID, freeVendorCalls: broken },
+      { hasPaidBalance: PAID, freeVendorSpend: broken },
     ).catch((error: unknown) => error);
 
-    expect(isFreeVendorCallLimit(thrown)).toBe(true);
+    expect(isFreeVendorSpendLimit(thrown)).toBe(true);
   });
 });

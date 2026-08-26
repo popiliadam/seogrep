@@ -4,14 +4,14 @@ import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { AuthContext } from "../auth.ts";
 import {
-  FREE_VENDOR_CALL_DAILY_LIMIT,
-  FreeVendorCallLimitError,
-  freeVendorCallLimitMessage,
+  FREE_VENDOR_SPEND_DAILY_USD,
+  FreeVendorSpendLimitError,
+  freeVendorSpendLimitMessage,
 } from "../credits/free-vendor-calls.ts";
 import { defineTool, registerAll, type ChargeMode, type RegisteredTool } from "./registry.ts";
 
 /**
- * The free-vendor-call ceiling is a DESIGNED refusal and must not read as a crash.
+ * The free-vendor-SPEND ceiling is a DESIGNED refusal and must not read as a crash.
  *
  * Same axis as budget-refusal.test.ts one file over, and the same failure it guards against: a
  * typed refusal that falls through to the registry's generic catch reaches the user as "failed
@@ -74,30 +74,30 @@ async function callThrowing(error: unknown, charge: ChargeMode = "handler") {
   }
 }
 
-const REFUSAL = freeVendorCallLimitMessage("research_keywords", FREE_VENDOR_CALL_DAILY_LIMIT);
+const REFUSAL = freeVendorSpendLimitMessage("research_keywords", FREE_VENDOR_SPEND_DAILY_USD);
 
-describe("the registry renders the free-vendor-call refusal", () => {
+describe("the registry renders the free-vendor-spend refusal", () => {
   it("passes the gate's own sentence through verbatim", async () => {
-    const seen = await callThrowing(new FreeVendorCallLimitError("research_keywords", REFUSAL));
+    const seen = await callThrowing(new FreeVendorSpendLimitError("research_keywords", REFUSAL));
     expect(seen.text).toBe(REFUSAL);
     expect(seen.isError).toBe(true);
   });
 
   it("does NOT answer it with the generic crash sentence", async () => {
-    const seen = await callThrowing(new FreeVendorCallLimitError("research_keywords", REFUSAL));
+    const seen = await callThrowing(new FreeVendorSpendLimitError("research_keywords", REFUSAL));
     expect(seen.text).not.toMatch(/failed unexpectedly/i);
     expect(seen.text).not.toMatch(/quote it if you report this/i);
   });
 
   it("tells the user when it clears and that nothing was charged", async () => {
-    const seen = await callThrowing(new FreeVendorCallLimitError("research_keywords", REFUSAL));
+    const seen = await callThrowing(new FreeVendorSpendLimitError("research_keywords", REFUSAL));
     expect(seen.text).toMatch(/00:00 UTC/);
     expect(seen.text).toMatch(/not charged|neither is this refusal/i);
   });
 
   it("gives the operator a log line to correlate with a vendor-budget complaint", async () => {
-    const seen = await callThrowing(new FreeVendorCallLimitError("research_keywords", REFUSAL));
-    expect(seen.logged.join("\n")).toMatch(/free vendor-call allowance/i);
+    const seen = await callThrowing(new FreeVendorSpendLimitError("research_keywords", REFUSAL));
+    expect(seen.logged.join("\n")).toMatch(/free vendor-spend allowance/i);
   });
 
   it("keys on the TYPE, so a plain Error carrying the same words is still a crash", async () => {
@@ -109,7 +109,7 @@ describe("the registry renders the free-vendor-call refusal", () => {
 
   it("recognises the refusal across a duplicated module instance (name fallback)", async () => {
     const impostor = new Error(REFUSAL);
-    impostor.name = "FreeVendorCallLimitError";
+    impostor.name = "FreeVendorSpendLimitError";
     const seen = await callThrowing(impostor);
     expect(seen.text).toBe(REFUSAL);
   });
