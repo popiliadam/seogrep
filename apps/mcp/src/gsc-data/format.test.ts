@@ -7,7 +7,6 @@ import {
   formatCannibalization,
   formatContentDecay,
   formatPullSummary,
-  formatQuickWins,
   renderAnalyzedWindow,
   renderRowCapCaveat,
 } from "./format.ts";
@@ -15,7 +14,6 @@ import { detectCannibalization } from "./cannibalization.ts";
 import type { CannibalGroup } from "./cannibalization.ts";
 import { analyzeContentDecay } from "./content-decay.ts";
 import type { PageDecay } from "./content-decay.ts";
-import { findQuickWins } from "./quick-wins.ts";
 import { SAMPLE_PULL } from "./fixtures.ts";
 import type { GscRow, PullData } from "./types.ts";
 
@@ -137,10 +135,15 @@ describe("renderRowCapCaveat", () => {
   });
 });
 
+/**
+ * QUICK WINS IS ABSENT FROM THE THREE BLOCKS BELOW, and its absence is the point. This file pins
+ * the renderers the discovery tools actually print through; find_quick_wins stopped printing
+ * through `format.ts` when it moved to page grouping, and the flat stand-in that stayed behind
+ * has now been deleted. Its empty message, its key facts and its shortlist-cap remainder are
+ * pinned against `formatGroupedQuickWins` — the renderer `renderQuickWins` really calls — in
+ * tools/find-quick-wins.test.ts ("the flat renderer's pins, moved onto the live one").
+ */
 describe("empty-result messages are actionable", () => {
-  it("quick wins: none", () => {
-    expect(formatQuickWins([])).toMatch(/no quick wins/i);
-  });
   it("cannibalization: none", () => {
     expect(formatCannibalization([])).toMatch(/no cannibalization/i);
   });
@@ -150,13 +153,6 @@ describe("empty-result messages are actionable", () => {
 });
 
 describe("non-empty results carry the key facts", () => {
-  it("quick wins list the query, page, and position", () => {
-    const text = formatQuickWins(findQuickWins(SAMPLE_PULL));
-    expect(text).toContain('"running shoes"');
-    expect(text).toContain("https://shop.test/running");
-    expect(text).toContain("position 11.2");
-  });
-
   it("cannibalization names the query and its competing pages", () => {
     const text = formatCannibalization(detectCannibalization(SAMPLE_PULL));
     expect(text).toContain('"trail shoes"');
@@ -168,33 +164,6 @@ describe("non-empty results carry the key facts", () => {
     const text = formatContentDecay(analyzeContentDecay(SAMPLE_PULL));
     expect(text).toContain("https://shop.test/trail");
     expect(text).toContain("60 → 30");
-  });
-});
-
-/**
- * The shortlist cap, said out loud. find_quick_wins returns at most MAX_QUICK_WINS rows; without
- * this line a site with 400 qualifying queries reads "50 quick wins, best first" and has no way
- * to know it is holding 12% of the answer. Same failure as a silent row cap, one layer up.
- */
-describe("formatQuickWins reports what the shortlist cap left out", () => {
-  const wins = findQuickWins(SAMPLE_PULL); // two rows
-
-  it("names the remaining count when more cleared the bands than were listed", () => {
-    expect(formatQuickWins(wins, 402)).toContain("…and 400 more cleared the bands.");
-  });
-
-  it("thousands-separates the remainder rather than printing a bare digit run", () => {
-    expect(formatQuickWins(wins, 4002)).toContain("…and 4,000 more");
-  });
-
-  it("says nothing when the list IS the whole answer", () => {
-    expect(formatQuickWins(wins, wins.length)).not.toMatch(/cleared the bands/i);
-    expect(formatQuickWins(wins)).not.toMatch(/cleared the bands/i);
-  });
-
-  /** A total SMALLER than the list is a caller bug, not a negative remainder to print. */
-  it("prints no remainder when the total is below the list length", () => {
-    expect(formatQuickWins(wins, 1)).not.toMatch(/cleared the bands/i);
   });
 });
 

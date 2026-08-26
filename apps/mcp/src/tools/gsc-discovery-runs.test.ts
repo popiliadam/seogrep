@@ -8,13 +8,13 @@ import {
   findQuickWinsResult,
   formatCannibalization,
   formatContentDecay,
-  formatQuickWins,
   quickWinsReport,
   type DiscoveryReport,
   type DiscoveryRunTarget,
   type PullData,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
+import { formatGroupedQuickWins, renderQuickWins } from "./find-quick-wins.ts";
 import { makeDiscoveryTool, type RenderDiscovery } from "./gsc-discovery-shared.ts";
 
 /**
@@ -74,11 +74,19 @@ async function textOf(render: RenderDiscovery, written: Written[] = []): Promise
 }
 
 /**
- * The three tools' renderings, written the way their modules write them — ONE engine call feeding
- * both halves — beside the STRING render each of them used before the run ledger existed.
+ * The three tools' renderings — ONE engine call feeding both halves — beside the STRING render
+ * each of them used before the run ledger existed.
+ *
+ * The `after` half of case one is IMPORTED (`renderQuickWins`), not retyped: find-quick-wins.ts
+ * exports its render, so this file drives the identical function object the paid tool is built
+ * from and a change there cannot slip past a local copy. The other two modules pass their render
+ * inline, so those cases still mirror the expression by hand.
  *
  * The `before` half is what makes case 1 above a real comparison rather than a tautology: it is
- * the old expression, recomputed independently, not `rendering.text` read back.
+ * the old expression, recomputed independently, not `rendering.text` read back. For quick wins
+ * that expression now names `formatGroupedQuickWins` — the flat renderer it used to name was a
+ * stand-in the tool had already stopped calling, and has since been deleted, so comparing
+ * against it proved the builder preserved bytes NOBODY READS.
  */
 const CASES: {
   name: string;
@@ -90,12 +98,9 @@ const CASES: {
     name: "find_quick_wins",
     before: (pull) => {
       const { wins, total } = findQuickWinsResult(pull);
-      return formatQuickWins(wins, total);
+      return formatGroupedQuickWins(wins, total);
     },
-    after: (pull) => {
-      const result = findQuickWinsResult(pull);
-      return { report: quickWinsReport(pull, result), text: formatQuickWins(result.wins, result.total) };
-    },
+    after: renderQuickWins,
     total: 2,
   },
   {

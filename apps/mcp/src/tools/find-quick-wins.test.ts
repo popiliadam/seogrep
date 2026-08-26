@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
+import { findQuickWins } from "../gsc-data/index.ts";
 import type { GscRow, LoadTokenStatusFn, PullData } from "../gsc-data/index.ts";
 import { gscRow, pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
-import { renderQuickWins } from "./find-quick-wins.ts";
+import { formatGroupedQuickWins, renderQuickWins } from "./find-quick-wins.ts";
 import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
 
 /**
@@ -17,8 +18,9 @@ import { makeDiscoveryTool } from "./gsc-discovery-shared.ts";
  * real in gsc-discovery.db.test.ts.
  *
  * IT DRIVES THE TOOL'S OWN `renderQuickWins`, and that is a correction rather than a detail: this
- * file used to REBUILD the render from its parts (`formatQuickWins(findQuickWins(pull))`) while
- * claiming in this very comment to be exercising the real one. A spec that reassembles the
+ * file used to REBUILD the render from its parts — the engine's rows handed to a FLAT renderer
+ * that lived in gsc-data/format.ts, since deleted — while claiming in this very comment to be
+ * exercising the real one. A spec that reassembles the
  * expression under test pins its own arithmetic — the tool could have changed renderers under it
  * without a single red line, which is exactly what happened when the grouping defect was fixed.
  */
@@ -324,12 +326,64 @@ describe("the quick-win list is grouped by page", () => {
 });
 
 /**
- * THE RECOMMENDATION LAYER, through the TOOL — never through `formatQuickWins`.
+ * THE FLAT RENDERER'S PINS, MOVED ONTO THE LIVE ONE.
  *
- * That distinction is the whole reason this block lives here. `formatQuickWins` (gsc-data/
- * format.ts) is a stand-in nothing in production calls, so advice asserted against it would be a
- * green suite proving a customer-facing line that never ships. These drive `renderQuickWins`, the
- * real render `makeFindQuickWinsTool` passes, so what is asserted here is what a caller reads.
+ * These six assertions used to sit in gsc-data/format.test.ts on `formatQuickWins`, the flat
+ * renderer find_quick_wins stopped calling when it moved to page grouping. That function has now
+ * been deleted; the guarantees it carried have not, so they are re-asserted here against
+ * `formatGroupedQuickWins` — the renderer `renderQuickWins` actually passes to the tool.
+ *
+ * READ DIRECTLY rather than through the tool, unlike everything else in this file, and
+ * deliberately so: `total` is the PRE-CAP count the ENGINE computes, so reaching a remainder of
+ * 4,000 through the tool would mean fabricating 4,002 qualifying rows to assert one thousands
+ * separator. What makes that acceptable here and not before is the thing that changed — this
+ * renderer is production code, so pinning it directly pins what ships. The tool-level half of
+ * the same rule ("counts what BOTH caps left out") is above, and it is the half that proves the
+ * tool reaches this renderer at all.
+ */
+describe("the flat renderer's pins, moved onto the live one", () => {
+  const wins = findQuickWins(SAMPLE_PULL); // two rows
+
+  it("says so, actionably, when there is nothing to report", () => {
+    expect(formatGroupedQuickWins([])).toMatch(/no quick wins/i);
+  });
+
+  it("carries the query, its page and its position", () => {
+    const text = formatGroupedQuickWins(wins);
+    expect(text).toContain('"running shoes"');
+    expect(text).toContain("https://shop.test/running");
+    expect(text).toContain("position 11.2");
+  });
+
+  it("names the remaining count when more cleared the bands than were listed", () => {
+    expect(formatGroupedQuickWins(wins, 402)).toContain("…and 400 more cleared the bands.");
+  });
+
+  it("thousands-separates the remainder rather than printing a bare digit run", () => {
+    expect(formatGroupedQuickWins(wins, 4002)).toContain("…and 4,000 more");
+  });
+
+  it("says nothing when the list IS the whole answer", () => {
+    expect(formatGroupedQuickWins(wins, wins.length)).not.toMatch(/cleared the bands/i);
+    expect(formatGroupedQuickWins(wins)).not.toMatch(/cleared the bands/i);
+  });
+
+  /** A total SMALLER than the list is a caller bug, not a negative remainder to print. */
+  it("prints no remainder when the total is below the list length", () => {
+    expect(formatGroupedQuickWins(wins, 1)).not.toMatch(/cleared the bands/i);
+  });
+});
+
+/**
+ * THE RECOMMENDATION LAYER, through the TOOL.
+ *
+ * This block lives here rather than beside the other formatters because for a while there were
+ * TWO quick-win renderers: the page-grouping one the tool prints through, and a flat stand-in in
+ * gsc-data/format.ts that nothing in production called. Advice asserted against the stand-in
+ * would have been a green suite proving a customer-facing line that never shipped, so it was
+ * written against the tool from the start; the stand-in has since been deleted outright. These
+ * drive `renderQuickWins`, the real render `makeFindQuickWinsTool` passes, so what is asserted
+ * here is what a caller reads.
  *
  * The gap being closed (measured 2026-08-25): the list told the reader which queries were nearly
  * won and never once said what to do about any of them.
