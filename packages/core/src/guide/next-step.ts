@@ -53,6 +53,21 @@ export interface ProjectSignals {
    */
   readonly gscTokenInvalid?: boolean;
   /**
+   * The connection exists but NO Search Console property is mapped to it — `true` only when a
+   * `gsc_connections` row was read and its `gsc_property` was null.
+   *
+   * A SEPARATE signal from `gscConnected` for the reason `gscTokenInvalid` is separate: the link
+   * is real, and the thing that cannot happen is the pull. Folding it into `gscConnected` would
+   * send a project that HAS a working Google account back to `connect_gsc`, which is not the
+   * step — the account is fine, the mapping is missing.
+   *
+   * OPTIONAL and read with `=== true`. `undefined` is "this surface does not measure it", never
+   * "a property is mapped": a caller that omits it decides byte-identically to the ladder that
+   * existed before this signal did, which is what lets the MCP router adopt it ahead of the web
+   * panel without the two disagreeing.
+   */
+  readonly gscPropertyMissing?: boolean;
+  /**
    * The project's domain is KNOWN not to resolve — `true` only when a DNS lookup came back with
    * "no such name", never when the lookup itself failed to run.
    *
@@ -223,6 +238,33 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       // cannot take, so listing them would put the guaranteed failure back one line lower. The
       // audits are what the user CAN still do, and they need no Google account.
       upcoming: [...AUDIT_TRIO, "generate_report"],
+      allSet: false,
+    };
+  }
+  // Rung 4b — the account is live, but NO property is mapped to this project. Measured on
+  // 2026-08-26: a gsc_connections row can carry a null `gsc_property`, and every rung below this
+  // one recommends pull_gsc_data, which cannot succeed without one. That is the rung-3 wrong a
+  // field over — a guaranteed failure handed out as the next step — so it is cut off here.
+  //
+  // NOT connect_gsc: the Google account behind this project WORKS. Sending the user through
+  // another OAuth round would be asking them to fix something that is not broken. The step is to
+  // see which properties the account can read and map one, and both tools are free.
+  //
+  // BELOW the dead-credential rung on purpose: with a dead credential you cannot list the
+  // properties to choose from, so reconnecting has to come first. Position, not preference.
+  //
+  // `=== true`, never a truthy test: `undefined` is "not measured" (see gscPropertyMissing).
+  if (s.gscConnected && s.gscPropertyMissing === true) {
+    return {
+      primary: "list_gsc_properties",
+      reason:
+        "Your Google account is connected to this project, but no Search Console property is " +
+        "mapped to it yet — so Search Console pulls cannot run. List the properties the account " +
+        "can read, then map one with track_gsc_property. Both are free. Your crawl is ready to " +
+        "analyze either way.",
+      // No pull_gsc_data and none of the three discovery tools: every one of them reads a pull
+      // this project cannot take yet. The audits need no Google account at all.
+      upcoming: ["track_gsc_property", ...AUDIT_TRIO, "generate_report"],
       allSet: false,
     };
   }

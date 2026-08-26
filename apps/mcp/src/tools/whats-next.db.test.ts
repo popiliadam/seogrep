@@ -143,6 +143,40 @@ async function seedConnectionWithHealth(
   if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
 }
 
+/**
+ * A connection whose account is HEALTHY but which is mapped to NO property — `gsc_property` null
+ * on a row whose `account_id` is set. Measured live on 2026-08-26 (example.net). The old reader
+ * selected only `account_id`, so this project reported as plainly "connected" and the router sent
+ * it to pull_gsc_data, a pull that cannot succeed without a property.
+ *
+ * Seeded here rather than in the fast lane because the FAULT was in the column list of a real
+ * query: a spec that hands the ladder a hand-built signal cannot see a `select` that never asked
+ * for the column.
+ */
+async function seedConnectionWithoutProperty(userId: string, projectId: string): Promise<void> {
+  const account = await service
+    .from("gsc_accounts")
+    .insert({
+      user_id: userId,
+      google_account_sub: `sub-${randomUUID()}`,
+      google_account_email: `whats-next-${randomUUID()}@example.test`,
+      encrypted_refresh_token: "\\xdeadbeef",
+      token_status: "active",
+    })
+    .select("id")
+    .single();
+  if (account.error || !account.data) {
+    throw new Error(`gsc_accounts seed failed: ${account.error?.message ?? "no row"}`);
+  }
+  const { error } = await service.from("gsc_connections").insert({
+    user_id: userId,
+    project_id: projectId,
+    account_id: account.data.id,
+    gsc_property: null,
+  });
+  if (error) throw new Error(`gsc_connections seed failed: ${error.message}`);
+}
+
 async function ledgerCount(userId: string): Promise<number> {
   const { count, error } = await service
     .from("credit_ledger")
@@ -303,6 +337,23 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
    * Seeded with a FRESH crawl and a FRESH pull on purpose — the state that used to answer
    * "you're all set" for a project that can never refresh again.
    */
+  it("(i-b) a live account with NO property mapped -> pick a property, never pull_gsc_data", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "unmapped.example.com");
+    await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnectionWithoutProperty(user.userId, projectId);
+
+    const text = await runFor(user, projectId);
+    expect(text).toContain("list_gsc_properties");
+    expect(text).toContain("track_gsc_property");
+    expect(text).toMatch(/propert/i);
+    // The pull is the guaranteed failure this rung exists to withhold…
+    expect(text).not.toContain("pull_gsc_data");
+    // …and the account WORKS, so another OAuth round is not the answer either.
+    expect(text).not.toMatch(/expired/i);
+    expect(text).not.toMatch(/all set/i);
+  });
+
   it("(i) a connected project whose Google account is dead -> reconnect, never pull_gsc_data", async () => {
     const user = await makeUser();
     const projectId = await makeProject(user.userId, "dead-token.example.com");
