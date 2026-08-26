@@ -710,3 +710,38 @@ kesme cümlesini hep gizle → KIRMIZI · kesme cümlesini hep göster → KIRMI
 | **G15** | `list_jobs` `project_id`'yi ham uuid basıyor, alan adı yok | G11 ailesi, ayrı dilim |
 
 Bunlar kod değişikliğiyle kapanmaz; **kapanmamış** olarak duruyorlar ve "yapıldı" yazılmadı.
+
+
+---
+
+## §2 — A3 kovalanırken bulunan iki madde (2026-08-26)
+
+Operatörün "anahtar yenilendi" demesine rağmen `MCP_SMOKE_URL` kırmızı kalınca panel okundu.
+
+**Ölçümler:**
+- `~/.zshrc` **19 Ağustos'tan beri değişmemiş** (dosya tarihi), içindeki anahtar `sg_DuY…`;
+  paneldeki aktif anahtar `sg_EXRG…` → zshrc'deki anahtar **eski bir rotasyondan kalma, ölü**.
+- `key-panel.tsx:90-99` — **`Generate key` yalnız hiç aktif anahtar YOKKEN** görünüyor.
+- `actions.ts:93` — *"persist only its hash + prefix"* → paneldeki URL bir **MASKE**; tam anahtar
+  geri getirilemez.
+- `actions.ts:48` **`MAX_ACTIVE_KEYS = 5`** · `page.tsx:498` `keys.find(k => k.revokedAt === null)`
+  → panel yalnız **ilk** aktif anahtarı modelliyor.
+
+**BULGU: G16 — arka uç 5 anahtara izin veriyor, ürün 1'e zorluyor.** Otomasyon (smoke kapısı) için
+ayrı anahtar üretilemiyor; her rotasyon çalışan istemciyi kırıyor. İki yarısı var:
+
+| # | ne | durum |
+|---|---|---|
+| **G16a** | Rotate butonu, basmadan ÖNCE neyin kırılacağını söylemiyordu | ✅ **düzeltildi** (`commit 21`), iki yönde mutasyonlandı |
+| **G16b** | Panelin birden çok aktif anahtarı listeleyip ayrı ayrı yönetmesi | ⛔ **ürün kararı — sessizce inşa edilmedi, operatöre soruldu** |
+
+**Ayrıca:** asistan ilk talimatında "Generate key kullan" dedi; **premis ölçülmeden yazılmıştı** ve
+operatör "öyle bir buton yok" diye çürüttü. Doğru yol tek rotasyon + iki yere yapıştırma.
+Ders: **bir arayüz adımı, arayüz kodu okunmadan tarif edilmez.**
+
+## §1.6 — G15 ✅ KAPANDI
+
+`list_jobs` artık `project: <alan adı>` basıyor. Üç cevap **tek modülde**
+(`tools/project-domains.ts`) ve `list_credit_activity` de onu kullanıyor — iki tool bir projeyi
+farklı anlatamaz. Bir spec'in sözleşmesi taşındı ve **iki yarısı da daha fazlasını** iddia ediyor.
+Mutasyon: bilinmeyen id'de boş dizge → KIRMIZI · null'da ilk projeyi uydur → KIRMIZI.
