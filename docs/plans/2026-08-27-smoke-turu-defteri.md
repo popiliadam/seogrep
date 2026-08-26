@@ -1319,3 +1319,57 @@ Deploy edilmiş `list_credit_activity` açıklaması `"… which tool charged wh
 diyor (`list-credit-activity.ts:243-245`); asistanın istemcisinde görünen şema hâlâ eski metni
 taşıyor. **Çağrılar canlı sunucuya gidiyor** (sonuçlar yeni kodun çıktısı), yalnız şema/açıklama
 önbelleği bayat. Yeni açıklamaları görmek için bağlantı yenilenmeli.
+
+---
+
+## §D3 — MÜŞTERİ SORUSU: "hangi projelere / hangi tool'lara ne kadar harcadım?" (18:3xZ)
+
+Operatör dört soruyu müşteri gibi sordu. İlk ikisini **ürün cevapladı**, son ikisini **cevaplayamadı**.
+
+| soru | ürün cevapladı mı |
+|---|---|
+| aktif projelerim | ✅ `list_projects` — 18 aktif + 1 arşiv |
+| kaç kredim kaldı | ✅ `get_credit_balance` — 4519 |
+| **hangi projeye ne kadar** | ❌ **hiçbir yüzey cevaplayamıyor** |
+| **hangi tool'a ne kadar** | ❌ tek tek satır veriyor, **toplam yok** |
+
+### Bakiyenin doğrulaması (tool doğru çıktı)
+
+`200 grant + 1400 purchase + 10000 adjust − 7081 harcama = **4519**` — `get_credit_balance`'ın
+verdiği sayı defter toplamıyla **birebir**.
+
+> **Şefin kendi hatası, kayda geçer:** ilk toplama sorgusunu **tenant filtresiz** yazdım, 4699
+> çıktı ve bir an "tool ile defter çelişiyor" gibi göründü. Fark başka bir kiracının 180 kredisiydi.
+> NEVER#4'ün okuma tarafındaki karşılığı: **tenant filtresiz sorgu yanlış cevap üretir**, ve o
+> cevabı "üründe tutarsızlık" diye raporlamak bir adım kalmıştı.
+
+### 🔴 BULGU D-8 — KAPSAM · sahip: kod · orta-yüksek
+
+`list_credit_activity` **512 kaydın 50'sini** gösteriyor ve altına şunu yazıyor:
+*"462 older entries not shown — raise `limit` (max 50) to see more."*
+**`limit` zaten 50 — tavanda.** Yani tavsiye çıkmaz sokak: kalan 462 kayda ulaşmanın **hiçbir
+yolu yok**, ve hiçbir yüzey **toplam** vermiyor (ne tool bazında, ne proje bazında).
+Müşterinin "kredilerim nereye gitti" sorusu, 778 satırlık bir defterin üzerinde cevapsız kalıyor.
+
+**Öneri:** ya sayfalama (`before` imleci), ya da bir **özet** kalemi — tool bazında net toplam,
+`get_credit_balance`'ın altında veya ayrı bir uçta. Kararı operatörün.
+
+### D-7'nin canlı ölçeği
+
+**778 satırın 0'ı** proje taşıyor (%100 boş — kolon bugün eklendi). `job_id` üzerinden **gerçek**
+bir işe bağlanabilen harcama yalnız **540 kredi / 7081** = **%7,6**. Kalan **6541 kredi (%92,4)**
+hiçbir projeye bağlanamıyor. Migration 0033'ün ölçtüğü "%3,4 cevaplanabilir" oranı, iş kaydı
+join'iyle %7,6'ya çıkıyor — ama **hiçbiri ledger'ın kendi kolonundan gelmiyor**.
+
+Bu, 0033'ün ileriye dönük değerini de gösteriyor: **bugünden sonraki** her harcama satırı projesini
+taşıyacak. Geçmiş kalıcı olarak bağlanamaz (append-only, `UPDATE` yok).
+
+### Ölçülen tablolar (kanıt)
+
+Tool bazında net harcama (ilk 8): `ranked_keywords` 1430 · `compare_competitors` 1170 ·
+`analyze_backlinks` 980 · `audit_onpage` 720 · `crawl_site` 540 · `research_keywords` 375 ·
+`audit_tech` 285 · `detect_cannibalization` 220. Toplam **7081**.
+
+Projeye bağlanabilen (job_id join'i): `adstark.com.tr` 160 · `www.bigcattr.com` 80 ·
+`seogrep.com` 80 · `dentnotion.com` 60 · `katrenur.com` 40 · `bayder.com.tr` 40 ·
+`rkturizm.com` 40 · `www.noraninsaat.com` 20 · `noraninsaat.com` 20 → **540**.
