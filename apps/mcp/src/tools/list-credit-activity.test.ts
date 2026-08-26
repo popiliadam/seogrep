@@ -41,7 +41,9 @@ function recordingPort(rows: readonly CreditActivityRow[]) {
   const calls: { userId: string; limit: number }[] = [];
   const listActivity: ListCreditActivityFn = async (userId, limit) => {
     calls.push({ userId, limit });
-    return rows;
+    // `total` equals what the port hands back, so these specs describe an UNCUT page and none of
+    // their wordings change; the cut sentence has its own specs below.
+    return { rows, total: rows.length };
   };
   // The domain port is stubbed EMPTY rather than left to its default: the default reaches
   // getServiceClient, which needs the full prod env, and these specs are about the limit the read
@@ -162,10 +164,10 @@ describe("list_credit_activity rendering", () => {
    * refund would sum to something other than the balance beside it.
    */
   it("renders a charge and its refund as two entries, and says the entries are the movements", () => {
-    const text = formatCreditActivity([
+    const text = formatCreditActivity({ rows: [
       entry({ id: 2, delta: 20, kind: "spend_release", created_at: "2026-08-25T10:03:00.000Z" }),
       entry({ id: 1, delta: -20, kind: "spend_reserve" }),
-    ]);
+    ], total: 1 });
     const rows = text.split("\n").filter((line) => line.startsWith("- "));
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatch(/refund/);
@@ -174,7 +176,7 @@ describe("list_credit_activity rendering", () => {
   });
 
   it("points at the tool that owns the running total instead of restating it", () => {
-    const text = formatCreditActivity([entry()]);
+    const text = formatCreditActivity({ rows: [entry()], total: 1 });
     expect(text).toMatch(/get_credit_balance/);
     expect(text).toMatch(/newest first/i);
   });
@@ -242,5 +244,34 @@ describe("the project a charge was for", () => {
       const line = formatActivityLine(entry({ kind, delta: 200, project_id: null }), domains);
       expect(line).not.toMatch(/project/i);
     }
+  });
+});
+
+
+/**
+ * KAPSAM — measured live 2026-08-26: 512 balance-moving rows behind an answer that said "your 50
+ * most recent credit entries" and nothing else. True, and read as the whole ledger by a customer
+ * with no way to tell it was cut.
+ */
+describe("what the answer leaves out", () => {
+  const rows = [entry({ id: 1 }), entry({ id: 2 })];
+
+  it("says how many entries exist and how many are not shown", () => {
+    const text = formatCreditActivity({ rows, total: 512 });
+    expect(text).toMatch(/2 most recent credit entries of 512/i);
+    expect(text).toMatch(/510 older entries not shown/i);
+  });
+
+  it("names the argument that shows more, so the sentence is actionable", () => {
+    expect(formatCreditActivity({ rows, total: 512 })).toMatch(/limit/);
+  });
+
+  it("says nothing about a cut when the page IS the whole ledger", () => {
+    const text = formatCreditActivity({ rows, total: rows.length });
+    expect(text).not.toMatch(/not shown/i);
+  });
+
+  it("counts one leftover entry in the singular", () => {
+    expect(formatCreditActivity({ rows, total: 3 })).toMatch(/1 older entry not shown/i);
   });
 });

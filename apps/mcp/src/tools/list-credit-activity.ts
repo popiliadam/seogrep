@@ -62,10 +62,21 @@ export interface CreditActivityRow {
 }
 
 /** Read this tenant's most recent balance-moving ledger rows, newest first. */
+/**
+ * One page of entries AND how many balance-moving rows the tenant has in total.
+ *
+ * Measured live on 2026-08-26: the tenant had 512 and a 50-entry call answered "Your 50 most
+ * recent credit entries" with no hint that 462 more existed. True, and read as the whole ledger.
+ */
+export interface CreditActivityPage {
+  readonly rows: readonly CreditActivityRow[];
+  readonly total: number;
+}
+
 export type ListCreditActivityFn = (
   userId: string,
   limit: number,
-) => Promise<readonly CreditActivityRow[]>;
+) => Promise<CreditActivityPage>;
 
 /** How many entries a call returns when it does not say. */
 export const DEFAULT_ACTIVITY_LIMIT = 10;
@@ -103,10 +114,10 @@ export interface ListCreditActivityDeps {
 export async function listOwnCreditActivity(
   userId: string,
   limit: number,
-): Promise<readonly CreditActivityRow[]> {
-  const { data, error } = await getServiceClient()
+): Promise<CreditActivityPage> {
+  const { data, error, count } = await getServiceClient()
     .from("credit_ledger")
-    .select("id, delta, kind, reason, tool, project_id, created_at")
+    .select("id, delta, kind, reason, tool, project_id, created_at", { count: "exact" })
     // The tenant guard on an RLS-bypassing client (NEVER #4). Not decorative: proven load-bearing
     // in list-credit-activity.db.test.ts by calling this function with the wrong tenant's id.
     .eq("user_id", userId)
@@ -117,7 +128,7 @@ export async function listOwnCreditActivity(
   if (error) {
     throw new Error(`credit activity list failed: ${error.message}`);
   }
-  return (data ?? []) as readonly CreditActivityRow[];
+  return { rows: (data ?? []) as readonly CreditActivityRow[], total: count ?? 0 };
 }
 
 /**
@@ -223,15 +234,22 @@ export const NO_ACTIVITY_MESSAGE =
  * proves the read underneath it.
  */
 export function formatCreditActivity(
-  rows: readonly CreditActivityRow[],
+  page: CreditActivityPage,
   domains: ReadonlyMap<string, string> = new Map(),
 ): string {
+  const { rows, total } = page;
   if (rows.length === 0) return NO_ACTIVITY_MESSAGE;
   const lines = rows.map((row) => formatActivityLine(row, domains)).join("\n");
+  // WHAT WAS LEFT OUT. Measured: 512 balance-moving rows behind a 50-entry answer that said only
+  // "your 50 most recent" — true, and read as the whole ledger by anyone with no way to tell.
+  const cut =
+    total > rows.length
+      ? ` ${total - rows.length} older entr${total - rows.length === 1 ? "y" : "ies"} not shown — raise \`limit\` (max ${MAX_ACTIVITY_LIMIT}) to see more.`
+      : "";
   return (
-    `Your ${rows.length} most recent credit entries, newest first:\n${lines}\n` +
+    `Your ${rows.length} most recent credit entries of ${total}, newest first:\n${lines}\n` +
     "These are the entries that moved your balance, so a refunded run shows both its charge and " +
-    "its refund. Run get_credit_balance for your current total."
+    `its refund. Run get_credit_balance for your current total.${cut}`
   );
 }
 
@@ -257,11 +275,11 @@ export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): R
     handler: async (ctx, { limit }) => {
       // In parallel: the two reads are independent, and the domain map is small (one row per
       // project) however long the requested page is.
-      const [rows, domains] = await Promise.all([
+      const [page, domains] = await Promise.all([
         listActivity(ctx.userId, limit),
         listDomains(ctx.userId),
       ]);
-      return textResult(formatCreditActivity(rows, domains));
+      return textResult(formatCreditActivity(page, domains));
     },
   });
 }
