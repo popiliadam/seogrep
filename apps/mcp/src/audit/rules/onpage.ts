@@ -95,14 +95,27 @@ export interface OnpageReport {
  *
  * 1. STRAY_EDGE — syntax in Markdown, HTML or a template engine, and never how a human opens or
  *    closes a title. `<` and `>` belong here because a correct CMS escapes them inside `<title>`;
- *    a bare one at an edge means raw markup leaked.
- * 2. STRAY_TRAILING_ONLY — the dashes. A title may OPEN with a dash for effect; one that ENDS
- *    with a dash is a separator whose second half never arrived (`Dentist in Izmir -`).
+ *    a bare one at an edge means raw markup leaked. This does flag a CTA string like
+ *    `Learn More >`, and that is KEPT ON PURPOSE: a call to action sitting in a `<title>` is
+ *    itself body copy that leaked into the tag, which is worth seeing. Trailing `,` and `;` are
+ *    kept for the same reason — `Izmir Dentist, Whitening, Implants,` was severed mid-list, not
+ *    written that way.
+ * 2. STRAY_TRAILING_ONLY — the dashes. A title may OPEN with a dash for effect (`-50% Off …`);
+ *    one that ENDS with a dash is a separator whose second half never arrived
+ *    (`Dentist in Izmir -`). That asymmetry is PINNED on both sides rather than merely asserted
+ *    here: moving these code points into STRAY_EDGE turns the leading-dash spec red.
  * 3. LEADING_MARKER — a list or heading marker, which only counts as one when a space follows.
  *    `#DisBeyazlatma` is a hashtag and stays clean; `# Dis Beyazlatma` is a Markdown heading.
  *    Same for `- ` and `• ` against a leading hyphen inside a word.
+ *
+ * `+` WAS IN SET 1 AND WAS REMOVED. It produced false positives on ordinary editorial titles:
+ * `Affordable Dental Care for Ages 50+`, `Learn C++ Programming Basics`, and — the one that
+ * decides it for this product — `+90 232 000 00 00 Diş Kliniği İzmir`, because a phone-led title
+ * is a common local-SEO shape in Turkey. What the removal costs is the `+ ` Markdown bullet, the
+ * rarest of the three bullet forms, while `-` and `*` still cover the other two. That is a trade
+ * of a rare true positive for three common false ones. All three titles are pinned clean.
  */
-const STRAY_EDGE = new Set([...'`*_~|\\{}<>^,;&+/=']);
+const STRAY_EDGE = new Set([...'`*_~|\\{}<>^,;&/=']);
 const STRAY_TRAILING_ONLY = new Set([..."-–—"]);
 const LEADING_MARKER = /^(?:#{2,}|#[ \t]|[-•][ \t])/u;
 
@@ -118,7 +131,29 @@ function strayEdges(value: string): { lead: string | null; tail: string | null }
   return { lead, tail };
 }
 
-/** `field` is the customer-facing noun ("title" / "meta description"); `type` the finding key. */
+/**
+ * `field` is the customer-facing noun ("title" / "meta description"); `type` the finding key.
+ *
+ * OPEN FOLLOW-UP — `title_stray_chars` and `meta_stray_chars` are NOT YET IN `ONPAGE_LABELS`
+ * (audit/format.ts), and until they are the report contradicts itself: a page whose only defect
+ * is a stray edge character renders
+ *
+ *     Summary: no on-page issues found.
+ *     1 page(s) with findings; 0 clean.
+ *     …
+ *         · title starts with "`" — stray markup or template character, not part of the text
+ *
+ * because `formatOnpageReport` builds its summary by walking ONPAGE_ORDER, which is that map's
+ * key order, and drops any type the map does not name. `report.counts` is correct and the panel's
+ * finding total already includes these, so this is a rendering gap and not a data defect — but it
+ * is a self-contradicting page and must not be left to be rediscovered.
+ *
+ * THE FIX IS TWO KEYS, APPENDED: `title_stray_chars: "title has stray markup"` and
+ * `meta_stray_chars: "meta description has stray markup"` at the END of ONPAGE_LABELS. Appended,
+ * never interleaved — that map's key order IS the summary line's order, so inserting higher up
+ * would reorder a line that has already shipped. It was not done in this slice because format.ts
+ * was owned by a parallel slice; report/model.ts inherits the fix for free from the same map.
+ */
 function strayFinding(field: string, type: string, value: string): OnpageFinding | null {
   const { lead, tail } = strayEdges(value);
   if (lead === null && tail === null) return null;

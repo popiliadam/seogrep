@@ -209,6 +209,15 @@ describe("auditOnpage — stray markup at a title/description edge", () => {
     ["Arabic text", "العناية بالأسنان في دبي اليوم"],
     ["CJK text", "牙齿美白指南与价格以及注意事项"],
     ["a trailing percent", "Whitening Results Improved 40%"],
+    // THE `+` ROWS. `+` used to sit in STRAY_EDGE and flagged all three of these ordinary
+    // titles; the phone-led one is a common local-SEO shape in Turkey, which is what decided it.
+    ["a trailing plus in an age range", "Affordable Dental Care for Ages 50+"],
+    ["a language name that ends in plus signs", "A Beginner's Guide to Learn C++"],
+    ["a phone-led Turkish title", "+90 232 000 00 00 Diş Kliniği İzmir"],
+    // THE LEADING-DASH ROW, and it is the whole evidence for the dash ASYMMETRY: a trailing dash
+    // is a severed separator and IS flagged, while a leading one opens a discount and is not.
+    // Without this row that asymmetry is prose — moving the dashes into STRAY_EDGE stays green.
+    ["a title opening with a dash before a discount", "-50% Off Teeth Whitening This Week"],
     ["an apostrophe", "Izmir's Most Trusted Dental Clinic"],
   ];
   it.each(clean)("leaves %s alone", (_why, title) => {
