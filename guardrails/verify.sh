@@ -21,9 +21,16 @@ pnpm install --frozen-lockfile
 # Store'u okur, bu yüzden install'dan SONRA (CI'daki licenses job'ının yerel karşılığı).
 bash guardrails/check-licenses.sh
 pnpm turbo run typecheck lint test build
-# Üretilmiş tool sayfaları ↔ registry drift'i. `apps/mcp/dist`'i OKUDUĞU için build'den SONRA.
+# Üretilmiş tool sayfaları ↔ registry drift'i. `apps/mcp/dist`'i OKUR, bu yüzden build'den SONRA.
 # Bu satır olmadan kontrol yalnız `make goals` içinde yaşıyordu ve `make goals` HİÇBİR CI job'ında
 # koşmuyor — yani bayat bir tools-reference sayfası hiçbir zorunlu kapıyı kırmızıya döndürmüyordu
 # (imzalı ders 15: kapı, dokunulan yüzeyin kendi kontrolünü içerir).
+#
+# SIRA ARTIK GÜVENLİĞİN TEK DAYANAĞI DEĞİL. 2026-08-26'da ÖLÇÜLDÜ: bayat bir `dist` ile tek başına
+# koşulduğunda bu kontrol "38 tool pages in sync" deyip 0 dönüyordu — dünkü registry'yi bugünkü
+# MDX'le karşılaştıran, hiçbir şey ölçmeyen bir yeşil. Kontrol artık KENDİ girdisinin tazeliğini
+# doğruluyor (apps/web/scripts/dist-freshness.mjs) ve bayat/eksik `dist`'te İngilizce gerekçeyle
+# kırmızı verir. Yukarıdaki `build` satırı hâlâ doğru sıradır — kontrolü yeşil YAPAN odur; artık
+# güvenli YAPAN o değil.
 node apps/web/scripts/gen-tool-docs.mjs --check
 echo "VERIFY: PASS"
