@@ -1032,9 +1032,20 @@ export async function markGscAccountTokenInvalid(
 export function forUser(client: ServiceClient, userId: string) {
   return {
     userId,
-    /** A SELECT over `table`, pre-filtered to this tenant's rows. */
-    selectOwn(table: TenantTable, columns = "*") {
-      return client.from(table).select(columns).eq("user_id", userId);
+    /**
+     * A SELECT over `table`, pre-filtered to this tenant's rows.
+     *
+     * `options` is passed straight to supabase-js, which is how a caller asks for
+     * `{ count: "exact" }`. A paged list needs it to say how many rows it did NOT show, and
+     * counting through a second query would be a second place for the tenant filter to be
+     * forgotten — the one thing this wrapper exists to make impossible.
+     */
+    selectOwn(
+      table: TenantTable,
+      columns = "*",
+      options?: { count?: "exact" | "planned" | "estimated"; head?: boolean },
+    ) {
+      return client.from(table).select(columns, options).eq("user_id", userId);
     },
     /**
      * Tenant-scoped single-row read by id, returning the caller-declared projection
