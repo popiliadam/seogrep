@@ -8,6 +8,7 @@ import {
   makeKeywordGapTool,
 } from "./keyword-gap.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import gapFixture from "../dfs/fixtures/domain-intersection.json";
 
 /**
@@ -303,5 +304,82 @@ describe("keyword_gap free pre-reserve gates (no credit machinery)", () => {
     await expect(
       serving().run(CTX, { project_id: PROJECT_ID, competitor: "rival.com" }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+});
+
+// =============================================================================================
+// F3 claim 2 — THE HEADER PROMISE, PINNED ON BOTH SIDES.
+//
+// The schema promised "The header always says how many gaps exist in total, so a shorter list
+// never reads like the whole picture." It did not. `renderGapHeader` printed the total ONLY when
+// the vendor sent one AND it exceeded the window — so the exact case the sentence exists to
+// protect against (a short list that IS the whole picture) said nothing, and a vendor that sent
+// no count at all also said nothing.
+//
+// The fix is BOTH halves: the header now states the vendor's total in every case it has one, and
+// says plainly when the vendor sent none — because `rows.length` is OUR count of what came back,
+// never DataForSEO's count of what exists, and promoting it to a total would be a measurement
+// nobody made (NEVER #7). The schema sentence is rewritten to that keepable promise.
+//
+// The schema specs read the PUBLISHED JSON schema and assert on meaning with regexes, not on a
+// copy of the source string (signed lesson 11).
+// =============================================================================================
+
+describe("F3 — the keyword_gap header states what is known about the whole set", () => {
+  it("says N of M when the vendor's total exceeds the window", () => {
+    const text = formatKeywordGap(gap([FULL_ROW], 1841), WHERE);
+    expect(text).toContain("1 of 1,841 keywords");
+    // The window is a strict subset, so no "all of them" claim may appear.
+    expect(text).not.toMatch(/all of them/i);
+  });
+
+  it("says the list IS all of them when the window covers the vendor's total", () => {
+    const text = formatKeywordGap(gap([FULL_ROW], 1), WHERE);
+    expect(text).toMatch(/reports 1 in total/i);
+    expect(text).toMatch(/all of them/i);
+    // ...without inventing the "N of N" phrasing the older spec forbids.
+    expect(text).not.toContain(" of 1 keywords");
+  });
+
+  it("says the vendor sent no total, rather than letting the list read as complete", () => {
+    const text = formatKeywordGap(gap([FULL_ROW, BARE_ROW], null), WHERE);
+    expect(text).toMatch(/no count of the whole set/i);
+    expect(text).toMatch(/may not be all of them/i);
+  });
+
+  it("never promotes the row count to a vendor total", () => {
+    const text = formatKeywordGap(gap([FULL_ROW, BARE_ROW], null), WHERE);
+    expect(text).not.toMatch(/\b2 in total\b/);
+    expect(text).not.toMatch(/of 2 keywords/);
+    expect(text).not.toMatch(/reports \d+ in total/i);
+  });
+});
+
+describe("F3 — the keyword_gap limit description matches what the header does", () => {
+  const tool = makeKeywordGapTool();
+  const schema = tool.inputJsonSchema as { properties: Record<string, { description?: string }> };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("withdraws the unconditional 'always says how many in total' promise", () => {
+    expect(limit).not.toMatch(/header always says/i);
+    expect(limit).not.toMatch(/always says how many/i);
+  });
+
+  it("conditions the total on the vendor sending one", () => {
+    expect(limit).toMatch(/whenever[\s\S]*sends a count/i);
+  });
+
+  it("says plainly what happens when the vendor sends no count", () => {
+    expect(limit).toMatch(/no count/i);
+  });
+
+  it("keeps the promise it CAN keep", () => {
+    expect(limit).toMatch(/never reads like the whole picture/i);
+  });
+
+  it("keeps the signed price: TOOL_COSTS stays the only price table", () => {
+    expect(tool.description).toContain(`${TOOL_COSTS.keyword_gap} credits`);
+    // The row argument must not grow a price claim of its own.
+    expect(limit).not.toMatch(/credits?/i);
   });
 });

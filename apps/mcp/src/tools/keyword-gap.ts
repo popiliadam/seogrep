@@ -73,8 +73,10 @@ const inputSchema = z.object({
     .default(DEFAULT_KEYWORD_GAP_LIMIT)
     .describe(
       `How many gap keywords to return (1–${KEYWORD_GAP_MAX_LIMIT}, default ` +
-        `${DEFAULT_KEYWORD_GAP_LIMIT}), highest search volume first. The header always says how ` +
-        "many gaps exist in total, so a shorter list never reads like the whole picture.",
+        `${DEFAULT_KEYWORD_GAP_LIMIT}), highest search volume first. Whenever DataForSEO sends a ` +
+        "count of the whole set, the header states it — as \"N of M\", or as a note that this " +
+        "list is all of them — and when the vendor sends no count the header says that too, so a " +
+        "shorter list never reads like the whole picture.",
     ),
   language_code: z.string().min(2).default("en").describe("Language code (default 'en')."),
   location_code: z
@@ -113,6 +115,38 @@ function metric(value: number | null): string {
 }
 
 /**
+ * WHAT THE WHOLE SET IS — stated on EVERY answer, including the two cases the "N of M" phrasing
+ * cannot cover.
+ *
+ * The schema used to promise "the header always says how many gaps exist in total". It did not:
+ * the total appeared ONLY when the vendor sent one AND it exceeded the window, which leaves the
+ * exact case the promise exists for — a short list that IS the whole picture — reading like a
+ * truncation, and a vendor that sent no count at all reading like a complete answer. Both are now
+ * said out loud.
+ *
+ * The vendor silence is stated rather than papered over: `rows.length` is OUR count of what came
+ * back, never DataForSEO's count of what exists, and printing it as a total would be a
+ * measurement nobody made (NEVER #7). So the promise cannot be "always names a number" — it is
+ * "always says what is known about the whole set", which is a promise the code can keep.
+ */
+export function renderGapTotalNote(total: number | null, shown: number): string {
+  if (total === null) {
+    return (
+      "DataForSEO sent no count of the whole set for this request, so this list may not be all " +
+      "of them"
+    );
+  }
+  if (total > shown) return "";
+  if (total === shown) {
+    return `DataForSEO reports ${thousands(total)} in total, so this list is all of them`;
+  }
+  return (
+    `DataForSEO reports ${thousands(total)} in total, fewer than the ${thousands(shown)} rows it ` +
+    "returned"
+  );
+}
+
+/**
  * The header for the gap list — honest about how much of the total is shown, and about WHAT the
  * list is. "ranks for and X does not" is the endpoint's own non-intersecting semantics restated;
  * nothing here claims the rival outranks the caller, because on these keywords the caller has no
@@ -127,10 +161,11 @@ export function renderGapHeader(gap: KeywordGapResult, input: KeywordGapRenderIn
     total !== null && total > shown
       ? `${thousands(shown)} of ${thousands(total)} keywords`
       : `${thousands(shown)} keyword${shown === 1 ? "" : "s"}`;
-  return (
+  const lead =
     `Keyword gap for ${subject} against ${gap.competitor} ${where} — ${scope} ` +
-    `${gap.competitor} ranks for and ${subject} does not, highest search volume first:`
-  );
+    `${gap.competitor} ranks for and ${subject} does not, highest search volume first`;
+  const note = renderGapTotalNote(total, shown);
+  return note === "" ? `${lead}:` : `${lead}. ${note}:`;
 }
 
 /**

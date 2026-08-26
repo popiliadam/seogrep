@@ -49,7 +49,7 @@ Or keep it short:
 | `target` | string | No | The domain to analyse for keyword gaps, e.g. "example.com" or "https://example.com" — any public domain, including a competitor's. Pass this OR project_id, not both. |
 | `project_id` | string (uuid) | No | One of your projects (from setup_project / list_projects) — the domain is taken from it. Pass this OR target, not both. |
 | `competitor` | string | Yes | The rival to mine for gaps, e.g. "competitor.com" — the keywords it ranks for and your domain does not. One competitor per call. |
-| `limit` | integer | No | How many gap keywords to return (1–1000, default 100), highest search volume first. The header always says how many gaps exist in total, so a shorter list never reads like the whole picture. |
+| `limit` | integer | No | How many gap keywords to return (1–1000, default 100), highest search volume first. Whenever DataForSEO sends a count of the whole set, the header states it — as "N of M", or as a note that this list is all of them — and when the vendor sends no count the header says that too, so a shorter list never reads like the whole picture. |
 | `language_code` | string | No | Language code (default 'en'). |
 | `location_code` | integer | No | DataForSEO location code (default 2840 = United States). |
 
