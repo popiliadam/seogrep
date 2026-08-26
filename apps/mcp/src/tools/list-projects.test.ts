@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  JOB_SCOPE_NOTE,
   NO_PROJECTS_MESSAGE,
   NO_TRACKED_PROJECTS_MESSAGE,
   formatProjectList,
@@ -21,6 +22,8 @@ function project(overrides: Partial<ProjectListRow> = {}): ProjectListRow {
     domain: "example.com",
     created_at: "2026-01-01T00:00:00.000Z",
     archived_at: null,
+    gsc: { kind: "not_connected" },
+    lastJob: null,
     ...overrides,
   };
 }
@@ -63,7 +66,11 @@ describe("the tracked section", () => {
    */
   it("renders nothing about an archive when there is none", () => {
     const text = formatProjectList([project()]);
-    expect(text).toBe("You are tracking 1 project(s):\n- example.com (project_id: p-1)");
+    expect(text).toBe(
+      "You are tracking 1 project(s):\n" +
+        "- example.com (project_id: p-1) — Search Console: not connected · last job: none yet\n" +
+        JOB_SCOPE_NOTE,
+    );
   });
 });
 
@@ -134,5 +141,102 @@ describe("the tool description", () => {
     expect(listProjectsTool.description).toMatch(/archiv/i);
     // …and it does NOT put a restore verb here: that competes with the tools that restore.
     expect(listProjectsTool.description).not.toMatch(/bring .* back|restore/i);
+  });
+});
+
+
+/**
+ * G5 + G7 (operator-signed 2026-08-26). Every tracked line now carries the two facts a customer
+ * with fifteen identical-looking domains actually needs: whether Search Console can be read for
+ * it, and whether anything has ever run against it.
+ *
+ * THE POINT OF THESE SPECS IS THAT "CONNECTED" IS NOT A BOOLEAN. Live measurement on 2026-08-26
+ * found a project (example.net) holding a gsc_connections row with a NULL gsc_property: a boolean
+ * column would have printed a tick beside a project that can pull nothing at all. That is the
+ * "unreported, never as a zero" promise on the connection axis, and it is pinned here as a
+ * POSITION (a distinct third sentence), not as an absence.
+ */
+describe("the Search Console state on each tracked line", () => {
+  it("names a live property", () => {
+    const text = formatProjectList([
+      project({ domain: "dentnotion.com", gsc: { kind: "connected", property: "sc-domain:dentnotion.com", expired: false } }),
+    ]);
+    expect(text).toMatch(/Search Console: sc-domain:dentnotion\.com/);
+  });
+
+  it("says a connection with no property selected is NOT usable, in its own words", () => {
+    const text = formatProjectList([
+      project({ domain: "example.net", gsc: { kind: "connected", property: null, expired: false } }),
+    ]);
+    expect(text).toMatch(/connected, no property selected/i);
+    // …and it must not read like a working connection.
+    expect(text).not.toMatch(/Search Console: example\.net/);
+  });
+
+  it("says plainly when there is no connection at all", () => {
+    const text = formatProjectList([project({ domain: "seogrep.com" })]);
+    expect(text).toMatch(/Search Console: not connected/i);
+  });
+
+  /**
+   * Health is a DIFFERENT fact from the mapping: the property is still the right one, the
+   * credential behind it is dead. It is appended to the mapping rather than replacing it, so a
+   * reconnect does not look like a re-mapping.
+   */
+  it("flags a dead credential without hiding which property it belongs to", () => {
+    const text = formatProjectList([
+      project({ gsc: { kind: "connected", property: "https://a.com/", expired: true } }),
+    ]);
+    expect(text).toMatch(/https:\/\/a\.com\//);
+    expect(text).toMatch(/reconnect/i);
+  });
+
+  it("never calls an unconnected project expired", () => {
+    const text = formatProjectList([project({ gsc: { kind: "not_connected" } })]);
+    expect(text).not.toMatch(/reconnect/i);
+  });
+});
+
+describe("the last-job fact on each tracked line", () => {
+  it("names the tool and the day, not a bare timestamp", () => {
+    const text = formatProjectList([
+      project({ lastJob: { tool: "crawl_site", at: "2026-08-26T10:36:21.643Z" } }),
+    ]);
+    expect(text).toMatch(/last job: crawl_site 2026-08-26/);
+  });
+
+  it("says none yet rather than printing a zero or an empty date", () => {
+    const text = formatProjectList([project({ lastJob: null })]);
+    expect(text).toMatch(/last job: none yet/);
+    expect(text).not.toMatch(/last job: (0|-|null|undefined)/);
+  });
+
+  /**
+   * KAPSAM: `jobs` holds background runs only — measured 2026-08-26, its `tool` column carries
+   * exactly crawl_site and pull_gsc_data. A project audited ten times and never crawled reads
+   * "none yet", which is TRUE of jobs and FALSE of activity, so the answer says which one it
+   * means — once, under the list, rather than on every line.
+   */
+  it("states what a job is, once, under the tracked list", () => {
+    const text = formatProjectList([project(), project({ id: "p-2", domain: "b.com" })]);
+    expect(text).toContain(JOB_SCOPE_NOTE);
+    expect(text.split(JOB_SCOPE_NOTE).length - 1).toBe(1);
+    expect(JOB_SCOPE_NOTE).toMatch(/crawl_site/);
+    expect(JOB_SCOPE_NOTE).toMatch(/pull_gsc_data/);
+  });
+
+  it("puts no job note on an account that tracks nothing", () => {
+    expect(formatProjectList([])).not.toContain(JOB_SCOPE_NOTE);
+  });
+});
+
+describe("A4 — the description states the price", () => {
+  /**
+   * Measured 2026-08-26: list_gsc_properties, track_keywords and untrack_project all say
+   * "Costs 0 credits." in their tools/list sentence; list_projects did not. A customer reading
+   * the surface should not have to open the docs to learn a read is free.
+   */
+  it("says the read is free", () => {
+    expect(listProjectsTool.description).toMatch(/costs 0 credits/i);
   });
 });
