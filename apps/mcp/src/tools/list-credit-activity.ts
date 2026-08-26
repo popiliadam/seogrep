@@ -391,6 +391,16 @@ export function formatCreditActivity(
   page: CreditActivityPage,
   domains: ReadonlyMap<string, string> = new Map(),
   summary?: SpendSummary,
+  /**
+   * Whether this answer came back through a cursor. It changes ONE sentence and it has to.
+   *
+   * Measured live 2026-08-26, on the second page of the paging this same change shipped: page two
+   * still called itself "your 2 MOST RECENT credit entries of 510" — neither half true. They are
+   * not the most recent (page one was), and 510 is what REMAINS past the cursor, not the ledger.
+   * The axis varied when paging was built was "can the next page be reached"; the axis left
+   * unvaried was "what does the next page call itself".
+   */
+  paged = false,
 ): string {
   const { rows, total } = page;
   if (rows.length === 0) return NO_ACTIVITY_MESSAGE;
@@ -412,8 +422,11 @@ export function formatCreditActivity(
   )
     ? NOT_RECORDED_NOTE
     : "";
+  const heading = paged
+    ? `Continuing from your cursor: ${rows.length} of ${total} older credit entries, newest first:`
+    : `Your ${rows.length} most recent credit entries of ${total}, newest first:`;
   return (
-    `Your ${rows.length} most recent credit entries of ${total}, newest first:\n${lines}\n` +
+    `${heading}\n${lines}\n` +
     "These are the entries that moved your balance, so a refunded run shows both its charge and " +
     `its refund. Run get_credit_balance for your current total.${cut}${explainsNotRecorded}` +
     `${summary === undefined ? "" : formatSpendSummary(summary)}`
@@ -456,7 +469,7 @@ export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): R
         listDomains(ctx.userId),
         summarizeSpend(ctx.userId),
       ]);
-      return textResult(formatCreditActivity(page, domains, summary));
+      return textResult(formatCreditActivity(page, domains, summary, before_id !== undefined));
     },
   });
 }

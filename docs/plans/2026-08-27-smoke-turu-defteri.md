@@ -1442,3 +1442,28 @@ web 1975 · db 12 · 38 doküman senkron · `dist` taze.
 **kaydı yok** (son kayıt `0032_subject_lookup_runs`). Şema doğru, defter eksik. İleride
 `supabase db push` 0033'ü **yeniden uygulamayı deneyip** "column already exists" ile düşebilir.
 Kaydı elle eklemek operatörün işi; şef ortamda migration yazamıyor.
+
+### 🔴 BULGU D-9 — ÇIKTI · kod · ✅ DÜZELTİLDİ (aynı oturumda, canlı ölçümle)
+
+D-8'in sayfalaması canlıda doğrulandı — **doğrudan uçtan**, çünkü asistanın istemcisi `before_id`'yi
+tanımıyor ve dizgiye çeviriyordu (sunucu haklı olarak reddetti; **ürün kusuru değil**, bayat şema).
+`MCP_SMOKE_URL` üzerinden iki JSON-RPC çağrısı:
+
+```
+1. sayfa: 787'de bitti → imleç 787
+2. sayfa: before_id=787 → tam kaldığı yerden, atlama yok, tekrar yok
+```
+
+**Ama 2. sayfanın başlığı hâlâ şöyle diyordu:** *"Your 2 **most recent** credit entries of 510"* —
+iki yarısı da yanlış. Onlar en yeni değil (1. sayfa öyleydi), ve 510 **imlecin ötesinde kalan**,
+defterin boyu değil. Sayfalamayı yaparken varyantladığım eksen *"sonraki sayfaya ulaşılabiliyor mu"*;
+varyantlamadığım eksen *"sonraki sayfa kendine ne diyor"*. Bu, D-6 ile aynı şekil — **üçüncü kez**.
+
+Artık: `Continuing from your cursor: 2 of 510 older credit entries, newest first:`
+
+**Ve mutasyon bir pin deliği açığa çıkardı.** Handler'ın `before_id !== undefined` argümanını
+silmek **üç pini de yeşil bıraktı** — çünkü üçü de saf fonksiyonu çağırıp bayrağı kendileri
+veriyordu. **Saf fonksiyon pini kendi kablolamasını göremez.** Tool'un kendisini `before_id` ile
+koşan bir pin eklendi; aynı mutasyon şimdi kırmızı.
+
+**Kapı:** `verify.sh` **PASS** — mcp **3557** (3553→, +4).
