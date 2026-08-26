@@ -361,6 +361,19 @@ describe("the fifth status bucket (pages with no usable status)", () => {
     );
   });
 
+  it("puts the shortfall AFTER the four counts its own words point back at", () => {
+    // The sentence says "the four counts ABOVE". A referee measured that the block could be moved
+    // anywhere inside Technical health — above the four stat blocks included, where that word
+    // points at nothing — and the whole suite stayed green (136/136). Section SCOPE was pinned;
+    // position INSIDE the section, and therefore the truth of "above", was not.
+    const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
+    const lastOfFour = techBody.indexOf("Server errors (5xx)");
+    const shortfall = techBody.indexOf("no usable HTTP status");
+    expect(lastOfFour).toBeGreaterThan(-1);
+    expect(shortfall).toBeGreaterThan(-1);
+    expect(lastOfFour).toBeLessThan(shortfall);
+  });
+
   it("names the URLs behind the count and says how many were not listed", () => {
     const techBody = techBodyOf(renderReportHtml(UNCLASSIFIED));
     expect(techBody).toContain("https://example.com/no-status");
