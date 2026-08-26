@@ -655,8 +655,58 @@ Defterde **açık madde olarak duruyor** ve sırası geldiğinde kapanacak.
 
 | # | ne | operatörün yapacağı |
 |---|---|---|
-| **A1** | Bu istemcinin tool listesi **deploy öncesinden önbellekli** (36/38, açıklamalar bayat). Kanıt: servis edilen `list_projects` açıklaması `8668ff2`'nin **birebir dizgesi**. | MCP bağlantısını yeniden kur |
-| **A2** | `list_jobs` + `list_credit_activity` bu istemciden **çağrılamıyor** | A1 çözülünce kapanır |
-| **A3** | `~/.zshrc`'deki `MCP_SMOKE_URL` anahtarı **`-32001 Invalid API key`** (uca ulaşıldı, anahtar geçersiz) | anahtarı yenile |
+| **A1** | ✅ **KAPANDI 2026-08-26.** Operatör bağlantıyı yeniledi; yeni bağlantı **38 tool** veriyor ve `list_projects` açıklaması artık `7dc99bf`'in (deploy sonrası) metni — `8668ff2`'nin bayat dizgesi DEĞİL. Teşhis (önbellek) **doğrulandı**. | — |
+| **A2** | ✅ **KAPANDI.** İkisi de çağrıldı ve ölçüldü (§1.3, §1.5). | — |
+| **A3** | ⛔ **HÂLÂ AÇIK.** Operatör "anahtar yenilendi" dedi; `~/.zshrc`'deki `MCP_SMOKE_URL` **yine `-32001 Invalid API key`** veriyor (2026-08-26 15:0x). Yenilenen şey MCP istemci bağlantısıydı; `~/.zshrc` satırı eski anahtarı taşıyor. | `~/.zshrc`'deki `MCP_SMOKE_URL` satırını yeni anahtarla güncelle |
+
+---
+
+## §1.3b — list_credit_activity — 0 kredi ✅ ÖLÇÜLDÜ (A2 kapandı)
+
+- **çağrı:** `list_credit_activity({limit: 50})`
+- **kredi:** 0 · ledger **783 → 783** · vendor **$0,101 → $0,101**
+- **ÖNCEDEN KAYDEDİLEN KONTROL GEÇTİ:** §1.3'te "üç iade satırını aynı şekilde göstermeli;
+  göstermiyorsa bulgu orada" yazmıştım. **Üçü de görünüyor:** `ai_visibility_compare` +180 ·
+  `ai_visibility` +90 ×2 · `audit_schema` +5. Net rakamın arkasına saklanmıyor.
+- **VERİ birebir:** 3 günlük pencerede **45 bakiye-hareketi satırı, net −1.176** — DB ölçümüyle
+  **birebir aynı**. 41 zero-delta `spend_commit` satırı doğru şekilde dışarıda bırakılmış.
+- **BULGU: KAPSAM (orta)** — kullanıcının **512** bakiye-hareketi satırı var; tool 50'sini bastı ve
+  **462'sinin varlığını söylemedi**. → düzeltildi (`commit 17`).
+- **BULGU: VERİ (G11'in canlı doğrulaması)** — hiçbir satır projeyi söylemiyor. Düzeltmesi dalımda,
+  deploy edilmedi.
+
+## §1.5 — list_jobs — 0 kredi ✅ ÖLÇÜLDÜ
+
+- **çağrı:** `list_jobs({limit: 10})` · kredi 0 · ledger değişmedi
+- **BULGU: VERİ (yüksek)** — `pull_gsc_data` işleri **`finished_at < created_at`** basıyor:
+  `created …16:14:18 · finished …16:14:17`. DB ölçümü: **27 işten 2'sinde**, en kötüsü
+  **−13,87 saniye**; `crawl_site`'ta 0. **`get_job_status` bu vakayı BİLİYOR** (`jobTiming`
+  → `inconsistent`, süre basmayı reddediyor) ve yorumunda `pull_gsc_data`'yı adıyla anıyor;
+  aynı deploy'da doğan `list_jobs` ham basıyordu. → düzeltildi (`commit 16`), kural **import
+  edildi**, ikinci kopya yazılmadı.
+- **BULGU: KAPSAM (orta)** — 56 işten 10'unu bastı, 46'sını söylemedi → düzeltildi.
+- **BULGU: ÇIKTI (düşük)** — `project_id` ham uuid; alan adı yok. G11 ailesiyle aynı eksen,
+  ayrı tura yazıldı (**G15**).
+
+## Dilim 4 — A1/A2 kapanışı + iki yeni bulgu ✅
+
+| commit | ne |
+|---|---|
+| `commit 16` | `list_jobs`: çelişkili damga işareti (`jobTiming` **import** edildi) + kapsam satırı |
+| `commit 17` | `list_credit_activity`: kapsam satırı, sayım **aynı sorguda** (`count: "exact"`) |
+| `commit 18` | doküman |
+
+**Mutasyonlar — iki yönde de kırmızı:** notu kaldır → KIRMIZI · notu **her** satıra bas → KIRMIZI ·
+kesme cümlesini hep gizle → KIRMIZI · kesme cümlesini hep göster → KIRMIZI.
+
+**Kapılar:** `verify.sh` **PASS** (mcp **3540**, web 1965, core 323, db 12) ·
+`verify-db.sh` **PASS** (165 · 491 · 48) · `make goals` **16/16 (5 SKIP)**.
+
+### Açık kalan tek kod maddesi
+
+| # | madde | neden açık |
+|---|---|---|
+| **G12** | `keyword_gap` / `link_gap` okuma kaydı bırakmıyor | o iki tool **henüz gezilmedi** |
+| **G15** | `list_jobs` `project_id`'yi ham uuid basıyor, alan adı yok | G11 ailesi, ayrı dilim |
 
 Bunlar kod değişikliğiyle kapanmaz; **kapanmamış** olarak duruyorlar ve "yapıldı" yazılmadı.
