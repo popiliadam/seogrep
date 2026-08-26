@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   clampIncludePaths,
   clampMaxUrls,
+  clampSeedUrls,
   crawlProgressPayload,
+  MAX_SEED_URLS,
   makeProgressTicker,
   PROGRESS_WRITE_INTERVAL_MS,
   readCrawlProgress,
@@ -57,6 +59,40 @@ describe("clampIncludePaths", () => {
     expect(clampIncludePaths("/blog")).toBeUndefined();
     expect(clampIncludePaths(null)).toBeUndefined();
     expect(clampIncludePaths({ 0: "/blog" })).toBeUndefined();
+  });
+});
+
+/**
+ * clampSeedUrls — the SHAPE gate on crawl_site's opt-in ranking-page seeds. It deliberately does
+ * NOT decide whether a URL belongs to the site or to the scope: that is selectExtraSeeds' job,
+ * inside the crawler, on this same list (crawler/crawl.test.ts pins it). What is pinned here is
+ * that a malformed or oversized queue message degrades to "no seeds" rather than to something
+ * unbounded.
+ */
+describe("clampSeedUrls", () => {
+  it("passes an array of non-empty strings through", () => {
+    expect(clampSeedUrls(["https://a.test/x", "https://a.test/y"])).toEqual([
+      "https://a.test/x",
+      "https://a.test/y",
+    ]);
+  });
+
+  it("drops blank / non-string entries and yields undefined when nothing valid remains", () => {
+    expect(clampSeedUrls(["https://a.test/x", "", "  ", 42, null])).toEqual(["https://a.test/x"]);
+    expect(clampSeedUrls([])).toBeUndefined();
+    expect(clampSeedUrls(["", "   "])).toBeUndefined();
+  });
+
+  it("rejects non-array values -> undefined (the crawl seeds exactly as it always did)", () => {
+    expect(clampSeedUrls(undefined)).toBeUndefined();
+    expect(clampSeedUrls("https://a.test/x")).toBeUndefined();
+    expect(clampSeedUrls(null)).toBeUndefined();
+    expect(clampSeedUrls({ 0: "https://a.test/x" })).toBeUndefined();
+  });
+
+  it("caps an oversized list at the crawler's page cap", () => {
+    const many = Array.from({ length: MAX_SEED_URLS + 40 }, (_, i) => `https://a.test/${i}`);
+    expect(clampSeedUrls(many)).toHaveLength(MAX_SEED_URLS);
   });
 });
 
