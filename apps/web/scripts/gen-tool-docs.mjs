@@ -437,14 +437,35 @@ export const DOC_PROSE = {
 
   list_projects: {
     lead:
-      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` " +
-      "— and, below them, anything you have **archived**. If you have neither yet, it points you to " +
-      "`setup_project`.",
+      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`, " +
+      "its Search Console state and its last background job — and, below them, anything you have " +
+      "**archived**. If you have neither yet, it points you to `setup_project`.",
     whatItDoes:
       "Reads your projects, scoped to your account, and returns them as two lists: the ones you are " +
       "tracking, and the ones you archived with " +
       "[`untrack_project`](/docs/tools-reference/untrack-project).",
     preExampleSections: [
+      {
+        heading: "What each tracked line tells you",
+        body:
+          "Beside the domain and its `project_id`, every tracked line carries two facts, because a " +
+          "list of fifteen identical-looking domains answers neither question a customer actually " +
+          "has: can Search Console be read for this one, and has anything ever run against it.\n\n" +
+          "**Search Console** is reported in three states, never as a tick:\n\n" +
+          "- `not connected` — no Google account is linked to this project.\n" +
+          "- `connected, no property selected` — an account is linked but no property has been " +
+          "matched to it. Nothing can be pulled yet. This state is named rather than folded into " +
+          "\"connected\" precisely because it looks like a working connection and is not.\n" +
+          "- the property itself (for example `sc-domain:example.com`) — the mapping that pulls " +
+          "will use. If the stored credential behind it has died, `(reconnect needed)` is appended: " +
+          "the property is still right, the credential is not.\n\n" +
+          "**Last job** names the tool that ran and the day it ran. A *job* is a background run — " +
+          "[`crawl_site`](/docs/tools-reference/crawl-site) or " +
+          "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data). Audits, keyword and backlink " +
+          "lookups run synchronously and are not jobs, so a project can read `none yet` and still " +
+          "have been analysed — the reply says so, under the list, rather than leaving the line to " +
+          "be read as \"nothing has ever happened here\".",
+      },
       {
         heading: "The archive",
         body:
@@ -462,10 +483,11 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Which sites am I tracking?\n\nor\n\n" +
       "> What did I archive?",
     returns:
-      "One line per tracked project (`domain` and `project_id`), oldest first; then an archive " +
-      "section, most recently archived first, with each archived project's `domain`, `project_id`, " +
-      "archive date, and how to restore it. Guidance to create your first project when you have " +
-      "nothing at all.",
+      "One line per tracked project (`domain`, `project_id`, Search Console state, last job), " +
+      "oldest first, followed by one line saying what counts as a job; then an archive section, " +
+      "most recently archived first, with each archived project's `domain`, `project_id`, archive " +
+      "date, and how to restore it. Guidance to create your first project when you have nothing " +
+      "at all.",
   },
 
   list_jobs: {
