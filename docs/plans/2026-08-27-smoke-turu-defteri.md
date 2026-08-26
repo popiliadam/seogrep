@@ -745,3 +745,44 @@ Ders: **bir arayüz adımı, arayüz kodu okunmadan tarif edilmez.**
 (`tools/project-domains.ts`) ve `list_credit_activity` de onu kullanıyor — iki tool bir projeyi
 farklı anlatamaz. Bir spec'in sözleşmesi taşındı ve **iki yarısı da daha fazlasını** iddia ediyor.
 Mutasyon: bilinmeyen id'de boş dizge → KIRMIZI · null'da ilk projeyi uydur → KIRMIZI.
+
+
+---
+
+## §3 — A3 KAPANDI ve kapattığı anda BİR ÜRETİM KÖRLÜĞÜ ORTAYA ÇIKTI (2026-08-26)
+
+**A3 ✅** — operatör rotate etti, yeni anahtarı `~/.zshrc`'ye editörle yazdı (terminale yapıştırma
+tırnak kaçışına takılmıştı ve anahtarı `~/.zsh_history`'ye yazıyordu). Doğrulandı:
+`~/.zshrc` bugün 18:56'da değişmiş, anahtar `sg_9DcV…`, ve **canlı `tools/list` ilk kez doğrudan
+soruldu: 38 tool**, `list_jobs` + `list_credit_activity` içinde.
+
+> **Güvenlik notu:** rotate'ten önce eski anahtar (`sg_EXRG…`) bir yapıştırma kazasıyla düz metin
+> olarak sohbete düştü. Rotate onu **iptal ettiği için** sızıntı ölüdür; ayrıca bir aksiyon
+> gerekmiyor. Bu yüzden yol "yeni anahtarı editörle yaz" olarak değiştirildi.
+
+### 🔴 BULGU G17 — `trial-flow-e2e` iki gündür ÜRETİM YÜZEYİNİ HİÇ SAYMIYORDU
+
+Anahtar çalışır çalışmaz `make goals` koşuldu ve kalem **ilk kez gerçekten koştu → KIRMIZI**.
+
+**Ölçüm:**
+- `goals/trial-flow-e2e.md:11` predicate'i **36** tool pinliyor.
+- Canlı sunucunun `inputSchema` sayısı: **38**.
+- Predicate'in **ikinci** satırı (auth + canlı `get_credit_balance`) **geçiyor** → **ürün sağlam**,
+  bayat olan pin.
+- `list_jobs` + `list_credit_activity` (imza md.15) deploy edildi, **pin güncellenmedi**.
+
+**Neden kimse görmedi:** kalem `MCP_SMOKE_URL` yokken `exit 97` ile **SKIP** ediyor ve deploy'dan
+beri her oturumda kapı **"16/16 PASS (5 skip)"** diyordu. **İmzalı ders 7'nin birebir kendisi:**
+env-koşullu SKIP, tam ölçüm gibi okundu. İki gün boyunca üretim tool yüzeyini **hiçbir şey saymadı**.
+
+→ Düzeltildi (`commit 22`): pin **38**, ve dosyanın kendi değişiklik günlüğüne **gecikmenin kendisi**
+yazıldı — sayıyı sessizce artırmak bulguyu silmek olurdu.
+
+### Kapı — A3 sonrası İLK TAM ÖLÇÜM
+
+| önce | sonra |
+|---|---|
+| `16/16 PASS (5 skip)` | **`16/16 PASS (1 skip)`** |
+
+SKIP'ten gerçek ölçüme dönen dört kalem: **`mcp-alive`** · **`trial-flow-e2e`** ·
+**`landing-live`** · **`purchase-flow-live`**. Kalan tek SKIP `dfs-budget-guard` (`DFS_LIVE`, kasıtlı).
