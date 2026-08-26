@@ -1,15 +1,21 @@
 ---
 title: list_projects
-description: "List the website domains you are tracking (oldest first)."
+description: "List the website domains you are tracking (oldest first), plus any projects you have archived."
 ---
 
 **Cost:** Free (0 credits).
 
-`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`. If you have none yet, it points you to `setup_project`.
+`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` — and, below them, anything you have **archived**. If you have neither yet, it points you to `setup_project`.
 
 ## What it does
 
-Reads your projects, scoped to your account, and returns them as a simple list.
+Reads your projects, scoped to your account, and returns them as two lists: the ones you are tracking, and the ones you archived with [`untrack_project`](/docs/tools-reference/untrack-project).
+
+## The archive
+
+Archived projects are listed separately, most recently archived first, each with its `project_id` and the date it was archived. They are **not** counted as tracked and never appear in the tracked list — but they are visible, which is what makes them recoverable: you do not have to remember the exact domain to bring one back.
+
+Either route restores the original project in place, on the same `project_id`, with its crawls, reports and Search Console connection intact: [`setup_project`](/docs/tools-reference/setup-project) with the same domain, or [`track_gsc_property`](/docs/tools-reference/track-gsc-property) for its property.
 
 ## Example
 
@@ -17,10 +23,14 @@ Ask your MCP client in plain language:
 
 > Which sites am I tracking?
 
+or
+
+> What did I archive?
+
 ### Input
 
 No parameters.
 
 ### Returns
 
-One line per project (`domain` and `project_id`), or guidance to create your first project when the list is empty.
+One line per tracked project (`domain` and `project_id`), oldest first; then an archive section, most recently archived first, with each archived project's `domain`, `project_id`, archive date, and how to restore it. Guidance to create your first project when you have nothing at all.

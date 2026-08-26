@@ -1,0 +1,36 @@
+---
+title: list_jobs
+description: "List your recent background jobs — crawls and Search Console pulls — newest first, with each job_id. Use it when you do not have a job_id to hand."
+---
+
+**Cost:** Free (0 credits).
+
+`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run in the background — newest first, each with its `job_id`. It is the tool to reach for when you **do not have a `job_id` to hand**.
+
+## What it does
+
+Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what state it is in, when it was created and finished, its `project_id` when it has one, and the `job_id` to ask about.
+
+## What the list shows, and what needs a second call
+
+The list deliberately carries **no results**. A finished crawl or Search Console pull can store a very large result — one measured pull held close to a megabyte — so printing even a few of them would bury the answer you asked for.
+
+Take a `job_id` from the list and pass it to [`get_job_status`](/docs/tools-reference/get-job-status) for that one job's detail: its crawl summary, how far a running job has got, or why it failed.
+
+## Example
+
+Ask your MCP client in plain language:
+
+> How is the crawl I started doing?
+
+The tool replies with your recent jobs; pick the one you mean and ask [`get_job_status`](/docs/tools-reference/get-job-status) about its `job_id`.
+
+### Input
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `limit` | integer | No | How many recent jobs to return (1-50, default 10). |
+
+### Returns
+
+One line per job — tool, status, timestamps, `project_id` where there is one, and `job_id` — newest first, followed by a pointer to `get_job_status` for the full result. Guidance to the two tools that create jobs when you have run none.

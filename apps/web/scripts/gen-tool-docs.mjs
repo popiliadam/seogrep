@@ -371,13 +371,97 @@ export const DOC_PROSE = {
 
   list_projects: {
     lead:
-      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id`. " +
-      "If you have none yet, it points you to `setup_project`.",
-    whatItDoes: "Reads your projects, scoped to your account, and returns them as a simple list.",
-    example: "Ask your MCP client in plain language:\n\n> Which sites am I tracking?",
+      "`list_projects` returns the domains you're tracking, oldest first, each with its `project_id` " +
+      "— and, below them, anything you have **archived**. If you have neither yet, it points you to " +
+      "`setup_project`.",
+    whatItDoes:
+      "Reads your projects, scoped to your account, and returns them as two lists: the ones you are " +
+      "tracking, and the ones you archived with " +
+      "[`untrack_project`](/docs/tools-reference/untrack-project).",
+    preExampleSections: [
+      {
+        heading: "The archive",
+        body:
+          "Archived projects are listed separately, most recently archived first, each with its " +
+          "`project_id` and the date it was archived. They are **not** counted as tracked and never " +
+          "appear in the tracked list — but they are visible, which is what makes them recoverable: " +
+          "you do not have to remember the exact domain to bring one back.\n\n" +
+          "Either route restores the original project in place, on the same `project_id`, with its " +
+          "crawls, reports and Search Console connection intact: " +
+          "[`setup_project`](/docs/tools-reference/setup-project) with the same domain, or " +
+          "[`track_gsc_property`](/docs/tools-reference/track-gsc-property) for its property.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> Which sites am I tracking?\n\nor\n\n" +
+      "> What did I archive?",
     returns:
-      "One line per project (`domain` and `project_id`), or guidance to create your first project " +
-      "when the list is empty.",
+      "One line per tracked project (`domain` and `project_id`), oldest first; then an archive " +
+      "section, most recently archived first, with each archived project's `domain`, `project_id`, " +
+      "archive date, and how to restore it. Guidance to create your first project when you have " +
+      "nothing at all.",
+  },
+
+  list_jobs: {
+    lead:
+      "`list_jobs` lists your recent background jobs — the crawls and Search Console pulls that run " +
+      "in the background — newest first, each with its `job_id`. It is the tool to reach for when " +
+      "you **do not have a `job_id` to hand**.",
+    whatItDoes:
+      "Reads your own jobs, scoped to your account, and returns one line each: which tool ran, what " +
+      "state it is in, when it was created and finished, its `project_id` when it has one, and the " +
+      "`job_id` to ask about.",
+    preExampleSections: [
+      {
+        heading: "What the list shows, and what needs a second call",
+        body:
+          "The list deliberately carries **no results**. A finished crawl or Search Console pull can " +
+          "store a very large result — one measured pull held close to a megabyte — so printing even " +
+          "a few of them would bury the answer you asked for.\n\n" +
+          "Take a `job_id` from the list and pass it to " +
+          "[`get_job_status`](/docs/tools-reference/get-job-status) for that one job's detail: its " +
+          "crawl summary, how far a running job has got, or why it failed.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> How is the crawl I started doing?\n\n" +
+      "The tool replies with your recent jobs; pick the one you mean and ask " +
+      "[`get_job_status`](/docs/tools-reference/get-job-status) about its `job_id`.",
+    returns:
+      "One line per job — tool, status, timestamps, `project_id` where there is one, and `job_id` — " +
+      "newest first, followed by a pointer to `get_job_status` for the full result. Guidance to the " +
+      "two tools that create jobs when you have run none.",
+  },
+
+  list_credit_activity: {
+    lead:
+      "`list_credit_activity` shows your most recent credit ledger entries, newest first — what was " +
+      "granted, what you bought, and which tool charged what.",
+    whatItDoes:
+      "Reads your own credit ledger, scoped to your account, and returns one line per entry: when it " +
+      "happened, the signed number of credits, what kind of entry it is, and the tool behind it.",
+    preExampleSections: [
+      {
+        heading: "What counts as an entry",
+        body:
+          "Only entries that **moved your balance** are listed. A tool run is recorded internally as " +
+          "a charge and a matching settlement marker worth zero credits; the marker is bookkeeping " +
+          "and is left out, because a `0 credits` line next to the real charge for the same tool " +
+          "reads as an error rather than as a record.\n\n" +
+          "A run that was refunded therefore shows **twice** — once as the charge and once as the " +
+          "refund — rather than disappearing. That is what keeps the numbers you see equal to the " +
+          "movements behind your balance.\n\n" +
+          "For the running total itself, use " +
+          "[`get_credit_balance`](/docs/tools-reference/get-credit-balance). For charts and a full " +
+          "history, use the Usage page in your dashboard.",
+      },
+    ],
+    example:
+      "Ask your MCP client in plain language:\n\n> What have I spent credits on lately?",
+    returns:
+      "One line per ledger entry — timestamp, signed credits, kind, and the tool where there is one " +
+      "— newest first, with a pointer to `get_credit_balance` for your current total. Guidance when " +
+      "nothing has moved your balance yet.",
   },
 
   get_credit_balance: {
