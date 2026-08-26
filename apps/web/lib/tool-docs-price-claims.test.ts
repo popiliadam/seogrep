@@ -121,6 +121,38 @@ describe("the guard reddens on both measured defects", () => {
     expect(violations.map((v) => v.tool)).not.toContain("track_keywords");
   });
 
+  /**
+   * THE BEARING VERBS — the escape a judge measured on 2026-08-26, when both of these passed.
+   *
+   * The claim used to start at "no", so the backward walk's first token was "carries" or "at",
+   * neither of them BINDING_FILLER, and it stopped one word short of the tool. Nothing else in the
+   * guard was wrong; the claim was simply cut too short to reach its own subject. Each shape is
+   * pinned on BOTH sides — red on a priced tool, silent on the 0-credit one — because a pattern
+   * widened until it fires on everything is not a stronger guard, and `track_keywords` sitting in
+   * the same sentence is what says so.
+   */
+  it.each([
+    ["carries no charge", "`keyword_positions` carries no charge."],
+    ["carries no cost", "`keyword_positions` carries no cost."],
+    ["comes at no charge", "The read-back `keyword_positions` comes at no charge."],
+    ["comes at no cost", "The read-back `keyword_positions` comes at no cost."],
+    ["carry, plural subject", "`track_keywords` and `keyword_positions` carry no charge."],
+  ])("catches a claim reached through a bearing verb: %s", (_label, text) => {
+    const violations = findPriceClaimViolations(text);
+    expect(violations.map((v) => v.tool)).toContain("keyword_positions");
+    expect(violations.map((v) => v.tool)).not.toContain("track_keywords");
+  });
+
+  /**
+   * THE FORFEIT THE WIDENING DID NOT BUY BACK, kept visible on purpose. An ordinary adjective
+   * between the tool and the claim still stops `bindBackward` dead — measured green 2026-08-26.
+   * That is the conservative direction this file's header commits to, and pinning it here makes
+   * the miss a documented choice rather than something the next reader discovers.
+   */
+  it("still forfeits a claim held off from its tool by an ordinary word", () => {
+    expect(findPriceClaimViolations("`keyword_positions` is available at no cost.")).toEqual([]);
+  });
+
   it("names the tool, its real price and the fix in the failure message", () => {
     const [violation] = findPriceClaimViolations(DEFECT_1_SERP_SNAPSHOT);
     expect(violation).toBeDefined();
