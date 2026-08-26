@@ -833,3 +833,45 @@ describe("the crawl card stored on the run row (migration 0031)", () => {
   });
 });
 
+
+// =============================================================================================
+// S10d item 3 — THE PRICE SENTENCE, PINNED BY MEANING.
+//
+// The schema used to say "DataForSEO bills per returned row, so this is the price control, not a
+// display preference — the flat price was signed against this ceiling." Half of that is true and
+// the half a CUSTOMER reads is not: my_pages costs a flat 40 credits at `limit` 1 and at `limit`
+// 1,000, so narrowing the window to save money pays the same and receives less.
+//
+// The vendor half IS true here, unlike on the Backlinks family where the identical sentence was
+// withdrawn outright this round. COMPUTED from the Labs tariff this repo declares (one request,
+// $0.012 + $0.00012 a row): $0.01212 at 1 row, $0.024 at 100, $0.132 at 1,000 — the per-row half
+// equals the per-request half at exactly 100 rows and is ten times it at the ceiling, where it is
+// 91% of the bill. So the row count controls the VENDOR's bill, which is what justifies the CAP,
+// and never the caller's.
+//
+// These specs read the description off the PUBLISHED JSON schema — what the customer's client is
+// handed — and assert the CLAIM with regexes rather than a copy of the source string.
+// =============================================================================================
+
+describe("S10d — my_pages' limit description states measured Labs behaviour", () => {
+  const schema = makeMyPagesTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("no longer tells the caller the row count is their price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+  });
+
+  it("names the flat credit price the caller pays whatever they ask for", () => {
+    expect(limit).toMatch(/40 credits/);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  /** The half that IS true on Labs, and the reason the ceiling exists at all. */
+  it("says the row count moves the VENDOR's bill, and how much", () => {
+    expect(limit).toMatch(/dataforseo'?s own bill/i);
+    expect(limit).toMatch(/ten times it at 1000/i);
+  });
+});

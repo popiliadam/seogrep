@@ -817,3 +817,37 @@ describe("S1 — a field absent from the vendor body never becomes a 0", () => {
     expect(row).not.toContain("monthly not reported");
   });
 });
+
+// =============================================================================================
+// S10d item 3 — THE PRICE SENTENCE, PINNED BY MEANING. The same correction as my_pages, and the
+// same arithmetic, because both tools read Labs: one request at $0.012 plus $0.00012 a row, so
+// $0.01212 at 1 row, $0.024 at 100 and $0.132 at 1,000. The per-row half equals the per-request
+// half at exactly 100 rows and is TEN TIMES it at the ceiling — true, and the opposite of the
+// Backlinks family, where 19x the rows cost 13% more and the same sentence was withdrawn.
+//
+// What was false was the half a customer reads: discover_keywords costs a flat 40 credits at
+// `limit` 1 and at `limit` 1,000, so the row count is not their price control. Asserted on the
+// PUBLISHED schema and by meaning, never by a copy of the source string.
+// =============================================================================================
+
+describe("S10d — the limit description states measured Labs behaviour", () => {
+  const schema = makeDiscoverKeywordsTool().inputJsonSchema as {
+    properties: Record<string, { description?: string }>;
+  };
+  const limit = schema.properties.limit?.description ?? "";
+
+  it("no longer tells the caller the row count is their price control", () => {
+    expect(limit).not.toMatch(/\bthe price control\b/i);
+    expect(limit).not.toMatch(/bills? per returned row,? so this is/i);
+  });
+
+  it("names the flat credit price the caller pays whatever they ask for", () => {
+    expect(limit).toMatch(/40 credits/);
+    expect(limit).toMatch(/fewer rows costs? the same/i);
+  });
+
+  it("says the row count moves the VENDOR's bill, and how much", () => {
+    expect(limit).toMatch(/dataforseo'?s own bill/i);
+    expect(limit).toMatch(/ten times it at 1000/i);
+  });
+});

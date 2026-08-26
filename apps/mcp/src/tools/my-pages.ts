@@ -103,6 +103,23 @@ const NOT_ENABLED_MESSAGE =
 const inputSchema = z.object({
   target: targetField("list the ranking pages of"),
   project_id: projectIdField,
+  // WHOSE PRICE. This field used to say "DataForSEO bills per returned row, so this is the price
+  // control, not a display preference". Half of that is true and the half a CUSTOMER reads is not:
+  // the call costs a flat 40 credits at `limit` 1 and at `limit` 1,000, so a caller narrowing the
+  // window to save money pays the same and receives less.
+  //
+  // The other half IS true here, and it is true differently from the Backlinks family. Computed
+  // from the Labs tariff this repo already declares (dfs/relevant-pages.ts: $0.012 per request +
+  // $0.00012 per row, one request per lookup): $0.01212 at 1 row, $0.024 at 100, $0.132 at 1,000 —
+  // the per-row half EQUALS the per-request half at exactly 100 rows ($0.012 / $0.00012) and is
+  // ten times it at the 1,000-row ceiling, where it is 91% of the bill. Backlinks bills
+  // $0.024 + $0.000036 a row, which is why 19x the rows there cost 13% more and the same sentence
+  // was withdrawn outright on backlink_details.
+  //
+  // So the row count is a control on the VENDOR's bill, and what it justifies is the CEILING —
+  // not a saving the caller can make. The 100 and the ten-times below come from the tariff, not
+  // from our caps; if MAX_RELEVANT_PAGES_ROWS ever moves, the "ten times" has to be recomputed
+  // (and moving it is a price change either way — NEVER #6).
   limit: z
     .number()
     .int()
@@ -111,8 +128,15 @@ const inputSchema = z.object({
     .default(DEFAULT_RELEVANT_PAGES_ROWS)
     .describe(
       `How many pages to return (1-${MAX_RELEVANT_PAGES_ROWS}, default ` +
-        `${DEFAULT_RELEVANT_PAGES_ROWS}). DataForSEO bills per returned row, so this is the price ` +
-        "control, not a display preference — the flat price was signed against this ceiling.",
+        `${DEFAULT_RELEVANT_PAGES_ROWS}). It does not change what YOU pay: this call costs ` +
+        `${TOOL_COSTS.my_pages} credits whether you ask for one page or ` +
+        `${MAX_RELEVANT_PAGES_ROWS}, and asking for fewer rows costs the same. It does move ` +
+        "DataForSEO's own bill, unlike SeoGrep's backlink tools where the row count barely " +
+        "shifts it: the Labs tariff is a flat fee per request plus a fee per row, and the " +
+        "per-row half catches the flat half at 100 rows and is ten times it at " +
+        `${MAX_RELEVANT_PAGES_ROWS}. That is what fixes the ceiling — the flat credit price was ` +
+        "signed against a full-width request — and it is not a reason to ask for less than you " +
+        "need.",
     ),
   offset: z
     .number()
