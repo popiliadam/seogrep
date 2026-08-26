@@ -482,6 +482,13 @@ export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
  * starve the other outright, and "not found in that crawl" is the half a reader most often came
  * for; an even split means each group prints what it can and says what it could not.
  *
+ * AN EMPTY GROUP DOES NOT BURN ITS SHARE — see {@link vendorSideBudgets}. An even split alone had
+ * a measured hole: with `matched` empty its 9,000 characters simply evaporated, so `vendorOnly`
+ * printed 11 rows of a window whose FLAT list printed 23. A customer who named a project would
+ * have read HALF as many rows for the same 40 credits, with half the budget unspent — a penalty
+ * for using the comparison, which is the feature. The empty group's share goes to its sibling, so
+ * the vendor half spends the SAME 18,000 in every arrangement.
+ *
  * WHAT 9,000 BUYS, MEASURED rather than assumed: a my_pages row is FAT next to a backlink row —
  * 12 position buckets and 7 counters per item type, so ~400 characters for an organic-only page
  * and ~760 when the vendor also reports `paid`. That is ~22 and ~11 pages per group. It is a small
@@ -493,6 +500,25 @@ export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
 const VENDOR_LIST_CHAR_BUDGET = 18_000;
 const MATCHED_CHAR_BUDGET = 9_000;
 const VENDOR_ONLY_CHAR_BUDGET = 9_000;
+
+/**
+ * The two vendor groups' budgets for ONE answer. The pair always sums to at most
+ * {@link VENDOR_LIST_CHAR_BUDGET}, whichever branch is taken — that is what keeps the ceiling the
+ * same in all three arrangements (flat list, one group, two groups):
+ *
+ *   both populated → 9,000 + 9,000, so neither can starve the other;
+ *   one empty      → the other gets the whole 18,000, because a group with no rows to print
+ *                    cannot spend anything and holding the share back would only shorten the
+ *                    reply the caller paid for.
+ */
+export function vendorSideBudgets(
+  matchedCount: number,
+  vendorOnlyCount: number,
+): { readonly matched: number; readonly vendorOnly: number } {
+  if (matchedCount === 0) return { matched: 0, vendorOnly: VENDOR_LIST_CHAR_BUDGET };
+  if (vendorOnlyCount === 0) return { matched: VENDOR_LIST_CHAR_BUDGET, vendorOnly: 0 };
+  return { matched: MATCHED_CHAR_BUDGET, vendorOnly: VENDOR_ONLY_CHAR_BUDGET };
+}
 
 /** The uncomparable group — small by nature, bounded anyway because nothing else bounds it. */
 const UNKEYED_CHAR_BUDGET = 2_000;
@@ -660,18 +686,19 @@ export function renderComparison(result: RelevantPagesResult, crawl: CrawlSide):
     ...join.crawlUnkeyed.map((page) => `• ${page.url} (from your crawl)`),
   ];
   const unkeyedShown = renderWithinBudget(unkeyed, (line) => line, UNKEYED_CHAR_BUDGET);
+  const budgets = vendorSideBudgets(join.matched.length, join.vendorOnly.length);
   const sections = [
     budgetedVendorSection(
       "Reported by DataForSEO, and fetched by that crawl",
       join.matched,
       renderMatchedPage,
-      MATCHED_CHAR_BUDGET,
+      budgets.matched,
     ),
     budgetedVendorSection(
       "Reported by DataForSEO, not found in that crawl",
       join.vendorOnly,
       renderVendorPage,
-      VENDOR_ONLY_CHAR_BUDGET,
+      budgets.vendorOnly,
       crawlLimitsNote(crawl),
     ),
     crawlOnlySection(join, result),

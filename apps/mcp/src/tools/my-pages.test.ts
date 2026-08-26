@@ -900,6 +900,26 @@ describe("no page is printed twice, and no reply is too big to read", () => {
   }
 
   /**
+   * The row numbers of the vendor pages PRINTED in a block, **in the order they were printed**.
+   * Only a page's own bullet line matches: `renderMatchedPage`'s "your crawl fetched:" line is
+   * indented, so a crawled URL cannot be mistaken for a second printed page.
+   */
+  function printedRowNumbers(block: string): number[] {
+    return [...block.matchAll(/^• https:\/\/example\.com\/blog\/post-(\d+)$/gm)].map((m) =>
+      Number(m[1]),
+    );
+  }
+
+  /** The matched group's block, and everything from the vendor-only heading onward. */
+  function vendorBlocks(text: string): { readonly matched: string; readonly missed: string } {
+    const afterMatched = text.split("Reported by DataForSEO, and fetched by that crawl")[1] ?? "";
+    const [matched = "", missed = ""] = afterMatched.split(
+      "Reported by DataForSEO, not found in that crawl",
+    );
+    return { matched, missed };
+  }
+
+  /**
    * THE DEFECT ITSELF. Every vendor row used to be printed once in a flat list of the window and
    * again inside the comparison. Asserted per ROW rather than on the total length, because a
    * length assertion alone would also go green if the duplicate survived and the budget merely cut
@@ -982,6 +1002,153 @@ describe("no page is printed twice, and no reply is too big to read", () => {
       null,
     );
     expect(text.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /**
+   * ==========================================================================================
+   * WHICH ROWS SURVIVE THE CUT — pinned ON THE RENDER SURFACE, which is the hole the judge found.
+   * ==========================================================================================
+   * `joinPages` preserves DataForSEO's order and one spec above pins that on its ARRAYS. That is
+   * not the same claim: reversing or sorting the rows at the two VENDOR CALL SITES
+   * (`budgetedVendorSection`, `vendorWindowList`) left all seventy specs green, because none of
+   * them read the order out of the PRINTED text.
+   *
+   * What that regression would ship, at 40 credits a call: of a 1,000-row window the caller is
+   * handed the ~11-23 rows DataForSEO ranked LAST, while `PARTITION_NOTE` and the docs page both
+   * say "in DataForSEO's own order". A truncated list is only honest if the part that survives is
+   * the FRONT of the order the answer claims to be in.
+   *
+   * So the assertion is a STRICT PREFIX of the vendor's own row numbering, read back out of the
+   * rendered string: rows 0..k-1 in that order, never a suffix, never a permutation, never a gap.
+   * Asserted on all three vendor surfaces, because they are three separate call sites.
+   */
+  it("prints the FRONT of DataForSEO's order in the flat list when it has to truncate", () => {
+    const text = formatMyPages(
+      windowOf(wideRows(MAX_RELEVANT_PAGES_ROWS), MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    const printed = printedRowNumbers(text);
+    expect(printed.length).toBeGreaterThan(0);
+    // The cut really happened — otherwise "the survivors are the front" is a vacuous claim.
+    expect(printed.length).toBeLessThan(MAX_RELEVANT_PAGES_ROWS);
+    expect(printed).toEqual(Array.from({ length: printed.length }, (_, i) => i));
+  });
+
+  it("prints the FRONT of DataForSEO's order in BOTH comparison groups when it has to truncate", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    // Interleaved on purpose: the two groups then carry INTERLEAVED row numbers, so a spec that
+    // merely checked "ascending" would pass on a block holding the wrong half of the window.
+    const evenRowNumbers = rows.map((_, i) => i).filter((i) => i % 2 === 0);
+    const oddRowNumbers = rows.map((_, i) => i).filter((i) => i % 2 === 1);
+    const text = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(evenRowNumbers.map((i) => rows[i]!.page_address)),
+      PROJECT,
+    );
+
+    const { matched, missed } = vendorBlocks(text);
+    const printedMatched = printedRowNumbers(matched);
+    const printedMissed = printedRowNumbers(missed);
+
+    expect(printedMatched.length).toBeGreaterThan(0);
+    expect(printedMissed.length).toBeGreaterThan(0);
+    expect(printedMatched.length).toBeLessThan(evenRowNumbers.length);
+    expect(printedMissed.length).toBeLessThan(oddRowNumbers.length);
+
+    expect(printedMatched).toEqual(evenRowNumbers.slice(0, printedMatched.length));
+    expect(printedMissed).toEqual(oddRowNumbers.slice(0, printedMissed.length));
+  });
+
+  /**
+   * A list that FITS must be in the vendor's order too, whole and unpermuted. The prefix specs
+   * above only look at truncated lists, so a reordering that happened after the cut — or one that
+   * only ever showed up on short windows — would slip past them.
+   */
+  it("prints the whole window in DataForSEO's order when nothing is cut", () => {
+    const rows = wideRows(6);
+    const all = rows.map((_, i) => i);
+    expect(printedRowNumbers(formatMyPages(windowOf(rows), LOCALE, { kind: "not_requested" }, null)))
+      .toEqual(all);
+
+    const text = formatMyPages(
+      windowOf(rows),
+      LOCALE,
+      crawlOf([rows[0]!.page_address, rows[2]!.page_address, rows[4]!.page_address]),
+      PROJECT,
+    );
+    expect(text).not.toMatch(/output limit reached/i);
+    const { matched, missed } = vendorBlocks(text);
+    expect(printedRowNumbers(matched)).toEqual([0, 2, 4]);
+    expect(printedRowNumbers(missed)).toEqual([1, 3, 5]);
+  });
+
+  /**
+   * AN EMPTY GROUP DOES NOT BURN ITS SHARE. Measured before this was fixed: with `matched` empty,
+   * its 9,000 characters evaporated and `vendorOnly` printed 11 rows of a window whose FLAT list
+   * printed 23 — so naming a project HALVED what the same 40 credits bought, with half the vendor
+   * budget unspent.
+   *
+   * The expectation is DERIVED from the flat list rather than typed, so it follows the constants:
+   * the same rows through the same renderer must reach the same depth whether or not a comparison
+   * was made. It is not a claim that the two answers are equal — the comparison carries its own
+   * groups and notes — only that the caller is not charged rows for using the feature.
+   */
+  it("hands an empty group's share to its filled sibling, so a comparison prints no fewer rows", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const flat = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    // A crawl that fetched NOTHING this window names: `matched` is empty, `vendorOnly` is all of it.
+    const compared = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(["https://example.com/only-crawled"]),
+      PROJECT,
+    );
+    expect(compared).not.toContain("Reported by DataForSEO, and fetched by that crawl");
+    expect(compared).toContain(
+      `Reported by DataForSEO, not found in that crawl (${exactCount(MAX_RELEVANT_PAGES_ROWS)}):`,
+    );
+
+    const flatPrinted = printedRowNumbers(flat);
+    const comparedPrinted = printedRowNumbers(compared);
+    expect(flatPrinted.length).toBeGreaterThan(0);
+    expect(comparedPrinted).toEqual(flatPrinted);
+    // …and the carried-over share still cannot push the reply past the ceiling.
+    expect(compared.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  /** The mirror case: `vendorOnly` empty hands ITS share to `matched`. */
+  it("hands the share the other way when every page of the window was crawled", () => {
+    const rows = wideRows(MAX_RELEVANT_PAGES_ROWS);
+    const compared = formatMyPages(
+      windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+      LOCALE,
+      crawlOf(rows.map((r) => r.page_address)),
+      PROJECT,
+    );
+    expect(compared).not.toContain("Reported by DataForSEO, not found in that crawl");
+    const printed = printedRowNumbers(compared);
+    // A matched row costs MORE than a flat one (it carries the crawled URL too), so this is not
+    // asserted against the flat list — only that the whole 18,000 was available to it.
+    expect(printed).toEqual(Array.from({ length: printed.length }, (_, i) => i));
+    expect(printed.length).toBeGreaterThan(
+      printedRowNumbers(
+        formatMyPages(
+          windowOf(rows, MAX_RELEVANT_PAGES_ROWS),
+          LOCALE,
+          crawlOf(rows.slice(0, MAX_RELEVANT_PAGES_ROWS / 2).map((r) => r.page_address)),
+          PROJECT,
+        ).split("Reported by DataForSEO, not found in that crawl")[0] ?? "",
+      ).length,
+    );
+    expect(compared.length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
   });
 
   /**
