@@ -1,7 +1,6 @@
 import type { CannibalGroup } from "./cannibalization.ts";
 import type { PageDecay } from "./content-decay.ts";
 import { MAX_ROW_LIMIT } from "./pull.ts";
-import type { QuickWin } from "./quick-wins.ts";
 import type { PullData } from "./types.ts";
 
 /**
@@ -90,51 +89,6 @@ export function renderRowCapCaveat(pull: PullData): string | null {
     `Note: this analysis covers at most ${grouped(MAX_ROW_LIMIT)} rows per window — ` +
     "the pull hit that cap, so these results may be partial."
   );
-}
-
-/**
- * Render the quick-win shortlist as a FLAT list (or a friendly empty message).
- *
- * NOT THE TOOL'S RENDERER ANY MORE, and this sentence is here because its absence already cost a
- * deterministic red: `find_quick_wins` groups its findings by page (find-quick-wins.ts
- * `formatGroupedQuickWins`), and a db-lane byte-pin went on naming THIS function as "what the
- * tool prints" long after it stopped being true. A second renderer that merely LOOKS like the
- * tool's is a second source of truth, and the lane that would have caught the drift is not the
- * one the unit gate runs.
- *
- * What is left is a stand-in: the three sibling specs that need SOME renderer behind a FAKE
- * 0-credit discovery tool (gsc-discovery-shared.test.ts, gsc-discovery-runs.test.ts) use it, and
- * format.test.ts pins it directly. Nothing in production calls it. Anything asserting what
- * find_quick_wins PRINTS must go through `formatGroupedQuickWins` instead.
- *
- * `total` is how many opportunities cleared the bands BEFORE the shortlist cap
- * (quick-wins.ts findQuickWinsResult). It defaults to the shortlist's own length so a caller
- * that has no total cannot accidentally claim rows were dropped; when it is larger, the count
- * of what was cut is PRINTED. Without that line a site with 400 qualifying queries reads "50
- * quick wins" and the user has no way to know the list is 12% of the answer — the shortlist cap
- * is a presentation choice, and presenting it as the finding is the same silent-truncation
- * failure the row cap has.
- *
- * IT CARRIES NO RECOMMENDATION, on purpose, and that is the one asymmetry with its two siblings
- * below. formatCannibalization and formatContentDecay ARE what their tools print, so the advice
- * belongs in them; this one is not, so advice added here would be read by nobody but the specs
- * that use it as a stand-in — a green suite proving a customer-facing line that never ships. The
- * quick-win recommendation lives with the renderer find_quick_wins actually calls
- * (find-quick-wins.ts `quickWinAdvice`). Copying it here would recreate the second source of
- * truth this docblock already exists to warn about.
- */
-export function formatQuickWins(wins: readonly QuickWin[], total = wins.length): string {
-  if (wins.length === 0) {
-    return "No quick wins found: no query is ranking in positions 8–20 with enough impressions yet.";
-  }
-  const lines = wins.map(
-    (w) =>
-      `• "${w.query}" → ${w.page} — position ${pos(w.position)}, ` +
-      `${w.impressions} impressions, ${w.clicks} clicks, CTR ${pct(w.ctr)}`,
-  );
-  const remainder =
-    total > wins.length ? `\n…and ${grouped(total - wins.length)} more cleared the bands.` : "";
-  return `${wins.length} quick win${wins.length === 1 ? "" : "s"} (position 8–20 with demand), best first:\n${lines.join("\n")}${remainder}`;
 }
 
 /**
