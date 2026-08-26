@@ -1178,3 +1178,46 @@ açmasını durdurur. **İmza bekliyor.**
 
 **NE ÖLÇMEZLER:** secret taraması yok · **canlı uç yok**. D-1/D-2/D-4 canlıda **görülmedi**;
 `mcp.seogrep.com` hâlâ `499a2a0`. Deploy'dan sonra §D1'deki dokuz çağrı tekrarlanmalı.
+
+---
+
+## §D1d — MERGE + DEPLOY + CANLI DOĞRULAMA (2026-08-26 17:3x–18:0xZ)
+
+### Sıra, adım adım — hepsi ölçüldü
+
+| # | adım | kanıt |
+|---|---|---|
+| ① | **migration 0033 cloud'a uygulandı** (operatör, Supabase SQL Editor — asistanın `apply_migration` çağrısı ortam izin katmanınca reddedildi) | `project_id` kolonu **var** · iki indeks **var** · `reserve_credits(uuid,bigint,text,text,uuid)` · üç fonksiyonun `execute`'u **yalnız `service_role`** · ledger **783 satır değişmedi** · `credit_ledger`'da hiçbir role'de **UPDATE/DELETE yok**, iki tetikleyici yerinde (**NEVER#2 canlı mührü**) |
+| ② | **PR #180 merge** | `3ade3f2` — `git cat-file` **iki ebeveyn** = merge-commit, squash değil (gitleaks parmak izleri sağlam) |
+| ③ | **CI on `main`** | **6/6 yeşil** — `I-2` (Docker Hub limitli kırmızı koşu) böylece kapandı |
+| ④ | **Deploy MCP** | ✅ · `/status` `ok:true` · `errorsSinceBoot:0` · `pendingJobs:0` · `schema:ready` (ilk 30 sn `unknown`, taze boot'ta beklenen) |
+| ⑤ | **web** | `seogrep.com` HTTP **200** · `/app/projects` **307** (oturumsuz yönlendirme, doğru) |
+
+### Canlı doğrulama — düzeltmelerin kendisi
+
+| ne | canlı çağrı | sonuç |
+|---|---|---|
+| **D-3** (İ folder) | `MİNİNGAA.COM` | → `www.miningaa.com` **mevcut projesi**. Fold olmasaydı punycode'a düşüp **yeni satır** açardı: ayırt edici prob, sıfır satır maliyeti |
+| **D-3**, ikinci tanık | `HTTPS://WWW.LASTİKSA.COM/urunler` | → `www.lastiksa.com` mevcut projesi |
+| **D-2** (sonraki adım) | ikisinde de | `Run whats_next with this project_id for the next step.` |
+| **D-4** (IDN makbuz) | `smoke-dalga2-örnek.com` | `Created project for "smoke-dalga2-örnek.com (xn--smoke-dalga2-rnek-c0b.com)"` — **her iki biçim** |
+| **D-4** (IDN liste) | `list_projects` | satır `smoke-dalga2-örnek.com` olarak okunuyor |
+| **D-1** (panel uyarısı) | — | **ölçülmedi**: tarayıcı oturumu gerekiyor, operatörün manuel testine bırakıldı |
+
+### 🔴 BULGU D-6 — ÇIKTI · kod · **kendi düzeltmemin kaçırdığı eksen** · ✅ DÜZELTİLDİ
+
+Canlı D-4 doğrulaması, D-4'ün kendi eksiğini gösterdi. Tek cevap, iki farklı ad:
+
+```
+Created project for "smoke-dalga2-örnek.com (xn--smoke-dalga2-rnek-c0b.com)" …
+Heads up: xn--smoke-dalga2-rnek-c0b.com does not resolve …
+```
+
+Makbuz müşterinin yazımını öğrenmişti, **uyarı paragrafı öğrenmemişti**. D-4'ü düzeltirken
+varyantladığım eksen "hangi TOOL" idi (setup_project · list_projects · projectLabel · panel ·
+banner); varyantlamadığım eksen **"tek cevabın İÇİNDEKİ hangi CÜMLE"**. İmzalı ders 14'ün bu
+turdaki ikinci vakası — ve bu kez ölçüm, düzeltmenin kendi çıktısını okumaktan geldi.
+
+`reachabilityWarning` artık `displayDomain` ile açıyor; iki pin eklendi (IDN + ASCII).
+**Kapı:** `verify.sh` **PASS** · mcp **3545** (3543→, +2). Bu düzeltme **ayrı bir dalda**
+(`fix/idn-warning-name`) — canlı henüz eski cümleyi basıyor.
