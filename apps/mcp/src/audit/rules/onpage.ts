@@ -134,25 +134,23 @@ function strayEdges(value: string): { lead: string | null; tail: string | null }
 /**
  * `field` is the customer-facing noun ("title" / "meta description"); `type` the finding key.
  *
- * OPEN FOLLOW-UP — `title_stray_chars` and `meta_stray_chars` are NOT YET IN `ONPAGE_LABELS`
- * (audit/format.ts), and until they are the report contradicts itself: a page whose only defect
- * is a stray edge character renders
+ * BOTH TYPES ARE NAMED IN `ONPAGE_LABELS` (audit/format.ts), and that is load-bearing rather than
+ * incidental. `formatOnpageReport` builds its summary by walking ONPAGE_ORDER — that map's key
+ * order — and DROPS any type the map does not name. While these two were unnamed the report
+ * contradicted itself: a page whose only defect was a stray edge character printed
  *
  *     Summary: no on-page issues found.
  *     1 page(s) with findings; 0 clean.
  *     …
  *         · title starts with "`" — stray markup or template character, not part of the text
  *
- * because `formatOnpageReport` builds its summary by walking ONPAGE_ORDER, which is that map's
- * key order, and drops any type the map does not name. `report.counts` is correct and the panel's
- * finding total already includes these, so this is a rendering gap and not a data defect — but it
- * is a self-contradicting page and must not be left to be rediscovered.
+ * `report.counts` was correct throughout and the panel's finding total always included these, so
+ * it was a rendering gap and not a data defect — but a self-contradicting page all the same.
  *
- * THE FIX IS TWO KEYS, APPENDED: `title_stray_chars: "title has stray markup"` and
- * `meta_stray_chars: "meta description has stray markup"` at the END of ONPAGE_LABELS. Appended,
- * never interleaved — that map's key order IS the summary line's order, so inserting higher up
- * would reorder a line that has already shipped. It was not done in this slice because format.ts
- * was owned by a parallel slice; report/model.ts inherits the fix for free from the same map.
+ * The two keys sit at the END of that map, APPENDED and never interleaved beside the other
+ * title/meta keys, because its key order IS the summary line's order and inserting higher up would
+ * reorder a line that has already shipped. audit/format.test.ts pins both halves — that the types
+ * are named, and where they sit — and report/model.ts reads the same map.
  */
 function strayFinding(field: string, type: string, value: string): OnpageFinding | null {
   const { lead, tail } = strayEdges(value);
