@@ -92,6 +92,38 @@ export const JOB_SCOPE_NOTE =
   "lookups run synchronously and are not jobs, so a project can read \"none yet\" and still have " +
   "been analysed.";
 
+/**
+ * One line per Search Console property that MORE THAN ONE tracked project is mapped to.
+ *
+ * Measured live on 2026-08-26: `noraninsaat.com` and `www.noraninsaat.com` were two projects on
+ * one `sc-domain:noraninsaat.com`. Every pull for them fetches ONE set of data and is billed
+ * twice, and no surface said so. This does not deduplicate anything and does not guess which
+ * project the customer meant to keep — both are decisions only they can make, and a tool that
+ * quietly picked one would be worse than the silence it replaced.
+ *
+ * ONLY MAPPED PROPERTIES GROUP. Several connections with a NULL property share an ABSENCE, not a
+ * property; grouping them would invent a warning out of a fact nobody reported, which is the same
+ * fault as printing a zero for an unreported number. Archived projects are excluded by the
+ * caller: nothing is being pulled for them, so nothing is being paid twice.
+ */
+export function duplicatePropertyNotes(active: readonly ProjectListRow[]): string[] {
+  const byProperty = new Map<string, string[]>();
+  for (const project of active) {
+    if (project.gsc.kind !== "connected" || project.gsc.property === null) continue;
+    const domains = byProperty.get(project.gsc.property) ?? [];
+    domains.push(project.domain);
+    byProperty.set(project.gsc.property, domains);
+  }
+  return [...byProperty.entries()]
+    .filter(([, domains]) => domains.length > 1)
+    .map(
+      ([property, domains]) =>
+        `Heads up: ${domains.length} projects read the same Search Console property ` +
+        `(${property}): ${domains.join(", ")}. Each Search Console pull fetches one set of data ` +
+        "and is billed once per project, so they cost credits twice for the same rows.",
+    );
+}
+
 /** The Search Console half of a tracked line. */
 function renderGsc(gsc: ProjectGscState): string {
   if (gsc.kind === "not_connected") return "Search Console: not connected";
@@ -121,7 +153,10 @@ function trackedSection(active: readonly ProjectListRow[]): string {
       `- ${project.domain} (project_id: ${project.id}) — ${renderGsc(project.gsc)} · ` +
       renderLastJob(project.lastJob),
   );
-  return `You are tracking ${ordered.length} project(s):\n${lines.join("\n")}\n${JOB_SCOPE_NOTE}`;
+  const notes = duplicatePropertyNotes(ordered);
+  return [`You are tracking ${ordered.length} project(s):`, ...lines, JOB_SCOPE_NOTE, ...notes].join(
+    "\n",
+  );
 }
 
 /** The archive section: most recently archived first, and how to bring one back. */

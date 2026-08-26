@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  duplicatePropertyNotes,
   JOB_SCOPE_NOTE,
   NO_PROJECTS_MESSAGE,
   NO_TRACKED_PROJECTS_MESSAGE,
@@ -238,5 +239,84 @@ describe("A4 — the description states the price", () => {
    */
   it("says the read is free", () => {
     expect(listProjectsTool.description).toMatch(/costs 0 credits/i);
+  });
+});
+
+
+/**
+ * G6 — measured live on 2026-08-26: `noraninsaat.com` and `www.noraninsaat.com` are two separate
+ * projects mapped to the SAME `sc-domain:noraninsaat.com`. Every Search Console pull for them
+ * fetches one set of data and is billed twice, and nothing anywhere said so. Naming the property
+ * once, under the list, is the smallest thing that makes the duplication visible without
+ * pretending to know which of the two the customer meant to keep.
+ */
+describe("two projects mapped to one Search Console property", () => {
+  const mapped = (id: string, domain: string, property: string): ProjectListRow =>
+    project({ id, domain, gsc: { kind: "connected", property, expired: false } });
+
+  it("names the shared property and both projects", () => {
+    const text = formatProjectList([
+      mapped("p-1", "noraninsaat.com", "sc-domain:noraninsaat.com"),
+      mapped("p-2", "www.noraninsaat.com", "sc-domain:noraninsaat.com"),
+    ]);
+    expect(text).toMatch(/same Search Console property/i);
+    expect(text).toMatch(/sc-domain:noraninsaat\.com/);
+    expect(text).toMatch(/noraninsaat\.com, www\.noraninsaat\.com/);
+  });
+
+  it("says what the duplication costs, so it reads as a warning and not as trivia", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      mapped("p-2", "b.com", "sc-domain:x.com"),
+    ]);
+    expect(text).toMatch(/twice|billed|credits/i);
+  });
+
+  it("stays silent when every mapped property is distinct", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:a.com"),
+      mapped("p-2", "b.com", "sc-domain:b.com"),
+      project({ id: "p-3", domain: "c.com" }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
+  });
+
+  /**
+   * The unmapped state is NOT a shared value. Three projects each holding a connection with no
+   * property would otherwise group under "null" and be reported as reading one property — a
+   * warning invented out of an absence, which is the same fault as printing a zero for a fact
+   * nobody reported.
+   */
+  it("does not treat several unmapped connections as one shared property", () => {
+    const text = formatProjectList([
+      project({ id: "p-1", domain: "a.com", gsc: { kind: "connected", property: null, expired: false } }),
+      project({ id: "p-2", domain: "b.com", gsc: { kind: "connected", property: null, expired: false } }),
+      project({ id: "p-3", domain: "c.com" }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
+  });
+
+  it("reports each shared property once, on its own line", () => {
+    const notes = duplicatePropertyNotes([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      mapped("p-2", "b.com", "sc-domain:x.com"),
+      mapped("p-3", "c.com", "sc-domain:y.com"),
+      mapped("p-4", "d.com", "sc-domain:y.com"),
+    ]);
+    expect(notes).toHaveLength(2);
+  });
+
+  /** An archived project is not being pulled for, so it cannot be paying twice. */
+  it("ignores archived projects", () => {
+    const text = formatProjectList([
+      mapped("p-1", "a.com", "sc-domain:x.com"),
+      project({
+        id: "p-2",
+        domain: "b.com",
+        archived_at: "2026-08-01T00:00:00.000Z",
+        gsc: { kind: "connected", property: "sc-domain:x.com", expired: false },
+      }),
+    ]);
+    expect(text).not.toMatch(/same Search Console property/i);
   });
 });
