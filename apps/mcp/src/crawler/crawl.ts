@@ -186,6 +186,22 @@ export interface CrawlOptions {
    */
   includePaths?: string[];
   /**
+   * EXTRA entry points to queue ahead of the sitemap — `crawl_site`'s opt-in
+   * `seed_from_ranking_pages`, i.e. the pages DataForSEO reports as ranking for this domain.
+   *
+   * WHY IT EXISTS (measured 2026-08-25): the site's HIGHEST-etv page (127.2) never entered a
+   * crawl. Discovery seeds from the sitemap plus the homepage, the crawl stops at 100 pages, and
+   * a sitemap is not ordered by importance — so the one page that earns the traffic can sit
+   * hundreds of entries deep and never survive the ceiling. Seeding from the ranking list puts it
+   * in the first batch.
+   *
+   * THEY BUY NO PRIVILEGE. Every entry is filtered by {@link selectExtraSeeds} — same-site, in
+   * `includePaths`, not a reserved infrastructure path, normalized and deduped — and then queued
+   * as an ordinary depth-0 item, so robots.txt, the SSRF guards, `maxUrls` and the time budget all
+   * still apply. Absent or empty leaves the crawl byte-identical to before.
+   */
+  extraSeeds?: readonly string[];
+  /**
    * Called after every committed batch with the counts SO FAR — the crawl's only live signal.
    *
    * WHY IT EXISTS: a crawl_site run takes up to 90 s, and while it ran `get_job_status`
@@ -554,6 +570,96 @@ export function isInfrastructurePath(pathname: string): boolean {
   return INFRASTRUCTURE_PATH_PREFIXES.some(
     (prefix) => path.startsWith(prefix) || path === prefix.slice(0, -1),
   );
+}
+
+/**
+ * What became of a list of EXTERNALLY SUPPLIED seed URLs — see {@link selectExtraSeeds}. The
+ * three rejection counts are kept apart because they mean different things to the person who
+ * asked for the seeding: "not your site" is the vendor's doing, "outside the scope you asked
+ * for" is the caller's own `include_paths`, and "not a URL" is a broken input.
+ */
+export interface ExtraSeedSelection {
+  /** Normalized, same-site, in-scope, deduped seeds, in the order they were supplied. */
+  readonly seeds: string[];
+  /** Parseable URLs that are off-site, out of `includePaths`, or a reserved infrastructure path. */
+  readonly outOfScope: number;
+  /** Values that are not a usable http(s) URL at all. */
+  readonly unusable: number;
+  /** URLs an earlier entry had already claimed under the same normalized form. */
+  readonly duplicates: number;
+}
+
+/**
+ * Turn externally supplied seed URLs into entry points this crawl may actually queue — through
+ * the crawl's OWN gates, never around them.
+ *
+ * It exists because `crawl_site`'s opt-in `seed_from_ranking_pages` hands the crawl a list of URLs
+ * that came from OUTSIDE (DataForSEO's ranking-page list, carried to the worker in a queue
+ * message). Such a list must not be able to widen a crawl by a single URL: every entry goes
+ * through the same four predicates a sitemap loc goes through in `loadSitemapSeeds`'s `claim` —
+ * {@link sameSite}, {@link matchesIncludePaths}, {@link isInfrastructurePath} and
+ * {@link normalizeUrl} — and everything downstream (robots.txt, the SSRF origin/redirect guards,
+ * the page cap, the time budget) applies to a seed exactly as it applies to a sitemap URL, because
+ * a seed is just another queue item.
+ *
+ * It is EXPORTED and pure so BOTH sides use the one function: the `crawl_site` surface runs it to
+ * decide (and COUNT, for the answer it prints) what it will send, and `crawlSite` runs it again on
+ * what arrives, because a queue payload is external input for the same reason `clampMaxUrls` is.
+ * Running it twice is idempotent — its output is already normalized and in scope.
+ */
+export function selectExtraSeeds(
+  rawUrls: readonly unknown[] | undefined,
+  origin: string,
+  includePaths?: readonly string[],
+): ExtraSeedSelection {
+  const supplied = rawUrls ?? [];
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    // No origin means no scope to judge against: nothing is seeded, and the count says the
+    // inputs could not be used rather than claiming they were out of scope.
+    return { seeds: [], outOfScope: 0, unusable: supplied.length, duplicates: 0 };
+  }
+  const prefixes = normalizeIncludePaths(includePaths);
+  const seeds: string[] = [];
+  const seen = new Set<string>();
+  let outOfScope = 0;
+  let unusable = 0;
+  let duplicates = 0;
+  for (const raw of supplied) {
+    if (typeof raw !== "string" || raw.trim() === "") {
+      unusable++;
+      continue;
+    }
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      unusable++;
+      continue;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      unusable++;
+      continue;
+    }
+    if (
+      !sameSite(url, originUrl) ||
+      !matchesIncludePaths(url.pathname, prefixes) ||
+      isInfrastructurePath(url.pathname)
+    ) {
+      outOfScope++;
+      continue;
+    }
+    const norm = normalizeUrl(url.toString());
+    if (seen.has(norm)) {
+      duplicates++;
+      continue;
+    }
+    seen.add(norm);
+    seeds.push(norm);
+  }
+  return { seeds, outOfScope, unusable, duplicates };
 }
 
 /**
@@ -1500,13 +1606,28 @@ export async function crawlSite(origin: string, opts: CrawlOptions = {}): Promis
   // (with no prefixes matchesIncludePaths is always true, so the common case is unchanged), and
   // the Set below keeps a sitemap that ALSO lists "/" from queueing it twice.
   const rootInScope = matchesIncludePaths(new URL(rootSeed).pathname, prefixes);
+  // RANKING-PAGE SEEDS (CrawlOptions.extraSeeds). Re-filtered HERE and not merely trusted from
+  // the surface that sent them: they reach a worker through a queue message, which is external
+  // input for the same reason clampMaxUrls exists. selectExtraSeeds is the SAME function the
+  // surface counted with, and it is idempotent, so this second pass is a gate and not a second
+  // opinion. Sliced to maxUrls because a seed the page cap can never reach is pure ballast.
+  //
+  // POSITION: behind the homepage, AHEAD of the sitemap. The homepage keeps the first slot for
+  // the reason written above it; after that, the pages that already earn traffic outrank a
+  // sitemap's arbitrary order — which is the whole defect this option was added to fix.
+  const extraSeeds = selectExtraSeeds(opts.extraSeeds, originUrl.toString(), prefixes).seeds.slice(
+    0,
+    maxUrls,
+  );
   // Deduped at construction: a sitemap that ALSO lists "/" would otherwise leave a second root
   // entry in the array (the Set below only dedupes the SET, not the array). `visited` already
   // stops it being fetched twice — measured — but a ceiling that drains the queue would count
   // that dead entry as "skipped", inflating the very number this slice is making honest.
   // Seeds are depth 0 by definition: the homepage and every sitemap URL is an entry point,
   // not something discovered from another page.
-  const seedUrls = [...new Set(rootInScope ? [rootSeed, ...seeds] : seeds)];
+  const seedUrls = [
+    ...new Set([...(rootInScope ? [rootSeed] : []), ...extraSeeds, ...seeds]),
+  ];
   const queue: QueueItem[] = seedUrls.map((url) => ({ url, depth: 0 }));
   const enqueued = new Set<string>(seedUrls);
   const visited = new Set<string>();
