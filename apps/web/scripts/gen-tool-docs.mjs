@@ -1394,7 +1394,19 @@ export const DOC_PROSE = {
           "The `limit` ceiling is **part of the price** rather than a display preference: " +
           "DataForSEO bills **per returned row**, and that cap is what holds the flat price inside " +
           "the margin it was signed against. Asking for fewer rows costs the same; asking for more " +
-          "than the ceiling is refused before anything is charged.",
+          "than the ceiling is refused before anything is charged.\n\n" +
+          "**A reply is bounded, and it says so when it is.** A keyword row costs about 300 " +
+          "characters, so a full-width 1,000-row lookup would render close to **300,000 " +
+          "characters** — several times the size a calling client refuses outright, and a " +
+          "refused reply means the credits are spent and you see an error instead of an " +
+          "answer. So the reply has a size budget, and roughly **80–90 keywords** fit one " +
+          "reply, depending on how long they are. When rows are cut, the reply prints how many " +
+          "keywords were shown and how many more were fetched in the same window but not " +
+          "printed, and says plainly that those were charged for either way. Raising `limit` " +
+          "past what one reply carries buys rows nobody can show you: advance `offset` to read " +
+          "the next stretch — a separate call at the same flat price — or narrow the set with " +
+          "`min_volume`, `max_volume` or `max_difficulty` so the keywords you want arrive " +
+          "inside the window that prints.",
       },
       {
         heading: "Limitations",
