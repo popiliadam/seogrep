@@ -559,8 +559,52 @@ describe("parseHtml — per-record ceilings (H-02)", () => {
   });
 });
 
+/**
+ * The FREE-SIGNAL half of a PageRecord, at its zero values.
+ *
+ * These fields are REQUIRED on PageRecord, and the fixtures below used to omit them — which
+ * `tsconfig.json` never noticed, because it excluded every `*.test.ts`. The omission mattered:
+ * a fixture missing half the record is a narrower input than anything production can produce,
+ * so a consumer that read one of these fields was being measured against `undefined` while the
+ * real crawler always supplies a number. Spread this and override only what a spec is about.
+ */
+const PAGE_SIGNALS = {
+  jsonLdBlocks: [],
+  jsonLdTruncated: 0,
+  fetchMs: 1,
+  htmlBytes: 0,
+  h2Count: 0,
+  h3Count: 0,
+  imgCount: 0,
+  imgMissingAlt: 0,
+  hreflangs: [],
+  ogTitle: null,
+  ogDescription: null,
+  ogImage: null,
+  twitterCard: null,
+  htmlLang: null,
+  xRobotsTag: null,
+  redirectChain: [],
+  contentHash: "",
+  depth: 0,
+  inLinkCount: 0,
+} as const satisfies Omit<
+  PageRecord,
+  | "url"
+  | "status"
+  | "title"
+  | "metaDescription"
+  | "h1s"
+  | "canonical"
+  | "robotsMeta"
+  | "links"
+  | "wordCount"
+  | "jsonLdTypes"
+  | "issues"
+>;
+
 describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", () => {
-  const page = (i: number) => ({
+  const page = (i: number): PageRecord => ({
     url: `https://x.test/${i}`,
     status: 200,
     title: "t",
@@ -572,6 +616,7 @@ describe("boundCrawlResult — the ceiling on what reaches jobs.result (H-02)", 
     wordCount: 1,
     jsonLdTypes: [],
     issues: [],
+    ...PAGE_SIGNALS,
   });
   const AT = "2026-07-28T00:00:00.000Z";
 
@@ -1854,23 +1899,7 @@ describe("attachInLinkCounts", () => {
     wordCount: 0,
     jsonLdTypes: [],
     issues: [],
-    fetchMs: 1,
-    htmlBytes: 0,
-    h2Count: 0,
-    h3Count: 0,
-    imgCount: 0,
-    imgMissingAlt: 0,
-    hreflangs: [],
-    ogTitle: null,
-    ogDescription: null,
-    ogImage: null,
-    twitterCard: null,
-    htmlLang: null,
-    xRobotsTag: null,
-    redirectChain: [],
-    contentHash: "",
-    depth: 0,
-    inLinkCount: 0,
+    ...PAGE_SIGNALS,
   });
   const countOf = (pages: PageRecord[], url: string): number | undefined =>
     attachInLinkCounts(pages).find((p) => p.url === url)?.inLinkCount;
