@@ -5,6 +5,24 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
+### 🧪 SIRADAKİ OTURUM — **SMOKE TURU** (38/38, tool tool, operatör onayıyla)
+
+> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff.md`
+
+Deploy sonrası tam tur. **Neredeyse her tool yüzeyi bu turda değişti**, o yüzden nokta kontrolü
+değil **38/38**. Protokol operatörün koyduğu hâliyle: **tek tool test edilir, deftere yazılır, ve
+operatör "okey" demeden sıradakine GEÇİLMEZ.** Her tool için iki kanal — asistanın çağrısı **ve**
+operatörün kendi manuel testi; çelişirlerse çelişki yazılır. **Bu tur ölçüm turudur, kod değişmez.**
+
+**İlk iş şema kontrolü:** önceki oturumda `seogrep` MCP bağlantısı şemaları `properties` olmadan
+verdi ve dizi/sayı parametreli tool'lar test edilemedi (**S2 bu yüzden açık kaldı**). Ürün sağlam —
+`registry.ts:385-390` `inputSchema` servis ediyor. Şema bozuk gelirse o tool'lar **operatörün
+istemcisinden** test edilir, "yapıldı" diye yazılmaz.
+
+Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` (yeni). Dokunulmaz kanıt listesi handoff §7.
+
+---
+
 ### 🚀 2026-08-26 — **TUR CANLIDA**: 40 dilim `main`'e bindi ve deploy edildi
 
 **PR [#178](https://github.com/popiliadam/seogrep/pull/178) merge edildi** (merge-commit, squash DEĞİL — gitleaks parmak izleri sağlam).
