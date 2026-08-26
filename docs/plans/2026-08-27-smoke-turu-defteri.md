@@ -402,7 +402,7 @@ Türkçe karşılıklar: "kaç kredim kaldı", "bakiyem ne", "kredi durumum".
 - **asıl işlevde bulgu:** **YOK** — bakiye doğru, kiracı izolasyonu sağlam, NEVER#2 mühürlü.
 - **operatörün notu:** _bekleniyor_
 
-### 1.3 list_credit_activity — 0 kredi · ⛔ **TEST EDİLEMEDİ** (A2)
+### 1.3 list_credit_activity — 0 kredi · ⚠️ O ANDA TEST EDİLEMEDİ (A2) → **§1.3b'de KAPANDI**
 
 - **çağrı (asistan):** **YAPILAMADI.** Üçüncü kez doğrulandı: tool bu istemcinin listesinde yok
   (birebir ad araması + anahtar-kelime araması, ikisi de boş). §0.3'ün sonucu.
@@ -657,7 +657,7 @@ Defterde **açık madde olarak duruyor** ve sırası geldiğinde kapanacak.
 |---|---|---|
 | **A1** | ✅ **KAPANDI 2026-08-26.** Operatör bağlantıyı yeniledi; yeni bağlantı **38 tool** veriyor ve `list_projects` açıklaması artık `7dc99bf`'in (deploy sonrası) metni — `8668ff2`'nin bayat dizgesi DEĞİL. Teşhis (önbellek) **doğrulandı**. | — |
 | **A2** | ✅ **KAPANDI.** İkisi de çağrıldı ve ölçüldü (§1.3, §1.5). | — |
-| **A3** | ⛔ **HÂLÂ AÇIK.** Operatör "anahtar yenilendi" dedi; `~/.zshrc`'deki `MCP_SMOKE_URL` **yine `-32001 Invalid API key`** veriyor (2026-08-26 15:0x). Yenilenen şey MCP istemci bağlantısıydı; `~/.zshrc` satırı eski anahtarı taşıyor. | `~/.zshrc`'deki `MCP_SMOKE_URL` satırını yeni anahtarla güncelle |
+| **A3** | ✅ **KAPANDI 2026-08-26 18:56.** Operatör rotate etti ve yeni anahtarı `~/.zshrc`'ye editörle yazdı; canlı `tools/list` doğrudan soruldu → **38 tool**. Ayrıntı §3. | — |
 
 ---
 
@@ -821,3 +821,54 @@ Diğer beş job (`verify`, `gitleaks`, `static-guards`, `licenses`, `lighthouse`
 
 → Actions dönünce `main`'in o koşusu **yeniden çalıştırılmalı**; kırmızı bırakılırsa `deploy-mcp`'nin
 `require-ci` job'ı bir sonraki deploy'da 25 dakika bekleyip kırmızıya düşer.
+
+
+---
+
+# 🔒 DEFTERİN KAPANIŞ DURUMU — tek yetkili tablo (2026-08-26 16:2xZ)
+
+Bu tablo defterin üstündeki bölüm başlıklarını **geçersiz kılar**; bir madde burada ne diyorsa odur.
+
+## ✅ Kapanan — 20 madde
+
+| # | madde | nerede kapandı |
+|---|---|---|
+| A1 | istemci tool listesi bayattı (36/38) | §3 · operatör bağlantıyı yeniledi, doğrulandı |
+| A2 | iki yeni tool çağrılamıyordu | §1.3b · §1.5 · ikisi de ölçüldü |
+| A3 | `MCP_SMOKE_URL` geçersiz anahtar | §3 · rotate + editörle yazım, canlı 38 tool |
+| A4 | `list_projects` fiyatını söylemiyor | `f918aa9` |
+| G1 | alan adı kabul eden 13 tool görünür değil | `152a592` · registry'den türetildi |
+| G2 | panel detay rotası yok | `33cb7fe` · `/app/projects/[id]` |
+| G3 · G7 | 15 ayırt edilemez satır, canlılık sinyali yok | `f918aa9` · `last job` |
+| G4 | apex/www çifti uyarısı | `d7dcadd` · **premis ölçümle düzeltildi** |
+| G5 | GSC durumu yok (boolean yalan söylerdi) | `f918aa9` · üç durum + sağlık |
+| G6 | aynı property iki projede | `1f66f0b` |
+| G8 | "yarım kurulum" adlandırılmıyor | `f918aa9` |
+| G9 | `whats_next` boolean GSC → koşamayacak pull öneriyordu | `fb2a450` |
+| G10 | bakiye çıktısının %92'si ilgisiz kural | `6ded121` |
+| G11 | `credit_ledger`'da `project_id` yok | `256bdfb` + `86a2aa9` + `1227322` · **migration 0033** |
+| G13 | `list_credit_activity` kapsam sessizliği (512'den 50) | `bd7ee20` |
+| G14 | `list_jobs` çelişkili zaman damgası basıyordu | `19f4dea` |
+| G15 | `list_jobs` ham uuid basıyordu | `commit 20` · `project-domains.ts` |
+| G16a | Rotate butonu neyin kırılacağını söylemiyordu | `commit 21` |
+| G17 | `trial-flow-e2e` 36-tool pini bayat, 2 gündür ölçmüyordu | `commit 22` |
+| §8 | `credit_ledger` indeks boşluğu | migration 0033'ün ikinci indeksi |
+
+## ⛔ AÇIK — 2 madde (ikisi de bilinçli)
+
+| # | madde | neden açık | sahip |
+|---|---|---|---|
+| **G12** | `keyword_gap` + `link_gap` (45'er kredi) hiçbir okuma kaydı bırakmıyor, gerekçesi de kodda yazmıyor | **o iki tool bu turda HENÜZ GEZİLMEDİ.** Ne kaydedecekleri kendi turlarında karara bağlanır; şimdi yazmak, ölçmediğim bir yüzeye tasarım dayatmak olur | kod, orta |
+| **G16b** | Panel birden çok aktif anahtarı yönetmiyor — arka uç 5'e izin veriyor (`MAX_ACTIVE_KEYS`), panel 1'e zorluyor; her rotasyon çalışan istemciyi kırıyor | **ürün kararı.** Çok-anahtarlı yönetim arayüzü demek; sessizce inşa edilmedi, operatöre soruldu | operatör kararı → kod |
+
+## ⏸️ ALTYAPI — kod değil, beklemede
+
+| # | ne | ölçüm | ne gerekiyor |
+|---|---|---|---|
+| I-1 | PR [#180](https://github.com/popiliadam/seogrep/pull/180) CI'ı hiç koşmadı | GitHub olayı: *Incident with Actions*, **critical**, 15:11:58Z, "throttled inbound traffic"; 16:14'te toparlanma başladı. Repoda 11:14'ten beri **hiçbir dalda** koşu yok | Actions dönünce kendiliğinden koşar; koşmazsa PR'ı kapat/aç |
+| I-2 | `main` CI kırmızı (`verify-db`) | 11:14Z koşusu: `toomanyrequests: Rate exceeded` (Docker Hub imaj limiti) → stack kalkmadı. Diğer 5 job yeşil. **Kod kusuru değil** | o koşuyu **re-run** et; yoksa sonraki `deploy-mcp` `require-ci`'da düşer |
+
+## Gezilen yüzey
+
+**4 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs`.
+Kalan **34 tool** bu defterin kapsamında **değil**; smoke turu devam ediyor.
