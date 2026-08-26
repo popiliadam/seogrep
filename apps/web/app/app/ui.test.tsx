@@ -48,6 +48,7 @@ describe("app dashboard ui", () => {
             createdAt: "2026-07-01T12:00:00.000Z",
             delta: 200,
             kind: "grant",
+            projectId: null,
             reason: "trial",
             tool: null,
           },
@@ -78,7 +79,7 @@ function ledgerRow(
   partial: Partial<LedgerEntry> & Pick<LedgerEntry, "kind" | "delta" | "createdAt">,
 ): LedgerEntry {
   fixtureId += 1;
-  return { id: fixtureId, reason: null, tool: "crawl_site", ...partial };
+  return { id: fixtureId, reason: null, tool: "crawl_site", projectId: null, ...partial };
 }
 
 /** reserve (moves the balance) + zero-delta commit marker — one settled spend of `amount`. */
@@ -244,5 +245,49 @@ describe("SpendSparkline", () => {
       />,
     );
     expect(container.querySelector("polyline")).toBeNull();
+  });
+});
+
+
+/**
+ * G11 on the panel. The MCP tool names the project a charge was for; the ledger table is the
+ * other place the same question is asked, and until migration 0033 neither could answer it.
+ */
+describe("LedgerTable names the project a charge was for", () => {
+  const spend = {
+    id: 1,
+    createdAt: "2026-08-25T17:46:42.803Z",
+    delta: -65,
+    kind: "spend_reserve",
+    reason: null,
+    tool: "ranked_keywords",
+    projectId: "p-1",
+  };
+
+  it("shows the domain when the project is known", () => {
+    render(<LedgerTable entries={[spend]} domains={new Map([["p-1", "dentnotion.com"]])} />);
+    expect(screen.getByText("dentnotion.com")).toBeTruthy();
+  });
+
+  /** The negative is printed. A blank reads as "the table forgot", not as "there was no site". */
+  it("says a charge had no project scope rather than leaving it blank", () => {
+    render(<LedgerTable entries={[{ ...spend, projectId: null }]} domains={new Map()} />);
+    expect(screen.getByText(/no project/i)).toBeTruthy();
+  });
+
+  /** 0033 keeps no foreign key on purpose, so an id with no project left is reachable. */
+  it("falls back to the id when the project is gone", () => {
+    render(<LedgerTable entries={[{ ...spend, projectId: "p-gone" }]} domains={new Map()} />);
+    expect(screen.getByText("p-gone")).toBeTruthy();
+  });
+
+  it("asks nothing about scope on a grant", () => {
+    render(
+      <LedgerTable
+        entries={[{ ...spend, kind: "grant", delta: 200, tool: null, projectId: null }]}
+        domains={new Map()}
+      />,
+    );
+    expect(screen.queryByText(/no project/i)).toBeNull();
   });
 });

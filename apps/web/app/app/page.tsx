@@ -80,6 +80,26 @@ function firstValue(raw: string | string[] | undefined): string | undefined {
  * link attempt: `searchParams` (a promise in Next 16) carries the ?gsc= status that GscBanner
  * turns into copy. The banner renders nothing when there is no (known) status.
  */
+
+/**
+ * This tenant's projects as id -> domain, for the Site column on a spend row (migration 0033).
+ * Archived ones included: the spend happened while the project was tracked. Caller's
+ * authenticated client + explicit user_id filter (NEVER #4). Degrades to an empty map rather than
+ * throwing — the rows still render, with their ids, and losing a name column beats losing the page.
+ */
+async function readProjectDomains(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+): Promise<ReadonlyMap<string, string>> {
+  const { data, error } = await supabase.from("projects").select("id, domain").eq("user_id", userId);
+  if (error) {
+    console.error("project domain lookup failed:", error.message);
+    return new Map();
+  }
+  const rows = (data ?? []) as unknown as { id: string; domain: string }[];
+  return new Map(rows.map((row) => [row.id, row.domain]));
+}
+
 export default async function OverviewPage({
   searchParams,
 }: {
@@ -100,13 +120,16 @@ export default async function OverviewPage({
     );
   }
 
-  const [balance, recent, sparkWindow, projectCount, expiredAccounts] = await Promise.all([
+  const [balance, recent, sparkWindow, projectCount, expiredAccounts, domains] = await Promise.all([
     getBalance(supabase, user.id),
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 5 }),
     // A wider window purely for the spend sparkline — the table stays the exact latest five.
     listLedgerEntries(supabase, user.id, { page: 1, pageSize: 60 }),
     countActiveProjects(supabase, user.id),
     countExpiredGscAccounts(supabase, user.id),
+    // Same map /app/usage builds, for the same Site column — the last five rows here would
+    // otherwise be the one ledger surface that still cannot say which site a charge was for.
+    readProjectDomains(supabase, user.id),
   ]);
 
   // New-account surface: the design's GETTING STARTED card shows until the ledger records any
@@ -218,7 +241,7 @@ export default async function OverviewPage({
             View all <span aria-hidden="true">→</span>
           </Link>
         </div>
-        <LedgerTable entries={recent.entries} />
+        <LedgerTable entries={recent.entries} domains={domains} />
       </div>
     </section>
   );

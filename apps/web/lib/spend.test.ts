@@ -17,6 +17,7 @@ function row(partial: Partial<LedgerEntry> & Pick<LedgerEntry, "kind" | "delta">
     createdAt: "2026-08-10T12:00:00.000Z",
     reason: null,
     tool: "audit_content",
+    projectId: null,
     ...partial,
   };
 }

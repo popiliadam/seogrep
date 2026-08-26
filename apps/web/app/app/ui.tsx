@@ -197,8 +197,32 @@ export function PageHeader({ title, right }: { title: string; right?: ReactNode 
   );
 }
 
+/** The ledger kinds for which "which project?" is a question anybody has. */
+const SPEND_KINDS: ReadonlySet<string> = new Set(["spend_reserve", "spend_release"]);
+
+/**
+ * What the Site cell says for one row — the same three answers the MCP tool gives, so the two
+ * surfaces cannot describe one ledger differently:
+ *   • a known project  -> its domain
+ *   • no project scope -> those words. Printed, not blank: a blank reads as "the table forgot"
+ *     rather than as "there was no site", and it IS the answer for that row.
+ *   • an id with no project left -> the id. Migration 0033 keeps no foreign key on purpose.
+ * A grant or a purchase gets an em dash: it is not a spend, so the question does not arise.
+ */
+function siteCell(entry: LedgerEntry, domains: ReadonlyMap<string, string>): string {
+  if (!SPEND_KINDS.has(entry.kind)) return "—";
+  if (entry.projectId === null) return "no project scope";
+  return domains.get(entry.projectId) ?? entry.projectId;
+}
+
 /** Ledger rows as a compact table (shared by Overview's last-five and Usage's page). */
-export function LedgerTable({ entries }: { entries: readonly LedgerEntry[] }) {
+export function LedgerTable({
+  entries,
+  domains = new Map(),
+}: {
+  entries: readonly LedgerEntry[];
+  domains?: ReadonlyMap<string, string>;
+}) {
   if (entries.length === 0) {
     return <p className="m-0 font-serif text-[15px] text-muted">No activity yet.</p>;
   }
@@ -215,6 +239,9 @@ export function LedgerTable({ entries }: { entries: readonly LedgerEntry[] }) {
             </th>
             <th scope="col" className="py-2.5 pr-5 font-normal">
               Detail
+            </th>
+            <th scope="col" className="w-[170px] py-2.5 pr-5 font-normal">
+              Site
             </th>
             <th scope="col" className="w-[90px] py-2.5 text-right font-normal">
               Amount
@@ -236,6 +263,9 @@ export function LedgerTable({ entries }: { entries: readonly LedgerEntry[] }) {
                   <KindBadge kind={entry.kind} />
                 </td>
                 <td className="py-[13px] pr-5 font-mono text-[12.5px] text-body">{detail ?? ""}</td>
+                <td className="truncate py-[13px] pr-5 font-mono text-[12.5px] text-faint">
+                  {siteCell(entry, domains)}
+                </td>
                 <td className="py-[13px] text-right">
                   <DeltaAmount delta={entry.delta} />
                 </td>
