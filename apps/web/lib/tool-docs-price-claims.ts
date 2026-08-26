@@ -165,17 +165,51 @@ function bindBackward(clause: string, claimStart: number): string[] {
  * has a tool a few words after the claim, but no opening delimiter and a run that continues into
  * ordinary prose. Contrast is normal, good writing about two tools with different prices, and a
  * guard that punished it would be a guard nobody keeps.
+ *
+ * THE RUN MUST BE ENTIRELY TOOLS, NOT MERELY BEGIN WITH THEM — `listIsClosed`. The paragraph above
+ * claims a purity test the first version did not actually perform: it only required the delimited
+ * run to START with tool references and let the sentence continue however it liked afterwards. On a
+ * parenthesis that is harmless, because a `(` is nearly always closed right after the list. On an
+ * em dash it is a LATENT FALSE POSITIVE, measured 2026-08-26 before this line existed:
+ *
+ *     "The refusal is free — `research_keywords` charges only when it delivers."
+ *
+ * is a TRUE sentence — the dash introduces a contrast, not an enumeration — and the guard reported
+ * `research_keywords` at 25 credits for it. Nothing in today's corpus is written that way, so it
+ * never fired; it was one contrast sentence away from being the false positive that gets a guard
+ * deleted. Requiring the run to reach its closer distinguishes the two shapes structurally: an
+ * enumeration ENDS at the delimiter that closed it, a contrast runs on into a predicate.
  */
 function bindForward(clause: string, claimEnd: number): string[] {
   const after = clause.slice(claimEnd);
   const match = after.match(
-    new RegExp(`^(?:\\s+[A-Za-z']+){0,6}\\s*[(—–]\\s*((?:${MARK}[a-z_]+${MARK}|and|or|,|\\s)+)`),
+    new RegExp(`^(?:\\s+[A-Za-z']+){0,6}\\s*([(—–])\\s*((?:${MARK}[a-z_]+${MARK}|and|or|,|\\s)+)`),
   );
-  const list = match?.[1];
-  if (list === undefined) return [];
+  if (match === null) return [];
+  const [whole, opener, list] = match;
+  if (opener === undefined || list === undefined) return [];
+  if (!listIsClosed(opener, after.slice(whole.length))) return [];
   return (list.match(new RegExp(`${MARK}[a-z_]+${MARK}`, "g")) ?? []).map((token) =>
     token.slice(MARK.length, -MARK.length),
   );
+}
+
+/**
+ * Did the delimited run END, or did the sentence carry on past it?
+ *
+ * `rest` is what follows the run, which has already eaten every space, comma, "and" and "or" it
+ * could — so anything left is either the enumeration's closer or a word, and a word means prose.
+ * A `(` closes with its `)`. A dash has no partner, so it closes at the end of the clause, at the
+ * clause's own punctuation, or at a second dash bracketing the aside.
+ *
+ * THE PRICE OF THIS, stated rather than discovered later: a list whose closer is separated from it
+ * by a relative clause — "the two free halves — `a` and `b`, which both run on any account" — no
+ * longer binds. That is the conservative direction this file already chose (see
+ * `findPriceClaimViolations`), and neither measured defect is written that way.
+ */
+function listIsClosed(opener: string, rest: string): boolean {
+  if (opener === "(") return rest.startsWith(")");
+  return rest === "" || /^[.;:!?—–]/.test(rest);
 }
 
 /** One page's claim that a named, non-free tool costs nothing. */

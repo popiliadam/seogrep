@@ -1,8 +1,16 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { DOC_PROSE } from "../scripts/gen-tool-docs.mjs";
+import {
+  DOC_PROSE,
+  FRONTMATTER_DESCRIPTION_MAX,
+  deriveSlug,
+  frontmatterDescription,
+  stripCostSentences,
+  truncateAtWord,
+} from "../scripts/gen-tool-docs.mjs";
 import { TOOL_COSTS } from "../../mcp/src/credits/costs";
 import {
   describeViolation,
@@ -55,6 +63,25 @@ describe("the guard reddens on both measured defects", () => {
     }
   });
 
+  // The attributive binder's OTHER opening delimiter. Nothing pinned it before 2026-08-26: the
+  // `—`/`–` half of its character class could be deleted outright and every spec in this file
+  // stayed green — so the false-positive fix below could have been "fixed" by blinding the branch
+  // instead of narrowing it, and no test would have said a word.
+  // Each of the three opening characters gets its own case, on BOTH sides. A green-side case alone
+  // pins nothing: removing a character from the class leaves every green case green, so `–` would
+  // still have been deletable in silence with only the em dash covered here.
+  it.each([
+    ["em dash", "—"],
+    ["en dash", "–"],
+    ["bracket", "("],
+  ])("catches the attributive form when a %s opens the list", (_label, open) => {
+    const close = open === "(" ? ")" : "";
+    const violations = findPriceClaimViolations(
+      `…and the two free halves of the rank tracker ${open} \`track_keywords\` and \`keyword_positions\`${close}.`,
+    );
+    expect(violations.map((v) => v.tool)).toContain("keyword_positions");
+  });
+
   it("names the tool, its real price and the fix in the failure message", () => {
     const [violation] = findPriceClaimViolations(DEFECT_1_SERP_SNAPSHOT);
     expect(violation).toBeDefined();
@@ -93,6 +120,16 @@ describe("the guard stays silent on true claims", () => {
     ["free pre-discovery step", "Before queuing, `crawl_site` runs a quick, **free** size check."],
     // A refusal branch of a priced tool. "not charged" is deliberately outside the vocabulary.
     ["free refusal on a priced tool", "`research_keywords` is not available on trial credits; the refusal arrives before anything is reserved and says outright that you were not charged."],
+    // THE LATENT FALSE POSITIVE, measured 2026-08-26. A dash can introduce a contrast as easily as
+    // an enumeration, and this sentence is TRUE — the free thing is the refusal, not the tool. The
+    // guard reported `research_keywords` at 25 credits for it. No page is written this way today,
+    // which is the only reason it never fired; a guard is not safe because nobody has yet phrased
+    // a true sentence in the shape it punishes.
+    ["em-dash contrast, not enumeration", "The refusal is free — `research_keywords` charges only when it delivers."],
+    // The same shape with the other delimiter: a `(` that opens a predicate rather than a list.
+    ["parenthetical that continues into prose", "The size check is free (`crawl_site` charges only once the crawl is queued)."],
+    // …and with an en dash, the third character in the opening class.
+    ["en-dash contrast", "The dry run is free – `serp_snapshot` bills per keyword once it searches."],
   ])("stays green on: %s", (_label, text) => {
     expect(findPriceClaimViolations(text)).toEqual([]);
   });
@@ -120,17 +157,15 @@ describe("the parts the binder is built from", () => {
 });
 
 /**
- * THE LIVE CORPUS. Both halves of what a customer reads:
+ * THE LIVE CORPUS. Every half of what a customer reads:
  *
  *   • every DOC_PROSE block (the generated tool pages' prose — checked at the SOURCE, so a
  *     violation is caught before regeneration and the message names the block to edit);
  *   • every hand-written docs page. `tools-reference/` is excluded because it is generated output
  *     byte-identical to DOC_PROSE (`gen-tool-docs.mjs --check` enforces that), so scanning it would
- *     report each violation twice and point at a file nobody may hand-edit.
- *
- * KNOWN LIMIT, stated rather than hidden: a tool's `description` reaches the page's frontmatter and
- * is NOT scanned here. Descriptions are code, changing them changes tool selection, and they carry
- * their own review — but a false free-claim written there would reach a page past this guard.
+ *     report each violation twice and point at a file nobody may hand-edit;
+ *   • every tool `description` — added 2026-08-26, see the last describe in this file. It was the
+ *     surface this guard could not see, and it had two false claims in it this round.
  */
 /** Walk up from the runner's cwd to the workspace root, as node-floor.test.ts does. */
 function findRepoRoot(): string {
@@ -166,5 +201,74 @@ describe("no live docs page calls a priced tool free", () => {
   it.each(pages.map((p) => [p.path, p.text]))("%s", (path, text) => {
     const violations = findPriceClaimViolations(text);
     expect(violations.map((v) => describeViolation(String(path), v)).join("\n")).toBe("");
+  });
+});
+
+/**
+ * THE THIRD SURFACE — tool descriptions, which this guard did not look at until 2026-08-26.
+ *
+ * A description is not just code. It is rendered into the page's frontmatter `description` (the
+ * `<meta>` tag and the search-result snippet, via `renderToolPage`), and it is the text an assistant
+ * reads when it decides which tool to call. Both defects this guard was built for were qualitative
+ * price claims in PROSE; the same sentence written one file over, in a description, reached a
+ * customer-facing page and passed everything — the docs pipeline's two price defences both operate
+ * on NUMBERS, and `stripCostSentences` removes "Costs 10 credits." while leaving "is free"
+ * untouched. Two false claims were in fact living here this round and were corrected by hand.
+ *
+ * WHY THE FULL DESCRIPTION AND NOT THE RENDERED FRONTMATTER. The frontmatter is truncated to
+ * FRONTMATTER_DESCRIPTION_MAX, and 30-odd of these descriptions are several times that long — a
+ * scan of the rendered pages would read the first sentence of each and report a clean bill of
+ * health for the other 80%. Reading the registry covers the whole text and both surfaces it feeds.
+ *
+ * WHY `dist`, WHEN THE HEADER OF THE GUARD ITSELF PREFERS SOURCE. It was tried from source first
+ * and MEASURED: `import { ALL_TOOLS } from "../../mcp/src/tools/index"` type-checks, lints and runs
+ * green under vitest, and then reddens `next build`, because it drags MCP's `.ts`-suffixed imports
+ * into the web app's TypeScript program. Only the build says so — exactly the failure mode signed
+ * lesson 15 names. So the registry is loaded the way the `--check` CLI loads it, through a computed
+ * URL that the web build's type graph does not follow. The cost of that choice is a `dist` that
+ * could lag `src`, and the test below is what makes the lag visible instead of green.
+ */
+const ALL_TOOLS = await loadBuiltRegistry();
+
+async function loadBuiltRegistry(): Promise<readonly { name: string; description: string }[]> {
+  const url = pathToFileURL(join(findRepoRoot(), "apps/mcp/dist/tools/index.js")).href;
+  const registry = (await import(/* @vite-ignore */ url)) as {
+    ALL_TOOLS: readonly { name: string; description: string }[];
+  };
+  return registry.ALL_TOOLS;
+}
+
+describe("no tool description calls a priced tool free", () => {
+  it("sees the whole registry (a guard over an empty list is not a guard)", () => {
+    expect(ALL_TOOLS.length).toBe(Object.keys(DOC_PROSE).length);
+    expect(ALL_TOOLS.map((tool) => tool.name)).toContain("keyword_positions");
+  });
+
+  it("reads the full description, not the truncated frontmatter it is rendered into", () => {
+    // If this lane is ever re-pointed at the generated pages, most of the text it claims to cover
+    // silently disappears. This is what says so.
+    const longer = ALL_TOOLS.filter((tool) => tool.description.length > FRONTMATTER_DESCRIPTION_MAX);
+    expect(longer.length).toBeGreaterThan(20);
+  });
+
+  it("reads the descriptions that actually shipped — a stale `dist` reddens here", () => {
+    // Every committed page's frontmatter description was rendered from a description by exactly
+    // this pipeline. If the built registry no longer produces it, the text scanned above is not the
+    // text a customer reads, and this lane's green would be about a build from yesterday.
+    const pages = join(findRepoRoot(), "apps/web/content/docs/tools-reference");
+    const drifted = ALL_TOOLS.filter((tool) => {
+      const page = readFileSync(join(pages, `${deriveSlug(tool.name)}.mdx`), "utf8");
+      const rendered = truncateAtWord(
+        stripCostSentences(tool.description),
+        FRONTMATTER_DESCRIPTION_MAX,
+      );
+      return frontmatterDescription(page) !== rendered;
+    });
+    expect(drifted.map((tool) => tool.name)).toEqual([]);
+  });
+
+  it.each(ALL_TOOLS.map((tool) => [tool.name, tool.description]))("%s", (name, description) => {
+    const violations = findPriceClaimViolations(description);
+    expect(violations.map((v) => describeViolation(`${name}.description`, v)).join("\n")).toBe("");
   });
 });
