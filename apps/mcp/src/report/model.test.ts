@@ -223,9 +223,13 @@ describe("buildReportModel — audit engine summaries (G1)", () => {
       redirect3xx: tech.status.redirect3xx,
       clientError4xx: tech.status.clientError4xx,
       serverError5xx: tech.status.serverError5xx,
+      // The fifth bucket, carried like the other four. This exhaustive toEqual is what makes it
+      // a PIN rather than a hope: dropping the field again fails here as well as in its own test.
+      other: tech.status.other,
       robotsConflicts: tech.robotsConflicts.length,
       clientErrorUrls: capOf(tech.clientErrorUrls),
       serverErrorUrls: capOf(tech.serverErrorUrls),
+      otherStatusUrls: capOf(tech.otherStatusUrls),
       slowPages: capOf(tech.slowPages),
       heavyPages: capOf(tech.heavyPages),
       // Derived from the crawl rather than from `tech`: the engine reports the findings, not how
@@ -510,6 +514,86 @@ describe("buildReportModel — the engine output G1 discarded (R1-a)", () => {
     // The pre-cap total travels WITH the list so a truncated list is never the whole answer.
     expect(capped.tech?.slowPages.items).toHaveLength(REPORT_MAX_LISTED);
     expect(capped.tech?.slowPages.total).toBe(REPORT_MAX_LISTED + 7);
+  });
+});
+
+/**
+ * THE FIFTH STATUS BUCKET. `summarizeTech` took four of the engine's five status counts, and the
+ * page behind the fifth was in the report's "Pages crawled" stat and in nothing else.
+ *
+ * Status 0 is not a contrived value: `crawl-data.ts` reads `status` through `asFiniteNumber`,
+ * which yields 0 for a missing or non-numeric one, and 0 falls through every branch of
+ * `classifyStatus` into `other`. So this is what a page from a legacy or defective crawl looks
+ * like by the time the report sees it.
+ */
+describe("buildReportModel — pages the crawl could not classify", () => {
+  const UNCLASSIFIED_CRAWL: AuditCrawl = crawl([
+    page({ url: "https://example.com/ok", status: 200 }),
+    page({ url: "https://example.com/gone", status: 404 }),
+    page({ url: "https://example.com/no-status", status: 0 }),
+  ]);
+
+  it("carries the count and the URLs behind it, straight from the engine", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: UNCLASSIFIED_CRAWL,
+      pull: null,
+    });
+    const tech = auditTech(UNCLASSIFIED_CRAWL);
+    expect(model.tech?.other).toBe(tech.status.other);
+    expect(model.tech?.other).toBe(1);
+    expect(model.tech?.otherStatusUrls).toEqual(capOf(tech.otherStatusUrls));
+    expect(model.tech?.otherStatusUrls.items).toEqual(["https://example.com/no-status"]);
+  });
+
+  it("is the exact amount by which the four counts fall short of pageCount", () => {
+    // The whole reason the bucket has to be carried: WITHOUT it the model states a page count and
+    // four numbers that silently disagree with it, and nothing in the model records the gap.
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: UNCLASSIFIED_CRAWL,
+      pull: null,
+    });
+    const t = model.tech!;
+    const four = t.ok2xx + t.redirect3xx + t.clientError4xx + t.serverError5xx;
+    expect(four).toBe(2);
+    expect(t.pageCount).toBe(3);
+    expect(four + t.other).toBe(t.pageCount);
+  });
+
+  it("is 0 with an empty URL list when every page classified", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: crawl([page({ status: 200 }), page({ url: "https://example.com/x", status: 301 })]),
+      pull: null,
+    });
+    expect(model.tech?.other).toBe(0);
+    expect(model.tech?.otherStatusUrls).toEqual({ items: [], total: 0 });
+  });
+
+  it("caps the URL list while keeping the pre-cap total", () => {
+    const many = crawl(
+      Array.from({ length: REPORT_MAX_LISTED + 4 }, (_, i) =>
+        page({ url: `https://example.com/nostatus-${i}`, status: 0 }),
+      ),
+    );
+    const capped = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: many,
+      pull: null,
+    });
+    expect(capped.tech?.otherStatusUrls.items).toHaveLength(REPORT_MAX_LISTED);
+    expect(capped.tech?.otherStatusUrls.total).toBe(REPORT_MAX_LISTED + 4);
+    // The COUNT is never capped — it is the number the shortfall sentence has to be right about.
+    expect(capped.tech?.other).toBe(REPORT_MAX_LISTED + 4);
   });
 });
 
