@@ -53,6 +53,15 @@ import { TOOL_COSTS, creditCostFor, isPerUnitTool, type ToolName } from "../cred
 export type ToolResult = {
   readonly content: { readonly type: "text"; readonly text: string }[];
   readonly isError?: boolean;
+  /**
+   * The same answer as DATA, for a host rendering this tool's MCP Apps view (SEP-1865).
+   *
+   * NEVER A REPLACEMENT FOR `content`. The spec keeps the text mandatory because it is what the
+   * MODEL reads and what every non-supporting host shows; this is an extra channel a view can
+   * read fields out of instead of scraping a sentence. A tool with no view omits it, and every
+   * client that does not understand it ignores it.
+   */
+  readonly structuredContent?: Record<string, unknown>;
 };
 
 /**
@@ -79,6 +88,19 @@ export interface ToolSpec<TIn> {
   readonly handler: (ctx: AuthContext, input: TIn, rawInput: unknown) => Promise<ToolResult>;
   /** Credit-settlement mode. Defaults to "surface" (sync charge under the guard). */
   readonly charge?: ChargeMode;
+  /**
+   * The MCP Apps view (SEP-1865) a supporting host renders for this tool's results, named by the
+   * `ui://` resource URI that `resources/list` advertises.
+   *
+   * DECLARED UNCONDITIONALLY, which the spec's own guidance ("check client capabilities before
+   * registering UI-enabled tools") would rather we did not — and cannot be done here. This
+   * gateway is STATELESS: `handleMcpRequest` builds a fresh Server per HTTP request with
+   * `sessionIdGenerator: undefined`, so the capabilities a client advertised at `initialize`
+   * are not in scope when a later `tools/list` arrives. Declaring it anyway is safe by the
+   * extension's own backwards-compatibility rule — `_meta` a host does not understand is ignored
+   * — and it is the reason `content` may never stop carrying the whole answer.
+   */
+  readonly ui?: { readonly resourceUri: string };
   /**
    * How many PRICED UNITS this call buys, read off the parsed input — declared ONLY by a tool whose
    * signed price is per unit rather than per call (credits/costs.ts CREDIT_UNITS). Optional in the
@@ -113,6 +135,8 @@ export interface RegisteredTool {
    * see. See refundAssurance below.
    */
   readonly charge: ChargeMode;
+  /** The tool's MCP Apps view URI, or undefined when it has none. See ToolSpec.ui. */
+  readonly uiResourceUri?: string;
   run(ctx: AuthContext, rawInput: unknown): Promise<ToolResult>;
 }
 
@@ -125,6 +149,19 @@ export interface RegistryDeps {
 /** A plain text tool result. */
 export function textResult(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * A text result that ALSO carries structured data for an MCP Apps view.
+ *
+ * A separate function rather than a second parameter on `textResult`, so the 37 tools that have
+ * no view keep calling a function that cannot grow a second channel by accident.
+ */
+export function textResultWithData(
+  text: string,
+  structuredContent: Record<string, unknown>,
+): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent };
 }
 
 /** An error tool result (isError so the MCP client renders it as a failure, not data). */
@@ -345,6 +382,7 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     description: spec.description,
     inputJsonSchema,
     charge,
+    uiResourceUri: spec.ui?.resourceUri,
     async run(ctx, rawInput) {
       const parsed = spec.inputSchema.safeParse(rawInput ?? {});
       if (!parsed.success) {
@@ -414,6 +452,12 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputJsonSchema,
+      // SEP-1865 names the view through `_meta.ui.resourceUri`. SPREAD, not a `_meta: undefined`
+      // key: a tool with no view must serialize byte-identically to how it did before this
+      // existed, or every client that hashes or diffs tools/list sees 38 tools change.
+      ...(tool.uiResourceUri === undefined
+        ? {}
+        : { _meta: { ui: { resourceUri: tool.uiResourceUri } } }),
     })),
   }));
 

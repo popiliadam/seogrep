@@ -26,6 +26,7 @@ vi.mock("../credits/paid-balance.ts", async (importOriginal) => ({
 
 import type { AuthContext } from "../auth.ts";
 import { PAID_BALANCE_TOOLS, paidBalanceRequiredMessage } from "../credits/paid-balance.ts";
+import { BALANCE_CARD_URI } from "../ui/app-card.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
 
 /**
@@ -156,5 +157,49 @@ describe("the answer says whether the paid-balance gate applies to THIS account"
     paid.mockResolvedValueOnce(true);
     balance.mockResolvedValueOnce(4519);
     expect((await answer()).length).toBeLessThan(356);
+  });
+});
+
+/**
+ * THE MCP APPS PROBE MAY NOT CHANGE THE ANSWER (2026-08-27, SEP-1865).
+ *
+ * The view is an ADDITIONAL channel. `content` stays the whole answer — it is what the model
+ * reads, what every client without the extension shows, and what this project's smoke tour has
+ * been measuring tool by tool; a view that quietly became the real answer would invalidate that
+ * record without failing anything.
+ *
+ * The second pin is the one that earns its place: the view may never know something the sentence
+ * does not. Both facts are asserted AGAINST THE TEXT rather than against the fake, so a
+ * structuredContent that drifted from the prose — the two surfaces telling different stories
+ * about one account — fails here rather than in front of a customer.
+ */
+describe("the MCP Apps view rides along without changing the answer", () => {
+  it("declares the view and keeps content the whole answer", async () => {
+    expect(getCreditBalanceTool.uiResourceUri).toBe(BALANCE_CARD_URI);
+    balance.mockResolvedValueOnce(4519);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.text).toMatch(PAID_BALANCE_REQUIRED);
+    expect(result.content[0]?.text).toMatch(/balance:\s*4519\s+credits/i);
+  });
+
+  it("states nothing in the data channel that the sentence does not state", async () => {
+    balance.mockResolvedValueOnce(4519);
+    paid.mockResolvedValueOnce(true);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    const text = result.content[0]?.text ?? "";
+    // The number: read back OUT of the sentence, so a fake balance cannot satisfy both sides.
+    const quoted = Number(/balance:\s*(\d+)/i.exec(text)?.[1]);
+    expect(result.structuredContent?.balance).toBe(quoted);
+    // The gate: `paid` true must coincide with the sentence that says this account is unlocked.
+    expect(result.structuredContent?.paid).toBe(true);
+    expect(text).toMatch(/\bunlocked\b/i);
+  });
+
+  it("says the account is NOT unlocked in both channels at once", async () => {
+    paid.mockResolvedValueOnce(false);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect(result.structuredContent?.paid).toBe(false);
+    expect(result.content[0]?.text ?? "").not.toMatch(/\bunlocked\b/i);
   });
 });
