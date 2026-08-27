@@ -92,10 +92,20 @@ Kaynak dosyalar küçük kalır (proje kuralı), servis edilen şey tektir.
 | host alanı | kullanım | host vermezse |
 |---|---|---|
 | `theme` (`light`/`dark`) | vurgu tonunu seçer | `light` |
-| `styles.variables` | zemin · metin · kenarlık · gölge | **SeoGrep kâğıt paleti** |
+| `styles.variables` | `:root`'a **olduğu gibi** uygulanır (bkz. aşağıdaki not) | uygulanacak bir şey yok |
 | `styles.css.fonts` | font tanımları — CSP'yi aşmanın meşru yolu | Georgia / Courier New |
 | `containerDimensions` | esnekse `size-changed` gönderilir | sabit varsayılır |
 | `platform`, `deviceCapabilities` | dokunmatikte daha geniş hedefler | masaüstü varsayılır |
+
+**⚠️ DÜZELTME (2026-08-27, planlama sırasında bulundu).** Bu belgenin ilk hâli *"yüzey renkleri
+host'un `styles.variables`'ından gelir"* diyordu. Uygulanamaz: spec o değişkenlerin **adlarını**
+tanımlamıyor — host'a özgüler ve Claude'unkiler **henüz ölçülmedi**. Bir CSS değişken adını
+ezberden yazmak NEVER#9'dur (konvansiyon uydurma).
+
+Bunun yerine **v1 `theme` alanını kullanır** ve SeoGrep'in kendi **iki paletinden** birini seçer —
+açık ve koyu. Asıl hedef ("koyu temada göz yakmasın, her yüzeyde doğal dursun") bununla sağlanır ve
+hiçbir isim uydurulmaz. Host'un gönderdiği değişkenler yine de `:root`'a **olduğu gibi** yazılır,
+böylece adları ÖLÇÜLDÜKTEN sonra bir sonraki dilim onlara referans verebilir.
 
 **Kimlik host'tan gelmez.** Vurgu rengi SeoGrep'in: açık temada `#b45309`, koyu temada markanın
 kendi `--color-accent-dark` (`#d9a353`) değeri. **Yeni renk uydurulmaz** — ikisi de
