@@ -241,3 +241,33 @@
     animation: none !important;
   }
 }
+
+/* Scroll affordance for a horizontally scrollable strip (app nav on a narrow viewport).
+   L-07: the strip scrolled correctly at 375px but gave no sign it could — iOS hides overlay
+   scrollbars, so the only cue that more tabs existed was already knowing.
+
+   PURE CSS, AND SELF-HIDING. Four layered backgrounds: two shadows pinned to the BOX
+   (background-attachment: scroll) and two covers pinned to the CONTENT (local). At the far left
+   the left cover sits over the left shadow and hides it; scroll right and the content — and its
+   cover — move away, revealing the shadow. So the hint appears only when there is something in
+   that direction, and a strip that fits shows nothing at all. No JS, no resize observer, no
+   browser-support cliff.
+
+   IN @layer components FOR THE REASON GIVEN AT THE TOP OF THIS FILE: an unlayered rule outranks
+   every Tailwind utility, so a caller could no longer override the background from the markup.
+
+   --scroll-shadow-bg is the surface the strip sits on; a caller on a different band overrides it. */
+@layer components {
+  .scroll-hint-x {
+    --scroll-shadow-bg: var(--color-card);
+    background-image:
+      linear-gradient(to right, var(--scroll-shadow-bg) 30%, transparent),
+      linear-gradient(to left, var(--scroll-shadow-bg) 30%, transparent),
+      linear-gradient(to right, rgb(28 27 24 / 0.16), transparent 14px),
+      linear-gradient(to left, rgb(28 27 24 / 0.16), transparent 14px);
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+}

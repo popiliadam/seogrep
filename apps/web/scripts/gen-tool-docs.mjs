@@ -306,8 +306,106 @@ export function substituteProseTokens(text, constants) {
   return out;
 }
 
-/** Pages allowed in tools-reference/meta.json that are not tools (none today; kept for future). */
-export const NON_TOOL_ALLOWLIST = [];
+/**
+ * The SHORT cost label for one row of the hub table. The per-unit tools cannot be summarised as a
+ * single number — `serp_snapshot` at "5 + 8 / keyword" costs 13 to 85 credits — so the formula is
+ * printed rather than a number that is wrong at every count. Derived from the same TOOL_COSTS /
+ * CREDIT_UNITS pair renderCostLine reads, so a hub row and a tool page can never disagree.
+ */
+export function renderIndexCost(cost, unitRule) {
+  if (unitRule) {
+    const base = unitRule.base ?? 0;
+    const perUnit = `${cost} / ${unitRule.unit}`;
+    return base > 0 ? `${base} + ${perUnit}` : perUnit;
+  }
+  if (cost === 0) return "Free";
+  return cost === 1 ? "1 credit" : `${cost} credits`;
+}
+
+/**
+ * The tools-reference hub page (pure). Every cell is derived:
+ *   • the row set and its order come from ALL_TOOLS — no typed tool count anywhere on the page;
+ *   • the cost column comes from TOOL_COSTS / CREDIT_UNITS;
+ *   • the "Paid balance" column comes from requiresPaidBalance(), the SAME predicate the credit
+ *     guard calls at runtime (apps/mcp/src/credits/paid-balance.ts). This is the column
+ *     billing-and-credits.mdx promises its reader, and deriving it is what makes that promise true
+ *     rather than a claim maintained by hand;
+ *   • the one-line summary is the tool's own description with its cost sentence stripped, the same
+ *     text that becomes each page's meta description.
+ *
+ * Free and paid tools are split because that is the first question a reader arrives with, and the
+ * split is computed from the cost, not from a curated list.
+ */
+export function renderIndexPage(allTools, toolCosts, creditUnits, needsPaidBalance) {
+  const rows = allTools.map((tool) => {
+    const cost = toolCosts[tool.name];
+    return {
+      name: tool.name,
+      slug: deriveSlug(tool.name),
+      cost,
+      label: renderIndexCost(cost, creditUnits[tool.name]),
+      paid: needsPaidBalance(tool.name),
+      summary: truncateAtWord(stripCostSentences(tool.description), INDEX_SUMMARY_MAX),
+    };
+  });
+  const free = rows.filter((row) => row.cost === 0);
+  const charged = rows.filter((row) => row.cost !== 0);
+
+  const table = (list, withPaidColumn) => {
+    const header = withPaidColumn
+      ? ["| Tool | Cost | Paid balance | What it does |", "| --- | --- | --- | --- |"]
+      : ["| Tool | Cost | What it does |", "| --- | --- | --- |"];
+    const body = list.map((row) => {
+      const link = `[\`${row.name}\`](/docs/tools-reference/${row.slug})`;
+      const cells = withPaidColumn
+        ? [link, row.label, row.paid ? "Required" : "—", mdxEscapeInline(row.summary)]
+        : [link, row.label, mdxEscapeInline(row.summary)];
+      return `| ${cells.join(" | ")} |`;
+    });
+    return [...header, ...body].join("\n");
+  };
+
+  const frontmatter = [
+    "---",
+    "title: Tools Reference",
+    `description: ${yamlString(
+      "Every SeoGrep MCP tool, what it costs in credits, and whether it needs a paid balance.",
+    )}`,
+    "---",
+  ].join("\n");
+
+  return [
+    frontmatter,
+    "One page per tool, generated from the same code the MCP server runs — so the credit cost " +
+      "and the paid-balance rule below are the ones the guard actually enforces, not a copy of " +
+      "them.",
+    "## Free tools\n\nThese spend no credits. Use them to set up, connect, and check state.\n\n" +
+      table(free, false),
+    "## Tools that spend credits\n\nCredits are reserved before the call and settled after it; a " +
+      "call that fails without delivering a result is refunded. **Paid balance: Required** marks a " +
+      "tool that a trial account cannot reach at any price — buy any credit pack and it opens.\n\n" +
+      table(charged, true),
+    "See [Billing and credits](/docs/billing-and-credits) for how credits are reserved, settled " +
+      "and refunded, and [Getting started](/docs/getting-started) to connect a client.",
+  ].join("\n\n") + "\n";
+}
+
+/** Row summaries are one table cell, so they are cut shorter than a page meta description. */
+export const INDEX_SUMMARY_MAX = 110;
+
+/**
+ * Pages allowed in tools-reference/meta.json that are not tools. `index` is the section hub — the
+ * one page here that is ABOUT the set rather than about a member of it.
+ *
+ * It exists because the section did not have one. tools-reference held 38 generated tool pages and
+ * a meta.json and no index.mdx, while all three sibling sections (core-concepts, getting-started,
+ * recipes) had one — so `/docs/tools-reference` was a 404, and billing-and-credits.mdx linked
+ * straight at it while telling the reader "that is the list to trust" for which tools need a paid
+ * balance (M-07, audit 2026-08-26). The hub is GENERATED rather than hand-written for the reason
+ * this whole file exists: a hand-written index would carry a typed tool count and typed credit
+ * numbers, which is exactly the drift the 15/16-pages finding closed.
+ */
+export const NON_TOOL_ALLOWLIST = ["index"];
 
 /**
  * Verify the tools-reference meta.json `pages` match ALL_TOOLS by name AND order (the tool-surface
@@ -3321,16 +3419,22 @@ async function loadRegistry() {
   const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
   const windowsUrl = new URL("../../mcp/dist/gsc-data/windows.js", import.meta.url);
   const trackedUrl = new URL("../../mcp/dist/tools/tracked-keywords-store.js", import.meta.url);
+  // The SAME predicate the credit guard calls before every charged tool (credits/guard.ts). The hub
+  // page publishes its answer, so a tool moving in or out of the trial gate re-renders the docs and
+  // turns --check red — instead of a hand-kept list quietly disagreeing with the runtime.
+  const paidBalanceUrl = new URL("../../mcp/dist/credits/paid-balance.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
     const pull = await import(pullUrl);
     const windows = await import(windowsUrl);
     const tracked = await import(trackedUrl);
+    const paidBalance = await import(paidBalanceUrl);
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
       TOOL_COSTS: costs.TOOL_COSTS,
       CREDIT_UNITS: costs.CREDIT_UNITS,
+      requiresPaidBalance: paidBalance.requiresPaidBalance,
       constants: {
         maxRowLimit: pull.MAX_ROW_LIMIT,
         lagDays: windows.GSC_FRESHNESS_LAG_DAYS,
@@ -3361,7 +3465,11 @@ function pageFor(tool, cost, constants, unitRule) {
 
 /** The tools-reference meta.json content, derived from ALL_TOOLS order. */
 function toolsMetaJson(allTools) {
-  return `${JSON.stringify({ title: "Tools Reference", pages: allTools.map((t) => deriveSlug(t.name)) }, null, 2)}\n`;
+  // `index` leads, so fumadocs renders the hub as the section's landing page and the tools follow in
+  // registry order. checkToolsMetaSync filters it out via NON_TOOL_ALLOWLIST, so the tool-order pin
+  // is unchanged by its presence.
+  const pages = ["index", ...allTools.map((t) => deriveSlug(t.name))];
+  return `${JSON.stringify({ title: "Tools Reference", pages }, null, 2)}\n`;
 }
 
 /** Ensure the parent docs nav lists tools-reference (inserted after core-concepts). Idempotent. */
@@ -3377,23 +3485,27 @@ function ensureParentNav() {
 }
 
 /** Write all tool pages + tools-reference meta.json + parent nav. */
-function writeAll({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) {
+function writeAll({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants, requiresPaidBalance }) {
   for (const tool of ALL_TOOLS) {
     writeFileSync(
       new URL(`${deriveSlug(tool.name)}.mdx`, TOOLS_DIR),
       pageFor(tool, TOOL_COSTS[tool.name], constants, CREDIT_UNITS[tool.name]),
     );
   }
+  writeFileSync(
+    new URL("index.mdx", TOOLS_DIR),
+    renderIndexPage(ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, requiresPaidBalance),
+  );
   writeFileSync(new URL("meta.json", TOOLS_DIR), toolsMetaJson(ALL_TOOLS));
   const navChanged = ensureParentNav();
   console.error(
-    `gen-tool-docs: wrote ${ALL_TOOLS.length} tool pages + meta.json` +
+    `gen-tool-docs: wrote ${ALL_TOOLS.length} tool pages + index.mdx + meta.json` +
       `${navChanged ? " + added tools-reference to parent nav" : ""}.`,
   );
 }
 
 /** Run the three --check gates. Returns a list of human-readable failures (empty = in sync). */
-function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) {
+function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants, requiresPaidBalance }) {
   const errors = [];
   const expectedSlugs = ALL_TOOLS.map((t) => deriveSlug(t.name));
 
@@ -3412,9 +3524,29 @@ function collectCheckErrors({ ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, constants }) 
     }
   }
   for (const file of readdirSync(fileURLToPath(TOOLS_DIR))) {
-    if (file.endsWith(".mdx") && !expectedSlugs.includes(file.replace(/\.mdx$/, ""))) {
+    const slug = file.replace(/\.mdx$/, "");
+    if (file.endsWith(".mdx") && !expectedSlugs.includes(slug) && !NON_TOOL_ALLOWLIST.includes(slug)) {
       errors.push(`(i) unexpected page tools-reference/${file} — no matching tool in ALL_TOOLS.`);
     }
+  }
+
+  // (i-b) The section hub, byte-compared like every tool page. Without this line index.mdx would be
+  // merely PERMITTED by the allowlist rather than CHECKED — a page that stops matching the registry
+  // and never turns anything red, which is the shape of finding this section was created to close.
+  let indexActual;
+  try {
+    indexActual = readFileSync(new URL("index.mdx", TOOLS_DIR), "utf8");
+  } catch {
+    errors.push("(i) missing tools-reference/index.mdx — run `node apps/web/scripts/gen-tool-docs.mjs`.");
+  }
+  if (
+    indexActual !== undefined &&
+    indexActual !== renderIndexPage(ALL_TOOLS, TOOL_COSTS, CREDIT_UNITS, requiresPaidBalance)
+  ) {
+    errors.push(
+      "(i) tools-reference/index.mdx is out of sync — regenerate with " +
+        "`node apps/web/scripts/gen-tool-docs.mjs`.",
+    );
   }
 
   // (ii) No tool input schema may declare a reserved `confirm` field (D17).

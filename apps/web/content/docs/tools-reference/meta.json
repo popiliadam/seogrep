@@ -1,6 +1,7 @@
 {
   "title": "Tools Reference",
   "pages": [
+    "index",
     "setup-project",
     "connect-gsc",
     "list-projects",
