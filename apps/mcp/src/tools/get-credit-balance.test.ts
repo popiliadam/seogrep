@@ -209,18 +209,26 @@ describe("the MCP Apps view rides along without changing the answer", () => {
     paid.mockResolvedValueOnce(true);
     const result = await getCreditBalanceTool.run(CTX, {});
     const text = result.content[0]?.text ?? "";
-    // The number: read back OUT of the sentence, so a fake balance cannot satisfy both sides.
-    const quoted = Number(/balance:\s*(\d+)/i.exec(text)?.[1]);
-    expect(result.structuredContent?.balance).toBe(quoted);
-    // The gate: `paid` true must coincide with the sentence that says this account is unlocked.
-    expect(result.structuredContent?.paid).toBe(true);
+    // FIELD MOVED (task 5, ruling 2026-08-27): the bare {balance, paid} probe shape is gone —
+    // structuredContent now carries a zod-validated card instead, so the SAME two facts live at
+    // card.value / card.badge. The pin's INTENT is unchanged: read the number back OUT of the
+    // sentence, so a fabricated card value cannot satisfy both sides independently.
+    const card = result.structuredContent?.card as { value?: string; badge?: string };
+    const quoted = /balance:\s*(\d+)/i.exec(text)?.[1];
+    expect(card.value).toBe(quoted);
+    // The gate: the "Paid" badge must coincide with the sentence that says this account is
+    // unlocked — two channels, one claim, checked against each other rather than against a mock.
+    expect(card.badge).toBe("Paid");
     expect(text).toMatch(/\bunlocked\b/i);
   });
 
   it("says the account is NOT unlocked in both channels at once", async () => {
     paid.mockResolvedValueOnce(false);
     const result = await getCreditBalanceTool.run(CTX, {});
-    expect(result.structuredContent?.paid).toBe(false);
+    // FIELD MOVED (task 5, ruling 2026-08-27): see comment above — `paid` now lives as the
+    // card's badge, not a bare structuredContent field.
+    const card = result.structuredContent?.card as { badge?: string };
+    expect(card.badge).not.toBe("Paid");
     expect(result.content[0]?.text ?? "").not.toMatch(/\bunlocked\b/i);
   });
 });
