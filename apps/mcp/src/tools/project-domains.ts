@@ -35,6 +35,38 @@ export async function listOwnProjectDomains(userId: string): Promise<ReadonlyMap
 }
 
 /**
+ * The same map, for ONE project id — what a single-job surface needs.
+ *
+ * A NARROWER READ, not a convenience wrapper. `get_job_status` answers about one job, so pulling
+ * the tenant's whole project table to label it would grow with an account that has hundreds of
+ * projects in order to print one domain. The RESULT is still a map, so `projectLabel` below stays
+ * the one place an id becomes a sentence and the two surfaces cannot word it differently.
+ *
+ * An id this tenant does not have comes back as an EMPTY map, not an error: `projectLabel` then
+ * prints the id, which is true. A read FAILURE still throws, for the reason the wide read gives.
+ */
+export type LookupProjectDomainFn = (
+  userId: string,
+  projectId: string,
+) => Promise<ReadonlyMap<string, string>>;
+
+export async function lookupOwnProjectDomain(
+  userId: string,
+  projectId: string,
+): Promise<ReadonlyMap<string, string>> {
+  const { data, error } = await forUser(getServiceClient(), userId)
+    .selectOwn("projects", "id, domain")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`project domain lookup failed: ${error.message}`);
+  }
+  if (!data) return new Map();
+  const row = data as unknown as { id: string; domain: string };
+  return new Map([[row.id, row.domain]]);
+}
+
+/**
  * What a surface prints for one stored `project_id`. THREE answers, and the middle one is why this
  * is a function rather than a `?? id`:
  *   • a known project  -> its domain

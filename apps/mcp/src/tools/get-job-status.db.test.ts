@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { getServiceClient, type Json, type JobStatus } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
 import { getJobStatusTool } from "./get-job-status.ts";
+import { lookupOwnProjectDomain } from "./project-domains.ts";
 
 /**
  * DB-integration specs for get_job_status against a LOCAL Supabase stack. Proves the
@@ -111,5 +112,56 @@ describe("get_job_status against the local stack", () => {
     const unknown = await getJobStatusTool.run(a, { job_id: randomUUID() });
     expect(unknown.isError).toBe(true);
     expect(unknown.content[0]?.text).toMatch(/no job found/i);
+  });
+});
+
+/**
+ * F-3 — the project label, against real rows. The fast lane proves the WORDING from a map handed
+ * to it; only Postgres proves the map is the right one and that the read is tenant-scoped.
+ */
+describe("get_job_status names the project, against the local stack", () => {
+  async function makeProject(userId: string, domain: string): Promise<string> {
+    const { data, error } = await service
+      .from("projects")
+      .insert({ user_id: userId, domain })
+      .select("id")
+      .single();
+    if (error || !data) throw new Error(`projects insert failed: ${error?.message ?? "no row"}`);
+    return data.id;
+  }
+
+  it("names the project's domain on the job's own status line", async () => {
+    const ctx = await makeCtx();
+    const projectId = await makeProject(ctx.userId, "noraninsaat.com");
+    const jobId = await makeJob(ctx.userId, { status: "succeeded" });
+    const { error } = await service.from("jobs").update({ project_id: projectId }).eq("id", jobId);
+    if (error) throw new Error(`jobs update failed: ${error.message}`);
+
+    const text = (await getJobStatusTool.run(ctx, { job_id: jobId })).content[0]?.text ?? "";
+
+    expect(text).toContain("project: noraninsaat.com");
+    expect(text).not.toContain(projectId);
+  });
+
+  it("does NOT name another tenant's project, even for the same project row", async () => {
+    // The label read is tenant-scoped like every other read here. Driven head-on, because the
+    // tool's own shape cannot produce this pairing: the job read would refuse first.
+    const owner = await makeCtx();
+    const stranger = await makeCtx();
+    const projectId = await makeProject(owner.userId, "noraninsaat.com");
+
+    expect([...(await lookupOwnProjectDomain(owner.userId, projectId)).values()]).toEqual([
+      "noraninsaat.com",
+    ]);
+    expect((await lookupOwnProjectDomain(stranger.userId, projectId)).size).toBe(0);
+  });
+
+  it("still answers for a job with no project at all", async () => {
+    const ctx = await makeCtx();
+    const jobId = await makeJob(ctx.userId, { status: "succeeded" });
+
+    const text = (await getJobStatusTool.run(ctx, { job_id: jobId })).content[0]?.text ?? "";
+
+    expect(text).toContain("project: no project scope");
   });
 });
