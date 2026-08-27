@@ -1724,3 +1724,82 @@ Ders 6.3'ün (tenant filtresiz doğrulama sorgusu) handoff'a sızmış hâli. Ü
 | **rung 4b** (property'siz bağlantı) | canlı fikstür **yok** (E-4) |
 | stale crawl / stale pull | en eski veri **18 gün**, pencere **30 gün** |
 | panelin kendi DOM'u | tarayıcı oturumu gerek — D-1 ile **aynı blokaj**, operatörde |
+
+---
+
+## §D5b — DÜZELTME + MERGE + DEPLOY + CANLI DOĞRULAMA (2026-08-27 07:0x–07:3xZ)
+
+### Mutasyon kanıtları — beşi de kırmızıya döndü
+
+| # | mutasyon | sonuç |
+|---|---|---|
+| M1 | `choose_project` listesinden `displayDomain` düşür | **1 kırmızı** — *yalnız* liste pini |
+| M2 | `formatNextStep` başlığından `displayDomain` düşür | **2 kırmızı** — *yalnız* başlık pinleri |
+| M3 | arşiv cümlesini 2026-08-25 öncesi hâline döndür | **1 kırmızı** |
+| M4 | panelden `gscPropertyMissing`'i tamamen kaldır | **6 kırmızı** |
+| M5 | `connected &&` korumasını düşür | **3 kırmızı** |
+
+M1 ve M2'nin **birbirinden bağımsız** kırmızı vermesi, iki renderer'ın gerçekten ayrı eksen
+olduğunun kanıtı — D-6'da tam olarak bu ayrım sorulmamıştı.
+
+### Kapılar — NE ölçtükleriyle
+
+| kapı | sonuç | NE ÖLÇMEZ |
+|---|---|---|
+| `TURBO_FORCE=1 bash guardrails/verify.sh` | **PASS** · mcp **3562** (3557→, +5) · web **1979** (1975→, +4) · core 339 · db 12 · **38 doküman senkron** · `dist` taze (133/133) | secret taraması YOK · DB şeritleri YOK · canlı uç YOK |
+| `bash guardrails/verify-db.sh` | **PASS** · db 165 · mcp 493 · web 48 (**07:12Z** — gece yarısı penceresi dışında) | canlı uç |
+| `make goals` | **16/16 PASS · 1 SKIP** | SKIP adıyla: **`dfs-budget-guard`** (env-koşullu). ⚠️ **`repo-clean` yalnız `verify.sh`i tekrar koşar — adının aksine çalışma ağacını ÖLÇMEZ** |
+| CI (PR #188) | **6/6** — gitleaks · licenses · lighthouse · static-guards · verify · verify-db | — |
+
+### Merge + deploy
+
+| adım | kanıt |
+|---|---|
+| PR [#188](https://github.com/popiliadam/seogrep/pull/188) merge | `0946006` — `git cat-file` **iki ebeveyn** = merge-commit, squash değil |
+| Deploy MCP | ✅ `success` · `/status` `ok:true errorsSinceBoot:0 pendingJobs:0 schema:ready` (ilk 54 sn `unknown`, taze boot'ta beklenen) |
+| dal | `fix/whats-next-dalga3` **silindi** |
+
+### Canlı doğrulama — düzeltmelerin KENDİ çıktısı okundu
+
+| madde | canlı çağrı | sonuç |
+|---|---|---|
+| **E-1** liste | `whats_next` *(parametresiz)* | son satır artık `smoke-dalga2-örnek.com` — **A-label gitti** |
+| **E-1** başlık | `whats_next { e5095cf9… }` | `Next step for smoke-dalga2-örnek.com: run setup_project (free).` |
+| **E-2** arşiv | `whats_next { 4f3eb00a… }` | `Restore it with setup_project for the same domain — which works whether or not the project has a Search Console property — or with track_gsc_property …` |
+| **E-3** panel | — | **ölçülmedi**: tarayıcı oturumu gerek, D-1 ile **aynı blokaj**, operatörde |
+
+Cevapların **tamamı** okundu; kalan hiçbir cümlede punycode ya da çalışmayan tamir yolu yok.
+
+### Para muhasebesi — dalga 3'ün tamamı
+
+| ne | başlangıç | şimdi | fark |
+|---|---|---|---|
+| kredi bakiyesi | 4519 | **4519** | **0** |
+| `credit_ledger` (kiracı) | 778 | **778** | **0 satır** |
+| `dfs_spend_today_usd()` | $0,00 | **$0,00** | **$0,00** |
+| `projects` (kiracı) | 19 (18 aktif + 1 arşiv) | **19 (18 + 1)** | **0** — arşiv probu yerinde |
+
+## §D5c — `whats_next` KAPANIŞ TABLOSU
+
+| # | madde | durum | canlıda mı |
+|---|---|---|---|
+| E-1 | IDN projeyi punycode basıyordu (iki renderer) | ✅ düzeltildi | ✅ **iki tanıkla** ölçüldü |
+| E-2 | arşiv mesajı çalışamayan tek yol veriyordu (13 tool'un sabiti) | ✅ düzeltildi | ✅ ölçüldü |
+| **E-3a** | panel rung 4b'yi beslemiyordu (property'siz bağlantı → 5 kredilik ölü çekim) | ✅ düzeltildi | **canlıda, ÖLÇÜLMEDİ** — tarayıcı oturumu |
+| **E-3b** | panel `domainUnreachable`'ı beslemiyor (ölü alan adı → **20 kredilik** crawl önerisi) | ⛔ **AÇIK** | **operatör/tasarım kararı** — kart başına 1 DNS lookup (18 proje = 18 lookup, 2 sn tavan) |
+| E-4 | handoff §4/2'nin premisi yanlıştı; rung 4b'nin canlı fikstürü yok | 📋 kayda geçti | — |
+| E-5 | handoff "20 proje" diyor, kiracı filtresiyle 19 | 📋 kayda geçti | — |
+
+### Bu turun ürettiği YENİ açık maddeler
+
+| # | madde | sahip |
+|---|---|---|
+| **E-3b** | panel ölü alan adı için 20 kredilik crawl öneriyor | **operatör** (DNS maliyeti kararı) |
+| **E-6** | `whats_next` dışında **7 dosyada** daha depolanan `domain` `displayDomain`'siz basılıyor (liste §D5'te E-1 altında) | kod — her tool kendi dalgasında |
+| **E-7** | `goals/repo-clean.md`'nin predicate'i `verify.sh` — **adının söylediği şeyi ölçmüyor** (çalışma ağacı kirliyken PASS verdi, ölçüldü) | kod/operatör |
+| **E-8** | `docs/audits/2026-08-26-full-repository-and-tool-audit.md` çalışma ağacında **bu oturuma ait olmayan** bir düzeltme taşıyor (satır 450: `M-08` → `M-07`; düzeltme **doğru**, 404 bulgusu gerçekten M-07). Tek-yazar kuralı gereği **commit EDİLMEDİ** | **operatör** — paralel oturum mu? |
+
+### Gezilen yüzey
+
+**6 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs` ·
+`setup_project` · **`whats_next`**. Sıradaki: **`get_job_status`** (operatörün "okey"i bekleniyor).
