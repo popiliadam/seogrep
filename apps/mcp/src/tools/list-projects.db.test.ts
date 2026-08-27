@@ -110,6 +110,36 @@ async function connectGsc(
   }
 }
 
+/**
+ * Seed the state migration 0021 makes possible and this tool used to misread: a
+ * `gsc_connections` row whose `account_id` is NULL while its `gsc_property` survives.
+ *
+ * WRITTEN THE WAY PRODUCTION WRITES IT, not by inserting a null: the row is seeded through the
+ * normal `connectGsc` path and the account is then DELETED, so `on delete set null` nulls the
+ * column exactly as it does when a customer disconnects their Google account. A hand-inserted
+ * null would be this spec asserting against its own idea of the state rather than against the
+ * one the database actually produces.
+ */
+async function orphanConnection(userId: string, projectId: string, property: string): Promise<void> {
+  await connectGsc(userId, projectId, property);
+  const { data, error } = await service
+    .from("gsc_connections")
+    .select("account_id")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .single();
+  if (error || !data?.account_id) {
+    throw new Error(`orphanConnection: could not read the seeded account: ${error?.message}`);
+  }
+  const { error: deleteError } = await service
+    .from("gsc_accounts")
+    .delete()
+    .eq("id", data.account_id);
+  if (deleteError) {
+    throw new Error(`orphanConnection: account delete failed: ${deleteError.message}`);
+  }
+}
+
 /** Record a finished background job for one project — what `last job` reads. */
 async function seedJob(userId: string, projectId: string, tool: string): Promise<void> {
   const { error } = await service
@@ -251,6 +281,49 @@ describe("what each tracked line reports, against real rows", () => {
         .split("\n")
         .find((row) => row.includes("half.com")) ?? "";
     expect(line).toMatch(/connected, no property selected/i);
+  });
+
+  /**
+   * DEFECT #52 AT THE BUILDER, against real rows — the shape measured live on 2026-08-27.
+   *
+   * Four of eighteen live projects printed a Search Console property, so the list read as
+   * connected for all four; `whats_next` routed those same projects to `connect_gsc` the same
+   * day and the database agreed with whats_next. The row existed; the account behind it did not.
+   * This tool was the last surface deciding on the ROW rather than on `account_id`, and the
+   * reassuring answer was the wrong one — a customer reading the list would have paid for a pull
+   * that cannot succeed.
+   */
+  it("reports a project whose Google account was deleted as NOT connected", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "orphan.com" });
+    await orphanConnection(ctx.userId, await projectIdFor(ctx.userId, "orphan.com"), "sc-domain:orphan.com");
+
+    const line =
+      ((await listProjectsTool.run(ctx, {})).content[0]?.text ?? "")
+        .split("\n")
+        .find((row) => row.includes("orphan.com")) ?? "";
+    expect(line).toMatch(/not connected/i);
+    // …and the mapping is NOT reported as lost: it survives and reconnecting restores it.
+    expect(line).toContain("sc-domain:orphan.com");
+    expect(line).toMatch(/connect_gsc/);
+  });
+
+  /**
+   * The other side of the axis (signed lesson 14): an identical row WITH its account intact must
+   * still read as connected. Without it, a builder that called every row unconnected would pass
+   * the case above and tell a whole account its Search Console had gone.
+   */
+  it("still reports a project whose account is intact as connected", async () => {
+    const ctx = await makeCtx();
+    await setupProjectTool.run(ctx, { domain: "intact.com" });
+    await connectGsc(ctx.userId, await projectIdFor(ctx.userId, "intact.com"), "sc-domain:intact.com");
+
+    const line =
+      ((await listProjectsTool.run(ctx, {})).content[0]?.text ?? "")
+        .split("\n")
+        .find((row) => row.includes("intact.com")) ?? "";
+    expect(line).toContain("sc-domain:intact.com");
+    expect(line).not.toMatch(/not connected/i);
   });
 
   it("flags a dead credential on the project that holds it", async () => {
