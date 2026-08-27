@@ -46,4 +46,11 @@ node apps/web/scripts/gen-tool-docs.mjs --check
 # yüzeyin kendi kontrolünü içerir — ve bu yüzeyin kontrolü node ister).
 node scripts/testing/check-deploy-paths.mjs --self-test
 node scripts/testing/check-deploy-paths.mjs
+# NUL bytes in tracked text sources. A single NUL makes a source `data` to file(1) and binary to
+# Git, which removes it from review diffs, from text search, and from every scanner that skips
+# binaries — INCLUDING gitleaks, which is a required check. So this is not cosmetics: it is the
+# hole through which a secret would pass the secret gate. Found three such files on 2026-08-27,
+# two of them production modules that no audit had seen (L-09 and its two siblings).
+node scripts/testing/check-text-sources.mjs --self-test
+node scripts/testing/check-text-sources.mjs
 echo "VERIFY: PASS"
