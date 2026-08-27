@@ -1,5 +1,6 @@
 import { isReserveCommitFailed, type ReserveCommitFailedError } from "../credits/guard.ts";
 import { isFreeVendorSpendLimit } from "../credits/free-vendor-calls.ts";
+import { isInsufficientCredits } from "../credits/insufficient-credits.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
 import { isGscReauthRequired } from "../gsc-data/reauth-error.ts";
@@ -55,6 +56,7 @@ export function isCustomerFacingFailure(error: unknown): boolean {
     isGscReauthRequired(error) ||
     isDfsBudgetExhausted(error) ||
     isPaidBalanceRequired(error) ||
+    isInsufficientCredits(error) ||
     isFreeVendorSpendLimit(error)
   );
 }

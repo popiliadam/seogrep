@@ -91,6 +91,40 @@ afterAll(async () => {
   await stopBoss();
 });
 
+/**
+ * WHAT A FAILED JOB MAY SAY, since F-1 (smoke tour wave 4).
+ *
+ * `jobs.error` is what get_job_status prints to the CUSTOMER, so an unmarked cause no longer
+ * lands there: the row carries a stable sentence plus a reference, and the verbatim cause goes to
+ * the server log under that same reference. These helpers keep the specs below asserting the same
+ * two things they always did — the fail-mark is honest, and the cause is not lost — with the cause
+ * checked where it now lives.
+ */
+function expectRedacted(stored: string | null | undefined, cause: string): void {
+  expect(stored ?? "").toMatch(/problem on our side/i);
+  expect(stored ?? "").toMatch(/reference [0-9a-f]{8}/);
+  // The whole point: our internals are NOT in the row a customer reads.
+  expect(stored ?? "").not.toContain(cause);
+}
+
+/** The verbatim cause reached the operator log, under the reference the customer was given. */
+function expectLogged(logs: readonly string[], stored: string | null | undefined, cause: string): void {
+  const reference = /reference ([0-9a-f]{8})/.exec(stored ?? "")?.[1];
+  expect(reference, "the stored sentence must name a reference").toBeDefined();
+  const line = logs.find((entry) => entry.includes(cause));
+  expect(line, `no log line carried the cause ${JSON.stringify(cause)}`).toBeDefined();
+  expect(line).toContain(reference as string);
+}
+
+/** Capture console.error for one assertion block. */
+function captureErrors(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  });
+  return { lines, restore: () => spy.mockRestore() };
+}
+
 describe("jobs bridge + worker against the local stack", () => {
   it("enqueueJob inserts a queued jobs row and returns its id", async () => {
     const userId = await makeUserId();
@@ -147,11 +181,19 @@ describe("jobs bridge + worker against the local stack", () => {
       throw new Error("quick wins handler exploded");
     });
 
-    await executeJob({ jobId, userId, tool: "find_quick_wins", payload: {} });
+    const captured = captureErrors();
+    try {
+      await executeJob({ jobId, userId, tool: "find_quick_wins", payload: {} });
+    } finally {
+      captured.restore();
+    }
 
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    expect(job?.error).toContain("quick wins handler exploded");
+    // An unmarked handler throw is redacted; the cause moved to the log (F-1). The MONEY half of
+    // this spec — reserve then release, the refund — is unchanged and asserted below.
+    expectRedacted(job?.error, "quick wins handler exploded");
+    expectLogged(captured.lines, job?.error, "quick wins handler exploded");
     expect(job?.finished_at).not.toBeNull();
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve", "spend_release"]);
   });
@@ -177,9 +219,11 @@ describe("jobs bridge + worker against the local stack", () => {
 
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    // Honest wording (not a plain failure) + the underlying cause preserved for forensics.
+    // Honest wording (not a plain failure). The SENTENCE is written for the customer and stays;
+    // the raw cause it used to carry in parentheses is now behind the reference (F-1).
     expect(job?.error).toContain("charge settled but result did not persist");
-    expect(job?.error).toContain("jobs update lost the row");
+    expect(job?.error).toMatch(/reference [0-9a-f]{8}/);
+    expect(job?.error).not.toContain("jobs update lost the row");
     expect(job?.finished_at).not.toBeNull();
     // Money direction: the commit STOOD — no release on a committed charge (guard.ts's rule).
     // The ledger shows the spend_commit and NO spend_release; the charge is not refunded.
@@ -219,7 +263,9 @@ describe("jobs bridge + worker against the local stack", () => {
     // automatic refund here is a promise the ledger-keyed sweep will keep.
     expect(job?.error).toContain("credit charge could not be settled");
     expect(job?.error).toContain("the reserve is still open and reconciliation refunds it");
-    expect(job?.error).toContain("connection reset by peer"); // cause kept for forensics
+    // The per-disposition money sentence is the customer's and is unchanged; the driver's own
+    // words are no longer stapled to it (F-1).
+    expect(job?.error).not.toContain("connection reset by peer");
     // The open-reserve shape: a debit with no settling row on either side.
     expect(await ledgerKinds(userId)).toEqual(["grant", "spend_reserve"]);
   });
@@ -279,7 +325,11 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(ran).toBe(false);
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    expect(job?.error).toMatch(/insufficient balance/);
+    // NOT redacted, and this is the case that proved the rule needed the exception (F-5): a
+    // customer who is out of credits must be told so, with the figures, not handed a reference.
+    expect(job?.error).toMatch(/do not have enough credits/i);
+    expect(job?.error).toMatch(/credit\(s\).*balance is/i);
+    expect(job?.error).not.toMatch(/problem on our side/i);
     expect(await ledgerKinds(userId)).toEqual(["grant"]);
   });
 
@@ -351,7 +401,7 @@ describe("jobs bridge + worker against the local stack", () => {
     expect(ran).toBe(false);
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    expect(job?.error).toContain("jobs read timed out");
+    expectRedacted(job?.error, "jobs read timed out");
     expect(await ledgerKinds(userId)).toEqual(["grant"]); // failed before any reserve
   });
 
@@ -363,7 +413,9 @@ describe("jobs bridge + worker against the local stack", () => {
 
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    expect(job?.error).toMatch(/no handler registered/);
+    // An unroutable tool name is OUR deployment gap, so the row is redacted (F-1). The MONEY
+    // half — that it failed BEFORE any reserve — is what this spec is really for, below.
+    expectRedacted(job?.error, "no handler registered");
     expect(await ledgerKinds(userId)).toEqual([]); // failed BEFORE any reserve
   });
 });
@@ -394,7 +446,10 @@ describe("executeJob tenant isolation (fix wave 1, Important 1)", () => {
     expect(ran).toBe(false); // handler must not run under the wrong identity
     const job = await getJob(jobId);
     expect(job?.status).toBe("failed");
-    expect(job?.error).toMatch(/owner mismatch/i);
+    // Redacted (F-1): naming our identity check to the wrong tenant tells them something about
+    // our internals AND about a job that is not theirs. The console.error beside it keeps the
+    // operator's copy. The tenant-isolation half of this spec is unchanged.
+    expectRedacted(job?.error, "owner mismatch");
     expect(job?.started_at).toBeNull(); // never even reached markJobRunning
     // No credit reserve was ever opened — neither identity's ledger moved
     // past its initial grant (in particular, otherUserId's funded balance

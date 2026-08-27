@@ -263,7 +263,15 @@ export interface CrawlHandlerDeps {
  */
 export async function resolveProjectOrigin(userId: string, job: JobRow): Promise<string> {
   if (!job.project_id) {
-    throw new Error("crawl_site: job has no project to crawl");
+    // MARKED (F-1). This is not an internal invariant: migration 0017 nulls `project_id` when the
+    // project row goes, so the way a queued job reaches here is that the CUSTOMER removed the
+    // project between enqueue and pickup. Redacting it would answer "something went wrong on our
+    // side" to a consequence of their own action, and hide that the crawl they paid for has no
+    // subject any more.
+    throw new PreconditionNotMetError(
+      "The project this crawl was queued for is no longer tracked, so there is nothing to crawl. " +
+        "Run setup_project to track it again, then crawl_site.",
+    );
   }
   // The SHARED by-id resolver, not a read of this handler's own: a per-caller project read is a
   // per-caller place for the archive check below to be forgotten — which is precisely how this
