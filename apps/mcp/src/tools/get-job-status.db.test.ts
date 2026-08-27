@@ -47,10 +47,13 @@ async function makeJob(
     started_at?: string | null;
     finished_at?: string | null;
   } = {},
+  // INSERT-only, deliberately separate from `patch`: jobs.Update lists no project_id (db.ts), so
+  // a job's project is set when the row is created or not at all.
+  projectId?: string,
 ): Promise<string> {
   const inserted = await service
     .from("jobs")
-    .insert({ user_id: userId, tool: "crawl_site", status: "queued" })
+    .insert({ user_id: userId, tool: "crawl_site", status: "queued", project_id: projectId ?? null })
     .select("id")
     .single();
   if (inserted.error || !inserted.data) {
@@ -133,9 +136,7 @@ describe("get_job_status names the project, against the local stack", () => {
   it("names the project's domain on the job's own status line", async () => {
     const ctx = await makeCtx();
     const projectId = await makeProject(ctx.userId, "noraninsaat.com");
-    const jobId = await makeJob(ctx.userId, { status: "succeeded" });
-    const { error } = await service.from("jobs").update({ project_id: projectId }).eq("id", jobId);
-    if (error) throw new Error(`jobs update failed: ${error.message}`);
+    const jobId = await makeJob(ctx.userId, { status: "succeeded" }, projectId);
 
     const text = (await getJobStatusTool.run(ctx, { job_id: jobId })).content[0]?.text ?? "";
 

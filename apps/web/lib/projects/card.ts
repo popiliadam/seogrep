@@ -1,4 +1,9 @@
-import { decideProjectNextStep, summarizeCrawlResult, type NextStep } from "@pseo/core";
+import {
+  decideProjectNextStep,
+  summarizeCrawlResult,
+  type DomainReachability,
+  type NextStep,
+} from "@pseo/core";
 import { buildAuditLines, type AuditLine, type AuditRunRow } from "./audits";
 import {
   buildCrawlHistory,
@@ -82,6 +87,25 @@ export interface ProjectCardInput {
    * These rows carry only the report SUB-FIELDS the lines need (see `insights.ts`).
    */
   readonly discoveryRuns?: readonly DiscoveryRunRow[];
+  /**
+   * Has ANY analysis ever run for this project (E-9)? Measured across all THREE run tables, so it
+   * is passed in rather than derived from `auditRuns` / `discoveryRuns` above: those two cover six
+   * tools, and `audit_content` writes to a third table this card does not read. Deriving it here
+   * would tell a project whose only analysis was a content audit that nothing had been analysed.
+   *
+   * Optional — an absent value routes exactly as the ladder did before the signal existed.
+   */
+  readonly hasAnalysis?: boolean;
+  /**
+   * What a DNS lookup of this project's domain found (E-3b), or absent when nobody looked.
+   *
+   * WHY THE CARD NEEDS IT (measured 2026-08-27). Core's rung 0 — "the domain does not resolve" —
+   * has existed since 2026-08-25 and the MCP router feeds it; this card never did, so a project
+   * whose domain returns "no such name" was told to run crawl_site: 20 credits against a host
+   * that cannot be fetched. That is the exact wrong rung 0 exists to remove, still live on the
+   * surface a human looks at — the same shape as E-3a one signal over.
+   */
+  readonly reachability?: DomainReachability;
   /**
    * The project's recent `domain_lookup_runs` rows (migration 0027). Optional for the same reason
    * `discoveryRuns` is: a strictly additive read, and a caller that does not ask for it gets a card
@@ -216,6 +240,8 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
     auditRuns,
     discoveryRuns,
     lookupRuns,
+    hasAnalysis,
+    reachability,
   } = input;
   return {
     projectId: project.id,
@@ -236,7 +262,10 @@ export function buildProjectCard(input: ProjectCardInput, now: Date): ProjectCar
       : { kind: "not_connected" },
     gscExpired: isGscConnected(connection) && tokenStatus === "invalid",
     nextStep: decideProjectNextStep(
-      deriveProjectSignals({ crawl, pull, connection, tokenStatus }, now),
+      deriveProjectSignals(
+        { crawl, pull, connection, tokenStatus, hasAnalysis, reachability },
+        now,
+      ),
     ),
   };
 }

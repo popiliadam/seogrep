@@ -1,3 +1,4 @@
+import { checkDomainReachable, type DomainReachability } from "@pseo/core";
 import { AUDIT_TOOLS, type AuditRunRow } from "../../../lib/projects/audits";
 import {
   buildProjectCards,
@@ -404,6 +405,79 @@ async function latestDomainLookupRuns(
   return runs.filter((run): run is DomainLookupRunRow => run !== null);
 }
 
+/**
+ * Has ANY analysis ever run for this project? (E-9.)
+ *
+ * ALL THREE RUN TABLES, and that is the point rather than thoroughness for its own sake: this
+ * page's own lines cover six tools across `audit_runs` (0024) and `gsc_discovery_runs` (0025),
+ * and `audit_content` writes to `audit_content_runs` (0026). Deriving the answer from the rows
+ * the card already holds would tell a project whose only analysis was a content audit that
+ * nothing had been analysed — and route it to buy one.
+ *
+ * `select("id").limit(1)`, never a count: the ladder asks whether the number is zero, and a
+ * project with two hundred audits must not pay to have them counted. Caller's authenticated
+ * client with an explicit user_id filter beside RLS, like every other read in this file
+ * (constitution NEVER #4). It THROWS rather than degrading to false — `false` is the value that
+ * ROUTES, so a swallowed error would re-recommend analysis the customer already bought.
+ *
+ * The MCP half is `readHasAnalysis` in apps/mcp/src/tools/whats-next.ts, over the same three
+ * tables, so the panel and the assistant answer the all-set rung the same way.
+ */
+async function hasAnyAnalysisRun(
+  supabase: Supabase,
+  userId: string,
+  projectId: string,
+): Promise<boolean> {
+  // THE THREE TABLE NAMES ARE LITERALS AT THREE `.from(` CALLS, not a loop over an array, and that
+  // is a guardrail rather than a style: read-coverage.test.ts pins each read to the table it names
+  // INSIDE its own body, so a probe that quietly dropped one would otherwise stay green. Written
+  // this way, deleting any line reddens that census by name. apps/mcp's readHasAnalysis is spelled
+  // the same for the same reason.
+  const exists = (rows: { data: unknown[] | null; error: { message: string } | null }, table: string) => {
+    if (rows.error) throw new Error(`${table} presence probe failed: ${rows.error.message}`);
+    return (rows.data ?? []).length > 0;
+  };
+  const [audits, discovery, content] = await Promise.all([
+    supabase.from("audit_runs").select("id").eq("user_id", userId).eq("project_id", projectId).limit(1),
+    supabase
+      .from("gsc_discovery_runs")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("project_id", projectId)
+      .limit(1),
+    supabase
+      .from("audit_content_runs")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("project_id", projectId)
+      .limit(1),
+  ]);
+  return (
+    exists(audits, "audit_runs") ||
+    exists(discovery, "gsc_discovery_runs") ||
+    exists(content, "audit_content_runs")
+  );
+}
+
+/**
+ * Does this project's domain resolve? (E-3b — operator-signed 2026-08-27: look it up at render.)
+ *
+ * ONE DNS LOOKUP PER CARD, through the SAME `checkDomainReachable` port the MCP router uses, so
+ * the two surfaces cannot disagree about whether a domain exists. The port caps itself at
+ * DOMAIN_LOOKUP_TIMEOUT_MS (2s) and answers `"unknown"` rather than throwing when it cannot find
+ * out, which is what makes this safe to run per card: the lookups go out together with every other
+ * read for that card, and the slowest one a page can wait on is that cap.
+ *
+ * BEST-EFFORT, and the direction is the whole contract. A rejection collapses to `"unknown"`,
+ * which the signal layer turns into an ABSENT `domainUnreachable`, not a false one — a lookup that
+ * could not run must never be reported as a domain that does not exist, or one resolver blip would
+ * route a whole account to the dead-domain rung and stop recommending paid work. Only a positive
+ * "no such name" moves the router.
+ */
+async function checkReachability(domain: string): Promise<DomainReachability> {
+  return checkDomainReachable(domain).catch(() => "unknown" as const);
+}
+
 /** Gather every row one card is built from. */
 async function cardInputFor(
   supabase: Supabase,
@@ -412,14 +486,17 @@ async function cardInputFor(
   connections: Map<string, ConnectionRow>,
   health: Map<string, GscTokenStatus>,
 ): Promise<ProjectCardInput> {
-  const [crawl, pull, crawlHistory, auditRuns, discoveryRuns, lookupRuns] = await Promise.all([
-    latestSucceeded(supabase, userId, project.id, "crawl_site"),
-    latestPullSummary(supabase, userId, project.id),
-    recentCrawlRuns(supabase, userId, project.id),
-    latestAuditRuns(supabase, userId, project.id),
-    latestDiscoveryRuns(supabase, userId, project.id),
-    latestDomainLookupRuns(supabase, userId, project.id),
-  ]);
+  const [crawl, pull, crawlHistory, auditRuns, discoveryRuns, lookupRuns, hasAnalysis, reachability] =
+    await Promise.all([
+      latestSucceeded(supabase, userId, project.id, "crawl_site"),
+      latestPullSummary(supabase, userId, project.id),
+      recentCrawlRuns(supabase, userId, project.id),
+      latestAuditRuns(supabase, userId, project.id),
+      latestDiscoveryRuns(supabase, userId, project.id),
+      latestDomainLookupRuns(supabase, userId, project.id),
+      hasAnyAnalysisRun(supabase, userId, project.id),
+      checkReachability(project.domain),
+    ]);
   const connection = connections.get(project.id) ?? null;
   return {
     project,
@@ -431,6 +508,8 @@ async function cardInputFor(
     lookupRuns,
     connection,
     tokenStatus: tokenStatusFor(connection, health),
+    hasAnalysis,
+    reachability,
   };
 }
 
