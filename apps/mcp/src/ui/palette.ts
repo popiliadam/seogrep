@@ -11,18 +11,31 @@
  * `--color-body`, `--color-muted`, `--color-hairline`; accent/accentSurface/accentEdge from
  * `--color-accent`, `--color-accent-badge-bg`, `--color-accent-badge-border`).
  *
- * DARK is only PARTIALLY grounded in that file, and that gap is recorded rather than papered
- * over (task-2-report.md carries the full per-key trace):
- *   - surface, raised, accent, muted and body DO match existing dark-surface tokens
- *     (`--color-terminal`, `--color-terminal-chrome`, `--color-accent-dark`, `--color-faint`,
- *     `--color-faintest`).
- *   - ink, hairline, accentSurface and accentEdge do NOT match anything in globals.css today.
- *     The file's own dark text token is `--color-dark-text: #f0ece2`, not the `#faf8f3` used
- *     below; and it defines no dark accent-surface/accent-edge pair and no solid dark hairline
- *     (only `--color-hairline-dark: rgb(250 248 243 / 0.08)`, a translucent white). These four
- *     values are reproduced EXACTLY as the task brief specified them, verbatim and unedited —
- *     not silently "corrected" to the site's tokens, because deciding which is right is a design
- *     call this task was told not to make on its own.
+ * DARK — corrected in fix round 1 (2026-08-27). globals.css DOES carry a full dark-surface
+ * vocabulary (lines 58-64, "Dark (terminal / dark CTA) surface text"); the first pass of this
+ * file simply never found it and reused three LIGHT-theme tokens on a dark surface instead — text
+ * that is technically present and practically unreadable:
+ *   - `ink` was `#faf8f3` (`--color-paper`, a LIGHT background) — now `#f0ece2`
+ *     (`--color-dark-text`).
+ *   - `body` was `#c4beb0` (`--color-faintest`, the LIGHT ink scale read backwards) — now
+ *     `#918b7d` (`--color-dark-muted`).
+ *   - `muted` was `#a8a294` (`--color-faint`, same LIGHT scale) — now `#6e6a60`
+ *     (`--color-dark-faint`).
+ *   - `hairline` was `#3a3730`, a hex with no source anywhere in globals.css — now
+ *     `rgb(250 248 243 / 0.08)` (`--color-hairline-dark`), the brand's own translucent-white
+ *     dark hairline.
+ * `surface`, `raised` and `accent` were already correct (`--color-terminal`,
+ * `--color-terminal-chrome`, `--color-accent-dark`) and are unchanged.
+ *
+ * `accentSurface` and `accentEdge` remain the one REAL gap: globals.css defines no dark
+ * counterpart to `--color-accent-badge-bg` / `--color-accent-badge-border` at all. Rather than
+ * invent a fifth hue, both are the brand's existing dark accent AT ALPHA —
+ * `rgb(217 163 83 / …)`, where `217 163 83` is `--color-accent-dark` (`#d9a353`) in decimal. An
+ * alpha of a brand colour that already exists is not a new colour; a new hex would have been.
+ *
+ * `palette.test.ts` now reads globals.css itself and asserts each of these against its named
+ * token, so a future edit to either file that lets them diverge fails a test rather than shipping
+ * quietly (finding 3, fix round 1).
  */
 export interface Palette {
   readonly surface: string;
@@ -51,11 +64,13 @@ export const LIGHT: Palette = {
 export const DARK: Palette = {
   surface: "#211f1b",
   raised: "#262420",
-  ink: "#faf8f3",
-  body: "#c4beb0",
-  muted: "#a8a294",
-  hairline: "#3a3730",
+  ink: "#f0ece2",
+  body: "#918b7d",
+  muted: "#6e6a60",
+  hairline: "rgb(250 248 243 / 0.08)",
   accent: "#d9a353",
-  accentSurface: "#33302a",
-  accentEdge: "#4a4335",
+  // Derived, not copied: --color-accent-dark (#d9a353 = rgb(217 163 83)) at alpha. See the doc
+  // comment above — globals.css has no dark accent-surface/accent-edge pair to copy.
+  accentSurface: "rgb(217 163 83 / 0.12)",
+  accentEdge: "rgb(217 163 83 / 0.32)",
 };
