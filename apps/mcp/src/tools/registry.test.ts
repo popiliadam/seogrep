@@ -11,6 +11,7 @@ import {
   readConfirmFlag,
   registerAll,
   textResult,
+  textResultWithData,
   type RegisteredTool,
 } from "./registry.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
@@ -275,6 +276,21 @@ describe("registerAll", () => {
     const [withView, withoutView] = list().tools;
     expect(withView?._meta).toEqual({ ui: { resourceUri: "ui://seogrep/credit-balance" } });
     expect(withoutView && "_meta" in withoutView).toBe(false);
+  });
+
+  /**
+   * The helper OWNS `summary`, so a caller cannot quietly decide which copy of the answer wins.
+   * A throw at call time puts that conflict in a test run; silent overwriting would put it in
+   * production, in whichever channel the host happened to render.
+   */
+  it("refuses a caller-supplied summary rather than overwriting it", () => {
+    expect(() => textResultWithData("the answer", { summary: "something else" })).toThrow(
+      /summary/i,
+    );
+    expect(textResultWithData("the answer", { n: 1 }).structuredContent).toEqual({
+      n: 1,
+      summary: "the answer",
+    });
   });
 
   it("tools/call dispatches to the named tool and returns its result", async () => {

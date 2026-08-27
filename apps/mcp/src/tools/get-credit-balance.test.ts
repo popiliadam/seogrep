@@ -183,6 +183,27 @@ describe("the MCP Apps view rides along without changing the answer", () => {
     expect(result.content[0]?.text).toMatch(/balance:\s*4519\s+credits/i);
   });
 
+  /**
+   * THE DATA CHANNEL MAY NOT SHOW LESS THAN THE WHOLE ANSWER.
+   *
+   * Measured live 2026-08-27, minutes after the probe deployed: a client that receives both
+   * channels rendered ONLY `structuredContent`, so the model saw `{"balance":…,"paid":…}` and
+   * lost the sentence — with it, the clause that says trial credits do not unlock the vendor
+   * tools. The extension promises `content` is what the model reads; that promise belongs to the
+   * host, and this one did not keep it.
+   *
+   * So the pin is not "summary exists" but "summary IS the text": a field that merely looked
+   * like a summary would satisfy the first and still lose the gate clause. Asserted against the
+   * content block itself, never against a literal.
+   */
+  it("carries the whole sentence in the data channel too", async () => {
+    paid.mockResolvedValueOnce(false);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect(result.structuredContent?.summary).toBe(result.content[0]?.text);
+    // The clause a host that shows only data would otherwise drop.
+    expect(String(result.structuredContent?.summary)).toMatch(TRIAL_IS_NOT_ENOUGH);
+  });
+
   it("states nothing in the data channel that the sentence does not state", async () => {
     balance.mockResolvedValueOnce(4519);
     paid.mockResolvedValueOnce(true);

@@ -99,7 +99,10 @@ const VIEW_SCRIPT = `
   function render(params) {
     var data = (params && params.structuredContent) || {};
     var blocks = (params && params.content) || [];
-    var fallback = blocks.length && blocks[0] && blocks[0].text ? blocks[0].text : "";
+    // The sentence, from whichever channel this host populated. "summary" comes first because a
+    // host that drops the content blocks is exactly the case that made it exist.
+    // (No backticks in here: this script lives inside a TS template literal.)
+    var fallback = data.summary || (blocks.length && blocks[0] && blocks[0].text ? blocks[0].text : "");
     text("state", "live");
     text("balance", data.balance === undefined ? "?" : String(data.balance));
     text("unit", data.balance === 1 ? "credit" : "credits");

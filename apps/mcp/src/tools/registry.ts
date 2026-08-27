@@ -156,12 +156,36 @@ export function textResult(text: string): ToolResult {
  *
  * A separate function rather than a second parameter on `textResult`, so the 37 tools that have
  * no view keep calling a function that cannot grow a second channel by accident.
+ *
+ * IT FOLDS THE SENTENCE INTO THE DATA, and that is the whole reason this function exists rather
+ * than a literal at each call site. MEASURED 2026-08-27, minutes after the MCP Apps probe went
+ * live: a real client that receives BOTH channels showed only `structuredContent` and dropped
+ * `content` entirely, so the model saw `{"balance":4519,"paid":true}` where an hour earlier it
+ * had seen the sentence — including the clause explaining that trial credits do not unlock the
+ * vendor tools, which exists precisely so the assistant does not tell a trial account it is
+ * ready to spend.
+ *
+ * The extension's promise is that `content` is what the model reads and the data is merely an
+ * extra channel. That promise is the HOST's to keep, and at least one host does not. So this
+ * server stops depending on it: whatever a client chooses to show, it cannot show less than the
+ * whole answer, because the whole answer is in both channels.
+ *
+ * `summary` may not be supplied by the caller — a tool that passed its own would decide which
+ * copy wins, which is the ambiguity this closes. Declaring one throws at call time rather than
+ * being silently overwritten, so the conflict surfaces in a test run and never in production.
  */
 export function textResultWithData(
   text: string,
   structuredContent: Record<string, unknown>,
 ): ToolResult {
-  return { content: [{ type: "text", text }], structuredContent };
+  if ("summary" in structuredContent) {
+    throw new Error(
+      'textResultWithData owns the "summary" field: it carries the tool\'s full text answer so a ' +
+        "host that renders only structuredContent cannot show less than the whole answer. Name " +
+        "the caller's field something else.",
+    );
+  }
+  return { content: [{ type: "text", text }], structuredContent: { ...structuredContent, summary: text } };
 }
 
 /** An error tool result (isError so the MCP client renders it as a failure, not data). */
