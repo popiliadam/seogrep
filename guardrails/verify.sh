@@ -53,4 +53,10 @@ node scripts/testing/check-deploy-paths.mjs
 # two of them production modules that no audit had seen (L-09 and its two siblings).
 node scripts/testing/check-text-sources.mjs --self-test
 node scripts/testing/check-text-sources.mjs
+# The live-tool sweep's OWN coverage gate. It asserts that every tool the server publishes is
+# either in PLAN or in EXCLUDED with a written reason — and it had been exiting 1 on every branch
+# since nineteen tools were left in neither, invisible because nothing ran it: verify.sh did not
+# execute scripts/ at all (M-01, audit 2026-08-26). --self-test needs no network, no disk and no
+# clock, and issues ZERO tool calls; the live sweep is never run here and spends no credits.
+node scripts/testing/tool-sweep.mjs --self-test
 echo "VERIFY: PASS"
