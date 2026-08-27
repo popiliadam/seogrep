@@ -2,7 +2,7 @@ import { z } from "zod";
 import { creditBalance, getServiceClient } from "../db.ts";
 import { hasPaidBalance } from "../credits/paid-balance.ts";
 import { CARD_URI } from "../ui/card.ts";
-import { defineTool, textResultWithData } from "./registry.ts";
+import { defineTool, textResultWithCard } from "./registry.ts";
 
 /**
  * get_credit_balance — the tenant's available credits. 0 credits (reading your balance
@@ -54,12 +54,23 @@ export const getCreditBalanceTool = defineTool({
       : "Having credits is not always enough: the tools that read live data from a paid " +
         "third-party SEO provider need a PAID balance and are not available on trial credits, " +
         "however many trial credits are left. Buying any credit pack unlocks them.";
-    return textResultWithData(
+    const sentence =
       `Credit balance: ${balance} ${unit}. Paid tools debit credits when they run, and a ` +
-        `balance of 0 blocks them until you top up. ${gate}`,
-      // The two facts the sentence states, as fields — so the view reads them instead of parsing
-      // prose. Nothing here is NEW information: a view may never know something the text does not.
-      { balance, paid },
-    );
+      `balance of 0 blocks them until you top up. ${gate}`;
+    return textResultWithCard(sentence, {
+      kind: "metric",
+      title: "Credit balance",
+      value: String(balance),
+      unit,
+      // The badge states the gate the sentence states. "Paid" only when the ledger says so; a
+      // trial account must not read as unlocked on the card while the sentence says it is not.
+      badge: paid ? "Paid" : "Trial",
+      facts: [
+        {
+          label: "Vendor tools",
+          value: paid ? "Unlocked" : "Locked — needs a paid balance",
+        },
+      ],
+    });
   },
 });

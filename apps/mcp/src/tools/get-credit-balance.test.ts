@@ -224,3 +224,27 @@ describe("the MCP Apps view rides along without changing the answer", () => {
     expect(result.content[0]?.text ?? "").not.toMatch(/\bunlocked\b/i);
   });
 });
+
+/**
+ * THE CARD ITSELF (2026-08-27, task 5): get_credit_balance now produces a validated MCP Apps
+ * metric card, not a bare {balance, paid} payload. Its figures are READ BACK OUT of the sentence
+ * so a fabricated card value cannot satisfy both sides independently.
+ */
+describe("get_credit_balance's card", () => {
+  it("builds a metric card whose figures are the sentence's own", async () => {
+    balance.mockResolvedValueOnce(4519);
+    paid.mockResolvedValueOnce(true);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    const text = result.content[0]?.text ?? "";
+    const card = result.structuredContent?.card as { value: string; badge?: string };
+    // Read back OUT of the sentence, so a fabricated balance cannot satisfy both sides.
+    expect(card.value).toBe(/balance:\s*(\d+)/i.exec(text)?.[1]);
+    expect(card.badge).toBe("Paid");
+  });
+
+  it("does not call a trial account paid on the card either", async () => {
+    paid.mockResolvedValueOnce(false);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect((result.structuredContent?.card as { badge?: string }).badge).not.toBe("Paid");
+  });
+});

@@ -11,12 +11,15 @@ import {
   readConfirmFlag,
   registerAll,
   textResult,
+  textResultWithCard,
   textResultWithData,
   type RegisteredTool,
 } from "./registry.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
 import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
 import type { AuthContext } from "../auth.ts";
+import { ALL_TOOLS } from "./index.ts";
+import { CARDED_TOOLS } from "../ui/card-map.ts";
 
 /**
  * Unit tests for the tool registry — the docs-automation foundation (D11): every
@@ -617,5 +620,60 @@ describe("declaredProjectId", () => {
     expect(declaredProjectId({ project_id: null })).toBeUndefined();
     expect(declaredProjectId(null)).toBeUndefined();
     expect(declaredProjectId("not-an-object")).toBeUndefined();
+  });
+});
+
+/**
+ * textResultWithCard — the MCP Apps card goes through zod on the way OUT, so a malformed card
+ * fails in a test run and never as a blank frame in a customer's chat (spec §8.1).
+ */
+describe("textResultWithCard", () => {
+  /**
+   * The card goes through zod on the way out. A malformed card must fail in a test run, never in
+   * a customer's chat — and never silently, as an empty frame the reader mistakes for a product
+   * that does not work.
+   */
+  it("refuses a card the template cannot draw", () => {
+    expect(() => textResultWithCard("the answer", { kind: "metric", title: "x", value: "" } as never))
+      .toThrow(/card/i);
+  });
+
+  it("carries the sentence in both channels beside the card", () => {
+    const result = textResultWithCard("the answer", {
+      kind: "metric",
+      title: "Credit balance",
+      value: "4519",
+      facts: [],
+    });
+    expect(result.content[0]?.text).toBe("the answer");
+    expect(result.structuredContent?.summary).toBe("the answer");
+    expect(result.structuredContent?.card).toMatchObject({ kind: "metric", value: "4519" });
+  });
+});
+
+/**
+ * §8.2 wiring gate — the biconditional between `ui.resourceUri` and `CARDED_TOOLS` membership.
+ * Both directions, across every REGISTERED tool (ALL_TOOLS from tools/index.ts), not a
+ * hand-maintained duplicate list: a hand-maintained list is exactly the hole this gate exists to
+ * close. ALL_TOOLS is importable DB-free (registered-tool objects only; getServiceClient is a
+ * lazy singleton — see db.ts), so this runs in the fast, DB-less lane.
+ */
+describe("card wiring gate (spec §8.2) — a tool carries ui.resourceUri iff it is in CARDED_TOOLS", () => {
+  it("every carded tool declares ui.resourceUri", () => {
+    for (const tool of ALL_TOOLS) {
+      if (CARDED_TOOLS.has(tool.name)) {
+        expect(tool.uiResourceUri, `${tool.name} is in CARDED_TOOLS but declares no ui.resourceUri`)
+          .toBeDefined();
+      }
+    }
+  });
+
+  it("every tool that declares ui.resourceUri is in CARDED_TOOLS", () => {
+    for (const tool of ALL_TOOLS) {
+      if (tool.uiResourceUri !== undefined) {
+        expect(CARDED_TOOLS.has(tool.name), `${tool.name} declares ui.resourceUri but is not in CARDED_TOOLS`)
+          .toBe(true);
+      }
+    }
   });
 });
