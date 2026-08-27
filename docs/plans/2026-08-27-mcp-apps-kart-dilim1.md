@@ -18,9 +18,10 @@
 - **Kart uydurmaz.** Ölçülmemiş değer boş bırakılır, sıfır basılmaz (NEVER#7).
 - **Fiyat yeniden yazılmaz** (NEVER#6). Dilim 1 hiç kredi rakamı göstermiyor.
 - **UI dili English** (imzalı ders 4). Kaynak yorumları İngilizce, planlar/defter Türkçe.
-- **Renk uydurulmaz.** Yalnız `apps/web/app/globals.css`'te tanımlı değerler: açık vurgu `#b45309`, koyu vurgu `#d9a353`, kâğıt `#faf8f3`, kart `#fffdf9`, mürekkep `#1c1b18`, gövde `#524f48`, soluk `#6b6862`, ince çizgi `#e2ddd2`, şerit `#f5f2ea`.
+- **Renk uydurulmaz.** Yalnız `apps/web/app/globals.css`'te tanımlı token'lar. AÇIK yüzey: kart `#fffdf9` · şerit `#f5f2ea` · mürekkep `#1c1b18` · gövde `#524f48` · soluk `#6b6862` · ince çizgi `#e2ddd2` · vurgu `#b45309` · vurgu-zemin `#f9f0dd` · vurgu-kenar `#ecd9b8`. **KOYU yüzey** (marka bunu da taşıyor — `--color-terminal` ailesi): zemin `#211f1b` · kabartı `#262420` · mürekkep `#f0ece2` · gövde `#918b7d` · soluk `#6e6a60` · ince çizgi `rgb(250 248 243 / 0.08)` · vurgu `#d9a353`. Açık yüzey token'ını koyu yüzeyde kullanmak da uydurmaktır. Markanın koyu vurgu-zemin/kenar çifti YOK; onlar `--color-accent-dark`'ın **alfası** olarak türetilir, yeni ton icat edilmez.
 - **Şablon içindeki JS bir TS template literal'ının içinde yaşar** — o JS'e **backtick yazılamaz** (2026-08-27'de kapıyı lint'ten kırmızıya düşürdü).
 - **Tek commit >200 satır → böl** (NEVER#10).
+- **Tip kapısı `pnpm --filter @pseo/mcp typecheck`'tir, çıplak `tsc --noEmit` DEĞİL.** `apps/mcp/tsconfig.json` `src/**/*.test.ts`i HARİÇ tutar; çıplak komut bir spec dosyasındaki tip hatasını göremez. Ölçüldü 2026-08-27: çıplak komut `rc=0`, kapı `TS2532` (imzalı ders 15).
 - Kapı: `TURBO_FORCE=1 bash guardrails/verify.sh` ve `bash guardrails/verify-db.sh`. Her dilim sonunda **ne ölçmedikleriyle** raporlanır.
 
 ---
@@ -136,9 +137,9 @@ export const CARD_KINDS = ["metric", "list", "report", "action"] as const;
 export type CardKind = (typeof CARD_KINDS)[number];
 
 /** One label/value row. Both non-empty: a card may not print a blank where a fact belongs. */
-const factSchema = z.object({
-  label: z.string().min(1),
-  value: z.string().min(1),
+const factSchema = z.strictObject({
+  label: z.string().trim().min(1),
+  value: z.string().trim().min(1),
 });
 
 /**
@@ -147,13 +148,19 @@ const factSchema = z.object({
  * `value` is a STRING, not a number: the card renders what the tool already decided to say, and a
  * number here would invite the view to format it — a second place for "4519" to become "4,519" or
  * "4.5k" while the text says something else.
+ *
+ * `strictObject`, NOT `object`, and the difference is the whole gate. zod's `object` STRIPS
+ * unknown keys: a producer that sent { kind: "metric", value: "18", rows: [ …18 rows… ] } would
+ * parse clean, lose `rows` silently, and draw a headline with nothing behind it — a fabricated
+ * card with no error anywhere. `trim().min(1)` closes the same hole a space wide: " " passes
+ * `min(1)` and renders as a blank figure.
  */
-const metricCardSchema = z.object({
+const metricCardSchema = z.strictObject({
   kind: z.literal("metric"),
-  title: z.string().min(1),
-  value: z.string().min(1),
-  unit: z.string().min(1).optional(),
-  badge: z.string().min(1).optional(),
+  title: z.string().trim().min(1),
+  value: z.string().trim().min(1),
+  unit: z.string().trim().min(1).optional(),
+  badge: z.string().trim().min(1).optional(),
   facts: z.array(factSchema).max(6).default([]),
 });
 
@@ -319,9 +326,16 @@ Expected: FAIL — `Cannot find module './palette.ts'`
  * touches two files. That is a deliberate debt, recorded in the spec (§11), and `palette.test.ts`
  * pins the values so the debt is visible rather than silent.
  *
- * The DARK palette is not an invention either: `--color-accent-dark` (#d9a353) is the brand's own
- * dark-surface accent, and the neutrals are its ink scale read the other way up. No new hue is
- * introduced anywhere in this file.
+ * THE DARK PALETTE IS THE BRAND'S OWN, and every value names the token it came from. globals.css
+ * carries a full dark-surface vocabulary (--color-terminal, --color-terminal-chrome,
+ * --color-dark-text, --color-dark-muted, --color-dark-faint, --color-hairline-dark,
+ * --color-accent-dark) because the site already renders dark terminal transcripts.
+ *
+ * MEASURED 2026-08-27: this plan's first draft used #faf8f3 / #c4beb0 / #a8a294 here — those are
+ * --color-paper, --color-faintest and --color-faint, LIGHT-surface tokens placed on a dark
+ * surface, which is how you get text that is technically present and practically unreadable. The
+ * implementer caught it; the values below are the real ones. Only the accent SURFACE pair is
+ * derived, and it is derived by alpha rather than by inventing a hue.
  */
 export interface Palette {
   readonly surface: string;
@@ -348,15 +362,18 @@ export const LIGHT: Palette = {
 };
 
 export const DARK: Palette = {
-  surface: "#211f1b",
-  raised: "#262420",
-  ink: "#faf8f3",
-  body: "#c4beb0",
-  muted: "#a8a294",
-  hairline: "#3a3730",
-  accent: "#d9a353",
-  accentSurface: "#33302a",
-  accentEdge: "#4a4335",
+  surface: "#211f1b",        // --color-terminal
+  raised: "#262420",         // --color-terminal-chrome
+  ink: "#f0ece2",            // --color-dark-text
+  body: "#918b7d",           // --color-dark-muted
+  muted: "#6e6a60",          // --color-dark-faint
+  hairline: "rgb(250 248 243 / 0.08)", // --color-hairline-dark
+  accent: "#d9a353",         // --color-accent-dark
+  // DERIVED, not copied: the brand has no dark accent surface. These are --color-accent-dark
+  // AT ALPHA — an alpha of an existing brand colour is not a new colour, and inventing a fifth
+  // hex would have been. rgb(217 163 83) is #d9a353 in decimal.
+  accentSurface: "rgb(217 163 83 / 0.12)",
+  accentEdge: "rgb(217 163 83 / 0.32)",
 };
 ```
 

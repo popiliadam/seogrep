@@ -67,10 +67,7 @@ apps/mcp/src/ui/
   card-model.ts      zod şeması — dört kind'ın ayrık birleşimi
   theme.ts           host token'ları -> CSS değişkenleri + SeoGrep yedekleri
   runtime.ts         el sıkışma · host-context-changed · size-changed
-  render/metric.ts   \
-  render/list.ts      >  her biri model parçasını HTML'e çeviren saf fonksiyon
-  render/report.ts   /
-  render/action.ts
+  runtime.ts         çerçevede KOŞAN JS: el sıkışma · tema · çizim · boyut
   card.ts            hepsini TEK HTML dizgisine derler (servis edilen şey)
 ```
 
@@ -84,6 +81,12 @@ gerekçesi).
 React yok; CSP hidrasyon dosyası çekmeyi yasaklıyor. HTML sunucuda üretilir.
 
 Kaynak dosyalar küçük kalır (proje kuralı), servis edilen şey tektir.
+
+**⚠️ DÜZELTME (2026-08-27, Görev 3 hakemi).** Bu bölümün ilk hâli `render/metric.ts` gibi
+**sunucu tarafı saf fonksiyonlar** listeliyordu. O mimari **çalışamaz**: şablon önceden bildirilir
+ve statiktir, veri sonradan postMessage ile gelir — yani çizim ZORUNLU olarak tarayıcıda olur.
+Çizim kodu `runtime.ts` içinde, şablona gömülen JS olarak yaşar. Liste düzeltildi ki sonraki bir
+dilim kodu imkânsız bir düzene doğru "düzeltmeye" kalkmasın.
 
 ## 5. Tema sözleşmesi
 
@@ -141,12 +144,20 @@ sonra tek kaynağa taşınması backlog'a yazılır.
 1. **`card` zod ile doğrulanır** — `textResultWithCard(text, card)` bozuk modeli fırlatır.
 2. **Kapsam testi**, iki ayrı iddia — çünkü biri diğerini göremez:
    - **Eşleme tam.** `apps/mcp/src/ui/card-map.ts` her `ToolName`'i bir `kind`'a bağlayan bir
-     `Record<ToolName, CardKind>` dışa verir. TypeScript eksik anahtarı derlemede yakalar; test
-     ayrıca **fazla** anahtar olmadığını ve sayımın (§3) tuttuğunu iddia eder.
+     `Record<ToolName, CardKind>` dışa verir. TypeScript **hem eksik hem fazla** anahtarı derlemede
+     yakalar (taze nesne değişmezi + fazla-özellik kontrolü); testin asıl işi sayımın (§3)
+     sürüklenmediğini iddia etmektir.
    - **Kablolama tam.** Bir tool `ui.resourceUri` taşıyorsa `card-map`'te olmalı VE kart döndüren
      bir yardımcı kullanmalı; taşımıyorsa kart döndürmemeli. Yayılım kademeli olduğu için
-     "henüz kartlanmamış" meşru bir hâldir ve `card-map` bunu `pending` ile söyler — sessiz bir
-     boşluk değil, **adı konmuş** bir hâl.
+     "henüz kartlanmamış" meşru bir hâldir ve bunu **ayrı bir küme** söyler
+     (`CARDED_TOOLS`) — haritanın kendisi değil.
+
+     ⚠️ **DÜZELTME (2026-08-27, Görev 1 hakemi).** Bu maddenin ilk hâli "harita bunu `pending`
+     ile söyler" diyordu. O tarif haritayı `Record<ToolName, CardKind | "pending">`e çevirir ve
+     bütün kapının dayandığı garantiyi *"her tool'un kararlaşmış bir tipi var"*dan *"her tool'un
+     kararlaşmış bir tipi VEYA bir mazereti var"*a düşürür — bir tool sonsuza dek `pending`
+     kalarak gözden geçirilmeden yaşayabilirdi. Rollout cephesi haritadan **ayrı** bir kümede
+     yaşar; harita `CardKind` üzerinde **total** kalır.
 3. **Dış kaynak yasağı** paylaşılan şablonda pinlidir (`https?://` ve `//host` şekilleri, `fetch(`,
    `WebSocket`, `import(`).
 4. **Metin değişmezliği**: kart alan her tool'un kendi spec'i `content`in bugünkü cümlesini
