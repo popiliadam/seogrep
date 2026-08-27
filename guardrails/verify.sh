@@ -59,4 +59,9 @@ node scripts/testing/check-text-sources.mjs
 # execute scripts/ at all (M-01, audit 2026-08-26). --self-test needs no network, no disk and no
 # clock, and issues ZERO tool calls; the live sweep is never run here and spends no credits.
 node scripts/testing/tool-sweep.mjs --self-test
+# Repo migrations vs the cloud migration journal — the SELF-TEST only, which needs no database.
+# The live half is env-conditional and lives in `make goals` (migration-journal-sync), because a
+# gate that reaches production cannot be a step of the local deterministic gate. Measured
+# 2026-08-27: prod recorded 21 of the repo's 33 migrations; the audit had reported one (M-08).
+bash guardrails/check-migration-journal.sh --self-test
 echo "VERIFY: PASS"
