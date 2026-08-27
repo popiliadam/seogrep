@@ -7,6 +7,7 @@ import {
   type JobUpdate,
   type ServiceClient,
 } from "../db.ts";
+import { errorText, newFailureReference, platformFailureText } from "../failure-redaction.ts";
 
 /**
  * Queue + jobs bridge. Owns the pg-boss instance over SUPABASE_DB_URL for async job
@@ -124,9 +125,23 @@ export async function enqueueJob(
     const boss = await getBoss();
     await boss.send(JOBS_QUEUE, message);
   } catch (sendError) {
-    const detail = sendError instanceof Error ? sendError.message : String(sendError);
-    await failJob(jobId, `enqueue failed: ${detail}`);
-    throw new Error(`enqueueJob: queue send failed: ${detail}`);
+    const detail = errorText(sendError);
+    // THE MEASURED LEAK (smoke tour wave 4, F-1). This line used to store `enqueue failed:
+    // ${detail}` and get_job_status printed it verbatim, so two production rows answered "why
+    // did my 20-credit crawl fail?" with `password authentication failed for user "postgres"`
+    // and `getaddrinfo ENOTFOUND base` — our database role and our internal hostname, handed to
+    // whoever holds an API key. A queue that will not accept the job is entirely OUR fault and
+    // there is nothing in it for the customer to act on, so the stored mark is the generic
+    // sentence and the detail goes to the log under the same reference.
+    // ONE INCIDENT, ONE REFERENCE. The rethrow below reaches tools/registry.ts, which redacts it
+    // too and mints a reference of its OWN — so a single enqueue failure used to be filed under
+    // two unrelated handles, and a customer quoting either sent the operator to one of two log
+    // lines with no link between them. The reference is carried INTO the rethrown message so both
+    // land under this one.
+    const reference = newFailureReference();
+    console.error(`enqueueJob: queue send failed for job ${jobId} [ref ${reference}]: ${detail}`);
+    await failJob(jobId, platformFailureText(reference));
+    throw new Error(`enqueueJob: queue send failed [ref ${reference}]: ${detail}`);
   }
   return { jobId };
 }

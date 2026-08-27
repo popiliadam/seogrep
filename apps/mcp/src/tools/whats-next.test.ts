@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DATA_FRESHNESS_DAYS, dataAgeInDays } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
@@ -604,5 +607,88 @@ describe("whats_next renders IDN projects as the customer typed them", () => {
   it("leaves a plain ASCII domain byte-identical", () => {
     const text = formatNextStep("example.com", decideProjectNextStep(signals()));
     expect(text).toContain("example.com");
+  });
+});
+
+/**
+ * E-9's probe, pinned at the SOURCE — the half no fast-lane double can reach.
+ *
+ * `readHasAnalysis` runs on a service-role client that BYPASSES RLS, so its `.eq("user_id", …)`
+ * is the only thing standing between one tenant's ladder and another tenant's analysis rows
+ * (NEVER #4). A recorder double cannot prove a filter it never receives, and the db lane proves
+ * the behaviour on one path; this asserts the construction on all three, so a filter dropped from
+ * the SECOND statement cannot hide behind the first.
+ */
+/**
+ * The slice of `body` belonging to ONE `.from("<table>")` statement: from that call up to the
+ * NEXT `.from(` (or the end).
+ *
+ * A SLICE, NOT A SPANNING REGEX, and this is measured rather than cautious. The first version
+ * asserted `.from("X") … .eq("user_id") … .eq("project_id")` with a lazy `[\s\S]{0,300}?`
+ * between them, and its own comment claimed that stopped a filter "belonging to a NEIGHBOURING
+ * read" from satisfying it. It did not: deleting `.eq("user_id", …)` from the SECOND of the three
+ * statements left the pin green, because the lazy gap simply ran on into the third statement and
+ * borrowed its filters. Only the LAST statement was actually pinned — two of the three tenant
+ * guards were unenforced by a spec that read as though it covered all three.
+ *
+ * Signed lesson 14, on the position axis: the pin was written against one arrangement of the
+ * statements and never varied WHICH of them was broken.
+ */
+function fromSegment(body: string, table: string): string {
+  const start = body.search(new RegExp(`\\.from\\(\\s*["']${table}["']\\s*\\)`));
+  if (start === -1) throw new Error(`no .from("${table}") call to slice`);
+  const rest = body.slice(start + 1);
+  const next = rest.search(/\.from\(/);
+  return next === -1 ? body.slice(start) : body.slice(start, start + 1 + next);
+}
+
+describe("readHasAnalysis is scoped by construction", () => {
+  const SOURCE = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "whats-next.ts"),
+    "utf8",
+  );
+  /**
+   * Comments out, statements only — PROSE IS NOT CODE, the same rule parity.test.ts states and
+   * for the same reason, measured here on the first run: the negative below matched the word
+   * `selectOwn` inside this function's own doc comment, which EXPLAINS why selectOwn is not used.
+   * A pin that reddens on an accurate explanation of itself is a pin that gets deleted.
+   */
+  const codeOf = (source: string): string =>
+    source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+
+  const BODY = SOURCE.slice(SOURCE.indexOf("export async function readHasAnalysis"));
+  const PROBE = codeOf(BODY.slice(0, BODY.indexOf("\n}") + 2));
+
+  it.each(["audit_runs", "gsc_discovery_runs", "audit_content_runs"])(
+    "scopes its %s read by BOTH user_id and project_id",
+    (table) => {
+      const segment = fromSegment(PROBE, table);
+      expect(segment, `${table}: no user_id filter in its own statement`).toMatch(
+        /\.eq\(\s*["']user_id["']/,
+      );
+      expect(segment, `${table}: no project_id filter in its own statement`).toMatch(
+        /\.eq\(\s*["']project_id["']/,
+      );
+    },
+  );
+
+  it("never reaches for the id-only read, and never widens past `id`", () => {
+    expect(PROBE).not.toMatch(/selectOwn|\.select\(\s*["']\*/);
+    expect([...PROBE.matchAll(/\.select\(\s*["']([^"']*)["']\s*\)/g)].map((m) => m[1])).toEqual([
+      "id",
+      "id",
+      "id",
+    ]);
+    // Existence, not a census: one row answers the ladder's question on each table.
+    expect([...PROBE.matchAll(/\.limit\(\s*1\s*\)/g)]).toHaveLength(3);
+  });
+
+  /**
+   * THE ARGUMENT ORDER, which `tsc` cannot see: `userId` and `projectId` are both `string`, so
+   * swapping them at the call site typechecks and silently answers `false` forever — every
+   * all-set customer routed to find_quick_wins, every gate green. Pinned where the caller is.
+   */
+  it("is called with (client, userId, projectId), in that order", () => {
+    expect(codeOf(SOURCE)).toMatch(/readHasAnalysis\(\s*client\s*,\s*userId\s*,\s*projectId\s*\)/);
   });
 });

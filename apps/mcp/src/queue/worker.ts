@@ -10,12 +10,10 @@ import {
   type JobMessage,
 } from "./boss.ts";
 import type { Json } from "../db.ts";
-import {
-  isReserveCommitFailed,
-  withCredits,
-  type ReserveCommitFailedError,
-} from "../credits/guard.ts";
+import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
+import { markFailure, type FailureMark } from "./failure-text.ts";
+import { newFailureReference } from "../failure-redaction.ts";
 import { createCrawlHandler } from "./handlers/crawl.ts";
 import { reconcileStuckJobs, type ReconcileOutcome } from "./reaper.ts";
 import { DAILY_BUDGET_USD } from "../dfs/budget.ts";
@@ -90,31 +88,17 @@ function errorDetail(error: unknown): string {
 }
 
 /**
- * Stamped when the tool ran but its charge could not settle (guard.ts's ReserveCommitFailedError).
- * This is NOT the same story as a handler failure: the run produced a result the user never
- * received. What happens to their credits NEXT depends on the reserve's actual disposition, so
- * each one gets its own sentence. A single blanket "reconciliation refunds it automatically"
- * was a promise the code could not keep for every shape — the reaper skips a settled reserve,
- * so a user told to expect a refund would have waited for one that never came.
+ * The fail-mark for a rejection inside executeJob.
+ *
+ * IT NO LONGER STORES THE RAW MESSAGE (smoke tour wave 4, F-1). What a failed job may say to the
+ * customer who reads it through get_job_status is decided by `markFailure` in ./failure-text.ts —
+ * the same policy `tools/registry.ts` has always applied on the synchronous path, which that
+ * file's own comment explicitly did NOT extend to "a worker's fail-mark". The per-disposition
+ * commit-failure sentences moved there with it, unchanged in wording; what they lost is the
+ * `(${error.message})` they used to staple on the end.
  */
-const COMMIT_FAILED_PREFIX = "the tool ran but its credit charge could not be settled";
-const COMMIT_FAILED_BY_DISPOSITION: Record<
-  ReserveCommitFailedError["disposition"],
-  string
-> = {
-  // Verified open in the ledger: the sweep WILL find and refund it. A promise we can keep.
-  open: `${COMMIT_FAILED_PREFIX} — the reserve is still open and reconciliation refunds it automatically; re-run the tool`,
-  // Already released: the money is back now. Nothing further is coming, so do not imply it is.
-  refunded: `${COMMIT_FAILED_PREFIX} — the reserve had already been refunded, so you were not charged; re-run the tool`,
-  // The classifying read failed too. Promise NOTHING; point at the one path that can resolve it.
-  unknown: `${COMMIT_FAILED_PREFIX} and the reserve's final state could not be confirmed — contact support if your balance looks short`,
-};
-
-/** The fail-mark for a rejection inside executeJob: honest for the commit shape, raw otherwise. */
-function failureDetail(error: unknown): string {
-  return isReserveCommitFailed(error)
-    ? `${COMMIT_FAILED_BY_DISPOSITION[error.disposition]} (${error.message})`
-    : errorDetail(error);
+function failureMarkFor(error: unknown): FailureMark {
+  return markFailure(error, newFailureReference());
 }
 
 /**
@@ -123,9 +107,16 @@ function failureDetail(error: unknown): string {
  * in which case the recording write fails for the same reason. Log and give up rather than
  * turning a recorded failure into an unhandled rejection that kills the worker.
  */
-async function failJobSafely(jobId: string, detail: string): Promise<void> {
+async function failJobSafely(jobId: string, mark: FailureMark): Promise<void> {
+  // The withheld text is logged BEFORE the write, so a failure to record the mark cannot also
+  // lose the only copy of what actually went wrong.
+  if (mark.logged) {
+    console.error(
+      `executeJob: job ${jobId} failed [ref ${mark.logged.reference}]: ${mark.logged.detail}`,
+    );
+  }
   try {
-    await failJob(jobId, detail);
+    await failJob(jobId, mark.stored);
   } catch (markError) {
     console.error(`executeJob: could not record failure on job ${jobId}: ${errorDetail(markError)}`);
   }
@@ -147,7 +138,9 @@ export async function executeJob(message: JobMessage): Promise<void> {
 
   const handler = registry.get(tool);
   if (!handler) {
-    await failJob(jobId, `no handler registered for tool "${tool}"`);
+    // An unroutable tool name is OUR deployment gap, not something the customer did or can fix,
+    // so it takes the redacted mark like any other internal fault (F-1).
+    await failJobSafely(jobId, failureMarkFor(new Error(`no handler registered for tool "${tool}"`)));
     return;
   }
 
@@ -172,7 +165,10 @@ export async function executeJob(message: JobMessage): Promise<void> {
       // This runs BEFORE the claim so a mismatched delivery never even flips the
       // row to running (started_at stays NULL).
       console.error(`executeJob: job ${jobId} does not belong to message userId ${userId}; failing`);
-      await failJob(jobId, "job owner mismatch: refusing to execute under a different user_id");
+      await failJobSafely(
+        jobId,
+        failureMarkFor(new Error("job owner mismatch: refusing to execute under a different user_id")),
+      );
       return;
     }
 
@@ -199,7 +195,7 @@ export async function executeJob(message: JobMessage): Promise<void> {
     //     reasoning in guard.ts), so this gets its own honest wording. That distinguishing
     //     signal (ReserveCommitFailedError) is the Faz-4 follow-up this comment used to ask
     //     for; the reserve is refunded by reaper.ts's ledger-keyed sweep, not left forever.
-    await failJobSafely(jobId, failureDetail(error));
+    await failJobSafely(jobId, failureMarkFor(error));
     return;
   }
 
@@ -211,10 +207,20 @@ export async function executeJob(message: JobMessage): Promise<void> {
   try {
     await completeJob(jobId, result);
   } catch (error) {
-    await failJob(
-      jobId,
-      `charge settled but result did not persist — contact support (${errorDetail(error)})`,
-    );
+    // The SENTENCE is for the customer and stays; the raw `error.message` it used to carry in
+    // parentheses does not (F-1). A reference replaces it so support still reaches the detail.
+    const reference = newFailureReference();
+    // failJobSafely, not failJob (referee, wave 4). The likeliest reason completeJob just failed
+    // is the database being unreachable — in which case this recording write fails for the SAME
+    // reason, and a bare failJob would throw straight out of executeJob, breaking its
+    // never-throws contract exactly where failJobSafely's own header says it must not. The mark
+    // is pre-built because its sentence is the customer's, not the generic redaction.
+    await failJobSafely(jobId, {
+      stored:
+        "charge settled but result did not persist — contact support, quoting reference " +
+        `${reference}`,
+      logged: { reference, detail: errorDetail(error) },
+    });
   }
 }
 

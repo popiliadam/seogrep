@@ -312,7 +312,10 @@ describe("crawl_pages dual write (migration 0023)", () => {
 
     const job = await getJobRow(jobId);
     expect(job.status).toBe("failed");
-    expect(job.error).toMatch(/crawl_pages write failed/i);
+    // Redacted (F-1): the writer's message names our table and its transport. What this spec is
+    // for — the refund direction and the all-or-nothing write — is asserted unchanged below.
+    expect(job.error).toMatch(/problem on our side/i);
+    expect(job.error).not.toMatch(/crawl_pages/i);
     // The run produced no result the tenant received, so it is not charged: the guard
     // released the reserve (net zero, every ledger row still there — NEVER #2).
     expect(await ledgerKinds(user.id)).toEqual(["grant", "spend_reserve", "spend_release"]);
@@ -350,7 +353,10 @@ describe("crawl_pages dual write (migration 0023)", () => {
     expect(wroteFor).toBe(projectId); // the handler really attempted the write, tenant-keyed
     const job = await getJobRow(jobId);
     expect(job.status).toBe("failed");
-    expect(job.error).toMatch(/crawl_pages write failed/i);
+    // Redacted (F-1): the writer's message names our table and its transport. What this spec is
+    // for — the refund direction and the all-or-nothing write — is asserted unchanged below.
+    expect(job.error).toMatch(/problem on our side/i);
+    expect(job.error).not.toMatch(/crawl_pages/i);
     expect(await ledgerKinds(user.id)).toEqual(["grant", "spend_reserve", "spend_release"]);
   });
 

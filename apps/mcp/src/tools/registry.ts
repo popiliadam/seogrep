@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { newFailureReference } from "../failure-redaction.ts";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -12,6 +12,7 @@ import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isFreeVendorSpendLimit } from "../credits/free-vendor-calls.ts";
 import { NOT_CHARGED_SENTENCE, withNoChargeNote } from "../credits/free-refusal.ts";
+import { isInsufficientCredits } from "../credits/insufficient-credits.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
@@ -215,19 +216,6 @@ export function errorResult(text: string): ToolResult {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Entropy in a failure REFERENCE. 4 bytes = 8 hex chars: short enough for a human to read
- * back out of a chat transcript, wide enough (4.3e9) that two failures a support thread is
- * comparing are not plausibly the same reference. It is a correlation handle, not a secret
- * and not a security control, so this is sized for legibility rather than unguessability.
- */
-const FAILURE_REFERENCE_BYTES = 4;
-
-/** A fresh correlation handle linking one caller-visible failure to one server log line. */
-function newFailureReference(): string {
-  return randomBytes(FAILURE_REFERENCE_BYTES).toString("hex");
 }
 
 /**
@@ -568,6 +556,13 @@ export function registerAll(server: Server, deps: RegistryDeps): void {
       // pull_gsc_data property refusal says "No credits were charged"), and refundAssurance is
       // what decides whether this request may promise anything at all — on charge:"worker" it
       // may not, and the message goes through untouched.
+      // OUT OF CREDITS, ahead of the generic branch (F-5). Without this the answer to "you have
+      // 5 credits and this costs 20" was "failed unexpectedly, quote reference …", which sends a
+      // customer to support over a balance they can read and fix themselves. Free, and it says so:
+      // the reserve never opened, so nothing was charged for the attempt.
+      if (isInsufficientCredits(error)) {
+        return errorResult(withNoChargeNote(error.message));
+      }
       if (isPreconditionNotMet(error)) {
         return errorResult(withNoChargeNote(error.message, refundAssurance(tool.charge, error)));
       }

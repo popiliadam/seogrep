@@ -355,3 +355,121 @@ describe("the ladder is core's, on both surfaces", () => {
     );
   });
 });
+
+/**
+ * E-9 + E-3b (smoke tour wave 4) — the two rungs the panel was NOT feeding.
+ *
+ * Both are the E-3a shape one signal over: core grew a rung, the MCP router adopted it, and this
+ * card fell one rung further and recommended paid work. E-3b cost 20 credits against a host that
+ * does not resolve; E-9 cost 15 for a report over findings nobody had produced.
+ */
+describe("the panel feeds the dead-domain and no-analysis rungs", () => {
+  const ALL_SET: Omit<ProjectCardInput, "project"> = {
+    crawl: { created_at: FRESH, result: null },
+    pull: { created_at: FRESH, result: null },
+    connection: LINKED,
+    tokenStatus: "active",
+  };
+
+  it("E-3b: a domain DNS says does not exist is not sent to crawl_site", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      ...ALL_SET,
+      crawl: null,
+      pull: null,
+      connection: null,
+      reachability: "no_such_domain",
+    };
+    const card = buildProjectCard(input, NOW);
+
+    expect(card.nextStep.primary).toBe("setup_project");
+    expect(card.nextStep.primary).not.toBe("crawl_site");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+    // Nothing this rung offers may cost credits — that is the whole point of it.
+    expect(card.nextStep.upcoming).not.toContain("crawl_site");
+  });
+
+  /**
+   * The OTHER side of the same axis (signed lesson 14 — vary the VALUE, not only the presence).
+   * `"unknown"` is a measured answer meaning "the lookup could not find out", and it must route
+   * exactly like a resolving domain. Without this, a derivation that treated every measured
+   * lookup as a death would pass the case above and strand a whole account on one DNS blip.
+   */
+  it.each(["resolves", "unknown"] as const)(
+    "E-3b: a %s lookup leaves the project on the ordinary ladder",
+    (reachability) => {
+      const input: ProjectCardInput = {
+        project: PROJECT,
+        ...ALL_SET,
+        crawl: null,
+        pull: null,
+        connection: null,
+        reachability,
+      };
+      const card = buildProjectCard(input, NOW);
+
+      expect(card.nextStep.primary).toBe("crawl_site");
+      expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+    },
+  );
+
+  it("E-9: an all-set project with NO analysis leads with quick wins, not a report", () => {
+    const input: ProjectCardInput = { project: PROJECT, ...ALL_SET, hasAnalysis: false };
+    const card = buildProjectCard(input, NOW);
+
+    expect(card.nextStep.primary).toBe("find_quick_wins");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+    expect(card.nextStep.allSet).toBe(true);
+  });
+
+  it("E-9: the same project WITH an analysis still gets the report", () => {
+    const input: ProjectCardInput = { project: PROJECT, ...ALL_SET, hasAnalysis: true };
+    const card = buildProjectCard(input, NOW);
+
+    expect(card.nextStep.primary).toBe("generate_report");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+  });
+
+  it("an omitted signal changes nothing — the pre-signal answer, byte for byte", () => {
+    const measured: ProjectCardInput = { project: PROJECT, ...ALL_SET, hasAnalysis: true };
+    const omitted: ProjectCardInput = { project: PROJECT, ...ALL_SET };
+
+    expect(buildProjectCard(omitted, NOW).nextStep).toEqual(
+      buildProjectCard(measured, NOW).nextStep,
+    );
+  });
+});
+
+describe("both surfaces measure the two new signals the same way", () => {
+  const PAGE_PATH = resolve(HERE, "../../app/app/projects/page.tsx");
+
+  /**
+   * ALL THREE RUN TABLES, on BOTH surfaces. This is the axis most likely to drift: the panel's
+   * own lines cover six tools across two tables, so a future reader has every reason to think two
+   * probes are enough — and a project whose only analysis was a content audit would then be told
+   * nothing had been analysed. Each table is pinned by name on each surface.
+   */
+  it.each(["audit_runs", "gsc_discovery_runs", "audit_content_runs"])(
+    "both probe %s for the analysis signal",
+    (table) => {
+      expect(codeOf(read(PAGE_PATH))).toContain(table);
+      expect(codeOf(read(WHATS_NEXT_PATH))).toContain(table);
+    },
+  );
+
+  it("both call a domain dead ONLY on a positive no-such-name", () => {
+    for (const path of [PAGE_PATH, WHATS_NEXT_PATH, resolve(HERE, "signals.ts")]) {
+      const code = codeOf(read(path));
+      if (!/no_such_domain/.test(code)) continue;
+      // Never a truthy test on the reachability verdict: "unknown" must not be a death.
+      expect(code).toMatch(/===\s*["']no_such_domain["']/);
+    }
+  });
+
+  it("the panel uses core's DNS port rather than its own lookup", () => {
+    const source = read(PAGE_PATH);
+    expect(source).toMatch(/checkDomainReachable[\s\S]{0,200}?from\s*["']@pseo\/core["']/);
+    // A second resolver in apps/web would be a second answer to "did DNS say no, or not answer?"
+    expect(codeOf(source)).not.toMatch(/from\s*["']node:dns/);
+  });
+});

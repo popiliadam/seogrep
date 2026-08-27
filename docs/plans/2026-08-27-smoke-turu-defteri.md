@@ -1913,3 +1913,460 @@ yönlendirir.
 
 **6 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs` ·
 `setup_project` · `whats_next`. Sıradaki: **`get_job_status`**.
+
+---
+
+# 🌊 DALGA 4 — 2026-08-27 14:5xZ'de başladı
+
+## §D7 — `get_job_status` — 0 kredi ✅ ÖLÇÜLDÜ
+
+### §D7.0 — açılış ölçümleri (hiçbiri handoff'tan devralınmadı)
+
+| ne | ölçüm | kaynak |
+|---|---|---|
+| `mcp.seogrep.com/status` | `ok:true` · `errorsSinceBoot:0` · `pendingJobs:0` · `schema:ready` · uptime 7195s | curl |
+| `seogrep.com` | HTTP 200 | curl |
+| **`MCP_SMOKE_URL`** | **HTTP 401 `Invalid API key`** — bayatlık **ölçüldü**, miras alınmadı | `zsh -c 'source ~/.zshrc'` + curl |
+| vendor tabanı | **$0,00** · UTC günü 2026-08-27 14:51:44 | `dfs_spend_today_usd()` |
+| `credit_ledger` | **783** satır global · kiracı `041a09b3…` **778** satır / **4519** kredi | SQL |
+| bağlantı | `get_credit_balance` → **kart + summary** geldi; summary tam cümle (§6.1 ✅) | canlı MCP |
+| kiracı kimliği | `041a09b3-e149-402b-902b-725026331877` (bakiye 4519 ile eşleşti) | SQL |
+
+`MCP_SMOKE_URL` bayat olduğu için `mcp-alive` + `trial-flow-e2e` **bakmıyor**; bu turda
+"yeşil" diye raporlanmadı. Uçtan doğrulama **canlı MCP istemci bağlantısı** üzerinden yapıldı.
+
+---
+
+### §D7.1 — ⚠️ HANDOFF'UN FİKSTÜR ENVANTERİ YANLIŞTI — yeniden ölçüldü
+
+Handoff §3'ün tablosu üç yerde gerçeği tutmuyor. Ölçülen:
+
+| durum | tool | handoff | **ÖLÇÜLEN** | fark |
+|---|---|---|---|---|
+| `succeeded` | `crawl_site` | 27 | **28** (27 bizim + **1 YABANCI kiracı**) | handoff kiracı-kapsamlı sayıyı fikstür envanteri diye sundu |
+| `succeeded` | `pull_gsc_data` | 27, hepsi timing `none` | **27**, ama **25 `none` + 2 `inconsistent`** | ⛔ aşağıda |
+| `failed` | `crawl_site` | 2 | 2 ✔ | — |
+| `queued` / `running` | — | 0 | 0 ✔ | fikstür gerçekten yok |
+| damgalar çelişik | — | **"fikstür YOK, ölçülemez"** | **2 CANLI FİKSTÜR VAR** | ⛔ aşağıda |
+
+**A. `inconsistent` dalı fikstürsüz DEĞİL.** İki `pull_gsc_data` satırında `finished_at < created_at`:
+
+| id | created | finished | fark |
+|---|---|---|---|
+| `de8f2440-e851-4ed8-8ad0-d0845c0a01ea` | 15:42:59.928 | 15:42:46.054 | **−13,9 s** |
+| `e1db2b1e-48b7-48ce-ac43-b23bece309d0` | 16:14:18.769 | 16:14:17.299 | **−1,5 s** |
+
+Handoff "uydurulmaz, *ölçülemedi* diye yazılır" diyordu. **Ölçüldü** — §D7.3'te çıktısı var.
+Kaynağın kendisi bunu zaten söylüyordu (`get-job-status.ts:59-61`): *"every `pull_gsc_data` row
+written before this fix has `created_at` stamped at INSERT time … so `finished_at` precedes it."*
+Handoff kaynağı okumuş ama bu cümleyi envantere geçirmemiş.
+
+**B. Yabancı kiracının GERÇEK job id'si var.** `1bfe47da-2bcc-420c-9450-e82b951f28a5` sahibi
+`fccfb6db-e9f3-43ad-9119-862de2b68334` (crawl_site, succeeded, 2026-08-07). Handoff izolasyon
+testi için uydurma uuid öneriyordu; **canlı fikstür** mevcut ve §D7.3'te kullanıldı.
+
+---
+
+### §D7.2 — ⛔ HANDOFF'UN 1. ÖLÇÜM MADDESİ **BAYAT** — kusur değil, kapanmış bir kayıt
+
+Handoff §3 madde 1: *"`pull_gsc_data`'nın 27 işinin 27'sinde `started_at` NULL … **yapısal** …
+`get_job_status` bir çekim işinin ne kadar sürdüğünü **asla** söyleyemiyor."*
+
+**Ölçüm bunu çürütüyor.** `pull_gsc_data` **senkron** (surface-charged) bir tool; satırı
+`recordSucceededPull` yazıyor. Commit **`cb4d21d`** — *"stamp a sync job row with the run's
+bracket, not the insert's instant"*, **2026-08-25 21:41:21 +03 = 18:41 UTC** — `created_at`,
+`started_at` ve `finished_at` üçünü de caller'ın **tek saatinden** yazıyor (`boss.ts:323-345`).
+
+En yeni `pull_gsc_data` satırı: **2026-08-25 16:14 UTC** — düzeltmeden **2,5 saat önce**.
+Yani 27/27 NULL, *yapısal bir kusur değil*, **düzeltmeden önceki tarihsel kalıntı**; düzeltmeden
+sonra hiç pull koşulmamış. Aynı şey `inconsistent` gösteren 2 satır için de geçerli — onlar bu
+düzeltmenin **"önce" kanıtı**.
+
+> **Ders (dalga 3 §5.1'in tekrarı, üçüncü kez):** handoff'un TEŞHİSİ hipotezdir. Burada
+> semptom (27/27 NULL) doğru ölçülmüş, teşhis ("yapısal, asla söyleyemez") yanlış çıkmış —
+> düzeltme iki gün önce inmişti. `git log -S` teşhisi 30 saniyede çürüttü.
+
+**Sonuç:** handoff madde 1 diye bir bulgu **açılmadı**. `jobs` satırının anlamı hakkında sorduğu
+soruya cevap: senkron yol için **satır ZATEN koşunun kendisidir**, kuyruk beklemesi yoktur ve
+`reserve_id` kasten NULL'dur (kredi rezervi ledger'da, traceability uuid'sine bağlı).
+
+---
+
+### §D7.3 — çağrılar (asistan) — 10 canlı çağrı, hepsi `mcp.seogrep.com`, hepsi 0 kredi
+
+| # | girdi | dal | çıktı — birebir |
+|---|---|---|---|
+| 1 | `af7a2925…` bizim crawl | `succeeded` + timing **ok** | `Job af7a2925… (crawl_site) succeeded. created …19.305617+00:00 · started …21.518+00:00 · finished …53.409+00:00 · took 1m 32s. Crawled 26 page(s), skipped 117, 3 issue(s) found (mostly: non-HTML (image/webp)).` |
+| 2 | `49b32a71…` pull | `succeeded` + timing **none** | `… succeeded. created …11.929929+00:00 · finished …11.964+00:00. Pulled 90 day(s) … 5000 row(s) … the row limit was reached in both windows, so this is a PARTIAL view …` |
+| 3 | `de8f2440…` pull | `succeeded` + timing **inconsistent** | `… created 2026-08-25T15:42:59.92812+00:00 · finished 2026-08-25T15:42:46.054+00:00 · timing unavailable (this job's stored timestamps are out of order). Pulled 90 day(s) …` |
+| 4 | `24c43b20…` | **`failed`** | `… failed: enqueue failed: password authentication failed for user "postgres". created … · finished …` ⛔ **F-1** |
+| 5 | `d0dea4d5…` | **`failed`** | `… failed: enqueue failed: getaddrinfo ENOTFOUND base. created … · finished …` ⛔ **F-1** |
+| 6 | `fccfb6db…` **YABANCI kiracının gerçek işi** | yok | `No job found with id fccfb6db-e9f3-43ad-9119-862de2b68334.` |
+| 7 | `fccfb6db…35` (1 karakter değişik, var olmayan) | yok | `No job found with id fccfb6db-e9f3-43ad-9119-862de2b68335.` |
+| 8 | `00000000-…-000000000000` (nil uuid, şema açıkça izin veriyor) | yok | `No job found with id 00000000-0000-0000-0000-000000000000.` |
+| 9 | `not-a-uuid` | argüman reddi | `Invalid input for "get_job_status": ✖ Invalid UUID → at job_id` |
+| 10 | `list_jobs limit=5` / `limit=50` | keşif yolu | §D7.5 |
+
+**Kiracı izolasyonu ✅ ÖLÇÜLDÜ — gerçek fikstürle, uydurmayla değil.** #6 ile #7 **birebir aynı**
+cümle. Yabancı kiracının var olan işi ile hiç var olmayan bir id ayırt edilemiyor; varlık sızıntısı
+yok. `getJobForUser` (`boss.ts:161-180`) `.eq("id").eq("user_id")` ile okuyor; id-only `getJob`
+tool yüzeyine bağlanmamış — kaynakta iki ayrı yerde yazılı ve **doğrulandı**.
+
+**Dört durumun üçü ölçüldü:** `succeeded` (timing'in **üç** hâliyle) ve `failed`.
+`queued`/`running` **ölçülemedi** — fikstür yok, üretmek 20 kredilik bir crawl demek,
+**operatör onayı alınmadı, başlatılmadı.**
+
+---
+
+### §D7.4 — 🔴 BULGU F-1 — ÇIKTI/BİLGİ SIZINTISI · kod · **orta** · ham altyapı hatası müşteriye aynen basılıyor
+
+`failed` dalı `job.error`'ı **hiç işlemeden** basıyor (`get-job-status.ts:163`), ve `job.error`'ın
+kaynağı `failJob(jobId, \`enqueue failed: ${detail}\`)` (`boss.ts:128`) — `detail` yakalanan
+istisnanın **ham `message`**'ı. Hiçbir katmanda sanitizasyon yok (`failJob` `boss.ts:415-421`:
+dizgiyi olduğu gibi `error` kolonuna yazıyor).
+
+Ödeme yapan müşterinin gördüğü iki canlı cümle:
+
+```
+Job 24c43b20-… (crawl_site) failed: enqueue failed: password authentication failed for user "postgres".
+Job d0dea4d5-… (crawl_site) failed: enqueue failed: getaddrinfo ENOTFOUND base.
+```
+
+**İki ayrı problem, ikisi de gerçek:**
+
+1. **Bilgi sızıntısı.** DB rol adı (`postgres`) ve iç hostname (`base`) müşteriye gidiyor.
+   Parola sızmıyor, çapraz-kiracı sızıntı yok — bu yüzden **kritik değil** — ama ürünün iç
+   topolojisini isteyen kimseye anlatmayan bir sınırın karşı tarafında.
+2. **Müşteriye eyleme dönük hiçbir şey söylemiyor.** *"password authentication failed for user
+   postgres"* okuyan müşterinin yapabileceği tek şey yok; **kendi hatası olduğunu sanabilir**.
+   20 kredilik bir işin neden düştüğünü soran kişiye verilen cevap bu.
+
+**Tarihsel değil, canlı davranış.** Bu iki satır 2026-07-21'den, ama yol açık: bugün bir enqueue
+istisnası atsa aynı ham `message` aynı şekilde basılır. Kapı bunu görmüyor.
+
+**Not — bu bir ÇELİŞKİ:** aynı dosya `TIMING_INCONSISTENT_NOTE`'u yazarken *"müşteriye
+bookkeeping'i yüzünden işinin battığını söylemek, ilk yalanın üstüne ikinci bir yalan olur"*
+diye **açıkça** düşünmüş (`get-job-status.ts:106-112`). Aynı özen `job.error` yolunda yok.
+
+---
+
+### §D7.5 — 🔴 BULGU F-2 — KAPSAM · kod · **orta** · **D-8 sınıfının İKİNCİ evi**: `list_jobs`'ta imleç yok
+
+`get_job_status`'ın **tek** keşif yolu `list_jobs` (kaynağın kendi başlık yorumu bunu söylüyor:
+*"`get_job_status` is the only way to read either back, and it REQUIRES that id — which is the one
+thing a plain sentence cannot carry"*). O yüzden bu bulgu `get_job_status` turunun kapsamındadır.
+
+**Ölçüm — `limit` ZATEN tavanda (50) iken:**
+
+```
+Your 50 most recent job(s) of 56, newest first:
+…
+6 older job(s) not shown — raise `limit` (max 50) to see more.
+```
+
+Kullanıcı **zaten 50'de**. Yükseltecek yer yok. **6 iş kalıcı olarak erişilemez** — imleç yok,
+`before_id` yok, tarih filtresi yok. Tavsiye **uygulanamaz**.
+
+Kaynak (`list-jobs.ts:186-190`): `cut` yalnız `total > rows.length` koşuluyla basılıyor;
+`rows.length === MAX_JOB_LIST_LIMIT` hâli **hiç ayrılmamış**.
+
+> **Bu tam olarak D-8.** `list_credit_activity`'de bulunmuş, `before_id` imleciyle düzeltilmiş
+> ve §D1e'de kapanmış kusurun **düzeltilmemiş ikinci evi**. Dalga 3'ün dersi (*"aynı cümleyi
+> taşıyan İKİNCİ sabit"*) burada üçüncü kez doğrulandı. `list_jobs` D-8'den **sonra** yazıldı
+> (0 kredi, operatör imzası 2026-08-25 madde 15) — yani ders yeni koda taşınmamış.
+
+Bugün 56 iş var, tavan 50; **açık 6**. Fark her crawl/pull ile büyüyor.
+
+---
+
+### §D7.6 — 🟡 BULGU F-3 — ÇIKTI/PARİTE · kod · **düşük-orta** · `get_job_status` HANGİ SİTE olduğunu söylemiyor
+
+`formatJobStatus`'ın başlığı (`get-job-status.ts:139`): `Job ${job.id} (${job.tool})`.
+**`project_id` yok.**
+
+- `JobRow` **`project_id: string \| null` taşıyor** (`db.ts:38-50`) ve `getJobForUser`
+  `select("*")` yapıyor — **veri elde, kullanılmıyor.**
+- `list_jobs` **aynı satırda projeyi basıyor**: `· project: noraninsaat.com ·`,
+  `projectLabel()` ile alan adına çevirerek.
+
+**Sonuç:** 19 projeli bir hesapta `get_job_status` cevabı *"Job af7a2925… (crawl_site) succeeded …
+Crawled 26 page(s)"* — **hangi sitenin** taraması olduğu yazmıyor. Aynı yüzeyin iki tool'u aynı
+satır için farklı miktarda bilgi veriyor; ayrıntı için çağrılan tool, listeden **daha az** söylüyor.
+
+---
+
+### §D7.7 — 🟡 F-4 — küçük · aynı durum için İKİ farklı cümle
+
+Aynı `inconsistent` durumu iki tool'da farklı anlatılıyor:
+
+| tool | cümle |
+|---|---|
+| `get_job_status` | `timing unavailable (this job's stored timestamps are out of order)` |
+| `list_jobs` | `timestamps out of order — this job's stamps are not reliable` |
+
+**Kural (`jobTiming`) tek evde — bu doğru ve kaynak bunu bilinçli yapmış** (`list-jobs.ts:130-137`
+`jobTiming`'i *import ediyor*, yeniden karşılaştırma yazmıyor). Sürüklenen kural değil **ibare**.
+Düşük etki; kayda geçiyor, bulgu olarak açılmıyor.
+
+---
+
+### §D7.8 — bakıldı, kusur YOK — bu eksenlerde temiz
+
+| eksen | ölçüm |
+|---|---|
+| **kiracı izolasyonu** | ✅ gerçek yabancı id (`fccfb6db…`) ile var olmayan id **birebir aynı** cevap; varlık sızıntısı yok |
+| **ÜCRET DÜRÜSTLÜĞÜ** | ✅ 0 kredi denmişti, **0 düştü**; ledger 783 → **783**, bakiye 4519 → **4519** |
+| **ARGÜMAN** | ✅ `not-a-uuid` → net, yol gösterici, **ücretsiz** ret; tek parametre, zorunlu, açıklaması doğru |
+| **uydurma özet** | ✅ `summarizeCrawlResult`/`summarizePullResult` guard'lı (`crawl-summary.ts:26-28`): `{pages[],skipped[]}` değilse **`null`** → özet satırı **basılmıyor**, uydurulmuyor |
+| **ada değil ŞEKLE göre dispatch** | ✅ kaynakta yazılı ve doğrulandı (`summarizeJobResult`, `get-job-status.ts:48-50`) |
+| **panel paritesi** | ✅ **tek fonksiyon**: `apps/web/lib/projects/card.ts:227` `summarizeCrawlResult(crawl.result)` — MCP ile aynı `@pseo/core` evi; iki cümle olamaz |
+| **uydurma süre** | ✅ `inconsistent`'te **hiçbir rakam basılmıyor** (0 bile değil) — canlı çıktıda doğrulandı |
+| **`list_jobs` kiracı kapsamı** | ✅ *"of 56"* diyor; DB'de 57 iş var, 1'i yabancı kiracının — **yabancı iş sayıma girmiyor** |
+| **KAPSAM dürüstlüğü (kesme var mı diyor mu)** | ✅ `list_jobs` kesmeyi **söylüyor** (*"6 older job(s) not shown"*) — kusur söylememesi değil, **çözümün uygulanamaz olması** (F-2) |
+
+---
+
+### §D7.9 — ÖLÇÜLEMEDİ — uydurulmadı
+
+| ne | neden | ne gerekir |
+|---|---|---|
+| **`queued` dalı** | canlı fikstür 0 | crawl başlatmak — **20 kredi**, operatör onayı |
+| **`running` dalı + canlı ilerleme sayacı** | canlı fikstür 0 | aynı crawl, **koşarken iki kez** yoklanır ve iki cevabın **farklı** olduğu doğrulanır |
+| `readCrawlProgress` yolu | yalnız `running` işte çalışır | yukarıdakiyle aynı |
+| F-1'in bugün tekrarlanabilirliği | enqueue'yu bilerek düşürmek gerekir | üretimde yapılmaz; kod yolu okundu (`boss.ts:128` → `failJob` → `formatJobStatus:163`) |
+
+---
+
+### §D7.10 — para ve yan etki muhasebesi — dalga 4 açılışı
+
+| ne | önce | sonra | fark |
+|---|---|---|---|
+| vendor (`dfs_spend_today_usd()`) | **$0,00** | **$0,00** | **0** |
+| `credit_ledger` (global) | 783 | 783 | **0 satır** |
+| bakiye (`041a09b3…`) | 4519 | 4519 | **0 kredi** |
+| `jobs` | 57 | 57 | **0 iş** |
+
+**10 canlı MCP çağrısı · 0 kredi · $0,00 vendor · 0 yan etki.** `actual_usd` yazılacak satır yok —
+paralı hiçbir uca gidilmedi.
+
+---
+
+### §D7.11 — çalışma prensibi · panel · tetikleyen komutlar
+
+**Prensip.** `job_id` (uuid, zorunlu) → `getJobForUser(service, id, ctx.userId)` → satır yoksa tek
+tip ret. Satır varsa `formatJobStatus`: başlık + damga izi + duruma göre gövde. Damgalar
+`jobTiming` ile **üç** hâle ayrılıyor (`ok`/`none`/`inconsistent`); kural **tek evde** ve
+`list_jobs` de oradan okuyor. Biten işin özeti **result'ın ŞEKLİNE** göre seçiliyor, `job.tool`
+adına göre değil.
+
+**Panelde.** `/app/projects` kartı crawl özetini **aynı** `summarizeCrawlResult`'tan alıyor
+(`card.ts:227`). Panelde ayrı bir "job durumu" ekranı yok — kart yalnız **en son başarılı** crawl'ı
+gösteriyor; `queued`/`running`/`failed` işler panelde **görünmüyor**. Bir işin neden düştüğünü
+öğrenmenin tek yolu `get_job_status`, ve o da F-1'i basıyor.
+
+**Tetikleyen komutlar.** *"Is my crawl done?"* · *"What happened to job X?"* · *"Why did that
+crawl fail?"* — hepsi bir `job_id` gerektiriyor; id yoksa doğru yol önce `list_jobs`.
+`crawl_site` ve `pull_gsc_data` cevabında id'yi veriyor.
+
+---
+
+### §D7.12 — `get_job_status` KAPANIŞ TABLOSU — **operatör onayı bekliyor**
+
+| # | bulgu | eksen | ağırlık | sahip |
+|---|---|---|---|---|
+| **F-1** | `failed` dalı ham altyapı hatasını basıyor (`user "postgres"`, `ENOTFOUND base`) | ÇIKTI + sızıntı | **orta** | **kod — düzeltme izni açık** |
+| **F-2** | `list_jobs` tavandayken "raise `limit`" diyor; 6 iş erişilemez, imleç yok (**D-8'in 2. evi**) | KAPSAM | **orta** | **kod — düzeltme izni açık** |
+| **F-3** | `get_job_status` hangi projeye ait olduğunu söylemiyor; `project_id` elde ama kullanılmıyor | ÇIKTI/parite | düşük-orta | **kod** |
+| F-4 | `inconsistent` için iki tool iki farklı ibare kullanıyor | ibare | düşük | kayıt |
+| — | handoff envanteri 3 yerde yanlıştı (28≠27 · `inconsistent` fikstürü VAR · yabancı id VAR) | kayıt | — | **düzeltildi §D7.1** |
+| — | handoff madde 1 (*"yapısal, asla süre söyleyemez"*) **bayat**: `cb4d21d` iki gün önce düzeltmiş | kayıt | — | **kapatıldı §D7.2** |
+
+**Gezilen yüzey: 7 / 38 tool.** (`get_job_status`; `list_jobs` keşif yolu olarak ölçüldü ama
+**kendi turu yapılmadı** — F-2 oradan çıktı.)
+
+**DUR.** Operatörün kendi testi ve "okey"i olmadan sıradaki tool'a (`list_gsc_properties`)
+geçilmez. `queued`/`running` ölçümü **20 kredi** ister ve **onay alınmadı**.
+
+---
+
+## §D8 — DÜZELTMELER: F-1 · F-2 · F-3 · E-9 · E-3b (+F-5, kapının bulduğu)
+
+Operatör 2026-08-27'de *"düzeltelim, ek olarak whats_next'ten de gelen hatalar"* dedi.
+İki madde imza istiyordu; **§D8.0'da imzalandı**, gerisi düzeltme izni kapsamındaydı.
+
+### §D8.0 — alınan imzalar
+
+| madde | seçenekler | **İMZALANAN** |
+|---|---|---|
+| **E-9** manşet | `find_quick_wins` (10) · `audit_schema` (5) · `audit_onpage` (30) | **`find_quick_wins` (10 kredi)** — merdivenin all-set `upcoming` listesi zaten bununla başlıyordu; manşete terfi, `generate_report` alta. Bugünkünden **5 kredi ucuz** |
+| **E-3b** DNS | render'da lookup (2sn tavan) · kalıcılaştır · açık bırak | **render'da lookup** — şema değişikliği yok, MCP ile birebir taze veri; bayatlama riski yok |
+
+### §D8.1 — dal ve commit'ler
+
+`fix/job-status-whats-next-dalga4`, taban `7197905`. **Altı commit** (NEVER#10: her bulgu ayrı):
+
+| commit | ne |
+|---|---|
+| `8ac7e47` | **F-1** — asenkron yolda redaksiyon politikası |
+| `0ba7b35` | **F-2** — `list_jobs` bileşik imleç |
+| `df53bcd` | **F-3** — `get_job_status` projeyi adlandırıyor |
+| `6355f23` | **E-9** — merdivenin bayat önermesi sinyale dönüştü |
+| `bbf8601` | **E-3b** + E-9'un panel yarısı |
+| `6dcba8c` | **F-5** — kapının bulduğu yeni bulgu |
+
+---
+
+### §D8.2 — F-1: kusurun GERÇEK şekli ölçümle değişti
+
+Defterin §D7.4'te F-1'i *"`job.error` işlenmeden basılıyor"* diye yazmıştım. Kaynağı okuyunca
+teşhis **daraldı ve sertleşti**: `tools/registry.ts:632-643` bu politikayı **senkron yolda zaten
+uyguluyor** ve kendi yorumu şöyle diyor:
+
+> *"Anything that escapes a handler is an UNEXPECTED failure … Postgres names the relation, an RPC
+> names the function, a provider names its endpoint. **Handing that to whoever holds an API key
+> maps the schema for them.**"*
+
+Ve aynı yorum *"a worker's fail-mark"*ı bu catch'in **dışında** bırakıyor. Yani kusur "kimse
+düşünmemiş" değil: **politika yazılmış, uygulanmış, ve asenkron yola taşınmamış.** Bir yüzeyde
+kural, diğerinde hiçbir şey.
+
+**Kural artık:** bir mesaj müşteriye ancak **fırlatanı onu müşteri için yazdığını İŞARETLEDİYSE**
+birebir ulaşır (`PreconditionNotMetError` ve registry'nin diğer tipli retleri). Gerisi
+redaksiyona uğrar, ham metin **aynı referansla** sunucu log'una gider.
+
+**Fail-closed yönü kasıtlı:** işaretsiz bir mesaj, kimsenin "müşteriye gösterilebilir" demediği
+mesajdır. Bu yönde yanılmanın bedeli *"birinin işaretlemeyi unuttuğu bir cümle yerine referans
+gören müşteri"* — bir destek sorusu, bir ifşa değil. **F-5 tam olarak bu oldu ve kapı yakaladı.**
+
+`crawl.ts`'in dört operatör teşhisi redaksiyona girdi, **dört müşteri mesajı işaretlendi**
+(arşiv · proje bulunamadı · hiç sayfa taranamadı · **0017 SET NULL yolu**).
+
+**Kapı bu ekseni hiç görmüyormuş:** hızlı şeritte tek bir test ham geçişi pinlemiyordu.
+
+---
+
+### §D8.3 — 🔴 YENİ BULGU F-5 — PARA · kod · **orta-yüksek** · kredisi biten müşteriye "bizde hata var" deniyor
+
+**Kapı buldu, aramakla değil.** F-1'in redaksiyonu inince mevcut bir DB testi kırmızıya döndü:
+
+```
+expected 'the job could not be completed…' to match /insufficient balance/
+```
+
+Peşine düşünce çıkan gerçek kusur **daha eski ve SENKRON yolda**: `reserve_credits`
+`insufficient balance: cannot reserve 20 (available 5)` fırlatıyor (migration 0033), `guard.ts`
+bunu **düz `Error`**'a sarıyor, hiçbir şey tanımıyor — ve `registry.ts`'in beklenmeyen-hata dalı
+kredisi biten müşteriye şunu diyor:
+
+```
+Tool "audit_onpage" failed unexpectedly. The server logged the details under
+reference 3f9c1a20 — quote it if you report this.
+```
+
+**Kredisi bitmiş bir insana, kendi bakiyesi hakkında bug bildirmesi söyleniyor.**
+
+Düzeltme: raise'in gözlendiği **tek yerde** tiplendi, iki yüzey de tanıyor. **Rakamlar korunuyor**
+— ne tuttuğu ve elinde ne olduğu cevabın tamamı, ikisi de iç detay değil (fiyat public, bakiye
+müşterinin kendisinin). RPC'nin adı ve ifadesi düşüyor. Rakamsız bir raise'de rakam **uydurulmuyor**.
+
+> **Ders:** F-1'in kendi başlık yorumu bu hatayı **önceden tarif etmişti**. Fail-closed doğru
+> yöndü; izin listesi bir kalem eksikti, ve o eksiği **prose değil kapı** buldu.
+
+---
+
+### §D8.4 — F-2 · F-3 · E-9 · E-3b — kısa
+
+**F-2.** İmleç **bileşik** — `credit_ledger`'ınkinden ayrıldığı yer burası: `jobs.id` uuid, sırası
+yok, `id < cursor` `gen_random_uuid()` gürültüsünde gezerdi. Sorgunun zaten sıraladığı çift
+(`created_at desc, id desc`), ve id yarısı süs değil: `recordSucceededPull` `created_at`'i
+**caller'ın saatinden** yazıyor, tek döngüde kapanan iki pull aynı milisaniyeyi paylaşabilir.
+D-8'in **ikinci** dersi de kapandı: sayfa iki artık kendine *"en yeni"* demiyor.
+
+**Kusurun kendisini pinleyen bir test vardı** (`toMatch(/limit/)`) — silinmedi, **hangi ekseni
+varyantlayıp hangisini varyantlamadığı yazılarak** yeniden yazıldı.
+
+**F-3.** `project: <alan adı>` — `list_jobs` ile **aynı ibare, aynı yer, aynı `projectLabel`**.
+Okuma **dar** (tek satır), projesi olmayan işte hiç koşmuyor, ve **not-found dalından SONRA**.
+
+**E-9.** Kusur bir **yorumdu**. Merdiven *"denetimler iz bırakmaz"* cümlesine dayanarak analiz
+sinyallerini hiç aramamış. Önerme artık **yüzeyin ölçtüğü bir sinyal**. `hasAnalysis` opsiyonel ve
+`=== false` ile okunuyor; özgün beş sinyalin **32 kombinasyonu da bit bit aynı** karar veriyor.
+**Üç tablo da**, üç literal `.from(` ile — `audit_content` üçüncüsüne yazıyor.
+
+**E-3b.** Panel `checkDomainReachable`'ı **core'dan** çağırıyor (aynı port, iki yüzey aynı cevap).
+**Yön sözleşme:** koşamayan bir lookup `"unknown"`a düşüyor, o da `domainUnreachable`'ı **YOK**
+yapıyor, `false` değil — tek resolver arızası bütün hesabı ölü-alan basamağına atmasın diye.
+Her iki değer de (`resolves` VE `unknown`) ayrı ayrı pinli (ders 14).
+
+---
+
+### §D8.5 — mutasyon kanıtları — hepsi kırmızıya döndü, geri alınca yeşil
+
+| mutasyon | sonuç |
+|---|---|
+| F-1: redaksiyonu kaldır, ham mesajı geçir | **13 testin 7'si kırmızı** |
+| E-9: `=== false`'u truthy teste çevir | core **3** + web **3** kırmızı |
+| E-9: rung'u tamamen kaldır | core **4** + web **1** kırmızı |
+| E-3b: `"unknown"`u ölüm say | web **1** kırmızı |
+| E-9: üçüncü tabloyu panelden düşür | web **1** kırmızı |
+| hepsi geri alındı | **hepsi yeşil** |
+
+---
+
+### §D8.6 — kapının KENDİSİ üç gerçek şey yakaladı
+
+Bunlar prose'un değil kapının bulguları:
+
+1. **`read-coverage.test.ts`** — panele eklediğim okuma ve iki kart alanı matrise kaydedilmemişti.
+   Sayımı **zayıflatmadan** genişlettim: her satır **kaç tablo okuduğunu beyan ediyor**. *"En az bir"*e
+   gevşetmek, sayımın var olma sebebini (bir gövdenin sessizce İKİ okuma taşıması) çöpe atardı.
+   Ayrıca sayım, üç probu **literal `.from()`** yazmaya zorladı — döngü, silinince kırmızı verecek
+   çağrı yerini gizliyordu. Her iki yüzeyde de öyle yazıldı.
+2. **`typecheck-tests.mjs`** — `jobs.Update` `project_id` taşımıyor; çıplak `tsc --noEmit` görmezdi
+   (**ders 15**, bu kez benim kodumda).
+3. **DB şeridi → F-5.** Yukarıda.
+
+---
+
+### §D8.7 — kapılar, NE ÖLÇTÜKLERİYLE
+
+| kapı | sonuç | ölçtü | **ÖLÇMEDİ** |
+|---|---|---|---|
+| `make verify` | **PASS** | guard-selftest · RLS/append-only/grants · lisans · typecheck·lint·test·build · tool-docs drift · core **348** (←339) · db **12** · mcp **3667** (←3627) · web **1993** (←1979) | **secret taraması YOK · DB şeritleri YOK** |
+| `make verify-db` | **PASS** | db **165** · mcp **502** · web **48** — bileşik imleç, `created_at` tie-break, yabancı-imleç izolasyonu, proje etiketi | — |
+| `make goals` | **16/16 (5 SKIP)** | `no-secrets` **gitleaks PASS** · rls · ledger · uptime · webhook · repo-clean | ⚠️ **5 SKIP** |
+
+> ⛔ **"16/16" TAM ÖLÇÜM DEĞİL.** SKIP'ler: `mcp-alive` · `trial-flow-e2e` · `dfs-budget-guard` ·
+> `landing-live` · `purchase-flow-live`. İlk ikisi **hâlâ `MCP_SMOKE_URL` bayat olduğu için kör**
+> (§D7.0). Bugün 14/16 yerine 16/16 görünmesinin sebebi kapının düzelmesi değil, **SKIP'lerin
+> FAIL değil PASS sayılması**. Anahtar tazelenmeden bu iki kapı hiçbir şey söylemiyor.
+
+---
+
+### §D8.8 — NEVER#10 ŞERHİ — okunmalı
+
+- **Tek commit >200 satır → böl.** Altıya bölündü; `8ac7e47` (353) ve `bbf8601` yine 200'ün
+  üstünde. Daha fazla bölmek derlenmeyen ara commit'ler üretirdi (politika + her çağrı yerinde
+  uygulanması + testleri tek birimdir).
+- **Task toplam diff >400 satır → hakem HER DURUMDA Fable.** Bu turun toplamı 400'ün **çok**
+  üstünde. **Hakem turu KOŞULMADI** — oturumda ajan çağrısı kapalıydı. Deterministik son söz
+  (`verify.sh` · `verify-db.sh` · `make goals`) alındı ve üçü de yukarıda **ne ölçtükleriyle**
+  raporlandı, ama **taze bağlamlı hakem eksiktir ve bu bir borçtur.**
+- **Canlıya çıkmadı.** Merge + deploy + canlıda doğrulama operatörün onayını bekliyor.
+
+---
+
+### §D8.9 — bu turun kapanış tablosu
+
+| # | bulgu | durum |
+|---|---|---|
+| **F-1** | ham altyapı hatası müşteriye | ✅ düzeltildi · 3 kapı yeşil · **canlıda DEĞİL** |
+| **F-2** | `list_jobs` imleçsiz (D-8'in 2. evi) | ✅ düzeltildi · **canlıda DEĞİL** |
+| **F-3** | `get_job_status` projeyi söylemiyor | ✅ düzeltildi · **canlıda DEĞİL** |
+| **F-5** | kredisi bitene "bizde hata var" | ✅ düzeltildi (**kapı buldu**) · **canlıda DEĞİL** |
+| **E-9** | all-set basamağı analizi bilmiyor | ✅ imzalandı + düzeltildi (MCP **ve** panel) · **canlıda DEĞİL** |
+| **E-3b** | panel ölü alan adına 20 kredilik crawl | ✅ imzalandı + düzeltildi · **canlıda DEĞİL** |
+| — | `MCP_SMOKE_URL` bayat | ⛔ **AÇIK — operatör işi**, iki kapı kör |
+| — | taze hakem turu (NEVER#10) | ⛔ **BORÇ** |
+
+**Gezilen yüzey: 7 / 38 tool.** Sırada `list_gsc_properties`.

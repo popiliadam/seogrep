@@ -199,3 +199,86 @@ describe("list_jobs against the local stack", () => {
     );
   });
 });
+
+/**
+ * F-2 — THE CURSOR, against real rows. The fast lane can prove the SENTENCE names a before_id;
+ * only Postgres can prove the value it names reaches the next page.
+ *
+ * Two things here are provable nowhere else. The composite predicate — `created_at < c OR
+ * (created_at = c AND id < cid)` — has to survive a TIE, and `jobs.id` is a uuid, so the tie is
+ * broken by uuid ordering the fast lane's recorder knows nothing about. And a cursor naming
+ * another tenant's job has to come back as "unknown", which needs two real tenants.
+ */
+describe("list_jobs paging against the local stack", () => {
+  it("reaches every job through the cursor, with no row repeated or skipped", async () => {
+    const ctx = await makeCtx();
+    const created: string[] = [];
+    for (let i = 1; i <= 7; i++) {
+      created.push(
+        await makeJob(ctx.userId, {
+          status: "succeeded",
+          created_at: `2026-08-0${i}T00:00:00.000Z`,
+        }),
+      );
+    }
+    const newestFirst = [...created].reverse();
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page++) {
+      const result = await listOwnJobs(ctx.userId, 3, cursor);
+      if (result.rows.length === 0) break;
+      seen.push(...result.rows.map((r) => r.id));
+      cursor = result.rows[result.rows.length - 1]?.id;
+    }
+
+    expect(seen).toEqual(newestFirst);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it("breaks a created_at TIE by id, so a shared millisecond loses no row", async () => {
+    const ctx = await makeCtx();
+    // recordSucceededPull stamps created_at from the caller's clock, so two pulls settled in one
+    // loop really can share a millisecond. A created_at-only cursor skips or repeats here.
+    const stamp = "2026-08-15T12:00:00.000Z";
+    const tied = [
+      await makeJob(ctx.userId, { status: "succeeded", created_at: stamp }),
+      await makeJob(ctx.userId, { status: "succeeded", created_at: stamp }),
+      await makeJob(ctx.userId, { status: "succeeded", created_at: stamp }),
+    ];
+
+    const first = await listOwnJobs(ctx.userId, 1);
+    const rest = await listOwnJobs(ctx.userId, 10, first.rows[0]?.id);
+
+    expect(first.rows).toHaveLength(1);
+    expect(rest.rows.map((r) => r.id)).not.toContain(first.rows[0]?.id);
+    expect([...first.rows, ...rest.rows].map((r) => r.id).sort()).toEqual([...tied].sort());
+  });
+
+  it("counts what REMAINS past the cursor, not the whole history", async () => {
+    const ctx = await makeCtx();
+    for (let i = 1; i <= 5; i++) {
+      await makeJob(ctx.userId, { status: "succeeded", created_at: `2026-08-0${i}T00:00:00.000Z` });
+    }
+    const first = await listOwnJobs(ctx.userId, 2);
+    expect(first.total).toBe(5);
+
+    const second = await listOwnJobs(ctx.userId, 2, first.rows[1]?.id);
+    expect(second.total).toBe(3);
+  });
+
+  it("treats ANOTHER TENANT's job id as an unknown cursor, leaking no existence", async () => {
+    const owner = await makeCtx();
+    const stranger = await makeCtx();
+    await makeJob(owner.userId, { status: "succeeded" });
+    const strangerJob = await makeJob(stranger.userId, { status: "succeeded" });
+
+    const page = await listOwnJobs(owner.userId, 10, strangerJob);
+
+    expect(page.unknownCursor).toBe(true);
+    expect(page.rows).toEqual([]);
+    // Identical to a uuid that is nobody's — the two must be indistinguishable.
+    const nonexistent = await listOwnJobs(owner.userId, 10, randomUUID());
+    expect(nonexistent).toEqual(page);
+  });
+});

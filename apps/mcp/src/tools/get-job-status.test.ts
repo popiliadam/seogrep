@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatDuration, formatJobStatus, jobTiming } from "./get-job-status.ts";
+import { formatJobLine } from "./list-jobs.ts";
 import type { JobRow } from "../db.ts";
 
 /**
@@ -388,12 +389,20 @@ describe("formatJobStatus — a running crawl reports its progress", () => {
     expect(second).toContain("started 2026-07-19T00:01:00.000Z");
   });
 
-  it("a running job with NO stored progress prints exactly the line it always did", () => {
-    const line = formatJobStatus(job({ status: "running", started_at: "2026-07-19T00:01:00.000Z" }));
+  it("a running job with NO stored progress prints the plain line, plus its project", () => {
+    // The byte-exact expectation gained `· project: …` when F-3 landed (smoke tour wave 4): the
+    // clause is not conditional on progress, so this line moves with every other status. What the
+    // spec is still guarding is unchanged — no progress counts appear when none are stored.
+    const line = formatJobStatus(
+      job({ status: "running", started_at: "2026-07-19T00:01:00.000Z" }),
+      new Map([["proj-1", "example.com"]]),
+    );
     expect(line).toBe(
       "Job 11111111-1111-4111-8111-111111111111 (crawl_site) is running. " +
-        "created 2026-07-19T00:00:00.000Z · started 2026-07-19T00:01:00.000Z.",
+        "created 2026-07-19T00:00:00.000Z · started 2026-07-19T00:01:00.000Z · " +
+        "project: example.com.",
     );
+    expect(line).not.toMatch(/page\(s\) crawled/);
   });
 
   it("ignores a malformed or foreign result rather than printing half a number", () => {
@@ -410,5 +419,61 @@ describe("formatJobStatus — a running crawl reports its progress", () => {
       expect(line).not.toMatch(/crawled, /);
       expect(line).toMatch(/is running/);
     }
+  });
+});
+
+/**
+ * F-3 (smoke tour wave 4) — WHICH SITE was this job about?
+ *
+ * Measured live 2026-08-27 on an account with 19 projects: `get_job_status` answered
+ * "Job af7a2925… (crawl_site) succeeded … Crawled 26 page(s)" and never named the site, while
+ * `list_jobs` — the list the caller came FROM — printed `· project: noraninsaat.com` on the same
+ * job. The detail tool said less about a job than the index did, and `project_id` was on the row
+ * the whole time.
+ */
+describe("formatJobStatus names the project", () => {
+  const domains = new Map([["proj-1", "noraninsaat.com"]]);
+
+  it.each(["queued", "running", "succeeded", "failed"] as const)(
+    "names it on a %s job — the clause is not conditional on status",
+    (status) => {
+      const line = formatJobStatus(job({ status, error: "x" }), domains);
+      expect(line).toContain("project: noraninsaat.com");
+    },
+  );
+
+  it("uses the SAME clause list_jobs uses, so the two surfaces cannot word it differently", () => {
+    const row = job({ status: "succeeded", finished_at: "2026-07-19T00:02:00.000Z" });
+    const statusLine = formatJobStatus(row, domains);
+    const listLine = formatJobLine(
+      {
+        id: row.id,
+        tool: row.tool,
+        status: "succeeded",
+        project_id: row.project_id,
+        created_at: row.created_at,
+        finished_at: row.finished_at,
+      },
+      domains,
+    );
+    const clause = "project: noraninsaat.com";
+    expect(statusLine).toContain(clause);
+    expect(listLine).toContain(clause);
+  });
+
+  it("renders an IDN project the way the customer typed it, not as punycode", () => {
+    const line = formatJobStatus(job({}), new Map([["proj-1", "xn--rnek-4qa.com"]]));
+    expect(line).toContain("project: örnek.com");
+    expect(line).not.toContain("xn--");
+  });
+
+  it("says 'no project scope' in words for a job that has none, never a dropped clause", () => {
+    const line = formatJobStatus(job({ project_id: null }), domains);
+    expect(line).toContain("project: no project scope");
+  });
+
+  it("prints the id — which is TRUE — for a project the tenant no longer has", () => {
+    const line = formatJobStatus(job({ project_id: "gone-1" }), domains);
+    expect(line).toContain("project: gone-1");
   });
 });

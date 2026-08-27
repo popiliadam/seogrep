@@ -7,6 +7,11 @@ import {
   requiresPaidBalance,
 } from "./paid-balance.ts";
 import {
+  InsufficientCreditsError,
+  insufficientCreditsMessage,
+  isInsufficientBalanceRaise,
+} from "./insufficient-credits.ts";
+import {
   assertFreeVendorSpendBudget,
   createDbFreeVendorSpendCounter,
   type FreeVendorSpendCounter,
@@ -129,6 +134,13 @@ async function reserve(
     p_project_id: projectId ?? null,
   });
   if (error) {
+    // OUT OF CREDITS IS NOT AN UNEXPECTED FAILURE (F-5). Left as a plain Error it reached
+    // registry.ts's generic branch and told a customer who had simply run out to file a bug, and
+    // — once the worker learned to redact — told them a background job failed on OUR side. Typed
+    // here, at the one place the raise is observed, so both surfaces recognise it.
+    if (isInsufficientBalanceRaise(error.message)) {
+      throw new InsufficientCreditsError(insufficientCreditsMessage(error.message));
+    }
     throw new Error(`reserve_credits failed: ${error.message}`);
   }
   if (typeof data !== "string") {

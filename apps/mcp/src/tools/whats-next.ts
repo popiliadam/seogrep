@@ -250,6 +250,68 @@ async function readGscLink(
  * the answer. Swallowing it would answer "active", which is exactly the wrong recommendation
  * this rung exists to remove — and a whats_next that fails costs 0 credits and can be re-run.
  */
+/**
+ * Has ANY analysis ever run for this project? (E-9, smoke tour wave 4.)
+ *
+ * THREE TABLES, ONE QUESTION, and all three are needed. `audit_runs` (0024) records the crawl-side
+ * audits, `gsc_discovery_runs` (0025) the three Search Console discovery tools, and
+ * `audit_content_runs` (0026) the one tool that joins a pull to a crawl and therefore fits in
+ * neither. Probing two of them would answer "nobody has analysed this" to a project whose only
+ * analysis was the third — the panel reads two, and this is the read that must not inherit that
+ * gap.
+ *
+ * `limit(1)` on the id alone, not a count: the ladder asks whether the number is zero, and a
+ * project with two hundred audits must not pay to have them counted. Tenant-scoped through
+ * `forUser` (NEVER #4) on an RLS-bypassing service client, exactly like every other read here.
+ *
+ * IT THROWS rather than degrading to `false`, and the direction matters: `false` is the signal
+ * that ROUTES, so a swallowed error would answer "nothing has been analysed" for a project full
+ * of analyses and re-recommend work the customer already bought. `undefined` is the value for
+ * "not measured", and it belongs to a surface that does not probe — not to a probe that failed.
+ * whats_next costs 0 credits and can be re-run.
+ */
+export async function readHasAnalysis(
+  client: ServiceClient,
+  userId: string,
+  projectId: string,
+): Promise<boolean> {
+  // AN EXPLICIT user_id FILTER, not forUser/selectOwn — the same shape readGscLink above uses and
+  // for the same stated reason: selectOwn narrows filters to the columns common to ALL tenant
+  // tables, which excludes project_id, so only the literal `.from(table)` gives the row type this
+  // filter needs. The tenant guard (NEVER #4) is the `.eq("user_id", …)` on every one of the three.
+  //
+  // THREE LITERAL `.from(` CALLS rather than a loop, matching the panel's hasAnyAnalysisRun
+  // spelling: parity.test.ts pins each of the three table names on BOTH surfaces, and a loop
+  // hides the call site a future reader would have to delete to break it.
+  const exists = (
+    rows: { data: unknown[] | null; error: { message: string } | null },
+    table: string,
+  ): boolean => {
+    if (rows.error) throw new Error(`whats_next: ${table} presence probe failed: ${rows.error.message}`);
+    return (rows.data ?? []).length > 0;
+  };
+  const [audits, discovery, content] = await Promise.all([
+    client.from("audit_runs").select("id").eq("user_id", userId).eq("project_id", projectId).limit(1),
+    client
+      .from("gsc_discovery_runs")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("project_id", projectId)
+      .limit(1),
+    client
+      .from("audit_content_runs")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("project_id", projectId)
+      .limit(1),
+  ]);
+  return (
+    exists(audits, "audit_runs") ||
+    exists(discovery, "gsc_discovery_runs") ||
+    exists(content, "audit_content_runs")
+  );
+}
+
 async function readProjectSignals(
   client: ServiceClient,
   userId: string,
@@ -259,7 +321,7 @@ async function readProjectSignals(
   loadTokenStatus: LoadTokenStatusFn,
   checkDomain: CheckDomainFn,
 ): Promise<ProjectSignals> {
-  const [crawl, pull, gscLink, tokenStatus, reachability] = await Promise.all([
+  const [crawl, pull, gscLink, tokenStatus, reachability, hasAnalysis] = await Promise.all([
     getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" }),
     getLatestSucceededResult(client, { projectId, userId, tool: "pull_gsc_data" }),
     readGscLink(client, userId, projectId),
@@ -270,6 +332,7 @@ async function readProjectSignals(
     // timeout says: nobody found out. The health read throws because there "active" would be a
     // FABRICATED answer; here there is a real value for "did not find out".
     checkDomain(domain).catch(() => "unknown" as const),
+    readHasAnalysis(client, userId, projectId),
   ]);
   return {
     hasCrawl: crawl !== null,
@@ -290,6 +353,9 @@ async function readProjectSignals(
     gscTokenInvalid: tokenStatus === "invalid",
     // ONLY a positive "no such name" — never a check that failed to run. See the port.
     domainUnreachable: reachability === "no_such_domain",
+    // MEASURED, so the all-set rung stops assuming. The premise it replaces ("audits leave no job
+    // trace") was a comment in next-step.ts that had been false since migration 0024.
+    hasAnalysis,
   };
 }
 

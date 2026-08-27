@@ -8,7 +8,8 @@ import { getJobForUser } from "../queue/boss.ts";
  * is written. Same reason summarizeCrawlResult has exactly one home.
  */
 import { readCrawlProgress } from "../queue/handlers/crawl.ts";
-import { defineTool, errorResult, textResult } from "./registry.ts";
+import { lookupOwnProjectDomain, projectLabel, type LookupProjectDomainFn } from "./project-domains.ts";
+import { defineTool, errorResult, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
  * get_job_status — check an async job (e.g. a crawl_site run). 0 credits. Reads the
@@ -119,13 +120,27 @@ function timingPart(job: JobRow): string | null {
   return null;
 }
 
-/** Join the non-null lifecycle stamps into a compact ` · `-separated trail. */
-function stampsOf(job: JobRow): string {
+/**
+ * Join the non-null lifecycle stamps into a compact ` · `-separated trail, and name the project.
+ *
+ * WHY THE PROJECT IS HERE AT ALL (F-3, smoke tour wave 4). It was not, and `job.project_id` has
+ * been on `JobRow` the whole time — `getJobForUser` selects `*`, so the value was read and then
+ * dropped. On an account with 19 projects the answer read `Job af7a2925… (crawl_site) succeeded …
+ * Crawled 26 page(s)` and never said WHICH SITE was crawled. The tool a caller reaches for to get
+ * the DETAIL of one job told them less about it than the list they came from.
+ *
+ * SAME CLAUSE, SAME WORDS, SAME PLACE AS list_jobs — `· project: <label>` at the end of the
+ * trail, through the same `projectLabel`. Two surfaces naming the same project two ways is the
+ * defect this codebase keeps finding (`summarizeCrawlResult` has one home for exactly this
+ * reason), and inventing a nicer position here would have been a second wording to keep in step.
+ */
+function stampsOf(job: JobRow, domains: ReadonlyMap<string, string>): string {
   return [
     `created ${job.created_at}`,
     job.started_at ? `started ${job.started_at}` : null,
     job.finished_at ? `finished ${job.finished_at}` : null,
     timingPart(job),
+    `project: ${projectLabel(job.project_id, domains)}`,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
@@ -135,9 +150,12 @@ function stampsOf(job: JobRow): string {
  * Render a human-readable status line for a job. Pure (no I/O) so the fast lane can
  * pin the wording of every status; the tenant-scoped read is proven in the db spec.
  */
-export function formatJobStatus(job: JobRow): string {
+export function formatJobStatus(
+  job: JobRow,
+  domains: ReadonlyMap<string, string> = new Map(),
+): string {
   const head = `Job ${job.id} (${job.tool})`;
-  const stamps = stampsOf(job);
+  const stamps = stampsOf(job, domains);
   switch (job.status) {
     case "queued":
       return `${head} is queued. ${stamps}.`;
@@ -164,20 +182,36 @@ export function formatJobStatus(job: JobRow): string {
   }
 }
 
-export const getJobStatusTool = defineTool({
-  name: "get_job_status",
-  description:
-    "Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id.",
-  inputSchema: z.object({
-    job_id: z.uuid().describe("The job_id returned by an async tool such as crawl_site."),
-  }),
-  handler: async (ctx, { job_id }) => {
-    const job = await getJobForUser(getServiceClient(), job_id, ctx.userId);
-    if (!job) {
-      // Unknown id and another tenant's job both land here (see getJobForUser) — one
-      // message, no cross-tenant existence leak.
-      return errorResult(`No job found with id ${job_id}.`);
-    }
-    return textResult(formatJobStatus(job));
-  },
-});
+export interface GetJobStatusDeps {
+  /** Project-domain lookup (default: the real single-project read). Injectable for the fast lane. */
+  readonly lookupDomain?: LookupProjectDomainFn;
+}
+
+/** Build the tool. The label read is a port, so the wording is provable with no database. */
+export function makeGetJobStatusTool(deps: GetJobStatusDeps = {}): RegisteredTool {
+  const lookupDomain = deps.lookupDomain ?? lookupOwnProjectDomain;
+  return defineTool({
+    name: "get_job_status",
+    description:
+      "Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id.",
+    inputSchema: z.object({
+      job_id: z.uuid().describe("The job_id returned by an async tool such as crawl_site."),
+    }),
+    handler: async (ctx, { job_id }) => {
+      const job = await getJobForUser(getServiceClient(), job_id, ctx.userId);
+      if (!job) {
+        // Unknown id and another tenant's job both land here (see getJobForUser) — one
+        // message, no cross-tenant existence leak.
+        return errorResult(`No job found with id ${job_id}.`);
+      }
+      // AFTER the not-found branch, and only when there is an id to resolve: a job with no
+      // project needs no lookup, and a job this tenant cannot reach must cost no second query.
+      const domains =
+        job.project_id === null ? new Map<string, string>() : await lookupDomain(ctx.userId, job.project_id);
+      return textResult(formatJobStatus(job, domains));
+    },
+  });
+}
+
+/** The production get_job_status tool (real DB). */
+export const getJobStatusTool = makeGetJobStatusTool();

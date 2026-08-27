@@ -11,12 +11,24 @@
  * pin are unchanged. The I/O half — the tenant-scoped signal reads, the state loader, the
  * renderers and the tool definition — stays there, where the DB client is.
  *
- * The router is a HEURISTIC guide, not a precise tracker: audits and the discovery tools leave no
- * job trace (they are synchronous and return directly), so the ladder advances on the observable
- * DATA milestones — a project exists, a crawl succeeded, Search Console is connected, a pull
+ * The router is a HEURISTIC guide, not a precise tracker. It advances on the observable DATA
+ * milestones — a project exists, a crawl succeeded, Search Console is connected, a pull
  * succeeded — and always surfaces the matching analysis trio as the recommended follow-up. Google
  * Search Console is framed as OPTIONAL at every rung (design D15: the first aha is crawl + audit
  * with no GSC; connecting it is never a barrier).
+ *
+ * THIS COMMENT USED TO SAY MORE, AND THE EXTRA CLAUSE WAS WRONG (E-9, smoke tour wave 4). It read
+ * "audits and the discovery tools leave no job trace (they are synchronous and return directly)",
+ * and the whole ladder was built on it: if no analysis leaves a trace, there is nothing to look
+ * for, so it never looked. Migrations 0024 (`audit_runs`), 0025 (`gsc_discovery_runs`) and 0026
+ * (`audit_content_runs`) had been storing exactly that trace for weeks — the panel reads two of
+ * them — and the sentence stayed. The live witness: adstark.com.tr, fresh crawl, fresh pull, ZERO
+ * analyses of any kind, and the tool's recommendation was a 15-credit report summarising findings
+ * nobody had produced.
+ *
+ * A STALE COMMENT DOES NOT GO RED. It quietly carries a decision, which is why the premise is
+ * now a SIGNAL (`hasAnalysis`) that the surface measures, rather than a claim this file makes
+ * about the world.
  */
 
 import { DATA_FRESHNESS_DAYS, describeDataAge } from "./freshness.js";
@@ -79,6 +91,23 @@ export interface ProjectSignals {
    * (see apps/mcp `tools/domain-reachability.ts`).
    */
   readonly domainUnreachable?: boolean;
+  /**
+   * Whether ANY analysis has ever run for this project — an `audit_runs`, `gsc_discovery_runs` or
+   * `audit_content_runs` row exists (migrations 0024 / 0025 / 0026).
+   *
+   * OPTIONAL and read with `=== false` at the one rung that uses it, which is the mirror of the
+   * `=== true` convention above and chosen for the same reason: `undefined` means "this surface
+   * does not measure it", and a caller that omits it decides byte-identically to the ladder that
+   * existed before this signal did. Reading it truthily would send every unmeasured project down
+   * the never-analysed branch — the ladder would re-route a whole surface on a signal nobody
+   * supplied.
+   *
+   * PRESENCE, NOT FRESHNESS. The question this answers is "has anyone looked at this data at
+   * all?", and one look is enough to stop the ladder claiming nobody has. Whether an old analysis
+   * should be re-run against newer data is a different question, and answering it here would put
+   * a second freshness rule beside the one FRESHNESS_WINDOW_DAYS already owns.
+   */
+  readonly hasAnalysis?: boolean;
   /**
    * Whole days since the latest crawl / pull, when the surface measured them. OPTIONAL: a caller
    * that omits them gets the same recommendation with the age left out of the wording, so
@@ -314,8 +343,45 @@ export function decideProjectNextStep(s: ProjectSignals): NextStep {
       allSet: false,
     };
   }
-  // All-set — every applicable source is present and fresh. Point at the report payoff and the
-  // monthly-routine prompt that keeps the data current.
+  // All-set, but NOTHING HAS BEEN ANALYSED YET. The data is complete and current; what is missing
+  // is anyone having looked at it. Measured live 2026-08-27 on adstark.com.tr — fresh crawl,
+  // fresh pull, zero rows in all three run tables — where the rung below recommended a 15-credit
+  // report, i.e. a summary of findings that did not exist. The report is not wrong to offer, it
+  // is wrong to offer FIRST: it is a cover over an empty folder, and the analyses that would fill
+  // it were listed underneath as things to get to later.
+  //
+  // find_quick_wins, at 10 credits, is CHEAPER than the report it replaces, so the money ordering
+  // improves rather than trading one spend for a bigger one. It is also already the first item of
+  // the all-set follow-up list below — this rung PROMOTES the ladder's own existing first choice
+  // to the headline rather than inventing a new preference — and it reads the fresh pull that
+  // reaching this rung guarantees.
+  //
+  // `=== false`, never a falsy test: `undefined` is "this surface does not measure analyses" and
+  // must decide exactly as the ladder did before this rung existed (see ProjectSignals.hasAnalysis).
+  //
+  // allSet stays TRUE: every applicable data source really is present and fresh, which is what
+  // that flag has always meant. What changed is the recommendation, not the state of the data.
+  if (s.hasAnalysis === false) {
+    return {
+      primary: "find_quick_wins",
+      reason:
+        `You have a fresh crawl${agedClause(s.crawlAgeDays)} and fresh Search Console data` +
+        `${agedClause(s.pullAgeDays)} — both inside the ${FRESHNESS_WINDOW_DAYS}-day freshness ` +
+        "window — but nothing has been analyzed yet. Start with quick wins: it reads the Search " +
+        "Console data you already pulled and names the pages closest to moving up. Generate a " +
+        "report once there are findings to put in it.",
+      upcoming: [
+        "detect_cannibalization",
+        "analyze_content_decay",
+        ...AUDIT_TRIO,
+        "generate_report",
+        "monthly-routine (prompt)",
+      ],
+      allSet: true,
+    };
+  }
+  // All-set — every applicable source is present and fresh, and something has been analysed (or
+  // this surface does not measure it). Point at the report payoff and the monthly-routine prompt.
   return {
     primary: "generate_report",
     reason:
