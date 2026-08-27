@@ -38,6 +38,7 @@ describe("buildProjectCard's ladder", () => {
       gscConnected: false,
       hasPull: false,
       pullFresh: false,
+      gscPropertyMissing: false,
     });
     expect(card.nextStep.primary).toBe("crawl_site");
   });

@@ -204,6 +204,67 @@ describe("the panel names the same next step as whats_next", () => {
     expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
   });
 
+  /**
+   * THE UNMAPPED-PROPERTY RUNG (4b), on the panel's own signals — defect E-3, measured live
+   * 2026-08-27.
+   *
+   * Every fixture above uses `LINKED`, which always carries a `gsc_property`. So the axis this
+   * whole spec never varied was the MAPPING: core grew rung 4b on 2026-08-26 and whats_next fed
+   * it the same day, while `deriveProjectSignals` emitted five signals and none of them was this
+   * one. The panel therefore fell one rung further and told such a project to run `pull_gsc_data`
+   * — 5 credits for a pull that CANNOT succeed without a property — which is the exact wrong that
+   * rung exists to remove, left standing on the surface a human looks at.
+   *
+   * The literal is what fails: with the signal absent, `decideProjectNextStep` agrees with the
+   * card perfectly, because they are wrong together (the same trap the dead-account case notes).
+   */
+  it("routes a connected project with NO property mapped to list_gsc_properties", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: null,
+      connection: { account_id: "acct-1", gsc_property: null },
+      tokenStatus: "active",
+    };
+    const card = buildProjectCard(input, NOW);
+    expect(card.nextStep.primary).toBe("list_gsc_properties");
+    expect(card.nextStep).toEqual(decideProjectNextStep(deriveProjectSignals(input, NOW)));
+    // Nothing that reads a pull this project cannot take may be offered as a follow-up.
+    expect(card.nextStep.upcoming).not.toContain("pull_gsc_data");
+  });
+
+  /**
+   * The other side of the same axis (signed lesson 14): an identical project WITH a property
+   * mapped must stay on the ordinary ladder. Without this, a derivation that called every
+   * connection unmapped would pass the case above and reroute every healthy project on the panel.
+   */
+  it("leaves a connected project WITH a property on the ordinary ladder", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: null,
+      connection: LINKED,
+      tokenStatus: "active",
+    };
+    expect(buildProjectCard(input, NOW).nextStep.primary).toBe("pull_gsc_data");
+  });
+
+  /**
+   * And an UNCONNECTED project whose row still carries an old property is not "missing" one:
+   * the rung is `gscConnected && gscPropertyMissing`, so this must stay on rung 2.
+   */
+  it("does not call an unconnected project's mapping missing", () => {
+    const input: ProjectCardInput = {
+      project: PROJECT,
+      crawl: { created_at: FRESH, result: null },
+      pull: null,
+      connection: { account_id: null, gsc_property: null },
+      tokenStatus: null,
+    };
+    expect(deriveProjectSignals(input, NOW).gscPropertyMissing).toBe(false);
+    expect(buildProjectCard(input, NOW).nextStep.primary).toBe("audit_onpage");
+  });
+
   // Defect #52 reaches the LADDER too, not only the status line: a project whose row lost its
   // account must be routed to audit_onpage (rung 2), never to pull_gsc_data (rung 3).
   it("routes a row-but-no-account project as NOT connected", () => {
@@ -275,6 +336,22 @@ describe("the ladder is core's, on both surfaces", () => {
     expect(read(WHATS_NEXT_PATH)).toMatch(/gscTokenInvalid:[^,\n]*===\s*["']invalid["']/i);
     expect(codeOf(read(resolve(HERE, "signals.ts")))).toMatch(
       /gscTokenInvalid:[^,\n]*===\s*["']invalid["']/i,
+    );
+  });
+
+  /**
+   * The MAPPING signal, on both surfaces, meaningful only WITH a connection.
+   *
+   * A source pin as well as the value pins above, for the reason the health one has both: a
+   * surface that derived `gscPropertyMissing` from the property ALONE would report every
+   * unconnected project as unmapped, and every value case here would still pass — rung 4b sits
+   * below the connect rungs, so an unconnected project never reaches it. The wrong would only
+   * show up in a state no fixture holds.
+   */
+  it("both surfaces call a mapping missing only on a CONNECTED row", () => {
+    expect(read(WHATS_NEXT_PATH)).toMatch(/propertyMissing:\s*connected\s*&&/i);
+    expect(codeOf(read(resolve(HERE, "signals.ts")))).toMatch(
+      /gscPropertyMissing:\s*connected\s*&&/i,
     );
   });
 });

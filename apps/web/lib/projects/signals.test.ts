@@ -154,6 +154,8 @@ describe("deriveProjectSignals", () => {
       gscConnected: false,
       hasPull: false,
       pullFresh: false,
+      // A project with no connection has no mapping to be missing: false, not "missing".
+      gscPropertyMissing: false,
     });
   });
 
@@ -172,7 +174,8 @@ describe("deriveProjectSignals", () => {
       gscConnected: true,
       hasPull: true,
       pullFresh: false,
-      });
+      gscPropertyMissing: false,
+    });
   });
 
   it("marks recent sources fresh", () => {
