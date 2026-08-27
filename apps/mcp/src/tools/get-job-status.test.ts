@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatJobStatus, jobTiming } from "./get-job-status.ts";
+import { failureClause, formatDuration, formatJobStatus, jobTiming } from "./get-job-status.ts";
 import { formatJobLine } from "./list-jobs.ts";
 import type { JobRow } from "../db.ts";
 
@@ -475,5 +475,61 @@ describe("formatJobStatus names the project", () => {
   it("prints the id — which is TRUE — for a project the tenant no longer has", () => {
     const line = formatJobStatus(job({ project_id: "gone-1" }), domains);
     expect(line).toContain("project: gone-1");
+  });
+});
+
+/**
+ * F-6 — the failed line's punctuation, measured LIVE minutes after F-1 deployed:
+ *
+ *     … preserved in the engineering record.. created 2026-07-21T10:55:30.924461+00:00 …
+ *
+ * The renderer always appended a stop and the messages were fragments, so the two never met.
+ * F-1 made every stored failure a written-for-a-customer SENTENCE, which brings its own.
+ */
+describe("formatJobStatus punctuates a failed job exactly once", () => {
+  const failed = (error: string | null): string =>
+    formatJobStatus(job({ status: "failed", error, finished_at: "2026-07-19T00:02:00.000Z" }));
+
+  it("does not double the stop on a message that is already a sentence", () => {
+    const line = failed("This was a problem on our side, not with your site.");
+
+    expect(line).not.toContain("..");
+    expect(line).toContain("not with your site. created");
+  });
+
+  it("still adds one to a fragment, which is what it always did", () => {
+    const line = failed("crawl_site: no pages could be crawled");
+
+    expect(line).toContain("no pages could be crawled. created");
+    expect(line).not.toContain("..");
+  });
+
+  it("says 'unknown error' for a null, punctuated once", () => {
+    const line = failed(null);
+
+    expect(line).toContain("failed: unknown error. created");
+    expect(line).not.toContain("..");
+  });
+
+  /**
+   * THE VALUES THAT MUST NOT BE TRIMMED (lesson 14 — vary the value, not only the presence).
+   * A question mark, an exclamation and an ellipsis all END the sentence too, and cutting the
+   * last character of any of them changes what it says: "…" would become "..", and "why?" would
+   * become "why". Only a lone full stop is absorbed.
+   */
+  it.each([
+    ["a question", "Did your site block our crawler?"],
+    ["an exclamation", "Your trial expired!"],
+    ["an ellipsis", "The crawl stopped early…"],
+    ["an ASCII ellipsis", "The crawl stopped early..."],
+  ])("leaves %s intact", (_label, error) => {
+    expect(failed(error)).toContain(`failed: ${error}. created`);
+  });
+
+  it("is exported pure, so the trim is provable without building a whole line", () => {
+    expect(failureClause("A sentence.")).toBe("A sentence");
+    expect(failureClause("A fragment")).toBe("A fragment");
+    expect(failureClause(null)).toBe("unknown error");
+    expect(failureClause("Wait...")).toBe("Wait...");
   });
 });
