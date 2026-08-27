@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { newFailureReference } from "../failure-redaction.ts";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -215,19 +215,6 @@ export function errorResult(text: string): ToolResult {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/**
- * Entropy in a failure REFERENCE. 4 bytes = 8 hex chars: short enough for a human to read
- * back out of a chat transcript, wide enough (4.3e9) that two failures a support thread is
- * comparing are not plausibly the same reference. It is a correlation handle, not a secret
- * and not a security control, so this is sized for legibility rather than unguessability.
- */
-const FAILURE_REFERENCE_BYTES = 4;
-
-/** A fresh correlation handle linking one caller-visible failure to one server log line. */
-function newFailureReference(): string {
-  return randomBytes(FAILURE_REFERENCE_BYTES).toString("hex");
 }
 
 /**

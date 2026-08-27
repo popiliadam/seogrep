@@ -9,6 +9,7 @@ import { writeCrawlPages, type CrawlPagesWriter } from "./crawl-pages.ts";
 import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "../../tools/project-target.ts";
 import { getJobForUser } from "../boss.ts";
 import type { ToolHandler } from "../worker.ts";
+import { PreconditionNotMetError } from "../../tools/precondition.ts";
 
 /**
  * Queue handler for the crawl_site tool — the ledger's first money-spending tool
@@ -272,7 +273,13 @@ export async function resolveProjectOrigin(userId: string, job: JobRow): Promise
   // rather than the tool, and get_job_status prints the tool beside it anyway).
   const project = await loadOwnProject(userId, job.project_id);
   if (!project) {
-    throw new Error("crawl_site: project not found for this account");
+    // The customer's business (their project is not there any more), so it is MARKED and keeps
+    // its wording. The "crawl_site:" prefix is dropped with the mark: that prefix is this file's
+    // convention for operator diagnostics, and get_job_status already prints the tool name.
+    throw new PreconditionNotMetError(
+      "This project could not be found on your account — it may have been removed. Run " +
+        "list_projects to see the projects you can crawl.",
+    );
   }
   // ARCHIVED AT PICKUP. The surface refuses an archived project before it ever enqueues, so a
   // job can only reach here archived by being queued while the project was still live and picked
@@ -287,7 +294,11 @@ export async function resolveProjectOrigin(userId: string, job: JobRow): Promise
   // get_job_status renders jobs.error to the USER as written, and this is a refusal they can act
   // on, not a fault for an operator to read.
   if (project.archivedAt !== null) {
-    throw new Error(ARCHIVED_PROJECT_MESSAGE);
+    // MARKED, not plain (smoke tour wave 4, F-1). The comment above already says this sentence is
+    // "a refusal they can act on, not a fault for an operator to read" — the marker is what makes
+    // that statement enforceable rather than a convention. Since the worker now redacts every
+    // UNMARKED failure, an unmarked refusal here would reach the customer as a reference number.
+    throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
   }
   return `https://${project.domain}`;
 }
@@ -356,8 +367,12 @@ export function createCrawlHandler(deps: CrawlHandlerDeps = {}): ToolHandler {
       // matter here (unreachable robots, blocked origin) carry ONE actionable reason.
       const reasons =
         result.skipped.slice(0, 5).map((s) => s.reason).join("; ") || "no pages reachable";
-      throw new Error(
-        `crawl_site: no pages could be crawled for ${origin} (${reasons.slice(0, 1_000)})`,
+      // MARKED: the skip reasons are the whole point of this message — an unreachable robots.txt
+      // or a blocked origin is something the customer can fix, and redacting it to a reference
+      // would delete the one crawl failure that is genuinely theirs to act on. The reasons come
+      // from OUR crawler's own vocabulary, not from a driver or a database.
+      throw new PreconditionNotMetError(
+        `No pages could be crawled for ${origin} (${reasons.slice(0, 1_000)}).`,
       );
     }
 
