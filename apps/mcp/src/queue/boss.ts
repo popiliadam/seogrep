@@ -133,10 +133,15 @@ export async function enqueueJob(
     // whoever holds an API key. A queue that will not accept the job is entirely OUR fault and
     // there is nothing in it for the customer to act on, so the stored mark is the generic
     // sentence and the detail goes to the log under the same reference.
+    // ONE INCIDENT, ONE REFERENCE. The rethrow below reaches tools/registry.ts, which redacts it
+    // too and mints a reference of its OWN — so a single enqueue failure used to be filed under
+    // two unrelated handles, and a customer quoting either sent the operator to one of two log
+    // lines with no link between them. The reference is carried INTO the rethrown message so both
+    // land under this one.
     const reference = newFailureReference();
     console.error(`enqueueJob: queue send failed for job ${jobId} [ref ${reference}]: ${detail}`);
     await failJob(jobId, platformFailureText(reference));
-    throw new Error(`enqueueJob: queue send failed: ${detail}`);
+    throw new Error(`enqueueJob: queue send failed [ref ${reference}]: ${detail}`);
   }
   return { jobId };
 }

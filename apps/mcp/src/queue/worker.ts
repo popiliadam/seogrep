@@ -210,15 +210,17 @@ export async function executeJob(message: JobMessage): Promise<void> {
     // The SENTENCE is for the customer and stays; the raw `error.message` it used to carry in
     // parentheses does not (F-1). A reference replaces it so support still reaches the detail.
     const reference = newFailureReference();
-    console.error(
-      `executeJob: job ${jobId} charge settled but result did not persist ` +
-        `[ref ${reference}]: ${errorDetail(error)}`,
-    );
-    await failJob(
-      jobId,
-      "charge settled but result did not persist — contact support, quoting reference " +
+    // failJobSafely, not failJob (referee, wave 4). The likeliest reason completeJob just failed
+    // is the database being unreachable — in which case this recording write fails for the SAME
+    // reason, and a bare failJob would throw straight out of executeJob, breaking its
+    // never-throws contract exactly where failJobSafely's own header says it must not. The mark
+    // is pre-built because its sentence is the customer's, not the generic redaction.
+    await failJobSafely(jobId, {
+      stored:
+        "charge settled but result did not persist — contact support, quoting reference " +
         `${reference}`,
-    );
+      logged: { reference, detail: errorDetail(error) },
+    });
   }
 }
 

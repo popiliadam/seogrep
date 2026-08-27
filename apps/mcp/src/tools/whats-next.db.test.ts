@@ -4,7 +4,7 @@ import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { getServiceClient, type Json } from "../db.ts";
 import type { AuthContext } from "../auth.ts";
 import type { DomainReachability } from "./domain-reachability.ts";
-import { makeWhatsNextTool } from "./whats-next.ts";
+import { makeWhatsNextTool, readHasAnalysis } from "./whats-next.ts";
 
 /**
  * DB-integration proof for whats_next (0 credits, tenant-scoped state reads) against a LOCAL
@@ -82,7 +82,9 @@ async function seedSucceededJob(
   projectId: string,
   tool: string,
   result: Json,
-): Promise<void> {
+  // RETURNS THE ID since E-9: audit_runs / gsc_discovery_runs / audit_content_runs each carry a
+  // NOT NULL FK to the job their analysis read, so a seeded run needs the job it belongs to.
+): Promise<string> {
   const inserted = await service
     .from("jobs")
     .insert({ user_id: userId, project_id: projectId, tool, status: "queued" })
@@ -96,6 +98,7 @@ async function seedSucceededJob(
     .update({ status: "succeeded", finished_at: new Date().toISOString(), result })
     .eq("id", inserted.data.id);
   if (error) throw new Error(`job update failed: ${error.message}`);
+  return inserted.data.id;
 }
 
 /**
@@ -104,6 +107,35 @@ async function seedSucceededJob(
  * credential, but it does read that account's token_status, so the health is stated rather than
  * left to the column default — the axis (i) below varies.
  */
+/**
+ * Seed ONE analysis run in one of the three tables the all-set rung probes (E-9).
+ *
+ * The three carry different provenance columns — audit_runs a crawl_job_id, gsc_discovery_runs a
+ * pull_job_id, audit_content_runs BOTH — so each is inserted on its own terms rather than through
+ * a shape they do not share.
+ */
+async function seedAnalysisRun(
+  table: "audit_runs" | "gsc_discovery_runs" | "audit_content_runs",
+  userId: string,
+  projectId: string,
+  jobId: string,
+): Promise<void> {
+  const row =
+    table === "audit_runs"
+      ? { user_id: userId, project_id: projectId, crawl_job_id: jobId, tool: "audit_onpage", report: {} }
+      : table === "gsc_discovery_runs"
+        ? { user_id: userId, project_id: projectId, pull_job_id: jobId, tool: "find_quick_wins", report: {} }
+        : {
+            user_id: userId,
+            project_id: projectId,
+            crawl_job_id: jobId,
+            pull_job_id: jobId,
+            report: {},
+          };
+  const { error } = await service.from(table).insert(row as never);
+  if (error) throw new Error(`${table} seed failed: ${error.message}`);
+}
+
 async function seedConnection(userId: string, projectId: string): Promise<void> {
   // Delegates so the health axis has ONE seeder. 'active' is what the column defaults to
   // (migration 0021), so every existing caller seeds byte-identically to before.
@@ -266,16 +298,87 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
     expect(text).toMatch(/connect_gsc \(optional\)/);
   });
 
-  it("(d) fresh crawl + Search Console connection + pull -> all set (generate_report)", async () => {
+  /**
+   * (d) SPLIT IN TWO when E-9 landed, because the single case had gone green for an adjacent
+   * reason (referee, wave 4): with no analysis seeded the primary is now find_quick_wins, and
+   * `toContain("generate_report")` was being satisfied by the DEMOTED entry in the "Then:" list
+   * while the title still said "all set (generate_report)". A regression that dropped the report
+   * from the headline and kept it in the list is exactly what that spec looked like it pinned.
+   *
+   * The primary is now asserted through the header sentence — "recommended next: run X" — so the
+   * two halves cannot be confused again, and BOTH values of hasAnalysis are driven (lesson 14).
+   */
+  it("(d) all sources fresh AND an analysis has run -> all set, report is the headline", async () => {
     const user = await makeUser();
     const projectId = await makeProject(user.userId, "complete.example.com");
+    const crawlJob = await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnection(user.userId, projectId);
+    await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+    await seedAnalysisRun("audit_runs", user.userId, projectId, crawlJob);
+
+    const text = await runFor(user, projectId);
+    expect(text).toMatch(/all set/i);
+    expect(text).toMatch(/recommended next: run generate_report/i);
+    expect(text).toContain("monthly-routine");
+  });
+
+  /**
+   * THE TRUE BRANCH OF THE PROBE, one table at a time. Without these the read is only ever
+   * exercised returning FALSE: swapping its userId/projectId arguments (both `string`, so `tsc`
+   * is silent) would leave every gate green while every all-set customer was permanently routed
+   * to find_quick_wins. Each table is driven separately because a two-table probe passes the
+   * other two.
+   */
+  it.each(["audit_runs", "gsc_discovery_runs", "audit_content_runs"] as const)(
+    "(d) a run in %s alone is enough to make the report the headline again",
+    async (table) => {
+      const user = await makeUser();
+      const projectId = await makeProject(user.userId, `analysed-${table}.example.com`);
+      const crawlJob = await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
+      await seedConnection(user.userId, projectId);
+      const pullJob = await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+      await seedAnalysisRun(table, user.userId, projectId, table === "gsc_discovery_runs" ? pullJob : crawlJob);
+
+      const text = await runFor(user, projectId);
+      expect(text).toMatch(/recommended next: run generate_report/i);
+    },
+  );
+
+  it("(d2) all sources fresh and NOTHING analysed -> quick wins leads, report demoted", async () => {
+    const user = await makeUser();
+    const projectId = await makeProject(user.userId, "unanalysed.example.com");
     await seedSucceededJob(user.userId, projectId, "crawl_site", CRAWL_RESULT);
     await seedConnection(user.userId, projectId);
     await seedSucceededJob(user.userId, projectId, "pull_gsc_data", PULL_RESULT);
+
     const text = await runFor(user, projectId);
-    expect(text).toMatch(/all set/i);
+    expect(text).toMatch(/recommended next: run find_quick_wins/i);
+    expect(text).not.toMatch(/recommended next: run generate_report/i);
+    // Demoted, not deleted.
     expect(text).toContain("generate_report");
-    expect(text).toContain("monthly-routine");
+    expect(text).toMatch(/all set/i);
+  });
+
+  /**
+   * THE TENANT BELT on that probe, driven head-on. `readHasAnalysis` runs on a service-role
+   * client that bypasses RLS, so its `.eq("user_id", …)` is the ONLY guard (NEVER #4) — and
+   * nothing else in this suite would redden if it were deleted.
+   */
+  it("(d) another tenant's analysis row does NOT count as this project's", async () => {
+    const owner = await makeUser();
+    const stranger = await makeUser();
+    const projectId = await makeProject(owner.userId, "belt.example.com");
+    const crawlJob = await seedSucceededJob(owner.userId, projectId, "crawl_site", CRAWL_RESULT);
+    await seedConnection(owner.userId, projectId);
+    await seedSucceededJob(owner.userId, projectId, "pull_gsc_data", PULL_RESULT);
+    // A row on the SAME project id, owned by somebody else. Only the user_id filter excludes it.
+    await seedAnalysisRun("audit_runs", stranger.userId, projectId, crawlJob);
+
+    expect(await readHasAnalysis(service, owner.userId, projectId)).toBe(false);
+    expect(await readHasAnalysis(service, stranger.userId, projectId)).toBe(true);
+
+    const text = await runFor(owner, projectId);
+    expect(text).toMatch(/recommended next: run find_quick_wins/i);
   });
 
   it("(e) no project_id with a single project auto-selects it", async () => {
