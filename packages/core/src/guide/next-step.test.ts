@@ -536,3 +536,94 @@ describe("a connection with no property mapped", () => {
     expect(step.primary).toBe("crawl_site");
   });
 });
+
+/**
+ * E-9 (smoke tour wave 4) — the all-set rung learns whether anyone has LOOKED at the data.
+ *
+ * The premise it replaces was a COMMENT in this module ("audits and the discovery tools leave no
+ * job trace"), false since migration 0024 and load-bearing anyway: the ladder never looked for
+ * analyses because that sentence said there was nothing to find. Live witness, adstark.com.tr on
+ * 2026-08-27 — fresh crawl, fresh pull, zero rows in all three run tables, and the tool's
+ * recommendation was a 15-credit report summarising findings nobody had produced.
+ */
+describe("the all-set rung, when nothing has been analysed yet", () => {
+  const allSetSignals: ProjectSignals = {
+    hasCrawl: true,
+    crawlFresh: true,
+    gscConnected: true,
+    hasPull: true,
+    pullFresh: true,
+  };
+
+  it("leads with the first analysis, not with a report over an empty folder", () => {
+    const step = decideProjectNextStep({ ...allSetSignals, hasAnalysis: false });
+
+    expect(step.primary).toBe("find_quick_wins");
+    expect(step.primary).not.toBe("generate_report");
+  });
+
+  it("costs the customer LESS than the answer it replaces (10 credits, not 15)", () => {
+    // Not a price assertion — prices live in apps/mcp's TOOL_COSTS (NEVER #6) and this package
+    // knows none of them. It pins the CHOICE those prices made defensible: the promoted step is
+    // the ladder's own existing first follow-up, so this rung reorders and does not upsell.
+    const before = decideProjectNextStep({ ...allSetSignals, hasAnalysis: true });
+    expect(before.upcoming[0]).toBe("find_quick_wins");
+
+    const after = decideProjectNextStep({ ...allSetSignals, hasAnalysis: false });
+    expect(after.primary).toBe(before.upcoming[0]);
+  });
+
+  it("keeps the report — demoted, not deleted", () => {
+    const step = decideProjectNextStep({ ...allSetSignals, hasAnalysis: false });
+
+    expect(step.upcoming).toContain("generate_report");
+    expect(step.upcoming).toContain("detect_cannibalization");
+    expect(step.upcoming).toContain("analyze_content_decay");
+  });
+
+  it("still calls the DATA all set — the data is complete, the analysis is not", () => {
+    expect(decideProjectNextStep({ ...allSetSignals, hasAnalysis: false }).allSet).toBe(true);
+  });
+
+  it("says WHY in words a reader can act on, without claiming the data is stale", () => {
+    const step = decideProjectNextStep({ ...allSetSignals, hasAnalysis: false });
+
+    expect(step.reason).toMatch(/nothing has been analyzed yet/i);
+    expect(step.reason).not.toMatch(/stale|out of date|more than/i);
+  });
+
+  it("goes back to the report once ANY analysis exists", () => {
+    const step = decideProjectNextStep({ ...allSetSignals, hasAnalysis: true });
+
+    expect(step.primary).toBe("generate_report");
+    expect(step.allSet).toBe(true);
+  });
+
+  it("an UNMEASURED signal decides exactly as before — undefined is not 'none'", () => {
+    const omitted = decideProjectNextStep(allSetSignals);
+    const measuredPresent = decideProjectNextStep({ ...allSetSignals, hasAnalysis: true });
+
+    expect(omitted).toEqual(measuredPresent);
+    expect(omitted.primary).toBe("generate_report");
+  });
+
+  it("does not fire on a rung that is not all-set — a stale pull still comes first", () => {
+    const step = decideProjectNextStep({
+      ...allSetSignals,
+      pullFresh: false,
+      hasAnalysis: false,
+    });
+
+    expect(step.primary).toBe("pull_gsc_data");
+  });
+
+  it("does not outrank the dead-domain rung — no analysis is not a reason to spend", () => {
+    const step = decideProjectNextStep({
+      ...allSetSignals,
+      hasAnalysis: false,
+      domainUnreachable: true,
+    });
+
+    expect(step.primary).toBe("setup_project");
+  });
+});

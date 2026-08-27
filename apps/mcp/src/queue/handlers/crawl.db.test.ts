@@ -369,7 +369,9 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     expect(crawlRan).toBe(false); // origin never resolved -> crawl never ran
     const job = await getJobRow(jobId);
     expect(job.status).toBe("failed");
-    expect(job.error).toMatch(/project not found/i);
+    // The wording moved with the mark (F-1): the "crawl_site:" prefix is this file's convention
+    // for operator diagnostics, and a refusal the customer can act on no longer carries it.
+    expect(job.error).toMatch(/could not be found on your account/i);
     // reserve opened then released (resolveOrigin threw inside withCredits)
     expect((await ledger(owner)).map((r) => r.kind)).toEqual([
       "grant",
@@ -456,7 +458,10 @@ describe("crawl_site queue handler E2E (spec §8.2)", () => {
     expect(crawlRan).toBe(false);
     const job = await getJobRow(jobId);
     expect(job.status).toBe("failed");
-    expect(job.error).toMatch(/no project to crawl/i);
+    // NOT redacted (F-1): migration 0017 nulls project_id when the project row goes, so this is
+    // the customer's own removal reaching a queued job — theirs to read and theirs to fix.
+    expect(job.error).toMatch(/no longer tracked/i);
+    expect(job.error).not.toMatch(/problem on our side/i);
     expect((await ledger(owner)).map((r) => r.kind)).toEqual([
       "grant",
       "spend_reserve",

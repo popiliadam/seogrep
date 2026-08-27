@@ -52,10 +52,28 @@ import { paramsOf, returnPropsOf } from "./query-pins";
  *  R8 latestDiscoveryRun — gsc_discovery_runs — sort #6 ..... every cell: insights-query.test.ts
  *  R9 latestDomainLookupRun — domain_lookup_runs — sort #7 .. every cell: lookups-query.test.ts
  *
+ * R10 hasAnyAnalysisRun — audit_runs + gsc_discovery_runs + audit_content_runs — NO sort (E-9)
+ *     table HERE (all THREE, each pinned by name) · cols HERE · values HERE (user/project→params,
+ *     asserted per table — the claim is enforced, not merely written; see the referee note below) ·
+ *     sort n/a (the question is "does a row exist", so which row comes back is unobservable) ·
+ *     limit HERE (1) · single-row n/a (an array, tested for emptiness) · error HERE (throws — see
+ *     the page) · projection HERE (`id` alone; the ladder asks whether the count is zero) ·
+ *     consumed HERE + parity.test.ts (the `hasAnalysis` signal on both surfaces)
+ *
+ *     THE ONLY ROW THAT READS MORE THAN ONE TABLE, and the reason is in the page: `audit_content`
+ *     writes to a third table the panel's own lines do not cover, so a two-table probe would tell
+ *     a project whose only analysis was a content audit that nothing had been analysed. The
+ *     `.from(` census below therefore counts DECLARED tables per row rather than one per row.
+ *
+ * NOT A READ, and deliberately in neither list: `checkReachability` (E-3b) makes a DNS lookup, not
+ * a PostgREST call. It has no matrix row because this matrix surveys database reads; what it does
+ * carry is a parity pin in lib/projects/parity.test.ts.
+ *
  * ── WHAT `cardInputFor` RETURNS ───────────────────────────────────────────────────────────────
  *  project HERE · crawl Q&N · pull pull-query · crawlHistory history-query · auditRuns
  *  audits-query · discoveryRuns insights-query · lookupRuns lookups-query · connection Q&N ·
- *  tokenStatus Q&N (the name, and now its arguments)
+ *  tokenStatus Q&N (the name, and now its arguments) · hasAnalysis HERE + parity (E-9) ·
+ *  reachability HERE + parity (E-3b)
  *
  * ── CELLS NO SPEC IN THIS LANE CAN FILL, stated rather than left blank ────────────────────────
  *  1. THAT ANY OF IT RENDERS. vitest has no RSC boundary and nothing in the fast lane executes
@@ -149,7 +167,7 @@ const fromCall = (flags = ""): RegExp => new RegExp(FROM_CALL_SOURCE, flags);
 
 const READS = functionNames(PAGE).filter((name) => fromCall().test(bodyOf(PAGE, name)));
 
-/** The nine rows the matrix above carries, in the order it carries them. */
+/** The ten rows the matrix above carries, in the order it carries them. */
 const MATRIX_ROWS = [
   "listActiveProjects",
   "readConnections",
@@ -160,7 +178,47 @@ const MATRIX_ROWS = [
   "latestAuditRun",
   "latestDiscoveryRun",
   "latestDomainLookupRun",
+  "hasAnyAnalysisRun",
 ] as const;
+
+/**
+ * How many DISTINCT tables each row reads, where it is more than one. Every row not named here
+ * reads exactly one.
+ *
+ * DECLARED RATHER THAN COUNTED, so the `.from(` census keeps its full strength. The census exists
+ * to catch a body that quietly holds a SECOND read; simply relaxing it to "at least one per row"
+ * would have thrown that away to admit R10. Stating the number instead keeps the total exact: a
+ * fourth table inside hasAnyAnalysisRun, or a stray read anywhere else, still reddens this file.
+ */
+const TABLES_PER_READ: Readonly<Record<string, number>> = { hasAnyAnalysisRun: 3 };
+
+const EXPECTED_FROM_CALLS = MATRIX_ROWS.reduce(
+  (total, name) => total + (TABLES_PER_READ[name] ?? 1),
+  0,
+);
+
+/**
+ * The slice of `body` belonging to ONE `.from("<table>")` statement: from that call up to the
+ * NEXT `.from(` (or the end).
+ *
+ * A SLICE, NOT A SPANNING REGEX, and this is measured rather than cautious. The first version
+ * asserted `.from("X") … .eq("user_id") … .eq("project_id")` with a lazy `[\s\S]{0,300}?`
+ * between them, and its own comment claimed that stopped a filter "belonging to a NEIGHBOURING
+ * read" from satisfying it. It did not: deleting `.eq("user_id", …)` from the SECOND of the three
+ * statements left the pin green, because the lazy gap simply ran on into the third statement and
+ * borrowed its filters. Only the LAST statement was actually pinned — two of the three tenant
+ * guards were unenforced by a spec that read as though it covered all three.
+ *
+ * Signed lesson 14, on the position axis: the pin was written against one arrangement of the
+ * statements and never varied WHICH of them was broken.
+ */
+function fromSegment(body: string, table: string): string {
+  const start = body.search(new RegExp(`\\.from\\(\\s*["']${table}["']\\s*\\)`));
+  if (start === -1) throw new Error(`no .from("${table}") call to slice`);
+  const rest = body.slice(start + 1);
+  const next = rest.search(/\.from\(/);
+  return next === -1 ? body.slice(start) : body.slice(start, start + 1 + next);
+}
 
 const CARD_INPUT = bodyOf(PAGE, "cardInputFor");
 
@@ -174,7 +232,7 @@ describe("every read this page makes has a row in the matrix above", () => {
    * An EQUALITY, in source order, not a subset: a read that is deleted must lose its matrix row
    * too, or the table starts describing a page that no longer exists.
    */
-  it("reads exactly the nine tables the matrix names, in that order", () => {
+  it("reads exactly the ten tables the matrix names, in that order", () => {
     expect(READS).toEqual([...MATRIX_ROWS]);
   });
 
@@ -233,7 +291,7 @@ describe("every read this page makes has a row in the matrix above", () => {
    * satisfy it while quietly serving the wrong one. Here the total would be ten against nine.
    */
   it("talks to PostgREST only inside reads the matrix accounts for", () => {
-    expect([...PAGE.matchAll(fromCall("g"))].length).toBe(READS.length);
+    expect([...PAGE.matchAll(fromCall("g"))].length).toBe(EXPECTED_FROM_CALLS);
   });
 
   /**
@@ -252,8 +310,58 @@ describe("every read this page makes has a row in the matrix above", () => {
     ["latestAuditRun", "audit_runs"],
     ["latestDiscoveryRun", "gsc_discovery_runs"],
     ["latestDomainLookupRun", "domain_lookup_runs"],
+    // R10 names all three, and each is pinned separately: two of the three would be green on a
+    // probe that had quietly dropped the content-audit table.
+    ["hasAnyAnalysisRun", "audit_runs"],
+    ["hasAnyAnalysisRun", "gsc_discovery_runs"],
+    ["hasAnyAnalysisRun", "audit_content_runs"],
   ])("%s reads %s", (fn, table) => {
     expect(bodyOf(PAGE, fn)).toMatch(new RegExp(`\\.from\\(\\s*["']${table}["']\\s*\\)`));
+  });
+
+  /**
+   * …and R10's THREE reads each carry BOTH filters. Written because a referee found the matrix
+   * cell above claiming "values HERE" while nothing in this file asserted them — a cell that
+   * READS covered and is not, which is signed lesson 16 inside a census whose whole job is to
+   * stop exactly that.
+   *
+   * Per table, and per STATEMENT: the three are separate calls, so a `user_id` filter dropped
+   * from any one of them must redden on its own. See `fromSegment` for the hole the first version
+   * of this pin had — and for the measurement that found it.
+   *
+   * Unlike the MCP twin, the tenant guarantee here does not rest on this pin alone — the page
+   * uses the caller's authenticated client and RLS is on all three tables. It is asserted anyway:
+   * a defence that is only ever provided by one layer is one deployment mistake from being none.
+   */
+  it.each(["audit_runs", "gsc_discovery_runs", "audit_content_runs"])(
+    "hasAnyAnalysisRun scopes its %s read by BOTH user_id and project_id",
+    (table) => {
+      const segment = fromSegment(bodyOf(PAGE, "hasAnyAnalysisRun"), table);
+      expect(segment, `${table}: no user_id filter in its own statement`).toMatch(
+        /\.eq\(\s*["']user_id["']/,
+      );
+      expect(segment, `${table}: no project_id filter in its own statement`).toMatch(
+        /\.eq\(\s*["']project_id["']/,
+      );
+    },
+  );
+
+  /**
+   * The projection, and the reason it is `id` alone: the ladder asks whether the count is ZERO,
+   * so a project with two hundred audits must not pay to have its reports shipped across the
+   * wire. `report` is the megabyte column on all three tables (0024/0025/0026), and naming it
+   * here would be the `list_jobs` mistake one table over.
+   */
+  it("hasAnyAnalysisRun selects id alone, never a report column", () => {
+    const body = bodyOf(PAGE, "hasAnyAnalysisRun");
+    expect([...body.matchAll(/\.select\(\s*["']([^"']*)["']\s*\)/g)].map((m) => m[1])).toEqual([
+      "id",
+      "id",
+      "id",
+    ]);
+    expect(body).not.toMatch(/report/);
+    // Bounded: the question is existence, so one row is the whole answer.
+    expect([...body.matchAll(/\.limit\(\s*1\s*\)/g)]).toHaveLength(3);
   });
 });
 
@@ -264,7 +372,7 @@ describe("every field the card input carries has a row in the matrix above", () 
    * a tenth field added HERE and consumed by nobody is the `connection` defect again. Both are
    * caught by asking for the exact set.
    */
-  it("returns exactly the nine properties the matrix names", () => {
+  it("returns exactly the eleven properties the matrix names", () => {
     expect([...returnPropsOf(CARD_INPUT, "cardInputFor").keys()].sort()).toEqual(
       [
         "project",
@@ -276,6 +384,8 @@ describe("every field the card input carries has a row in the matrix above", () 
         "lookupRuns",
         "connection",
         "tokenStatus",
+        "hasAnalysis",
+        "reachability",
       ].sort(),
     );
   });

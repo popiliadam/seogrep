@@ -1,4 +1,9 @@
-import { FRESHNESS_WINDOW_DAYS, type Json, type ProjectSignals } from "@pseo/core";
+import {
+  FRESHNESS_WINDOW_DAYS,
+  type DomainReachability,
+  type Json,
+  type ProjectSignals,
+} from "@pseo/core";
 
 /**
  * The four observable signals /app/projects shows, derived from rows the page has already read.
@@ -141,6 +146,27 @@ export interface SignalInput {
    * Only the third produces an absent `gscTokenInvalid`; see {@link deriveProjectSignals}.
    */
   readonly tokenStatus?: GscTokenStatus | null;
+  /**
+   * Has ANY analysis ever run for this project (E-9)? Measured by the caller across all THREE run
+   * tables — `audit_runs`, `gsc_discovery_runs` AND `audit_content_runs`.
+   *
+   * ALL THREE, and the third is the one this page did not already have. The panel's own lines
+   * cover six tools across two tables; `audit_content` writes to a third, so deriving this from
+   * what the card already reads would answer "nothing has been analysed" to a project whose only
+   * analysis was a content audit — and route it to buy another one.
+   *
+   * Absent (`undefined`) means "this surface does not measure analyses", which is what keeps a
+   * caller that omits it deciding byte-identically to the ladder before the signal existed.
+   */
+  readonly hasAnalysis?: boolean;
+  /**
+   * What a DNS lookup of this project's domain found, when the caller ran one (E-3b).
+   *
+   * THREE ANSWERS, not a boolean, and the middle one is why: `"unknown"` (the lookup timed out or
+   * could not run) must never become `domainUnreachable: true`, or one DNS blip would stop the
+   * panel recommending paid work across a whole account. Absent means nobody looked.
+   */
+  readonly reachability?: DomainReachability;
 }
 
 /**
@@ -160,7 +186,7 @@ export interface SignalInput {
  * project — so the two surfaces route such a project the same way.
  */
 export function deriveProjectSignals(input: SignalInput, now: Date): ProjectSignals {
-  const { crawl, pull, connection, tokenStatus } = input;
+  const { crawl, pull, connection, tokenStatus, hasAnalysis, reachability } = input;
   const connected = isGscConnected(connection);
   const signals: ProjectSignals = {
     hasCrawl: crawl !== null,
@@ -185,8 +211,16 @@ export function deriveProjectSignals(input: SignalInput, now: Date): ProjectSign
     // pick-a-property rung on a card whose answer is connect_gsc.
     gscPropertyMissing: connected && connection?.gsc_property == null,
   };
-  if (tokenStatus === undefined) {
-    return signals;
-  }
-  return { ...signals, gscTokenInvalid: tokenStatus === "invalid" };
+  // Each optional signal is spread in ONLY when its input was supplied. Passing `false` for one
+  // the caller never measured would be a CLAIM by a layer that measured nothing, and it would read
+  // exactly like a genuine measurement — the reason `gscTokenInvalid` has worked this way since it
+  // was added, applied unchanged to the two signals below it.
+  return {
+    ...signals,
+    ...(tokenStatus === undefined ? {} : { gscTokenInvalid: tokenStatus === "invalid" }),
+    ...(hasAnalysis === undefined ? {} : { hasAnalysis }),
+    // ONLY a positive "no such name" — never a lookup that failed to run. Same rule as
+    // whats-next.ts's readProjectSignals, which is what keeps the two surfaces on the same rung.
+    ...(reachability === undefined ? {} : { domainUnreachable: reachability === "no_such_domain" }),
+  };
 }

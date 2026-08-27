@@ -8,6 +8,9 @@ import {
   formatJobLine,
   formatJobList,
   makeListJobsTool,
+  NO_JOBS_MESSAGE,
+  NO_MORE_JOBS_MESSAGE,
+  UNKNOWN_CURSOR_MESSAGE,
   type JobListRow,
   type ListJobsFn,
 } from "./list-jobs.ts";
@@ -248,8 +251,19 @@ describe("what the job list leaves out", () => {
     expect(text).toMatch(/55 older job\(s\) not shown/i);
   });
 
-  it("names the argument that shows more", () => {
-    expect(formatJobList({ rows, total: 56 })).toMatch(/limit/);
+  /**
+   * THIS SPEC USED TO ASSERT THE DEFECT (F-2, smoke tour wave 4). It read
+   * `expect(formatJobList({ rows, total: 56 })).toMatch(/limit/)` — green for the sentence
+   * "raise `limit` (max 50) to see more", which is unfollowable advice for a caller already at
+   * 50, and there were 6 such jobs in production. The axis it varied was "does the answer name a
+   * way to see more"; the axis it never varied was "does that way WORK from here". It is
+   * rewritten rather than deleted, so the requirement it was reaching for — the answer names its
+   * own remedy — survives with a remedy that holds at every page.
+   */
+  it("names the remedy that actually reaches the rest, at any page size", () => {
+    const text = formatJobList({ rows, total: 56 });
+    expect(text).toMatch(/before_id/);
+    expect(text).not.toMatch(/raise `?limit`?/i);
   });
 
   it("says nothing about a cut when the page IS the whole history", () => {
@@ -294,5 +308,89 @@ describe("the site a job ran against", () => {
 
   it("still resolves nothing when no map is supplied", () => {
     expect(formatJobLine(base)).toContain("p-1");
+  });
+});
+
+/**
+ * F-2 (smoke tour wave 4) — D-8 IN ITS SECOND HOME.
+ *
+ * Measured live 2026-08-27: a tenant with 56 jobs called list_jobs at limit 50 — already the
+ * ceiling — and was told "6 older job(s) not shown — raise `limit` (max 50) to see more." True
+ * about the count, and a dead end about the remedy: 6 jobs no call could reach.
+ *
+ * list_credit_activity carried exactly that sentence, was measured, and got a cursor. This tool
+ * was written AFTER that fix and inherited the sentence instead — which is what these specs pin,
+ * on both axes the earlier fix had to learn: can the next page be reached, and what does it call
+ * itself when it arrives.
+ */
+describe("list_jobs paging — the advice names a value that works", () => {
+  function jobRow(n: number): JobListRow {
+    return {
+      id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+      tool: "crawl_site",
+      status: "succeeded",
+      project_id: null,
+      created_at: `2026-08-${String(n).padStart(2, "0")}T00:00:00.000Z`,
+      finished_at: `2026-08-${String(n).padStart(2, "0")}T00:01:00.000Z`,
+    };
+  }
+  const fullPage = Array.from({ length: MAX_JOB_LIST_LIMIT }, (_, i) => jobRow(i + 1));
+
+  it("AT THE CEILING, does not tell the caller to raise a limit they are already at", () => {
+    const text = formatJobList({ rows: fullPage, total: 56 });
+
+    expect(text).not.toMatch(/raise `?limit`?/i);
+    expect(text).toContain("6 older job(s) not shown");
+  });
+
+  it("names the cursor VALUE to pass — the oldest id on this page", () => {
+    const text = formatJobList({ rows: fullPage, total: 56 });
+    const oldest = fullPage[fullPage.length - 1]?.id;
+
+    expect(text).toContain(`before_id: ${oldest}`);
+  });
+
+  it("says nothing about paging when the whole history fit", () => {
+    const text = formatJobList({ rows: fullPage, total: MAX_JOB_LIST_LIMIT });
+
+    expect(text).not.toContain("older job(s) not shown");
+    expect(text).not.toContain("before_id");
+  });
+
+  it("page two does NOT call itself the most recent (the second half of the D-8 lesson)", () => {
+    const text = formatJobList({ rows: [jobRow(1)], total: 6 }, new Map(), true);
+
+    expect(text).not.toMatch(/most recent/i);
+    expect(text).toMatch(/continuing from your cursor/i);
+    expect(text).toContain("1 of 6 older job(s)");
+  });
+
+  it("tells an exhausted cursor apart from an account with no jobs at all", () => {
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), true)).toBe(NO_MORE_JOBS_MESSAGE);
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), false)).toBe(NO_JOBS_MESSAGE);
+    expect(NO_MORE_JOBS_MESSAGE).not.toBe(NO_JOBS_MESSAGE);
+  });
+
+  it("answers an unreachable cursor without saying whether it exists elsewhere", () => {
+    const text = formatJobList({ rows: [], total: 0, unknownCursor: true }, new Map(), true);
+
+    expect(text).toBe(UNKNOWN_CURSOR_MESSAGE);
+    // Anti-enumeration, same shape as get_job_status: the answer must not distinguish "no such
+    // job" from "another tenant's job", so it says neither.
+    expect(text).not.toMatch(/another|other account|belongs to/i);
+  });
+
+  it("hands before_id through to the read port unchanged", async () => {
+    const calls: Array<{ limit: number; beforeId?: string }> = [];
+    const listJobs: ListJobsFn = async (_userId, limit, beforeId) => {
+      calls.push({ limit, beforeId });
+      return { rows: [], total: 0 };
+    };
+    const tool = makeListJobsTool({ listJobs, listDomains: async () => new Map() });
+    const cursor = "11111111-1111-4111-8111-111111111111";
+
+    await tool.run({ userId: "user-1" } as AuthContext, { before_id: cursor });
+
+    expect(calls).toEqual([{ limit: DEFAULT_JOB_LIST_LIMIT, beforeId: cursor }]);
   });
 });
