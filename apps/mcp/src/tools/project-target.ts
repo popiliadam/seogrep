@@ -100,11 +100,29 @@ export const AMBIGUOUS_SUBJECT_MESSAGE =
  * than nine copies for the reason this repo has already paid for: a hand-maintained list of
  * places to repeat a check grows holes — the `rsc-boundary` gate had SIX, every one of them a
  * spot someone forgot. It names the repair, because a refusal a caller cannot act on is a
- * dead end; `track_gsc_property` and /app/connection are the two ways back.
+ * dead end.
+ *
+ * IT NAMES setup_project TOO, since 2026-08-27, and that is not a wording preference — the
+ * sentence used to offer a route that CANNOT RUN for the projects most likely to hit it.
+ * `track_gsc_property` really does restore an archive (it goes through `openTrackedProject`),
+ * but it takes a Search Console PROPERTY and refuses with `NO_ACCOUNT` before anything else when
+ * the caller has no connected Google account. Measured live on 2026-08-27: `whats_next` on an
+ * archived project with no connection, no property and a domain that does not even resolve
+ * answered "Restore it with track_gsc_property" — the one repair on offer, unusable for that
+ * project. `setup_project` for the same domain goes through the SAME `openTrackedProject`,
+ * clearing `archived_at` in place, and works whether or not the project ever touched Search
+ * Console.
+ *
+ * `untrack_project` had the identical defect and it was fixed there on 2026-08-25 (tool review
+ * card 9) — in ITS two messages only. This shared constant, which THIRTEEN tools print, kept the
+ * old sentence: the axis varied that day was "which message inside untrack_project", and the axis
+ * never asked was "does another constant carry the same sentence". Signed lesson 14, fourth case.
  */
 export const ARCHIVED_PROJECT_MESSAGE =
   "That project is archived, so it is not being tracked right now. Restore it with " +
-  "track_gsc_property, or from the Connection page in SeoGrep.";
+  "setup_project for the same domain — which works whether or not the project has a Search " +
+  "Console property — or with track_gsc_property for its property, or from the Connection page " +
+  "in SeoGrep.";
 
 /**
  * The one sentence a project id that did not resolve gets. It interpolates ONLY the id the

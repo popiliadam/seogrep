@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   dataAgeInDays,
   decideProjectNextStep,
+  displayDomain,
   FRESHNESS_WINDOW_DAYS,
   type NextStep,
   type ProjectSignals,
@@ -117,13 +118,22 @@ function withPrice(item: string): string {
   return label === "" ? item : `${item} — ${label}`;
 }
 
-/** Render a resolved project's next step as the tool's plain-text output (pure). */
+/**
+ * Render a resolved project's next step as the tool's plain-text output (pure).
+ *
+ * THE DOMAIN GOES THROUGH `displayDomain`. Projects are STORED as A-labels, so an IDN project
+ * read as `xn--smoke-dalga2-rnek-c0b.com` here while `list_projects` — the tool the caller got
+ * the project_id from, one line earlier in the same session — printed `smoke-dalga2-örnek.com`.
+ * Two free tools, one project, two names (measured live 2026-08-27). Display only: nothing
+ * stored, compared or sent anywhere changes, exactly as in list-projects.ts.
+ */
 export function formatNextStep(domain: string, step: NextStep): string {
   const price = priceLabel(step.primary);
   const primary = price === "" ? step.primary : `${step.primary} (${price})`;
+  const shown = displayDomain(domain);
   const header = step.allSet
-    ? `You're all set for ${domain} — recommended next: run ${primary}.`
-    : `Next step for ${domain}: run ${primary}.`;
+    ? `You're all set for ${shown} — recommended next: run ${primary}.`
+    : `Next step for ${shown}: run ${primary}.`;
   const then = step.upcoming.map((item) => `- ${withPrice(item)}`).join("\n");
   return `${header}\n\nWhy: ${step.reason}\n\nThen:\n${then}`;
 }
@@ -143,7 +153,11 @@ export function renderWhatsNext(state: WhatsNextState): string {
         `- generate_report (${priceLabel("generate_report")}) — produce a shareable report`
       );
     case "choose_project": {
-      const list = state.projects.map((p) => `- ${p.domain} (project_id: ${p.id})`).join("\n");
+      // `displayDomain` for the same reason formatNextStep uses it, and this is the surface where
+      // the mismatch is loudest: this list exists to be read beside list_projects' list.
+      const list = state.projects
+        .map((p) => `- ${displayDomain(p.domain)} (project_id: ${p.id})`)
+        .join("\n");
       // WHY THIS ANSWERS INSTEAD OF ROUTING. The schema used to promise it would "route from your
       // project list"; measured on an account with 15 projects it printed the same rows
       // list_projects prints (defect card 5). Two honest options existed, and this is the one

@@ -553,3 +553,56 @@ describe("one crawl, three surfaces, one freshness window", () => {
     expect(AGE_DAYS).toBeLessThan(DATA_FRESHNESS_DAYS);
   });
 });
+
+/**
+ * IDN PROJECTS READ AS THE CUSTOMER TYPED THEM, on BOTH renderers.
+ *
+ * Projects are stored as A-labels. `list_projects` has rendered them through `displayDomain`
+ * since 2026-08-26 and `setup_project`'s receipt through `displayDomainWithAscii` — whats_next
+ * did neither, so the same project was `smoke-dalga2-örnek.com` in one free tool and
+ * `xn--smoke-dalga2-rnek-c0b.com` in the next (measured live 2026-08-27, defect E-1).
+ *
+ * TWO renderers, pinned separately, because that is the axis the previous round missed: the
+ * choose_project LIST and the formatNextStep HEADER are different code paths over the same field,
+ * and fixing one leaves the other printing punycode (signed lesson 14 — the D-6 shape: which
+ * SENTENCE inside one answer, not which tool).
+ *
+ * The U-label is asserted present AND the A-label absent. Present-only would pass on a renderer
+ * that printed both, which is the receipt's format, not this one's.
+ */
+describe("whats_next renders IDN projects as the customer typed them", () => {
+  const ASCII = "xn--smoke-dalga2-rnek-c0b.com";
+  const UNICODE = "smoke-dalga2-örnek.com";
+
+  it("the choose_project list shows the U-label, not the A-label", () => {
+    const text = renderWhatsNext({
+      kind: "choose_project",
+      projects: [
+        { id: "p-1", domain: ASCII },
+        { id: "p-2", domain: "plain-ascii.com" },
+      ],
+    });
+    expect(text).toContain(UNICODE);
+    expect(text).not.toContain(ASCII);
+    // The id is what the caller pastes back; it must survive the display change untouched.
+    expect(text).toContain("p-1");
+  });
+
+  it("the routed header shows the U-label, not the A-label", () => {
+    const text = formatNextStep(ASCII, decideProjectNextStep(signals({ hasCrawl: false, crawlFresh: false })));
+    expect(text).toContain(UNICODE);
+    expect(text).not.toContain(ASCII);
+  });
+
+  it("the all-set header shows it too — the other half of the same sentence", () => {
+    const text = formatNextStep(ASCII, decideProjectNextStep(signals()));
+    expect(text).toMatch(/all set/i);
+    expect(text).toContain(UNICODE);
+    expect(text).not.toContain(ASCII);
+  });
+
+  it("leaves a plain ASCII domain byte-identical", () => {
+    const text = formatNextStep("example.com", decideProjectNextStep(signals()));
+    expect(text).toContain("example.com");
+  });
+});
