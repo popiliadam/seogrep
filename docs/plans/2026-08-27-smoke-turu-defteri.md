@@ -1680,18 +1680,59 @@ domain in silence"*): o tur **Add domain akışını** düzeltti, **kartların n
 
 ---
 
-## 🟡 E-4 — handoff §4/2'nin premisi YANLIŞ (ürün kusuru değil)
+## 🔴 E-4 — ⚠️ **BU KAYIT YANLIŞTI, DÜZELTİLDİ (2026-08-27 09:xxZ)** — kusur handoff'ta değil `list_projects`'te
 
-Handoff, `example.net`'i *"bağlı ama property seçilmemiş tek örnek (G5/G8'in canlı kanıtı)"*
-diye veriyordu. Ölçüldü:
+### Önce ne yazmıştım (yanlış)
 
-```sql
-example.net → gsc_connections satırı VAR, account_id = NULL, gsc_property = NULL
-```
+> *"Handoff §4/2'nin premisi yanlış: `example.net` bağlı değil. Ürün kusuru değil."*
 
-Yani **bağlı değil**. Canlı çağrı da bunu doğruladı: rung 1 (`crawl_site`), rung 4b değil.
-**Rung 4b'nin bu hesapta canlı fikstürü YOK** — kodda pinli, müşteri yolundan hiç görülmedi.
-(Hangi projelerin `account_id IS NOT NULL AND gsc_property IS NULL` olduğu tarandı: **hiçbiri**.)
+Ölçümlerim doğruydu (`account_id` gerçekten NULL, `whats_next` gerçekten rung 1 veriyor), ama
+**teşhisim yanlıştı.** Handoff o iddiayı uydurmamıştı — `list_projects`'ten okumuştu. Ve
+`list_projects` **yanlış söylüyordu.**
+
+### Gerçek — canlıda ölçüldü, aynı hesap aynı dakika
+
+`list_projects` bir `gsc_connections` **satırı varsa** "bağlı" diyordu; `account_id`'ye hiç
+bakmıyordu. **18 projenin DÖRDÜ** yanlış gösteriliyordu:
+
+| proje | `list_projects` | `whats_next` | SQL (`account_id`) |
+|---|---|---|---|
+| `bayder.com.tr` | `Search Console: https://bayder.com.tr/` | rung 3 → `connect_gsc` | **NULL** |
+| `rkturizm.com` | `Search Console: https://rkturizm.com/` | — | **NULL** |
+| `www.noraninsaat.com` | `Search Console: sc-domain:noraninsaat.com` | — | **NULL** |
+| `example.net` | `connected, no property selected` | rung 1 | **NULL** |
+
+İki tool aynı hesap hakkında **ters** şey söylüyordu ve **güven veren cevap yanlış olandı** —
+rapor edilmeyen yön budur. Müşteri maliyeti: listeye bakıp `pull_gsc_data` çalıştıran biri
+başarısız olur.
+
+Bu **#52 numaralı kusur**: *"satırın varlığı cevap değildir"*. Migration 0021'den beri kimlik
+`gsc_accounts`'ta yaşıyor ve bu satır **eşleme**; `unmapProject` `account_id`'yi temizleyip satırı
+BIRAKIYOR, hesap silinince `on delete set null` aynı kolonu boşaltıyor ve her `gsc_property`
+hayatta kalıyor.
+
+### Eksen taraması — bu kez tam yapıldı
+
+`gsc_connections`'tan "bağlı mı" kararı veren **yedi** yer tarandı. Altısı **doğru**:
+`connect-gsc.ts` (kusuru adıyla anan bir yorumu bile var) · `pull-gsc-data.ts` ·
+`generate-report.ts` · `whats-next.ts` · `apps/web/lib/projects/signals.ts` ·
+`apps/web/app/app/connection/connection-view.ts` (bu durum için doğru sözcüğü zaten kullanıyor:
+**`retained`**). **`list_projects` tek suçluydu** ve en çok okunan yüzeydi.
+
+✅ **DÜZELTİLDİ.** Artık `account_id === null` → `not_connected`, ve kalan property **adıyla**
+söyleniyor (*"sc-domain:x is still mapped and comes back when you run connect_gsc (free)"*) —
+çünkü yalnız "not connected" demek, eşlemenin kaybolduğu izlenimi verirdi.
+
+### Rung 4b hâlâ fikstürsüz
+
+`account_id IS NOT NULL AND gsc_property IS NULL` olan proje **yok**. Rung 4b kodda pinli,
+müşteri yolundan hiç görülmedi. Bu kısım değişmedi.
+
+### Ders
+
+**Bir tool'un çıktısını başka bir tool'un çıktısıyla çelişirken gördüğünde, ilk soru "hangisi
+bozuk" olmalı — "doküman bayat mı" değil.** İlk teşhisim ikinci soruyu sordu ve gerçek kusuru
+altı saat gizledi. Ölçümün doğru olması teşhisin doğru olduğunu göstermez.
 
 ## 🟡 E-5 — handoff "20 proje" diyor; kiracı filtresiyle **19**
 

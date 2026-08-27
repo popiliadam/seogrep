@@ -24,7 +24,7 @@ function project(overrides: Partial<ProjectListRow> = {}): ProjectListRow {
     domain: "example.com",
     created_at: "2026-01-01T00:00:00.000Z",
     archived_at: null,
-    gsc: { kind: "not_connected" },
+    gsc: { kind: "not_connected", retainedProperty: null },
     lastJob: null,
     ...overrides,
   };
@@ -194,7 +194,7 @@ describe("the Search Console state on each tracked line", () => {
   });
 
   it("never calls an unconnected project expired", () => {
-    const text = formatProjectList([project({ gsc: { kind: "not_connected" } })]);
+    const text = formatProjectList([project({ gsc: { kind: "not_connected", retainedProperty: null } })]);
     expect(text).not.toMatch(/reconnect/i);
   });
 });
@@ -388,5 +388,48 @@ describe("apex and www. tracked as two projects", () => {
       project({ id: "p-2", domain: "www.a.com", archived_at: "2026-08-01T00:00:00.000Z" }),
     ]);
     expect(text).not.toMatch(/same site/i);
+  });
+});
+
+/**
+ * DEFECT #52's RENDERING half — what the line SAYS once the state is known.
+ *
+ * These are RENDERER pins and nothing more, and saying so matters: the defect measured live on
+ * 2026-08-27 was in the BUILDER (every `gsc_connections` row was labelled connected, whatever its
+ * `account_id`), and a spec that rebuilt the state here would be asserting against its own copy
+ * of the decision — a test double more permissive than the runtime, which is how a wrong builder
+ * keeps a green suite (signed lesson 12). The builder is pinned where it really runs, against
+ * real rows, in list-projects.db.test.ts.
+ */
+describe("what an unconnected line says about the property it kept", () => {
+  it("names the property that survived, so the mapping does not look lost", () => {
+    const text = formatProjectList([
+      project({ gsc: { kind: "not_connected", retainedProperty: "sc-domain:orphan.com" } }),
+    ]);
+    expect(text).toMatch(/not connected/i);
+    expect(text).toContain("sc-domain:orphan.com");
+    // The repair, named: reconnecting is free and brings the mapping back untouched.
+    expect(text).toMatch(/connect_gsc/);
+  });
+
+  it("says nothing about a retained property when there is none", () => {
+    const text = formatProjectList([
+      project({ gsc: { kind: "not_connected", retainedProperty: null } }),
+    ]);
+    expect(text).toMatch(/not connected/i);
+    expect(text).not.toMatch(/still mapped/i);
+  });
+
+  /**
+   * The other side of the axis (signed lesson 14): a live link must still read as connected, and
+   * must NOT pick up the unconnected wording. Without this, a renderer that said "not connected"
+   * everywhere would pass both assertions above.
+   */
+  it("leaves a live link reading as connected", () => {
+    const text = formatProjectList([
+      project({ gsc: { kind: "connected", property: "sc-domain:live.com", expired: false } }),
+    ]);
+    expect(text).toContain("sc-domain:live.com");
+    expect(text).not.toMatch(/not connected/i);
   });
 });

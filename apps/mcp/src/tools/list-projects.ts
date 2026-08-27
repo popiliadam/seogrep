@@ -48,7 +48,20 @@ import { defineTool, textResult } from "./registry.ts";
  * expressible on the `not_connected` variant.
  */
 export type ProjectGscState =
-  | { readonly kind: "not_connected" }
+  | {
+      readonly kind: "not_connected";
+      /**
+       * The property this project READ THROUGH before the account link went away, when the row
+       * still remembers one — `null` when there is nothing to remember.
+       *
+       * It exists because "not connected" alone would read as "you lost your mapping", and the
+       * mapping is exactly what survives: `gsc_connections.account_id` is `on delete set null`,
+       * so disconnecting a Google account (or unmapping it) keeps every `gsc_property` in place
+       * and reconnecting restores the project unchanged. /app/connection already models this and
+       * calls it `retained`; this is the same fact under the same name.
+       */
+      readonly retainedProperty: string | null;
+    }
   | { readonly kind: "connected"; readonly property: string | null; readonly expired: boolean };
 
 /** The most recent background run for a project — the tool that ran, and when. */
@@ -161,7 +174,15 @@ export function sameSiteNotes(active: readonly ProjectListRow[]): string[] {
 
 /** The Search Console half of a tracked line. */
 function renderGsc(gsc: ProjectGscState): string {
-  if (gsc.kind === "not_connected") return "Search Console: not connected";
+  if (gsc.kind === "not_connected") {
+    // The retained property is NAMED rather than hidden: a customer who reconnects gets this
+    // project back exactly as it was, and "not connected" with no more said reads as if the
+    // mapping had been lost with the account.
+    return gsc.retainedProperty === null
+      ? "Search Console: not connected"
+      : `Search Console: not connected — ${gsc.retainedProperty} is still mapped and comes ` +
+          "back when you run connect_gsc (free)";
+  }
   if (gsc.property === null) {
     // Connected to a Google account, mapped to no property. Saying "connected" alone here is the
     // lie this branch exists to prevent — nothing can be pulled until a property is chosen.
@@ -269,11 +290,25 @@ async function readGscStates(scoped: Scoped): Promise<Map<string, ProjectGscStat
   return new Map(
     rows.map((row) => [
       row.project_id,
-      {
-        kind: "connected" as const,
-        property: row.gsc_property,
-        expired: row.account_id !== null && health.get(row.account_id) === "invalid",
-      },
+      // CONNECTED IS `account_id !== null`, NOT the existence of the row — defect #52, and this
+      // tool was the last surface still getting it backwards (measured live 2026-08-27: four of
+      // eighteen projects were printed as connected while `whats_next` routed the same projects
+      // to connect_gsc on the same day, and the SQL agreed with whats_next).
+      //
+      // Since migration 0021 the credential lives on `gsc_accounts` and this row is the MAPPING:
+      // `unmapProject` clears `account_id` and KEEPS the row, and deleting a Google account nulls
+      // the same column through `on delete set null` while every `gsc_property` survives. So a
+      // row with a null `account_id` reads NOTHING, and calling it connected told the customer
+      // their Search Console data was live when no token could reach it — the one thing this
+      // tool exists to report. The same definition as connect-gsc.ts, pull-gsc-data.ts,
+      // generate-report.ts, whats-next.ts and the panel's signals.ts.
+      row.account_id === null
+        ? { kind: "not_connected" as const, retainedProperty: row.gsc_property }
+        : {
+            kind: "connected" as const,
+            property: row.gsc_property,
+            expired: health.get(row.account_id) === "invalid",
+          },
     ]),
   );
 }
@@ -346,7 +381,7 @@ export const listProjectsTool = defineTool({
     ]);
     const rows: ProjectListRow[] = bare.map((row) => ({
       ...row,
-      gsc: gsc.get(row.id) ?? { kind: "not_connected" },
+      gsc: gsc.get(row.id) ?? { kind: "not_connected", retainedProperty: null },
       lastJob: lastJobs.get(row.id) ?? null,
     }));
     return textResult(formatProjectList(rows));
