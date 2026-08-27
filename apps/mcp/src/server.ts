@@ -6,7 +6,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { MCP_APP_MIME, UI_RESOURCES } from "./ui/app-card.ts";
+import { MCP_APP_MIME, UI_RESOURCES } from "./ui/card.ts";
 import {
   createAuthenticator,
   createRateLimiter,

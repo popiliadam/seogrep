@@ -26,7 +26,7 @@ vi.mock("../credits/paid-balance.ts", async (importOriginal) => ({
 
 import type { AuthContext } from "../auth.ts";
 import { PAID_BALANCE_TOOLS, paidBalanceRequiredMessage } from "../credits/paid-balance.ts";
-import { BALANCE_CARD_URI } from "../ui/app-card.ts";
+import { CARD_URI } from "../ui/card.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
 
 /**
@@ -175,7 +175,7 @@ describe("the answer says whether the paid-balance gate applies to THIS account"
  */
 describe("the MCP Apps view rides along without changing the answer", () => {
   it("declares the view and keeps content the whole answer", async () => {
-    expect(getCreditBalanceTool.uiResourceUri).toBe(BALANCE_CARD_URI);
+    expect(getCreditBalanceTool.uiResourceUri).toBe(CARD_URI);
     balance.mockResolvedValueOnce(4519);
     const result = await getCreditBalanceTool.run(CTX, {});
     expect(result.content).toHaveLength(1);
@@ -209,18 +209,58 @@ describe("the MCP Apps view rides along without changing the answer", () => {
     paid.mockResolvedValueOnce(true);
     const result = await getCreditBalanceTool.run(CTX, {});
     const text = result.content[0]?.text ?? "";
-    // The number: read back OUT of the sentence, so a fake balance cannot satisfy both sides.
-    const quoted = Number(/balance:\s*(\d+)/i.exec(text)?.[1]);
-    expect(result.structuredContent?.balance).toBe(quoted);
-    // The gate: `paid` true must coincide with the sentence that says this account is unlocked.
-    expect(result.structuredContent?.paid).toBe(true);
+    // FIELD MOVED (task 5, ruling 2026-08-27): the bare {balance, paid} probe shape is gone —
+    // structuredContent now carries a zod-validated card instead, so the SAME two facts live at
+    // card.value / card.badge. The pin's INTENT is unchanged: read the number back OUT of the
+    // sentence, so a fabricated card value cannot satisfy both sides independently.
+    const card = result.structuredContent?.card as { value?: string; badge?: string };
+    const quoted = /balance:\s*(\d+)/i.exec(text)?.[1];
+    expect(card.value).toBe(quoted);
+    // The gate: the "Paid" badge must coincide with the sentence that says this account is
+    // unlocked — two channels, one claim, checked against each other rather than against a mock.
+    expect(card.badge).toBe("Paid");
     expect(text).toMatch(/\bunlocked\b/i);
   });
 
   it("says the account is NOT unlocked in both channels at once", async () => {
     paid.mockResolvedValueOnce(false);
     const result = await getCreditBalanceTool.run(CTX, {});
-    expect(result.structuredContent?.paid).toBe(false);
+    // FIELD MOVED (task 5, ruling 2026-08-27): see comment above — `paid` now lives as the
+    // card's badge, not a bare structuredContent field.
+    //
+    // EXACT, not merely "not Paid" (fix round 2, coordinator ruling): `.not.toBe("Paid")` also
+    // passes when the badge is ABSENT, and an absent badge makes the runtime render the
+    // template's default "live" on a trial account's card — inexact, at the same cost as exact.
+    const card = result.structuredContent?.card as { badge?: string };
+    expect(card.badge).toBe("Trial");
     expect(result.content[0]?.text ?? "").not.toMatch(/\bunlocked\b/i);
+  });
+});
+
+/**
+ * THE CARD ITSELF (2026-08-27, task 5): get_credit_balance now produces a validated MCP Apps
+ * metric card, not a bare {balance, paid} payload. Its figures are READ BACK OUT of the sentence
+ * so a fabricated card value cannot satisfy both sides independently.
+ */
+describe("get_credit_balance's card", () => {
+  it("builds a metric card whose figures are the sentence's own", async () => {
+    // Deliberately a DIFFERENT balance from the :208 probe above (fix round 2, coordinator
+    // ruling): with both probes on the same number, a card VALUE hardcoded to a constant equal
+    // to that number would satisfy both — the pin caught a value that DIFFERS from the balance,
+    // not the class it exists to catch (a value that is not a function of the balance at all).
+    balance.mockResolvedValueOnce(6001);
+    paid.mockResolvedValueOnce(true);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    const text = result.content[0]?.text ?? "";
+    const card = result.structuredContent?.card as { value: string; badge?: string };
+    // Read back OUT of the sentence, so a fabricated balance cannot satisfy both sides.
+    expect(card.value).toBe(/balance:\s*(\d+)/i.exec(text)?.[1]);
+    expect(card.badge).toBe("Paid");
+  });
+
+  it("does not call a trial account paid on the card either", async () => {
+    paid.mockResolvedValueOnce(false);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect((result.structuredContent?.card as { badge?: string }).badge).not.toBe("Paid");
   });
 });

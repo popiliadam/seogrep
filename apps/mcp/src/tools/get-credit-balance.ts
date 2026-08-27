@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { creditBalance, getServiceClient } from "../db.ts";
 import { hasPaidBalance } from "../credits/paid-balance.ts";
-import { BALANCE_CARD_URI } from "../ui/app-card.ts";
-import { defineTool, textResultWithData } from "./registry.ts";
+import { CARD_URI } from "../ui/card.ts";
+import { defineTool, textResultWithCard } from "./registry.ts";
 
 /**
  * get_credit_balance — the tenant's available credits. 0 credits (reading your balance
@@ -35,13 +35,13 @@ export const getCreditBalanceTool = defineTool({
   description: "Show your available credit balance (the running total of your credit ledger).",
   inputSchema: z.object({}),
   /**
-   * THE MCP APPS RENDERING PROBE (2026-08-27) — see ui/app-card.ts for what it is measuring and
+   * THE MCP APPS RENDERING PROBE (2026-08-27) — see ui/card.ts for what it is measuring and
    * why this tool is the one carrying it: 0 credits, no parameters, and an answer whose two facts
    * (a number and a gate) are enough to tell a rendered view from a blank one. The sentence
    * below is unchanged and stays the whole answer; a host that ignores `_meta` sees exactly what
    * it saw yesterday.
    */
-  ui: { resourceUri: BALANCE_CARD_URI },
+  ui: { resourceUri: CARD_URI },
   handler: async (ctx) => {
     const [balance, paid] = await Promise.all([
       creditBalance(getServiceClient(), ctx.userId),
@@ -54,12 +54,23 @@ export const getCreditBalanceTool = defineTool({
       : "Having credits is not always enough: the tools that read live data from a paid " +
         "third-party SEO provider need a PAID balance and are not available on trial credits, " +
         "however many trial credits are left. Buying any credit pack unlocks them.";
-    return textResultWithData(
+    const sentence =
       `Credit balance: ${balance} ${unit}. Paid tools debit credits when they run, and a ` +
-        `balance of 0 blocks them until you top up. ${gate}`,
-      // The two facts the sentence states, as fields — so the view reads them instead of parsing
-      // prose. Nothing here is NEW information: a view may never know something the text does not.
-      { balance, paid },
-    );
+      `balance of 0 blocks them until you top up. ${gate}`;
+    return textResultWithCard(sentence, {
+      kind: "metric",
+      title: "Credit balance",
+      value: String(balance),
+      unit,
+      // The badge states the gate the sentence states. "Paid" only when the ledger says so; a
+      // trial account must not read as unlocked on the card while the sentence says it is not.
+      badge: paid ? "Paid" : "Trial",
+      facts: [
+        {
+          label: "Vendor tools",
+          value: paid ? "Unlocked" : "Locked — needs a paid balance",
+        },
+      ],
+    });
   },
 });

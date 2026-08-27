@@ -7,6 +7,7 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { AuthContext } from "../auth.ts";
+import { cardSchema, type Card } from "../ui/card-model.ts";
 import { isReserveCommitFailed, withCredits } from "../credits/guard.ts";
 import { isPaidBalanceRequired } from "../credits/paid-balance.ts";
 import { isFreeVendorSpendLimit } from "../credits/free-vendor-calls.ts";
@@ -186,6 +187,25 @@ export function textResultWithData(
     );
   }
   return { content: [{ type: "text", text }], structuredContent: { ...structuredContent, summary: text } };
+}
+
+/**
+ * A text result carrying a VALIDATED MCP Apps card beside it.
+ *
+ * The card goes through zod here rather than at each call site, so a tool cannot ship a shape the
+ * template has no branch for. The failure is a THROW: a card that arrived malformed would paint
+ * an empty frame, and an empty frame reads to a customer as a product that does not work — a
+ * worse outcome than a loud test failure.
+ *
+ * `summary` still carries the whole sentence (see textResultWithData): a host that renders only
+ * structuredContent must not be able to show less than the whole answer.
+ */
+export function textResultWithCard(text: string, card: Card): ToolResult {
+  const parsed = cardSchema.safeParse(card);
+  if (!parsed.success) {
+    throw new Error(`Invalid MCP Apps card: ${z.prettifyError(parsed.error)}`);
+  }
+  return textResultWithData(text, { card: parsed.data });
 }
 
 /** An error tool result (isError so the MCP client renders it as a failure, not data). */
