@@ -30,6 +30,32 @@ describe("security header rules", () => {
     );
   });
 
+  /**
+   * L-10. The global policy carried frame-ancestors and nothing else, so outside the public report
+   * route there was no CSP layer at all. These two directives are the ones that could be turned on
+   * from a static reading — the capability each forbids was grepped for and is unused.
+   */
+  it("blocks <base> hijacking and plugin content on every route (L-10)", () => {
+    const csp = headerValue(GLOBAL_SOURCE, "content-security-policy") ?? "";
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  /**
+   * The NEGATIVE half, and it is the more important one. form-action 'self' looks like an obvious
+   * hardening win and would break a paying customer: app/billing/actions.ts redirects a form
+   * submission to Paddle's hosted portal, and browsers apply form-action to the redirect target.
+   * Pinning its ABSENCE means a future "let's tighten the CSP" pass has to read this test — and the
+   * reason on the constant — before it can delete the line.
+   */
+  it("does NOT set form-action globally: the Paddle portal is a cross-origin form redirect", () => {
+    const csp = headerValue(GLOBAL_SOURCE, "content-security-policy") ?? "";
+    expect(csp).not.toContain("form-action");
+    // The report route is a different case and keeps its lockdown: that page has no form at all.
+    expect(headerValue(REPORT_SOURCE, "content-security-policy")).toContain("form-action 'none'");
+  });
+
   it("carries X-Frame-Options: DENY as the second layer for pre-CSP3 user agents", () => {
     expect(headerValue(GLOBAL_SOURCE, "x-frame-options")).toBe("DENY");
   });
