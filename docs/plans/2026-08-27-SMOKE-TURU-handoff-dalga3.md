@@ -41,7 +41,7 @@ DURUMU) **yalnız dalga 1 içindir** ve değişmez.
 | yüzey | **38 tool** |
 | kredi bakiyesi | **4519** (dalga 2'de **hiç kredi harcanmadı**) |
 | `credit_ledger` | **783 satır** — 13 canlı `setup_project` çağrısı **tek satır yazmadı** |
-| vendor | **$0,101 / $3,00** — dalga 2'de **tek paralı çağrı yok** |
+| vendor | dalga 2 boyunca **$0,101 / $3,00**, hiç paralı çağrı yok. **UTC günü 2026-08-27'ye döndü ve sayaç $0,00'a sıfırlandı** (ölçüldü 06:38Z) |
 | `projects` | **20** (17 → +3 kanıt satırı, aşağıda) |
 | migration | **0033 cloud'a UYGULANDI** ve doğrulandı |
 
@@ -73,7 +73,10 @@ curl -s https://mcp.seogrep.com/status      # ok:true, schema:ready
 1. **Bağlantıyı doğrula:** `get_credit_balance` (0 kredi). `requires authentication` gelirse
    operatörün istemciyi yenilemesi gerekir.
 2. **⚠️ ŞEMA TAZELİĞİNİ ÖLÇ** — aşağıdaki §3, dalga 2'de canlı bir doğrulamayı engelledi.
-3. **Vendor tabanını ölç:** `select dfs_spend_today_usd()` → **$0,101** olmalı.
+3. **Vendor tabanını ÖLÇ, hatırlama:** `select dfs_spend_today_usd()`.
+   ⚠️ **Bu sayaç UTC takvim gününe göre sıfırlanır** (`spend_day`). Dalga 2, 08-26'da $0,101 ile
+   kapandı; 06:38Z'de yeni gün başlamış ve sayaç **$0,00** okunmuştu. Yani "taban $0,101" diye
+   ezberlenen bir sayı, ertesi gün **yanlış** bir taban olur — ve $3 tavanı da o günün tavanıdır.
 4. Defteri aç, **§D1e**'yi ve bu dosyanın §6'sını oku.
 
 ---
