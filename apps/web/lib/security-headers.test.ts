@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GLOBAL_SOURCE, REPORT_SOURCE, SECURITY_HEADER_RULES } from "./security-headers";
 
@@ -61,6 +63,27 @@ describe("security header rules", () => {
     ]) {
       expect(reportCsp).toContain(directive);
     }
+  });
+
+  /**
+   * L-02 is not a header this module emits — it is Next's `poweredByHeader` FLAG, and turning it
+   * off removes `x-powered-by: Next.js` (a free framework fingerprint) from every response. There
+   * is nothing importable to assert, so this reads next.config.ts as text.
+   *
+   * A SOURCE-TEXT ASSERTION IS A WEAK TEST AND IS USED DELIBERATELY, with its weakness named. It
+   * does NOT prove the running server omits the header; what proves the flag reaches the server is
+   * `next build` resolving it into .next/required-server-files.json, measured 2026-08-27. What
+   * this test CAN do is fail when someone deletes or flips the flag, which is the regression that
+   * would otherwise ship in silence. Asserting the VALUE too, not just the key, is the difference
+   * between this and a test that stays green when the flag goes back to `true` — both mutations
+   * were run and both measured red before this test was kept.
+   */
+  it("keeps Next's x-powered-by fingerprint disabled in next.config.ts (L-02)", () => {
+    // Resolved from the package root (vitest runs with cwd = apps/web). A wrong cwd makes
+    // readFileSync THROW rather than return empty, so this cannot degrade into a silent pass.
+    const config = readFileSync(resolve(process.cwd(), "next.config.ts"), "utf8");
+    expect(config).toMatch(/poweredByHeader\s*:\s*false/);
+    expect(config).not.toMatch(/poweredByHeader\s*:\s*true/);
   });
 
   it("orders the report rule LAST so its stricter CSP wins over the global one", () => {
