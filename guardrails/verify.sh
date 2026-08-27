@@ -38,4 +38,12 @@ pnpm turbo run typecheck lint test build
 # Yukarıdaki `build` satırı hâlâ doğru sıradır — kontrolü yeşil YAPAN odur; artık güvenli YAPAN o
 # değil.
 node apps/web/scripts/gen-tool-docs.mjs --check
+# Deploy-trigger drift: the MCP image's workspace-package list is copied into apps/mcp/Dockerfile
+# (twice) and .github/workflows/deploy-mcp.yml, and this derives all three from apps/mcp's own
+# dependencies. It reads only manifests and text, so it needs neither build nor DB — but it lives
+# HERE rather than in CI's static-guards job, which is deliberately node-free. `verify` is a
+# required check; static-guards is too, but it cannot run node (imzalı ders 15: kapı, dokunulan
+# yüzeyin kendi kontrolünü içerir — ve bu yüzeyin kontrolü node ister).
+node scripts/testing/check-deploy-paths.mjs --self-test
+node scripts/testing/check-deploy-paths.mjs
 echo "VERIFY: PASS"
