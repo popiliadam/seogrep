@@ -147,6 +147,33 @@ function stampsOf(job: JobRow, domains: ReadonlyMap<string, string>): string {
 }
 
 /**
+ * A stored failure text, ready to sit inside `failed: … .` without doubling its punctuation.
+ *
+ * MEASURED LIVE 2026-08-27, minutes after F-1 deployed (F-6):
+ *
+ *     Job 24c43b20-… failed: … preserved in the engineering record.. created 2026-07-21T…
+ *
+ * The renderer has always appended a full stop, and the messages it rendered were fragments
+ * ("crawl_site: no pages could be crawled"), so the two never collided. They do now: every
+ * message that reaches this field through the F-1 policy is a written-for-a-customer SENTENCE and
+ * ends in a stop of its own. The defect is older than F-1 — `ARCHIVED_PROJECT_MESSAGE` has ended
+ * in "in SeoGrep." since it was written — but it was reachable only by archiving a project between
+ * a crawl's enqueue and its pickup, and is now on the common path.
+ *
+ * TRIMMED HERE RATHER THAN UNPUNCTUATED AT THE SOURCE. The alternative was to strip the stops from
+ * every customer-facing message, which would make them wrong everywhere ELSE they are rendered —
+ * the registry returns the same sentences as a whole tool result, where a missing full stop is the
+ * defect. One renderer owns its own punctuation; the messages stay well-formed sentences.
+ *
+ * Only ONE trailing stop is removed, and only a stop: an ellipsis or a message ending in "?" or
+ * "!" keeps what it has, because trimming those would change what the sentence means.
+ */
+export function failureClause(error: string | null): string {
+  const text = error ?? "unknown error";
+  return text.endsWith("..") || !text.endsWith(".") ? text : text.slice(0, -1);
+}
+
+/**
  * Render a human-readable status line for a job. Pure (no I/O) so the fast lane can
  * pin the wording of every status; the tenant-scoped read is proven in the db spec.
  */
@@ -178,7 +205,7 @@ export function formatJobStatus(
       return `${head} succeeded. ${stamps}.${summary ? ` ${summary}.` : ""}`;
     }
     case "failed":
-      return `${head} failed: ${job.error ?? "unknown error"}. ${stamps}.`;
+      return `${head} failed: ${failureClause(job.error)}. ${stamps}.`;
   }
 }
 

@@ -2370,3 +2370,122 @@ Bunlar prose'un değil kapının bulguları:
 | — | taze hakem turu (NEVER#10) | ⛔ **BORÇ** |
 
 **Gezilen yüzey: 7 / 38 tool.** Sırada `list_gsc_properties`.
+
+---
+
+## §D9 — HAKEM TURU · CANLIYA ÇIKIŞ · CANLI DOĞRULAMA
+
+Operatör *"ne gerekiyorsa yap, bütün izinleri veriyorum"* dedi. NEVER#10'un hakem borcu kapandı.
+
+### §D9.1 — hakem: taze Fable, yalnız iş emri + diff
+
+**VERDICT: PASS**, 7 bulgu, **critical/high YOK**. Beşi kodda kapandı, biri veri düzeltmesiydi.
+
+| # | ağırlık | bulgu | durum |
+|---|---|---|---|
+| 1 | orta | `readHasAnalysis`'in **TRUE dalı hiçbir testte koşmuyor**; argümanları takas etmek `tsc`'den geçer | ✅ |
+| 2 | orta | `read-coverage` matrisi *"values HERE"* diyor, **hiçbir şey zorlamıyor** — ders 16'nın şekli | ✅ |
+| 3 | düşük | `whats-next.db.test.ts` (d) **yanlış sebeple** yeşil | ✅ |
+| 4 | düşük | tek enqueue arızası **İKİ referans** üretiyor | ✅ |
+| 5 | düşük | `completeJob` dalı `failJobSafely` yerine `failJob` çağırıyor | ✅ |
+| 6 | düşük | canlıdaki iki satır **hâlâ ham dizgiyi servis ediyor** (ve panel `jobs.error`'ı ham basıyor) | ✅ veri |
+| 7 | info | hakemin `tsc` koşusu `next-env.d.ts`'i üretti | ✅ geri alındı |
+
+**Hakemin 1. senaryosu ÖLÇÜLDÜ ve doğru çıktı:** `readHasAnalysis(client, projectId, userId)` — argümanlar takas
+edilmiş hâli — `pnpm --filter @pseo/mcp typecheck`'ten **sessizce geçiyor**. İkisi de `string`.
+
+### §D9.2 — 🔴 KENDİ PİNİM YANLIŞ SEBEPLE YEŞİLDİ — turun en iyi dersi
+
+Hakemin 2. bulgusunu kapatmak için yazdığım pin **kendisi delikti**:
+
+```
+.from("X") … [\s\S]{0,300}? … .eq("user_id") … .eq("project_id")
+```
+
+Yorumu *"komşu bir okumanın filtresi bunu karşılayamaz"* diyordu. **Ölçüldü: karşılıyor.** Üç
+ifadenin **ORTANCASINDAN** `user_id` düşürüldüğünde pin yeşil kaldı — lazy boşluk üçüncü ifadeye
+uzanıp onun filtrelerini ödünç aldı. Yalnız **SONUNCUSU** gerçekten pinliydi.
+
+İki tenant guard'ı, üçünü de kapsadığını yazan bir spec tarafından **korunmuyordu**.
+
+**Ders 14, pozisyon ekseninde** — ve bu sefer *"kapsama iddiası"* bulgusunu kapatmak için yazılmış
+bir pinde. İfade-bazlı dilimlemeyle değiştirildi; **altı mutasyonun** (3 tablo × 2 yüzey) altısı da
+tek tek kırmızıya dönüyor.
+
+> Bu, dalga 3'ün §5.1'inin üçüncü katmanı: teşhis hipotezdir — **kendi düzeltmenin teşhisi de.**
+
+### §D9.3 — 🟢 ŞEMA, TESTİMDEN GÜÇLÜ ÇIKTI
+
+Kiracı-kemeri testim yabancı bir `audit_runs` satırını sahibin projesine yazmaya çalıştı; **Postgres
+reddetti**: `audit_runs_user_id_crawl_job_id_fkey`. FK **BİLEŞİK** — `(user_id, crawl_job_id)`.
+
+Yani bir kiracının işine başka bir kiracının adıyla referans veren satır aşağıda filtrelenmiyor,
+**HİÇ YAZILAMIYOR**. Çapraz-kiracı kenarı, testin konusu olan filtrenin **bir katman altında** kapalı.
+Test gerçeğe göre yeniden yazıldı ve **şema gerçeğinin kendisi** ayrı bir testle pinlendi: o FK tek
+kolona gevşetilirse kırmızı verir.
+
+### §D9.4 — canlıya çıkış
+
+| adım | sonuç |
+|---|---|
+| PR | [#197](https://github.com/popiliadam/seogrep/pull/197) · CI **9/9** (gitleaks · licenses · lighthouse · static-guards · verify · verify-db · Netlify ×3) |
+| merge | **`dbf82ef`** — merge-commit (squash `.gitleaksignore` parmak izlerini bozar), dal silindi |
+| deploy | `Deploy MCP` **success** · `uptimeSeconds` 16285 → **3** (gerçekten yeniden başladı) |
+| `/status` | `ok:true` · `errorsSinceBoot:0` · `schema:ready` · `seogrep.com` 200 |
+
+### §D9.5 — CANLI DOĞRULAMA — düzeltmelerin KENDİ çıktısı okundu
+
+| # | canlı ölçüm |
+|---|---|
+| **F-3** ✅ | `Job af7a2925… (crawl_site) succeeded. … · took 1m 32s · project: noraninsaat.com. Crawled 26 page(s)…` |
+| **F-1** ✅ | `Job 24c43b20… failed: the job could not be completed — this was a problem on our side…` — ham dizgi **yok** |
+| **F-2** ✅ | `53 older job(s) not shown — call again with \`before_id: e1db2b1e…\`` — ve **imleç gerçekten koşturuldu**: `Continuing from your cursor: 3 of 53 older job(s)` → zincirlendi. Erişilemez 6 iş artık erişilebilir |
+| **E-9** ✅ | `adstark.com.tr` (0 analiz) → *"nothing has been analyzed yet"* → **`find_quick_wins` (10 kredi)**. Karşı yön: `dentnotion.com` (**8 analiz**) → **`generate_report` (15 kredi)**. İki yön de canlıda |
+| veri | `jobs` tablosunda infra dizgisi taşıyan satır: **0** (yeniden ölçüldü) |
+
+### §D9.6 — 🔴 BULGU F-6 — canlı çıktı YENİ bir kusur gösterdi
+
+F-1'in canlı cevabını **tamamını** okuyunca (dalga 3 §5.3: *"değiştirdiğin satırı değil, cevabın
+tamamını oku"*):
+
+```
+… preserved in the engineering record.. created 2026-07-21T10:55:30.924461+00:00 …
+```
+
+**Çift nokta.** Renderer her zaman bir nokta ekliyordu ve bastığı mesajlar **PARÇAYDI**
+(`crawl_site: no pages could be crawled`) — ikisi hiç çakışmamıştı. F-1 her saklanan hatayı
+**müşteri için yazılmış bir CÜMLEYE** dönüştürdü, cümle kendi noktasını getiriyor.
+
+**F-1'den ESKİ:** `ARCHIVED_PROJECT_MESSAGE` yazıldığından beri `in SeoGrep.` ile bitiyor ve aynı
+renderer'dan geçiyor. Ama yalnız bir projeyi crawl'ın enqueue'su ile pickup'ı **arasında**
+arşivleyerek ulaşılabilirdi — kimse görmemiş. F-1 onu **yaygın yola** taşıdı, böyle bulundu.
+
+Düzeltme renderer'da (kaynakta değil: aynı cümleler registry tarafından **bütün bir tool sonucu**
+olarak da döndürülüyor, orada eksik nokta kusurun kendisi olur). **Tek** nokta, ve **yalnız** nokta —
+`?`, `!` ve ellipsis dokunulmuyor; `…` kırpılsa `..` olurdu, yani kusurun ta kendisi.
+
+[PR #199](https://github.com/popiliadam/seogrep/pull/199) · `make verify` PASS mcp **3680** ·
+3 mutasyon (trim yok → 2 kırmızı · koşulsuz trim → 8 · ellipsis koruması yok → 2).
+
+### §D9.7 — kapılar
+
+| kapı | hakem turu sonrası | F-6 sonrası |
+|---|---|---|
+| `make verify` | **PASS** — core 348 · db 12 · mcp **3672** · web **1997** | **PASS** — mcp **3680** |
+| `make verify-db` | **PASS** — db 165 · mcp **508** · web 48 | (F-6 db şeridine dokunmuyor) |
+| `make goals` | **16/16 (5 SKIP)** · gitleaks PASS | — |
+| CI (#197) | **9/9** | koşuyor |
+
+> ⛔ 5 SKIP değişmedi. `mcp-alive` + `trial-flow-e2e` **hâlâ kör** — `MCP_SMOKE_URL` bayat.
+
+### §D9.8 — ⛔ ÖLÇÜLEMEDİ — izin katmanı durdurdu
+
+`queued`/`running` dalları **hâlâ ölçülmedi**. Operatör sözlü izin verdi, ama `crawl_site`
+çağrısını **harness sınıflandırıcısı reddetti** (ücretli eylem). Etrafından dolaşılmadı.
+
+Para tabanı ölçülmüştü ve **değişmedi**: vendor **$0,00** · bakiye **4519** · ledger **783** ·
+jobs **57**. Bu turda **hiç kredi harcanmadı**.
+
+Ölçmek için gereken, aynen duruyor: `crawl_site` (20 kredi, `seed_from_ranking_pages` KAPALI) →
+koşarken **iki kez** yoklanır → iki cevabın **farklı** olduğu doğrulanır (canlı ilerleme sayacının
+var oluş gerekçesi) → `queued` yakalanabilirse o da yazılır.
