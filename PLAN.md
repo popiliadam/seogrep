@@ -5,9 +5,41 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 3** (sırada `whats_next`, 5/38 gezildi)
+### 🎴 2026-08-27 — **MCP APPS KARTLARI DİLİM 1 CANLIDA** + smoke turu dalga 3
+
+**`main` = `3a5063f`** ([PR #193](https://github.com/popiliadam/seogrep/pull/193), merge-commit · CI 6/6 · Deploy ✅).
+Tool cevapları destekleyen istemcilerde (Claude mobil · masaüstü · web) **markalı kart** olarak da
+çiziliyor. **Metin hiçbir tool'da değişmedi.** Kartlı tool: **1** (`get_credit_balance`, 0 kredi);
+diğer **37**'nin `tools/list` çıktısı bit bit aynı. Yüzey **38** sabit, **kredi fiyatı değişikliği SIFIR**.
+
+Spec `docs/specs/2026-08-27-mcp-apps-kart-tasarimi.md` · plan+defter
+`docs/plans/2026-08-27-mcp-apps-kart-dilim1*.md`. Önce bir **spike** koşuldu: kartın Claude'da
+gerçekten çizildiği **ölçüldü**, ve `structuredContent`'in en az bir istemcide metnin YERİNE
+geçtiği bulundu ([#191](https://github.com/popiliadam/seogrep/pull/193)) — tasarımın en önemli girdisi.
+
+**Kapı:** `verify.sh` PASS — mcp **3627** (dilim başı 3577, **+50**) · web 1979 · core 339 · db 12 ·
+`verify-db.sh` PASS · **`make goals` 14/16** ⚠️ aşağıda. 6 hakem turu (biri Fable, NEVER#10),
+**20'den fazla mutasyon kanıtı**, 7 gerçek delik yakalandı — 3'ü planın kendi defektiydi.
+
+**⛔ OPERATÖR KUYRUĞU (dilim 1'den):**
+1. **`MCP_SMOKE_URL` BAYAT** — 2026-08-27 09:04:26Z'de iptal edilmiş anahtar taşıyor (`api_keys`
+   kanıtı). `mcp-alive` + `trial-flow-e2e` bu yüzden FAIL; **uçlar sağlam**, dalla ilgisi yok.
+   Açık metin yalnız üretim anında görülür → **insan işi**.
+2. **Marka borcu:** `--color-accent` on `--color-accent-badge-bg` = **4.43:1** (AA altı),
+   `apps/web/app/app/layout.tsx:82`'de canlı. Kart bundan kaçındı; düzeltme marka token'larına ait.
+3. **Kapı zayıflığı:** `gen-tool-docs --check` yetim `dist` çıktısını sayıp raporluyor ama
+   **reddetmiyor**.
+4. **Dilim 2 borcu:** spec §8.2'nin 3. şıkkı — kartlı bir tool düz `textResult` döndürse kapı
+   yeşil kalır. **İkinci tool kartlanmadan önce** kapatılmalı.
+5. **Dilim 1 NEYİ ÖLÇMEDİ:** yeni şablonun canlı çizimi (sabahki kanıt emekli probe'a aitti) ·
+   `reportSize`/debounce (jsdom'da `scrollHeight` daima 0) · giden protokolün tek mesaj ötesi.
+
+---
+
+### 🧪 SMOKE TURU DALGA 3 — **6/38 gezildi**, sırada `get_job_status`
 
 > **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga3.md`
+> **`whats_next` KAPANDI** (E-1 IDN adı · E-2 arşiv mesajı · E-3a panel paritesi — [#188](https://github.com/popiliadam/seogrep/pull/188)/[#189](https://github.com/popiliadam/seogrep/pull/189)) ve **`list_projects`'te #52 bulundu+düzeltildi** ([#192](https://github.com/popiliadam/seogrep/pull/192): 4 proje "bağlı" görünürken bağlı değildi). Açık: **E-3b** panel ölü alan adı için 20 kredilik crawl öneriyor.
 > Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — dalga 2 bölümleri **§D0–§D4**,
 > `setup_project` kapanışı **§D1e**.
 
