@@ -168,6 +168,25 @@ describe("resolveTarget — archived projects", () => {
     expect(ARCHIVED_PROJECT_MESSAGE).toMatch(/track_gsc_property|connection page/i);
   });
 
+  /**
+   * THE REPAIR IT NAMES MUST BE RUNNABLE BY THE PROJECT MOST LIKELY TO SEE IT.
+   *
+   * The assertion above is an OR, and an OR cannot see the hole this closes: deleting
+   * `track_gsc_property` from the sentence entirely leaves it green on `connection page`.
+   * Measured live 2026-08-27 — an archived project with no Google account, no property and a
+   * domain that does not resolve was told to restore it with `track_gsc_property`, which refuses
+   * such a caller with NO_ACCOUNT before it looks at anything. So the sentence must ALSO name the
+   * route that has no Search Console precondition, and say so rather than listing two tools as if
+   * they were interchangeable.
+   *
+   * Pinned as separate `toMatch`es, never as the source literal (signed lesson 11): each one is
+   * an independent claim, and a single re-stated string would prove only that it was copied.
+   */
+  it("names a restore route that needs no Search Console property", () => {
+    expect(ARCHIVED_PROJECT_MESSAGE).toMatch(/setup_project/);
+    expect(ARCHIVED_PROJECT_MESSAGE).toMatch(/whether or not/i);
+  });
+
   it("still resolves an active project exactly as before", async () => {
     const resolved = await resolveTarget("user-1", { project_id: MINE }, loadProject);
     expect(resolved).toMatchObject({ ok: true, domain: "adstark.com.tr" });

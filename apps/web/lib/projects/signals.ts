@@ -16,6 +16,7 @@ import { FRESHNESS_WINDOW_DAYS, type Json, type ProjectSignals } from "@pseo/cor
  *   crawlFresh / pullFresh = that job's created_at is within FRESHNESS_WINDOW_DAYS of now
  *   gscConnected        = the gsc_connections row carries a non-null account_id
  *   gscTokenInvalid     = that account's stored gsc_accounts.token_status is 'invalid'
+ *   gscPropertyMissing  = that row is connected and its gsc_property is null
  *
  * `FRESHNESS_WINDOW_DAYS` is IMPORTED, never re-typed. A literal 30 here would be a second place
  * for the window to live, and the day core changed it the panel would quietly keep the old one.
@@ -160,12 +161,29 @@ export interface SignalInput {
  */
 export function deriveProjectSignals(input: SignalInput, now: Date): ProjectSignals {
   const { crawl, pull, connection, tokenStatus } = input;
+  const connected = isGscConnected(connection);
   const signals: ProjectSignals = {
     hasCrawl: crawl !== null,
     crawlFresh: crawl !== null && isFresh(crawl.created_at, now),
-    gscConnected: isGscConnected(connection),
+    gscConnected: connected,
     hasPull: pull !== null,
     pullFresh: pull !== null && isFresh(pull.created_at, now),
+    // ALWAYS EMITTED, unlike gscTokenInvalid — `connection` is a required field of SignalInput, so
+    // every caller of this function has MEASURED the mapping. Omitting it would be an abstention
+    // by a layer that holds the answer.
+    //
+    // WHY IT IS HERE AT ALL (measured 2026-08-27, defect E-3). Core's rung 4b — "a live account
+    // with no property mapped" — was added on 2026-08-26 and the MCP router adopted it; this
+    // function never fed it, so the panel fell one rung further and told such a project to run
+    // pull_gsc_data: 5 credits for a pull that cannot succeed without a property. That is the
+    // exact wrong rung 4b exists to remove, still live on the surface a human looks at. It cost
+    // nothing to close: `connection.gsc_property` was already read and already printed on the
+    // card's Search Console line.
+    //
+    // Meaningful only WITH a connection, exactly as whats-next.ts's readGscLink decides it: an
+    // unconnected project has no mapping to be missing, and reporting one would put the
+    // pick-a-property rung on a card whose answer is connect_gsc.
+    gscPropertyMissing: connected && connection?.gsc_property == null,
   };
   if (tokenStatus === undefined) {
     return signals;
