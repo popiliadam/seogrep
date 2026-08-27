@@ -50,4 +50,38 @@ describe("the card model rejects what it cannot render", () => {
   it("rejects an empty headline — a card may not show a blank where a number belongs", () => {
     expect(cardSchema.safeParse({ kind: "metric", title: "x", value: "" }).success).toBe(false);
   });
+
+  /**
+   * Fix round 1, finding 1. A plain `z.object` strips a key it does not recognise, so a
+   * mis-shaped payload — the wrong `kind` carrying another kind's field, or a typo'd key —
+   * parses clean and renders short with no error anywhere. `strictObject` must refuse it.
+   */
+  it("rejects an unknown key instead of silently stripping it", () => {
+    expect(
+      cardSchema.safeParse({ kind: "metric", title: "x", value: "1", rows: [] }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * Fix round 1, finding 2. Whitespace-only satisfies a bare `.min(1)` while rendering exactly
+   * the blank figure the "a card may not fabricate" constraint forbids.
+   */
+  it("rejects a whitespace-only value", () => {
+    expect(cardSchema.safeParse({ kind: "metric", title: "x", value: "   " }).success).toBe(
+      false,
+    );
+  });
+
+  /** Keeps the schema from simply refusing everything: a real card with facts still parses. */
+  it("still accepts a well-formed metric card with facts", () => {
+    expect(
+      cardSchema.safeParse({
+        kind: "metric",
+        title: "Credit balance",
+        value: "4519",
+        unit: "credits",
+        facts: [{ label: "Plan", value: "Pro" }],
+      }).success,
+    ).toBe(true);
+  });
 });
