@@ -108,6 +108,16 @@ olarak kapatılmamalı.
   ölçülmüş gerekçeyle **kasten** eklenmedi: `billing/actions.ts:103` bir form gönderimini Paddle'a,
   yani çapraz-origin'e yönlendiriyor.
 
+### Yarım kapanan, sınırı ölçülmüş
+
+- **L-01 mobilde yarım.** Gerçek deploy'da iki genişlikte ölçüldü: 1440px'te `main 1 / navigation 1`
+  ("Documentation" etiketli), **375px'te `main 1 / navigation 0`**. fumadocs iki ayrı eleman
+  çiziyor; `sidebar` prop'u yalnız masaüstü `#nd-sidebar`'a iniyor, mobil drawer
+  (`#nd-sidebar-mobile`) kendi prop'larıyla çiziliyor. Rolü oraya taşımak `slots.sidebar.root`'u bir
+  client bileşeniyle ezmek demek — sürüm yükseltmesinin sessizce kıracağı bir bağ, ve kullanıcı
+  açana dek `invisible` olan bir panel için. Takas **bilerek reddedildi**; okurun içeriğe atlamak
+  için ihtiyaç duyduğu `main` landmark'ı **iki genişlikte de var**.
+
 ### Yapısal olarak kapatılamayan
 
 - **M-06** — Paddle live açılmadan gerçek para E2E ölçülemez.
