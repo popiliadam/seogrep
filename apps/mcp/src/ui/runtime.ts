@@ -21,6 +21,7 @@ export const VIEW_SCRIPT = `
   var host = window.parent;
   var announced = false;
   var lastHeight = 0;
+  var sizeTimer = null;
 
   function send(message) { try { host.postMessage(message, "*"); } catch (e) {} }
 
@@ -59,6 +60,16 @@ export const VIEW_SCRIPT = `
     send({ jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height: height } });
   }
 
+  // A REFLOW TRIGGER, not just a measurement: reportSize() only reads the current height, it does
+  // not know when to read it again. Two things resize this card after the point-in-time calls
+  // below have already run: host fonts arriving asynchronously (applyHostContext writes them
+  // synchronously, but the @font-face swap and its reflow happen later) and content rewrapping on
+  // a viewport change. Debounced so a burst of layout changes reports once.
+  function scheduleSize() {
+    if (sizeTimer !== null) clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(function () { sizeTimer = null; reportSize(); }, 50);
+  }
+
   function text(id, value) {
     var el = document.getElementById(id);
     if (el) el.textContent = value;
@@ -91,8 +102,17 @@ export const VIEW_SCRIPT = `
     var data = (params && params.structuredContent) || {};
     var card = data.card;
     // No card, or a kind this template cannot draw: keep the text answer visible and say so,
-    // rather than painting an empty frame that looks like a broken card.
+    // rather than painting an empty frame that looks like a broken card. Also CLEAR whatever a
+    // PREVIOUS metric result drew here — otherwise a metric-then-non-metric sequence leaves the
+    // old title/value/unit/facts sitting beside the new summary. The badge moves off "waiting":
+    // that word is reserved for before any result has arrived, not for "this result has no card".
     if (!card || card.kind !== "metric") {
+      text("sg-title", "");
+      text("sg-value", "—");
+      text("sg-unit", "");
+      text("sg-badge", "text");
+      var facts = document.getElementById("sg-facts");
+      if (facts) facts.textContent = "";
       text("sg-note", data.summary || "");
       reportSize();
       return;
@@ -109,6 +129,17 @@ export const VIEW_SCRIPT = `
     if (message.method === "ui/notifications/host-context-changed") { applyHostContext(message.params); }
     if (message.method === "ui/notifications/tool-result") { announce(); draw(message.params); }
   });
+
+  // typeof-GUARDED: jsdom, the environment the next task's card-dom.test.ts runs this script
+  // under, has no ResizeObserver. An unguarded "new ResizeObserver" would throw at script load
+  // and take the whole handshake down with it — do not "clean this up" into a bare constructor
+  // call.
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(scheduleSize).observe(document.documentElement);
+  }
+  if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+    document.fonts.ready.then(scheduleSize);
+  }
 
   send({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: {} });
   setTimeout(announce, 400);

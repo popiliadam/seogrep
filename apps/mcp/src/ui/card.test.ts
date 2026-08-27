@@ -19,6 +19,11 @@ describe("the shared card template is self-contained", () => {
     expect(html).not.toMatch(/<button|<a\s|onclick=/i);
   });
 
+  it("names a fallback for every brand font, because no web font can load", () => {
+    expect(html).toMatch(/Newsreader,\s*Georgia,\s*serif/);
+    expect(html).toMatch(/"IBM Plex Mono",\s*"Courier New",\s*monospace/);
+  });
+
   it("says it is waiting before any data arrives", () => {
     expect(html).toMatch(/id="sg-badge"[^>]*>waiting</);
   });
