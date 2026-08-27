@@ -3,6 +3,11 @@ import { DEFAULT_MCP_URL_TEMPLATE, mcpUrlTemplate } from "@pseo/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { MCP_APP_MIME, UI_RESOURCES } from "./ui/app-card.ts";
+import {
   createAuthenticator,
   createRateLimiter,
   hasValidKeyFormat,
@@ -33,7 +38,12 @@ const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
  * capability card republishes them verbatim — a second literal would let the card and the
  * real handshake drift apart.
  */
-const SERVER_CAPABILITIES = { tools: {}, prompts: {} } as const;
+/**
+ * `resources` joined tools/prompts on 2026-08-27 for MCP Apps (SEP-1865): a view is served as a
+ * `ui://` RESOURCE, so a server that advertises no resources capability can never hand one over,
+ * however correct its tool `_meta` is. The surface is read-only and static — see registerUiResources.
+ */
+const SERVER_CAPABILITIES = { tools: {}, prompts: {}, resources: {} } as const;
 
 /** JSON-RPC error codes returned before a request reaches the MCP server. */
 const JSON_RPC_UNAUTHORIZED = -32001;
@@ -530,6 +540,37 @@ function clientIpOf(req: Request): string {
 }
 
 /**
+ * The MCP Apps view surface (SEP-1865): `resources/list` and `resources/read` over UI_RESOURCES.
+ *
+ * TENANT-INDEPENDENT, exactly like `registerPrompts` beside it — a view is a static template, the
+ * same bytes for every caller, and the DATA that fills it travels with the tool result. That is
+ * also why nothing here reads `ctx`: a resource handler that touched tenant data would be a
+ * second, unaudited path to it, and this one has no reason to exist.
+ *
+ * An unknown URI is refused rather than answered with an empty list, so a host that asks for a
+ * view this deploy does not serve learns that instead of rendering a blank frame.
+ */
+function registerUiResources(server: Server): void {
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    resources: UI_RESOURCES.map((resource) => ({
+      uri: resource.uri,
+      name: resource.name,
+      description: resource.description,
+      mimeType: MCP_APP_MIME,
+    })),
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+    const resource = UI_RESOURCES.find((candidate) => candidate.uri === request.params.uri);
+    if (!resource) {
+      throw new Error(`Unknown resource: ${request.params.uri}`);
+    }
+    return {
+      contents: [{ uri: resource.uri, mimeType: MCP_APP_MIME, text: resource.html }],
+    };
+  });
+}
+
+/**
  * A stateless MCP server for one request: it advertises `tools` (tools/list) and
  * dispatches them under the credit guard (tools/call), both scoped to `ctx`, plus the
  * static orchestration `prompts` (prompts/list + prompts/get, tenant-independent). The
@@ -541,6 +582,7 @@ function createMcpServer(ctx: AuthContext, tools: readonly RegisteredTool[]): Se
   const server = new Server(SERVER_INFO, { capabilities: SERVER_CAPABILITIES });
   registerAll(server, { ctx, tools });
   registerPrompts(server);
+  registerUiResources(server);
   return server;
 }
 

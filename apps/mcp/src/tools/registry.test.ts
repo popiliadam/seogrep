@@ -246,6 +246,37 @@ describe("registerAll", () => {
     ]);
   });
 
+  /**
+   * THE MCP APPS WIRING (SEP-1865) — the one step that, removed, kills the whole feature in
+   * silence.
+   *
+   * Measured 2026-08-27: deleting the `_meta` spread from tools/list left ALL 154 specs in this
+   * area green. The server still SERVED the view and no host ever asked for it, because
+   * `_meta.ui.resourceUri` is the only thing that tells a host a view exists. The pin above could
+   * not see it: both of its tools declare no view, so with the spread gone their output is
+   * byte-identical — it was varying the wrong axis (which FIELDS a tool emits, never whether a
+   * tool HAS a view).
+   *
+   * Both directions, because either alone is green for the wrong reason: a tool with a view must
+   * carry the meta, and a tool without one must carry NO `_meta` key at all — an explicit
+   * `_meta: undefined` would change the serialized shape of all 37 view-less tools.
+   */
+  it("tools/list names a tool's MCP Apps view, and adds no _meta to a tool without one", () => {
+    const viewed = defineTool({
+      name: "get_credit_balance",
+      description: "Has a view",
+      inputSchema: z.object({}),
+      ui: { resourceUri: "ui://seogrep/credit-balance" },
+      handler: async () => textResult("ok"),
+    });
+    const { handlers, server } = fakeServer();
+    registerAll(server, { ctx: CTX, tools: [viewed, echoTool] });
+    const list = handlers.get(ListToolsRequestSchema) as () => { tools: Record<string, unknown>[] };
+    const [withView, withoutView] = list().tools;
+    expect(withView?._meta).toEqual({ ui: { resourceUri: "ui://seogrep/credit-balance" } });
+    expect(withoutView && "_meta" in withoutView).toBe(false);
+  });
+
   it("tools/call dispatches to the named tool and returns its result", async () => {
     const { call } = wire();
     const result = await call({ params: { name: "get_job_status", arguments: { jobId: "j-9" } } });
