@@ -26,7 +26,7 @@ vi.mock("../credits/paid-balance.ts", async (importOriginal) => ({
 
 import type { AuthContext } from "../auth.ts";
 import { PAID_BALANCE_TOOLS, paidBalanceRequiredMessage } from "../credits/paid-balance.ts";
-import { BALANCE_CARD_URI } from "../ui/app-card.ts";
+import { CARD_URI } from "../ui/card.ts";
 import { getCreditBalanceTool } from "./get-credit-balance.ts";
 
 /**
@@ -175,7 +175,7 @@ describe("the answer says whether the paid-balance gate applies to THIS account"
  */
 describe("the MCP Apps view rides along without changing the answer", () => {
   it("declares the view and keeps content the whole answer", async () => {
-    expect(getCreditBalanceTool.uiResourceUri).toBe(BALANCE_CARD_URI);
+    expect(getCreditBalanceTool.uiResourceUri).toBe(CARD_URI);
     balance.mockResolvedValueOnce(4519);
     const result = await getCreditBalanceTool.run(CTX, {});
     expect(result.content).toHaveLength(1);
