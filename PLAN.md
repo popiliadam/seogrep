@@ -36,21 +36,47 @@ geçtiği bulundu ([#191](https://github.com/popiliadam/seogrep/pull/193)) — t
 
 ---
 
-### 🧪 SMOKE TURU DALGA 4 — **6/38 gezildi**, sırada `get_job_status`
+### 🧪 SMOKE TURU DALGA 4 — **`get_job_status` KAPANDI**, altı düzeltme canlıda · 7/38 gezildi
 
-> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga4.md`
-> Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — dalga 3 bölümleri **§D5–§D6b**,
-> `whats_next`'in **gerçek** kapanış tablosu **§D6b**.
+**`main` = `dbf82ef`** ([PR #197](https://github.com/popiliadam/seogrep/pull/197), merge-commit ·
+CI 9/9 · Deploy MCP ✅ · `uptime` 16285→3, gerçekten yeniden başladı).
+Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — **§D7** ölçüm · **§D8** düzeltmeler ·
+**§D9** hakem turu + canlı doğrulama.
 
-**⛔ İLK İŞ:** `MCP_SMOKE_URL` bayat bir anahtar taşıyor (09:04:26Z'de iptal) — `make goals`
-14/16'nın tek sebebi bu, **uçlar sağlam**. Tazelenene kadar `mcp-alive` + `trial-flow-e2e`
-**bakmıyor**, "yeşil" diye raporlanamaz. **Operatör işi.**
+**Altı bulgu, hepsi canlıda doğrulandı (düzeltmenin KENDİ çıktısı okundu):**
 
-**`whats_next` kod olarak KAPALI DEĞİL — iki madde açık:**
-- **E-3b** panel ölü alan adı için **20 kredilik** crawl öneriyor (operatör/tasarım kararı)
-- **E-9** all-set basamağı *"analiz edilmiş mi"*yi bilmiyor; merdivenin *"denetimler iz bırakmaz"*
-  önermesi **bayat** (0024/0025/0026 tam da o izleri tutuyor). Canlı tanık `adstark.com.tr`:
-  taze veri, **0 analiz**, önerilen adım **15 kredilik rapor**. **İmza gerektirir.**
+| # | ne | canlı kanıt |
+|---|---|---|
+| **F-1** | `failed: … password authentication failed for user "postgres"` — DB rol adı + iç hostname müşteriye gidiyordu | ham dizgi yok; `jobs`'ta infra dizgisi taşıyan satır **0** |
+| **F-2** | `list_jobs` tavandayken *"raise `limit` (max 50)"* — 6 iş erişilemezdi (**D-8'in 2. evi**) | imleç **koşturuldu**, zincirlendi, 6 iş erişilebilir |
+| **F-3** | `get_job_status` hangi siteyi söylemiyordu | `· project: noraninsaat.com` |
+| **F-5** | kredisi bitene *"failed unexpectedly, quote reference"* (**kapı buldu**) | tiplendi, iki yüzey de tanıyor |
+| **E-9** | all-set basamağı analizi bilmiyordu; dayandığı **yorum** 0024'ten beri yanlıştı | `adstark` (0 analiz) → `find_quick_wins` 10kr · `dentnotion` (8 analiz) → `generate_report` 15kr |
+| **E-3b** | panel ölü alan adına 20 kredilik crawl öneriyordu | core'un DNS portu, render'da, 2sn tavan |
+
+**Kredi fiyatı değişikliği SIFIR** (NEVER#6) · migration YOK · yüzey **38** sabit.
+Bu turda **hiç kredi harcanmadı** (vendor $0,00 · bakiye 4519 · ledger 783 · jobs 57 — hepsi sabit).
+
+**Kapı:** `verify.sh` PASS — mcp **3672** (dilim başı 3627) · web **1997** · core **348** · db 12 ·
+`verify-db.sh` PASS (mcp **508**) · `make goals` **16/16 (5 SKIP)**, `no-secrets` gitleaks PASS.
+
+**Hakem (NEVER#10, taze Fable):** PASS, 7 bulgu, critical/high yok — beşi kodda kapandı, biri
+veri düzeltmesiydi. **En iyi ders §D9.2'de:** hakemin *"kapsama iddiası zorlanmıyor"* bulgusunu
+kapatmak için yazdığım pin **kendisi delikti** — üç ifadenin ortancasından filtre düşürüldüğünde
+lazy regex komşudan ödünç alıyordu; yalnız sonuncusu pinliymiş. **Kendi düzeltmenin teşhisi de
+hipotezdir.** §D9.3: şema testimden güçlü çıktı — `audit_runs`'ın bileşik FK'i çapraz-kiracı satırı
+**yazılamaz** kılıyor.
+
+**⛔ AÇIK:**
+1. **`MCP_SMOKE_URL` BAYAT** — `mcp-alive` + `trial-flow-e2e` **hâlâ kör**; "16/16" tam ölçüm
+   değil, 5'i SKIP. **Operatör işi.**
+2. **F-6** — canlı çıktı yeni bir kusur gösterdi: `record.. created` çift nokta. F-1'den **eski**
+   (`ARCHIVED_PROJECT_MESSAGE` hep noktayla bitiyordu), F-1 onu yaygın yola taşıdı.
+   [PR #199](https://github.com/popiliadam/seogrep/pull/199), `verify` PASS mcp **3680**.
+3. **`queued`/`running` dalları ÖLÇÜLEMEDİ** — 20 kredilik crawl gerekiyor; operatör sözlü izin
+   verdi ama **harness sınıflandırıcısı ücretli çağrıyı reddetti**. Etrafından dolaşılmadı.
+
+**Sıradaki tool: `list_gsc_properties`.**
 
 ---
 
