@@ -1492,3 +1492,235 @@ ve başlık artık `Continuing from your cursor: 2 of 510 older credit entries`.
 **Bu tur şefin kendi eserinde ÜÇ kez aynı deliği buldu** (D-6 · D-9 · D-9'un pin deliği):
 *bir düzeltmeyi N eksende varyantlayıp N+1'inciyi hiç sormamak.* Üçünde de yakalayan şey
 **düzeltmenin kendi çıktısını canlıda okumak** oldu — testler değil.
+
+---
+
+# 🌊 DALGA 3 — 2026-08-27 06:5xZ'de başladı
+
+> Handoff: `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga3.md`.
+> Dalga 3 bulguları **E** önekiyle yazılır (dalga 1 = G/A/I, dalga 2 = D).
+
+## §D5 — `whats_next` — 0 kredi ✅ ÖLÇÜLDÜ
+
+### §D5.0 — açılış ölçümleri
+
+| ne | ölçüm |
+|---|---|
+| `main` | **`4c6b0a1`** (handoff'un `ab8e225`'inden yeni: #187 handoff düzeltmesi) · temiz · `origin/main` ile eşit |
+| `mcp.seogrep.com/status` | `ok:true` · `uptime 40234s` · `errorsSinceBoot:0` · `pendingJobs:0` · `schema:ready` |
+| `seogrep.com` | HTTP **200** |
+| istemci bağlantısı | ✅ `get_credit_balance` cevap verdi |
+| kredi bakiyesi | **4519** — ve **kiracı-filtreli** SQL toplamı da `4519` (ders 6.3 uygulandı) |
+| `credit_ledger` | **783 satır** (kiracımızın 778'i) |
+| vendor tabanı | `dfs_spend_today_usd()` = **$0,00** / $3,00 · UTC 2026-08-27 06:56Z |
+| **şema tazeliği (handoff §3)** | ✅ **TAZE** — istemcideki `whats_next` açıklaması ve `project_id` describe metni, `apps/mcp/src/tools/whats-next.ts`'teki dizgilerle **birebir aynı**. Dalga 2'nin `before_id` tuzağı bu tool'da tekrarlamadı |
+
+### §D5.1 — çalışma prensibi (kod okundu, tahmin değil)
+
+- **0 kredi.** `TOOL_COSTS.whats_next = 0` → `withCredits` kısa devre → **ledger'a hiç dokunulmaz**.
+- Karar `packages/core/src/guide/next-step.ts`'te **saf** (`decideProjectNextStep`); I/O yarısı
+  `apps/mcp/src/tools/whats-next.ts`'te. **Panel de aynı saf fonksiyonu çağırıyor**
+  (`apps/web/lib/projects/card.ts:238`) — "aynı cümle" bir sözleşme.
+- Bir proje yönlendirilirken **5 okuma paralel** koşuyor: son başarılı `crawl_site` · son başarılı
+  `pull_gsc_data` · `gsc_connections` satırı · `gsc_accounts.token_status` · **DNS lookup**
+  (`@pseo/core/net/reachability`, 2 sn tavan). Hepsi `user_id` filtreli (NEVER#4).
+- Merdiven, ilk uyan basamağı döndürür: **0** ölü alan adı → **1** crawl yok → **2** crawl var/GSC yok
+  → **3** pull var/bağlantı yok → **4** kimlik ölü → **4b** property yok → **5** bağlı/pull yok
+  → **stale pull** → **stale crawl** → **all set**.
+- Üç sinyal `=== true` ile okunur (`domainUnreachable`, `gscTokenInvalid`, `gscPropertyMissing`):
+  `undefined` = "ölçülmedi", "sağlıklı" değil. DNS kesintisinde bütün hesabın 0. basamağa
+  düşmesini bu engelliyor.
+- Fiyatlar `TOOL_COSTS`'tan `creditCostFor` üzerinden **okunur**, asla yeniden yazılmaz (NEVER#6).
+
+### §D5.2 — hangi komutlar tetikler
+
+*"what should I do next"* · *"sırada ne var"* · *"bu site için ne yapmalıyım"* ·
+*"whats_next for <project_id>"*. Parametresiz sorulursa tek projeyi yönlendirir; birden çoksa
+listeler ve **hangisi diye sorar**.
+
+### §D5.3 — panelde/sitede nasıl görünüyor
+
+`/app/projects` her proje kartında `Next step: run <primary>` + gerekçe basıyor
+(`project-list.tsx:388-390`), aynı `decideProjectNextStep` üzerinden. Docs sayfası
+`/docs/tools-reference/whats-next` — **okundu, güncel** (rung 4b dahil bütün basamaklar yazılı).
+
+### §D5.4 — çağrılar (asistan) — 11 canlı çağrı, hepsi `mcp.seogrep.com`
+
+| # | girdi | dönen basamak | doğru mu |
+|---|---|---|---|
+| 1 | *(parametresiz)* | `choose_project` — 18 proje listelendi + "hangisi?" | ✅ · 🔴 **E-1** |
+| 2 | `example.org` | rung 1 — `crawl_site (20 credits)` | ✅ |
+| 3 | `smoke-dalga2-yok-4e91.com` | **rung 0** — `setup_project (free)`, listede **hiç paralı tool yok** | ✅ ilk kez müşteri yolundan |
+| 4 | `xn--smoke-dalga2-rnek-c0b.com` | rung 0 | ✅ karar · 🔴 **E-1** ad |
+| 5 | `noraninsaat.com` | rung 5 — `pull_gsc_data (5 credits)` | ✅ |
+| 6 | `dentnotion.com` | **all set** — `generate_report (15 credits)`, *"fresh crawl (1 day ago) ve fresh Search Console data (1 day ago)"* | ✅ |
+| 7 | `bayder.com.tr` | **rung 3** — `connect_gsc (free)` | ✅ **G9/kart-5'in canlı kanıtı** |
+| 8 | `seogrep.com` | rung 2 — `audit_onpage (30 credits)` | ✅ |
+| 9 | arşivdeki proje `4f3eb00a…` | `project_archived` | ⚠️ 🔴 **E-2** |
+| 10 | `00000000-…-000000000000` | `project_not_found` | ✅ |
+| 11 | **başka kiracının GERÇEK projesi** `dc3914e3…` | `project_not_found` | ✅ **birebir aynı cümle** — sızıntı yok |
+
+### §D5.5 — para ve yan etki muhasebesi
+
+| ne | önce | sonra | fark |
+|---|---|---|---|
+| kredi bakiyesi | 4519 | **4519** | **0** |
+| `credit_ledger` | 783 | **783** | **0 satır** — 11 canlı çağrı, tek defter satırı yok |
+| `dfs_spend_today_usd()` | $0,00 | **$0,00** | **$0,00** |
+| `projects` (kiracı) | 19 | **19** | **0** — hiçbir fikstür bozulmadı, arşiv probuna dokunulmadı |
+
+---
+
+## 🔴 BULGU E-1 — ÇIKTI · kod · **orta** · IDN projeyi punycode basıyor
+
+`whats_next`'in **iki** renderer'ı da depolanan A-label'ı basıyor:
+
+```
+- xn--smoke-dalga2-rnek-c0b.com (project_id: e5095cf9-…)      ← choose_project listesi
+Next step for xn--smoke-dalga2-rnek-c0b.com: run setup_project ← formatNextStep başlığı
+```
+
+Aynı oturumda `list_projects` **aynı projeyi** `smoke-dalga2-örnek.com` olarak basıyor. İki
+ücretsiz tool, tek proje, **iki farklı ad**.
+
+`whats-next.ts` `displayDomain`'i **hiç import etmiyor**; `p.domain` ve `state.domain` çıplak
+interpolasyonda. Bu, D-4/D-6'nın **altıncı yüzeyi** — o turda varyantlanan eksen "hangi tool"
+idi ve `whats_next` listede yoktu.
+
+### Eksen taraması — bu kez ders 14 uygulandı
+
+"Depolanan proje `domain`'ini müşteriye basan ve `displayDomain`'den geçmeyen" bütün yollar
+tarandı. `whats_next` dışında **kalanlar** (her biri kendi dalgasında ölçülecek, burada
+kaydediliyor ki yeniden keşfedilmesin):
+
+| dosya:satır | cümle |
+|---|---|
+| `project-target.ts:196` | `your project "${project.domain}"` — DFS ailesinin özne etiketi |
+| `track-gsc-property.ts:318/321/323` | created · **restored** · already-tracked makbuzları |
+| `track-keywords.ts:263/275/288` | tracked · untracked · cap-refusal |
+| `connect-gsc.ts:34/37/38/41/47/189` | OAuth linki + property uyarıları |
+| `generate-report.ts:199/202` | rapor **başlığı** ve gövdesindeki domain |
+| `ai-visibility-compare.ts:253` | `your project "…"` |
+| `list-gsc-properties.ts:223` | aday property adları |
+
+**Bu turda YALNIZ `whats_next` düzeltildi** (protokol: tek tool). Liste operatörün bilgisinde.
+
+---
+
+## 🔴 BULGU E-2 — ÇIKTI/EYLEM · kod · **yüksek-orta** · arşiv mesajı ÇALIŞMAYAN tek yol veriyor
+
+Canlı ölçüm (çağrı 9, arşivdeki `bu-domain-kesinlikle-yok-9f3a2c.com`):
+
+```
+That project is archived, so it is not being tracked right now.
+Restore it with track_gsc_property, or from the Connection page in SeoGrep.
+```
+
+`track_gsc_property` bir arşivi **gerçekten** geri getirir (`openTrackedProject`) — ama zorunlu
+`property` argümanı ister ve bağlı Google hesabı yoksa `NO_ACCOUNT` ile daha ilk adımda reddeder.
+Bu projenin **GSC property'si yok, bağlantısı yok, alan adı hiç çözülmüyor**. Yani sunulan tek
+tamir yolu, tam da bu proje için **koşulamaz**. `setup_project { domain }` aynı `openTrackedProject`
+rotasından geçer ve tek ücretsiz çağrıda geri getirir.
+
+### Bu hata ZATEN bulunmuş ve YARIM düzeltilmiş
+
+`untrack-project.ts:90-95`, 2026-08-25 tool-review kartı 9'u kelimesi kelimesine anlatıyor:
+
+> *"it named only `track_gsc_property`. That tool restores a project through its Search Console
+> PROPERTY, so for a project that has none … the single route on offer does not work."*
+
+O gün `untrack_project`'in **iki** mesajı düzeltildi. Düzeltilmeyen şey, **13 tool'un bastığı
+paylaşılan sabit** `ARCHIVED_PROJECT_MESSAGE` oldu — `whats_next` · `connect_gsc` · `crawl_site`
+(+ kuyruk handler'ı) · `pull_gsc_data` · `generate_report` · `audit_onpage`/`_tech`/`_schema`
+(`audit-shared`) · `audit_content` · `track_keywords` · `gsc-discovery-shared` · `project-target`
+resolver'ı. Sabitin **kendi doküman yorumu** *"it names the repair, because a refusal a caller
+cannot act on is a dead end"* diyor.
+
+**Ders 14'ün dördüncü vakası:** varyantlanan eksen "aynı tool'un hangi mesajı" idi; sorulmayan
+eksen **"aynı cümleyi taşıyan başka bir sabit var mı"**.
+
+### Pin, bu deliği göremiyordu
+
+`project-target.test.ts:168` → `expect(ARCHIVED_PROJECT_MESSAGE).toMatch(/track_gsc_property|connection page/i)`
+— **OR**'lu bir regex. `track_gsc_property`'yi tamamen silsen bile `connection page` yüzünden yeşil
+kalır. (Ders 11'in tersi: bu kez pin gerçekten gevşekti ve mutasyonla kanıtlandı — aşağıda.)
+
+---
+
+## 🔴 BULGU E-3 — PARİTE · kod + karar · **yüksek** · panel ile tool AYNI projede FARKLI adım söylüyor
+
+`apps/web/lib/projects/card.ts`'nin kendi başlığı: *"the MCP `whats_next` tool and this panel must
+name the same next step"*. Ölçüldü — **söylemiyorlar**. Panelin `deriveProjectSignals`'ı
+(`apps/web/lib/projects/signals.ts`) yalnız **beş** sinyal üretiyor; merdivenin `domainUnreachable`
+ve `gscPropertyMissing` basamaklarını **hiç beslemiyor**.
+
+Ölçüm — canlı `packages/core/dist` üzerinden, iki sinyal kümesi aynı saf fonksiyona verildi:
+
+```
+PROJE: smoke-dalga2-yok-4e91.com  (DNS: no such name)
+PANEL /app/projects -> "crawl_site"        ← 20 KREDİ, var olmayan bir host için
+MCP whats_next      -> "setup_project"     ← 0 kredi
+
+PROJE: bağlı ama property seçilmemiş
+PANEL /app/projects -> "pull_gsc_data"     ← 5 KREDİ, garantili başarısızlık
+MCP whats_next      -> "list_gsc_properties" ← 0 kredi
+```
+
+İkisi de **tam olarak** rung 0 ve rung 4b'nin var olma gerekçesi olan hatalar — bir yüzeyde
+kaldırılmış, diğerinde duruyor. `packages/core/src/net/reachability.ts`'in kendi başlığı bile bu
+şekli anlatıyor (*"the panel — the surface a human actually types into — registered a mistyped
+domain in silence"*): o tur **Add domain akışını** düzeltti, **kartların next step'ini** değil.
+
+**İki yarısı aynı fiyatta değil:**
+
+| yarı | maliyet | karar |
+|---|---|---|
+| `gscPropertyMissing` | **BEDAVA** — `ConnectionRow.gsc_property` zaten okunuyor ve kartın Search Console satırında basılıyor. Ek I/O **sıfır** | kod |
+| `domainUnreachable` | sunucu render'ında **kart başına bir DNS lookup** (18 proje = 18 lookup, 2 sn tavanlı) | **operatör/tasarım** |
+
+---
+
+## 🟡 E-4 — handoff §4/2'nin premisi YANLIŞ (ürün kusuru değil)
+
+Handoff, `example.net`'i *"bağlı ama property seçilmemiş tek örnek (G5/G8'in canlı kanıtı)"*
+diye veriyordu. Ölçüldü:
+
+```sql
+example.net → gsc_connections satırı VAR, account_id = NULL, gsc_property = NULL
+```
+
+Yani **bağlı değil**. Canlı çağrı da bunu doğruladı: rung 1 (`crawl_site`), rung 4b değil.
+**Rung 4b'nin bu hesapta canlı fikstürü YOK** — kodda pinli, müşteri yolundan hiç görülmedi.
+(Hangi projelerin `account_id IS NOT NULL AND gsc_property IS NULL` olduğu tarandı: **hiçbiri**.)
+
+## 🟡 E-5 — handoff "20 proje" diyor; kiracı filtresiyle **19**
+
+18 aktif + 1 arşiv = **19**, hepsi `041a09b3…`. 20. satır **başka bir kiracının** `example.com`'u.
+Ders 6.3'ün (tenant filtresiz doğrulama sorgusu) handoff'a sızmış hâli. Ürün doğru:
+`whats_next` "18 projects" diyor, `list_projects` 18 aktif + 1 arşiv diyor.
+
+---
+
+## Bakıldı, kusur YOK — bu eksenlerde temiz
+
+- **Fiyat dürüstlüğü:** basılan 10 fiyatın onu da `TOOL_COSTS` ile birebir
+  (crawl 20 · onpage 30 · tech 15 · schema 5 · pull 5 · quick-wins/cannibalization/decay 10 ·
+  report 15 · connect/list/untrack/whats_next **free**). Hiçbir rakam yeniden yazılmamış.
+- **Kiracı izolasyonu:** başka kiracının **gerçek** proje id'si ile hiç var olmayan bir id
+  **birebir aynı** cevabı verdi.
+- **Sıralama:** `choose_project` oldest-first — `list_projects` ile tutarlı.
+- **Yaş cümlesi:** all-set gerekçesi `(1 day ago)` basıyor; `generate_report`'un kullandığı
+  `describeDataAge`'den geçiyor (kart 12'nin kapanışı canlıda).
+- **Rung 0'ın disiplini:** ölü alan adı listesinde **tek bir paralı tool yok** — üçü de free.
+- **0 kredi sözleşmesi:** 11 canlı çağrı, **0 defter satırı**, **$0,00 vendor**.
+- **Docs sayfası** güncel ve merdivenle uyumlu.
+
+## ÖLÇÜLEMEDİ — fikstür yok, uydurulmadı
+
+| ne | neden |
+|---|---|
+| `no_projects` state | hesapta 18 aktif proje var; ölçmek için hepsini arşivlemek gerekirdi |
+| rung 4 (ölü kimlik, `token_status='invalid'`) | canlı fikstür yok — bütün bağlı hesaplar `active` |
+| **rung 4b** (property'siz bağlantı) | canlı fikstür **yok** (E-4) |
+| stale crawl / stale pull | en eski veri **18 gün**, pencere **30 gün** |
+| panelin kendi DOM'u | tarayıcı oturumu gerek — D-1 ile **aynı blokaj**, operatörde |
