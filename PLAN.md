@@ -5,39 +5,40 @@
 
 ## Faz: 4 (LAUNCH) — **ÇIKIŞ KRİTERİ KARŞILANDI (2026-07-28): ÜRÜN CANLI PARA ALIYOR** · Faz 0-3.5 KAPALI
 
-### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 2** (sırada `whats_next`, 5/38 gezildi)
+### 🧪 SIRADAKİ OTURUM — **SMOKE TURU DALGA 3** (sırada `whats_next`, 5/38 gezildi)
 
-> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga2.md`
-> Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — sonundaki **§D1e KAPANIŞ TABLOSU**.
+> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga3.md`
+> Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — dalga 2 bölümleri **§D0–§D4**,
+> `setup_project` kapanışı **§D1e**.
 
-**Dalga 1 CANLIDA.** PR [#180](https://github.com/popiliadam/seogrep/pull/180) merge-commit
-`3ade3f2` · **migration 0033 cloud'a uygulandı ve doğrulandı** (`project_id` kolonu, iki indeks,
+**Dalga 1 + dalga 2 CANLIDA.** `main` = **`ab8e225`** · PR #180 · #181 · #183 · #184 · #185,
+hepsi merge-commit · CI 6/6 · Deploy MCP ✅ · `/status` `ok:true errorsSinceBoot:0 schema:ready` ·
+`seogrep.com` 200. **Migration 0033 cloud'a uygulandı ve doğrulandı** (`project_id`, iki indeks,
 `reserve_credits` 5-arg, `execute` yalnız `service_role`, ledger 783 satır değişmedi,
-`credit_ledger`'da hiçbir role'de UPDATE/DELETE yok) · CI **6/6** · Deploy MCP ✅ ·
-`seogrep.com` 200. **I-1 ve I-2 kapandı** (Actions döndü, `main` CI yeşil).
+`credit_ledger`'da hiçbir role'de UPDATE/DELETE yok).
 
-**`setup_project` gezildi ve BÜTÜN maddeleri kapatıldı** — PR
-[#181](https://github.com/popiliadam/seogrep/pull/181) `642804c`, `main` = **`642804c`**:
-
+**`setup_project` gezildi, ALTI maddesi kapandı ve canlıda doğrulandı:**
 - **D-3 (yüksek):** Türkçe büyük harf `İ` siteyi ikiye bölüyordu — `SİGORTA.COM.TR` →
-  `xn--sigorta-7he.com.tr`, çözülmeyen bir ad. Küçük harfte saf ASCII olan bir alan adı, **sırf
-  büyük yazıldığı için** punycode'a düşüyordu. Canlıda iki tanıkla doğrulandı.
-- **D-1:** panel "Add domain" DNS uyarısını hiç basmıyordu; DNS portu `@pseo/core`'a taşındı,
-  cümleler yüzeylerde kaldı. *(canlıda, ama tarayıcı ölçümü operatörde)*
-- **D-4 + D-6:** IDN projeler punycode gösteriliyordu; `displayDomain` beş yüzeyde. Var olan bir
-  pin **homograf riskini** yakaladı (`xn--80ak6aa92e.com` → Kiril "apple") → yalnız Latin script
-  gösteriliyor. D-6, D-4'ün kendi çıktısını canlıda okuyunca çıktı.
-- **D-2:** kurulum makbuzu `whats_next`'i işaret ediyor.
+  `xn--sigorta-7he.com.tr`, çözülmeyen bir ad. Küçük harfte **saf ASCII** olan bir alan adı sırf
+  büyük yazıldığı için punycode'a düşüyordu. Canlıda iki tanıkla doğrulandı.
+- **D-7 (yüksek, para dürüstlüğü):** ledger `no project scope` diyordu; o çağrıların **projesi
+  vardı**, kolon yoktu. Artık eşiğe göre `project not recorded` — ve eski 778 satır append-only
+  olduğu için **asla** doldurulamaz.
+- **D-8:** *"raise `limit` (max 50)"* zaten 50'de olana söyleniyordu; 462 kayıt erişilemezdi.
+  `before_id` imleci + tek satırlık **net** harcama toplamı geldi.
+- **D-1** panel DNS uyarısı · **D-2** sonraki adım · **D-4/D-6** IDN görüntüleme (+ homograf
+  koruması) · **D-9** sayfalanmış başlık.
 
-**Kapılar:** `verify.sh` PASS (core **339** · mcp **3545** · web **1975** · db 12) ·
-`verify-db.sh` PASS (165 · 491 · 48) · CI 6/6. **Kredi fiyatı değişikliği: SIFIR.**
-13 canlı çağrı, **0 defter satırı**, vendor **$0,00** ($0,101/$3 sabit).
+**Kapılar:** `verify.sh` PASS (mcp **3557** · core **339** · web **1975** · db 12) ·
+`verify-db.sh` PASS (165 · **493** · 48) · CI 6/6. **Kredi fiyatı değişikliği: SIFIR.**
+Dalga 2'de **0 kredi**, **0 defter satırı**, vendor **$0,00** ($0,101/$3 sabit).
 
-**⛔ İMZA BEKLEYEN TEK MADDE — D-5:** proje sayısında tavan yok (0 kredi + açık kayıt = bir hesap
-sınırsız proje açabilir). Kod hatası değil **paket kararı**; öneri **hesap başına 50 aktif proje**.
+**⛔ İMZA/OPERATÖR KUYRUĞU:** **D-5** proje tavanı (öneri: hesap başına 50 aktif proje) ·
+**D-1'in tarayıcı ölçümü** · **M-1** `supabase_migrations`'ta 0033 kaydı yok · **B-1** merge
+edilmiş 5 dal silinmedi.
 
 **Açık (devreden):** G12 (`keyword_gap`/`link_gap` okuma kaydı — F bölümünde) · G16b (panel tek
-anahtara zorluyor — operatör kararı).
+anahtara zorluyor).
 
 ---
 
