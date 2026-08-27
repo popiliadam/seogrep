@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DARK, LIGHT } from "./palette.ts";
+import { DARK, LIGHT, type Palette } from "./palette.ts";
 import { cardCss } from "./style.ts";
 
 /** `pathname` percent-encodes; this repo's path contains a space, so decode it properly. */
@@ -242,26 +242,29 @@ describe("the palettes match their named tokens in globals.css", () => {
  * (4.5:1) — pinned as a computed check, not left to a comment's claim or a human eyeballing hex
  * codes. `style.ts` pairs `--sg-ink`/`--sg-body`/`--sg-muted` against `--sg-surface` (`.sg-card`,
  * `body`) and `--sg-muted` against `--sg-raised` (`.sg-note`); those eight combinations — four per
- * theme — are what is asserted below.
+ * theme — plus the two brand-h1 pairs below (`--sg-accent` on `--sg-surface`, `.sg-brand`) are the
+ * TEN asserted here.
  *
- * NOT exhaustive (corrected in the FINAL whole-branch review — an earlier version of this comment
- * claimed "nothing narrower and nothing invented", which was false): `style.ts` also pairs
- * `--sg-accent` on `--sg-accent-surface` (`.sg-badge`) and `--sg-accent` on `--sg-surface`
- * (`.sg-brand`, the "SeoGrep" h1). Those four pairs are DELIBERATELY left out of the assertions
- * below — the reviewer has not ruled on the badge yet and this suite must not lower 4.5:1 to
- * accommodate one pair. Measured with this file's own `contrastRatio` helper (DARK's badge
- * background is translucent — `--sg-accent-surface` at alpha 0.12 — so its effective colour was
- * first alpha-composited over `--sg-surface`, the badge's actual backdrop, before measuring):
- *   - LIGHT accent on accentSurface (badge): 4.43:1 — BELOW the 4.5:1 floor, on 10px uppercase text.
- *   - DARK accent on accentSurface (badge, composited over DARK.surface): 5.85:1.
- *   - LIGHT accent on surface (brand h1): 4.94:1.
- *   - DARK accent on surface (brand h1): 7.30:1.
- * Both brand-h1 pairs clear AA; the light badge does not. This is a named, measured exemption,
- * not an omission — do not fold these four into the enforced set below without a human ruling on
- * the light badge first.
+ * RULING (FINAL whole-branch review, human sign-off): an earlier round of this file found the
+ * LIGHT badge pairing (`--sg-accent` on `--sg-accent-surface`) at 4.43:1 — below the 4.5:1 floor —
+ * and left all four badge/h1 pairs out of the enforced set pending a ruling. The ruling: LIGHT's
+ * badge fill is now `transparent` (sitting on `--sg-surface` instead of the opaque tint;
+ * `style.ts`'s `.sg-badge` rule), which measures 4.94:1 — the SAME pairing as the brand-h1 case
+ * below, since both now put `--sg-accent` text directly on `--sg-surface`. DARK keeps its tint
+ * (`:root[data-theme="dark"] .sg-badge`, `--sg-accent-surface` at alpha 0.12 composited over
+ * `--sg-surface`): 5.85:1, already passing. Both badge pairs are now enforced too, in the describe
+ * block below this one — which reads `style.ts`'s actual declared `background:` values via regex
+ * rather than a hardcoded pair, specifically so a future edit that reverts the LIGHT fill back to
+ * the tint is caught here rather than needing a human to notice.
  *
- * If a future palette edit fails one of the eight ENFORCED pairs below, the fix is a different
- * colour, not a lower threshold — a failing pair here is unreadable text in the shipped card.
+ * NAMED BRAND-LEVEL DEBT, not fixed here: `--color-accent` on `--color-accent-badge-bg` — the
+ * SAME 4.43:1 pairing this card's badge used to ship — is live today on seogrep.com's own app
+ * shell (`apps/web/app/app/layout.tsx:82`, a badge at 12px semibold). This card avoids the
+ * pairing rather than fixing it; fixing the brand token itself belongs to `apps/web`'s design
+ * tokens, not to this card.
+ *
+ * If a future palette edit fails one of the TEN pairs below, the fix is a different colour, not a
+ * lower threshold — a failing pair here is unreadable text in the shipped card.
  */
 describe("text stays at or above WCAG AA (4.5:1) on the backgrounds style.ts actually pairs it with", () => {
   const cases: readonly { readonly name: string; readonly fg: string; readonly bg: string }[] = [
@@ -273,6 +276,10 @@ describe("text stays at or above WCAG AA (4.5:1) on the backgrounds style.ts act
     { name: "DARK body on surface", fg: DARK.body, bg: DARK.surface },
     { name: "DARK muted on surface", fg: DARK.muted, bg: DARK.surface },
     { name: "DARK muted on raised", fg: DARK.muted, bg: DARK.raised },
+    // Brand h1 (`.sg-brand`, the "SeoGrep" wordmark): plain opaque pairs, so — unlike the badge
+    // below — no compositing is needed and a hardcoded pair is enough.
+    { name: "LIGHT accent on surface (brand h1)", fg: LIGHT.accent, bg: LIGHT.surface },
+    { name: "DARK accent on surface (brand h1)", fg: DARK.accent, bg: DARK.surface },
   ];
 
   for (const { name, fg, bg } of cases) {
@@ -280,4 +287,84 @@ describe("text stays at or above WCAG AA (4.5:1) on the backgrounds style.ts act
       expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_TEXT_MIN);
     });
   }
+});
+
+/**
+ * Alpha-composites a `rgb(r g b / a)` string onto an opaque `#rrggbb` backdrop, in sRGB space (the
+ * same space CSS itself composites in) — returns a `#rrggbb` hex. `contrastRatio` only accepts
+ * opaque hex; the badge's DARK fill is a translucent tint, so the colour actually painted has to
+ * be resolved against its real backdrop (`--sg-surface`, `.sg-card`) before it can be measured.
+ */
+function compositeOverSurface(over: string, backdropHex: string): string {
+  const match = over.match(/^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/);
+  if (!match) throw new Error(`compositeOverSurface: expected "rgb(r g b / a)", got "${over}"`);
+  const [, rs, gs, bs, alphaText] = match;
+  if (!rs || !gs || !bs || !alphaText) {
+    throw new Error(`compositeOverSurface: could not parse channel/alpha from "${over}"`);
+  }
+  const alpha = Number(alphaText);
+  const [br, bg, bb] = hexToRgb(backdropHex);
+  const composite = (channel: number, backdrop: number) => Math.round(alpha * channel + (1 - alpha) * backdrop);
+  const channels = [composite(Number(rs), br), composite(Number(gs), bg), composite(Number(bs), bb)];
+  return `#${channels.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * The literal `background:` declaration inside the FIRST CSS rule whose selector text matches
+ * `selectorPattern`. Reads `cardCss()`'s actual text rather than assuming what `style.ts` says it
+ * does — the whole point of the describe block below, which has to notice if a future edit moves
+ * the LIGHT badge fill back to the opaque tint.
+ */
+function ruleBackground(css: string, selectorPattern: RegExp): string {
+  const ruleMatch = css.match(selectorPattern);
+  const rule = ruleMatch?.[0];
+  if (!rule) throw new Error(`contrast pin: no rule in cardCss() matches ${String(selectorPattern)}`);
+  const bodyMatch = rule.match(/\{([^}]*)\}/);
+  const body = bodyMatch?.[1];
+  if (!body) throw new Error(`contrast pin: rule matching ${String(selectorPattern)} has no {...} body`);
+  const bgMatch = body.match(/background:\s*([^;]+);/);
+  const value = bgMatch?.[1];
+  if (!value) throw new Error(`contrast pin: rule matching ${String(selectorPattern)} declares no background`);
+  return value.trim();
+}
+
+/**
+ * The badge's fill, resolved to what a reader actually sees, per theme:
+ *   - `transparent` shows the badge's real backdrop, `.sg-card`'s own background — `palette.surface`.
+ *   - `var(--sg-accent-surface)` is LIGHT's opaque tint as-is, or DARK's translucent tint
+ *     composited over `palette.surface`, its actual backdrop inside `.sg-card`.
+ * Any other declared value is a background this test does not know how to resolve, and fails
+ * loudly rather than silently reporting a wrong contrast number.
+ */
+function resolveBadgeBackground(declaredValue: string, palette: Palette): string {
+  if (declaredValue === "transparent") return palette.surface;
+  if (declaredValue === "var(--sg-accent-surface)") {
+    return palette.accentSurface.startsWith("#")
+      ? palette.accentSurface
+      : compositeOverSurface(palette.accentSurface, palette.surface);
+  }
+  throw new Error(`contrast pin: don't know how to resolve badge background "${declaredValue}"`);
+}
+
+/**
+ * BADGE CONTRAST, read from `style.ts`'s actual declared backgrounds rather than a hardcoded pair
+ * (unlike the ten pairs above): the badge's LIGHT fill is exactly the pairing a human ruled below
+ * floor at 4.43:1 (see the docstring above), so this has to notice if a future edit reverts it —
+ * a hardcoded `{ fg: LIGHT.accent, bg: LIGHT.surface }` pair would stay green even if `style.ts`
+ * silently went back to `var(--sg-accent-surface)`.
+ */
+describe("the badge's fill clears 4.5:1 in both themes, read from style.ts's own CSS", () => {
+  const css = cardCss();
+  const baseBackground = ruleBackground(css, /\.sg-badge\s*\{[^}]*\}/);
+  const darkBackground = ruleBackground(css, /:root\[data-theme="dark"\]\s*\.sg-badge\s*\{[^}]*\}/);
+
+  it("LIGHT badge clears 4.5:1", () => {
+    const bg = resolveBadgeBackground(baseBackground, LIGHT);
+    expect(contrastRatio(LIGHT.accent, bg)).toBeGreaterThanOrEqual(AA_TEXT_MIN);
+  });
+
+  it("DARK badge clears 4.5:1", () => {
+    const bg = resolveBadgeBackground(darkBackground, DARK);
+    expect(contrastRatio(DARK.accent, bg)).toBeGreaterThanOrEqual(AA_TEXT_MIN);
+  });
 });

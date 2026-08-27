@@ -62,8 +62,14 @@ export function cardCss(): string {
   .sg-badge {
     font-family: "IBM Plex Mono", "Courier New", monospace;
     font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
-    background: var(--sg-accent-surface); border: 1px solid var(--sg-accent-edge);
+    /* LIGHT: transparent, sitting on --sg-surface (accent on accent-surface measured 4.43:1,
+       below the 4.5:1 AA floor — a brand-level debt, see palette.test.ts). DARK restores the
+       tint below: composited over --sg-surface it measures 5.85:1, already passing. */
+    background: transparent; border: 1px solid var(--sg-accent-edge);
     border-radius: 999px; padding: 2px 8px; color: var(--sg-accent);
+  }
+  :root[data-theme="dark"] .sg-badge {
+    background: var(--sg-accent-surface);
   }
   .sg-figure { display: flex; align-items: baseline; gap: 8px; margin: 0 0 12px; }
   .sg-figure b {
