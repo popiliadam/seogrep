@@ -360,25 +360,62 @@ describe("whats_next tenant-scoped routing against the local stack", () => {
   });
 
   /**
-   * THE TENANT BELT on that probe, driven head-on. `readHasAnalysis` runs on a service-role
-   * client that bypasses RLS, so its `.eq("user_id", …)` is the ONLY guard (NEVER #4) — and
-   * nothing else in this suite would redden if it were deleted.
+   * THE TENANT BELT on that probe, driven HEAD-ON — the call the tool's own shape cannot make.
+   *
+   * `readHasAnalysis` runs on a service-role client that BYPASSES RLS, so its `.eq("user_id", …)`
+   * is the only thing between one tenant's ladder and another tenant's analysis rows (NEVER #4),
+   * and nothing else in this suite would redden if it were deleted.
+   *
+   * WHAT THIS SPEC LEARNED ON ITS FIRST RUN, recorded because it is a stronger fact than the one
+   * it set out to assert. It originally seeded a stranger-owned `audit_runs` row against the
+   * OWNER's project id, and Postgres refused: `audit_runs_user_id_crawl_job_id_fkey`. The FK is
+   * COMPOSITE — (user_id, crawl_job_id) — so a row claiming one tenant's job under another
+   * tenant's id is not merely filtered out downstream, it CANNOT BE WRITTEN. The cross-tenant
+   * edge is closed in the schema, one layer below the filter this spec is about.
+   *
+   * So the filter is driven the only way it can be: with a real foreign row on the foreign
+   * tenant's own project, asked for under the wrong user id. Both directions are asserted — the
+   * owner must not see it AND the stranger must — because a probe hard-wired to `false` would
+   * pass the first half alone (lesson 14: vary the VALUE, not only the presence).
    */
-  it("(d) another tenant's analysis row does NOT count as this project's", async () => {
+  it("(d) does not count another tenant's analysis, and does count that tenant's own", async () => {
     const owner = await makeUser();
     const stranger = await makeUser();
-    const projectId = await makeProject(owner.userId, "belt.example.com");
-    const crawlJob = await seedSucceededJob(owner.userId, projectId, "crawl_site", CRAWL_RESULT);
-    await seedConnection(owner.userId, projectId);
-    await seedSucceededJob(owner.userId, projectId, "pull_gsc_data", PULL_RESULT);
-    // A row on the SAME project id, owned by somebody else. Only the user_id filter excludes it.
-    await seedAnalysisRun("audit_runs", stranger.userId, projectId, crawlJob);
+    const strangerProject = await makeProject(stranger.userId, "stranger.example.com");
+    const strangerCrawl = await seedSucceededJob(
+      stranger.userId,
+      strangerProject,
+      "crawl_site",
+      CRAWL_RESULT,
+    );
+    await seedAnalysisRun("audit_runs", stranger.userId, strangerProject, strangerCrawl);
 
-    expect(await readHasAnalysis(service, owner.userId, projectId)).toBe(false);
-    expect(await readHasAnalysis(service, stranger.userId, projectId)).toBe(true);
+    // The same project id, asked for under the wrong tenant: only the user_id filter says no.
+    expect(await readHasAnalysis(service, owner.userId, strangerProject)).toBe(false);
+    expect(await readHasAnalysis(service, stranger.userId, strangerProject)).toBe(true);
+  });
 
-    const text = await runFor(owner, projectId);
-    expect(text).toMatch(/recommended next: run find_quick_wins/i);
+  /**
+   * …and the schema fact above, asserted rather than left as a comment: a stranger CANNOT record
+   * an analysis against another tenant's crawl job. If that composite FK were ever relaxed to a
+   * single-column one, this reddens and the belt spec above stops being the only guard.
+   */
+  it("(d) a stranger cannot even WRITE an analysis row against another tenant's job", async () => {
+    const owner = await makeUser();
+    const stranger = await makeUser();
+    const ownerProject = await makeProject(owner.userId, "belt.example.com");
+    const ownerCrawl = await seedSucceededJob(owner.userId, ownerProject, "crawl_site", CRAWL_RESULT);
+
+    const { error } = await service.from("audit_runs").insert({
+      user_id: stranger.userId,
+      project_id: ownerProject,
+      crawl_job_id: ownerCrawl,
+      tool: "audit_onpage",
+      report: {},
+    } as never);
+
+    expect(error, "the composite FK must refuse this write").not.toBeNull();
+    expect(error?.message).toMatch(/foreign key/i);
   });
 
   it("(e) no project_id with a single project auto-selects it", async () => {
