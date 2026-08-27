@@ -58,9 +58,30 @@ export interface JobListRow {
 export interface JobListPage {
   readonly rows: readonly JobListRow[];
   readonly total: number;
+  /**
+   * True only when a `before_id` was given and named no job this tenant can reach. Distinct from
+   * an empty page: "you have no jobs" and "that cursor is not yours" are different answers, and
+   * collapsing them would tell a caller with 56 jobs that they have none.
+   */
+  readonly unknownCursor?: boolean;
 }
 
-export type ListJobsFn = (userId: string, limit: number) => Promise<JobListPage>;
+export type ListJobsFn = (
+  userId: string,
+  limit: number,
+  beforeId?: string,
+) => Promise<JobListPage>;
+
+/**
+ * What a cursor that names no reachable job gets told.
+ *
+ * ONE message for an unknown id and for ANOTHER TENANT's job, exactly as get_job_status answers
+ * an unreachable job_id. The cursor is resolved by a tenant-scoped read, so a caller cannot use
+ * paging to learn whether some uuid is a real job on somebody else's account.
+ */
+export const UNKNOWN_CURSOR_MESSAGE =
+  "No job found with that before_id, so there is no page to continue from. Call list_jobs " +
+  "without before_id to start again from your most recent jobs.";
 
 /** How many jobs a call returns when it does not say. Small enough to read in one glance. */
 export const DEFAULT_JOB_LIST_LIMIT = 10;
@@ -91,11 +112,46 @@ export interface ListJobsDeps {
 export async function listOwnJobs(
   userId: string,
   limit: number,
+  beforeId?: string,
 ): Promise<JobListPage> {
-  const { data, error, count } = await forUser(getServiceClient(), userId)
-    .selectOwn("jobs", "id, tool, status, project_id, created_at, finished_at", {
-      count: "exact",
-    })
+  const scoped = forUser(getServiceClient(), userId);
+  // THE CURSOR IS COMPOSITE, and it has to be — this is where jobs differs from credit_ledger,
+  // whose cursor is a monotonic bigint `id` and needs nothing else. `jobs.id` is a UUID: it
+  // carries no order, so `id < cursor` would page through gen_random_uuid() noise rather than
+  // through time. The order this query already declares is `(created_at desc, id desc)`, so the
+  // cursor has to be that same pair, and the id half is not decoration: `recordSucceededPull`
+  // stamps `created_at` from the CALLER's clock, so two pulls settled in one loop can share a
+  // millisecond. A `created_at < …` cursor would then skip a row or repeat one — the exact hazard
+  // list-credit-activity.ts names, one column type over.
+  //
+  // The pair is resolved from the id the caller pastes rather than asked for as two arguments: a
+  // cursor a human has to assemble is a cursor that gets assembled wrong, and the answer that
+  // prints it can only print one value per line.
+  let cursor: { createdAt: string; id: string } | undefined;
+  if (beforeId !== undefined) {
+    const { data: anchor, error: anchorError } = await scoped
+      .selectOwn("jobs", "id, created_at")
+      .eq("id", beforeId)
+      .maybeSingle();
+    if (anchorError) {
+      throw new Error(`jobs cursor lookup failed: ${anchorError.message}`);
+    }
+    // Unknown id and another tenant's job both land here — the read was tenant-scoped.
+    if (!anchor) return { rows: [], total: 0, unknownCursor: true };
+    const row = anchor as unknown as { id: string; created_at: string };
+    cursor = { createdAt: row.created_at, id: row.id };
+  }
+  const query = scoped.selectOwn("jobs", "id, tool, status, project_id, created_at, finished_at", {
+    count: "exact",
+  });
+  const paged =
+    cursor === undefined
+      ? query
+      : query.or(
+          `created_at.lt.${cursor.createdAt},` +
+            `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        );
+  const { data, error, count } = await paged
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit);
@@ -106,6 +162,10 @@ export async function listOwnJobs(
   // (it falls back to GenericStringError[]); assert the projection this query asked for.
   return { rows: (data ?? []) as unknown as readonly JobListRow[], total: count ?? 0 };
 }
+
+/** The guidance an account with no async runs yet gets, instead of a bare empty list. */
+export const NO_MORE_JOBS_MESSAGE =
+  "That is the end of your job history — there is nothing older than the cursor you passed.";
 
 /** The guidance an account with no async runs yet gets, instead of a bare empty list. */
 export const NO_JOBS_MESSAGE =
@@ -174,19 +234,39 @@ export function formatJobLine(
 export function formatJobList(
   page: JobListPage,
   domains: ReadonlyMap<string, string> = new Map(),
+  /**
+   * Whether this answer came back through a cursor. It changes ONE sentence and it has to — the
+   * SECOND half of the same lesson list-credit-activity.ts records: when paging was added there,
+   * page two went on calling itself "your 2 most recent entries of 510", and neither half was
+   * true. Varying the "can the next page be reached" axis left the "what does the next page call
+   * itself" axis unvaried.
+   */
+  paged = false,
 ): string {
   const { rows, total } = page;
-  if (rows.length === 0) return NO_JOBS_MESSAGE;
+  if (page.unknownCursor === true) return UNKNOWN_CURSOR_MESSAGE;
+  if (rows.length === 0) return paged ? NO_MORE_JOBS_MESSAGE : NO_JOBS_MESSAGE;
   const lines = rows.map((job) => formatJobLine(job, domains)).join("\n");
-  // WHAT WAS LEFT OUT, said out loud. "Your 10 most recent" is true and reads as the whole
-  // history; a reader with no way to know a list was cut has no reason to ask for more. The
-  // `limit` that would show them is named, so the sentence is actionable rather than an apology.
+  // WHAT WAS LEFT OUT, AND HOW TO REACH IT. "Your 10 most recent" is true and reads as the whole
+  // history; a reader with no way to know a list was cut has no reason to ask for more.
+  //
+  // NAMING `limit` WAS NOT ENOUGH, and this is the D-8 defect in its SECOND home (measured live
+  // 2026-08-27: 56 jobs, a caller ALREADY at limit 50, and the answer still said "raise `limit`
+  // (max 50) to see more" — 6 jobs with no way to reach them and advice that could not be
+  // followed). list_credit_activity had exactly this sentence, found it, and replaced it with a
+  // cursor; this tool was written afterwards and inherited the sentence rather than the fix. The
+  // remedy is now the cursor, and it is named WITH THE VALUE TO PASS.
+  const oldest = rows[rows.length - 1]?.id;
+  const remaining = total - rows.length;
   const cut =
-    total > rows.length
-      ? ` ${total - rows.length} older job(s) not shown — raise \`limit\` (max ${MAX_JOB_LIST_LIMIT}) to see more.`
+    remaining > 0 && oldest !== undefined
+      ? ` ${remaining} older job(s) not shown — call again with \`before_id: ${oldest}\` for the next page.`
       : "";
+  const heading = paged
+    ? `Continuing from your cursor: ${rows.length} of ${total} older job(s), newest first:`
+    : `Your ${rows.length} most recent job(s) of ${total}, newest first:`;
   return (
-    `Your ${rows.length} most recent job(s) of ${total}, newest first:\n${lines}\n` +
+    `${heading}\n${lines}\n` +
     "Run get_job_status with one of these job_id values for that job's full result — its crawl " +
     `summary, its progress, or why it failed.${cut}`
   );
@@ -200,7 +280,8 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
     name: "list_jobs",
     description:
       "List your recent background jobs — crawls and Search Console pulls — newest first, with " +
-      "each job_id. Use it when you do not have a job_id to hand. Costs 0 credits.",
+      "each job_id. Use it when you do not have a job_id to hand. Pages with before_id. " +
+      "Costs 0 credits.",
     inputSchema: z.object({
       limit: z
         .int()
@@ -210,15 +291,23 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
         .describe(
           `How many recent jobs to return (1-${MAX_JOB_LIST_LIMIT}, default ${DEFAULT_JOB_LIST_LIMIT}).`,
         ),
+      before_id: z
+        .uuid()
+        .optional()
+        .describe(
+          "Paging cursor: return only jobs older than this job_id. Each answer names the value " +
+            "to pass for the next page, so an account with more jobs than the row cap can reach " +
+            "all of them.",
+        ),
     }),
-    handler: async (ctx, { limit }) => {
+    handler: async (ctx, { limit, before_id }) => {
       // In parallel: independent reads, and the domain map is one row per project however long
       // the requested page is.
       const [page, domains] = await Promise.all([
-        listJobs(ctx.userId, limit),
+        listJobs(ctx.userId, limit, before_id),
         listDomains(ctx.userId),
       ]);
-      return textResult(formatJobList(page, domains));
+      return textResult(formatJobList(page, domains, before_id !== undefined));
     },
   });
 }
