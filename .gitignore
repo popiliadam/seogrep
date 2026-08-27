@@ -17,3 +17,10 @@ guardrails/.dfs-spend/
 
 # SDD scratch workspace (ledger, briefs, review packages) — git history is the real record
 .superpowers/
+
+# Üretilmiş diyagramlar (archify) — YEREL KALIR, commit edilmez.
+# Ölçüldü 2026-08-27: 40 dosya / 6 MB, bunun 2,7 MB'ı aracın kendi `visual-check` ekran
+# görüntüleri (her diyagram × iki boyut × iki tema). Kalan 10 dosyanın `.html` yarısı da
+# inline SVG olduğu için dosya başına ~7.400 satır — diff'te okunamaz, yani kod incelemesinden
+# geçemez. Operatör kararı: çıktı elde, git'te durmasına gerek yok.
+docs/diagrams/
