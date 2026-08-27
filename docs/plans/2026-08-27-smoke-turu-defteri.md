@@ -1844,3 +1844,72 @@ Cevapların **tamamı** okundu; kalan hiçbir cümlede punycode ya da çalışma
 
 **6 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs` ·
 `setup_project` · **`whats_next`**. Sıradaki: **`get_job_status`** (operatörün "okey"i bekleniyor).
+
+---
+
+## §D6 — `whats_next`'e DÖNÜŞ: iki madde açık (2026-08-27, ürün sorusundan çıktı)
+
+Operatör *"adstark'ta sırada ne var?"* diye sordu. Aracın cevabı — *"her şey tamam, `generate_report`
+(15 kredi)"* — ve veritabanı birbirini tutmuyordu.
+
+### 🔴 BULGU E-9 — KARAR · kod · **orta-yüksek** · merdivenin dayandığı önerme BAYAT
+
+`packages/core/src/guide/next-step.ts:14-15`:
+
+> *"audits and the discovery tools leave no job trace (they are synchronous and return directly),
+> so the ladder advances on the observable DATA milestones"*
+
+**Artık doğru değil.** Migration **0024** `audit_runs`, **0025** `gsc_discovery_runs`, **0026**
+`audit_content_runs` tablolarını yarattı. `apps/web/lib/projects/card.ts` ikisini **okuyor**
+(`auditRuns`, `discoveryRuns`). `whats_next` **hiçbirini** okumuyor — grep sayımı **0**.
+
+Sonuç: all-set basamağı *"tamam ve analiz edilmiş"* ile *"tamam ama HİÇ analiz edilmemiş"*i
+ayırt edemiyor ve ikisine de aynı şeyi söylüyor.
+
+**Canlı tanık — `adstark.com.tr`** (`e2785bf7…`), ölçüldü:
+
+| ne | değer |
+|---|---|
+| tarama · GSC çekimi | 2026-08-09, ikisi de taze (18 gün / 30 gün penceresi) |
+| GSC verisi | 90 günlük pencere (9 May – 6 Ağu), **234 satır** |
+| `audit_runs` | **0** |
+| `gsc_discovery_runs` | **0** |
+| aracın önerisi | **`generate_report` (15 kredi)** |
+
+Yani araç, hiç kimsenin analiz etmediği bir veriyi özetleyen 15 kredilik bir rapor öneriyor; asıl
+bulgu üretecek analizler (`find_quick_wins` · `detect_cannibalization` · `audit_*`) altta
+"sonra"lar listesinde duruyor. **Para dürüstlüğü değil ama para SIRALAMASI sorunu:** müşteri
+15 krediyi boş bir kapağa harcıyor.
+
+Sinyal maliyeti **düşük**: üç tablo da `project_id` + `user_id` taşıyor, yani mevcut
+`readProjectSignals`'ın `Promise.all`'una bir `limit(1)` varlık probu eklemek yetiyor —
+`gscPropertyMissing`'in eklenişiyle aynı şekil.
+
+Önerilen davranış (imza gerektirir, çünkü öneri sırası değişiyor): all-set basamağında hiç analiz
+yoksa manşet `generate_report` değil **en ucuz gerçek analiz** olsun ve rapor "sonra"ya insin.
+
+### Bu turun kendi dersinin tekrarı
+
+Ders 16 *"her oturumda yüklenen bir dosyada kapanmış bir iddia bırakmak, hiç yazmamaktan
+kötüdür"* diyor. Burada iddia bir yorumda ve **bir kararı taşıyor** — merdiven o cümleye
+dayanarak analiz sinyallerini hiç aramamış. Bayat bir yorum kırmızı vermez; sessizce yanlış
+yönlendirir.
+
+## §D6b — `whats_next` GERÇEK KAPANIŞ TABLOSU
+
+| # | madde | durum |
+|---|---|---|
+| E-1 | IDN adı punycode basılıyordu (iki renderer) | ✅ canlıda, iki tanıkla ölçüldü |
+| E-2 | arşiv mesajı çalışamayan tek yol veriyordu | ✅ canlıda, ölçüldü |
+| E-3a | panel rung 4b'yi beslemiyordu | ✅ canlıda (kod) — panel DOM ölçümü operatörde |
+| **E-3b** | panel ölü alan adı için **20 kredilik** crawl öneriyor | ⛔ **AÇIK** — operatör kararı (kart başına 1 DNS lookup) |
+| E-4 | `list_projects` #52 (4 proje yanlış "bağlı") | ✅ canlıda, ölçüldü ([#192](https://github.com/popiliadam/seogrep/pull/192)) |
+| E-5 | handoff'un proje sayısı kiracı-filtresizdi | 📋 kayda geçti |
+| **E-9** | all-set basamağı "analiz edilmiş mi"yi bilmiyor (önerme bayat) | ⛔ **AÇIK** — imza gerektirir |
+
+**`whats_next` kod olarak kapalı DEĞİL.** İki madde açık ve ikisi de karar istiyor.
+
+### Gezilen yüzey
+
+**6 / 38 tool** — `list_projects` · `get_credit_balance` · `list_credit_activity` · `list_jobs` ·
+`setup_project` · `whats_next`. Sıradaki: **`get_job_status`**.

@@ -36,7 +36,25 @@ geçtiği bulundu ([#191](https://github.com/popiliadam/seogrep/pull/193)) — t
 
 ---
 
-### 🧪 SMOKE TURU DALGA 3 — **6/38 gezildi**, sırada `get_job_status`
+### 🧪 SMOKE TURU DALGA 4 — **6/38 gezildi**, sırada `get_job_status`
+
+> **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga4.md`
+> Defter: `docs/plans/2026-08-27-smoke-turu-defteri.md` — dalga 3 bölümleri **§D5–§D6b**,
+> `whats_next`'in **gerçek** kapanış tablosu **§D6b**.
+
+**⛔ İLK İŞ:** `MCP_SMOKE_URL` bayat bir anahtar taşıyor (09:04:26Z'de iptal) — `make goals`
+14/16'nın tek sebebi bu, **uçlar sağlam**. Tazelenene kadar `mcp-alive` + `trial-flow-e2e`
+**bakmıyor**, "yeşil" diye raporlanamaz. **Operatör işi.**
+
+**`whats_next` kod olarak KAPALI DEĞİL — iki madde açık:**
+- **E-3b** panel ölü alan adı için **20 kredilik** crawl öneriyor (operatör/tasarım kararı)
+- **E-9** all-set basamağı *"analiz edilmiş mi"*yi bilmiyor; merdivenin *"denetimler iz bırakmaz"*
+  önermesi **bayat** (0024/0025/0026 tam da o izleri tutuyor). Canlı tanık `adstark.com.tr`:
+  taze veri, **0 analiz**, önerilen adım **15 kredilik rapor**. **İmza gerektirir.**
+
+---
+
+### 🧪 (eski başlık) SMOKE TURU DALGA 3
 
 > **TAZE OTURUM BURADAN BAŞLAR:** `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga3.md`
 > **`whats_next` KAPANDI** (E-1 IDN adı · E-2 arşiv mesajı · E-3a panel paritesi — [#188](https://github.com/popiliadam/seogrep/pull/188)/[#189](https://github.com/popiliadam/seogrep/pull/189)) ve **`list_projects`'te #52 bulundu+düzeltildi** ([#192](https://github.com/popiliadam/seogrep/pull/192): 4 proje "bağlı" görünürken bağlı değildi). Açık: **E-3b** panel ölü alan adı için 20 kredilik crawl öneriyor.
