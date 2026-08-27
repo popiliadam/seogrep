@@ -101,6 +101,13 @@ export const VIEW_SCRIPT = `
   function draw(params) {
     var data = (params && params.structuredContent) || {};
     var card = data.card;
+    // The sentence: structuredContent.summary when present, otherwise the first text content
+    // block. errorResult carries content and NO structuredContent (registry.ts) — a host that
+    // delivers that tool-result here must still show the customer why the card is empty, not a
+    // blank note. Reading only data.summary was the regression this fallback closes: it read
+    // '{}' from a missing structuredContent and painted an empty sg-note next to an empty card.
+    var blocks = (params && params.content) || [];
+    var sentence = data.summary || (blocks.length && blocks[0] && blocks[0].text ? blocks[0].text : "");
     // No card, or a kind this template cannot draw: keep the text answer visible and say so,
     // rather than painting an empty frame that looks like a broken card. Also CLEAR whatever a
     // PREVIOUS metric result drew here — otherwise a metric-then-non-metric sequence leaves the
@@ -113,12 +120,12 @@ export const VIEW_SCRIPT = `
       text("sg-badge", "text");
       var facts = document.getElementById("sg-facts");
       if (facts) facts.textContent = "";
-      text("sg-note", data.summary || "");
+      text("sg-note", sentence);
       reportSize();
       return;
     }
     drawMetric(card);
-    text("sg-note", data.summary || "");
+    text("sg-note", sentence);
     reportSize();
   }
 

@@ -122,6 +122,63 @@ describe("the card's CSS", () => {
   });
 });
 
+/** Every `--sg-x: ...;` declaration this CSS actually contains, as the bare property name. */
+function declaredCustomProperties(css: string): Set<string> {
+  const declared = new Set<string>();
+  const pattern = /(--sg-[a-z-]+)\s*:/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(css)) !== null) {
+    const name = match[1];
+    if (name) declared.add(name);
+  }
+  return declared;
+}
+
+/** Every `var(--sg-x)` reference this CSS actually contains, as the bare property name. */
+function referencedCustomProperties(css: string): Set<string> {
+  const referenced = new Set<string>();
+  const pattern = /var\((--sg-[a-z-]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(css)) !== null) {
+    const name = match[1];
+    if (name) referenced.add(name);
+  }
+  return referenced;
+}
+
+/**
+ * PARITY (style.ts's own docstring calls its kebab-case conversion "the one place a key/property
+ * mismatch could hide", but nothing pinned it before this): `variables()` derives `--sg-x`
+ * property names from `Palette` keys by a regex, and every rule below spells those same names by
+ * hand. Dropping a hyphen in the conversion — or in a hand-typed `var(--sg-...)`  — keeps every
+ * other test in this file green (the eight contrast pairs and the nine parity assertions above
+ * all read the `Palette` objects directly, never the generated CSS text) while the badge's
+ * background silently falls to transparent and its border to `currentColor`.
+ *
+ * Both sides are DERIVED, not hand-listed: the expected property names come from `Palette`'s own
+ * keys run through the same kebab-case rule `variables()` uses, and the declared/referenced sides
+ * come from a regex over `cardCss()` itself. A hand-maintained list of the nine names would be
+ * exactly the kind of duplicate that lets the two sides drift without either test file's author
+ * noticing — this derives instead of retyping.
+ */
+describe("style.ts declares and references the same --sg- property names it derives from Palette", () => {
+  it("declares one --sg- property per Palette key, and references only properties it declares", () => {
+    const css = cardCss();
+    const expected = new Set(
+      Object.keys(LIGHT).map((key) => `--sg-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`),
+    );
+    const declared = declaredCustomProperties(css);
+    for (const property of expected) {
+      expect(declared.has(property)).toBe(true);
+    }
+
+    const referenced = referencedCustomProperties(css);
+    for (const property of referenced) {
+      expect(declared.has(property)).toBe(true);
+    }
+  });
+});
+
 /**
  * PARITY: the card's palette values must equal the brand's actual tokens in globals.css, not
  * merely a comment's claim that they do.
@@ -185,10 +242,26 @@ describe("the palettes match their named tokens in globals.css", () => {
  * (4.5:1) — pinned as a computed check, not left to a comment's claim or a human eyeballing hex
  * codes. `style.ts` pairs `--sg-ink`/`--sg-body`/`--sg-muted` against `--sg-surface` (`.sg-card`,
  * `body`) and `--sg-muted` against `--sg-raised` (`.sg-note`); those eight combinations — four per
- * theme — are exactly what is asserted below, nothing narrower and nothing invented.
+ * theme — are what is asserted below.
  *
- * If a future palette edit fails one of these, the fix is a different colour, not a lower
- * threshold — a failing pair here is unreadable text in the shipped card.
+ * NOT exhaustive (corrected in the FINAL whole-branch review — an earlier version of this comment
+ * claimed "nothing narrower and nothing invented", which was false): `style.ts` also pairs
+ * `--sg-accent` on `--sg-accent-surface` (`.sg-badge`) and `--sg-accent` on `--sg-surface`
+ * (`.sg-brand`, the "SeoGrep" h1). Those four pairs are DELIBERATELY left out of the assertions
+ * below — the reviewer has not ruled on the badge yet and this suite must not lower 4.5:1 to
+ * accommodate one pair. Measured with this file's own `contrastRatio` helper (DARK's badge
+ * background is translucent — `--sg-accent-surface` at alpha 0.12 — so its effective colour was
+ * first alpha-composited over `--sg-surface`, the badge's actual backdrop, before measuring):
+ *   - LIGHT accent on accentSurface (badge): 4.43:1 — BELOW the 4.5:1 floor, on 10px uppercase text.
+ *   - DARK accent on accentSurface (badge, composited over DARK.surface): 5.85:1.
+ *   - LIGHT accent on surface (brand h1): 4.94:1.
+ *   - DARK accent on surface (brand h1): 7.30:1.
+ * Both brand-h1 pairs clear AA; the light badge does not. This is a named, measured exemption,
+ * not an omission — do not fold these four into the enforced set below without a human ruling on
+ * the light badge first.
+ *
+ * If a future palette edit fails one of the eight ENFORCED pairs below, the fix is a different
+ * colour, not a lower threshold — a failing pair here is unreadable text in the shipped card.
  */
 describe("text stays at or above WCAG AA (4.5:1) on the backgrounds style.ts actually pairs it with", () => {
   const cases: readonly { readonly name: string; readonly fg: string; readonly bg: string }[] = [

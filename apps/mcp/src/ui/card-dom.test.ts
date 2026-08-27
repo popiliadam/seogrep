@@ -129,6 +129,30 @@ describe("the card draws what the host sends", () => {
   });
 
   /**
+   * FINAL review fix: `errorResult` (registry.ts:212-214) returns `{ content: [...], isError:
+   * true }` — no `structuredContent` at all, not even an empty object. A host that delivers that
+   * tool-result to an already-rendered frame hands `draw()` a `params` whose `structuredContent`
+   * is `undefined`, so `data = {}` and `data.summary` is `undefined`. Reading only `data.summary`
+   * (the retired probe's own script read `data.summary || blocks[0].text`) painted an EMPTY
+   * `sg-note` next to an empty card on every tool failure — exactly what this branch's earlier
+   * round called "a product that does not work". This delivers a CONTENT-ONLY result (the actual
+   * shape `errorResult` produces) and asserts the sentence still reaches `sg-note` from the first
+   * text content block.
+   */
+  it("falls back to the first content block when structuredContent is missing entirely", () => {
+    const { window } = mountCard();
+    fromHost(window, {
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: { content: [{ type: "text", text: "Could not reach the ledger. Try again shortly." }], isError: true },
+    });
+    expect(window.document.getElementById("sg-note")?.textContent).toBe(
+      "Could not reach the ledger. Try again shortly.",
+    );
+    expect(window.document.getElementById("sg-badge")?.textContent).toBe("text");
+  });
+
+  /**
    * Fix round 1 (CRITICAL 1, second half): the reset lines in the fallback branch
    * (`runtime.ts:110-115` — title, value, unit, badge, facts cleared) and the fact that the
    * `message` listener is NOT removed after the first delivery (IMPORTANT 1 mutation (b)) are only
