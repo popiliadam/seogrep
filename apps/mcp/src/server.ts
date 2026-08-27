@@ -1,4 +1,4 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { DEFAULT_MCP_URL_TEMPLATE, mcpUrlTemplate } from "@pseo/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -46,10 +46,16 @@ const SERVER_INFO = { name: "seogrep-mcp", version: "0.0.1" } as const;
 const SERVER_CAPABILITIES = { tools: {}, prompts: {}, resources: {} } as const;
 
 /** JSON-RPC error codes returned before a request reaches the MCP server. */
+/** Explicit cap on a request body. Equal to express.json()'s own default — see where it is used. */
+const MAX_REQUEST_BODY = "100kb";
 const JSON_RPC_UNAUTHORIZED = -32001;
 const JSON_RPC_METHOD_NOT_ALLOWED = -32000;
 const JSON_RPC_RATE_LIMITED = -32002;
 const JSON_RPC_INTERNAL_ERROR = -32603;
+/** JSON-RPC 2.0's own code for a body that is not valid JSON. */
+const JSON_RPC_PARSE_ERROR = -32700;
+/** JSON-RPC 2.0's code for a request that is well-formed JSON but not a valid Request object. */
+const JSON_RPC_INVALID_REQUEST = -32600;
 
 interface JsonRpcErrorBody {
   readonly jsonrpc: "2.0";
@@ -717,7 +723,12 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
     res.set(SECURITY_HEADERS);
     next();
   });
-  app.use(express.json());
+  // The body limit, STATED. 100kb is exactly what express.json() already defaulted to, so this
+  // changes no behaviour — it makes the contract readable in the code instead of living in a
+  // framework default nobody can see (L-03, audit 2026-08-26). The largest legitimate request this
+  // server takes is a tool call with a bounded array (ten compare targets, ten SERP keywords), which
+  // is orders of magnitude below it.
+  app.use(express.json({ limit: MAX_REQUEST_BODY }));
 
   // Liveness probe for Fly health checks and load balancers.
   app.get("/healthz", (_req, res) => {
@@ -896,6 +907,49 @@ export function createApp(deps: AppDeps = buildDefaultDeps()): Express {
   app.delete("/mcp/:key", rejectNonPostFromPath);
   app.get("/mcp", rejectNonPostFromHeaders);
   app.delete("/mcp", rejectNonPostFromHeaders);
+
+  // ---- The two remaining HTML surfaces -------------------------------------------------------
+  //
+  // Everything above answers in JSON-RPC; everything NOT above fell through to Express's built-in
+  // handlers, which serve `<!DOCTYPE html>… <pre>Cannot GET /x</pre>`. MEASURED against production
+  // on 2026-08-27: an unknown path returned 404 text/html, and a malformed body 400 text/html
+  // (L-03). No stack, env or secret leaked — that was checked, and it is why this is a
+  // consistency fix rather than a disclosure one. But an MCP client is a JSON-RPC client: handed
+  // HTML it reports a parse failure instead of the server's actual answer, and the operator
+  // debugging it starts from the wrong error.
+  //
+  // ORDER MATTERS AND IS LOAD-BEARING. The 404 is registered after every route so it catches only
+  // what nothing else claimed; the error handler is registered LAST and takes four arguments,
+  // which is the only way Express recognises it as an error handler at all.
+
+  app.use((_req, res) => {
+    res.status(404).json(jsonRpcError(JSON_RPC_METHOD_NOT_ALLOWED, "No such endpoint"));
+  });
+
+  app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    // A response already on the wire cannot be rewritten; hand it to Express to close out.
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    // body-parser tags its own failures with `type`, which separates "not JSON" (-32700) from
+    // "too big" from anything else. The MESSAGE is ours in every branch: body-parser's own text
+    // can quote the offending input back, and echoing a request body into a response is how an
+    // error surface starts leaking what was sent to it.
+    const type = (error as { type?: string } | null)?.type;
+    if (type === "entity.parse.failed") {
+      res.status(400).json(jsonRpcError(JSON_RPC_PARSE_ERROR, "Parse error: body is not valid JSON"));
+      return;
+    }
+    if (type === "entity.too.large") {
+      res
+        .status(413)
+        .json(jsonRpcError(JSON_RPC_INVALID_REQUEST, `Request body exceeds the ${MAX_REQUEST_BODY} limit`));
+      return;
+    }
+    console.error("mcp: unhandled request error:", errorMessage(error));
+    res.status(500).json(jsonRpcError(JSON_RPC_INTERNAL_ERROR, "Internal server error"));
+  });
 
   return app;
 }
