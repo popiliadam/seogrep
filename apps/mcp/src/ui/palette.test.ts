@@ -29,11 +29,63 @@ function readGlobalsCss(): string {
  */
 function tokenValue(css: string, name: string): string {
   const match = css.match(new RegExp(`--${name}:\\s*([^;]+);`));
-  if (!match) {
+  // `noUncheckedIndexedAccess` (tsconfig.base.json) types a regex capture as `string | undefined`
+  // even after `match` itself is checked non-null — the repo's own convention for this (see
+  // untrack-project.test.ts, crawler/sitemap.ts, crawler/crawl.ts) is to guard the capture
+  // itself, not just the match object. `pnpm exec tsc --noEmit` alone would NOT have caught this:
+  // apps/mcp/tsconfig.json excludes `src/**/*.test.ts`, and only `pnpm run typecheck` (which also
+  // runs scripts/typecheck-tests.mjs) type-checks spec files at all (fix round 2, coordinator's
+  // own correction — that command, not bare tsc, is the gate).
+  const value = match?.[1];
+  if (value === undefined) {
     throw new Error(`palette parity spec: token --${name} not found in globals.css`);
   }
-  return match[1].trim();
+  return value.trim();
 }
+
+/**
+ * A palette hex colour's three channels as bytes, 0-255. `hex` is always this file's own
+ * `#rrggbb` values (never user input), so a plain slice is enough — no capture group, so none of
+ * `tokenValue`'s `noUncheckedIndexedAccess` guarding applies here.
+ */
+function hexToRgb(hex: string): [number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+/** A hex colour's channels as a space-separated decimal triplet, e.g. "217 163 83". */
+function decimalTriplet(hex: string): string {
+  return hexToRgb(hex).join(" ");
+}
+
+/** One sRGB channel (0-255), linearised per the WCAG 2.x relative-luminance formula. */
+function linearize(byte: number): number {
+  const c = byte / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/** WCAG 2.x relative luminance of a `#rrggbb` colour. */
+function relativeLuminance(hex: string): number {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
+}
+
+/**
+ * WCAG 2.x contrast ratio between two colours (order-independent; always >= 1). Fed the palette's
+ * own values, never a retyped literal — a retyped literal is exactly what let fix round 1's
+ * `DARK.muted` (`#6e6a60` on `#211f1b`, 3.05:1 — below the 4.5:1 AA text floor, and below even
+ * the 3:1 non-text floor) ship with every earlier test in this file staying green: nothing had
+ * ever computed a contrast ratio.
+ */
+function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const lighter = Math.max(la, lb);
+  const darker = Math.min(la, lb);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** WCAG AA's floor for normal-size text (small badge/table text included — nothing here is large). */
+const AA_TEXT_MIN = 4.5;
 
 /**
  * The palettes are COPIES of apps/web/app/globals.css (spec §5): apps/mcp may not depend on
@@ -89,27 +141,70 @@ describe("the card's CSS", () => {
 describe("the palettes match their named tokens in globals.css", () => {
   const css = readGlobalsCss();
 
-  it("LIGHT's core values equal their globals.css tokens", () => {
+  it("LIGHT's values equal their globals.css tokens", () => {
     expect(LIGHT.surface).toBe(tokenValue(css, "color-card"));
+    expect(LIGHT.raised).toBe(tokenValue(css, "color-band"));
     expect(LIGHT.ink).toBe(tokenValue(css, "color-ink"));
-    expect(LIGHT.accent).toBe(tokenValue(css, "color-accent"));
+    expect(LIGHT.body).toBe(tokenValue(css, "color-body"));
+    expect(LIGHT.muted).toBe(tokenValue(css, "color-muted"));
     expect(LIGHT.hairline).toBe(tokenValue(css, "color-hairline"));
+    expect(LIGHT.accent).toBe(tokenValue(css, "color-accent"));
+    expect(LIGHT.accentSurface).toBe(tokenValue(css, "color-accent-badge-bg"));
+    expect(LIGHT.accentEdge).toBe(tokenValue(css, "color-accent-badge-border"));
   });
 
-  it("DARK's core values equal their globals.css tokens", () => {
+  it("DARK's values equal their globals.css tokens", () => {
     expect(DARK.surface).toBe(tokenValue(css, "color-terminal"));
     expect(DARK.raised).toBe(tokenValue(css, "color-terminal-chrome"));
     expect(DARK.ink).toBe(tokenValue(css, "color-dark-text"));
     expect(DARK.body).toBe(tokenValue(css, "color-dark-muted"));
-    expect(DARK.muted).toBe(tokenValue(css, "color-dark-faint"));
+    // muted is the SAME token as body (fix round 2): the brand's dark scale has only two readable
+    // text tiers, not three — see palette.ts's doc comment on DARK. Asserting the same token twice
+    // (rather than --color-dark-faint, which is what round 1 wrongly matched it to) is the point:
+    // it is what keeps this test from re-accepting a decorative token as body text.
+    expect(DARK.muted).toBe(tokenValue(css, "color-dark-muted"));
     expect(DARK.hairline).toBe(tokenValue(css, "color-hairline-dark"));
     expect(DARK.accent).toBe(tokenValue(css, "color-accent-dark"));
   });
 
   it("DARK's accent-surface/accent-edge are the dark accent AT ALPHA, not a new colour", () => {
-    // 217 163 83 is #d9a353 (DARK.accent / --color-accent-dark) in decimal — the derivation
-    // this test pins, since no globals.css token exists to compare against directly.
-    expect(DARK.accentSurface).toContain("217 163 83");
-    expect(DARK.accentEdge).toContain("217 163 83");
+    // Derived from DARK.accent itself, not retyped as a literal: a retyped "217 163 83" would
+    // pass unchanged if the brand's dark accent hue ever moved (last year's tint behind this
+    // year's accent text) AND would pass unchanged if someone dropped the alpha entirely
+    // (rgb(217 163 83) with no alpha renders identically to the accent text on top of it —
+    // contrast 1.00:1, invisible, no error). Deriving the hue from DARK.accent and asserting the
+    // exact string, alpha included, closes both holes.
+    const decimal = decimalTriplet(DARK.accent);
+    expect(DARK.accentSurface).toBe(`rgb(${decimal} / 0.12)`);
+    expect(DARK.accentEdge).toBe(`rgb(${decimal} / 0.32)`);
   });
+});
+
+/**
+ * CONTRAST: every text/background pair the stylesheet actually draws stays at or above WCAG AA
+ * (4.5:1) — pinned as a computed check, not left to a comment's claim or a human eyeballing hex
+ * codes. `style.ts` pairs `--sg-ink`/`--sg-body`/`--sg-muted` against `--sg-surface` (`.sg-card`,
+ * `body`) and `--sg-muted` against `--sg-raised` (`.sg-note`); those eight combinations — four per
+ * theme — are exactly what is asserted below, nothing narrower and nothing invented.
+ *
+ * If a future palette edit fails one of these, the fix is a different colour, not a lower
+ * threshold — a failing pair here is unreadable text in the shipped card.
+ */
+describe("text stays at or above WCAG AA (4.5:1) on the backgrounds style.ts actually pairs it with", () => {
+  const cases: readonly { readonly name: string; readonly fg: string; readonly bg: string }[] = [
+    { name: "LIGHT ink on surface", fg: LIGHT.ink, bg: LIGHT.surface },
+    { name: "LIGHT body on surface", fg: LIGHT.body, bg: LIGHT.surface },
+    { name: "LIGHT muted on surface", fg: LIGHT.muted, bg: LIGHT.surface },
+    { name: "LIGHT muted on raised", fg: LIGHT.muted, bg: LIGHT.raised },
+    { name: "DARK ink on surface", fg: DARK.ink, bg: DARK.surface },
+    { name: "DARK body on surface", fg: DARK.body, bg: DARK.surface },
+    { name: "DARK muted on surface", fg: DARK.muted, bg: DARK.surface },
+    { name: "DARK muted on raised", fg: DARK.muted, bg: DARK.raised },
+  ];
+
+  for (const { name, fg, bg } of cases) {
+    it(`${name} clears 4.5:1`, () => {
+      expect(contrastRatio(fg, bg)).toBeGreaterThanOrEqual(AA_TEXT_MIN);
+    });
+  }
 });

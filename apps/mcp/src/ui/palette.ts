@@ -19,13 +19,25 @@
  *     (`--color-dark-text`).
  *   - `body` was `#c4beb0` (`--color-faintest`, the LIGHT ink scale read backwards) — now
  *     `#918b7d` (`--color-dark-muted`).
- *   - `muted` was `#a8a294` (`--color-faint`, same LIGHT scale) — now `#6e6a60`
- *     (`--color-dark-faint`).
  *   - `hairline` was `#3a3730`, a hex with no source anywhere in globals.css — now
  *     `rgb(250 248 243 / 0.08)` (`--color-hairline-dark`), the brand's own translucent-white
  *     dark hairline.
  * `surface`, `raised` and `accent` were already correct (`--color-terminal`,
  * `--color-terminal-chrome`, `--color-accent-dark`) and are unchanged.
+ *
+ * `muted` — corrected AGAIN in fix round 2 (2026-08-27). Round 1 mapped it to
+ * `--color-dark-faint` (`#6e6a60`) by matching it to `--color-faint`, LIGHT's `muted` source —
+ * but that is a naming coincidence, not a matching role: `--color-dark-faint` is a DECORATION
+ * token in this brand, and measured contrast confirmed it — `#6e6a60` on `#211f1b` is 3.05:1,
+ * below AA and below the 3:1 non-text floor. The brand's dark scale simply has FEWER readable
+ * content tiers than its light scale: three in light (`ink`/`body`/`muted`, each its own token)
+ * but only TWO in dark (`--color-dark-text`, `--color-dark-muted`) before the tokens stop being
+ * body text. `muted` is therefore `#918b7d`, the SAME `--color-dark-muted` as `body` — accepting
+ * that the brand does not have a third readable dark tier is honest; inventing one by treating a
+ * decoration token as text would not have been. `--color-hairline-dark`'s `--color-dark-faint`
+ * neighbour (`#6e6a60`) now maps to nothing in this palette, which is correct for a token this
+ * brand uses for decoration, not text. `palette.test.ts` pins both the token match AND the actual
+ * contrast ratio so this cannot silently regress again.
  *
  * `accentSurface` and `accentEdge` remain the one REAL gap: globals.css defines no dark
  * counterpart to `--color-accent-badge-bg` / `--color-accent-badge-border` at all. Rather than
@@ -66,7 +78,7 @@ export const DARK: Palette = {
   raised: "#262420",
   ink: "#f0ece2",
   body: "#918b7d",
-  muted: "#6e6a60",
+  muted: "#918b7d",
   hairline: "rgb(250 248 243 / 0.08)",
   accent: "#d9a353",
   // Derived, not copied: --color-accent-dark (#d9a353 = rgb(217 163 83)) at alpha. See the doc
