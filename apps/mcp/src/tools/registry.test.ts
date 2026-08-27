@@ -20,6 +20,7 @@ import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
 import type { AuthContext } from "../auth.ts";
 import { ALL_TOOLS } from "./index.ts";
 import { CARDED_TOOLS } from "../ui/card-map.ts";
+import { UI_RESOURCES } from "../ui/card.ts";
 
 /**
  * Unit tests for the tool registry — the docs-automation foundation (D11): every
@@ -673,7 +674,28 @@ describe("card wiring gate (spec §8.2) — a tool carries ui.resourceUri iff it
       if (tool.uiResourceUri !== undefined) {
         expect(CARDED_TOOLS.has(tool.name), `${tool.name} declares ui.resourceUri but is not in CARDED_TOOLS`)
           .toBe(true);
+        // Fix round 2 (coordinator ruling): a typo'd URI (e.g. "ui://seogrep/crad") would satisfy
+        // both directions above — the tool is carded, it declares SOME uri — while resources/read
+        // misses and the host renders nothing. Pin the declared URI to one this server actually
+        // serves.
+        expect(
+          UI_RESOURCES.some((resource) => resource.uri === tool.uiResourceUri),
+          `${tool.name} declares ui.resourceUri "${tool.uiResourceUri}", which no UI_RESOURCES entry serves`,
+        ).toBe(true);
       }
+    }
+  });
+
+  /**
+   * Fix round 2 (coordinator ruling): the two `it`s above are BOTH `if`-guarded inside a `for`,
+   * so an empty or truncated ALL_TOOLS would pass both vacuously. This loop iterates
+   * `CARDED_TOOLS` directly instead — a name in it that is defined but never wired into
+   * `tools/index.ts`'s ALL_TOOLS ships a card nobody can call, and the two loops above stay
+   * silent about a tool that is simply absent from what they walk.
+   */
+  it("every carded tool is actually registered in ALL_TOOLS", () => {
+    for (const name of CARDED_TOOLS) {
+      expect(ALL_TOOLS.some((tool) => tool.name === name)).toBe(true);
     }
   });
 });

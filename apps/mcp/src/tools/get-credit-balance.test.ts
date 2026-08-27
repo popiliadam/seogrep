@@ -227,8 +227,12 @@ describe("the MCP Apps view rides along without changing the answer", () => {
     const result = await getCreditBalanceTool.run(CTX, {});
     // FIELD MOVED (task 5, ruling 2026-08-27): see comment above — `paid` now lives as the
     // card's badge, not a bare structuredContent field.
+    //
+    // EXACT, not merely "not Paid" (fix round 2, coordinator ruling): `.not.toBe("Paid")` also
+    // passes when the badge is ABSENT, and an absent badge makes the runtime render the
+    // template's default "live" on a trial account's card — inexact, at the same cost as exact.
     const card = result.structuredContent?.card as { badge?: string };
-    expect(card.badge).not.toBe("Paid");
+    expect(card.badge).toBe("Trial");
     expect(result.content[0]?.text ?? "").not.toMatch(/\bunlocked\b/i);
   });
 });
@@ -240,7 +244,11 @@ describe("the MCP Apps view rides along without changing the answer", () => {
  */
 describe("get_credit_balance's card", () => {
   it("builds a metric card whose figures are the sentence's own", async () => {
-    balance.mockResolvedValueOnce(4519);
+    // Deliberately a DIFFERENT balance from the :208 probe above (fix round 2, coordinator
+    // ruling): with both probes on the same number, a card VALUE hardcoded to a constant equal
+    // to that number would satisfy both — the pin caught a value that DIFFERS from the balance,
+    // not the class it exists to catch (a value that is not a function of the balance at all).
+    balance.mockResolvedValueOnce(6001);
     paid.mockResolvedValueOnce(true);
     const result = await getCreditBalanceTool.run(CTX, {});
     const text = result.content[0]?.text ?? "";
