@@ -643,7 +643,9 @@ const HUB_TOOLS = [
 ];
 const HUB_COSTS = { crawl_site: 20, list_projects: 0, serp_snapshot: 8, get_credit_balance: 0 };
 const HUB_UNITS = { serp_snapshot: { unit: "keyword", min_units: 1, max_units: 10, base: 5 } };
-const hubPage = (needsPaid = (name: string) => name === "serp_snapshot") =>
+// Annotated rather than inferred: TypeScript narrows the default to a `name is "serp_snapshot"`
+// type predicate, which then rejects the `() => false` the paid-balance test needs.
+const hubPage = (needsPaid: (name: string) => boolean = (name) => name === "serp_snapshot") =>
   renderIndexPage(HUB_TOOLS, HUB_COSTS, HUB_UNITS, needsPaid);
 
 describe("renderIndexCost", () => {

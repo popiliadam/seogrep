@@ -1,7 +1,10 @@
+import { mcpUrlTemplate } from "@pseo/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ChatDemo } from "../../components/chat-demo";
 import { SoftwareApplicationStructuredData } from "../../components/structured-data";
+import { mcpUrlDisplayParts } from "../../lib/mcp-endpoint";
+import { toolPageCount } from "../../lib/tool-surface";
 
 export const metadata: Metadata = {
   title: "SEO analysis inside your AI assistant",
@@ -17,6 +20,20 @@ const TRUST = [
 
 const CLIENTS = ["Claude Desktop", "claude.ai", "Claude Code", "Cursor", "Windsurf"] as const;
 
+/**
+ * The tool groups the landing page shows. A CURATED SUBSET on purpose — a marketing page is not a
+ * reference — but a subset that has to represent the real product.
+ *
+ * It did not. These four groups named 16 tools while the server published 38, and the omission was
+ * not random: every paid DataForSEO family — backlinks, competitor comparison, rankings, SERP, AI
+ * visibility — was missing, i.e. the half of the surface the business runs on was invisible to a
+ * visitor (L-05, audit 2026-08-26). Groups five and six exist to end that.
+ *
+ * TWO RULES KEEP THIS HONEST, both enforced in page.test.tsx:
+ *   • every name here must be a real documented tool — no aspirational entries (NEVER #7);
+ *   • the total shown beside the grid is DERIVED (toolPageCount), never typed, so it cannot fall
+ *     behind the registry the way this list did.
+ */
 const FEATURES = [
   {
     index: "§1",
@@ -45,11 +62,26 @@ const FEATURES = [
   },
   {
     index: "§4",
+    group: "Competition",
+    benefit: "See who outranks you, which keywords they win, and which sites link to them but not to you.",
+    tools: ["compare_competitors", "ranked_keywords", "keyword_gap", "link_gap", "serp_snapshot"],
+  },
+  {
+    index: "§5",
+    group: "Backlinks & AI",
+    benefit: "Audit your link profile, shortlist toxic domains, and check how AI assistants describe you.",
+    tools: ["analyze_backlinks", "backlink_details", "disavow_candidates", "ai_visibility", "ai_visibility_compare"],
+  },
+  {
+    index: "§6",
     group: "Output",
     benefit: "Generate a shareable report and ask what to do next.",
     tools: ["generate_report", "whats_next"],
   },
 ] as const;
+
+/** Exported for page.test.tsx, which checks every name above against the generated tool docs. */
+export const FEATURED_TOOL_NAMES = FEATURES.flatMap((feature) => feature.tools);
 
 const STEPS = [
   {
@@ -68,6 +100,21 @@ const STEPS = [
     body: "“Audit my site”, “find quick wins”, “why did clicks drop?” — SeoGrep runs the analysis and answers right in your chat.",
   },
 ] as const;
+
+/**
+ * The address a visitor is invited to copy, derived from the SAME template the dashboard renders
+ * (@pseo/core mcpUrlTemplate) rather than typed here.
+ *
+ * This block published `https://mcp.seogrep.com/u/<key>/mcp` while the real address has been
+ * `https://mcp.seogrep.com/mcp/{key}`: the landing page taught every new user an endpoint that
+ * cannot connect (M-04, audit 2026-08-26). lib/mcp-endpoint.ts had forbidden exactly this in
+ * writing since it was created; the literal went in anyway because no helper existed for the
+ * one shape marketing needed. It exists now, and page.test.tsx fails if a literal comes back.
+ *
+ * Falls back to nothing rather than an invented address if a future template drops `{key}`
+ * (NEVER #9). Rendering the surrounding chrome with an empty address is the honest failure.
+ */
+const mcpUrl = mcpUrlDisplayParts(mcpUrlTemplate()) ?? { before: "", after: "" };
 
 export default function Page() {
   return (
@@ -120,7 +167,9 @@ export default function Page() {
             </p>
             <div className="flex w-fit max-w-full flex-wrap items-center border border-hairline bg-card animate-[rise_0.7s_ease-out_0.38s_both]">
               <span className="overflow-hidden text-ellipsis whitespace-nowrap px-4 py-[11px] font-mono text-[12px] text-body">
-                https://mcp.seogrep.com/u/<span className="text-accent">your-key</span>/mcp
+                {mcpUrl.before}
+                <span className="text-accent">your-key</span>
+                {mcpUrl.after}
               </span>
               <span className="whitespace-nowrap border-l border-hairline px-4 py-3 font-mono text-[11px] font-semibold tracking-[0.08em] text-muted">
                 ONE URL — THAT&apos;S THE SETUP
@@ -161,10 +210,17 @@ export default function Page() {
       <section className="border-t border-hairline bg-band">
         <div className="mx-auto w-full max-w-[1160px] px-5 py-20 sm:px-8">
           <p className="m-0 mb-5 font-mono text-[12px] font-semibold tracking-[0.14em] text-accent">COMMANDS</p>
-          <h2 className="m-0 mb-14 max-w-[24ch] font-serif text-[30px] font-medium tracking-[-0.01em] sm:text-4xl">
+          <h2 className="m-0 mb-5 max-w-[24ch] font-serif text-[30px] font-medium tracking-[-0.01em] sm:text-4xl">
             A focused SEO toolkit, spoken in plain language
           </h2>
-          <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-4">
+          <p className="m-0 mb-14 font-serif text-[15px] leading-[1.6] text-muted">
+            A selection below —{" "}
+            <Link href="/docs/tools-reference" className="border-b border-accent pb-0.5 transition-colors duration-150">
+              all {toolPageCount()} tools, with their credit costs
+            </Link>
+            .
+          </p>
+          <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((feature) => (
               <div key={feature.group} className="flex flex-col gap-4">
                 <div className="border-b border-hairline-mid pb-3">
