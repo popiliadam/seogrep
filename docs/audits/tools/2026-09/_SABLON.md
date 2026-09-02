@@ -16,7 +16,11 @@
 | 6 Kart | | |
 | 7 Kanıt üçlüsü | | |
 
-**Karar:** KAPANDI / DÜZELTME GEREKLİ / ÖLÇÜLEMEDİ — tek cümle gerekçe.
+**Karar (ölçüm turu, <YYYY-MM-DD>):** KAPANDI / DÜZELTME GEREKLİ / ÖLÇÜLEMEDİ — tek cümle gerekçe.
+
+**Karar (kapanış, <YYYY-MM-DD>):** düzeltme dalgası bittiğinde KAPATAN tur yazar — ölçüm turunun
+kararı SİLİNMEZ, yanına yazılır (ders 16). Tüm P1'ler kapandıysa
+`KAPANDI (dilim <n> düzeltmesi, #…; kalan: …)`, kalan P1 varsa `DÜZELTME GEREKLİ — kalan: …`.
 
 ## 1. Statik okuma
 
@@ -69,5 +73,19 @@ Referans "—" diyorsa: "dış kural yok — <ne kontrol edildi>".
 
 ## Bulgular
 
-| # | şiddet (P0/P1/P2) | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) |
-|---|---|---|---|---|
+| # | şiddet (P0/P1/P2) | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, <YYYY-MM-DD>) |
+|---|---|---|---|---|---|
+
+`durum` sütunu ölçüm turunda BOŞ bırakılır; kapatan tur doldurur. İzinli değerler ve tek kuralı —
+**her hücre ya bir PR numarasıyla ya da bir NEDENLE biter**:
+
+| değer | ne zaman |
+|---|---|
+| `KAPANDI #N` | bulgu kimliğini o PR'ın diff'inde GERÇEKTEN gördün (`gh pr diff N`), canlı ölçüm yok |
+| `KAPANDI #N + canlı ✔` | üstelik canlı uçta doğrulandı — hangi deploy'da olduğu yazılır |
+| `KAPANDI (#N, merge bekliyor)` | PR açık/CI'da; `main`'de YOK — bu bir iddiadır, kapanış değil |
+| `KISMEN — <yarısı> KAPANDI #N; <öbür yarısı> …` | bulgu bölünebiliyorsa iki yarı ayrı ayrı raporlanır |
+| `AÇIK — <neden>` | düzeltilmedi. PR'da karşılığını bulamadıysan **`AÇIK — PR'da karşılığı bulunamadı`** yaz; "muhtemelen kapandı" bir durum değildir |
+| `AÇIK — canlıda ölçülemedi` | kod doğru olabilir; ölçüm yapılamadı — "kapandı" DEĞİL |
+| `ERTELENDİ → Dilim N` | bilerek sonraki dilime bırakıldı, hangi dilim yazılır |
+| `İMZA KALEMİ — <kimde>` | ürün/metin kararı; kod yazılmaz, insan imzalar |

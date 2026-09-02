@@ -16,9 +16,11 @@
 | 6 Kart | ÖLÇÜLDÜ | `card-map.ts:12` `"metric"`, `CARDED_TOOLS` (satır 62) tek üyesi bu tool; canlı payload kartın 5 alanını da taşıyor |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | Bu dosya ✔ · `plan.mjs:196` PLAN girişi VAR · `goals/trial-flow-e2e.md` canlı predicate'i bu tool'u çağırıyor |
 
-**Karar:** DÜZELTME GEREKLİ — tool doğru çalışıyor ve kredi Δ 0 ölçüldü; ama (a) description tek başına
+**Karar (ölçüm turu, 2026-09-02):** DÜZELTME GEREKLİ — tool doğru çalışıyor ve kredi Δ 0 ölçüldü; ama (a) description tek başına
 maliyeti söylemiyor (38 tool'un 35'i söylüyor), (b) bilinmeyen argüman sessizce yutuluyor, (c) tekil/çoğul
 birim hiçbir testte pinli değil.
+
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #204 + #205) — üç bulgunun üçü de kapandı; P1 yoktu. **Kalan:** B-4 (P2, trial dalı — ürünün ödememiş hesabı olmadığı için ölçülemez).
 
 ## 1. Statik okuma
 
@@ -120,12 +122,12 @@ Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/37f05938-81d
 
 ## Bulgular
 
-| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) |
-|---|---|---|---|---|
-| B-1 | P2 | Description maliyeti söylemiyor; 38 canlı tool'un 35'i söylüyor. Maliyeti soran bir model bu tool için description'da cevap bulamaz | canlı `tools/list` üzerinde sayıldı: söylemeyenler `get_credit_balance`, `get_job_status`, `whats_next` | Description'a diğer 35'le aynı biçimde ` Costs 0 credits.` eklenmesi önerilir; `gen-tool-docs` maliyet cümlesini zaten soyuyor, mdx frontmatter değişmez |
-| B-2 | P2 | Şemada olmayan argüman sessizce yutuluyor (`{"foo":"bar"}`, `{"limit":5}` → HTTP 200, argümansız cevabın aynısı). Canlı 38 tool'un **hiçbirinde** `additionalProperties: false` yok | canlı ölçüm §3 | Sunucu genelinde bir karar konusu: ya `.strict()` (istemciye "bu argüman yok" denir) ya da bilerek hoşgörü — hangisi olursa olsun **yazılı** olmalı. Bu tool'a özgü düzeltme değil; §Bulgular'da 5 tool'da da tekrarlanıyor |
-| B-3 | P2 | Tekil/çoğul birim pinsiz: bakiyesi 1 olan hesap "1 credits" okur (hem cümle hem kart `unit`) | M2 mutasyonu yeşil kaldı (§2) | `formatBalanceSentence` benzeri saf bir yardımcıya `balance === 1` vakasını pinleyen bir test — mevcut testin `it.each` kalıbıyla (0, 1, 2) |
-| B-4 | P2 | "Trial" dalı canlıda ölçülemez: bu hesap ödemiş; ürünün ödememiş bir hesabı yok | §4 | Ölçüm turu için tek seferlik bir trial kiracı; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun kapı kapsam tablosuna yazılması |
+| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
+|---|---|---|---|---|---|
+| B-1 | P2 | Description maliyeti söylemiyor; 38 canlı tool'un 35'i söylüyor. Maliyeti soran bir model bu tool için description'da cevap bulamaz | canlı `tools/list` üzerinde sayıldı: söylemeyenler `get_credit_balance`, `get_job_status`, `whats_next` | Description'a diğer 35'le aynı biçimde ` Costs 0 credits.` eklenmesi önerilir; `gen-tool-docs` maliyet cümlesini zaten soyuyor, mdx frontmatter değişmez | KAPANDI #205 — description "Costs 0 credits." (S7); `get-credit-balance.test.ts` pinliyor |
+| B-2 | P2 | Şemada olmayan argüman sessizce yutuluyor (`{"foo":"bar"}`, `{"limit":5}` → HTTP 200, argümansız cevabın aynısı). Canlı 38 tool'un **hiçbirinde** `additionalProperties: false` yok | canlı ölçüm §3 | Sunucu genelinde bir karar konusu: ya `.strict()` (istemciye "bu argüman yok" denir) ya da bilerek hoşgörü — hangisi olursa olsun **yazılı** olmalı. Bu tool'a özgü düzeltme değil; §Bulgular'da 5 tool'da da tekrarlanıyor | KAPANDI #204 + canlı ✔ — canlı `8a2fb54`: 38/38 tool `additionalProperties:false` |
+| B-3 | P2 | Tekil/çoğul birim pinsiz: bakiyesi 1 olan hesap "1 credits" okur (hem cümle hem kart `unit`) | M2 mutasyonu yeşil kaldı (§2) | `formatBalanceSentence` benzeri saf bir yardımcıya `balance === 1` vakasını pinleyen bir test — mevcut testin `it.each` kalıbıyla (0, 1, 2) | KAPANDI #205 — "1 credit" tekil; cümle VE kart `unit` aynı testte pinli, 0/2/4519 çoğul karşı-pini ile |
+| B-4 | P2 | "Trial" dalı canlıda ölçülemez: bu hesap ödemiş; ürünün ödememiş bir hesabı yok | §4 | Ölçüm turu için tek seferlik bir trial kiracı; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun kapı kapsam tablosuna yazılması | AÇIK — ölçülemez; ürünün ödememiş bir hesabı yok, trial dalı yalnız birim testinde kanıtlı |
 
 ## Taban notu (şef, 2026-09-02, ölçüm sonrası)
 
