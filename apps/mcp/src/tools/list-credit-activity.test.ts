@@ -389,6 +389,69 @@ describe("paging and the not-recorded note", () => {
 });
 
 /**
+ * THREE WAYS AN ANSWER CAN CARRY NO ROWS, and until now they were ONE sentence.
+ *
+ * Measured live 2026-09-02 on an account with 512 balance-moving entries: `{"before_id":1}` was
+ * answered with "No credit activity yet … nothing has moved your balance so far." — a statement
+ * about the customer's ledger that was false, produced by a cursor sitting at the bottom of it.
+ * `{"before_id":99999999}` was worse: a cursor this tenant was never given came back as
+ * "Continuing from your cursor: 2 of 512 older credit entries" over the account's NEWEST two rows.
+ *
+ * list_jobs already tells the three apart (UNKNOWN_CURSOR_MESSAGE / NO_MORE_JOBS_MESSAGE /
+ * NO_JOBS_MESSAGE) and this tool was written first, so the fix travelled forwards and not back.
+ * Asserted on MEANING rather than on the source's literals (lesson 11).
+ */
+describe("the three ways an answer can come back with no entries", () => {
+  const ctx = { userId: "u-1", keyId: "k-1" };
+  const NEVER_MOVED = /nothing has moved your balance/i;
+
+  it("blames the cursor, not the ledger, when the before_id names no reachable entry", () => {
+    const text = formatCreditActivity(
+      { rows: [], total: 0, unknownCursor: true },
+      new Map(),
+      undefined,
+      true,
+    );
+    expect(text).toMatch(/no credit entry found with that before_id/i);
+    expect(text).not.toMatch(NEVER_MOVED);
+  });
+
+  it("says the history ENDS at the cursor rather than that it was never written", () => {
+    const text = formatCreditActivity({ rows: [], total: 0 }, new Map(), undefined, true);
+    expect(text).toMatch(/end of your credit history/i);
+    expect(text).not.toMatch(NEVER_MOVED);
+  });
+
+  it("keeps the empty-ledger sentence for an account that really has no entries", () => {
+    expect(formatCreditActivity({ rows: [], total: 0 })).toMatch(NEVER_MOVED);
+  });
+
+  /**
+   * THROUGH THE TOOL, not through the formatter — the pure pins above hand themselves the flag,
+   * so none of them can see whether the HANDLER computes it (the same gap the paged-heading block
+   * below records).
+   */
+  it("the tool tells an empty FIRST page apart from an empty page past a cursor", async () => {
+    const port = recordingPort([]);
+    expect(textOf(await port.tool.run(ctx, {}))).toMatch(NEVER_MOVED);
+    expect(textOf(await port.tool.run(ctx, { before_id: 9 }))).toMatch(
+      /end of your credit history/i,
+    );
+  });
+
+  it("carries an unknown cursor from the read port all the way to the answer", async () => {
+    const tool = makeListCreditActivityTool({
+      listActivity: async () => ({ rows: [], total: 0, unknownCursor: true }),
+      listDomains: async () => new Map(),
+      summarizeSpend: async () => ({ byTool: [], totalNet: 0, rowsCovered: 0, rowsTotal: 0 }),
+    });
+    expect(textOf(await tool.run(ctx, { before_id: 99999999 }))).toMatch(
+      /no credit entry found with that before_id/i,
+    );
+  });
+});
+
+/**
  * D-9 — what the SECOND page calls itself. Measured live 2026-08-26, minutes after paging
  * shipped: page two answered "Your 2 most recent credit entries of 510". They were not the most
  * recent — page one was — and 510 is what remains past the cursor, not the size of the ledger.

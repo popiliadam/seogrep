@@ -76,6 +76,17 @@ export interface CreditActivityRow {
 export interface CreditActivityPage {
   readonly rows: readonly CreditActivityRow[];
   readonly total: number;
+  /**
+   * True only when a `before_id` was given and named no ledger row this tenant can reach. The
+   * same flag list_jobs carries, for the same reason and with the same tenant-scoped resolution.
+   *
+   * Measured live 2026-09-02: `before_id: 99999999` on an account with 512 entries was ACCEPTED,
+   * and the account's two NEWEST rows came back headed "older credit entries". A cursor this
+   * tenant was never handed has to be refused, or paging reports the top of the ledger as its
+   * bottom — and another tenant's row id must be refused the same way, so paging cannot be used
+   * to learn whether some id exists on somebody else's account.
+   */
+  readonly unknownCursor?: boolean;
 }
 
 export type ListCreditActivityFn = (
@@ -161,6 +172,26 @@ export async function listOwnCreditActivity(
   // be reached at all. This module's own header warns that a reserve and its release can land in
   // the same millisecond; a `created_at < …` cursor would then either skip a row or repeat one.
   // `id` is the ledger's monotonic insert order on an append-only table, so it is exact.
+  //
+  // BUT AN EXACT CURSOR IS NOT A VALID ONE. `id` is a monotonic bigint, so ANY number is a
+  // well-formed cursor and `id < 99999999` matches the whole ledger — which is precisely what was
+  // measured on 2026-09-02: a value nobody was handed returned the newest rows under an "older
+  // entries" heading. Resolving the anchor first turns "a number" back into "a position in YOUR
+  // ledger". The probe is tenant-scoped, so another tenant's row id resolves to nothing and is
+  // answered exactly as an id that is nobody's (no existence leak) — the rule list_jobs already
+  // applies to its uuid cursor.
+  if (beforeId !== undefined) {
+    const { data: anchor, error: anchorError } = await getServiceClient()
+      .from("credit_ledger")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("id", beforeId)
+      .maybeSingle();
+    if (anchorError) {
+      throw new Error(`credit activity cursor lookup failed: ${anchorError.message}`);
+    }
+    if (!anchor) return { rows: [], total: 0, unknownCursor: true };
+  }
   const paged = beforeId === undefined ? query : query.lt("id", beforeId);
   const { data, error, count } = await paged
     .order("created_at", { ascending: false })
@@ -384,6 +415,26 @@ export const NO_ACTIVITY_MESSAGE =
   "tool charged — nothing has moved your balance so far.";
 
 /**
+ * What a cursor that names no reachable entry gets told.
+ *
+ * ONE message for an id that is nobody's and for ANOTHER TENANT's row, exactly as list_jobs
+ * answers an unreachable before_id: the anchor is resolved by a tenant-scoped read, so paging
+ * cannot be used to learn whether an id exists on somebody else's account.
+ */
+export const UNKNOWN_ACTIVITY_CURSOR_MESSAGE =
+  "No credit entry found with that before_id, so there is no page to continue from. Call " +
+  "list_credit_activity without before_id to start again from your most recent entries.";
+
+/**
+ * What the BOTTOM of the ledger says. Measured live 2026-09-02: an account with 512 entries
+ * paged to `before_id: 1` and was told "No credit activity yet … nothing has moved your balance
+ * so far" — a false statement about the customer's own ledger, produced by reaching its end.
+ * "There is nothing older" is the true claim; "there is nothing" is not.
+ */
+export const NO_MORE_ACTIVITY_MESSAGE =
+  "That is the end of your credit history — there is nothing older than the cursor you passed.";
+
+/**
  * Render the whole answer. Pure, so every wording is pinned in the fast lane while the DB lane
  * proves the read underneath it.
  */
@@ -403,7 +454,8 @@ export function formatCreditActivity(
   paged = false,
 ): string {
   const { rows, total } = page;
-  if (rows.length === 0) return NO_ACTIVITY_MESSAGE;
+  if (page.unknownCursor === true) return UNKNOWN_ACTIVITY_CURSOR_MESSAGE;
+  if (rows.length === 0) return paged ? NO_MORE_ACTIVITY_MESSAGE : NO_ACTIVITY_MESSAGE;
   const lines = rows.map((row) => formatActivityLine(row, domains)).join("\n");
   // WHAT WAS LEFT OUT, AND HOW TO REACH IT. Measured 2026-08-26: 512 balance-moving rows behind a
   // 50-entry answer whose advice was "raise `limit` (max 50)" — TO A CALLER ALREADY AT 50. The
