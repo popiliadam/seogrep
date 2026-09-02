@@ -8,5 +8,11 @@
     "rewriteRelativeImportExtensions": true
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  // `src/test/**` is test SCAFFOLDING, not a spec: it holds no `it()` and so cannot be named by
+  // the `*.test.ts` exclude, but this same config is the BUILD config
+  // (`tsc -p tsconfig.json --noEmit false --outDir dist`) and the reason that exclude exists is
+  // that fixtures must not ship in the runtime image (see tsconfig.test.json's header). It is
+  // still type-checked: tsconfig.test.json sets `exclude: []` and pulls these files in as
+  // imports of the specs that use them, so `pnpm typecheck` reads them either way.
+  "exclude": ["src/**/*.test.ts", "src/test/**"]
 }
