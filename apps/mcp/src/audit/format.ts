@@ -336,6 +336,20 @@ export function formatSchemaReport(report: SchemaReport, fetchedAt: string | nul
     lines.push("", "No JSON-LD @type found anywhere on the site.");
   }
 
+  // NOT a findings section: nothing here is broken. It exists so a reader whose FAQ markup stopped
+  // producing a rich result learns it from the audit rather than from a traffic chart, and it is
+  // read off the type NAMES, so a crawl that stored no bodies still says it (R-2.2).
+  if (report.retiredTypes.length > 0) {
+    lines.push("", "Types that no longer produce a Google rich result:");
+    lines.push(
+      bulletList(
+        report.retiredTypes.map(
+          (type) => `${type} is no longer a Google rich result; keep it only if it serves users.`,
+        ),
+      ),
+    );
+  }
+
   if (report.pagesWithout.length > 0) {
     lines.push("", "Pages with NO structured data:");
     lines.push(bulletList(report.pagesWithout));

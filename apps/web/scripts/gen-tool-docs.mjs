@@ -1274,7 +1274,11 @@ export const DOC_PROSE = {
       "- **Coverage** — how many pages carry JSON-LD structured data and how many have none.\n" +
       "- **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, " +
       "`WebSite`, `Article`, `Product`, and so on).\n" +
-      "- **Gaps** — the URLs of pages with no structured data at all.\n\n" +
+      "- **Gaps** — the URLs of pages with no structured data at all.\n" +
+      "- **Types that no longer produce a Google rich result** — printed only when the site " +
+      "declares one. `FAQPage` and `HowTo` are no longer in Google's rich-result gallery, so " +
+      "the markup is reported as present and left alone: it is not checked for missing fields, " +
+      "because repairing it would buy nothing.\n\n" +
       "**Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked " +
       "up that way counts here as having no structured data.\n\n" +
       "Coverage is what this tool is for, and coverage is what it always reports. On a crawl " +
@@ -1287,7 +1291,8 @@ export const DOC_PROSE = {
       {
         heading: "What it checks in a stored JSON-LD body",
         body:
-          "For a short, fixed list of schema.org types it checks that the fields without which " +
+          "For a short, fixed list of schema.org types — each one backed by a type Google's own " +
+          "gallery documents — it checks that the fields without which " +
           "the markup says nothing are declared — a `Product` with no `offers`, an `Article` " +
           "with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no " +
           "address. A type **not** on that list is **not judged at all**: schema.org has " +

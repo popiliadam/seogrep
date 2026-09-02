@@ -314,6 +314,27 @@ describe("the appended graph sections render their data", () => {
     expect(formatTechReport(auditTech(crawl), AT)).not.toContain("Hreflang");
   });
 
+  it("structured data: a retired type is named with what it is now worth, and is not a defect", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/faq",
+          jsonLdTypes: ["FAQPage"],
+          jsonLdBlocks: ['{"@type":"FAQPage"}'],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatSchemaReport(auditSchema(crawl), AT);
+    expect(text).toContain("FAQPage: 1 page(s)");
+    expect(text).toContain(
+      "· FAQPage is no longer a Google rich result; keep it only if it serves users.",
+    );
+    // …and it is NOT reported as a missing required field, which is the work that buys nothing.
+    expect(text).not.toContain("Required fields missing");
+  });
+
   it("structured data: missing fields, invalid JSON, partial storage, and a truthful note", () => {
     const crawl: AuditCrawl = {
       pages: [
