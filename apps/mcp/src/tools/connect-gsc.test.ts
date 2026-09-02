@@ -16,8 +16,13 @@ vi.mock("../db.ts", () => ({
   }),
 }));
 
-import { connectGscTool, renderAlreadyConnected } from "./connect-gsc.ts";
-import { projectNotFoundMessage } from "./project-target.ts";
+import {
+  connectGscTool,
+  makeConnectGscTool,
+  renderAlreadyConnected,
+  type GscMappingRow,
+} from "./connect-gsc.ts";
+import { ARCHIVED_PROJECT_MESSAGE, projectNotFoundMessage } from "./project-target.ts";
 import { makeUntrackProjectTool } from "./untrack-project.ts";
 import type { AuthContext } from "../auth.ts";
 
@@ -168,5 +173,93 @@ describe("connect_gsc already-connected copy", () => {
     expect(text).toContain(CONNECT_URL);
     // It must NOT claim the data path works — that was the whole failure.
     expect(text).not.toMatch(/already connected .* — property/);
+  });
+});
+
+/**
+ * CG-1 — the handler's own branches, which had no fast-lane gate at all until the ports landed.
+ *
+ * Measured 2026-09-02, both against the WHOLE fast lane (143 files / 3680 tests) and both green:
+ *   · disabling the archive refusal, so an archived project is handed a connect link;
+ *   · `if (mapping && mapping.account_id !== null)` → `if (mapping)`, which is defect #52 back
+ *     byte for byte — a mapping row with no credential behind it reported as "already connected
+ *     — property https://…", the exact sentence measured live on 2026-08-27.
+ *
+ * Neither is exotic: each is one clause, and each was pinned only by `connect-gsc.db.test.ts`,
+ * in a lane `make verify` does not run. The db lane keeps those specs — it proves the branches
+ * against real rows; this proves the DECISIONS without Docker.
+ */
+describe("connect_gsc decides on the credential, and refuses the archive (CG-1)", () => {
+  const PROJECT = "6d7e8f90-1a2b-4c3d-8e4f-506172839405";
+  const DOMAIN = "credential-under-test.example";
+  const PROPERTY = "https://credential-under-test.example/";
+  const BASE_URL = "https://base-url-under-test.example";
+
+  function toolFor(
+    project: { id: string; domain: string; archivedAt: string | null } | null,
+    mapping: GscMappingRow | null,
+  ) {
+    return makeConnectGscTool({
+      loadProject: () => Promise.resolve(project),
+      loadConnection: () => Promise.resolve(mapping),
+    });
+  }
+
+  const tracked = { id: PROJECT, domain: DOMAIN, archivedAt: null };
+
+  async function answer(
+    project: { id: string; domain: string; archivedAt: string | null } | null,
+    mapping: GscMappingRow | null,
+  ): Promise<{ isError: boolean; text: string }> {
+    const previous = process.env.WEB_BASE_URL;
+    process.env.WEB_BASE_URL = BASE_URL;
+    try {
+      const result = await toolFor(project, mapping).run(CTX, { project_id: PROJECT });
+      return { isError: result.isError === true, text: result.content[0]?.text ?? "" };
+    } finally {
+      if (previous === undefined) delete process.env.WEB_BASE_URL;
+      else process.env.WEB_BASE_URL = previous;
+    }
+  }
+
+  it("refuses an ARCHIVED project and hands out no link", async () => {
+    const { isError, text } = await answer(
+      { ...tracked, archivedAt: "2026-08-01T00:00:00.000Z" },
+      { account_id: "acct-1", gsc_property: PROPERTY },
+    );
+    expect(isError).toBe(true);
+    expect(text).toBe(ARCHIVED_PROJECT_MESSAGE);
+    // The whole point of the refusal: no OAuth link leaves the building for an untracked project.
+    expect(text).not.toContain(BASE_URL);
+  });
+
+  it("a mapping whose account_id is NULL is NOT connected (defect #52)", async () => {
+    const { isError, text } = await answer(tracked, { account_id: null, gsc_property: PROPERTY });
+    expect(isError).toBe(false);
+    // It offers the connect link…
+    expect(text).toContain(`${BASE_URL}/api/gsc/connect?project_id=${PROJECT}`);
+    // …and does NOT claim the data path works. This is the sentence the defect produced.
+    expect(text).not.toMatch(/already connected/i);
+  });
+
+  it("a mapping WITH an account_id is connected, and names the property", async () => {
+    const { isError, text } = await answer(tracked, {
+      account_id: "acct-1",
+      gsc_property: PROPERTY,
+    });
+    expect(isError).toBe(false);
+    expect(text).toMatch(/already connected/i);
+    expect(text).toContain(PROPERTY);
+  });
+
+  it("no mapping row at all is not connected either", async () => {
+    const { text } = await answer(tracked, null);
+    expect(text).not.toMatch(/already connected/i);
+  });
+
+  it("an unresolvable project_id gets the shared not-found sentence, before any mapping read", async () => {
+    const { isError, text } = await answer(null, { account_id: "acct-1", gsc_property: PROPERTY });
+    expect(isError).toBe(true);
+    expect(text).toBe(projectNotFoundMessage(PROJECT));
   });
 });
