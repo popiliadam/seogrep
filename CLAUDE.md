@@ -23,19 +23,30 @@ Global `performance.md`'nin "model omit" kuralı bu projede kullanıcı talimat�
 3. Paddle webhook'u imza doğrulaması + `event_id` idempotency olmadan işlenmez.
 4. Tenant filtresiz DB sorgusu yazılmaz; RLS hiçbir tabloda kapatılmaz.
 5. Test/CI'da paralı API'ye gerçek çağrı = 0; dış API'ler mock/fixture arkasında **port** olarak yazılır.
-   Konum kuralı `packages/core`'dur. **İmzalı istisna (insan onayı 2026-08-03 — audit L-04): DataForSEO
-   adaptörleri `apps/mcp/src/dfs/` altında kalır.** Gerekçe ölçüldü: `budget.ts` DB-destekli harcama
-   defterine (0014 RPC'leri) bağlıdır ve core'a taşımak, core'un tek runtime bağımlılığı olan `zod`'un
-   yanına Supabase'i sokar; gerçekçi taşıma 600-900 satır ve blast radius'ta $3/gün bütçe kapısı var.
-   NEVER#5'in ÖZÜ bu konumda da sağlanır ve testlerle pinlidir: enjekte edilebilir transport + 7 fixture,
-   `DFS_LIVE != 1` iken fail-closed. Dependency-inversion taşıması (saf parse/estimate → core,
-   `SpendLedger` → app) backlog'dadır. **Bu istisna DFS'e özgüdür; yeni bir dış API varsayılan olarak
-   `packages/core`'a yazılır.** Dev smoke DFS bütçesi ≤$3/gün (`guardrails/dfs-budget.sh`, Faz 3).
+   Konum kuralı `packages/core`'dur. **İmzalı istisna, YALNIZ DFS'e özgü (insan onayı 2026-08-03):**
+   DataForSEO adaptörleri `apps/mcp/src/dfs/` altında kalır; yeni bir dış API varsayılan olarak
+   `packages/core`'a yazılır. Ölçülmüş gerekçe, şerhler ve backlog maddesi:
+   `docs/audits/2026-07-28-hostile-audit-remediation-closure.md:1001`.
+   Dev smoke DFS bütçesi ≤$3/gün (`guardrails/dfs-budget.sh`).
 6. Fiyat, kredi maliyeti, paket rakamları insan onayı olmadan değişmez (kod + docs + pricing).
 7. Vitrine uydurma metrik/müşteri yorumu/logo konmaz.
 8. Testi geçirmek için testi değiştirmek/silmek = otomatik FAIL.
 9. Secret/endpoint/konvansiyon uydurma — dur ve sor.
 10. Tek commit >200 satır → böl; bölünemiyorsa hakem Fable. Task toplam diff >400 satır → hakem her durumda Fable.
+
+### Zorlama haritası — hangi NEVER gerçekten garanti altında
+
+Ölçüldü 2026-08-27. Bir kural kapıya taşındığında bu tablo güncellenir ve prose işaretçiye iner.
+
+| # | zorlayan | durum |
+|---|---|---|
+| 2 | `check-append-only.sh` (verify.sh) + `goals/append-only-armor.md` | zorlanıyor |
+| 3 | `goals/webhook-idempotent.md` → webhook testleri | zorlanıyor |
+| 4 | `check-rls.sh` + `check-grants.sh` (verify.sh) + `goals/rls-enabled.md` | zorlanıyor |
+| 5 | `apps/mcp/src/env.dfs.test.ts` fail-closed + fixture'lar · `dfs-budget.sh` | zorlanıyor — **konum kuralı prose** |
+| 6 | `packages/core/src/billing/ledger.test.ts:168` — `CREDIT_PACKAGES` pin | zorlanıyor — **yalnız rakamlar; docs+pricing prose** |
+| 9 | commit'lenmiş secret: `gitleaks` job'ı + `goals/no-secrets.md` | kısmen — **uydurma endpoint/konvansiyon prose** |
+| **1, 7, 8, 10** | — | **YALNIZ PROSE — hiçbir kapı bakmıyor** |
 
 ## WORDS
 
@@ -107,9 +118,27 @@ Haftalık compost: haftanın FAIL'lerinden ≤3 kural önerisi; insan imzalamada
     task boyunca kırmızıydı ve iki test tam da onu bekliyordu; hiçbir dar kapı `packages/db`'nin unit
     lane'ini koşmuyordu. "`tsc --noEmit` dokunduğum dosyalarda temiz" kapının koştuğu script DEĞİLDİR.
 
-## Komutlar
+### İmzalı ders (insan onayı 2026-08-27 — "okeyse imzalıyorum")
 
-`make verify` (kapı) · `make goals` (kalıcı hedefler) · `make dev` (web dev server)
+16. **Her oturumda yüklenen bir dosyada KAPANMIŞ bir iddia bırakmak, hiç yazmamaktan kötüdür.**
+    2026-08-27'de dört vaka ölçüldü — `DFS_LIVE` "kapalı" (7 gün önce açılmıştı) · branch protection
+    "eksik" (kapanmıştı, üstelik kendi hafıza dosyası düzeltilmiş, indeks düzeltilmemişti) · Turnstile
+    "provision edilmedi" (3 sayfada canlıydı) · FORCE-RLS/did-you-mean chip'leri "açık" (#110/#111 ile
+    kapanmıştı). Dördü de `MEMORY.md`'deydi, yani her oturumda İLK yüklenen metin; ikisi indeksin
+    KENDİ İÇİNDE çelişiyordu. Kural: **bir kalem kapandığında, kapatan tur indeksi de günceller** —
+    kapanış kaydını yalnız kendi dosyasına yazmak yetmez. Ders 11'in bağlam katmanındaki hâli:
+    bayat bir satır kırmızı vermez, sessizce yanlış yönlendirir.
+
+## Komutlar ve kapı kapsamı
+
+| komut | ne ölçer | **NEYİ ÖLÇMEZ** |
+|---|---|---|
+| `make verify` (`guardrails/verify.sh`) | guard-selftest + RLS/append-only/grants + lisans + typecheck·lint·test·build + tool-docs drift + deploy-paths·text-sources·sweep-selftest·migration-journal öz-testleri (aşağıda) | **secret taraması YOK · DB şeritleri YOK** |
+| `make verify-db` (`verify-db.sh`) | `*.db.test.ts` şeritleri (Docker + pinli supabase CLI) | 00:00–00:30 UTC'de her dalda deterministik kırmızı |
+| `make goals` (`verify-goals.sh`) | `goals/*.md` predicate'leri + `gitleaks` | env yüklü değilse canlı-uç hedefleri sessizce SKIP (çıkış kodu 97) |
+| `make dev` | web dev server | — |
+
+Kapı tarifinin tek yeri burasıdır; global `qa-loop.md` bu tabloyu TEKRAR ETMEZ.
 
 ### Kapı kapsamı — 2026-08-27 audit remediation turunda genişledi
 
