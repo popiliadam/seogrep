@@ -484,6 +484,15 @@ const INHERITED_LIMITS_FRESHNESS =
   "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.";
 
 /**
+ * THE REPEAT WARNING, for the three audits that keep an `audit_runs` row per (crawl, tool). Not on
+ * `audit_content`: it records into its own table and the note is not wired there.
+ */
+const AUDIT_REPEAT_LINE =
+  "\n\nIf this tool has already audited this same crawl, the reply says so and when. The report " +
+  "is deterministic, so a second run over an unchanged crawl returns the same findings — the note " +
+  "is there so that is a choice rather than a surprise. **The price is unchanged either way.**";
+
+/**
  * THE SCOPE SENTENCE the four audits open with. One constant because it describes ONE mechanism —
  * `audit/load.ts` picks the crawl and prints which one it picked — and four copies of a sentence
  * about a shared mechanism drift the moment one of them is edited.
@@ -1206,7 +1215,7 @@ export const DOC_PROSE = {
       "A summary of issue counts, then the duplicate-content groups with their member URLs, then " +
       "a per-page list of findings. Pages with no issues are counted but not listed. The per-page " +
       "list is capped, and past the cap the reply says how many further pages had findings — a " +
-      "short list never reads as a short audit." + AUDIT_SCOPE_LINE,
+      "short list never reads as a short audit." + AUDIT_SCOPE_LINE + AUDIT_REPEAT_LINE,
   },
 
   audit_tech: {
@@ -1270,7 +1279,7 @@ export const DOC_PROSE = {
       "its own count, zero included. Then whichever of the remaining sections this crawl gave " +
       "rows for, plus the sitemap comparison whenever a sitemap was read. So a short reply is a " +
       "clean crawl, not a shallow audit. Every list is capped, and past the cap says how many " +
-      "more there were." + AUDIT_SCOPE_LINE,
+      "more there were." + AUDIT_SCOPE_LINE + AUDIT_REPEAT_LINE,
   },
 
   audit_schema: {
@@ -1322,7 +1331,7 @@ export const DOC_PROSE = {
       "field (naming the type and the fields), the pages whose JSON-LD could not be parsed, and " +
       "the pages whose blocks were only partly stored. Each of those three sections is printed " +
       "only when it has rows, so a crawl carrying no bodies returns exactly the coverage report " +
-      "it always did — an absent section is never a clean result." + AUDIT_SCOPE_LINE,
+      "it always did — an absent section is never a clean result." + AUDIT_SCOPE_LINE + AUDIT_REPEAT_LINE,
   },
 
   audit_speed: {

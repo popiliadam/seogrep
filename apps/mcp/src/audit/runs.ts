@@ -33,6 +33,43 @@ export interface AuditRunTarget {
 /** The write itself — injectable so a spec can make it fail without breaking a database. */
 export type AuditRunWriter = (target: AuditRunTarget, report: AuditReport) => Promise<void>;
 
+/**
+ * The READ half of the same key: when did this tool last audit THIS crawl, if ever? `null` means
+ * never — or that the question could not be answered, which `findPriorAuditRun` explains.
+ */
+export type PriorAuditRunFinder = (target: AuditRunTarget) => Promise<string | null>;
+
+/**
+ * When this exact audit last ran over this exact crawl.
+ *
+ * FAIL-OPEN, and that is the deliberate OPPOSITE of `writeAuditRun` below. The write must throw:
+ * losing the record of a delivered audit is the failure the table exists to prevent. This read
+ * produces a COURTESY SENTENCE, and a throw would send `withCredits` down its release path and
+ * refuse an audit the tenant asked for and the engine could have delivered. A warning that cannot
+ * be computed is a missing warning, never a missing report — so a transport error is logged and
+ * answered `null`, and the reply is exactly what it was before this note existed.
+ *
+ * Tenant-scoped on the RLS-bypassing service client for the usual reason (NEVER #4): all four key
+ * columns are filtered, so it can only ever find the caller's own earlier run.
+ */
+export async function findPriorAuditRun(target: AuditRunTarget): Promise<string | null> {
+  const { data, error } = await getServiceClient()
+    .from("audit_runs")
+    .select("created_at")
+    .eq("user_id", target.userId)
+    .eq("project_id", target.projectId)
+    .eq("crawl_job_id", target.crawlJobId)
+    .eq("tool", target.tool)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error(`${target.tool}: prior audit_runs lookup failed (${error.message})`);
+    return null;
+  }
+  return data?.created_at ?? null;
+}
+
 type AuditRunInsert = Database["public"]["Tables"]["audit_runs"]["Insert"];
 
 /**

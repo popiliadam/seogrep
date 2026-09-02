@@ -2,12 +2,14 @@ import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
 import {
   crawlScopeLine,
+  findPriorAuditRun,
   loadLatestCrawl,
   writeAuditRun,
   type AuditCrawl,
   type AuditReport,
   type AuditRunWriter,
   type LoadCrawlFn,
+  type PriorAuditRunFinder,
 } from "../audit/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
@@ -68,6 +70,12 @@ export interface AuditToolDeps {
    * default reaches getServiceClient, which requires the full prod env.
    */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The "has this crawl been audited before?" reader (default: the real findPriorAuditRun). A PORT
+   * for the same reason the other three are, and the one whose absence is harmless: it feeds a
+   * sentence, not the report.
+   */
+  readonly findPriorRun?: PriorAuditRunFinder;
 }
 
 /**
@@ -91,6 +99,24 @@ const inputSchema = z.object({
     ),
 });
 
+/**
+ * The sentence a caller gets for auditing a crawl this tool has already judged — measured live
+ * 2026-09-02: two identical calls seconds apart returned byte-for-byte the same text and were
+ * charged twice, with nothing anywhere saying the first had happened.
+ *
+ * `""` when there is no earlier run, so the caller can drop it out of the reply. The stamp is cut
+ * to the minute and labelled UTC: a Postgres timestamptz carries microseconds and an offset, and
+ * neither belongs in a sentence whose whole job is "you have seen this before".
+ */
+function repeatNote(name: ToolName, priorAt: string | null): string {
+  if (priorAt === null) return "";
+  const when = `${priorAt.slice(0, 10)} ${priorAt.slice(11, 16)} UTC`;
+  return (
+    `Note: this crawl was already audited by ${name} on ${when}. Re-running produces the same ` +
+    "report and is charged again."
+  );
+}
+
 export function makeAuditTool(
   name: ToolName,
   description: string,
@@ -100,6 +126,7 @@ export function makeAuditTool(
   const loadCrawl = deps.loadCrawl ?? loadLatestCrawl;
   const loadProject = deps.loadProject ?? loadOwnProject;
   const writeRun = deps.writeRun ?? writeAuditRun;
+  const findPriorRun = deps.findPriorRun ?? findPriorAuditRun;
   return defineTool({
     name,
     description,
@@ -165,11 +192,22 @@ export function makeAuditTool(
       if (load.jobId === undefined) {
         throw new Error(`${name}: crawl load carried no job id — the audit run cannot be recorded`);
       }
-      await writeRun(
-        { userId: ctx.userId, projectId: project_id, crawlJobId: load.jobId, tool: name },
-        rendered.report,
-      );
-      return textResult(`${scope}\n\n${rendered.text}`);
+      const target = {
+        userId: ctx.userId,
+        projectId: project_id,
+        crawlJobId: load.jobId,
+        tool: name,
+      };
+
+      // THE REPEAT WARNING, and it is read BEFORE the write below for the obvious reason: after it,
+      // the row this call is about to insert would be the row it found. It is keyed to the crawl
+      // that was LOADED rather than to the id the caller typed, so what is reported is what was
+      // judged. The price is untouched — an operator-signed number this slice has no mandate over
+      // — and the sentence names no figure, so it cannot drift from the table.
+      const priorAt = await findPriorRun(target);
+
+      await writeRun(target, rendered.report);
+      return textResult([scope, repeatNote(name, priorAt), rendered.text].filter(Boolean).join("\n\n"));
     },
   });
 }

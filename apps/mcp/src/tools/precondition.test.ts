@@ -145,6 +145,7 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
         crawl: { pages: [], skipped: [], fetchedAt: "2026-08-09T00:00:00.000Z" },
       }),
       loadProject: NO_PROJECT,
+      findPriorRun: async () => null,
     });
     const result = await callTool(tool, "whats_next");
     expect(result.isError).toBeUndefined();
