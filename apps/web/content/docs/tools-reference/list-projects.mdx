@@ -25,6 +25,8 @@ Beside the domain and its `project_id`, every tracked line carries two facts, be
 
 **If two tracked projects are mapped to the same Search Console property**, the reply names that property and both projects underneath the list. Each pull fetches one set of rows and is billed once per project, so the pair costs credits twice for the same data. Nothing is deduplicated for you — which of the two to keep is a decision only you can make.
 
+**If two tracked projects are the same site** — an apex and its `www.` twin, say — the reply names them together as well. This is a different warning and it fires independently: a pair with no Google account at all still has it, because each of the two is crawled, audited and billed on its own. New projects can no longer split this way, so a pair you see is left over from before that changed; [`untrack_project`](/docs/tools-reference/untrack-project) archives the one you do not want, and nothing it holds is deleted.
+
 ## You do not always need the project_id
 
 The `project_id` is what most tools use to know which of your sites they are working on, and this is where you get it. But a large part of the surface will also take a plain domain instead, passed as `target` — including a competitor's, which is the point: those tools answer questions about any public site, not only your own.

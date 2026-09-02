@@ -19,6 +19,16 @@ A run that was refunded therefore shows **twice** — once as the charge and onc
 
 For the running total itself, use [`get_credit_balance`](/docs/tools-reference/get-credit-balance). For charts and a full history, use the Usage page in your dashboard.
 
+## Where the credits went, and how to read past the first page
+
+Every reply ends with one **Spent so far** line: your net spend, how many tools it covers, and the five that took the most, with the tail collapsed into a single number. *Net*, not gross — a run that was refunded cost nothing, so a tool whose every call was released is left out rather than printed as a zero. If your ledger is larger than one summary can read, the line says how many entries it covered: a partial total that calls itself complete is worse than no total at all.
+
+The list is capped, and the reply says how many entries it did **not** show along with the `before_id` to pass for the next page. Each page names the next value, so an account with hundreds of entries can be read all the way down. Page two calls itself a continuation rather than "your most recent", and counts what remains past the cursor rather than the size of the whole ledger.
+
+The two ways of running out are told apart, and neither is reported as an empty ledger: a `before_id` that names no entry of yours is refused outright rather than quietly restarting from the top, while reaching your oldest entry says the history **ends** there.
+
+Pass `project_id` to see what one site cost you. The ledger only began storing which project a spend was for partway through, and it is append-only, so entries older than that carry no project and can never match the filter — they are marked **project not recorded** in the list, and the scoped reply says so, rather than letting an empty answer read as "this site cost nothing".
+
 ## Example
 
 Ask your MCP client in plain language:
@@ -35,4 +45,4 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-One line per ledger entry — timestamp, signed credits, kind, and the tool where there is one — newest first, with a pointer to `get_credit_balance` for your current total. Guidance when nothing has moved your balance yet.
+One line per ledger entry — timestamp, signed credits, kind, the tool where there is one, and which project the spend was for — newest first, with a pointer to `get_credit_balance` for your current total, the `before_id` for the next page when the list was cut, and a closing **Spent so far** line. Guidance when nothing has moved your balance yet, when a cursor names no entry of yours, and when the history ends.
