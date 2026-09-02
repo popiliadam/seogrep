@@ -264,3 +264,48 @@ describe("get_credit_balance's card", () => {
     expect((result.structuredContent?.card as { badge?: string }).badge).not.toBe("Paid");
   });
 });
+
+/**
+ * GCB B-3 — measured by mutation, 2026-09-02. Rewriting `balance === 1 ? "credit" : "credits"` to
+ * the bare plural left all 156 specs of the account family green: an account holding exactly one
+ * credit read "1 credits" in the sentence AND in the card's `unit`, and nothing looked.
+ *
+ * Both channels are asserted, because the mutation reaches both from one expression — a pin on
+ * the sentence alone would go green again the day the card computed its own unit.
+ */
+describe("the unit agrees with the number", () => {
+  const unitOf = (result: { structuredContent?: { card?: unknown } }): string | undefined =>
+    (result.structuredContent?.card as { unit?: string } | undefined)?.unit;
+
+  it("says one credit in the singular, in the sentence and on the card", async () => {
+    balance.mockResolvedValueOnce(1);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect(result.content[0]?.text ?? "").toMatch(/balance:\s*1\s+credit\b/i);
+    expect(result.content[0]?.text ?? "").not.toMatch(/\b1\s+credits\b/i);
+    expect(unitOf(result)).toBe("credit");
+  });
+
+  /**
+   * The other side of the same axis (lesson 14 — vary the VALUE, not only its presence): zero and
+   * two are both plural, and a mutation that hardcoded "credit" would pass the pin above alone.
+   */
+  it.each([0, 2, 4519])("keeps the plural for %i", async (amount) => {
+    balance.mockResolvedValueOnce(amount);
+    const result = await getCreditBalanceTool.run(CTX, {});
+    expect(result.content[0]?.text ?? "").toMatch(
+      new RegExp(`balance:\\s*${amount}\\s+credits\\b`, "i"),
+    );
+    expect(unitOf(result)).toBe("credits");
+  });
+});
+
+/**
+ * GCB B-1 / S7 — counted on the live tools/list, 2026-09-02: 35 of 38 tools state their price in
+ * the description; the three that did not were get_credit_balance, get_job_status and whats_next.
+ * A model asked what a call will cost reads the description, not the docs site.
+ */
+describe("the description states the price", () => {
+  it("says the read is free, in the same words the other 35 use", () => {
+    expect(getCreditBalanceTool.description).toMatch(/costs 0 credits/i);
+  });
+});
