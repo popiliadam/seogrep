@@ -75,7 +75,7 @@ function codeProblem(raw: string): string | null {
   if (language === undefined || rest.length > 2) return `"${raw}" is not a valid hreflang value (${SHAPE_ADVICE})`;
   if (!ISO_639_1.has(language)) {
     return language.length === 2
-      ? `"${raw}" does not start with an ISO 639-1 language code — a region cannot be given on its own`
+      ? `"${raw}" does not start with an ISO 639-1 language code; a region cannot be given on its own`
       : `"${raw}" is not a valid hreflang value (${SHAPE_ADVICE})`;
   }
   // lang[-script][-region]: a script subtag is four letters, a region two.
