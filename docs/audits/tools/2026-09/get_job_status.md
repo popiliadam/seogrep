@@ -16,9 +16,11 @@
 | 6 Kart | PLANLI, SEVK EDİLMEMİŞ | `card-map.ts:52` `get_job_status: "action"`; `CARDED_TOOLS` yalnız `get_credit_balance` |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | Bu dosya ✔ · `plan.mjs:201,202,210` PLAN girişi VAR (3 hücre) · `goals/` hedefi yok |
 
-**Karar:** DÜZELTME GEREKLİ — iki taze düzeltme canlıda doğrulandı ve tool doğru cevap veriyor;
+**Karar (ölçüm turu, 2026-09-02):** DÜZELTME GEREKLİ — iki taze düzeltme canlıda doğrulandı ve tool doğru cevap veriyor;
 ama (a) "iş bulunamadı" cevabının `isError` bayrağı hızlı şeritte pinsiz, (b) F-6'nın kapatmadığı
 bir noktalama ekseni ölçüldü, (c) tool zincirin sonunda **hiçbir sonraki adım cümlesi** taşımıyor.
+
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #204 + #205) — altı bulgunun altısı da kapandı, P1 (B-1) dahil; dördü canlıda doğrulandı. **Kalan:** yok. **Ölçülmeyen:** canlı `queued`/`running` dalları (bkz. `list_jobs.md` B-3, Dilim 2).
 
 ## 1. Statik okuma
 
@@ -165,14 +167,14 @@ yok (ikisi de ölçüldü). Planlanan `action` kartının ihtiyacı olan alanlar
 
 ## Bulgular
 
-| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) |
-|---|---|---|---|---|
-| B-1 | **P1** | "İş bulunamadı" cevabının `isError: true` bayrağı hızlı şeritte pinsiz: `errorResult` → `textResult` yapıldığında 156 test yeşil kalıyor. Bayrak düşerse istemci bulunamayan işi **başarılı sonuç** sayar | M10 (§2); koruma yalnız `get-job-status.db.test.ts:111,116` | Bulunamayan iş dalının hızlı şeritte de sürülmesi: `makeGetJobStatusTool` zaten `deps.lookupDomain` alıyor; iş okuması da (`getJobForUser`) enjekte edilebilir bir port olsa bu dal DB'siz pinlenirdi |
-| B-2 | P2 | F-6'nın varyantlamadığı eksen: `jobs.error` sonda **boşlukla** biterse satır `record. . created` olur (iki nokta, arada boşluk) | repo dışı ölçüm §2 | `failureClause`'un girdiyi önce `trimEnd()` etmesi; ve testin `it.each` listesine bir "sondaki boşluk" satırı eklenmesi. Bugün ulaşılabilir değil, o yüzden P2 |
-| B-3 | P2 | Zincirin son halkası hiçbir durumda sonraki adımı söylemiyor. `failed` cevabı "bizim tarafımızda bir sorun" diyor ve ne yapılacağını söylemiyor; `succeeded` cevabı da hiçbir yere yönlendirmiyor. İki kardeş tool bunu yapıyor | §4 "What's next" ölçümü; `list-jobs.ts:270` ve `list-credit-activity.ts:430-431` | Duruma göre tek cümle: `failed` → aynı tool'u yeniden çalıştırma yolu (ör. `crawl_site`); `succeeded` → sonucu kullanan tool (`whats_next` ya da ilgili audit). Metin kararı, kod kararı değil |
-| B-4 | P2 | Description maliyeti söylemiyor (38 canlı tool'un 35'i söylüyor) | canlı `tools/list` sayımı | Diğer 35'le aynı biçimde ` Costs 0 credits.` eklenmesi |
-| B-5 | P2 | Docs sayfası F-3'ü (cevabın projeyi adlandırması) hiç anmıyor; kardeş `list-jobs.mdx` aynı olguyu anlatıyor | §1 tutarsızlık 2 | mdx "### Returns" listesine proje maddesinin eklenmesi. Drift kontrolü yalnız frontmatter + Input tablosuna baktığı için elle |
-| B-6 | P2 | Şemada olmayan argüman sessizce yutuluyor | canlı §3 | 5 tool'da ortak (bkz. `get_credit_balance.md` B-2) |
+| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
+|---|---|---|---|---|---|
+| B-1 | **P1** | "İş bulunamadı" cevabının `isError: true` bayrağı hızlı şeritte pinsiz: `errorResult` → `textResult` yapıldığında 156 test yeşil kalıyor. Bayrak düşerse istemci bulunamayan işi **başarılı sonuç** sayar | M10 (§2); koruma yalnız `get-job-status.db.test.ts:111,116` | Bulunamayan iş dalının hızlı şeritte de sürülmesi: `makeGetJobStatusTool` zaten `deps.lookupDomain` alıyor; iş okuması da (`getJobForUser`) enjekte edilebilir bir port olsa bu dal DB'siz pinlenirdi | KAPANDI #205 + canlı ✔ — `readJob` portu eklendi, `isError` hızlı şeritte pinli; canlı `4349f71`: GJS `isError` |
+| B-2 | P2 | F-6'nın varyantlamadığı eksen: `jobs.error` sonda **boşlukla** biterse satır `record. . created` olur (iki nokta, arada boşluk) | repo dışı ölçüm §2 | `failureClause`'un girdiyi önce `trimEnd()` etmesi; ve testin `it.each` listesine bir "sondaki boşluk" satırı eklenmesi. Bugün ulaşılabilir değil, o yüzden P2 | KAPANDI #205 — `failureClause` girdiyi `trimEnd()` ediyor, "sondaki boşluk" satırı `it.each`'e girdi |
+| B-3 | P2 | Zincirin son halkası hiçbir durumda sonraki adımı söylemiyor. `failed` cevabı "bizim tarafımızda bir sorun" diyor ve ne yapılacağını söylemiyor; `succeeded` cevabı da hiçbir yere yönlendirmiyor. İki kardeş tool bunu yapıyor | §4 "What's next" ölçümü; `list-jobs.ts:270` ve `list-credit-activity.ts:430-431` | Duruma göre tek cümle: `failed` → aynı tool'u yeniden çalıştırma yolu (ör. `crawl_site`); `succeeded` → sonucu kullanan tool (`whats_next` ya da ilgili audit). Metin kararı, kod kararı değil | KAPANDI #205 + canlı ✔ — `crawl_site`→audit üçlüsü / `pull_gsc_data`→GSC üçlüsü; canlı: GJS next-step |
+| B-4 | P2 | Description maliyeti söylemiyor (38 canlı tool'un 35'i söylüyor) | canlı `tools/list` sayımı | Diğer 35'le aynı biçimde ` Costs 0 credits.` eklenmesi | KAPANDI #205 — description "Costs 0 credits." (S7) |
+| B-5 | P2 | Docs sayfası F-3'ü (cevabın projeyi adlandırması) hiç anmıyor; kardeş `list-jobs.mdx` aynı olguyu anlatıyor | §1 tutarsızlık 2 | mdx "### Returns" listesine proje maddesinin eklenmesi. Drift kontrolü yalnız frontmatter + Input tablosuna baktığı için elle | KAPANDI #205 — `get-job-status.mdx` "Which site, and what to do next" gövdesi (S5) |
+| B-6 | P2 | Şemada olmayan argüman sessizce yutuluyor | canlı §3 | 5 tool'da ortak (bkz. `get_credit_balance.md` B-2) | KAPANDI #204 + canlı ✔ |
 
 ## Taban notu (şef, 2026-09-02, ölçüm sonrası)
 

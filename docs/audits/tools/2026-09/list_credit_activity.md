@@ -16,9 +16,11 @@
 | 6 Kart | PLANLI, SEVK EDİLMEMİŞ | `card-map.ts:16` `"list"`; `CARDED_TOOLS` (satır 62) yalnız `get_credit_balance` içeriyor |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | Bu dosya ✔ · `plan.mjs` PLAN girişi **YOK** (ve `EXCLUDED` boş) · `goals/` hedefi yok |
 
-**Karar:** DÜZELTME GEREKLİ — 512 kayıtlı bir hesaba imlecin sonunda **"No credit activity yet…
+**Karar (ölçüm turu, 2026-09-02):** DÜZELTME GEREKLİ — 512 kayıtlı bir hesaba imlecin sonunda **"No credit activity yet…
 nothing has moved your balance so far."** deniyor (canlı ölçüldü). Kardeş tool `list_jobs` bu iki
 dalı (bilinmeyen imleç / geçmişin sonu) doğru ayırıyor; düzeltme geri yönde yolculuk etmemiş.
+
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #205 + #206) — dört P1'in dördü de kapandı (B-1, B-2, B-3 canlı doğrulandı; B-4 hızlı şeritte pinlendi). **Kalan:** B-6 (P2, canlıda ölçülemedi — 0033 sonrası `project_id` taşıyan satır yok).
 
 ## 1. Statik okuma
 
@@ -141,14 +143,14 @@ Canlı `tools/list` bu tool için `_meta` **yayınlamıyor** (ölçüldü), `too
 
 ## Bulgular
 
-| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) |
-|---|---|---|---|---|
-| B-1 | **P1** | Geçmişin dibindeki bir imleç, 512 kayıtlı hesaba **`No credit activity yet … nothing has moved your balance so far.`** dedirtiyor. Cümle yanlış ve müşterinin defteri hakkında | canlı: `{"before_id":1}` ve `{"before_id":2}` (§3) | `list_jobs`'un **zaten** taşıdığı ayrımın buraya getirilmesi: `NO_MORE_JOBS_MESSAGE` karşılığı bir "geçmişin sonu" cümlesi; `formatCreditActivity` boş sayfada `paged` bayrağına bakıyor olmalı (bayrak zaten parametrede, satır 403, ama boş dalda kullanılmıyor — satır 406) |
-| B-2 | **P1** | Hiç verilmemiş / ulaşılamaz bir `before_id` reddedilmiyor: en yeni kayıtlar `Continuing from your cursor: … older credit entries` başlığıyla dönüyor | canlı: `{"before_id":99999999}` (§3) | `list_jobs`'taki `unknownCursor` + `UNKNOWN_CURSOR_MESSAGE` deseni (list-jobs.ts:82-84, 131-143). Burada imleç bir bigint olduğu için "kiracıya ait mi" kontrolü de aynı sorguda yapılabilir — bugün başka bir kiracının satır id'si de imleç olarak kabul ediliyor |
-| B-3 | P1 | Description "for which project" diyor, şemada `project_id` **yok**, ve verilen `project_id` (gerçek / rastgele UUID / bozuk — üçü de) sessizce yutulup hesap geneli cevap dönüyor. Model kapsamlanmış sanır | canlı 3 satır (§3) | İki seçenekten biri: (a) gerçek bir `project_id` filtresi (0033 sütunu zaten var), (b) `.strict()` ile reddetme. Sessiz yutma ikisinden de kötü |
-| B-4 | P1 | NEVER #4 kiracı filtresi hızlı şeritte ölçülmüyor: `.eq("user_id", userId)` silindiğinde 156 testin hepsi geçiyor. Koruma yalnız `*.db.test.ts`'te, o da `make verify`'da koşmuyor | M4 (§2) + `CLAUDE.md` kapı tablosu ("`make verify` … **DB şeritleri YOK**") | Kapının kapsam sorunu; bu tool'a özgü kod düzeltmesi değil. Öneri: `make verify-db`'nin hangi NEVER'ları tek başına taşıdığının zorlama haritasına yazılması |
-| B-5 | P2 | Docs sayfası description'ın vaat ettiği net harcama özetini ve imleç cümlesini hiç anlatmıyor | §1 tutarsızlık 1-2 | mdx gövdesine "Spent so far" satırının ve imleçle sayfalamanın anlatılması; drift kontrolü gövdeye bakmıyor, o yüzden bu elle yakalanmalı |
-| B-6 | P2 | Migration 0033'ün proje kapsamı canlıda hiç doğrulanamadı: ledger'ın en yeni satırı, sütunun yazılmaya başladığı andan **7 saat önce** | §4 | Ölçüm turunda bir kez ücretli bir iş koşup (operatör kararı) `project: <domain>` dalının canlıda göründüğünün kanıtlanması; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun yazılması |
+| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
+|---|---|---|---|---|---|
+| B-1 | **P1** | Geçmişin dibindeki bir imleç, 512 kayıtlı hesaba **`No credit activity yet … nothing has moved your balance so far.`** dedirtiyor. Cümle yanlış ve müşterinin defteri hakkında | canlı: `{"before_id":1}` ve `{"before_id":2}` (§3) | `list_jobs`'un **zaten** taşıdığı ayrımın buraya getirilmesi: `NO_MORE_JOBS_MESSAGE` karşılığı bir "geçmişin sonu" cümlesi; `formatCreditActivity` boş sayfada `paged` bayrağına bakıyor olmalı (bayrak zaten parametrede, satır 403, ama boş dalda kullanılmıyor — satır 406) | KAPANDI #205 + canlı ✔ — "end of your credit history"; canlı `4349f71`: LCA imleç cümleleri |
+| B-2 | **P1** | Hiç verilmemiş / ulaşılamaz bir `before_id` reddedilmiyor: en yeni kayıtlar `Continuing from your cursor: … older credit entries` başlığıyla dönüyor | canlı: `{"before_id":99999999}` (§3) | `list_jobs`'taki `unknownCursor` + `UNKNOWN_CURSOR_MESSAGE` deseni (list-jobs.ts:82-84, 131-143). Burada imleç bir bigint olduğu için "kiracıya ait mi" kontrolü de aynı sorguda yapılabilir — bugün başka bir kiracının satır id'si de imleç olarak kabul ediliyor | KAPANDI #205 + canlı ✔ — `unknownCursor` + yabancı-kiracı imleci reddi. Canlı şerh: bilinmeyen imleç iki kardeşte de `isError:false` dönüyor (tutarlı, şef kabul etti) |
+| B-3 | P1 | Description "for which project" diyor, şemada `project_id` **yok**, ve verilen `project_id` (gerçek / rastgele UUID / bozuk — üçü de) sessizce yutulup hesap geneli cevap dönüyor. Model kapsamlanmış sanır | canlı 3 satır (§3) | İki seçenekten biri: (a) gerçek bir `project_id` filtresi (0033 sütunu zaten var), (b) `.strict()` ile reddetme. Sessiz yutma ikisinden de kötü | KAPANDI #205 + canlı ✔ — şemada `project_id` (uuid), kiracı filtresinin üstüne; canlı: proje kapsamı |
+| B-4 | P1 | NEVER #4 kiracı filtresi hızlı şeritte ölçülmüyor: `.eq("user_id", userId)` silindiğinde 156 testin hepsi geçiyor. Koruma yalnız `*.db.test.ts`'te, o da `make verify`'da koşmuyor | M4 (§2) + `CLAUDE.md` kapı tablosu ("`make verify` … **DB şeritleri YOK**") | Kapının kapsam sorunu; bu tool'a özgü kod düzeltmesi değil. Öneri: `make verify-db`'nin hangi NEVER'ları tek başına taşıdığının zorlama haritasına yazılması | KAPANDI (#206) — üç okumanın da `.eq("user_id")`'i `service-client-pins.test.ts`'te pinli |
+| B-5 | P2 | Docs sayfası description'ın vaat ettiği net harcama özetini ve imleç cümlesini hiç anlatmıyor | §1 tutarsızlık 1-2 | mdx gövdesine "Spent so far" satırının ve imleçle sayfalamanın anlatılması; drift kontrolü gövdeye bakmıyor, o yüzden bu elle yakalanmalı | KAPANDI #205 — `list-credit-activity.mdx` gövdesi: "Spent so far" + imleçle sayfalama (S5) |
+| B-6 | P2 | Migration 0033'ün proje kapsamı canlıda hiç doğrulanamadı: ledger'ın en yeni satırı, sütunun yazılmaya başladığı andan **7 saat önce** | §4 | Ölçüm turunda bir kez ücretli bir iş koşup (operatör kararı) `project: <domain>` dalının canlıda göründüğünün kanıtlanması; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun yazılması | AÇIK — canlıda ölçülemedi; 0033 sonrası `project_id` taşıyan gerçek ledger satırı hâlâ yok |
 
 ## Taban notu (şef, 2026-09-02, ölçüm sonrası)
 
