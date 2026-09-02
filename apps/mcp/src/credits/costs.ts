@@ -116,8 +116,13 @@ export const TOOL_COSTS = {
   // audit_content (plan 2026-08-14 §4-N8 / §5): the GSC × crawl join — queries the site earns
   // impressions for whose words are missing from the page's own title and h1s. It reads TWO
   // stored measurements and calls no paid API, so the price is the analysis, not a vendor cost.
-  // PROPOSED AT 12 AND NOT YET SIGNED — NEVER #6: this number is invalid until a human approves
-  // it across code + docs + pricing, and the PR carrying it is parked for that signature.
+  // SIGNED BY THE OPERATOR 2026-08-17 at 12, shipped in PR #107 across code + docs + pricing. This
+  // comment said "PROPOSED AT 12 AND NOT YET SIGNED" for ten days after the signature landed, and
+  // two plan reviews logged it as debt before an outside audit re-found it a third time (L-06,
+  // 2026-08-26). A stale NEVER #6 disclaimer is worse than none: it tells the next reader a LIVE
+  // tool is charging under an invalid price, so they either escalate a closed question or learn to
+  // read the disclaimer as noise. NEVER #6 still binds the NUMBER — it does not move without a
+  // fresh human signature across code + docs + pricing.
   audit_content: 12,
   // The two AI-VISIBILITY tools (2026-08-17 signature package, MADDE 2 — SIGNED BY THE OPERATOR).
   // DataForSEO's LLM Mentions family: what a language model said about a domain or a keyword, on

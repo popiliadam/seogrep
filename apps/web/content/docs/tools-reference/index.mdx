@@ -1,0 +1,60 @@
+---
+title: Tools Reference
+description: "Every SeoGrep MCP tool, what it costs in credits, and whether it needs a paid balance."
+---
+
+One page per tool, generated from the same code the MCP server runs — so the credit cost and the paid-balance rule below are the ones the guard actually enforces, not a copy of them.
+
+## Free tools
+
+These spend no credits. Use them to set up, connect, and check state.
+
+| Tool | Cost | What it does |
+| --- | --- | --- |
+| [`setup_project`](/docs/tools-reference/setup-project) | Free | Register a website domain to track. Accepts a domain or URL; returns the project id. Idempotent — calling it… |
+| [`connect_gsc`](/docs/tools-reference/connect-gsc) | Free | Connect Google Search Console to a project. Returns a secure Google sign-in link that grants SeoGrep… |
+| [`list_projects`](/docs/tools-reference/list-projects) | Free | List the website domains you are tracking (oldest first), each with its Search Console state and last job… |
+| [`get_credit_balance`](/docs/tools-reference/get-credit-balance) | Free | Show your available credit balance (the running total of your credit ledger). |
+| [`list_credit_activity`](/docs/tools-reference/list-credit-activity) | Free | List your credit ledger entries, newest first — what each tool charged, for which project, plus net spend… |
+| [`get_job_status`](/docs/tools-reference/get-job-status) | Free | Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id. |
+| [`list_jobs`](/docs/tools-reference/list-jobs) | Free | List your recent background jobs — crawls and Search Console pulls — newest first, with each job_id. Use it… |
+| [`whats_next`](/docs/tools-reference/whats-next) | Free | Not sure what to do next? whats_next looks at where your project stands — crawl, audits, Search Console… |
+| [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties) | Free | List the Search Console properties on your connected Google accounts: permission level, whether SeoGrep can… |
+| [`track_gsc_property`](/docs/tools-reference/track-gsc-property) | Free | Start tracking a Search Console property: opens its project (or restores it from the archive) and links the… |
+| [`untrack_project`](/docs/tools-reference/untrack-project) | Free | Stop tracking a project. It moves to the archive — its history and Search Console link are kept, and… |
+| [`track_keywords`](/docs/tools-reference/track-keywords) | Free | Choose which keywords a project's ranking is watched for, on one location, language and device. Registration… |
+
+## Tools that spend credits
+
+Credits are reserved before the call and settled after it; a call that fails without delivering a result is refunded. **Paid balance: Required** marks a tool that a trial account cannot reach at any price — buy any credit pack and it opens.
+
+| Tool | Cost | Paid balance | What it does |
+| --- | --- | --- | --- |
+| [`crawl_site`](/docs/tools-reference/crawl-site) | 20 credits | — | Crawl a project's website (async). Returns a job_id immediately; poll it with get_job_status. |
+| [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) | 5 credits | — | Pull two windows of Google Search Console performance (current + previous period) for a connected project… |
+| [`find_quick_wins`](/docs/tools-reference/find-quick-wins) | 10 credits | — | Find quick-win keyword opportunities from your latest Search Console pull: queries ranking in positions 8–20… |
+| [`detect_cannibalization`](/docs/tools-reference/detect-cannibalization) | 10 credits | — | Detect keyword cannibalization from your latest Search Console pull: queries where two or more of your pages… |
+| [`analyze_content_decay`](/docs/tools-reference/analyze-content-decay) | 10 credits | — | Find decaying pages from your latest Search Console pull: pages whose clicks dropped meaningfully (absolute… |
+| [`audit_onpage`](/docs/tools-reference/audit-onpage) | 30 credits | — | Audit on-page SEO for a project's latest crawl: titles, meta descriptions, h1s, canonicals, and thin… |
+| [`audit_tech`](/docs/tools-reference/audit-tech) | 15 credits | — | Audit technical SEO for a project's latest crawl. Always reported: HTTP status, Redirects surfaced, Not… |
+| [`audit_schema`](/docs/tools-reference/audit-schema) | 5 credits | — | Report structured-data coverage AND required-field validation for a project's latest crawl: which pages… |
+| [`audit_speed`](/docs/tools-reference/audit-speed) | 15 credits | Required | Measure how fast pages load with Google Lighthouse: the performance score, the lab Core Web Vitals (LCP… |
+| [`audit_content`](/docs/tools-reference/audit-content) | 12 credits | — | Find queries your pages rank for but never mention in their title or h1, joining your latest pull and crawl… |
+| [`research_keywords`](/docs/tools-reference/research-keywords) | 25 credits | Required | Look up Google search volume, CPC, competition, keyword difficulty, search intent and search-volume trend… |
+| [`discover_keywords`](/docs/tools-reference/discover-keywords) | 40 credits | Required | Discover keywords to target, from DataForSEO Labs — the question that comes before pricing a list you… |
+| [`my_pages`](/docs/tools-reference/my-pages) | 40 credits | Required | List the pages of a domain that DataForSEO Labs reports ranking figures for, and compare them against the… |
+| [`ranked_keywords`](/docs/tools-reference/ranked-keywords) | 65 credits | Required | List the Google organic keywords a domain already ranks for — organic and on-page position, monthly search… |
+| [`analyze_backlinks`](/docs/tools-reference/analyze-backlinks) | 70 credits | Required | Analyze a domain's backlink profile — total backlinks, referring domains, dofollow-only share, spam score… |
+| [`compare_competitors`](/docs/tools-reference/compare-competitors) | 90 credits | Required | Compare a domain with its competitors on Google organic search — organic SERP counts, all twelve position… |
+| [`keyword_gap`](/docs/tools-reference/keyword-gap) | 45 credits | Required | Find the Google organic keywords a competitor ranks for and your domain does not — each with its monthly… |
+| [`link_gap`](/docs/tools-reference/link-gap) | 45 credits | Required | Find the domains that link to a competitor but not to you — the outreach shortlist — each with its… |
+| [`backlink_changes`](/docs/tools-reference/backlink-changes) | 35 credits | Required | See how a site's backlink profile changed over time: new and lost backlinks and referring domains per… |
+| [`backlink_details`](/docs/tools-reference/backlink-details) | 35 credits | Required | List a site's individual backlinks — who links, from which page, to which page of the site, with what anchor… |
+| [`disavow_candidates`](/docs/tools-reference/disavow-candidates) | 40 credits | Required | Find candidate referring domains for a Google disavow file, and return the disavow file's text for you to… |
+| [`ai_visibility`](/docs/tools-reference/ai-visibility) | 90 credits | Required | Measure how a domain or a keyword is mentioned in one AI assistant's answers, from DataForSEO's LLM Mentions… |
+| [`ai_visibility_compare`](/docs/tools-reference/ai-visibility-compare) | 90 / compared target | Required | Compare how several domains or keywords are mentioned in one AI assistant's answers, side by side, from… |
+| [`generate_report`](/docs/tools-reference/generate-report) | 15 credits | — | Generate a shareable HTML SEO report for a project from its latest crawl and Search Console data, and get a… |
+| [`serp_snapshot`](/docs/tools-reference/serp-snapshot) | 5 + 8 / keyword | Required | Measure where a domain appears in Google's organic results for up to 10 keywords, on one location, one… |
+| [`keyword_positions`](/docs/tools-reference/keyword-positions) | 10 credits | — | Read the SERP positions already measured and stored for a domain's keywords — each reading with its own… |
+
+See [Billing and credits](/docs/billing-and-credits) for how credits are reserved, settled and refunded, and [Getting started](/docs/getting-started) to connect a client.

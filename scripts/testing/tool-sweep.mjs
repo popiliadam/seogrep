@@ -1,7 +1,8 @@
 // tool-sweep — drives the live SeoGrep MCP endpoint across the site x tool x scenario matrix
 // and records what the server ACTUALLY returned and what it ACTUALLY cost.
 //
-// WHY THIS EXISTS. 19 tools x 8 sites x 6 scenarios cannot be run by hand: the context bloats,
+// WHY THIS EXISTS. The sweep matrix (every PLAN tool x 8 sites x 6 scenarios) cannot be run by
+// hand: the context bloats,
 // the measurement is lost, and nothing is repeatable. This is a DRIVER and a RECORDER, not an
 // analysis engine. It answers one question per cell — "what came back, and what did it cost" —
 // and keeps the full raw response. The analysis happens afterwards, by hand, from the JSONL,
@@ -214,7 +215,7 @@ async function liveRun(cells, opts, io) {
 
   log("");
   log(`RUN COMPLETE — ${state.ran} cells, ${state.spent} credits MEASURED, ${state.mismatches} delta mismatch(es).`);
-  log("Raw JSONL written. --self-test is the only automated check on this harness; verify.sh does not see scripts/.");
+  log("Raw JSONL written. --self-test is the only automated check on this harness, and verify.sh runs it; the live sweep above is never run by CI.");
 }
 
 async function main(argv) {

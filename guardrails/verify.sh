@@ -38,4 +38,30 @@ pnpm turbo run typecheck lint test build
 # Yukarıdaki `build` satırı hâlâ doğru sıradır — kontrolü yeşil YAPAN odur; artık güvenli YAPAN o
 # değil.
 node apps/web/scripts/gen-tool-docs.mjs --check
+# Deploy-trigger drift: the MCP image's workspace-package list is copied into apps/mcp/Dockerfile
+# (twice) and .github/workflows/deploy-mcp.yml, and this derives all three from apps/mcp's own
+# dependencies. It reads only manifests and text, so it needs neither build nor DB — but it lives
+# HERE rather than in CI's static-guards job, which is deliberately node-free. `verify` is a
+# required check; static-guards is too, but it cannot run node (imzalı ders 15: kapı, dokunulan
+# yüzeyin kendi kontrolünü içerir — ve bu yüzeyin kontrolü node ister).
+node scripts/testing/check-deploy-paths.mjs --self-test
+node scripts/testing/check-deploy-paths.mjs
+# NUL bytes in tracked text sources. A single NUL makes a source `data` to file(1) and binary to
+# Git, which removes it from review diffs, from text search, and from every scanner that skips
+# binaries — INCLUDING gitleaks, which is a required check. So this is not cosmetics: it is the
+# hole through which a secret would pass the secret gate. Found three such files on 2026-08-27,
+# two of them production modules that no audit had seen (L-09 and its two siblings).
+node scripts/testing/check-text-sources.mjs --self-test
+node scripts/testing/check-text-sources.mjs
+# The live-tool sweep's OWN coverage gate. It asserts that every tool the server publishes is
+# either in PLAN or in EXCLUDED with a written reason — and it had been exiting 1 on every branch
+# since nineteen tools were left in neither, invisible because nothing ran it: verify.sh did not
+# execute scripts/ at all (M-01, audit 2026-08-26). --self-test needs no network, no disk and no
+# clock, and issues ZERO tool calls; the live sweep is never run here and spends no credits.
+node scripts/testing/tool-sweep.mjs --self-test
+# Repo migrations vs the cloud migration journal — the SELF-TEST only, which needs no database.
+# The live half is env-conditional and lives in `make goals` (migration-journal-sync), because a
+# gate that reaches production cannot be a step of the local deterministic gate. Measured
+# 2026-08-27: prod recorded 21 of the repo's 33 migrations; the audit had reported one (M-08).
+bash guardrails/check-migration-journal.sh --self-test
 echo "VERIFY: PASS"

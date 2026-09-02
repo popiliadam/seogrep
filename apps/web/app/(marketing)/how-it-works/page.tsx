@@ -1,3 +1,4 @@
+import { mcpUrlFor, mcpUrlTemplate } from "@pseo/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -18,7 +19,9 @@ const STEPS: readonly Step[] = [
   {
     title: "Get your personal MCP URL",
     body: "Sign up and confirm your email, and your dashboard gives you a personal MCP URL — one URL that carries your projects and credits.",
-    aside: ["https://mcp.seogrep.com/u/•••••••••", "— one URL, all your projects"],
+    // Masked, but built from the LIVE template — the literal that stood here showed a `/u/<key>/mcp`
+    // address that has never routed (M-04). See the note on the landing page's `mcpUrl`.
+    aside: [mcpUrlFor("•••••••••", mcpUrlTemplate()), "— one URL, all your projects"],
   },
   {
     title: "Paste it into the client you already use",

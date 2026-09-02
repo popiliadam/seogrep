@@ -88,7 +88,58 @@ export const ID_TOOLS = Object.freeze([
  * today — all 19 live tools are planned — but the map stays, because the coverage assertion's
  * whole value is that skipping a tool costs someone a written sentence.
  */
-export const EXCLUDED = Object.freeze({});
+/**
+ * Tools deliberately OUTSIDE the sweep, each with the reason written out. assertCoverage treats an
+ * entry here as covered, so this object is the only way a live tool can be absent from PLAN without
+ * failing the run — which is why every value must be a non-empty reason and why the check enforces
+ * that rather than trusting the key alone.
+ *
+ * WHY IT WAS EMPTY WHILE 19 TOOLS WERE UNCOVERED. It was never filled in. `--self-test` had been
+ * exiting 1 on the coverage assertion, and nothing ran it: verify.sh does not execute scripts/, so
+ * the sweep's own coverage gate was red on every branch and invisible on all of them (M-01, audit
+ * 2026-08-26). verify.sh now runs `--self-test`, so this list cannot go stale in silence again.
+ *
+ * THIS IS NOT THE GATE BEING LOOSENED. What the assertion measures is "no live tool is
+ * UNACCOUNTED FOR", not "every live tool is swept" — a sweep cell spends real credits against real
+ * customer sites, and which of those to buy is an operator decision (contract.md: money and the
+ * outside world are the human's). Three of the nineteen cost nothing and mutate nothing, so they
+ * moved into PLAN rather than here. The other sixteen are listed with what it would take to
+ * include them.
+ */
+export const EXCLUDED = Object.freeze({
+  // ---- Free, but MUTATING. The sweep authenticates as one real tenant and runs against eight
+  // real customer sites; a cell here would change tracked state, not observe it. A sweep that
+  // rewrites the estate it is measuring cannot be re-run, and its second run measures its first.
+  track_gsc_property:
+    "free but MUTATING: opens or restores a project and binds a GSC property to it. Needs a " +
+    "disposable tenant, not the campaign account. Include when the sweep gets its own throwaway " +
+    "workspace.",
+  untrack_project:
+    "free but MUTATING: archives a project. Running it across the campaign sites would dismantle " +
+    "the estate every other layer measures. Same precondition as track_gsc_property.",
+  track_keywords:
+    "free but MUTATING: writes a project's tracked-keyword registration, and the registration is " +
+    "what keyword_positions later bills against. Same precondition.",
+
+  // ---- Paid. Each line carries the signed per-call price, because the reason a cell is not
+  // bought is the price times the site count, and that number should not need looking up.
+  discover_keywords: "paid, 40 credits/call and a DataForSEO Labs request. Needs an operator budget signature (NEVER #6).",
+  my_pages: "paid, 40 credits/call and a DataForSEO Labs request. Needs an operator budget signature.",
+  keyword_gap: "paid, 45 credits/call. Also requires a competitor domain per site — a per-site input the matrix does not yet carry.",
+  link_gap: "paid, 45 credits/call. Same missing per-site competitor input as keyword_gap.",
+  backlink_changes: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
+  backlink_details: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
+  disavow_candidates: "paid, 40 credits/call. Needs a budget signature, and a spam-score threshold chosen per site rather than defaulted.",
+  audit_speed: "paid, 15 credits/call plus a Lighthouse run per URL. Needs a budget signature and a per-site URL list.",
+  audit_content: "paid, 12 credits/call. Reads a stored pull AND a stored crawl, so it can only run after K1 and K2 both land on the same site.",
+  ai_visibility:
+    "paid, 90 credits/call — and BLOCKED beyond price: H-01 (audit 2026-08-26) found the vendor " +
+    "budget ceiling for this family unproven, so paid AI smoke is refused until the upper bound " +
+    "is established and the margin re-signed.",
+  ai_visibility_compare: "paid, 90 credits PER TARGET over 2-10 targets. Blocked by H-01 exactly as ai_visibility is.",
+  keyword_positions: "paid, 10 credits/call, and it only returns anything for keywords track_keywords registered first — which is itself excluded above.",
+  serp_snapshot: "paid, 5 + 8 per keyword over 1-10 keywords. Needs a budget signature and a per-site keyword list.",
+});
 
 /**
  * The six campaign scenarios. `charges` is the PRE-REGISTERED expectation of whether the cell
@@ -194,6 +245,13 @@ export const PLAN = Object.freeze([
   { layer: "K0", scenario: "S5", tool: "setup_project", sites: allSites, needs: [], note: "idempotence: the second call must report created:false and charge nothing", args: (c) => ({ domain: c.site.domain }) },
   { layer: "K0", scenario: "S1", tool: "list_projects", sites: only("adstark"), needs: [], note: "account-wide, not per-site — one call is the whole measurement", args: () => ({}) },
   { layer: "K0", scenario: "S1", tool: "get_credit_balance", sites: only("adstark"), needs: [], note: "account-wide; also the instrument every other cell is measured with", args: () => ({}) },
+  // The three free, READ-ONLY account surfaces. Added 2026-08-27 (M-01): they were among the 19
+  // tools in neither PLAN nor EXCLUDED, and unlike the other sixteen they cost nothing and change
+  // nothing, so there was never a reason to leave them unmeasured. Account-wide like the two above,
+  // so one site each — eight calls would be the same call eight times.
+  { layer: "K0", scenario: "S1", tool: "list_credit_activity", sites: only("adstark"), needs: [], note: "account-wide. The ledger read the sweep's own charges land in — measuring it here means a later cell's delta can be cross-read against what this tool reports", args: () => ({}) },
+  { layer: "K0", scenario: "S1", tool: "list_jobs", sites: only("adstark"), needs: [], note: "account-wide. Runs BEFORE K1 enqueues anything, so it also records the empty-list branch a new customer meets", args: () => ({}) },
+  { layer: "K0", scenario: "S1", tool: "list_gsc_properties", sites: only("adstark"), needs: [], note: "account-wide, read-only: lists the properties on connected Google accounts. Its mutating sibling track_gsc_property is EXCLUDED — see the reason there", args: () => ({}) },
   { layer: "K0", scenario: "S1", tool: "whats_next", sites: allSites, needs: ["projectId"], note: "H7: does the GSC branch swallow the audit branch at n=8", args: (c) => ({ project_id: c.projectId }) },
   { layer: "K0", scenario: "S1b", tool: "whats_next", sites: INVARIANT_SITE, needs: [], note: "project_id OMITTED — the multi-project summary branch. tool-analiz item 6(4) records it as never tested; after K0 the account holds eight projects, which is the first real input it has ever had. Lettered S1b, not S1, only because the cell key is site|tool|scenario and the per-project cell above already owns adstark|whats_next|S1", args: () => ({}) },
   { layer: "K0", scenario: "S1", tool: "connect_gsc", sites: allSites, needs: ["projectId"], note: "returns an OAuth link; the human clicks it, the harness does not", args: (c) => ({ project_id: c.projectId }) },
@@ -358,6 +416,19 @@ export const paidCells = (cells) => cells.filter((cell) => cell.unitCost > 0);
  * (--dry-run, --self-test), where TOOL_COSTS is the authority instead.
  */
 export function assertCoverage(liveToolNames, coveredToolNames, excluded = EXCLUDED) {
+  // EXCLUDED is the only way a live tool may be absent from PLAN, so the REASON is what makes it a
+  // decision rather than an escape hatch — and until 2026-08-27 nothing read it. Object.keys() alone
+  // meant `{ ai_visibility: undefined }` silenced the gate exactly as well as a written argument
+  // would, i.e. the mechanism the header calls "with a written reason" did not require one. A blank
+  // exclusion is now a startup failure, before any coverage arithmetic runs.
+  const unexplained = Object.entries(excluded)
+    .filter(([, reason]) => typeof reason !== "string" || reason.trim().length === 0)
+    .map(([name]) => name);
+  if (unexplained.length > 0) {
+    throw new Error(
+      `coverage: ${unexplained.length} EXCLUDED tool(s) carry no written reason: ${unexplained.join(", ")}`,
+    );
+  }
   const covered = new Set([...coveredToolNames, ...Object.keys(excluded)]);
   const known = Object.keys(TOOL_COSTS);
   const uncovered = (liveToolNames ?? known).filter((name) => !covered.has(name));

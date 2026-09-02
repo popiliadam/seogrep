@@ -35,13 +35,37 @@ const REPORT_CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-// Frame protection for EVERY route (L-11). It used to exist only inside the report CSP above,
-// which left /login, /signup and the whole /app dashboard with no clickjacking defence at all —
-// a live check confirmed the platform adds none. Deliberately frame-ancestors ONLY: a global
-// script-src/default-src would have to model the whole marketing + docs + dashboard surface, and
-// getting that wrong breaks the product. X-Frame-Options is the second layer for user agents
-// that do not implement CSP3 frame-ancestors.
-const GLOBAL_CSP = "frame-ancestors 'none'";
+// The global policy (L-11, widened for L-10). It used to be frame-ancestors ONLY, which left
+// every marketing, auth and app route with clickjacking defence and nothing else — no layer at all
+// between an XSS and data leaving the page (L-10, audit 2026-08-26).
+//
+// WHAT IS ADDED, AND WHY EXACTLY THESE TWO. Both forbid a capability this product does not use, so
+// each was VERIFIED UNUSED before being turned on rather than assumed:
+//
+//   base-uri 'none'   — grepped: this app renders no <base> element anywhere. It is also the
+//                       highest-value directive available without a nonce: an injected
+//                       `<base href="//attacker">` silently retargets EVERY relative URL on the
+//                       page, script src included, turning one injection point into all of them.
+//   object-src 'none' — grepped: no <object> and no <embed>. Plugin content is a legacy script
+//                       execution path with no use here.
+//
+// WHAT IS DELIBERATELY NOT ADDED, each for a MEASURED reason rather than caution:
+//
+//   form-action 'self' — WOULD BREAK A PAYING CUSTOMER. app/billing/actions.ts:103 redirects a
+//                        <form action={openCustomerPortal}> submission to Paddle's hosted portal,
+//                        i.e. cross-origin, and browsers enforce form-action against the REDIRECT
+//                        target. This is exactly the "defense-in-depth header that breaks
+//                        checkout" trade the constitution's NEVER list exists to prevent.
+//   script-src / connect-src / default-src — cannot be added honestly from a static reading. Next
+//                        ships inline hydration scripts, so a real script-src needs per-request
+//                        nonces (which also forces dynamic rendering and would move the Lighthouse
+//                        numbers), and connect-src must enumerate Supabase, PostHog, Turnstile and
+//                        Paddle exactly. Both need verification against a RUNNING app — a login
+//                        that breaks under a wrong connect-src is a total outage. Staging that is
+//                        the remaining half of L-10 and is still open.
+//
+// X-Frame-Options is the second layer for user agents that do not implement CSP3 frame-ancestors.
+const GLOBAL_CSP = ["frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'"].join("; ");
 
 export const SECURITY_HEADER_RULES: readonly HeaderRule[] = [
   {
