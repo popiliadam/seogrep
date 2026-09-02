@@ -6,6 +6,7 @@ import { makeTrackKeywordsTool } from "./track-keywords.ts";
 import {
   MAX_TRACKED_KEYWORDS_PER_PROJECT,
   countActiveTrackedKeywords,
+  listActiveTrackedKeywords,
   loadTrackedKeywords,
   trackKeywords,
   untrackKeywords,
@@ -229,6 +230,7 @@ describe("track_keywords against the local stack", () => {
 
     expect(await loadTrackedKeywords(stranger.userId, identity, ["seo tools"])).toEqual([]);
     expect(await countActiveTrackedKeywords(stranger.userId, projectId)).toBe(0);
+    expect(await listActiveTrackedKeywords(stranger.userId, projectId)).toEqual([]);
     expect(await untrackKeywords(stranger.userId, identity, ["seo tools"])).toEqual([]);
     // The owner's row is untouched by all three.
     const rows = await trackedRows(owner.userId, projectId);
@@ -239,6 +241,14 @@ describe("track_keywords against the local stack", () => {
     // than about three functions that always return nothing.
     expect(await loadTrackedKeywords(owner.userId, identity, ["seo tools"])).toHaveLength(1);
     expect(await countActiveTrackedKeywords(owner.userId, projectId)).toBe(1);
+    expect(await listActiveTrackedKeywords(owner.userId, projectId)).toEqual([
+      {
+        keyword: "seo tools",
+        locationName: identity.locationName,
+        languageCode: identity.languageCode,
+        device: identity.device,
+      },
+    ]);
     expect(await untrackKeywords(owner.userId, identity, ["seo tools"])).toEqual(["seo tools"]);
   });
 
@@ -248,6 +258,10 @@ describe("track_keywords against the local stack", () => {
     const identity = identityOf(projectId);
     await trackKeywords(ctx.userId, identity, ["seo tools"]);
     expect(await untrackKeywords(ctx.userId, identity, ["seo tools"])).toEqual(["seo tools"]);
+    // The read half only ever reports ACTIVE rows: the row is still there (nothing is deleted)
+    // and it must not come back from `action: "list"`.
+    expect(await listActiveTrackedKeywords(ctx.userId, projectId)).toEqual([]);
+    expect(await trackedRows(ctx.userId, projectId)).toHaveLength(1);
     const firstStamp = (await trackedRows(ctx.userId, projectId))[0]?.untracked_at;
     // The second call matches nothing at all — `untracked_at is null` is part of the filter.
     expect(await untrackKeywords(ctx.userId, identity, ["seo tools"])).toEqual([]);
