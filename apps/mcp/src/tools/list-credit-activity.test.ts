@@ -40,9 +40,9 @@ function entry(overrides: Partial<CreditActivityRow> = {}): CreditActivityRow {
 }
 
 function recordingPort(rows: readonly CreditActivityRow[]) {
-  const calls: { userId: string; limit: number; beforeId?: number }[] = [];
-  const listActivity: ListCreditActivityFn = async (userId, limit, beforeId) => {
-    calls.push({ userId, limit, beforeId });
+  const calls: { userId: string; limit: number; beforeId?: number; projectId?: string }[] = [];
+  const listActivity: ListCreditActivityFn = async (userId, limit, beforeId, projectId) => {
+    calls.push({ userId, limit, beforeId, projectId });
     // `total` equals what the port hands back, so these specs describe an UNCUT page and none of
     // their wordings change; the cut sentence has its own specs below.
     return { rows, total: rows.length };
@@ -490,5 +490,101 @@ describe("the heading a paged answer carries", () => {
     const next = textOf(await port.tool.run(ctx, { limit: 2, before_id: 401 }));
     expect(next).toMatch(/Continuing from your cursor/);
     expect(next).not.toMatch(/most recent/i);
+  });
+});
+
+/**
+ * LCA B-3, measured live 2026-09-02. The description says the list shows "what each tool charged,
+ * FOR WHICH PROJECT", so a model asked "what did dentnotion cost me?" passes `project_id`. There
+ * was no such field, and the argument was SWALLOWED: a real id, a random uuid and a malformed
+ * string all produced the byte-identical account-wide answer. The model reads a scoped list and
+ * tells the customer a number that is somebody else's site's too.
+ *
+ * Migration 0033 gave `credit_ledger` the column AND the (user_id, project_id, created_at) index,
+ * so the scope is a real filter rather than a refusal.
+ */
+describe("scoping the ledger to one project", () => {
+  const ctx = { userId: "u-1", keyId: "k-1" };
+  const PROJECT = "e2785bf7-1111-4111-8111-111111111111";
+  const domains = new Map([["p-1", "dentnotion.com"]]);
+
+  it("passes project_id through to the read port instead of swallowing it", async () => {
+    const port = recordingPort([entry({ project_id: "p-1" })]);
+    await port.tool.run(ctx, { project_id: PROJECT });
+    expect(port.calls[0]?.projectId).toBe(PROJECT);
+  });
+
+  it("refuses a project_id that is not a uuid, and never reaches the read port", async () => {
+    const port = recordingPort([entry()]);
+    const result = await port.tool.run(ctx, { project_id: "not-a-uuid" });
+    expect(result.isError).toBe(true);
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("names the project in the heading, so a scoped list cannot read as the whole ledger", () => {
+    const text = formatCreditActivity(
+      { rows: [entry({ project_id: "p-1" })], total: 1 },
+      domains,
+      undefined,
+      false,
+      "p-1",
+    );
+    expect(text).toMatch(/most recent credit entries of 1 for dentnotion\.com/i);
+  });
+
+  it("keeps the scope on a continued page too", () => {
+    const text = formatCreditActivity(
+      { rows: [entry({ project_id: "p-1" })], total: 1 },
+      domains,
+      undefined,
+      true,
+      "p-1",
+    );
+    expect(text).toMatch(/older credit entries for dentnotion\.com/i);
+  });
+
+  /**
+   * THE EMPTY SCOPED ANSWER IS THE DANGEROUS ONE. `project_id` was only written from the moment
+   * the 0033 deploy went live, and the ledger is append-only so the older rows can never be
+   * backfilled. "No entries for this site" would therefore be read as "this site cost nothing"
+   * by an account whose 512 historical entries simply predate the column.
+   */
+  it("says which project has no entries, and why older spends are not in that answer", () => {
+    const text = formatCreditActivity({ rows: [], total: 0 }, domains, undefined, false, "p-1");
+    expect(text).toMatch(/no credit entries recorded for dentnotion\.com/i);
+    expect(text).not.toMatch(/nothing has moved your balance/i);
+    expect(text).toMatch(/without project_id/i);
+  });
+
+  it("keeps the account-wide empty sentence when no project was asked for", () => {
+    expect(formatCreditActivity({ rows: [], total: 0 }, domains)).toMatch(
+      /nothing has moved your balance/i,
+    );
+  });
+
+  /**
+   * The summary is the other half of the same lie: "Spent so far: 7081 credits across 24 tools"
+   * printed under a one-project list is an account-wide number wearing a project's heading.
+   */
+  it("scopes the spend summary to the same project the list is scoped to", async () => {
+    const seen: (string | undefined)[] = [];
+    const tool = makeListCreditActivityTool({
+      listActivity: async () => ({ rows: [entry({ project_id: "p-1" })], total: 1 }),
+      listDomains: async () => domains,
+      summarizeSpend: async (_userId, projectId) => {
+        seen.push(projectId);
+        return { byTool: [], totalNet: 0, rowsCovered: 0, rowsTotal: 0 };
+      },
+    });
+    await tool.run(ctx, { project_id: PROJECT });
+    expect(seen).toEqual([PROJECT]);
+  });
+
+  it("names the scope in the spend sentence, and says nothing extra when there is none", () => {
+    const summary = summarizeSpendRows([{ tool: "crawl_site", delta: -20 }], 1);
+    expect(formatSpendSummary(summary, "dentnotion.com")).toMatch(
+      /spent so far on dentnotion\.com/i,
+    );
+    expect(formatSpendSummary(summary)).toMatch(/spent so far: 20 credits/i);
   });
 });

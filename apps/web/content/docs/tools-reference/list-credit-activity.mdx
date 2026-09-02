@@ -1,6 +1,6 @@
 ---
 title: list_credit_activity
-description: "List your credit ledger entries, newest first — what each tool charged, for which project, plus net spend per tool. Pages with before_id."
+description: "List your credit ledger entries, newest first — what each tool charged, for which project, plus net spend per tool. Scope it to one site with project_id…"
 ---
 
 **Cost:** Free (0 credits).
@@ -31,6 +31,7 @@ Ask your MCP client in plain language:
 | --- | --- | --- | --- |
 | `limit` | integer | No | How many recent entries to return (1-50, default 10). |
 | `before_id` | integer | No | Paging cursor: return only entries older than this entry id. Each answer names the value to pass for the next page. Omit for the newest entries. |
+| `project_id` | string (uuid) | No | Show only the spends recorded against this project (from list_projects). Entries written before the ledger started storing a project cannot match it; omit this to see the whole account. |
 
 ### Returns
 
