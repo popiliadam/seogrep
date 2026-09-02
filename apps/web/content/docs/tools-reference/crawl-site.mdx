@@ -19,7 +19,7 @@ Infrastructure paths are left out: `/cdn-cgi/` and `/.well-known/` are the CDN's
 
 ## Large sites, and why the page count is a floor
 
-Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with `include_paths` — for example `["/blog"]` — and run one focused crawl per section; this keeps every crawl within the cap and spends predictably.
+Each crawl covers up to **100 pages** — and stops at a **90-second time budget**, whichever comes first. On a slow or large site the clock is usually what runs out: one measured whole-site crawl returned 51 pages and stopped on TIME, not at the page limit, for the same flat price. Coverage therefore varies between runs of the same site, and the finish summary says which ceiling stopped that run. To crawl a bigger site — or to cover a section fully rather than partly — target it with `include_paths` — for example `["/blog"]` — and run one focused crawl per section; this keeps every crawl within both ceilings and spends predictably.
 
 Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it quotes is a **lower bound** — "at least N pages", never "~N". Both ways of sizing a site are floors by construction: reading the sitemap is bounded by how much of it is read, and the fallback counts only the links on your homepage. On one measured site the check said 28 and the crawl's own queue found at least 222. A "~" reads as "approximately", i.e. as likely-high as likely-low, and it never is — so the wording says which direction it can be wrong in. Where the floor came from is named too, and the homepage-only case says outright that the real site is very likely larger.
 
@@ -52,11 +52,15 @@ The tool replies with a `job_id`. Poll it until the job is done:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project_id` | string (uuid) | Yes | The project_id from setup_project / list_projects. |
-| `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). |
+| `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). A crawl also stops at a 90-second time budget, whichever comes first — on a slow or large site that budget usually binds before the page cap does, so fewer pages than max_urls are crawled for the same price. Narrow the crawl with include_paths to cover a section fully. |
 | `include_paths` | string[] | No | Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap). |
 | `seed_from_ranking_pages` | boolean | No | OPT-IN, off by default: start the crawl from the pages DataForSEO reports as ranking for this domain, so they are fetched before the 100-page cap is reached. This is a paid DataForSEO lookup and is charged SEPARATELY at the my_pages price (40 credits, its own ledger line); the crawl itself still costs 20. If the lookup returns nothing this crawl can use, or cannot run at all, the crawl runs without the seeds and the seeding is not charged. The lookup uses the same defaults as my_pages (United States, English) — for another market, run my_pages yourself. |
 | `confirm` | boolean | No | Set to true to re-run a call this tool answered with a confirmation prompt — an estimated cost above the confirmation threshold, or a scope the tool asks you to confirm. Optional, and only meaningful after such a prompt: nothing is charged until the call is re-run with it. |
 
 ### Returns
 
-A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — plus, when the free size check sized the site, how many pages it found **at least** and how many of them this one crawl covers. Feed the `job_id` to [`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports the pages crawled and skipped so far, so a job that is working and a job that is stuck no longer look alike, and when it finishes it carries the summary.
+A `job_id`, a `status` of `queued or already running`, and the `estimated_credits` the crawl will cost — plus, when the free size check sized the site, how many pages it found **at least** and how many of them this one crawl covers. The status says both because a worker usually claims the job within a second: the row is created `queued`, and by the time the `job_id` reaches you it is normally already `running`.
+
+If a crawl of this project is **already in flight**, the call returns that job's `job_id` instead of starting a second one — nothing is queued and nothing is charged. A second crawl of the same project is a second full charge for the same pages, so it is never started on your behalf without you asking again after the first one finishes.
+
+Feed the `job_id` to [`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports the pages crawled and skipped so far, so a job that is working and a job that is stuck no longer look alike, and when it finishes it carries the summary.

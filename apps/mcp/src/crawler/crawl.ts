@@ -684,7 +684,14 @@ export const USER_AGENT = "SeoGrepBot/1.0 (+https://seogrep.com/docs)";
 
 const DEFAULT_MAX_URLS = 100;
 const DEFAULT_PAGE_TIMEOUT_MS = 10_000;
-const DEFAULT_TIME_BUDGET_MS = 90_000;
+/**
+ * The WALL CLOCK one crawl gets — and, measured live 2026-09-02, the ceiling that usually binds
+ * FIRST: a 100-page run of a real site stopped at 51 pages "after 91s". EXPORTED so the two places
+ * that tell a customer what a crawl covers (the `max_urls` description and the docs page) quote
+ * this number rather than retyping one. A bound a customer is charged against must not be able to
+ * drift from the bound the crawler enforces.
+ */
+export const DEFAULT_TIME_BUDGET_MS = 90_000;
 const DEFAULT_CRAWL_DELAY_CAP_MS = 1_000;
 const DEFAULT_ROBOTS_RETRY_DELAY_MS = 2_000;
 const MAX_REDIRECTS = 5;

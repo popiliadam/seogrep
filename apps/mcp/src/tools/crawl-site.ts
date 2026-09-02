@@ -2,7 +2,11 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
-import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
+import {
+  DEFAULT_TIME_BUDGET_MS,
+  estimateSiteSize,
+  type SiteSizeEstimate,
+} from "../crawler/crawl.ts";
 import { getServiceClient } from "../db.ts";
 import { enqueueJob, findActiveJobForProject, type ActiveJob } from "../queue/boss.ts";
 import {
@@ -53,6 +57,14 @@ import {
  * drift apart.
  */
 const PAGE_CAP = 100;
+
+/**
+ * The crawl's OTHER ceiling, in whole seconds, derived from the crawler's own wall-clock budget.
+ * Both bounds are quoted to the caller because — measured live 2026-09-02 — this is the one that
+ * usually binds first: a whole-site run returned 51 pages of a possible 100, "the crawl stopped on
+ * TIME". Naming only the page cap sets an expectation the same flat price often does not meet.
+ */
+const TIME_BUDGET_SECONDS = Math.round(DEFAULT_TIME_BUDGET_MS / 1000);
 
 /** The enqueue port (default: the real enqueueJob) — injected so the surface is testable without pg-boss. */
 export type EnqueueFn = (
@@ -117,7 +129,13 @@ const inputSchema = z.object({
     .min(1)
     .max(PAGE_CAP)
     .default(PAGE_CAP)
-    .describe("Maximum pages to crawl (1–100, default 100)."),
+    .describe(
+      `Maximum pages to crawl (1–100, default 100). A crawl also stops at a ` +
+        `${TIME_BUDGET_SECONDS}-second time budget, whichever comes first — on a slow or large ` +
+        `site that budget usually binds before the page cap does, so fewer pages than max_urls ` +
+        `are crawled for the same price. Narrow the crawl with include_paths to cover a section ` +
+        `fully.`,
+    ),
   include_paths: z
     .array(z.string().min(1))
     .optional()
@@ -300,8 +318,14 @@ function queuedResult(
   // estimated_credits reads from the human-approved price table — never a literal. It is the
   // CRAWL's cost and stays that: any seeding charge is a separate line under its own tool name,
   // reported in its own sentence rather than folded into this number.
+  // "queued OR ALREADY RUNNING", and the second half is the honest one (B-2). MEASURED LIVE
+  // 2026-09-02: the row is INSERTed `queued` and a worker claimed it 562 ms later, while this call
+  // returned the job_id after 851 ms — 9 032 ms on the unconfirmed path. By the time the caller
+  // holds the id, the job is already `running`, so a flat "status: queued" promised a state
+  // get_job_status would then contradict. `queued` is still what the row IS at insert; what was
+  // wrong was implying the caller would ever see it.
   const base =
-    `Crawl queued for ${domain}. job_id: ${jobId} · status: queued · ` +
+    `Crawl queued for ${domain}. job_id: ${jobId} · status: queued or already running · ` +
     `estimated_credits: ${TOOL_COSTS.crawl_site}. ` +
     `Track it with get_job_status { "job_id": "${jobId}" }.`;
   // The seeding sentence is APPENDED, never merged: it states its own fee outcome (including

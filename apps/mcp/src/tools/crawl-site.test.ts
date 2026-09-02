@@ -9,6 +9,7 @@ import {
   type ProjectResolver,
 } from "./crawl-site.ts";
 import type { RankingSeedFetcher, RankingSeedOutcome } from "./crawl-seeds.ts";
+import { DEFAULT_TIME_BUDGET_MS } from "../crawler/crawl.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -67,6 +68,26 @@ describe("crawl_site input schema (referee: project_id + max_urls + include_path
     expect(schema.required).toEqual(["project_id"]);
     expect(schema.properties.max_urls).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
     expect(schema.properties.include_paths).toMatchObject({ type: "array", items: { type: "string" } });
+  });
+
+  /**
+   * BOTH ceilings, not just the flattering one (B-6). MEASURED LIVE 2026-09-02: a whole-site crawl
+   * of a real domain returned 51 pages and 138 skipped — "time budget exhausted after 91s — the
+   * crawl stopped on TIME, not at the 100-page limit". The FINISH sentence says that honestly;
+   * what nothing said BEFOREHAND was that a second ceiling exists at all, so "up to 100 pages" set
+   * an expectation the same 20 credits often does not meet.
+   *
+   * The seconds figure is DERIVED from the crawler's own constant here rather than retyped, so
+   * this asserts the WIRING: moving the budget without moving the sentence turns it red.
+   */
+  it("max_urls names the TIME budget too — the ceiling that usually binds first", () => {
+    const schema = makeTool({ enqueue: spyEnqueue() }).inputJsonSchema as {
+      properties: Record<string, { description?: string }>;
+    };
+    const description = schema.properties.max_urls?.description ?? "";
+    expect(description).toMatch(/1–100/);
+    expect(description).toContain(`${DEFAULT_TIME_BUDGET_MS / 1000}-second`);
+    expect(description).toMatch(/time budget/i);
   });
 });
 
@@ -244,6 +265,24 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(result.content[0]!.text).toMatch(/invalid input/i);
     expect(calls).toHaveLength(0); // rejected at schema, before any handler work
     expect(estimateCalls).toBe(0);
+  });
+
+  /**
+   * B-2. This reply used to say `status: queued` flat, and the docs promised the same — a state
+   * the tracking tool can essentially never confirm. MEASURED LIVE 2026-09-02: the jobs row is
+   * INSERTed `queued` and a worker claimed it 562 ms later, while the call itself returned the
+   * job_id after 851 ms (9 032 ms on the unconfirmed path). By the time the caller holds the id,
+   * the job is already `running` — so `get_job_status`'s queued sentence is unreachable through
+   * the documented flow, and a customer comparing the two answers sees a contradiction that is
+   * only ever OUR wording's fault.
+   *
+   * The fix is the sentence, not the state: `queued` is what the row genuinely is at INSERT.
+   */
+  it("does not promise a status the tracker will almost never confirm", async () => {
+    const { fn: enqueue } = captureEnqueue();
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(null) });
+    const text = (await tool.run(CTX, { project_id: PID })).content[0]!.text;
+    expect(text).toContain("status: queued or already running");
   });
 
   it("a small site enqueues normally with an honest one-liner and no confirmation", async () => {
@@ -455,7 +494,10 @@ describe("crawl_site refuses to queue a SECOND crawl while one is in flight", ()
     }).run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(result.content[0]!.text).toContain("job_id: job-crawl-1");
-    expect(result.content[0]!.text).not.toMatch(/already running/);
+    // The queued reply's own status clause reads "queued or already running" (B-2), so the
+    // negative has to name the REFUSAL's sentence rather than the two words the two share.
+    expect(result.content[0]!.text).not.toMatch(/is already running — poll it/);
+    expect(result.content[0]!.text).toContain("Crawl queued for");
   });
 
   /**
