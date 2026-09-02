@@ -1,5 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * `../db.ts` is replaced so the NOT-FOUND branch can be driven without a database. connect_gsc
+ * is the one tool in this family with no injectable ports (its readers are called directly), so
+ * this is the only way its wording is reachable from the fast lane; the branch returns before
+ * `gsc_connections` is ever read, so a project reader that answers null is the whole fixture.
+ */
+let projectRow: { id: string; domain: string; archived_at: string | null } | null = null;
+
+vi.mock("../db.ts", () => ({
+  getServiceClient: () => ({}),
+  markGscAccountTokenInvalid: vi.fn(),
+  forUser: () => ({
+    selectOwnById: () => Promise.resolve(projectRow),
+  }),
+}));
+
 import { connectGscTool, renderAlreadyConnected } from "./connect-gsc.ts";
+import { projectNotFoundMessage } from "./project-target.ts";
+import { makeUntrackProjectTool } from "./untrack-project.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -29,6 +48,37 @@ describe("connect_gsc input schema", () => {
   it("rejects a missing project_id", async () => {
     const result = await connectGscTool.run(CTX, {});
     expect(result.isError).toBe(true);
+  });
+});
+
+/**
+ * CG-2 / UP-2 — ONE state, TWO sentences, measured live side by side on 2026-09-02. For a
+ * project id that does not resolve, `connect_gsc` wrote its own wording while `untrack_project`
+ * printed the shared `projectNotFoundMessage` that thirteen tools print. Two answers to one
+ * question is how a user learns that the same refusal means different things.
+ *
+ * The strongest form of the claim is the one asserted here: the two tools' answers are compared
+ * to EACH OTHER, not each to a copy of the string — a spec that pinned a literal would go green
+ * again the moment one of the two drifted (signed lesson 11).
+ */
+describe("an unresolvable project id gets the family's ONE sentence", () => {
+  const UNKNOWN = "11111111-1111-4111-8111-111111111111";
+
+  it("answers with the shared projectNotFoundMessage", async () => {
+    projectRow = null;
+    const result = await connectGscTool.run(CTX, { project_id: UNKNOWN });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(projectNotFoundMessage(UNKNOWN));
+  });
+
+  it("says exactly what untrack_project says for the same state", async () => {
+    projectRow = null;
+    const untrack = makeUntrackProjectTool({ loadProject: () => Promise.resolve(null) });
+
+    const connect = await connectGscTool.run(CTX, { project_id: UNKNOWN });
+    const untracked = await untrack.run(CTX, { project_id: UNKNOWN });
+
+    expect(connect.content[0]?.text).toBe(untracked.content[0]?.text);
   });
 });
 

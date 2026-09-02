@@ -13,11 +13,14 @@ import {
 import {
   MAX_TRACKED_KEYWORDS_PER_PROJECT,
   countActiveTrackedKeywords,
+  listActiveTrackedKeywords,
   loadTrackedKeywords,
   normalizeKeywordList,
   trackKeywords,
   untrackKeywords,
+  type ActiveTrackedKeyword,
   type CountActiveTrackedFn,
+  type ListActiveTrackedFn,
   type LoadTrackedFn,
   type TrackKeywordsFn,
   type UntrackKeywordsFn,
@@ -67,8 +70,16 @@ export const DEFAULT_DEVICE: TrackedDevice = "desktop";
 
 
 
-/** What the caller asks this tool to do. Two verbs, one registration surface. */
-export const TRACK_ACTIONS = ["track", "untrack"] as const;
+/**
+ * What the caller asks this tool to do. Two verbs and a READ, on one registration surface.
+ *
+ * `list` is here rather than in a `list_tracked_keywords` of its own because it answers a question
+ * about exactly this tool's subject, and a caller who has just registered something asks it in the
+ * same breath. Measured 2026-09-02: there was no read at all on the MCP surface — the only way to
+ * find out what a project tracked was to WRITE the same list again, which this tool's own error
+ * text actually recommended.
+ */
+export const TRACK_ACTIONS = ["track", "untrack", "list"] as const;
 export type TrackAction = (typeof TRACK_ACTIONS)[number];
 
 const inputSchema = z.object({
@@ -82,18 +93,22 @@ const inputSchema = z.object({
     .array(z.string().min(1))
     .min(1)
     .max(MAX_TRACKED_KEYWORDS_PER_PROJECT)
+    .optional()
     .describe(
       `The keywords to track (or untrack), up to ${MAX_TRACKED_KEYWORDS_PER_PROJECT} — the same ` +
         "number one project may track in total. They are stored trimmed and lower-cased, so two " +
-        "spellings differing only in case or spacing are ONE tracked keyword.",
+        'spellings differing only in case or spacing are ONE tracked keyword. Required for ' +
+        '"track" and "untrack"; leave it out for "list", which is about the project rather than ' +
+        "about a list you supply.",
     ),
   action: z
     .enum(TRACK_ACTIONS)
     .default("track")
     .describe(
-      '"track" (default) starts watching these keywords; "untrack" stops. Untracking archives ' +
-        "the keyword rather than deleting it — tracking it again brings back the same record, " +
-        "and no stored measurement is ever removed by either.",
+      '"track" (default) starts watching these keywords; "untrack" stops; "list" reads back ' +
+        "everything this project already tracks and writes nothing. Untracking archives the " +
+        "keyword rather than deleting it — tracking it again brings back the same record, and no " +
+        "stored measurement is ever removed by either.",
     ),
   location_name: z
     .string()
@@ -122,15 +137,30 @@ const inputSchema = z.object({
         "different layout on each, so a desktop ranking says nothing about a mobile one — the " +
         "device is part of what is tracked.",
     ),
-});
+})
+  /**
+   * `keywords` IS STILL REQUIRED FOR THE TWO WRITES, and it is enforced at parse time rather
+   * than in the handler so the refusal keeps arriving in the same envelope it always did — a
+   * schema error, before any read, with the field named. `list` is the only action that is not
+   * about a list the caller supplies, so it is the only one exempt.
+   */
+  .superRefine((value, ctx) => {
+    if (value.action !== "list" && value.keywords === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["keywords"],
+        message: `required for action "${value.action}" — only "list" takes no keywords`,
+      });
+    }
+  });
 
 type TrackKeywordsInput = z.infer<typeof inputSchema>;
 
 const DESCRIPTION =
   "Choose which keywords a project's ranking is watched for, on one location, language and " +
-  "device. Registration only: it takes no measurement and contacts no search engine. Running it " +
-  "twice for the same keyword is safe, and untracking archives rather than deletes. Costs 0 " +
-  "credits.";
+  'device, and read back what it already tracks with action: "list". Registration only: it takes ' +
+  "no measurement and contacts no search engine. Running it twice for the same keyword is safe, " +
+  "and untracking archives rather than deletes. Costs 0 credits.";
 
 /** The identity clause every answer repeats, so no reply is readable as a general statement. */
 export function describeIdentity(input: {
@@ -208,6 +238,7 @@ export function classify(
 export interface TrackKeywordsDeps {
   readonly loadProject?: LoadProjectFn;
   readonly loadTracked?: LoadTrackedFn;
+  readonly listActive?: ListActiveTrackedFn;
   readonly countActive?: CountActiveTrackedFn;
   readonly track?: TrackKeywordsFn;
   readonly untrack?: UntrackKeywordsFn;
@@ -216,6 +247,7 @@ export interface TrackKeywordsDeps {
 export function makeTrackKeywordsTool(deps: TrackKeywordsDeps = {}): RegisteredTool {
   const loadProject = deps.loadProject ?? loadOwnProject;
   const loadTracked = deps.loadTracked ?? loadTrackedKeywords;
+  const listActive = deps.listActive ?? listActiveTrackedKeywords;
   const countActive = deps.countActive ?? countActiveTrackedKeywords;
   const track = deps.track ?? trackKeywords;
   const untrack = deps.untrack ?? untrackKeywords;
@@ -235,7 +267,16 @@ export function makeTrackKeywordsTool(deps: TrackKeywordsDeps = {}): RegisteredT
       if (project.archivedAt !== null) {
         return errorResult(ARCHIVED_PROJECT_MESSAGE);
       }
-      const keywords = normalizeKeywordList(input.keywords);
+      // THE READ, and it returns BEFORE the location check on purpose: listing is about what is
+      // already stored, so refusing it over a location name in THIS call's arguments — a name the
+      // caller never meant as a filter, since the read is not filtered by it — would refuse a
+      // question about existing rows on the strength of a default.
+      if (input.action === "list") {
+        return textResult(renderTrackedList(project.domain, await listActive(ctx.userId, input.project_id)));
+      }
+      // Every path below writes or asks about a supplied list, and the schema has already
+      // guaranteed there is one for both of those actions.
+      const keywords = normalizeKeywordList(input.keywords ?? []);
       if (keywords.length === 0) {
         return errorResult(NO_KEYWORDS_MESSAGE);
       }
@@ -342,6 +383,52 @@ export function renderUntracked(
       "tracking it again restores the same record. keyword_positions still reads what was stored.",
   );
   return lines.join("\n\n");
+}
+
+/** Byte order, so the same set of rows always prints in the same order (list_gsc_properties' rule). */
+function byteOrder(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Nothing is tracked. A true answer, and not an error: the project is fine, it is just empty. */
+function emptyListMessage(projectDomain: string): string {
+  return (
+    `"${projectDomain}" is not tracking any keywords right now. Run track_keywords with the ` +
+    "keywords you want watched — it registers them and takes no measurement."
+  );
+}
+
+/**
+ * The READ answer: what this project watches, grouped by WHERE each keyword is watched.
+ *
+ * Grouped rather than one flat list because the identity is half of what a tracked keyword IS —
+ * "seo tools" on two devices is two subscriptions, and a flat list would print the word twice
+ * with nothing to say why. Both the groups and the keywords inside them are in byte order, so two
+ * reads of an unchanged project are byte-identical.
+ */
+export function renderTrackedList(
+  projectDomain: string,
+  rows: readonly ActiveTrackedKeyword[],
+): string {
+  if (rows.length === 0) return emptyListMessage(projectDomain);
+  const groups = new Map<string, readonly string[]>();
+  for (const row of rows) {
+    const identity = describeIdentity({
+      location_name: row.locationName,
+      language_code: row.languageCode,
+      device: row.device,
+    });
+    groups.set(identity, [...(groups.get(identity) ?? []), row.keyword]);
+  }
+  const lines = [...groups.entries()]
+    .sort(([a], [b]) => byteOrder(a, b))
+    .map(([identity, keywords]) => `${identity}: ${quoteList([...keywords].sort(byteOrder))}`);
+  return [
+    `"${projectDomain}" is tracking ${countClause(rows.length)}, counting each location and ` +
+      "device separately:",
+    lines.join("\n"),
+    NO_MEASUREMENT_NOTE,
+  ].join("\n\n");
 }
 
 /** The production track_keywords tool (real DB). */

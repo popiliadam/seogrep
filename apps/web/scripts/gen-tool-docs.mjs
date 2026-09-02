@@ -497,10 +497,11 @@ export const DOC_PROSE = {
     ],
     example: "Ask your MCP client in plain language:\n\n> Set up example.com as a project.",
     returns:
-      "The `project_id`, the canonical `domain`, and `created` — in one of **three** wordings, " +
-      "not two: the project was created, it already existed, or it was **restored from your " +
-      "archive** and is tracked again on its original id. The resolution warning above follows " +
-      "when DNS says the name does not exist.",
+      "One sentence of plain text — not a structured object — naming the canonical `domain` and " +
+      "carrying `project_id` and `created` inside it, as in `(project_id: …, created: false)`. " +
+      "It comes in one of **three** wordings, not two: the project was created, it already " +
+      "existed, or it was **restored from your archive** and is tracked again on its original " +
+      "id. The resolution warning above follows when DNS says the name does not exist.",
   },
 
   connect_gsc: {
@@ -3007,6 +3008,10 @@ export const DOC_PROSE = {
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
       "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +
       "the site as it is now.\n" +
+      "- **Everything fresh, but nothing analysed yet** → " +
+      "[`find_quick_wins`](/docs/tools-reference/find-quick-wins) first: it reads the Search " +
+      "Console data you already pulled and names the pages closest to moving up. A report is " +
+      "worth generating once there are findings to put in it.\n" +
       "- **Everything fresh** → you're all set: " +
       "[`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the " +
       "`monthly-routine` prompt to keep it up to date.",
@@ -3069,7 +3074,23 @@ export const DOC_PROSE = {
           "a different site and is never offered: `blog.example.com` is not `example.com`. And " +
           "only a project that reads **no** property qualifies — a project already bound to a " +
           "different property is in a deliberate state, and offering to link it would really be " +
-          "offering to repoint it.",
+          "offering to repoint it.\n\n" +
+          "A project that still holds a property but lost the Google account behind it is named " +
+          "on that property's line too, with " +
+          "[`connect_gsc`](/docs/tools-reference/connect-gsc) as the repair. Disconnecting an " +
+          "account leaves the mapping in place and clears the account, and such a project used " +
+          "to appear in neither hint — it was printed as \"not used by any project\" while " +
+          "[`list_projects`](/docs/tools-reference/list-projects) said of the very same project " +
+          "that it was still mapped. It is not offered `track_gsc_property`: the mapping is " +
+          "already there, and it is the account that has to come back.",
+      },
+      {
+        heading: "The order is fixed",
+        body:
+          "For one account, the properties are always listed in the same order, so two reads of " +
+          "the same inventory line up against each other. Google's own listing carries no " +
+          "ordering promise, and printing it as it arrived returned the same 27 properties in " +
+          "two different orders on two calls a second apart.",
       },
       {
         heading: "When an account cannot be read",
@@ -3128,6 +3149,17 @@ export const DOC_PROSE = {
           "different site.",
       },
       {
+        heading: "Domain properties and disavow",
+        body:
+          "When the property you bind is a **Domain** property (`sc-domain:example.com`), the " +
+          "answer carries one extra note: Google's disavow links tool does not support Domain " +
+          "properties, so a disavow file for that site has to be submitted through a URL-prefix " +
+          "property instead. It is said here because this is where the kind of property is " +
+          "known — [`disavow_candidates`](/docs/tools-reference/disavow-candidates) is where you " +
+          "would otherwise find out. A URL-prefix property gets no such note; the limitation " +
+          "does not apply to it.",
+      },
+      {
         heading: "When it refuses",
         body:
           "A property your account cannot query is refused **before** any project is created — a " +
@@ -3170,8 +3202,22 @@ export const DOC_PROSE = {
       "Pass a `project_id` and the keywords you want watched. They are stored trimmed and " +
       "lower-cased, so two spellings that differ only in case or spacing are one tracked " +
       "keyword. Running it again for the same keyword is safe — nothing is duplicated and " +
-      "nothing is re-dated. Set `action` to `untrack` to stop watching one.",
+      "nothing is re-dated. Set `action` to `untrack` to stop watching one, or to `list` to read " +
+      "back everything the project already tracks.",
     preExampleSections: [
+      {
+        heading: "Reading back what a project tracks",
+        body:
+          "`action: \"list\"` answers with every keyword the project is tracking right now, " +
+          "grouped by the location, language and device each one is watched on. It takes no " +
+          "`keywords` — it is a question about the project, not about a list you supply — and it " +
+          "writes nothing.\n\n" +
+          "It is **not** filtered by the `location_name`, `language_code` and `device` of the " +
+          "call: those fields have defaults, and answering only about the defaults would tell a " +
+          "project whose keywords all sit on another locale that it tracks nothing. Archived " +
+          "(untracked) keywords are left out — they are kept, and `keyword_positions` still " +
+          "reads what was measured for them, but the project is no longer watching them.",
+      },
       {
         heading: "The location and the device are part of what is tracked",
         body:
@@ -3208,7 +3254,8 @@ export const DOC_PROSE = {
     returns:
       "What is tracked now for that project on that location, language and device — split into " +
       "newly tracked, tracked again, and already tracked — together with a reminder that " +
-      "tracking records what to watch and measures nothing.",
+      "tracking records what to watch and measures nothing. `action: \"list\"` instead returns " +
+      "every keyword the project currently tracks, grouped by location, language and device.",
   },
 
   serp_snapshot: {
