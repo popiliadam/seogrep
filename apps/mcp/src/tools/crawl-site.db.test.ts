@@ -54,16 +54,27 @@ async function makeProject(userId: string, domain: string): Promise<string> {
   return data.id;
 }
 
-/** Insert one jobs row directly, so an in-flight (or already finished) crawl can be staged. */
+/**
+ * Insert one jobs row directly, so an in-flight (or already finished) crawl can be staged.
+ * `createdAt` is explicit where a spec needs two rows in a KNOWN order — the default `now()` on
+ * two inserts a millisecond apart is not an ordering a spec may rely on.
+ */
 async function insertJob(
   userId: string,
   projectId: string | null,
   tool: string,
   status: "queued" | "running" | "succeeded" | "failed",
+  createdAt?: string,
 ): Promise<string> {
   const { data, error } = await service
     .from("jobs")
-    .insert({ user_id: userId, project_id: projectId, tool, status })
+    .insert({
+      user_id: userId,
+      project_id: projectId,
+      tool,
+      status,
+      ...(createdAt ? { created_at: createdAt } : {}),
+    })
     .select("id")
     .single();
   if (error || !data) throw new Error(`jobs insert failed: ${error?.message ?? "no row"}`);
@@ -172,7 +183,7 @@ describe("crawl_site does not queue a second crawl while one is in flight (real 
       expect(result.isError).toBeUndefined();
       expect(result.content[0]?.text).toContain(`job_id: ${jobId}`);
       expect(result.content[0]?.text).toContain(`status: ${status}`);
-      expect(result.content[0]?.text).toMatch(/already running — poll it with get_job_status/);
+      expect(result.content[0]?.text).toMatch(/already in flight — poll it with get_job_status/);
       // Nothing was enqueued, so the worker never binds a second reserve — and the ledger is
       // untouched at the surface either way.
       expect(await ledgerRows(ctx.userId)).toEqual([]);
@@ -234,5 +245,46 @@ describe("crawl_site does not queue a second crawl while one is in flight (real 
     });
     expect(enqueued).toBe(true);
     expect(result.content[0]?.text).toContain("job_id: job-mine");
+  });
+
+  /**
+   * THE SHAPE THE OLD QUERY GOT WRONG (referee, 2026-09-02). It ended
+   * `.order("created_at", desc).limit(1).maybeSingle()`, so it kept exactly ONE row — the newest —
+   * and then hoped the status filter had already excluded everything terminal. Widen that filter by
+   * a single status and the row it keeps is a crawl that FINISHED a minute ago, while the older one
+   * still holding a 20-credit reserve is never looked at: a second crawl is queued and the customer
+   * pays twice for the same pages.
+   *
+   * The filter is now the only truth and every matching row comes back, so an older in-flight crawl
+   * is found however many newer terminal ones sit in front of it. Staged with EXPLICIT stamps —
+   * two inserts a millisecond apart is not an order a spec may lean on.
+   */
+  it("an OLDER running crawl still blocks, with a NEWER succeeded one in front of it", async () => {
+    const ctx = await makeCtx();
+    const projectId = await makeProject(ctx.userId, "older-running.example.com");
+    const runningId = await insertJob(
+      ctx.userId,
+      projectId,
+      "crawl_site",
+      "running",
+      "2026-09-02T10:00:00.000Z",
+    );
+    await insertJob(
+      ctx.userId,
+      projectId,
+      "crawl_site",
+      "succeeded",
+      "2026-09-02T10:05:00.000Z",
+    );
+
+    const result = await makeCrawlSiteTool({
+      enqueue: refuseToEnqueue,
+      estimate: NO_ESTIMATE,
+    }).run(ctx, { project_id: projectId });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain(`job_id: ${runningId}`);
+    expect(result.content[0]?.text).toContain("status: running");
+    expect(await ledgerRows(ctx.userId)).toEqual([]);
   });
 });

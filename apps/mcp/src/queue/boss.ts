@@ -193,14 +193,26 @@ export async function getJobForUser(
   return data;
 }
 
+/**
+ * The NON-TERMINAL statuses: a job in one of these is IN FLIGHT, and its credit reserve may still
+ * be bound. Exported so the query below, the type beneath it and the specs all read ONE list.
+ */
+export const ACTIVE_JOB_STATUSES = ["queued", "running"] as const;
+
+export type ActiveJobStatus = (typeof ACTIVE_JOB_STATUSES)[number];
+
 /** A job of one tool that has not reached a terminal state yet: still `queued`, or `running`. */
 export interface ActiveJob {
   readonly jobId: string;
-  readonly status: Extract<JobStatus, "queued" | "running">;
+  readonly status: ActiveJobStatus;
+}
+
+function isActiveStatus(status: JobStatus): status is ActiveJobStatus {
+  return (ACTIVE_JOB_STATUSES as readonly string[]).includes(status);
 }
 
 /**
- * The newest NON-TERMINAL (`queued` or `running`) `tool` job for a project, tenant-scoped
+ * One NON-TERMINAL (`queued` or `running`) `tool` job for a project, tenant-scoped
  * (user_id = the caller AND project_id = the target). Null when that project has nothing in
  * flight for that tool.
  *
@@ -219,6 +231,18 @@ export interface ActiveJob {
  * a model re-asking seconds later), not a concurrent race. The DB-level second line of defence — a
  * partial unique index on (project_id, tool) WHERE status IN ('queued','running') — is a migration
  * and therefore a human-queued decision; see the crawl_site record's B-1 note.
+ *
+ * THE FILTER IS THE ONLY TRUTH, and the narrowing that used to sit beside it is gone (referee,
+ * 2026-09-02). The query was `… .in(status) .order("created_at", desc) .limit(1) .maybeSingle()`,
+ * and that pairing had a failure mode nothing measured: with a WIDER status filter, the single row
+ * it kept could be a `succeeded` crawl from a minute ago while an OLDER `running` one was still
+ * holding a reserve — the in-flight job would be missed and the customer charged twice. Correctness
+ * must not depend on two things agreeing. Every matching row now comes back and the choice is made
+ * here, where "matching" and "in flight" are the same predicate by construction.
+ *
+ * Dropping `.limit(1)` cannot lose a job to PostgREST's default page: the pathological case needs
+ * EVERY matching row to sit beyond page one, and a non-empty first page already answers the only
+ * question being asked.
  */
 export async function findActiveJobForProject(
   client: ServiceClient,
@@ -226,23 +250,31 @@ export async function findActiveJobForProject(
 ): Promise<ActiveJob | null> {
   const { data, error } = await client
     .from("jobs")
-    .select("id, status")
+    .select("id, status, created_at")
     .eq("user_id", params.userId)
     .eq("project_id", params.projectId)
     .eq("tool", params.tool)
-    .in("status", ["queued", "running"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .in("status", [...ACTIVE_JOB_STATUSES]);
   if (error) {
     throw new Error(`findActiveJobForProject(${params.tool}) failed: ${error.message}`);
   }
-  if (!data) return null;
-  // The `.in` filter above is the one that decides this, but the row's own status is what the
-  // caller reports to a customer — so it is narrowed here rather than asserted.
-  return data.status === "queued" || data.status === "running"
-    ? { jobId: data.id, status: data.status }
-    : null;
+  // The re-check is not belt-and-braces: it is what makes the RETURNED status a member of
+  // ActiveJobStatus by PROOF rather than by trusting the filter that ran on the server. It is a
+  // flatMap rather than a filter because narrowing `row.status` does not narrow `row` — a
+  // `.filter(...)` here type-checks the predicate and still hands back the wide row type.
+  const inFlight = (data ?? []).flatMap((row) =>
+    isActiveStatus(row.status)
+      ? [{ id: row.id, status: row.status, createdAt: row.created_at }]
+      : [],
+  );
+  if (inFlight.length === 0) return null;
+  // The OLDEST in-flight job: it is the one that will finish first, so it is the one worth
+  // polling — and `id` breaks a tie so two runs of the same query cannot answer differently.
+  const oldest = inFlight.reduce((best, row) => {
+    const delta = Date.parse(row.createdAt) - Date.parse(best.createdAt);
+    return delta < 0 || (delta === 0 && row.id < best.id) ? row : best;
+  });
+  return { jobId: oldest.id, status: oldest.status };
 }
 
 /**

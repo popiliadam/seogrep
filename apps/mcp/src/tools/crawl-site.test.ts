@@ -450,7 +450,7 @@ describe("crawl_site refuses to queue a SECOND crawl while one is in flight", ()
     // It is a NORMAL answer, not an error: the caller asked for a crawl and there is one.
     expect(result.isError).toBeUndefined();
     const text = result.content[0]!.text;
-    expect(text).toMatch(/already running — poll it with get_job_status/);
+    expect(text).toMatch(/already in flight — poll it with get_job_status/);
     expect(text).toContain("job_id: job-in-flight-1");
     expect(text).toContain("status: running");
     expect(text).toMatch(/not charged/i);
@@ -467,7 +467,13 @@ describe("crawl_site refuses to queue a SECOND crawl while one is in flight", ()
     expect(finder.calls).toEqual([{ userId: CTX.userId, projectId: PID }]);
   });
 
-  it("reports the QUEUED state as queued — it does not relabel a job it did not start", async () => {
+  /**
+   * ONE SENTENCE THAT FITS BOTH STATES (referee, 2026-09-02). The lead used to say "is already
+   * running" while the clause beside it printed `status: queued` — a single line disagreeing with
+   * itself about the state B-2 already showed is the hard one. The prose is now status-independent
+   * and the precise status is reported ONCE, in the field built to carry it.
+   */
+  it("reports the QUEUED state as queued, and never calls a queued job 'running'", async () => {
     const finder = activeCrawlSpy({ jobId: "job-in-flight-3", status: "queued" });
     const result = await makeTool({
       enqueue: captureEnqueue().fn,
@@ -475,8 +481,12 @@ describe("crawl_site refuses to queue a SECOND crawl while one is in flight", ()
       estimate: estimateOf(null),
       findActiveCrawl: finder.fn,
     }).run(CTX, { project_id: PID });
-    expect(result.content[0]!.text).toContain("status: queued");
-    expect(result.content[0]!.text).toContain("job_id: job-in-flight-3");
+    const text = result.content[0]!.text;
+    expect(text).toContain("status: queued");
+    expect(text).toContain("job_id: job-in-flight-3");
+    expect(text).toMatch(/already in flight/);
+    // The whole point: no wording anywhere in this reply asserts the job is RUNNING.
+    expect(text).not.toMatch(/running/i);
   });
 
   /**
@@ -494,9 +504,10 @@ describe("crawl_site refuses to queue a SECOND crawl while one is in flight", ()
     }).run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(result.content[0]!.text).toContain("job_id: job-crawl-1");
-    // The queued reply's own status clause reads "queued or already running" (B-2), so the
-    // negative has to name the REFUSAL's sentence rather than the two words the two share.
-    expect(result.content[0]!.text).not.toMatch(/is already running — poll it/);
+    // Named as the REFUSAL's own sentence: the queued reply legitimately carries the words
+    // "already running" inside its "queued or already running" status clause (B-2), so a looser
+    // negative would fail for the wrong reason — or pass for one.
+    expect(result.content[0]!.text).not.toMatch(/is already in flight — poll it/);
     expect(result.content[0]!.text).toContain("Crawl queued for");
   });
 

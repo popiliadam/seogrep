@@ -295,10 +295,16 @@ function confirmationResult(
  * id is the answer to the question they asked. What would be wrong is doing it silently a second
  * time — the worker binds a fresh {@link TOOL_COSTS.crawl_site}-credit reserve per job, so a
  * duplicate is a duplicate CHARGE for the same pages.
+ *
+ * "IN FLIGHT", never "running" (referee, 2026-09-02). The lead sentence used to say "is already
+ * running" and the clause right after it then printed `status: queued` — one line contradicting
+ * itself, on exactly the state B-2 already showed is the hard one to reason about. One phrase now
+ * covers both non-terminal statuses, and the precise one is reported ONCE, in the field built to
+ * carry it.
  */
-function alreadyRunningResult(domain: string, active: ActiveJob): ToolResult {
+function alreadyInFlightResult(domain: string, active: ActiveJob): ToolResult {
   return textResult(
-    `A crawl of ${domain} is already running — poll it with get_job_status ` +
+    `A crawl of ${domain} is already in flight — poll it with get_job_status ` +
       `{ "job_id": "${active.jobId}" }. job_id: ${active.jobId} · status: ${active.status}. ` +
       `No second crawl was queued and you were not charged: a second crawl of the same project ` +
       `costs another ${TOOL_COSTS.crawl_site} credits to fetch the same pages. ` +
@@ -400,7 +406,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       // the ownership and archive gates, ahead of all three — is what makes the duplicate free.
       const active = await findActiveCrawl(ctx, project_id);
       if (active) {
-        return alreadyRunningResult(project.domain, active);
+        return alreadyInFlightResult(project.domain, active);
       }
 
       // Empty/absent include_paths = whole-site (no scope); only a non-empty array scopes.
