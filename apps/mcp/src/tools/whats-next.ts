@@ -478,11 +478,15 @@ export function makeWhatsNextTool(deps: WhatsNextDeps = {}): RegisteredTool {
   return defineTool<WhatsNextInput>({
     name: "whats_next",
     description:
+      // THE PRICE IS SAID IN THE FAMILY'S WORDING, and last, as the other thirty-five tools say
+      // it. This one used to read "Free (0 credits)." in the middle of its own sentence — the
+      // same fact, phrased so that a client comparing prices across tools/list has to notice a
+      // second form of it. The A4 ruling on list_projects, one tool over.
       "Not sure what to do next? whats_next looks at where your project stands — crawl, audits, " +
       "Search Console, reports — and tells you the single best next step, with a short reason, " +
-      "what each step costs, and what comes after. Free (0 credits). Pass a project_id to route " +
-      "that project; omit it and it routes your only project, or lists them and asks which one " +
-      "if you track several.",
+      "what each step costs, and what comes after. Pass a project_id to route that project; " +
+      "omit it and it routes your only project, or lists them and asks which one if you track " +
+      "several. Costs 0 credits.",
     inputSchema,
     // charge defaults to "surface"; whats_next is 0 credits, so withCredits short-circuits (no ledger).
     handler: async (ctx: AuthContext, input): Promise<ToolResult> => {

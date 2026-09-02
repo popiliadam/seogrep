@@ -20,6 +20,7 @@ Pass a `project_id` to route that project; omit it and it routes your **only** p
 - **Connected, but no property is mapped** → [`list_gsc_properties`](/docs/tools-reference/list-gsc-properties), then [`track_gsc_property`](/docs/tools-reference/track-gsc-property). Both are free. The Google account works, so this rung does **not** send you round another OAuth loop — what is missing is the mapping, and until it exists a Search Console pull cannot run.
 - **Connected, nothing pulled** → run [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).
 - **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe the site as it is now.
+- **Everything fresh, but nothing analysed yet** → [`find_quick_wins`](/docs/tools-reference/find-quick-wins) first: it reads the Search Console data you already pulled and names the pages closest to moving up. A report is worth generating once there are findings to put in it.
 - **Everything fresh** → you're all set: [`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the `monthly-routine` prompt to keep it up to date.
 
 ## "Rows were pulled once" is not "the link is live"
