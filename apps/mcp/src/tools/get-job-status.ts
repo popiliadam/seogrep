@@ -169,7 +169,13 @@ function stampsOf(job: JobRow, domains: ReadonlyMap<string, string>): string {
  * "!" keeps what it has, because trimming those would change what the sentence means.
  */
 export function failureClause(error: string | null): string {
-  const text = error ?? "unknown error";
+  // TRAILING WHITESPACE COMES OFF FIRST, and the ORDER is the whole fix (B-2, measured
+  // out-of-tree 2026-09-02). F-6 varied the TERMINATING CHARACTER — ".", "?", "!", "…", "..." —
+  // and left the axis beside it unvaried: `"…engineering record. "` fails `endsWith(".")`, so
+  // nothing was absorbed and the renderer appended its own stop after the space, printing
+  // `record. . created`. Trimming the end makes the stop the last character again, after which
+  // every rule below applies exactly as it was written and as F-6's specs pin it.
+  const text = (error ?? "unknown error").trimEnd();
   return text.endsWith("..") || !text.endsWith(".") ? text : text.slice(0, -1);
 }
 
@@ -209,23 +215,46 @@ export function formatJobStatus(
   }
 }
 
+/**
+ * The tenant-scoped job read, as a port.
+ *
+ * The argument order is `(jobId, userId)` — `getJobForUser`'s own, minus the client it resolves
+ * for itself. The tenant id is NOT optional and never will be: this signature is the only job
+ * read a tool surface may use, and the id-only `getJob` must never be wired here.
+ */
+export type GetJobFn = (jobId: string, userId: string) => Promise<JobRow | null>;
+
 export interface GetJobStatusDeps {
   /** Project-domain lookup (default: the real single-project read). Injectable for the fast lane. */
   readonly lookupDomain?: LookupProjectDomainFn;
+  /**
+   * The job read (default: the real tenant-scoped one). A PORT because of B-1: with the read
+   * hardwired, the fast lane could not drive the not-found branch at all, and turning its
+   * `errorResult` into a `textResult` left 156 specs green — a client would have read "No job
+   * found" as a successful answer. The only guard lived in the db lane, which `make verify` does
+   * not run.
+   */
+  readonly readJob?: GetJobFn;
 }
 
-/** Build the tool. The label read is a port, so the wording is provable with no database. */
+/** Build the tool. Both reads are ports, so every wording and flag is provable with no database. */
 export function makeGetJobStatusTool(deps: GetJobStatusDeps = {}): RegisteredTool {
   const lookupDomain = deps.lookupDomain ?? lookupOwnProjectDomain;
+  // The default resolves the client at CALL time, exactly as the inline read did: building the
+  // production tool at import must not require the env a service client needs.
+  const readJob =
+    deps.readJob ??
+    ((jobId: string, userId: string) => getJobForUser(getServiceClient(), jobId, userId));
   return defineTool({
     name: "get_job_status",
     description:
-      "Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id.",
+      "Check the status and result summary of an async job (e.g. a crawl_site run), by its " +
+      "job_id. Costs 0 credits.",
     inputSchema: z.object({
       job_id: z.uuid().describe("The job_id returned by an async tool such as crawl_site."),
     }),
     handler: async (ctx, { job_id }) => {
-      const job = await getJobForUser(getServiceClient(), job_id, ctx.userId);
+      const job = await readJob(job_id, ctx.userId);
       if (!job) {
         // Unknown id and another tenant's job both land here (see getJobForUser) — one
         // message, no cross-tenant existence leak.

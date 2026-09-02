@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { failureClause, formatDuration, formatJobStatus, jobTiming } from "./get-job-status.ts";
+import {
+  failureClause,
+  formatDuration,
+  formatJobStatus,
+  getJobStatusTool,
+  jobTiming,
+  makeGetJobStatusTool,
+} from "./get-job-status.ts";
 import { formatJobLine } from "./list-jobs.ts";
+import type { AuthContext } from "../auth.ts";
 import type { JobRow } from "../db.ts";
+import type { RegisteredTool } from "./registry.ts";
 
 /**
  * Fast-lane specs for the pure status renderer. Every job status has a distinct line,
@@ -531,5 +540,117 @@ describe("formatJobStatus punctuates a failed job exactly once", () => {
     expect(failureClause("A fragment")).toBe("A fragment");
     expect(failureClause(null)).toBe("unknown error");
     expect(failureClause("Wait...")).toBe("Wait...");
+  });
+});
+
+/**
+ * GJS B-1 — measured by mutation, 2026-09-02. Turning the not-found `errorResult` into a plain
+ * `textResult` left all 156 specs of the account family GREEN: a client would have read "No job
+ * found with id …" as a SUCCESSFUL result, and an agent polling a mistyped id would have treated
+ * the refusal as an answer. The guard existed only in get-job-status.db.test.ts, which
+ * `make verify` does not run — so the fast lane could not see the flag fall.
+ *
+ * It could not see it because the job read was not a port: `makeGetJobStatusTool` injected the
+ * domain lookup and reached `getJobForUser` directly. It now injects both, which is the whole
+ * change — the not-found sentence and the tenant-scoped read are untouched.
+ */
+describe("a job that cannot be reached is an ERROR, not an answer", () => {
+  const CTX_J = { userId: "user-1", keyId: "key-1" } as AuthContext;
+  const ABSENT = "00000000-0000-4000-8000-000000000000";
+
+  const notFoundTool = (): RegisteredTool =>
+    makeGetJobStatusTool({
+      readJob: async () => null,
+      lookupDomain: async () => new Map(),
+    });
+
+  it("flags the not-found reply so a client cannot read it as a result", async () => {
+    const result = await notFoundTool().run(CTX_J, { job_id: ABSENT });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? "").toMatch(/no job found with id/i);
+  });
+
+  /**
+   * ANTI-ENUMERATION, pinned beside the flag it travels with: an unknown id and another tenant's
+   * job reach this branch through the SAME tenant-scoped read, so the answer must not hint that
+   * the id exists elsewhere.
+   */
+  it("says nothing about where the job might live instead", async () => {
+    const text = (await notFoundTool().run(CTX_J, { job_id: ABSENT })).content[0]?.text ?? "";
+    expect(text).not.toMatch(/another|other account|belongs to|different tenant/i);
+  });
+
+  it("does NOT flag a job it could read", async () => {
+    const tool = makeGetJobStatusTool({
+      readJob: async () => job({ status: "succeeded" }),
+      lookupDomain: async () => new Map(),
+    });
+    const result = await tool.run(CTX_J, { job_id: ABSENT });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text ?? "").toMatch(/succeeded/);
+  });
+
+  /** The read is asked for THIS caller's job — the tenant argument is not dropped on the way. */
+  it("asks the read port for the caller's own job", async () => {
+    const calls: { jobId: string; userId: string }[] = [];
+    const tool = makeGetJobStatusTool({
+      readJob: async (jobId, userId) => {
+        calls.push({ jobId, userId });
+        return null;
+      },
+      lookupDomain: async () => new Map(),
+    });
+    await tool.run(CTX_J, { job_id: ABSENT });
+    expect(calls).toEqual([{ jobId: ABSENT, userId: CTX_J.userId }]);
+  });
+});
+
+/**
+ * GJS B-2 — the axis F-6 did not vary. F-6 varied the TERMINATING CHARACTER (".", "?", "!", "…")
+ * and stopped; measured out-of-tree on 2026-09-02, an error text ending in a full stop AND A
+ * TRAILING SPACE still rendered `…engineering record. . created …` — `endsWith(".")` is false, so
+ * nothing was absorbed and the renderer added its own stop after the space.
+ *
+ * Not reachable from today's stored rows, which is why it is P2 and not P1. It is reachable from
+ * any message a human edits.
+ */
+describe("failureClause trims what the renderer will punctuate", () => {
+  it("absorbs the stop even when the stored text ends in whitespace", () => {
+    expect(failureClause("…preserved in the engineering record. ")).toBe(
+      "…preserved in the engineering record",
+    );
+  });
+
+  it.each([
+    ["a trailing space", "This was a problem on our side. "],
+    ["a trailing newline", "This was a problem on our side.\n"],
+    ["a trailing tab", "This was a problem on our side.\t"],
+  ])("renders one stop, not two, for %s", (_label, error) => {
+    const line = formatJobStatus(job({ status: "failed", error }));
+    expect(line).not.toContain(". .");
+    expect(line).not.toContain("..");
+    expect(line).toContain("on our side. created");
+  });
+
+  /** The values that must still keep what they have — the axis F-6 DID vary, re-pinned with the
+   * trailing whitespace added, so trimming cannot start eating question marks. */
+  it.each([
+    ["a question", "Did your site block our crawler? "],
+    ["an exclamation", "Your trial expired! "],
+    ["an ellipsis", "The crawl stopped early… "],
+  ])("leaves %s intact after trimming the whitespace", (_label, error) => {
+    expect(formatJobStatus(job({ status: "failed", error }))).toContain(
+      `failed: ${error.trimEnd()}. created`,
+    );
+  });
+});
+
+/**
+ * GJS B-4 / S7 — counted on the live tools/list 2026-09-02: 35 of 38 descriptions state their
+ * price; this was one of the three that did not.
+ */
+describe("get_job_status states its price", () => {
+  it("says the check is free, in the same words the other 35 use", () => {
+    expect(getJobStatusTool.description).toMatch(/costs 0 credits/i);
   });
 });
