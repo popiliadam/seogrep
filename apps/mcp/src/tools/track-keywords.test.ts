@@ -287,6 +287,139 @@ describe("untracking", () => {
   });
 });
 
+/**
+ * F-3 — MEASURED 2026-09-02: nothing on the MCP surface could READ what a project tracks.
+ * `serp_snapshot` takes its keywords as an argument and `keyword_positions` reads the measurement
+ * table, so `tracked_keywords` was written by this tool and read only by the web Rankings page.
+ * The tool's own error text admitted it — "run track_keywords with the same list to see what is
+ * actually tracked" offered a WRITE call as the way to read.
+ *
+ * The read lists the project's ACTIVE keywords across EVERY locale and device, not the ones
+ * matching this call's defaults. Filtering by the defaults would answer "nothing is tracked" to a
+ * tenant whose keywords all sit on `Turkiye · tr` — the confusion the feature exists to end,
+ * returning as a new form of itself.
+ */
+describe('action: "list" reads what is tracked, and writes nothing', () => {
+  const ASK_LIST = { project_id: "11111111-1111-4111-8111-111111111111", action: "list" };
+
+  function listOf(
+    rows: readonly {
+      keyword: string;
+      locationName: string;
+      languageCode: string;
+      device: TrackedDevice;
+    }[] = [],
+  ) {
+    const listed: string[] = [];
+    const tool = makeTrackKeywordsTool({
+      loadProject: async () => project,
+      listActive: async (userId, projectId) => {
+        expect(userId).toBe(ctx.userId);
+        listed.push(projectId);
+        return rows;
+      },
+      // Every WRITE port throws: a listing that reached one of them fails loudly rather than
+      // passing because the recorder happened to stay empty.
+      track: async () => {
+        throw new Error("fixture: listing must not write");
+      },
+      untrack: async () => {
+        throw new Error("fixture: listing must not write");
+      },
+      loadTracked: async () => {
+        throw new Error("fixture: listing reads the project, not one requested list");
+      },
+    });
+    return { tool, listed };
+  }
+
+  it("offers list as a third action on the schema", () => {
+    const { tool } = makeTool();
+    const schema = tool.inputJsonSchema as { properties: { action: { enum: string[] } } };
+    expect(schema.properties.action.enum).toContain("list");
+  });
+
+  it("takes no keywords — listing is not a request about a list", async () => {
+    const { tool, listed } = listOf([
+      { keyword: "adstark", locationName: "Turkiye", languageCode: "tr", device: "desktop" },
+    ]);
+    const result = await tool.run(ctx, ASK_LIST);
+    expect(result.isError).toBeUndefined();
+    expect(listed).toEqual([ASK_LIST.project_id]);
+    expect(textOf(result)).toContain('"adstark"');
+  });
+
+  it("names every locale and device a keyword is watched on", async () => {
+    const { tool } = listOf([
+      { keyword: "seo tools", locationName: "United States", languageCode: "en", device: "mobile" },
+      { keyword: "adstark", locationName: "Turkiye", languageCode: "tr", device: "desktop" },
+    ]);
+    const text = textOf(await tool.run(ctx, ASK_LIST));
+    expect(text).toContain("Turkiye · language tr · desktop SERP");
+    expect(text).toContain("United States · language en · mobile SERP");
+  });
+
+  it("lists keywords tracked on a locale this CALL did not name", async () => {
+    const { tool } = listOf([
+      { keyword: "adstark", locationName: "Turkiye", languageCode: "tr", device: "desktop" },
+    ]);
+    const text = textOf(
+      await tool.run(ctx, {
+        ...ASK_LIST,
+        location_name: "United States",
+        language_code: "en",
+        device: "desktop",
+      }),
+    );
+    expect(text).toContain('"adstark"');
+  });
+
+  it("answers a project that tracks nothing without pretending it failed", async () => {
+    const { tool } = listOf([]);
+    const result = await tool.run(ctx, ASK_LIST);
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toMatch(/not tracking any keywords/i);
+  });
+
+  it("prints a stable order, whatever order the rows arrive in", async () => {
+    const rows = [
+      { keyword: "b", locationName: "United States", languageCode: "en", device: "desktop" as const },
+      { keyword: "a", locationName: "United States", languageCode: "en", device: "desktop" as const },
+      { keyword: "c", locationName: "Turkiye", languageCode: "tr", device: "mobile" as const },
+    ];
+    const forward = textOf(await listOf(rows).tool.run(ctx, ASK_LIST));
+    const reversed = textOf(await listOf([...rows].reverse()).tool.run(ctx, ASK_LIST));
+    expect(reversed).toBe(forward);
+    expect(forward.indexOf('"a"')).toBeLessThan(forward.indexOf('"b"'));
+  });
+
+  it("still refuses an unknown project, and reads nothing", async () => {
+    const listed: string[] = [];
+    const tool = makeTrackKeywordsTool({
+      loadProject: async () => null,
+      listActive: async (_userId, projectId) => {
+        listed.push(projectId);
+        return [];
+      },
+    });
+    const result = await tool.run(ctx, ASK_LIST);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe(projectNotFoundMessage(ASK_LIST.project_id));
+    expect(listed).toHaveLength(0);
+  });
+
+  it("still requires keywords for track and for untrack", async () => {
+    const { tool, tracked, untracked } = makeTool();
+    for (const action of ["track", "untrack"] as const) {
+      const result = await tool.run(ctx, { project_id: ASK_LIST.project_id, action });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/invalid input/i);
+    }
+    expect(tracked).toHaveLength(0);
+    expect(untracked).toHaveLength(0);
+  });
+});
+
 describe("the tool touches no vendor and no ledger", () => {
   /**
    * BOTH PATHS, and the second one is the reason this test grew. Validating the location name
