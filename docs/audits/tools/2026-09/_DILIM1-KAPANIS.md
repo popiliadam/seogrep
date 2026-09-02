@@ -33,7 +33,7 @@ olmadı** — o PR'ın kapattığı 9 bulgu bugün `main`'de YOKTUR.
 | `list_jobs` | KAPANDI | #198, #204, #205, #206* | B-1 status filtresi + bogus ret | B-3 → **Dilim 2** |
 | `list_projects` | KAPANDI | #204, #205, #206* | B-2 (strict) | B-3 (P2) · B-5 (P2, ölçülemedi) |
 | `setup_project` | KAPANDI | #203, #204, #206* | SP-2 (strict) | yok |
-| `track_gsc_property` | KAPANDI | #198, #203, #206* | TGP-1 hariç **yok** — TGP-5 canlıda ölçülmedi | TGP-2 (P2) · TGP-3 (P2) |
+| `track_gsc_property` | KAPANDI | #198, #203, #206* | TGP-1 hariç **yok**; TGP-5 canlıda ✔ (şef, katrenur sc-domain:, Δ0) | TGP-2 (P2) · TGP-3 (P2) |
 | `track_keywords` | KAPANDI | #198, #203, #204, #206* | F-3 `action:"list"` · F-8 | F-4 · F-5 · F-6 · F-7 · F-9 (beş P2) |
 | `untrack_project` | KAPANDI | #198, #203, #206* | UP-2'nin tek-ses yarısı | UP-2 yarısı **İMZA** · UP-3 (P2) |
 | `whats_next` | KAPANDI | #203, #204, #206* | F-9 (`{confirm:true}` reddi) | F-1 **İMZA** + F-4·F-5·F-6·F-7·F-8·F-10 |
