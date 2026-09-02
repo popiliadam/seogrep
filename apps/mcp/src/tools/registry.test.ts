@@ -11,6 +11,7 @@ import {
   readConfirmFlag,
   registerAll,
   textResult,
+  toInputJsonSchema,
   textResultWithCard,
   textResultWithData,
   type RegisteredTool,
@@ -741,6 +742,21 @@ describe("S1 — unknown input keys are refused, not silently dropped", () => {
     expect(loose).toEqual([]);
     // Not vacuous: the filter above is silent on an empty ALL_TOOLS, and the surface is 38 tools.
     expect(ALL_TOOLS.length).toBe(38);
+  });
+
+  /**
+   * The deriver is pinned where the promise is MADE, not only where it happens to be pre-applied.
+   * Measured 2026-09-02: with `refuseUnknownKeys` removed from `toInputJsonSchema` and left in
+   * `defineTool`, the loop above stayed GREEN — defineTool hands the deriver an already-strict
+   * schema, so the deriver's own half was untested and a caller passing a raw spec schema (it is
+   * exported) would have advertised a permissive schema over a strict parse.
+   */
+  it("toInputJsonSchema adds additionalProperties:false to a schema handed to it untightened", () => {
+    expect(toInputJsonSchema(z.object({ focus: z.string() }))).toMatchObject({
+      type: "object",
+      properties: { focus: { type: "string" } },
+      additionalProperties: false,
+    });
   });
 
   it("refuses an unknown key and NAMES it, without running the handler", async () => {
