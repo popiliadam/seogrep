@@ -39,11 +39,13 @@ function bulletList(items: string[], indent = "  "): string {
  */
 export const ONPAGE_LABELS: Record<string, string> = {
   missing_title: "missing title",
-  title_too_long: "title too long",
+  // `title_too_long` and `meta_too_long` USED TO SIT HERE and are gone with the rules that fed
+  // them (rules/onpage.ts states why: Google publishes no character limit for either field).
+  // Removed rather than left as dead keys — a label the engine can never emit is a claim about a
+  // finding type this product no longer has.
   title_too_short: "title too short",
   duplicate_title: "duplicate title",
   missing_meta: "missing meta description",
-  meta_too_long: "meta description too long",
   meta_too_short: "meta description too short",
   duplicate_meta: "duplicate meta description",
   missing_h1: "missing h1",
@@ -111,8 +113,27 @@ export function formatOnpageReport(report: OnpageReport, fetchedAt: string | nul
       lines.push(`  … and ${report.duplicateGroups.length - MAX_LISTED} more group(s)`);
     }
   }
+
+  // THE SNIPPET NOTE, ONCE AND ONLY WHEN IT APPLIES (R-4.4).
+  //
+  // A missing or short meta description reads as "this page has nothing for Google to show", and
+  // that is not what Google says: the snippet is generated PRIMARILY from the page content, and
+  // the meta description is used only sometimes. The report keeps the finding — an empty
+  // description is still a wasted slot the page owns — and stops implying a consequence it cannot
+  // observe. It is a FOOTER rather than a per-page bullet because it qualifies the rule, not the
+  // page: repeated under fifty URLs it would be noise, and said once it is the caveat.
+  if (metaFindings.some((type) => (report.counts[type] ?? 0) > 0)) {
+    lines.push(
+      "",
+      "Note: Google generates most snippets from the page content itself and uses the meta " +
+        "description only sometimes, so these are opportunities rather than errors.",
+    );
+  }
   return lines.join("\n");
 }
+
+/** The finding types the snippet note qualifies — the two that judge a meta description's text. */
+const metaFindings = ["missing_meta", "meta_too_short"] as const;
 
 // --- technical -------------------------------------------------------------------
 

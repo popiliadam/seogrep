@@ -196,6 +196,12 @@ const SNAPSHOTS: Record<string, string> = {
     "- https://snap.example/gone",
     "    · title too short (7 chars, minimum 10)",
     "    · missing canonical",
+    // The snippet note (R-4.4), printed once at the foot because this fixture fires a
+    // meta-description finding. It belongs in the frozen text: the note is customer copy, so
+    // losing it should cost a deliberate edit here rather than pass unnoticed.
+    "",
+    "Note: Google generates most snippets from the page content itself and uses the meta " +
+      "description only sometimes, so these are opportunities rather than errors.",
   ].join("\n"),
   audit_tech: [
     "Technical audit — 2 page(s), 1 skipped (crawl from 2026-08-14T00:00:00.000Z).",

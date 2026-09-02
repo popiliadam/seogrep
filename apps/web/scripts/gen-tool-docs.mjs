@@ -1161,10 +1161,12 @@ export const DOC_PROSE = {
       "tells you so and charges nothing.",
     whatItDoes:
       "Runs a rule engine over every crawled page and reports, per page, issues such as:\n\n" +
-      "- **Titles** — missing, too long (over ~60 characters), too short, or duplicated across pages.\n" +
-      "- **Meta descriptions** — missing, too long (over ~160 characters), too short, or duplicated.\n" +
+      "- **Titles** — missing, very short (under ~10 characters), or duplicated across pages.\n" +
+      "- **Meta descriptions** — missing, very short (under ~50 characters), or duplicated.\n" +
       "- **Headings** — a missing `h1`, or more than one `h1`.\n" +
-      "- **Canonicals** — missing, or pointing to a different URL than the page itself.\n" +
+      "- **Canonicals** — missing, or pointing to a different URL than the page itself. The " +
+      "canonical is read from the HTML as served and never after JavaScript, which is also where " +
+      "Google asks you to declare it.\n" +
       "- **Thin content** — pages under ~200 words.\n"  +
       "- **Images with no alt text** — how many of the images on the page have none.\n" +
       "- **A title that merely repeats the h1** — the search snippet spent on words the visitor " +
@@ -1173,6 +1175,13 @@ export const DOC_PROSE = {
       "missing is one finding; declaring one and not the other is a style choice, not a gap.\n" +
       "- **A missing `html lang`** attribute.\n" +
       "- **A heading hierarchy gap** — `h3`s under an `h1` with no `h2` between them.\n\n" +
+      "**There is no maximum length for a title or a meta description, and this tool does not " +
+      "invent one.** Google publishes no character limit for either: a title link is shortened to " +
+      "the width of the device when it is shortened at all, and a snippet is generated mostly from " +
+      "the page's own content, with the meta description used only sometimes. Earlier versions of " +
+      "this tool reported \"title too long (over 60 characters)\" as if 60 were a published rule. " +
+      "It is not, and that finding has been removed rather than re-tuned. The remaining length " +
+      "signals are the short ones, and they are claims about the page, not about Google.\n\n" +
       "Thresholds are conservative \"worth a look\" signals, not hard rules. A rule whose input " +
       "an older crawl never recorded produces **no finding** for those pages rather than a " +
       "false one — not-measured and not-present are kept apart.\n\n" +

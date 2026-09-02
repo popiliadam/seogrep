@@ -126,9 +126,29 @@ const LEGACY_RESULT: Json = {
  * `    · URL (reason)` (U + R + 10 bytes) became `    REASON — 1 URL(s):` + a newline +
  * `      · URL` (U + R + 28). No new section, no changed count, no reordering — the categories are
  * still sorted by name and each still holds one skip. `onpage` and `schema` are byte-identical.
+ *
+ * RE-CUT A THIRD TIME, DELIBERATELY (the invented character limits were retired). `title_too_long`
+ * and `meta_too_long` no longer exist: Google publishes no character limit for either field
+ * (R-4.2 / R-4.4, measured 2026-09-02), so the engine stopped reporting a breach of one.
+ *
+ * THE ARITHMETIC AGAIN, and it is the whole proof that nothing else moved. `onpage` SHRANK
+ * 1091 -> 1030, and -61 is exactly the two places this fixture said it: `1 title too long, ` in the
+ * Summary line (18 bytes) plus the finding line `    · title too long (65 chars, limit 60)` and its
+ * newline (43 bytes — the `·` is two). The fixture fires no `meta_too_long`, so the meta half costs
+ * nothing here. No page left the list, no other count moved, and `tech` and `schema` are
+ * byte-identical: the other half of the same statement. The digest below was taken from the
+ * HAND-EDITED literal in format-signals.test.ts rather than from the renderer, so these two pins
+ * stay two independent measurements of one output instead of one measurement written down twice.
+ *
+ * AND THE OTHER HALF OF THE SAME CHANGE: the report now closes with the snippet note (R-4.4 —
+ * Google generates most snippets from the page content, so a meta-description finding is an
+ * opportunity, not a broken page). It prints only when a meta finding fired, and this fixture
+ * fires two. `onpage` therefore grew 1030 -> 1190, and +160 is a blank line plus that one
+ * sentence and nothing else. Net against the pre-change 1091: -61 for the retired limit, +160 for
+ * the note. `tech` and `schema` are still byte-identical.
  */
 const __baseline__ = {
-  onpage: { bytes: 1091, sha256: "71b222a583638607904f1cc1cc1bfad390206c1fd99a6c35a487a53ebc06a2fb" },
+  onpage: { bytes: 1190, sha256: "5c3adb3bdd629732c20dedc8e3b5210b5ce0dee1e00f4d334536ddba5379c0df" },
   tech: { bytes: 820, sha256: "61d286358f67dc62d676e40ae8b27f1b428aafcc382e54ea95e673e68226cf74" },
   schema: { bytes: 442, sha256: "109001323c5f9de8760be8921f3a3bc406b22b43100a1062182090c759071f59" },
 } as const;

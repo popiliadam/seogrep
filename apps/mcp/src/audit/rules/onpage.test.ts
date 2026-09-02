@@ -48,11 +48,20 @@ describe("auditOnpage — title rules", () => {
     const report = auditOnpage(crawl([page({ url: "https://e/a", title: null })]));
     expect(typesFor(report, "https://e/a")).toContain("missing_title");
   });
-  it("flags a title over 60 chars, and a clean-length title does not", () => {
-    const long = "x".repeat(61);
-    const report = auditOnpage(crawl([page({ url: "https://e/a", title: long })]));
-    expect(typesFor(report, "https://e/a")).toContain("title_too_long");
-    expect(typesFor(auditOnpage(crawl([page({ url: "https://e/b" })])), "https://e/b")).not.toContain("title_too_long");
+  /**
+   * NO UPPER BOUND ON TITLE LENGTH, and the absence is what this pins (R-4.2, measured 2026-09-02).
+   *
+   * This replaces a test that pinned `title_too_long` at 60 characters. Google publishes NO
+   * character limit for `<title>`; the "60 character rule" appears in no Google document, and a
+   * title link is truncated to the DEVICE WIDTH when it is truncated at all. The old rule sold an
+   * invented number to a paying customer as a published one, and the old test made the gate defend
+   * it. So the pin is INVERTED rather than removed: an over-long title must produce NO finding, and
+   * re-introducing any upper bound turns this red.
+   */
+  it("does NOT flag a long title — Google publishes no character limit for <title> (R-4.2)", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", title: "x".repeat(200) })]));
+    expect(typesFor(report, "https://e/a")).toEqual([]);
+    expect(report.counts).toEqual({});
   });
   it("flags a title under 10 chars", () => {
     const report = auditOnpage(crawl([page({ url: "https://e/a", title: "Hi" })]));
@@ -73,9 +82,19 @@ describe("auditOnpage — meta description rules", () => {
     const report = auditOnpage(crawl([page({ url: "https://e/a", metaDescription: null })]));
     expect(typesFor(report, "https://e/a")).toContain("missing_meta");
   });
-  it("flags a meta over 160 and under 50 chars", () => {
-    const longRep = auditOnpage(crawl([page({ url: "https://e/a", metaDescription: "y".repeat(161) })]));
-    expect(typesFor(longRep, "https://e/a")).toContain("meta_too_long");
+  /**
+   * The meta half of R-4.4, and the same inversion as the title above: Google publishes no length
+   * limit for a meta description either, and the snippet is generated PRIMARILY FROM THE PAGE
+   * CONTENT — the meta description is only sometimes used. A "too long" finding was therefore two
+   * assumptions deep. The short-side signal survives because it claims nothing about Google: a
+   * nine-character description under-uses a snippet slot the page owns.
+   */
+  it("does NOT flag a long meta description — no published length limit (R-4.4)", () => {
+    const report = auditOnpage(crawl([page({ url: "https://e/a", metaDescription: "y".repeat(400) })]));
+    expect(typesFor(report, "https://e/a")).toEqual([]);
+    expect(report.counts).toEqual({});
+  });
+  it("still flags a meta description under 50 chars", () => {
     const shortRep = auditOnpage(crawl([page({ url: "https://e/b", metaDescription: "too short" })]));
     expect(typesFor(shortRep, "https://e/b")).toContain("meta_too_short");
   });
@@ -125,15 +144,13 @@ function textFor(report: ReturnType<typeof auditOnpage>, url: string, type: stri
  * the sentence said. Deleting the bound from any one message turns that row red on its second
  * expectation, and only that one.
  *
- * The bounds are LITERALS here on purpose: 60/10/160/50/200 are the product's numbers, not the
+ * The bounds are LITERALS here on purpose: 10/50/200 are the product's numbers, not the
  * module's, so importing them back out of the module under test would let a silent change to a
  * constant carry its own test along with it.
  */
 describe("auditOnpage — every threshold finding states its threshold", () => {
   const cases: { rule: string; type: string; measured: number; bound: number; fields: Partial<AuditPage> }[] = [
-    { rule: "title too long", type: "title_too_long", measured: 62, bound: 60, fields: { title: "x".repeat(62) } },
     { rule: "title too short", type: "title_too_short", measured: 7, bound: 10, fields: { title: "Dentist" } },
-    { rule: "meta too long", type: "meta_too_long", measured: 161, bound: 160, fields: { metaDescription: "y".repeat(161) } },
     { rule: "meta too short", type: "meta_too_short", measured: 9, bound: 50, fields: { metaDescription: "too short" } },
     { rule: "thin content", type: "thin_content", measured: 42, bound: 200, fields: { wordCount: 42 } },
   ];

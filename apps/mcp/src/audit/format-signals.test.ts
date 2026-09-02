@@ -123,7 +123,7 @@ const LEGACY_RESULT: Json = {
 
 const LEGACY_ONPAGE = `On-page audit — 5 page(s) analyzed (crawl from 2026-08-14T00:00:00.000Z).
 
-Summary: 1 title too long, 1 title too short, 2 duplicate title, 1 missing meta description, 1 meta description too short, 2 duplicate meta description, 1 missing h1, 1 multiple h1, 1 missing canonical, 1 canonical points elsewhere, 2 thin content.
+Summary: 1 title too short, 2 duplicate title, 1 missing meta description, 1 meta description too short, 2 duplicate meta description, 1 missing h1, 1 multiple h1, 1 missing canonical, 1 canonical points elsewhere, 2 thin content.
 4 page(s) with findings; 1 clean.
 
 Findings by page:
@@ -132,7 +132,6 @@ Findings by page:
     · missing meta description
     · thin content (40 words, minimum 200)
 - https://legacy.test/a
-    · title too long (65 chars, limit 60)
     · meta description too short (9 chars, minimum 50)
     · missing h1
     · missing canonical
@@ -144,7 +143,9 @@ Findings by page:
     · thin content (10 words, minimum 200)
 - https://legacy.test/c
     · title too short (2 chars, minimum 10)
-    · duplicate meta description (shared with another page)`;
+    · duplicate meta description (shared with another page)
+
+Note: Google generates most snippets from the page content itself and uses the meta description only sometimes, so these are opportunities rather than errors.`;
 
 const LEGACY_TECH = `Technical audit — 5 page(s), 4 skipped (crawl from 2026-08-14T00:00:00.000Z).
 
