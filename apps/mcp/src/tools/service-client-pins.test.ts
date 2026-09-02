@@ -28,7 +28,7 @@ import {
  * spec's own answer callback handed over. The single exception is the last block, which is a
  * claim about how a CALLER INTERPRETS an answer it was given, not about the query.
  *
- * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1.
+ * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1 · CG-1 (mapping read).
  */
 
 const USER = "user-under-test";
@@ -47,9 +47,14 @@ vi.mock("../db.ts", async (importOriginal) => ({
 import { listOwnCreditActivity, summarizeOwnSpend } from "./list-credit-activity.ts";
 import { listOwnJobs } from "./list-jobs.ts";
 import { listProjectsTool } from "./list-projects.ts";
+import { loadOwnGscMapping } from "./connect-gsc.ts";
 import type { ProjectResolution } from "./setup-project.ts";
 import { makeTrackGscPropertyTool } from "./track-gsc-property.ts";
-import { untrackKeywords } from "./tracked-keywords-store.ts";
+import {
+  countActiveTrackedKeywords,
+  listActiveTrackedKeywords,
+  untrackKeywords,
+} from "./tracked-keywords-store.ts";
 import { archiveOwnProject } from "./untrack-project.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
@@ -361,13 +366,16 @@ describe("the property mapping upsert names the tenant in its conflict target (T
     return db.onlyStatementFor("gsc_connections");
   }
 
-  it("upserts on (user_id, project_id), not on project_id alone", async () => {
+  it("upserts on EXACTLY (user_id, project_id) — no fewer columns, and no more", async () => {
     const upserts = callsTo(await trackProperty(), "upsert");
     expect(upserts).toHaveLength(1);
     const target = upserts[0]?.args[1] as { onConflict?: string } | undefined;
     const columns = (target?.onConflict ?? "").split(",").map((column) => column.trim());
-    expect(columns).toContain("user_id");
-    expect(columns).toContain("project_id");
+    // THE WHOLE SET, order-independent — `toContain` was too loose (referee, 2026-09-02): it
+    // admitted any SUPERSET, and `"user_id,project_id,account_id"` is a real regression, not a
+    // hypothetical one. A wider target matches migration 0010's unique index on nothing, so the
+    // upsert stops folding onto the existing row and starts inserting a second mapping.
+    expect([...columns].sort()).toEqual(["project_id", "user_id"]);
   });
 
   it("writes the tenant id as a column too, not only in the conflict target", async () => {
@@ -378,5 +386,87 @@ describe("the property mapping upsert names the tenant in its conflict target (T
       account_id: ACCOUNT,
       gsc_property: PROPERTY,
     });
+  });
+});
+
+/**
+ * TK F-1, READ SIDE — found by the referee on 2026-09-02, after the write side was pinned.
+ *
+ * The same two constraints ride on the two reads the cap and the listing are built from, and both
+ * were invisible: deleting `.is("untracked_at", null)` or `.eq("user_id", …)` from either one left
+ * 144/144 green. The pair matters more than either alone. Lose the archive filter on the COUNT and
+ * the per-project cap starts counting keywords the customer already stopped tracking, so a project
+ * well under the cap is refused; lose it on the LIST and untracked keywords come back as tracked.
+ * Lose the tenant filter and both answers are the fleet's.
+ */
+describe("the tracked_keywords reads are tenant-scoped and archive-aware (TK F-1)", () => {
+  const PROJECT = "3c9f0b21-4d5e-4f60-9a7b-8c9d0e1f2a3b";
+  const ACTIVE_ONLY = { method: "is", args: ["untracked_at", null] };
+  const PROJECT_SCOPE = { method: "eq", args: ["project_id", PROJECT] };
+
+  it("the listing reads only this tenant's ACTIVE rows for this project", async () => {
+    db = createFakeQueryDb(() => ({
+      data: [
+        {
+          keyword: "seo audit",
+          location_name: "United States",
+          language_code: "en",
+          device: "desktop",
+        },
+      ],
+    }));
+    await listActiveTrackedKeywords(USER, PROJECT);
+    const statement = db.onlyStatementFor("tracked_keywords");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual(PROJECT_SCOPE);
+    expect(statement.calls).toContainEqual(ACTIVE_ONLY);
+  });
+
+  it("the cap's count does the same, and counts in the database rather than in hand", async () => {
+    db = createFakeQueryDb(() => ({ data: null, count: 7 }));
+    await expect(countActiveTrackedKeywords(USER, PROJECT)).resolves.toBe(7);
+    const statement = db.onlyStatementFor("tracked_keywords");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual(PROJECT_SCOPE);
+    expect(statement.calls).toContainEqual(ACTIVE_ONLY);
+    // `head: true` with an exact count — PostgREST's 1000-row page would silently under-count a
+    // project at the cap, which is the one place the number has to be right.
+    expect(callsTo(statement, "select")[0]?.args[1]).toMatchObject({
+      count: "exact",
+      head: true,
+    });
+  });
+});
+
+/**
+ * CG-1, THE READ THE PORT SEAM CREATED — found by the referee on 2026-09-02, and a fair finding
+ * about this very slice: extracting `loadOwnGscMapping` out of the handler moved the tenant filter
+ * into a new default port, and a new default port is a new place with no gate. Deleting
+ * `.eq("user_id", userId)` from it left 144/144 green.
+ *
+ * The three calls are one guarantee, not three preferences: `user_id` is the whole of NEVER #4 on
+ * an RLS-bypassing client, `project_id` is what makes the row THIS project's, and `maybeSingle`
+ * is what lets "no mapping" be an answer instead of an error.
+ */
+describe("the connect_gsc mapping read is scoped to one tenant's one project (CG-1)", () => {
+  const PROJECT = "6d7e8f90-1a2b-4c3d-8e4f-506172839405";
+
+  async function readMapping(): Promise<RecordedStatement> {
+    db = createFakeQueryDb(() => ({ data: { account_id: null, gsc_property: null } }));
+    await loadOwnGscMapping(USER, PROJECT);
+    return db.onlyStatementFor("gsc_connections");
+  }
+
+  it("filters by user_id AND project_id, and asks for at most one row", async () => {
+    const statement = await readMapping();
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    expect(callsTo(statement, "maybeSingle")).toHaveLength(1);
+  });
+
+  it("projects the column the connected/not-connected decision is made from", async () => {
+    const columns = String(callsTo(await readMapping(), "select")[0]?.args[0] ?? "");
+    expect(columns).toContain("account_id");
+    expect(columns).toContain("gsc_property");
   });
 });
