@@ -1,6 +1,6 @@
 # SeoGrep — tam depo, üretim ve 38-tool audit raporu
 
-> Tarih: 2026-08-26 (Europe/Istanbul)  
+> Tarih: 2026-08-26; devam doğrulaması: 2026-08-27 (Europe/Istanbul)
 > Tür: salt-okunur hostile audit; kod düzeltmesi, migration, deploy ve ücretli vendor çağrısı yapılmadı  
 > Kapsam: üretim + commit'li PR branch'i + yerel WIP, MCP tool yüzeyi, veri/para güvenliği,
 > CI/CD, bağımlılıklar, web ürünü, SEO, erişilebilirlik, hukuk ve canlı smoke  
@@ -11,9 +11,15 @@
 
 **Karar: mevcut PR sıradan bir merge/deploy akışıyla yayınlanmamalı; migration 0033 ile koordine
 edilmelidir.** Üründe kanıtlanmış kritik bir veri sızıntısı, yetki atlama, kredi defteri mutasyonu
-veya webhook sahteciliği bulunmadı. Buna karşılık **3 yüksek**, **7 orta** ve **10 düşük** risk/kalite
+veya webhook sahteciliği bulunmadı. Buna karşılık **3 yüksek**, **8 orta** ve **10 düşük** risk/kalite
 bulgusu var. Yükseklerin blokladığı kapsam aynı değildir: H-01 ücretli AI smoke ve ticari güveni,
-H-02 bu PR'nin koordinesiz release'ini, H-03 ise gelecekteki `packages/db`-only deploy güvenini bloklar.
+H-02 audit başında bu PR'nin koordinesiz release'ini, H-03 ise gelecekteki `packages/db`-only deploy
+güvenini blokluyordu. 2026-08-27 devamında H-02'nin exact release için doğru sıra ile kapandığı
+doğrulandı; release otomasyonu ve migration journal borcu açık.
+
+Bu **3H/8M/10L** sayımı audit başlangıcında bu raporun sınıflandırdığı bulgulara aittir. 2026-08-27
+devam smoke'unda bulunan `whats_next` E-1/E-2/E-3 kusurları, hareketli dalga defterinin kendi severity
+kuyruğunda tutulur ve headline sayıya eklenmez; §14 bunların canlı/branch durumunu ayrıca açıklar.
 
 En önemli üç yüksek bulgu:
 
@@ -21,9 +27,10 @@ En önemli üç yüksek bulgu:
    faturalandırılan sonuç satırlarını sınırlamadığını doğru biçimde yazıyor; aynı dosyanın bütçe
    tahmini ise alanı hâlâ `target × row cap` olarak kullanıyor. `ai_visibility` ailesi için pre-call
    rezervasyonun yukarıdan sınırladığı ve imzalı kredi marjının korunduğu gösterilemiyor.
-2. **H-02 — Migration 0033 release sırası belgelenmiş ama mekanize değil.** Prod DB'de kolon yok;
-   branch MCP kodu yeni RPC imzasını kullanıyor. Doğru sıra `0033 → MCP → web`. Netlify web'i merge
-   ile otomatik yayınlarken MCP ayrı GitHub workflow'u bekliyor; yanlış sırada üretim kırılır.
+2. **H-02 — Migration 0033 release sırası belgelenmiş ama mekanize değil.** Audit başlangıcında prod
+   DB'de kolon yoktu ve branch MCP kodu yeni RPC imzasını kullanıyordu. Doğru sıra `0033 → MCP → web`.
+   Operatör bu exact release'i doğru sırayla tamamladı; aynı sınıf gelecek release'ler hâlâ insan
+   runbook'una bağlı.
 3. **H-03 — MCP deploy trigger'ı `packages/db/**` değişikliklerini izlemiyor.** Docker image açıkça
    `@pseo/db` derleyip kopyalıyor. Sadece DB runtime package değişen gelecekteki bir commit CI'dan
    geçebilir, fakat yeni MCP image üretmez ve canlı kod sessizce eski kalır. Bu PR `apps/mcp/**`
@@ -40,7 +47,7 @@ Ancak **38/38 tool'un gerçek başarılı iş akışı test edilmiş değildir**
 şema, precondition/rejection ve no-charge davranışını gördü; önceki smoke defteri yalnız dört tool'u,
 sonraki adım `setup_project`i gerçek mutlu yolda ölçtü. Ücretli vendor happy path kapsamı hâlâ açık.
 
-## 2. Audit edilen üç sürüm
+## 2. Audit başlangıcında incelenen üç sürüm
 
 | Durum | Kimlik | Hüküm kapsamı |
 |---|---|---|
@@ -94,7 +101,7 @@ Bu rapor ürün koduna dokunmadı.
 | ID | Şiddet | Başlık | Durum |
 |---|---|---|---|
 | H-01 | Yüksek | AI visibility bütçe/marj modeli yanlış bir “row cap” varsayımına dayanıyor | Açık, ücretli smoke bloklu |
-| H-02 | Yüksek | 0033 → MCP → web release sırası otomatik güvence altında değil | Açık, merge no-go |
+| H-02 | Yüksek | 0033 → MCP → web release sırası otomatik güvence altında değil | Exact #180 release kapandı; otomasyon açık |
 | H-03 | Yüksek | MCP deploy path filtresi `packages/db/**` girdisini kaçırıyor | Açık |
 | M-01 | Orta | Tool sweep yalnız 19/38 tool'u kapsıyor ve ana verify bunu çalıştırmıyor | Açık |
 | M-02 | Orta | Runtime ağacında 17 advisory var; CI'da SCA kapısı yok | Açık |
@@ -103,6 +110,7 @@ Bu rapor ürün koduna dokunmadı.
 | M-05 | Orta | `keyword_gap`/`link_gap` ücretli sonuçları run history bırakmıyor | Açık |
 | M-06 | Orta | Paddle live yok; gerçek satın alma/refund/portal release kanıtı yok | Bilinen kısıt |
 | M-07 | Orta | Docs'ta `/docs/tools-reference` iç linki 404 | Açık |
+| M-08 | Orta | 0033 şemada uygulanmış fakat Supabase migration journal'da kayıtlı değil | Açık |
 | L-01 | Düşük | Docs shell semantik `main`/`nav` landmark'larını sunmuyor | Açık |
 | L-02 | Düşük | Web `x-powered-by: Next.js` yayınlıyor | Açık |
 | L-03 | Düşük | MCP 404/malformed JSON cevapları varsayılan Express HTML | Açık |
@@ -158,7 +166,7 @@ Kaynaklar: [aggregated legacy docs](https://docs.dataforseo.com/v3/ai_optimizati
 
 ### H-02 — Migration 0033 release sırası otomatik güvence altında değil
 
-**Kanıt.** `packages/db/supabase/migrations/0033_credit_ledger_project_scope.sql` ledger'a
+**Audit başlangıcı kanıtı.** `packages/db/supabase/migrations/0033_credit_ledger_project_scope.sql` ledger'a
 `project_id` ekliyor ve `reserve_credits` imzasını değiştiriyor. `apps/mcp/src/credits/guard.ts`
 branch'te `p_project_id` gönderiyor. Prod durum kaydı ve handoff, canlı DB'de bu kolonun henüz
 olmadığını doğruluyor. `docs/plans/2026-08-27-SMOKE-TURU-handoff-dalga2.md:100-106` doğru sırayı
@@ -176,6 +184,12 @@ riskidir.
 **Gerekli kapanış.** 0033 cloud apply kanıtı, tam SHA'lı MCP branch deploy/health/schema sentinel,
 sonra web deploy yapılmalı. `/status` 0033'e özgü kolon veya RPC imzasını doğrulamalı. Uzun vadede
 release orchestration migration uyumluluğunu otomatik kapı yapmalı.
+
+**2026-08-27 devam durumu.** PR #180 `3ade3f2` merge commit'iyle kapandı. Smoke defteri ve workflow
+kanıtları 0033'ün cloud'a uygulandığını, ardından MCP ve web'in deploy edildiğini, yeni ledger/project
+scope davranışının canlıda okunduğunu gösteriyor. Exact release outage olmadan kapandı. Bununla birlikte
+`/status` hâlâ yalnız `rpc:dfs_spend_today_usd` sentinel'ını yayımlıyor ve sıra otomatik değil; H-02'nin
+**bu olay** için no-go'su kapalı, süreç riski açık.
 
 ### H-03 — MCP deploy trigger'ı `packages/db/**` değişikliklerini kaçırıyor
 
@@ -260,6 +274,16 @@ beklenen bir audit kısıtı; ücretli lansman için ayrıca no-go'dur.
 68 sitemap URL'i 200 iken iç-link taraması bir kırık link buldu:
 `apps/web/content/docs/billing-and-credits.mdx:40` → `/docs/tools-reference` (**404**). Doğru hub
 oluşturulmalı veya link mevcut tool index/ilk sayfaya yönlendirilmeli.
+
+### M-08 — Migration 0033 şemada var, migration journal'da yok
+
+2026-08-27 smoke handoff'u, 0033 SQL'inin Supabase SQL Editor üzerinden uygulandığını ve şemanın doğru
+olduğunu; fakat `supabase_migrations.schema_migrations` tablosunda 0033 kaydının bulunmadığını kaydediyor.
+Bu bir mevcut runtime şema eksikliği değildir: kolon, indeksler ve RPC davranışı canlıda doğrulanmış.
+Risk bir sonraki standart `supabase db push` işlemindedir; araç migration'ı yeniden uygulamaya çalışıp
+`column already exists` ile durabilir veya operatörü tehlikeli bir “repair” kararına zorlayabilir.
+Journal, Supabase'in desteklediği migration repair yöntemiyle exact SQL/hash doğrulandıktan sonra
+uzlaştırılmalı; migration yeniden körlemesine çalıştırılmamalıdır.
 
 ## 7. Düşük bulgular
 
@@ -360,12 +384,12 @@ kapatmaz.
 
 | Tool | İmzalı kredi | Bu tur canlı sonucu | Ek audit notu |
 |---|---:|---|---|
-| `setup_project` | 0 | Mevcut proje happy path | DNS warning/next-step/IDN düzeltmeleri `dd4a003`te, prod'da değil |
+| `setup_project` | 0 | Mevcut proje happy path | Audit başlangıcı: düzeltmeler `dd4a003`te branch-only idi; §14'te canlıya çıktı |
 | `connect_gsc` | 0 | Happy path, mevcut bağlantı | OAuth güvenlik zinciri statik olarak iyi |
-| `list_projects` | 0 | Happy path | Prod ile branch çıktısı farklı |
+| `list_projects` | 0 | Happy path | Audit başlangıcı: prod/branch çıktısı farklıydı; §14'te branch davranışı canlı |
 | `get_credit_balance` | 0 | Happy path | 4519, no delta |
-| `list_credit_activity` | 0 | Happy path | Prod henüz project scope göstermez |
-| `list_jobs` | 0 | Happy path | Prod henüz branch düzeltmelerini taşımaz |
+| `list_credit_activity` | 0 | Happy path | Audit başlangıcı: prod project scope göstermiyordu; §14'te scope + pagination canlı |
+| `list_jobs` | 0 | Happy path | Audit başlangıcı: prod branch düzeltmelerini taşımıyordu; §14'te canlı |
 | `get_job_status` | 0 | Güvenli negatif | Tool-sweep PLAN'da mevcut |
 | `whats_next` | 0 | Happy path | Önceki stratejik kalite bulguları ayrıca izleniyor |
 | `list_gsc_properties` | 0 | Happy path | Sweep PLAN'da yok |
@@ -427,7 +451,7 @@ değil, doğru tool seçimine ve karar kalitesine de bakmalıdır.
 ### 11.2 SEO/link taraması
 
 - Sitemap: 68/68 URL 200, canonical var, title var, tek H1; duplicate title yok.
-- 71 benzersiz iç linkte tek 404: M-08.
+- 71 benzersiz iç linkte tek 404: M-07.
 - `http → https` ve `www → apex` 301; trailing slash canonicalization 308.
 - Landing'de uydurma müşteri logosu, testimonial veya doğrulanmamış metrik görülmedi.
 - Landing'in 16-tool anlatımı canlı 38-tool yüzeyiyle güncel değil; yanlış URL daha yüksek öncelikli.
@@ -453,13 +477,14 @@ karşılaştırılmalıdır.
 
 ## 12. Önerilen düzeltme ve yeniden test sırası
 
-### P0 — Merge'den önce
+### P0 — #180 release kontrolü (2026-08-27'de tamamlandı)
 
-1. 0033 cloud apply kanıtı.
-2. Exact branch SHA MCP deploy, yeni migration-aware `/status`, kredi reserve/commit/release smoke.
-3. Web deploy ve project ledger ekranı smoke.
-4. `dd4a003` CI required check'leri yeşil; taze hakem approval hâlâ gerekli.
-5. H-01 kapanana kadar ücretli `ai_visibility*` smoke ve “AI bütçe/marjı kanıtlı” iddiasını blokla.
+1. ✅ 0033 cloud apply ve şema davranışı doğrulandı.
+2. ✅ Exact merge zincirinde MCP deploy ve canlı kredi/project-scope smoke tamamlandı.
+3. ✅ Web deploy ve ilgili panel/tool davranışları canlıda okundu.
+4. ✅ `dd4a003` branch CI ve sonraki main CI run'ları yeşil.
+5. ⚠️ H-01 kapanana kadar ücretli `ai_visibility*` smoke ve “AI bütçe/marjı kanıtlı” iddiası bloklu.
+6. ⚠️ M-08 migration journal uzlaştırması açık.
 
 ### P1 — Ücretli smoke'dan önce
 
@@ -501,3 +526,61 @@ kanıt seti:
 
 Bu koşullar oluşmadan “kapılar yeşil” ifadesi yalnız mevcut deterministic testleri anlatır; üretim
 release güvenini veya tüm tool'ların gerçek başarılı davranışını anlatmaz.
+
+## 14. 2026-08-27 devam addendum'u — güncel üç durum
+
+Audit sürerken repo ve üretim ilerledi. Bu bölüm, yukarıdaki zaman damgalı kanıtları silmeden güncel
+durumu dondurur.
+
+| Güncel durum | Kimlik/kanıt | Sonuç |
+|---|---|---|
+| Canlı MCP/product code | Son gözlenen başarılı MCP deploy workflow head'i `7ba8fde`; `/healthz` ve `/status` 200 | `ok:true`, boot error 0, pending job 0, 38 tool |
+| Repo `main` / `origin/main` | `4c6b0a16eeb51dd16b9c251f698a61c018722966` | CI push run `33047002554` SUCCESS; son main değişiklikleri docs-only |
+| Açık geliştirme branch'i | `761eab48ca63fe9aa4729cc4e5149fa7e8f10a67`; ürün commit'leri `78b988b` + `d725cc9` | PR #188 açık; CI 6/6 SUCCESS; main'e merge/deploy edilmedi; yalnız bu rapor worktree'de değişik |
+
+### 14.1 Merge/deploy ve canlı doğrulama
+
+- PR #180, 2026-08-26 17:38Z'de `3ade3f2244cabeb0a28d769dfd46ed392fe78bbe` merge commit'iyle
+  kapandı. Merge commit'inin MCP deploy workflow'u SUCCESS; sonraki üç MCP kod deploy'u da SUCCESS:
+  `642804c`, `716fa30`, `7ba8fde`.
+- 0033 cloud'a önce uygulandı, MCP ve web ardından yayınlandı. Dalga defteri yeni `project_id`
+  davranışını, IDN/DNS mesajlarını ve `list_credit_activity` sayfalamasını canlı çıktıyla doğruluyor.
+- Canlı ücretsiz tekrar kontrolü: initialize ve `tools/list` başarılı; **38 tool**; canlı
+  `list_credit_activity` şemasında `before_id` mevcut; `get_credit_balance` ve
+  `list_credit_activity(limit:1)` HTTP 200 JSON-RPC result döndürdü, vendor/kredi harcaması yok.
+- Canlı `/`, `/docs` 200; `/app` beklenen şekilde 307 ile `/login`e yönlendiriyor.
+- Handoff'ta operatörün DB'den yaptığı ölçüm, 2026-08-27 UTC gün başlangıcında DFS sayacının `$0.00`
+  olduğunu kaydediyor. Bu Codex oturumunda service-role erişimi oluşmadı; rakam bağımsız yeniden
+  sorgulanmadı ve ücretli çağrı yapılmadı.
+
+### 14.2 Commit'li `whats_next` branch adayının audit'i
+
+`origin/main` `4c6b0a1` üzerine gelen iki ürün commit'i — `78b988b` ve `d725cc9` — sekiz dosyada;
+arşivlenmiş projeye çalışabilir `setup_project` geri dönüş yolu, IDN'in U-label olarak gösterilmesi ve
+panelin “connected but property missing” sinyalini MCP ile aynı merdivene beslemesi üzerinde. Bunların
+üstündeki `761eab4` yalnız smoke defterini commit ediyor. Statik okumada tenant, kredi veya dış API
+davranışını genişleten bir değişiklik görülmedi.
+
+Test edilen ürün delta'sı `4c6b0a1..d725cc9`; diff SHA-256 değeri test öncesi/sonrası aynıydı
+(`a2e02642d4c73d569df7a69cd6a5233582fe2d6e05150241df7e34c3087fdbb5`):
+
+- MCP `project-target` + `whats-next`: **59/59 PASS**.
+- Web `signals` + `parity` + `core-identity`: **40/40 PASS**.
+- `git diff --check`: PASS.
+- Exact `761eab4` GitHub CI run `33049141156`: **6/6 SUCCESS** (`verify`, `verify-db`,
+  `static-guards`, `gitleaks`, `licenses`, `lighthouse`).
+
+Targeted testler ve full CI yeşildir. Ürün değişiklikleri commit'li ve PR #188 açık; audit kapanışı
+anında main'e merge edilmemiş ve prod'a deploy edilmemiştir. Bu audit ürün koduna müdahale etmedi.
+
+### 14.3 Güncel karar
+
+- #180 için H-02 release no-go'su doğru manuel sıra ile kapandı; ürün canlı ve sağlıklı cevaplıyor.
+- **H-01 açık:** AI visibility bütçe üst sınırı kanıtsız; ücretli AI smoke yapılmamalı.
+- **H-03 açık:** gelecekteki `packages/db`-only değişiklik deploy trigger'ından kaçabilir.
+- **M-08 açık:** prod şema doğru, migration journal bayat.
+- Paddle live olmadığı için gerçek para E2E hâlâ ölçülemez.
+- 38 tool yüzeyi canlı; smoke defterinde **5/38** tool tamamlanıp deploy edilmiş durumda. Altıncı
+  tool `whats_next` 11 canlı çağrıyla ölçüldü. E-1/E-2/E-3 düzeltmeleri PR #188 branch'inde commit'li,
+  fakat main/prod'da değil; bu yüzden canlı kusurlar kapanmış sayılmaz. 38/38 paid/real-data
+  kapanışına ulaşılmış değil.
