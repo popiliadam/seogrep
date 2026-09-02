@@ -668,7 +668,8 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     expect(rows[0]?.estimatedUsd).toBeGreaterThan(2 * LIGHTHOUSE_PAGE_USD);
   });
 
-  it("sends one request per URL, each naming that URL and pinning enable_javascript", async () => {
+  /** Every request body this port sent, parsed, for the two specs below. */
+  async function recordedBodies(): Promise<readonly Record<string, unknown>[]> {
     const bodies: string[] = [];
     const recording: DfsTimedTransport = async (url, init) => {
       expect(url).toBe(DFS_LIGHTHOUSE_ENDPOINT);
@@ -677,14 +678,48 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     };
     const port = createLiveSpeedClient({ login: "u", password: "p", transport: recording, ledger });
     await port.fetchPageSpeed([URL_UNDER_TEST, "https://slowshop.org/pricing"]);
+    return bodies.map((body) => (JSON.parse(body) as Record<string, unknown>[])[0] ?? {});
+  }
 
+  it("sends one request per URL, each naming that URL and pinning both result flags", async () => {
+    const bodies = await recordedBodies();
     expect(bodies).toHaveLength(2);
-    expect(JSON.parse(bodies[0] ?? "[]")).toEqual([
-      { url: URL_UNDER_TEST, enable_javascript: true },
-    ]);
-    expect(JSON.parse(bodies[1] ?? "[]")).toEqual([
-      { url: "https://slowshop.org/pricing", enable_javascript: true },
-    ]);
+    expect(bodies[0]).toEqual({
+      url: URL_UNDER_TEST,
+      enable_javascript: true,
+      for_mobile: false,
+    });
+    expect(bodies[1]).toEqual({
+      url: "https://slowshop.org/pricing",
+      enable_javascript: true,
+      for_mobile: false,
+    });
+  });
+
+  /**
+   * B-9, the half the copy alone could not carry. The heading tells the reader these are desktop
+   * numbers; until this flag was sent, that sentence rested on the VENDOR'S DEFAULT rather than on
+   * anything in our request — true as documented on 2026-09-02, and true only for as long as
+   * DataForSEO keeps a default we do not control and never asserted.
+   *
+   * `for_mobile: false` is the documented desktop setting ("if set to `false`, the results will be
+   * provided for desktop … default value: `false`" —
+   * https://docs.dataforseo.com/v3/on_page/lighthouse/live/json/, read 2026-09-02). It buys nothing
+   * extra: still one run per URL, so the price and MAX_SPEED_URLS are untouched (NEVER #6). Adding
+   * the MOBILE axis would be the opposite — two runs per URL — and that is a price decision.
+   *
+   * PRESENT-AND-FALSE is asserted separately from the value, because presence is the actual claim.
+   * The `toEqual` above happens to catch a missing key today, but only as a side effect of what
+   * else is in the body; `Object.hasOwn` says out loud that the flag is STATED — the doctrine the
+   * sibling `enable_javascript` comment has always named and, until now, only half-kept.
+   */
+  it("states the DESKTOP form factor explicitly instead of inheriting it (B-9)", async () => {
+    for (const body of await recordedBodies()) {
+      expect(Object.hasOwn(body, "for_mobile"), "for_mobile was left to the vendor default").toBe(
+        true,
+      );
+      expect(body.for_mobile).toBe(false);
+    }
   });
 
   it("sends Basic auth built from the injected credentials", async () => {

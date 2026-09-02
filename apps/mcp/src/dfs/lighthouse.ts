@@ -517,11 +517,24 @@ export function createLiveSpeedClient(opts: LiveSpeedOptions): SpeedPort {
       {
         method: "POST",
         headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        // `enable_javascript` is pinned explicitly rather than left to the vendor default: a
-        // performance measurement of a page whose scripts never ran is a measurement of a
-        // different page, and D9's discipline is that a flag which silently changes the result is
-        // stated, never inherited.
-        body: JSON.stringify([{ url, enable_javascript: true }]),
+        // BOTH result-shaping flags are stated rather than left to the vendor default. D9's
+        // discipline is that a flag which silently changes the result is stated, never inherited —
+        // and until 2026-09-02 this comment claimed that discipline while keeping only half of it
+        // (B-9).
+        //
+        //   `enable_javascript: true` — a performance measurement of a page whose scripts never
+        //   ran is a measurement of a different page. One caveat, and it is a real one: this
+        //   parameter is NOT in the vendor's documented parameter list for this endpoint (checked
+        //   2026-09-02), so what it actually does here is unverified — it may be ignored. That is
+        //   not on its own a reason to remove it, but the guarantee is not an asserted one.
+        //
+        //   `for_mobile: false` — the DOCUMENTED desktop setting ("if set to `false`, the results
+        //   will be provided for desktop … default value: `false`"). Sending it is what makes the
+        //   output's "desktop run" sentence a statement about OUR REQUEST instead of about a
+        //   vendor default we do not control and never asserted. It costs nothing: still one
+        //   Lighthouse run per URL, so the signed price is untouched (NEVER #6). Measuring MOBILE
+        //   as well would be two runs per URL — a price decision, and not this flag.
+        body: JSON.stringify([{ url, enable_javascript: true, for_mobile: false }]),
       },
       timeoutMs,
     );
