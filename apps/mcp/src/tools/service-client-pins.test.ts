@@ -28,7 +28,7 @@ import {
  * spec's own answer callback handed over. The single exception is the last block, which is a
  * claim about how a CALLER INTERPRETS an answer it was given, not about the query.
  *
- * Findings closed here: LCA B-4 · LJ B-2 · LP B-1.
+ * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1.
  */
 
 const USER = "user-under-test";
@@ -47,6 +47,10 @@ vi.mock("../db.ts", async (importOriginal) => ({
 import { listOwnCreditActivity, summarizeOwnSpend } from "./list-credit-activity.ts";
 import { listOwnJobs } from "./list-jobs.ts";
 import { listProjectsTool } from "./list-projects.ts";
+import type { ProjectResolution } from "./setup-project.ts";
+import { makeTrackGscPropertyTool } from "./track-gsc-property.ts";
+import { untrackKeywords } from "./tracked-keywords-store.ts";
+import { archiveOwnProject } from "./untrack-project.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
 const tenantFilter = { method: "eq", args: ["user_id", USER] };
@@ -230,5 +234,149 @@ describe("a mapping with no credential is NOT connected (LP B-1)", () => {
     // — and PostgREST would hand back `undefined`, which is not null.
     expect(columns).toContain("account_id");
     expect(connections.calls).toContainEqual(tenantFilter);
+  });
+});
+
+/**
+ * UP-1 — `untrack-project.ts:68`. Deleting `.eq("user_id", userId)` from the archive UPDATE left
+ * 143 files / 3680 tests green. This is the WRITE side of NEVER #4 and it is not a duplicate of
+ * the ownership read that precedes it: the client is service-role and bypasses RLS, so that one
+ * call is all that stands between a stray project id and another tenant's row.
+ *
+ * The zero-row proof is pinned in the same breath, because the two are one guarantee: a write
+ * that matched nothing is not an error in PostgREST, so the statement has to ask for the row back
+ * or "stopped tracking" becomes a sentence nobody checked.
+ */
+describe("the archive write is tenant-filtered, and proves it matched (UP-1)", () => {
+  const PROJECT = "8f2c1d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+
+  async function archive(): Promise<RecordedStatement> {
+    db = createFakeQueryDb(() => ({ data: { id: PROJECT } }));
+    await archiveOwnProject(USER, PROJECT);
+    return db.onlyStatementFor("projects");
+  }
+
+  it("filters the UPDATE by user_id as well as by id", async () => {
+    const statement = await archive();
+    expect(callsTo(statement, "update")).toHaveLength(1);
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["id", PROJECT] });
+  });
+
+  it("asks the row back, so a zero-row UPDATE cannot read as a success", async () => {
+    const statement = await archive();
+    expect(callsTo(statement, "select")).toHaveLength(1);
+    expect(callsTo(statement, "maybeSingle")).toHaveLength(1);
+    // …and the function's answer really is derived from that row, not from the absent error.
+    db = createFakeQueryDb(() => ({ data: null }));
+    await expect(archiveOwnProject(USER, PROJECT)).resolves.toBe(false);
+  });
+});
+
+/**
+ * TK F-1 — `tracked-keywords-store.ts:216`. Dropping `.is("untracked_at", null)` from the untrack
+ * UPDATE left 143 files / 3680 tests green, because the tool injects `untrack` as a port and the
+ * real statement never runs in the fast lane.
+ *
+ * What that filter carries is a promise made in THREE places — the tool description, the docs page
+ * and the live answer: "untracking something twice does not change that date either". Without it,
+ * a second call re-stamps `untracked_at`, and the reply contradicts itself in one breath —
+ * `classify` still builds the "already archived" list from the rows it read, while the write now
+ * reports those same rows as freshly stopped.
+ */
+describe("the untrack write only touches rows that are still active (TK F-1)", () => {
+  const IDENTITY = {
+    projectId: "3c9f0b21-4d5e-4f60-9a7b-8c9d0e1f2a3b",
+    locationName: "United States",
+    languageCode: "en",
+    device: "desktop",
+  } as const;
+
+  async function untrack(): Promise<RecordedStatement> {
+    db = createFakeQueryDb(() => ({ data: [{ keyword: "seo audit" }] }));
+    await untrackKeywords(USER, IDENTITY, ["seo audit"]);
+    return db.onlyStatementFor("tracked_keywords");
+  }
+
+  it("filters on `untracked_at is null`, so a second call matches nothing", async () => {
+    expect((await untrack()).calls).toContainEqual({
+      method: "is",
+      args: ["untracked_at", null],
+    });
+  });
+
+  it("carries the tenant filter and the whole identity on the same UPDATE", async () => {
+    const statement = await untrack();
+    expect(callsTo(statement, "update")).toHaveLength(1);
+    expect(statement.calls).toContainEqual(tenantFilter);
+    for (const [column, value] of [
+      ["project_id", IDENTITY.projectId],
+      ["location_name", IDENTITY.locationName],
+      ["language_code", IDENTITY.languageCode],
+      ["device", IDENTITY.device],
+    ] as const) {
+      expect(statement.calls, column).toContainEqual({ method: "eq", args: [column, value] });
+    }
+  });
+});
+
+/**
+ * TGP-1 — `track-gsc-property.ts:87`. The mapping upsert's conflict target
+ * (`onConflict: "user_id,project_id"`) was pinned by NOTHING: the fast lane injects
+ * `mapProperty`, and the db lane names the target only inside a comment
+ * (`track-gsc-property.db.test.ts:282` — a claim with no `expect` under it). Dropping the tenant
+ * id from the target left 3680 tests green.
+ *
+ * That migration 0010's unique index would probably make PostgREST complain at runtime is not a
+ * gate, it is a coincidence — and the shape it produces is a raw `gsc_connections upsert failed:`
+ * error handed to a customer.
+ *
+ * The DEFAULT port is what runs here: every other port is injected, `mapProperty` deliberately is
+ * not, so the production write is the one being recorded.
+ */
+describe("the property mapping upsert names the tenant in its conflict target (TGP-1)", () => {
+  const PROJECT = "5b6c7d8e-9f01-4a2b-8c3d-4e5f60718293";
+  const ACCOUNT = "2a3b4c5d-6e7f-4081-9a2b-3c4d5e6f7081";
+  const PROPERTY = "https://mapped-under-test.example/";
+
+  async function trackProperty(): Promise<RecordedStatement> {
+    db = createFakeQueryDb(() => ({ data: [], count: 0 }));
+    const tool = makeTrackGscPropertyTool({
+      loadAccounts: () => Promise.resolve([{ id: ACCOUNT, email: "owner@example.com" }]),
+      listAccountSites: () =>
+        Promise.resolve([{ siteUrl: PROPERTY, permissionLevel: "siteOwner" }]),
+      openProject: () =>
+        Promise.resolve({
+          ok: true,
+          project: {
+            id: PROJECT,
+            domain: "mapped-under-test.example",
+            outcome: "created",
+          },
+        } satisfies ProjectResolution),
+      // mapProperty is NOT injected — the production writer is the subject of this block.
+    });
+    const result = await tool.run(CTX, { property: PROPERTY });
+    expect(result.isError, result.content[0]?.text).toBeUndefined();
+    return db.onlyStatementFor("gsc_connections");
+  }
+
+  it("upserts on (user_id, project_id), not on project_id alone", async () => {
+    const upserts = callsTo(await trackProperty(), "upsert");
+    expect(upserts).toHaveLength(1);
+    const target = upserts[0]?.args[1] as { onConflict?: string } | undefined;
+    const columns = (target?.onConflict ?? "").split(",").map((column) => column.trim());
+    expect(columns).toContain("user_id");
+    expect(columns).toContain("project_id");
+  });
+
+  it("writes the tenant id as a column too, not only in the conflict target", async () => {
+    const upserts = callsTo(await trackProperty(), "upsert");
+    expect(upserts[0]?.args[0]).toMatchObject({
+      user_id: USER,
+      project_id: PROJECT,
+      account_id: ACCOUNT,
+      gsc_property: PROPERTY,
+    });
   });
 });
