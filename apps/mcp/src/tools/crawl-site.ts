@@ -3,7 +3,8 @@ import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
 import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
-import { enqueueJob } from "../queue/boss.ts";
+import { getServiceClient } from "../db.ts";
+import { enqueueJob, findActiveJobForProject, type ActiveJob } from "../queue/boss.ts";
 import {
   fetchRankingSeeds,
   SEED_CHARGE_CREDITS,
@@ -75,10 +76,21 @@ export type EstimateFn = (
  */
 export type ProjectResolver = (ctx: AuthContext, projectId: string) => Promise<ProjectRef | null>;
 
+/**
+ * The in-flight-crawl port (default: the tenant-scoped jobs read). Answers "does this caller
+ * already have a crawl_site job queued or running for this project?" — see the guard in the
+ * handler. Injected so the fast lane can prove the guard's decisions with no database.
+ */
+export type ActiveCrawlFinder = (
+  ctx: AuthContext,
+  projectId: string,
+) => Promise<ActiveJob | null>;
+
 export interface CrawlSiteDeps {
   readonly enqueue?: EnqueueFn;
   readonly estimate?: EstimateFn;
   readonly resolveProject?: ProjectResolver;
+  readonly findActiveCrawl?: ActiveCrawlFinder;
   /**
    * The OPT-IN ranking-page seeding step (default: the real, env-resolved, credit-charging one).
    * Injected so the fast lane can prove the surface's seeding behavior — including that it is
@@ -133,6 +145,19 @@ const inputSchema = z.object({
  */
 const defaultResolveProject: ProjectResolver = (ctx, projectId) =>
   loadOwnProject(ctx.userId, projectId);
+
+/**
+ * The tenant-scoped in-flight read. It is deliberately NOT wrapped in a try/catch: it runs on the
+ * same service client that just answered the ownership read a line earlier, so a throw here means
+ * the database is unreachable — in which case the enqueue this guard protects would fail anyway,
+ * and failing before a job exists is the cheaper of the two failures.
+ */
+const defaultFindActiveCrawl: ActiveCrawlFinder = (ctx, projectId) =>
+  findActiveJobForProject(getServiceClient(), {
+    userId: ctx.userId,
+    projectId,
+    tool: "crawl_site",
+  });
 
 /**
  * A full-crawl PROJECTION at the FROZEN rate — it invents no price. `credits` is simply the
@@ -243,6 +268,27 @@ function confirmationResult(
   );
 }
 
+/**
+ * The answer to "crawl this project" when this project is ALREADY being crawled: the job that is
+ * already doing it, in the same machine-readable shape a fresh queue returns (`job_id: … · status:
+ * …`), so a client that parsed one can parse the other.
+ *
+ * It is NOT an error. The caller asked for a crawl of this site and there is one; handing back its
+ * id is the answer to the question they asked. What would be wrong is doing it silently a second
+ * time — the worker binds a fresh {@link TOOL_COSTS.crawl_site}-credit reserve per job, so a
+ * duplicate is a duplicate CHARGE for the same pages.
+ */
+function alreadyRunningResult(domain: string, active: ActiveJob): ToolResult {
+  return textResult(
+    `A crawl of ${domain} is already running — poll it with get_job_status ` +
+      `{ "job_id": "${active.jobId}" }. job_id: ${active.jobId} · status: ${active.status}. ` +
+      `No second crawl was queued and you were not charged: a second crawl of the same project ` +
+      `costs another ${TOOL_COSTS.crawl_site} credits to fetch the same pages. ` +
+      `Wait for this one to finish, then re-run — with include_paths if you want a different ` +
+      `section of the site.`,
+  );
+}
+
 /** The queued-crawl message: the unchanged core plus an honest one-liner when the site was sized. */
 function queuedResult(
   domain: string,
@@ -282,6 +328,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
   const enqueue = deps.enqueue ?? enqueueJob;
   const estimate = deps.estimate ?? estimateSiteSize;
   const resolveProject = deps.resolveProject ?? defaultResolveProject;
+  const findActiveCrawl = deps.findActiveCrawl ?? defaultFindActiveCrawl;
   const fetchSeeds = deps.fetchSeeds ?? ((request) => fetchRankingSeeds(request));
   return defineTool({
     name: "crawl_site",
@@ -320,6 +367,16 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       // worker, and no job is created.
       if (project.archivedAt !== null) {
         return errorResult(withNoChargeNote(ARCHIVED_PROJECT_MESSAGE));
+      }
+
+      // ONE CRAWL PER PROJECT AT A TIME (B-1), and this is the FIRST thing asked after ownership.
+      // Everything below it either costs money (the ranking-seed lookup is a separate charge) or
+      // costs the caller eight silent seconds (pre-discovery), and the enqueue at the bottom is
+      // what the worker's second 20-credit reserve would hang off. Placing the check here — behind
+      // the ownership and archive gates, ahead of all three — is what makes the duplicate free.
+      const active = await findActiveCrawl(ctx, project_id);
+      if (active) {
+        return alreadyRunningResult(project.domain, active);
       }
 
       // Empty/absent include_paths = whole-site (no scope); only a non-empty array scopes.

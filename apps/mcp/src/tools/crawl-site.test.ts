@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   makeCrawlSiteTool,
+  type ActiveCrawlFinder,
+  type CrawlSiteDeps,
   type EnqueueFn,
   type EstimateFn,
   type ProjectResolver,
@@ -22,9 +24,21 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 const spyEnqueue = (): ReturnType<typeof vi.fn<EnqueueFn>> =>
   vi.fn<EnqueueFn>(async () => ({ jobId: "job-should-not-happen" }));
 
+/** "Nothing is in flight for this project" — the state every spec assumes unless it says otherwise. */
+const noActiveCrawl: ActiveCrawlFinder = async () => null;
+
+/**
+ * The fast lane's tool factory. It supplies ONE dep the specs below do not otherwise name: the
+ * in-flight-crawl port (B-1), whose real implementation reads the jobs table — and this lane is
+ * DB-free by construction. Every other dep is passed through untouched, and any spec that cares
+ * about the guard passes its own `findActiveCrawl`, which wins over this default.
+ */
+const makeTool = (deps: CrawlSiteDeps = {}) =>
+  makeCrawlSiteTool({ findActiveCrawl: noActiveCrawl, ...deps });
+
 describe("crawl_site input schema (referee: project_id + max_urls + include_paths)", () => {
   it("advertises project_id + max_urls + include_paths + the reserved confirm — never timing knobs", () => {
-    const tool = makeCrawlSiteTool({ enqueue: spyEnqueue() });
+    const tool = makeTool({ enqueue: spyEnqueue() });
     const schema = tool.inputJsonSchema as {
       properties: Record<string, unknown>;
       required?: string[];
@@ -59,7 +73,7 @@ describe("crawl_site input schema (referee: project_id + max_urls + include_path
 describe("crawl_site surface rejects invalid input before enqueuing", () => {
   it("rejects a non-uuid project_id without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const result = await makeCrawlSiteTool({ enqueue }).run(CTX, { project_id: "not-a-uuid" });
+    const result = await makeTool({ enqueue }).run(CTX, { project_id: "not-a-uuid" });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/invalid input/i);
     expect(enqueue).not.toHaveBeenCalled();
@@ -67,14 +81,14 @@ describe("crawl_site surface rejects invalid input before enqueuing", () => {
 
   it("rejects a missing project_id without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const result = await makeCrawlSiteTool({ enqueue }).run(CTX, {});
+    const result = await makeTool({ enqueue }).run(CTX, {});
     expect(result.isError).toBe(true);
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("rejects max_urls out of the 1..100 range without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue });
+    const tool = makeTool({ enqueue });
     const id = randomUUID();
     expect((await tool.run(CTX, { project_id: id, max_urls: 0 })).isError).toBe(true);
     expect((await tool.run(CTX, { project_id: id, max_urls: 101 })).isError).toBe(true);
@@ -125,7 +139,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   it("fires confirmation for a very large site (unconfirmed): NOT enqueued, projection labeled", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     // 1500 pages -> ceil(1500/100)=15 runs -> 300 credits projected (> 200 threshold).
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
     const result = await tool.run(CTX, { project_id: PID });
 
     expect(calls).toHaveLength(0); // NOTHING enqueued, NOTHING charged
@@ -147,7 +161,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   });
 
   it("HONESTY: states the real 20-credit charge and never presents the projection as the charge", async () => {
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject,
       estimate: estimateOf(1500),
@@ -171,7 +185,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   it("does NOT confirm exactly AT the 200-credit projection boundary (1000 pages)", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     // 1000 pages -> 10 runs -> 200 credits, which is NOT strictly above the threshold.
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1000) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1000) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1); // enqueued, no confirmation
     expect(result.content[0]!.text).toContain("status: queued");
@@ -179,7 +193,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("confirms just above the boundary (1100 pages -> 220 credits projected)", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1100) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1100) });
     const body = JSON.parse((await tool.run(CTX, { project_id: PID })).content[0]!.text) as ConfirmationBody;
     expect(calls).toHaveLength(0);
     expect(body.requires_confirmation).toBe(true);
@@ -188,7 +202,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("confirm:true proceeds: enqueues and carries include_paths in the payload", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
     const result = await tool.run(CTX, {
       project_id: PID,
       include_paths: ["/blog"],
@@ -210,7 +224,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 1500, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    const tool = makeTool({ enqueue, resolveProject, estimate: spyEstimate });
     await tool.run(CTX, { project_id: PID, include_paths: ["/blog"], confirm: true });
     expect(estimateCalls).toBe(0); // the ~30s pre-discovery is skipped on the confirmed path
     expect(calls).toHaveLength(1);
@@ -224,7 +238,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 30, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    const tool = makeTool({ enqueue, resolveProject, estimate: spyEstimate });
     const result = await tool.run(CTX, { project_id: PID, include_paths: [""] });
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toMatch(/invalid input/i);
@@ -234,7 +248,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("a small site enqueues normally with an honest one-liner and no confirmation", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(30) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(30) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     const text = result.content[0]!.text;
@@ -253,7 +267,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const fromSitemap: EstimateFn = async () => ({ pages: 28, source: "sitemap" });
 
     const viaHome = (
-      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
+      await makeTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
         project_id: PID,
       })
     ).content[0]!.text;
@@ -262,7 +276,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(viaHome).toMatch(/very likely larger/i);
 
     const viaSitemap = (
-      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
+      await makeTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
         project_id: PID,
       })
     ).content[0]!.text;
@@ -273,7 +287,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("degrades to a normal enqueue (no one-liner) when pre-discovery returns null", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(null) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(null) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(calls[0]![1].payload).toEqual({ max_urls: 100 }); // no include_paths when unscoped
@@ -285,7 +299,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const throwing: EstimateFn = async () => {
       throw new Error("pre-discovery boom");
     };
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: throwing });
+    const tool = makeTool({ enqueue, resolveProject, estimate: throwing });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(result.isError).toBeUndefined();
@@ -307,7 +321,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 30, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       estimate,
       resolveProject: async () => ({
@@ -332,7 +346,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 1500, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       estimate,
       resolveProject: async () => null, // missing / another tenant's project
@@ -375,7 +389,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("DEFAULT OFF: a call that does not ask for seeding never reaches the paid lookup", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -393,7 +407,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("explicit false is the same as saying nothing", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -407,7 +421,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("opting in carries the seeds to the worker and states the separate charge", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -447,7 +461,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
       creditsCharged: 0,
       note: "DataForSEO named no ranking page this crawl could use as a starting point. The crawl was queued without them, and you were not charged for the seeding.",
     });
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -464,7 +478,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("does NOT buy seeds for a call that returns the large-site confirmation instead of queuing", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(1500),
@@ -479,14 +493,14 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
 
   it("does NOT buy seeds for a project that is missing or archived", async () => {
     const seed = seedSpy();
-    const missing = makeCrawlSiteTool({
+    const missing = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject: async () => null,
       fetchSeeds: seed.fn,
     });
     expect((await missing.run(CTX, { project_id: PID, seed_from_ranking_pages: true })).isError).toBe(true);
 
-    const archived = makeCrawlSiteTool({
+    const archived = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject: async () => ({
         id: PID,
