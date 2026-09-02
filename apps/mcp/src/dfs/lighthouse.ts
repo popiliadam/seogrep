@@ -144,6 +144,54 @@ export const CORE_METRIC_AUDITS: readonly {
 /** How many improvement opportunities one page block prints, largest estimated saving first. */
 export const MAX_OPPORTUNITIES = 5;
 
+/** Which band a Core Web Vital fell in — Google's own three words, verbatim. */
+export type VitalRating = "good" | "needs improvement" | "poor";
+
+/**
+ * The Core Web Vitals band boundaries — THE ONLY PLACE they are written down.
+ *
+ * Each pair is (upper bound of "good", upper bound of "needs improvement"), inclusive, in the unit
+ * that audit's `numericValue` arrives in: milliseconds for LCP, unitless for CLS. Source, and the
+ * reason this table can be checked rather than believed: web.dev/articles/vitals, read 2026-09-02
+ * for the 2026-09 reference list — R-1.1 (LCP good = 2.5 s) and R-1.3 (CLS good = 0.1); the
+ * "poor" boundaries (4 s and 0.25) come off the same page.
+ *
+ * WHAT IS DELIBERATELY NOT HERE:
+ *   - **INP (R-1.2, good = 200 ms).** Not because the threshold is in doubt, but because this is a
+ *     LAB tool and Lighthouse does not produce INP at all (see CORE_METRIC_AUDITS above). An entry
+ *     here would be a threshold with nothing to apply it to, and the first thing a reader would
+ *     conclude from its presence is that we measure INP. We do not, and cannot.
+ *   - **2.0 s for LCP.** That figure circulates in SEO blogs (reference list D-1) and is
+ *     CONTRADICTED by the primary source, which still says 2.5 s. It is not a rule and does not
+ *     enter the code.
+ *   - **A band for FCP, Speed Index, TBT or TTI.** They are diagnostics, not Core Web Vitals; the
+ *     reference list carries no threshold for them, and inventing one would be exactly the
+ *     fabricated-rule failure this table exists to avoid.
+ *
+ * These boundaries are Google's and they move on Google's cadence (R-1.6), so a change here is a
+ * change to a SOURCED number: re-read the reference list first, never the other way round.
+ */
+export const CORE_VITAL_THRESHOLDS: Readonly<
+  Record<string, { readonly good: number; readonly needsImprovement: number }>
+> = {
+  "largest-contentful-paint": { good: 2500, needsImprovement: 4000 },
+  "cumulative-layout-shift": { good: 0.1, needsImprovement: 0.25 },
+};
+
+/**
+ * Which band `numeric` falls in for the audit `id`, or null when no band can honestly be given —
+ * either the metric has no published threshold (every diagnostic above) or the vendor sent no raw
+ * number to compare. Null means "say nothing", never "good": an unrated metric printed as passing
+ * is the same fabricated-good-news lie a zero-filled metric would be.
+ */
+export function rateCoreVital(id: string, numeric: number | null): VitalRating | null {
+  const threshold = CORE_VITAL_THRESHOLDS[id];
+  if (threshold === undefined || numeric === null) return null;
+  if (numeric <= threshold.good) return "good";
+  if (numeric <= threshold.needsImprovement) return "needs improvement";
+  return "poor";
+}
+
 /** One reported lab metric. Absent metrics are NOT represented — see projectMetrics. */
 export interface SpeedMetric {
   /** The Lighthouse audit id (`largest-contentful-paint`, …). */
@@ -222,8 +270,32 @@ type RawAudit = z.infer<typeof auditSchema>;
  * degrades in pieces: a page can score on some categories and not others, an audit can be marked
  * not-applicable and carry no numbers, and a strict schema would throw away a PAID measurement
  * because one optional field was missing.
+ *
+ * THE KEYS ARE camelCase, and that is the fix for B-1 rather than a style choice. A Lighthouse
+ * result (LHR) is a Lighthouse document that DataForSEO passes through verbatim, so the ENVELOPE
+ * around it is snake_case — `status_code`, `tasks`, `result` — while the result INSIDE it keeps
+ * Lighthouse's own casing. The vendor's own documented example carries `lighthouseVersion`,
+ * `requestedUrl`, `mainDocumentUrl`, `finalDisplayedUrl`, `finalUrl` and `fetchTime`
+ * (https://docs.dataforseo.com/v3/on_page/lighthouse/live/json/, read 2026-09-02); only the
+ * REQUEST parameters (`url`, `for_mobile`, …) are snake_case.
+ *
+ * This schema used to ask for the snake_case names, so all four fields parsed as null on every
+ * live call: the provenance line was never printed once in production, and a redirect could not
+ * be detected at all — a redirected page's numbers were reported under the URL that was asked
+ * for. The fixture asked for the same wrong names, so the whole suite stayed green over it
+ * (signed lesson 12: a double more forgiving than the real runtime turns a missing field into a
+ * PASSING test).
+ *
+ * The snake_case names are kept as ALIASES rather than deleted. They are not a claim that anyone
+ * sends them — nothing observed does — they are one line each of insurance against throwing away
+ * a measurement the customer already paid for, and the camelCase key wins whenever both appear.
  */
 const lighthouseResultSchema = z.object({
+  lighthouseVersion: z.string().nullish(),
+  requestedUrl: z.string().nullish(),
+  finalUrl: z.string().nullish(),
+  fetchTime: z.string().nullish(),
+  // Transition aliases — see the note above. Never preferred over the camelCase key.
   lighthouse_version: z.string().nullish(),
   requested_url: z.string().nullish(),
   final_url: z.string().nullish(),
@@ -304,11 +376,21 @@ function projectMetrics(audits: Readonly<Record<string, RawAudit>>): readonly Sp
 /**
  * The improvement opportunities, largest estimated saving first, capped.
  *
- * Two filters, both deliberate. `details.type === "opportunity"` is Lighthouse's own marker for
+ * Three filters, all deliberate. `details.type === "opportunity"` is Lighthouse's own marker for
  * "this audit estimates a load-time saving" — every other audit type (debugdata, table, …) carries
  * no such estimate and would be listed under a heading that promises one. And a saving of zero is
  * dropped: Lighthouse emits passing opportunity audits with `overallSavingsMs: 0`, and printing
  * them as "opportunities" would pad the list with things already done.
+ *
+ * The THIRD is B-7, and the reason the rule above was stated correctly but enforced by half. A
+ * PASSING opportunity audit does not always carry a zero saving: Lighthouse scores it 1, flips its
+ * title to the past tense, and keeps the estimate. Measured live on 2026-09-02 — "Initial server
+ * response time was short — an estimated 180 ms saved" printed under "Biggest opportunities", i.e.
+ * a completed item listed as work to do. `score` was already parsed here and simply never read.
+ *
+ * The boundary is `score === 1` — PASSED — not a threshold near it. An audit scored 0.99 is not
+ * passed, and an audit the vendor did not score at all is UNJUDGED rather than done: dropping
+ * either would hide a real saving, which is the more expensive direction to be wrong in.
  */
 function projectOpportunities(
   audits: Readonly<Record<string, RawAudit>>,
@@ -316,6 +398,7 @@ function projectOpportunities(
   return Object.entries(audits)
     .flatMap(([key, audit]) => {
       if (audit.details?.type !== "opportunity") return [];
+      if (audit.score === 1) return [];
       const savings = audit.details.overallSavingsMs ?? null;
       if (savings === null || savings <= 0) return [];
       return [{ id: audit.id ?? key, title: audit.title ?? (audit.id ?? key), savings_ms: savings }];
@@ -343,10 +426,10 @@ export function parseLighthouseResponse(raw: unknown, requestedUrl: string): Pag
   const lhr = parsed.data;
   const audits = lhr.audits ?? {};
   return {
-    requested_url: lhr.requested_url ?? requestedUrl,
-    final_url: lhr.final_url ?? null,
-    fetch_time: lhr.fetch_time ?? null,
-    lighthouse_version: lhr.lighthouse_version ?? null,
+    requested_url: lhr.requestedUrl ?? lhr.requested_url ?? requestedUrl,
+    final_url: lhr.finalUrl ?? lhr.final_url ?? null,
+    fetch_time: lhr.fetchTime ?? lhr.fetch_time ?? null,
+    lighthouse_version: lhr.lighthouseVersion ?? lhr.lighthouse_version ?? null,
     performance_score: lhr.categories?.performance?.score ?? null,
     metrics: projectMetrics(audits),
     opportunities: projectOpportunities(audits),
@@ -434,11 +517,24 @@ export function createLiveSpeedClient(opts: LiveSpeedOptions): SpeedPort {
       {
         method: "POST",
         headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        // `enable_javascript` is pinned explicitly rather than left to the vendor default: a
-        // performance measurement of a page whose scripts never ran is a measurement of a
-        // different page, and D9's discipline is that a flag which silently changes the result is
-        // stated, never inherited.
-        body: JSON.stringify([{ url, enable_javascript: true }]),
+        // BOTH result-shaping flags are stated rather than left to the vendor default. D9's
+        // discipline is that a flag which silently changes the result is stated, never inherited —
+        // and until 2026-09-02 this comment claimed that discipline while keeping only half of it
+        // (B-9).
+        //
+        //   `enable_javascript: true` — a performance measurement of a page whose scripts never
+        //   ran is a measurement of a different page. One caveat, and it is a real one: this
+        //   parameter is NOT in the vendor's documented parameter list for this endpoint (checked
+        //   2026-09-02), so what it actually does here is unverified — it may be ignored. That is
+        //   not on its own a reason to remove it, but the guarantee is not an asserted one.
+        //
+        //   `for_mobile: false` — the DOCUMENTED desktop setting ("if set to `false`, the results
+        //   will be provided for desktop … default value: `false`"). Sending it is what makes the
+        //   output's "desktop run" sentence a statement about OUR REQUEST instead of about a
+        //   vendor default we do not control and never asserted. It costs nothing: still one
+        //   Lighthouse run per URL, so the signed price is untouched (NEVER #6). Measuring MOBILE
+        //   as well would be two runs per URL — a price decision, and not this flag.
+        body: JSON.stringify([{ url, enable_javascript: true, for_mobile: false }]),
       },
       timeoutMs,
     );

@@ -1316,16 +1316,27 @@ export const DOC_PROSE = {
       "- **Performance score** — Lighthouse's own 0–100 score for the page.\n" +
       "- **Lab Core Web Vitals and friends** — First Contentful Paint, Largest Contentful Paint, " +
       "Speed Index, Total Blocking Time, Cumulative Layout Shift, and Time to Interactive, each " +
-      "printed with Lighthouse's own formatting.\n" +
+      "printed with Lighthouse's own formatting. Largest Contentful Paint and Cumulative Layout " +
+      "Shift also carry Google's band — **good**, **needs improvement** or **poor** — with the " +
+      "\"good\" boundary named beside it (2,500 ms and 0.1). The other four are diagnostics with " +
+      "no published threshold, so they are printed without a verdict rather than given an " +
+      "invented one.\n" +
       "- **The biggest opportunities** — the improvements Lighthouse estimates the largest " +
       "load-time saving for, largest first, with the estimated milliseconds saved. A short " +
-      "list, not the full audit: only the handful with the largest savings are printed, and an " +
-      "audit Lighthouse estimates no saving for is dropped rather than listed at zero.\n\n" +
-      "**These are lab measurements.** Lighthouse loads the page once, on the vendor's machine, " +
-      "under simulated throttling. That is a repeatable diagnostic, not a record of what your " +
-      "visitors experienced — the field metrics Google reports from real Chrome users (including " +
-      "Interaction to Next Paint) are a different measurement, and this tool does not claim " +
-      "them.\n\n" +
+      "list, not the full audit: only the handful with the largest savings are printed, an " +
+      "audit Lighthouse estimates no saving for is dropped rather than listed at zero, and an " +
+      "audit your page already **passes** is dropped even when Lighthouse still attaches a " +
+      "saving to it — a completed item does not belong on a to-do list.\n\n" +
+      "**These are lab measurements, on a desktop run.** Lighthouse loads the page once, on the " +
+      "vendor's machine, under simulated throttling, emulating a desktop browser — mobile is not " +
+      "measured. That is a repeatable diagnostic, not a record of what your visitors experienced " +
+      "— the field metrics Google reports from real Chrome users (including Interaction to Next " +
+      "Paint) are a different measurement, and this tool does not claim them.\n\n" +
+      "**One run is a sample, not a verdict.** A lab run varies: the same page measured twice, " +
+      "minutes apart, can come back tens of points and a second of Largest Contentful Paint " +
+      "apart. Read a single run as a signal, and re-run before acting on a number sitting near a " +
+      "band boundary. What Google actually ranks on is field data at the 75th percentile of real " +
+      "visits, which this tool does not read.\n\n" +
       "A metric Lighthouse did not produce for a page gets **no line at all**, and a page it could " +
       "not score says so in words. Nothing is filled in with a zero: on a speed report a " +
       "fabricated zero would read as the best possible news.\n\n" +
@@ -1354,9 +1365,10 @@ export const DOC_PROSE = {
       "pricing page?\n\nThen hand a finding straight back to your assistant:\n\n> What would it " +
       "take to fix the biggest opportunity on the pricing page?",
     returns:
-      "A heading naming how many pages were measured and that the figures are lab measurements; " +
-      "then one block per page — the URL, when it was measured and by which Lighthouse version " +
-      "(and where it redirected to, if it did), the performance score, the metric lines, and the " +
+      "A heading naming how many pages were measured, that the run was a desktop one, that the " +
+      "figures are lab measurements and that a single run varies; then one block per page — the " +
+      "URL, when it was measured and by which Lighthouse version (and where it redirected to, if " +
+      "it did), the performance score, the metric lines with their bands, and the " +
       "opportunity list.\n\nAn empty list, more than five URLs, and any address that is not a " +
       "public web page are all rejected before anything is charged; while live data is off you " +
       "get the \"not yet enabled\" message instead — also free.",
