@@ -17,6 +17,7 @@ import {
   textResultWithData,
   type RegisteredTool,
 } from "./registry.ts";
+import { CREDIT_UNITS, creditCostFor } from "../credits/costs.ts";
 import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
 import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
@@ -878,6 +879,56 @@ describe("S1 — the reserved `confirm` flag is advertised exactly where D17 can
     });
   });
 
+  /**
+   * The flag is stripped ONLY for a tool that advertises it. Anywhere else `confirm` is an
+   * unrecognised key like any other, and the schema's promise is kept exactly: a tool whose
+   * tools/list entry does not mention `confirm` refuses one. The referee's P2 — before this, the
+   * server quietly swallowed it on all 36 unadvertised tools while their schemas said they would
+   * not, which is the same silent-drop this slice exists to end, wearing the registry's own name.
+   *
+   * The D17 gate cannot be reached this way either: an unadvertised tool refuses at the parse,
+   * which returns BEFORE the gate reads the raw input, so `readConfirmFlag` never runs for it.
+   */
+  it("refuses `confirm` on a tool that does not advertise it, naming the key", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "whats_next", // 0 credits, no units hook, no confirmsInHandler -> advertises nothing
+      description: "d",
+      inputSchema: z.object({ focus: z.string().optional() }),
+      handler,
+    });
+
+    expect(tool.confirmable).toBe(false);
+    const result = await tool.run(CTX, { focus: "titles", confirm: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/unrecognized key.*confirm/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /** The other direction for the handler-prompt route (crawl_site's shape), not just D17's. */
+  it("accepts and hides `confirm` on a tool that advertises it through the spec", async () => {
+    const handler = vi.fn(async (_ctx: AuthContext, input: { project_id: string }) =>
+      textResult(`crawling ${input.project_id}`),
+    );
+    const tool = defineTool({
+      name: "crawl_site",
+      description: "d",
+      inputSchema: z.object({ project_id: z.uuid() }),
+      charge: "worker",
+      confirmsInHandler: true,
+      handler,
+    });
+
+    const project_id = "11111111-2222-4333-8444-555555555555";
+    const result = await tool.run(CTX, { project_id, confirm: true });
+    expect(result).toEqual(textResult(`crawling ${project_id}`));
+    expect(handler.mock.calls[0]?.[1]).toEqual({ project_id });
+    // The handler still sees the flag on the RAW third argument — that is how its own prompt
+    // works. Read positionally: this spy declares two parameters (the ones it uses), and the
+    // registry passes three.
+    expect((handler.mock.calls[0] as unknown[])[2]).toEqual({ project_id, confirm: true });
+  });
+
   it("declares the field ONLY when the spec asks: the same sub-threshold tool without it stays bare", () => {
     const spec = {
       name: "audit_speed",
@@ -891,11 +942,20 @@ describe("S1 — the reserved `confirm` flag is advertised exactly where D17 can
 
   /**
    * The predicate reads the WORST CASE the price table allows, which is the only reading that
-   * separates the two per-unit tools: ai_visibility_compare reaches 900 and serp_snapshot tops
-   * out at 55. "Has a units hook" would have advertised a flag on serp_snapshot that its price
-   * can never make relevant.
+   * separates the two per-unit tools — one clears the threshold at its cap and the other does not.
+   * "Has a units hook" would have advertised the flag on both.
+   *
+   * The two worst cases are COMPUTED from CREDIT_UNITS + creditCostFor rather than typed in. A
+   * referee found a wrong number in this very comment (it said 55; the table says 85), and a
+   * number typed into a test about a price table is a second copy of that table, free to go stale
+   * without anything going red.
    */
   it("derives confirmability from the worst case in the price table, not from a units hook", () => {
+    const worst = (tool: keyof typeof CREDIT_UNITS): number =>
+      creditCostFor(tool, CREDIT_UNITS[tool].max_units);
+    expect(worst("ai_visibility_compare")).toBeGreaterThan(CONFIRMATION_THRESHOLD_CREDITS);
+    expect(worst("serp_snapshot")).toBeLessThanOrEqual(CONFIRMATION_THRESHOLD_CREDITS);
+
     expect(canRequireConfirmation("ai_visibility_compare")).toBe(true);
     expect(canRequireConfirmation("serp_snapshot")).toBe(false);
     expect(canRequireConfirmation("crawl_site")).toBe(false);

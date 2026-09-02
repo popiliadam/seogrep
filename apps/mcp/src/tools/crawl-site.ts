@@ -93,7 +93,9 @@ export interface CrawlSiteDeps {
  * tenants. max_urls is bounded 1..PAGE_CAP and defaults to PAGE_CAP. The surface is fully
  * snake_case; the crawler module's internal CrawlOptions stays camelCase and is mapped in the
  * queue handler. `confirm` is a RESERVED registry param read from the raw input — deliberately
- * NOT in this schema (so it never appears in tools/list).
+ * NOT in this schema. It IS advertised in this tool's tools/list entry, injected there by
+ * defineTool because the spec declares `confirmsInHandler` (the large-site prompt below); no zod
+ * schema anywhere declares it.
  */
 const inputSchema = z.object({
   project_id: z.uuid().describe("The project_id from setup_project / list_projects."),

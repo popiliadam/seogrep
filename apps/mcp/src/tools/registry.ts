@@ -333,15 +333,16 @@ export function evaluateConfirmation(estimate: number, confirmed: boolean): Conf
 
 /**
  * Read the registry-level `confirm` flag from the RAW tool arguments. `confirm` is a RESERVED
- * registry parameter, deliberately NOT part of any tool's zod schema, so it is read here from the
- * raw input and never appears in tools/list. Only the literal boolean `true` counts as
+ * registry parameter: it is in NO tool's zod schema, and `defineTool` advertises it — in the JSON
+ * Schema alone — only on a confirmable tool. Only the literal boolean `true` counts as
  * confirmation (a string "true" or any truthy value does not), so a client must send
  * `"confirm": true` explicitly.
  *
- * It is read from the RAW input because the parsed input no longer carries it: the schemas now
- * REFUSE unknown keys (S1), and `withoutReservedParams` strips this one before the parse so the
- * caller a confirmation prompt just told to "run it again with confirm: true" is not then refused
- * for doing exactly that.
+ * It is read from the RAW input because the parsed input never carries it: the schemas REFUSE
+ * unknown keys (S1), and on a confirmable tool `withoutReservedParams` strips this one before the
+ * parse so the caller a confirmation prompt just told to "run it again with confirm: true" is not
+ * then refused for doing exactly that. On a tool that advertises nothing the parse refuses it as
+ * an unknown key, which returns BEFORE the dispatch gate — so this never runs for one.
  */
 export function readConfirmFlag(rawInput: unknown): boolean {
   return (
@@ -384,8 +385,10 @@ export function confirmationGate(
  * Derived from the price table rather than from a list of tool names, so a signed price change
  * moves the advertisement with it and a new tool needs nobody to remember. It reads the WORST
  * case because that is the only reading that separates the two per-unit tools: at the vendor's
- * own cap ai_visibility_compare reaches 900 and serp_snapshot tops out at 55, so "declares a
- * units hook" would offer the flag on a call whose price can never need it.
+ * own cap one clears the threshold and the other does not, so "declares a units hook" would offer
+ * the flag on a call whose price can never need it. The two figures are deliberately NOT quoted
+ * here — a price written into a comment is a second copy of CREDIT_UNITS, free to go stale
+ * (a referee caught exactly that in this docstring); registry.test.ts computes them instead.
  *
  * It answers about the REGISTRY's gate only. A tool whose handler asks for a confirmation of its
  * own — crawl_site's large-site prompt — is invisible to the price table and declares itself
@@ -429,9 +432,10 @@ export function withConfirmField(jsonSchema: Record<string, unknown>): Record<st
 
 /**
  * The registry's RESERVED input parameters — names a caller may send that belong to the REGISTRY
- * rather than to any tool, and which therefore appear in no tool's zod schema and in no
- * tools/list entry. Today there is exactly one, `confirm` (the D17 gate), read straight off the
- * raw input by readConfirmFlag and by crawl_site's large-site prompt.
+ * rather than to any tool, and which therefore appear in NO tool's zod schema. They are not
+ * invisible: `defineTool` advertises `confirm` in the JSON Schema of a confirmable tool, and
+ * only there. Today there is exactly one, read straight off the raw input by readConfirmFlag and
+ * by crawl_site's large-site prompt.
  */
 const RESERVED_INPUT_PARAMS: readonly string[] = ["confirm"];
 
@@ -441,9 +445,14 @@ const RESERVED_INPUT_PARAMS: readonly string[] = ["confirm"];
  * It exists because of what refuseUnknownKeys below does: once a schema refuses what it does not
  * recognise, `confirm` — which by design no schema recognises — would be refused too, and the one
  * instruction a confirmation prompt gives ("run it again with confirm: true") would become the
- * one call that cannot succeed. Stripping it here keeps the D17 flag exactly where it has always
- * been read from (the raw input, which every path still receives untouched) while the tool's own
- * fields face a schema that names a typo instead of dropping it.
+ * one call that cannot succeed. Stripping it keeps the flag exactly where it has always been read
+ * from (the raw input, which every path still receives untouched) while the tool's own fields
+ * face a schema that names a typo instead of dropping it.
+ *
+ * APPLIED ONLY TO A TOOL THAT ADVERTISES THE FLAG (referee P2). Stripping it everywhere made the
+ * other 36 tools swallow `confirm` in silence while their schemas promised to refuse it — the
+ * same silent drop this slice exists to end, this time wearing the registry's own name. Where the
+ * flag is not advertised it is an unknown key like any other.
  *
  * A non-object is returned unchanged so zod still produces its own "expected object" message.
  */
@@ -567,7 +576,11 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     uiResourceUri: spec.ui?.resourceUri,
     confirmable,
     async run(ctx, rawInput) {
-      const parsed = parseSchema.safeParse(withoutReservedParams(rawInput) ?? {});
+      // The reserved flag is stripped only where it is ADVERTISED; anywhere else the schema
+      // promised to refuse an unknown key and must keep that promise. A refusal returns before
+      // the D17 gate below, so an unadvertised tool never reaches readConfirmFlag at all.
+      const candidate = confirmable ? withoutReservedParams(rawInput) : rawInput;
+      const parsed = parseSchema.safeParse(candidate ?? {});
       if (!parsed.success) {
         // Free by construction — this returns before ANY charge mode runs, so the guard, the
         // handler and the enqueue are all unreached and the ledger is never touched. Said out
