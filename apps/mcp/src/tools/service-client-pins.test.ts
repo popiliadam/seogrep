@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AuthContext } from "../auth.ts";
 import {
   callsTo,
   createFakeQueryDb,
@@ -27,10 +28,11 @@ import {
  * spec's own answer callback handed over. The single exception is the last block, which is a
  * claim about how a CALLER INTERPRETS an answer it was given, not about the query.
  *
- * Findings closed here: LCA B-4 · LJ B-2.
+ * Findings closed here: LCA B-4 · LJ B-2 · LP B-1.
  */
 
 const USER = "user-under-test";
+const CTX: AuthContext = { userId: USER, keyId: "key-1" };
 
 /** Rebound by each spec before the code under test runs; the mock reads it lazily. */
 let db: FakeQueryDb = createFakeQueryDb();
@@ -44,6 +46,7 @@ vi.mock("../db.ts", async (importOriginal) => ({
 
 import { listOwnCreditActivity, summarizeOwnSpend } from "./list-credit-activity.ts";
 import { listOwnJobs } from "./list-jobs.ts";
+import { listProjectsTool } from "./list-projects.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
 const tenantFilter = { method: "eq", args: ["user_id", USER] };
@@ -144,5 +147,88 @@ describe("the jobs cursor is composite, and matches the order (LJ B-2)", () => {
     const { anchor } = await pageWithCursor();
     expect(anchor.calls).toContainEqual(tenantFilter);
     expect(anchor.calls).toContainEqual({ method: "eq", args: ["id", CURSOR_ID] });
+  });
+});
+
+/**
+ * LP B-1 — `list-projects.ts:305`, and the ONE block here that reads rows rather than a chain,
+ * because the claim is about interpretation: given a `gsc_connections` row, what does this tool
+ * say about it?
+ *
+ * Defect #52: connected is `account_id !== null`, NOT the existence of the row. Since migration
+ * 0021 the row is a MAPPING — `unmapProject` keeps it and nulls the column, and deleting a Google
+ * account nulls `account_id` on every project of that account. Forcing the check to `false`
+ * (i.e. reading row existence again) left 156/156 green on 2026-09-02, while the same defect had
+ * been measured LIVE on four of eighteen projects on 2026-08-27.
+ *
+ * BOTH states in one fixture (signed lesson 14): a mutation that flips the ternary either way
+ * reddens, because the live project must still read as connected.
+ */
+describe("a mapping with no credential is NOT connected (LP B-1)", () => {
+  const DEAD_PROPERTY = "https://unmapped-credential.example/";
+  const LIVE_PROPERTY = "https://working-credential.example/";
+
+  async function listing(): Promise<string> {
+    db = createFakeQueryDb((statement) => {
+      if (statement.table === "projects") {
+        return {
+          data: [
+            {
+              id: "p-dead",
+              domain: "dead-account.example",
+              created_at: "2026-01-01T00:00:00.000Z",
+              archived_at: null,
+            },
+            {
+              id: "p-live",
+              domain: "live-account.example",
+              created_at: "2026-01-02T00:00:00.000Z",
+              archived_at: null,
+            },
+          ],
+        };
+      }
+      if (statement.table === "gsc_connections") {
+        return {
+          data: [
+            { project_id: "p-dead", account_id: null, gsc_property: DEAD_PROPERTY },
+            { project_id: "p-live", account_id: "acct-1", gsc_property: LIVE_PROPERTY },
+          ],
+        };
+      }
+      if (statement.table === "gsc_accounts") {
+        return { data: [{ id: "acct-1", token_status: null }] };
+      }
+      return { data: [] };
+    });
+    const result = await listProjectsTool.run(CTX, {});
+    expect(result.isError).toBeUndefined();
+    return result.content[0]?.text ?? "";
+  }
+
+  it("reports a null account_id as not connected, and names the retained property", async () => {
+    const text = await listing();
+    expect(text).toMatch(
+      new RegExp(String.raw`not connected — ${DEAD_PROPERTY} is still mapped`, "i"),
+    );
+  });
+
+  it("still reports the project whose account_id is set as connected", async () => {
+    const text = await listing();
+    expect(text).toContain(`Search Console: ${LIVE_PROPERTY}`);
+    // …and does not describe the live one as the dead one.
+    expect(text).not.toMatch(
+      new RegExp(String.raw`not connected — ${LIVE_PROPERTY}`, "i"),
+    );
+  });
+
+  it("reads the mapping columns the decision needs", async () => {
+    await listing();
+    const connections = db.onlyStatementFor("gsc_connections");
+    const columns = String(callsTo(connections, "select")[0]?.args[0] ?? "");
+    // A projection that stopped asking for `account_id` would make the check above unanswerable
+    // — and PostgREST would hand back `undefined`, which is not null.
+    expect(columns).toContain("account_id");
+    expect(connections.calls).toContainEqual(tenantFilter);
   });
 });
