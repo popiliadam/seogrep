@@ -424,6 +424,28 @@ describe("findConfirmFields", () => {
     ];
     expect(findConfirmFields(tools)).toEqual(["bad"]);
   });
+
+  /**
+   * The gate's intent is that `confirm` stays the REGISTRY's parameter and never becomes a TOOL's
+   * — it must not appear in anyone's zod schema. Since 2026-09-02 the registry INJECTS it into
+   * the advertised JSON Schema of a tool the D17 gate can fire for, which the JSON Schema alone
+   * cannot tell apart from a tool that declared it. `confirmable` — derived in the registry from
+   * the signed price table — is what separates them, so the gate reads that rather than widening
+   * to "confirm is fine now".
+   */
+  it("does NOT flag the registry-injected confirm on a confirmable tool", () => {
+    const tools = [
+      { name: "ok", confirmable: true, inputJsonSchema: { properties: { confirm: { type: "boolean" } } } },
+    ];
+    expect(findConfirmFields(tools)).toEqual([]);
+  });
+
+  it("still flags confirm on a tool the D17 gate can never fire for", () => {
+    const tools = [
+      { name: "bad", confirmable: false, inputJsonSchema: { properties: { confirm: { type: "boolean" } } } },
+    ];
+    expect(findConfirmFields(tools)).toEqual(["bad"]);
+  });
 });
 
 describe("groupThousands", () => {

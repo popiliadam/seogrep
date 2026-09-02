@@ -303,6 +303,27 @@ function ambiguousMessage(property: string, matches: readonly PropertyMatch[]): 
 }
 
 /**
+ * WHAT A DOMAIN PROPERTY CANNOT DO, said once, on the surface that knows the kind (R-6.7).
+ *
+ * Google's disavow links tool does not support Domain properties. This tool already holds
+ * `sc-domain:example.com` and `https://example.com/` apart as two different properties — it
+ * refuses to choose between them for the user, for exactly that reason — so it is the one place
+ * that knows which kind was just bound, and it said nothing: a tenant connected only to
+ * `sc-domain:` could find this out only by running `disavow_candidates` and hitting it there.
+ *
+ * ONLY on the Domain branch. On a URL-prefix property the limitation does not apply, and a
+ * sentence about a tool the caller has not reached would be noise on every successful call.
+ */
+const DISAVOW_DOMAIN_NOTE =
+  "Note for later: Google's disavow links tool does not support Domain properties, so a disavow " +
+  "file for this site has to be submitted through a URL-prefix property instead.";
+
+/** Whether a property string names a Search Console DOMAIN property rather than a URL prefix. */
+function isDomainProperty(property: string): boolean {
+  return property.startsWith("sc-domain:");
+}
+
+/**
  * What happened, in one sentence per outcome.
  *
  * THE THIRD BRANCH USED TO BE UNGRAMMATICAL and it is customer-visible: "Project "x" was already
@@ -322,11 +343,13 @@ function trackedMessage(project: TrackedProject, property: string, email: string
           `it to read ${source}.`
         : `Project "${project.domain}" was already tracked (project_id: ${project.id}); it now ` +
           `reads ${source}.`;
-  return (
-    `${opened}\n\n` +
+  const next =
     "Run pull_gsc_data for that project to fetch its Search Console performance data, then " +
-    "find_quick_wins, detect_cannibalization or analyze_content_decay."
-  );
+    "find_quick_wins, detect_cannibalization or analyze_content_decay.";
+  const parts = isDomainProperty(property)
+    ? [opened, next, DISAVOW_DOMAIN_NOTE]
+    : [opened, next];
+  return parts.join("\n\n");
 }
 
 /**

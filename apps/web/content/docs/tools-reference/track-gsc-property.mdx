@@ -21,6 +21,10 @@ When more than one does, the tool **offers the choice and stops**. `sc-domain:ex
 
 The same `www.` blindness applies to the project side: a property for `example.com` finds a project stored as `www.example.com` rather than opening a second project beside it. Only the leading `www.` label is ignored — a subdomain is a different site.
 
+## Domain properties and disavow
+
+When the property you bind is a **Domain** property (`sc-domain:example.com`), the answer carries one extra note: Google's disavow links tool does not support Domain properties, so a disavow file for that site has to be submitted through a URL-prefix property instead. It is said here because this is where the kind of property is known — [`disavow_candidates`](/docs/tools-reference/disavow-candidates) is where you would otherwise find out. A URL-prefix property gets no such note; the limitation does not apply to it.
+
 ## When it refuses
 
 A property your account cannot query is refused **before** any project is created — a project that looks tracked but can answer nothing is worse than no project, so the answer names the permission level and what to do about it. A property no connected account lists is refused the same way. And if Google could not be reached at all, you are told the account could not be read, never that the property is missing: an absence we did not observe is not an absence.

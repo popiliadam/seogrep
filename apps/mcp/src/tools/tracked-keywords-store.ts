@@ -115,6 +115,20 @@ export type LoadTrackedFn = (
 /** How many keywords this project is ACTIVELY tracking (across every locale and device). */
 export type CountActiveTrackedFn = (userId: string, projectId: string) => Promise<number>;
 
+/** One ACTIVE tracked keyword as the read path reports it: the word, and where it is watched. */
+export interface ActiveTrackedKeyword {
+  readonly keyword: string;
+  readonly locationName: string;
+  readonly languageCode: string;
+  readonly device: TrackedDevice;
+}
+
+/** Every keyword this project ACTIVELY tracks, with each one's locale and device. Tenant-scoped. */
+export type ListActiveTrackedFn = (
+  userId: string,
+  projectId: string,
+) => Promise<readonly ActiveTrackedKeyword[]>;
+
 /** Register (or revive) these keywords. Returns how many rows the write landed on. */
 export type TrackKeywordsFn = (
   userId: string,
@@ -143,6 +157,36 @@ export const loadTrackedKeywords: LoadTrackedFn = async (userId, identity, keywo
     .in("keyword", [...keywords]);
   if (error) throw new Error(`tracked_keywords read failed: ${error.message}`);
   return (data ?? []).map((row) => ({ keyword: row.keyword, untrackedAt: row.untracked_at }));
+};
+
+/**
+ * EVERY keyword this project is ACTIVELY tracking, with the locale and device each is watched on.
+ * The READ half of the surface, and the whole of it: nothing in this function writes.
+ *
+ * ACROSS every locale and device, deliberately. A read filtered by ONE identity would answer
+ * "nothing is tracked" to a tenant whose keywords all sit on `Turkiye · tr` and who asked with the
+ * defaults — the very "is it tracked or not" confusion this read exists to end, arriving back
+ * through the read path. Each row carries its own identity so the answer can say where each
+ * keyword is watched instead of implying they share one.
+ *
+ * NO PAGINATION, and that is a consequence of the cap rather than an omission: a project holds at
+ * most MAX_TRACKED_KEYWORDS_PER_PROJECT active rows, an order of magnitude under PostgREST's
+ * 1000-row page. If that cap ever moves, this read has to grow a page loop with it.
+ */
+export const listActiveTrackedKeywords: ListActiveTrackedFn = async (userId, projectId) => {
+  const { data, error } = await getServiceClient()
+    .from("tracked_keywords")
+    .select("keyword, location_name, language_code, device")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .is("untracked_at", null);
+  if (error) throw new Error(`tracked_keywords list failed: ${error.message}`);
+  return (data ?? []).map((row) => ({
+    keyword: row.keyword,
+    locationName: row.location_name,
+    languageCode: row.language_code,
+    device: row.device as TrackedDevice,
+  }));
 };
 
 /**

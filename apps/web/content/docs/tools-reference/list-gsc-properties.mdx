@@ -17,6 +17,12 @@ A property no project reads is not left as a bare "not used by any project". If 
 
 The match ignores a leading `www.` on either side and **nothing else**. A subdomain is a different site and is never offered: `blog.example.com` is not `example.com`. And only a project that reads **no** property qualifies — a project already bound to a different property is in a deliberate state, and offering to link it would really be offering to repoint it.
 
+A project that still holds a property but lost the Google account behind it is named on that property's line too, with [`connect_gsc`](/docs/tools-reference/connect-gsc) as the repair. Disconnecting an account leaves the mapping in place and clears the account, and such a project used to appear in neither hint — it was printed as "not used by any project" while [`list_projects`](/docs/tools-reference/list-projects) said of the very same project that it was still mapped. It is not offered `track_gsc_property`: the mapping is already there, and it is the account that has to come back.
+
+## The order is fixed
+
+For one account, the properties are always listed in the same order, so two reads of the same inventory line up against each other. Google's own listing carries no ordering promise, and printing it as it arrived returned the same 27 properties in two different orders on two calls a second apart.
+
 ## When an account cannot be read
 
 If Google refuses — an expired connection, an outage — that account is reported as **could not be read**, never as an account with no properties. An absence we did not observe is not an absence, and the difference is what tells you to reconnect rather than to go and verify a property that was there all along. The other accounts are still listed.

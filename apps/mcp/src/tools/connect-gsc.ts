@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { getServiceClient } from "../db.ts";
 import { optionalWebBaseUrl, requireWebBaseUrl } from "../env.ts";
-import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "./project-target.ts";
+import {
+  ARCHIVED_PROJECT_MESSAGE,
+  loadOwnProject,
+  projectNotFoundMessage,
+} from "./project-target.ts";
 import { defineTool, errorResult, textResult } from "./registry.ts";
 
 /**
@@ -130,9 +134,13 @@ export const connectGscTool = defineTool({
     // a per-tool place for the archive check below to be forgotten.
     const project = await loadOwnProject(ctx.userId, project_id);
     if (!project) {
-      return errorResult(
-        `No project found with id ${project_id}. Create one with setup_project first.`,
-      );
+      // THE SHARED SENTENCE, not a second wording of it. Measured live 2026-09-02 in one run:
+      // this tool answered "Create one with setup_project first." while untrack_project answered
+      // the family's projectNotFoundMessage for the byte-identical state. One question with two
+      // answers teaches a reader that the two refusals mean different things; they do not. The
+      // constant comes from the module this handler ALREADY reads the project through, so
+      // nothing new is shared to say it.
+      return errorResult(projectNotFoundMessage(project_id));
     }
     // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
     // indistinguishable from one that does not exist (see project-target.ts). connect_gsc costs

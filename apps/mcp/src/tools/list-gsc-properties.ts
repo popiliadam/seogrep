@@ -173,6 +173,15 @@ export const listAccountSitesFor: ListAccountSitesFn = async (accountId, userId)
   return listSites(accessToken);
 };
 
+/**
+ * BYTE-order comparison, the ONE ordering rule this file has, and NOT `localeCompare`: a
+ * locale-dependent answer differs between a developer's machine and the server (the same ruling
+ * track_gsc_property's `compareStrings` states, in the same words, for the same reason).
+ */
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** The domains reading `siteUrl` THROUGH `accountId` — never through a namesake elsewhere. */
 function readBy(
   mappings: readonly ProjectPropertyMapping[],
@@ -211,9 +220,43 @@ function unlinkedProjectsFor(
   return mappings
     .filter((mapping) => mapping.property === null && stripWwwLabel(mapping.domain) === host)
     .map((mapping) => mapping.domain)
-    // Byte order, not localeCompare: the sentence must not differ between a developer's machine
-    // and the server (the same ruling track_gsc_property's compareStrings states).
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(compareStrings);
+}
+
+/**
+ * The caller's projects that STILL HOLD this property but read it through NO account.
+ *
+ * WHY IT IS HERE. Disconnecting a Google account nulls `account_id` on every project of that
+ * account (`on delete set null`) and leaves `gsc_property` exactly where it was. Such a project
+ * fell out of BOTH hints: `readBy` requires the account to match — it is null — and
+ * `unlinkedProjectsFor` requires the property to be null — it is not. Measured live 2026-09-02:
+ * `https://rkturizm.com/` and `https://bayder.com.tr/` printed as "not used by any project", with
+ * no hint at all, in the same run where `list_projects` said of those very projects "still mapped
+ * and comes back when you run connect_gsc (free)". Two free tools, one truth, two answers — and
+ * the missing side was this tool's, which exists to say that two printed halves belong together.
+ *
+ * The repair is the ACCOUNT, not the mapping, so this must never offer `track_gsc_property`: the
+ * project already holds this property, and re-linking it would change nothing.
+ */
+function disconnectedProjectsFor(
+  mappings: readonly ProjectPropertyMapping[],
+  siteUrl: string,
+): string[] {
+  return mappings
+    .filter((mapping) => mapping.accountId === null && mapping.property === siteUrl)
+    .map((mapping) => mapping.domain)
+    .sort(compareStrings);
+}
+
+/** What a project that still holds this property but lost its account needs to hear. */
+function disconnectedNote(domains: readonly string[]): string {
+  const named = domains.map((domain) => `"${domain}"`).join(", ");
+  const subject = domains.length === 1 ? "your project" : "your projects";
+  const verb = domains.length === 1 ? "is" : "are";
+  return (
+    `${subject} ${named} ${verb} still mapped to it, but the Google account that read it is no ` +
+    "longer connected; run connect_gsc for that project to bring it back"
+  );
 }
 
 /** How an unread property is described: plainly, or with the project it plainly belongs to. */
@@ -236,8 +279,14 @@ function renderSite(
   accountId: string,
 ): string {
   const readers = readBy(mappings, accountId, site.siteUrl);
-  const usage =
-    readers.length > 0 ? `read by ${readers.join(", ")}` : unusedNote(mappings, site.siteUrl);
+  const disconnected = disconnectedProjectsFor(mappings, site.siteUrl);
+  // BOTH clauses, not the first that applies: a live reader on one project must not hide a
+  // second project that lost its account, which is the same axis-blindness (signed lesson 14)
+  // that let the disconnected case fall between the two hints in the first place.
+  const clauses: string[] = [];
+  if (readers.length > 0) clauses.push(`read by ${readers.join(", ")}`);
+  if (disconnected.length > 0) clauses.push(disconnectedNote(disconnected));
+  const usage = clauses.length > 0 ? clauses.join("; ") : unusedNote(mappings, site.siteUrl);
   const note = canQuerySearchAnalytics(site.permissionLevel)
     ? ""
     : " — NOT QUERYABLE: SeoGrep cannot read Search Console data at this permission level";
@@ -296,10 +345,18 @@ function renderAccount(
           "what it can reach is unknown. Try again shortly, or reconnect the account on the " +
           "Connection page.";
   }
+  // ORDERED BY siteUrl, NEVER BY GOOGLE'S ANSWER. Measured live 2026-09-02: two identical calls
+  // returned the same 27 properties in two different orders, because `sites.list` carries no
+  // ordering promise and this line printed whatever arrived. An inventory a user reads against
+  // Search Console — and, once the "list" card ships, a list that redraws on every refresh —
+  // cannot reshuffle itself between two reads of the same account.
   const listing =
     sites.length === 0
       ? "  No Search Console properties on this account."
-      : sites.map((site) => renderSite(site, mappings, account.id)).join("\n");
+      : [...sites]
+          .sort((a, b) => compareStrings(a.siteUrl, b.siteUrl))
+          .map((site) => renderSite(site, mappings, account.id))
+          .join("\n");
   return expired ? `${header}\n${RECONNECT_LINE}\n${listing}` : `${header}\n${listing}`;
 }
 
