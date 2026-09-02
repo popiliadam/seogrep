@@ -1,6 +1,6 @@
 ---
 title: list_jobs
-description: "List your recent background jobs — crawls and Search Console pulls — newest first, with each job_id. Use it when you do not have a job_id to hand. Pages…"
+description: "List your recent background jobs — crawls and Search Console pulls — newest first, with each job_id. Use it when you do not have a job_id to hand. Narrow…"
 ---
 
 **Cost:** Free (0 credits).
@@ -33,6 +33,8 @@ The tool replies with your recent jobs; pick the one you mean and ask [`get_job_
 | --- | --- | --- | --- |
 | `limit` | integer | No | How many recent jobs to return (1-50, default 10). |
 | `before_id` | string (uuid) | No | Paging cursor: return only jobs older than this job_id. Each answer names the value to pass for the next page, so an account with more jobs than the row cap can reach all of them. |
+| `status` | string | No | Show only jobs in this state. Omit for every state — the answer says which filter it applied, so a narrowed list is never read as your whole history. |
+| `project_id` | string (uuid) | No | Show only the jobs that ran against this project (from list_projects). |
 
 ### Returns
 

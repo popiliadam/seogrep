@@ -11,6 +11,7 @@ import {
   NO_JOBS_MESSAGE,
   NO_MORE_JOBS_MESSAGE,
   UNKNOWN_CURSOR_MESSAGE,
+  type JobFilters,
   type JobListRow,
   type ListJobsFn,
 } from "./list-jobs.ts";
@@ -392,5 +393,67 @@ describe("list_jobs paging — the advice names a value that works", () => {
     await tool.run({ userId: "user-1" } as AuthContext, { before_id: cursor });
 
     expect(calls).toEqual([{ limit: DEFAULT_JOB_LIST_LIMIT, beforeId: cursor }]);
+  });
+});
+
+/**
+ * LJ B-1, measured live 2026-09-02 on an account with 56 jobs. `{"status":"failed"}` came back
+ * with three `succeeded` rows under the heading "Your 3 most recent job(s) of 56", and
+ * `{"project_id":"4e0caff0-…"}` came back with jobs belonging to two OTHER projects. Neither
+ * field existed in the schema, so both were swallowed in silence.
+ *
+ * "Show me my failed jobs" and "the jobs for this site" are the two most natural things anyone
+ * asks a job list, and a model that believes it filtered will describe the answer as filtered.
+ * `jobs` has both columns (migration 0001's status CHECK; project_id since the table existed).
+ */
+describe("filtering the job list", () => {
+  const CTX_F: AuthContext = { userId: "user-1", keyId: "key-1" };
+  const PROJECT = "4e0caff0-1111-4111-8111-111111111111";
+
+  function filterPort() {
+    const calls: { limit: number; beforeId?: string; filters?: JobFilters }[] = [];
+    const listJobs: ListJobsFn = async (_userId, limit, beforeId, filters) => {
+      calls.push({ limit, beforeId, filters });
+      return { rows: [], total: 0 };
+    };
+    return { calls, tool: makeListJobsTool({ listJobs, listDomains: async () => new Map() }) };
+  }
+
+  it("passes status through to the read port instead of swallowing it", async () => {
+    const { calls, tool } = filterPort();
+    await tool.run(CTX_F, { status: "failed" });
+    expect(calls[0]?.filters?.status).toBe("failed");
+  });
+
+  it("passes project_id through to the read port instead of swallowing it", async () => {
+    const { calls, tool } = filterPort();
+    await tool.run(CTX_F, { project_id: PROJECT });
+    expect(calls[0]?.filters?.projectId).toBe(PROJECT);
+  });
+
+  /**
+   * The four the `jobs.status` CHECK allows, and ONLY those — a status the table cannot hold is a
+   * question with no possible answer, and answering it with an unfiltered list is the defect.
+   */
+  it("refuses a status the jobs table cannot hold, and never reaches the read port", async () => {
+    const { calls, tool } = filterPort();
+    const result = await tool.run(CTX_F, { status: "cancelled" });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("accepts every status the table CAN hold", async () => {
+    for (const status of ["queued", "running", "succeeded", "failed"]) {
+      const { calls, tool } = filterPort();
+      const result = await tool.run(CTX_F, { status });
+      expect(result.isError).toBeUndefined();
+      expect(calls[0]?.filters?.status).toBe(status);
+    }
+  });
+
+  it("refuses a project_id that is not a uuid", async () => {
+    const { calls, tool } = filterPort();
+    expect((await tool.run(CTX_F, { project_id: "not-a-uuid" })).isError).toBe(true);
+    expect(calls).toHaveLength(0);
   });
 });

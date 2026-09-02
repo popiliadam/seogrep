@@ -66,11 +66,41 @@ export interface JobListPage {
   readonly unknownCursor?: boolean;
 }
 
+/**
+ * What the caller asked to narrow the list to. Both sit ON TOP of the tenant filter, never
+ * instead of it (NEVER #4).
+ *
+ * Measured live 2026-09-02: neither field existed and both were SWALLOWED — `status: "failed"`
+ * came back with three succeeded jobs under an unfiltered heading, and `project_id` came back
+ * with two OTHER projects' jobs. A silently ignored filter is worse than a refused one: the model
+ * believes the list is narrowed and describes it to the customer that way.
+ */
+export interface JobFilters {
+  readonly status?: JobStatus;
+  readonly projectId?: string;
+}
+
 export type ListJobsFn = (
   userId: string,
   limit: number,
   beforeId?: string,
+  filters?: JobFilters,
 ) => Promise<JobListPage>;
+
+/**
+ * Every value `jobs.status` may hold (migration 0001's CHECK), as a type-checked record so the
+ * COMPILER demands an entry here the day a fifth status is added. The schema's enum is derived
+ * from these keys rather than retyped, so the two cannot drift: a typo is a type error and an
+ * omission is a missing property.
+ */
+const JOB_STATUS_SET: Record<JobStatus, true> = {
+  queued: true,
+  running: true,
+  succeeded: true,
+  failed: true,
+};
+
+export const JOB_STATUSES = Object.keys(JOB_STATUS_SET) as [JobStatus, ...JobStatus[]];
 
 /**
  * What a cursor that names no reachable job gets told.
@@ -113,6 +143,7 @@ export async function listOwnJobs(
   userId: string,
   limit: number,
   beforeId?: string,
+  filters: JobFilters = {},
 ): Promise<JobListPage> {
   const scoped = forUser(getServiceClient(), userId);
   // THE CURSOR IS COMPOSITE, and it has to be — this is where jobs differs from credit_ledger,
@@ -151,7 +182,29 @@ export async function listOwnJobs(
           `created_at.lt.${cursor.createdAt},` +
             `and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
         );
-  const { data, error, count } = await paged
+  // THE CALLER'S FILTERS GO LAST, on top of the tenant filter `selectOwn` already applied — they
+  // narrow this tenant's own rows and can never widen them. `count: "exact"` was asked for on the
+  // same builder, so the total the answer prints counts the FILTERED set: "3 of 3 failed job(s)"
+  // is true, while "3 of 56" under a narrowed list would describe a history nobody asked about.
+  //
+  // `.filter(col, "eq", v)` rather than `.eq(col, v)`, and NOT because eq was unavailable: it is
+  // the price of keeping `forUser`. `selectOwn` takes the UNION of every tenant-owned table, so
+  // the builder it hands back only admits filters on the columns all of them share (id, user_id,
+  // created_at) — `status` and `project_id` belong to `jobs` alone, exactly as `delta` belongs to
+  // credit_ledger alone (list-credit-activity.ts records the same wall). That module answered it
+  // by dropping forUser and writing the tenant guard by hand; here the guard stays by
+  // CONSTRUCTION and only the column name loses its type, which is the smaller loss of the two.
+  // Neither value is caller-shaped by the time it arrives: the schema admits one of four enum
+  // members and a uuid.
+  const filtered = [
+    ["status", filters.status] as const,
+    ["project_id", filters.projectId] as const,
+  ].reduce(
+    (builder, [column, value]) =>
+      value === undefined ? builder : builder.filter(column, "eq", value),
+    paged,
+  );
+  const { data, error, count } = await filtered
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(limit);
@@ -171,6 +224,7 @@ export const NO_MORE_JOBS_MESSAGE =
 export const NO_JOBS_MESSAGE =
   "You have not run any background jobs yet. crawl_site and pull_gsc_data create them, and they " +
   "return a job_id you can follow with get_job_status.";
+
 
 /**
  * What a line says when the stored stamps contradict each other — measured live on 2026-08-26,
@@ -280,8 +334,8 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
     name: "list_jobs",
     description:
       "List your recent background jobs — crawls and Search Console pulls — newest first, with " +
-      "each job_id. Use it when you do not have a job_id to hand. Pages with before_id. " +
-      "Costs 0 credits.",
+      "each job_id. Use it when you do not have a job_id to hand. Narrow it with status and " +
+      "project_id. Pages with before_id. Costs 0 credits.",
     inputSchema: z.object({
       limit: z
         .int()
@@ -299,12 +353,24 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
             "to pass for the next page, so an account with more jobs than the row cap can reach " +
             "all of them.",
         ),
+      status: z
+        .enum(JOB_STATUSES)
+        .optional()
+        .describe(
+          "Show only jobs in this state. Omit for every state — the answer says which filter it " +
+            "applied, so a narrowed list is never read as your whole history.",
+        ),
+      project_id: z
+        .uuid()
+        .optional()
+        .describe("Show only the jobs that ran against this project (from list_projects)."),
     }),
-    handler: async (ctx, { limit, before_id }) => {
+    handler: async (ctx, { limit, before_id, status, project_id }) => {
+      const filters = { status, projectId: project_id };
       // In parallel: independent reads, and the domain map is one row per project however long
       // the requested page is.
       const [page, domains] = await Promise.all([
-        listJobs(ctx.userId, limit, before_id),
+        listJobs(ctx.userId, limit, before_id, filters),
         listDomains(ctx.userId),
       ]);
       return textResult(formatJobList(page, domains, before_id !== undefined));
