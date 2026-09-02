@@ -16,6 +16,8 @@ import {
   mdxEscapeInline,
   renderCostLine,
   renderFieldType,
+  renderIndexCost,
+  renderIndexPage,
   renderInputTable,
   renderToolPage,
   stripCostSentences,
@@ -619,5 +621,107 @@ describe("the domain-addressable tool list", () => {
   it("refuses to substitute the token without the derived list", () => {
     expect(() => substituteProseTokens("x {{DOMAIN_TOOLS}} y", {})).toThrow(/DOMAIN_TOOLS/);
     expect(substituteProseTokens("x {{DOMAIN_TOOLS}} y", { domainTools: "A, B" })).toBe("x A, B y");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The section hub (M-07). /docs/tools-reference was a 404 while billing-and-credits.mdx linked at
+// it calling it "the list to trust" for paid-balance rules. These pin the two properties that make
+// the hub trustworthy rather than merely present: every number is DERIVED, and the paid-balance
+// column is the RUNTIME predicate rather than a copy of it.
+// ---------------------------------------------------------------------------
+
+// ORDER IS PART OF THE FIXTURE. The free tools are deliberately NOT a prefix of the list: with a
+// free tool first, `free = rows.slice(0, 1)` renders the identical page and the split test stays
+// green against a generator that no longer looks at the cost at all (MEASURED — that exact mutation
+// passed before this fixture was reordered). Interleaving is what makes the assertion discriminate.
+const HUB_TOOLS = [
+  { name: "crawl_site", description: "Crawl a site. Costs 20 credits." },
+  { name: "list_projects", description: "List your projects. Free (0 credits)." },
+  { name: "serp_snapshot", description: "Take a SERP snapshot. Costs 5 credits plus 8 per keyword." },
+  { name: "get_credit_balance", description: "Show your balance. Free (0 credits)." },
+];
+const HUB_COSTS = { crawl_site: 20, list_projects: 0, serp_snapshot: 8, get_credit_balance: 0 };
+const HUB_UNITS = { serp_snapshot: { unit: "keyword", min_units: 1, max_units: 10, base: 5 } };
+// Annotated rather than inferred: TypeScript narrows the default to a `name is "serp_snapshot"`
+// type predicate, which then rejects the `() => false` the paid-balance test needs.
+const hubPage = (needsPaid: (name: string) => boolean = (name) => name === "serp_snapshot") =>
+  renderIndexPage(HUB_TOOLS, HUB_COSTS, HUB_UNITS, needsPaid);
+
+describe("renderIndexCost", () => {
+  it("labels a zero cost Free and a flat cost in credits", () => {
+    expect(renderIndexCost(0, undefined)).toBe("Free");
+    expect(renderIndexCost(1, undefined)).toBe("1 credit");
+    expect(renderIndexCost(20, undefined)).toBe("20 credits");
+  });
+
+  // A per-unit tool has no single number: serp_snapshot really costs 13 to 85 credits, so printing
+  // its per-unit price alone ("8 credits") would be wrong at every possible count.
+  it("prints the FORMULA for a per-unit tool, base included", () => {
+    expect(renderIndexCost(8, HUB_UNITS.serp_snapshot)).toBe("5 + 8 / keyword");
+    expect(renderIndexCost(90, { unit: "target", min_units: 2, max_units: 10 })).toBe("90 / target");
+  });
+});
+
+describe("renderIndexPage", () => {
+  it("splits on the COST, not on a curated list", () => {
+    const page = hubPage();
+    const free = page.slice(page.indexOf("## Free tools"), page.indexOf("## Tools that spend"));
+    const paid = page.slice(page.indexOf("## Tools that spend"));
+    expect(free).toContain("list_projects");
+    // The LAST tool is free and the FIRST is not: only a cost-driven split puts them here.
+    expect(free).toContain("get_credit_balance");
+    expect(free).not.toContain("crawl_site");
+    expect(free).not.toContain("serp_snapshot");
+    expect(paid).toContain("crawl_site");
+    expect(paid).toContain("serp_snapshot");
+    expect(paid).not.toContain("get_credit_balance");
+  });
+
+  it("carries no typed tool count — the row set IS the registry", () => {
+    // The 15/16-pages finding: a hand-written hub grows a number that stops matching the surface.
+    // One row per tool and no total anywhere is what makes that impossible here.
+    const page = hubPage();
+    for (const tool of HUB_TOOLS) expect(page).toContain(`/docs/tools-reference/${deriveSlug(tool.name)}`);
+    expect(page).not.toMatch(/\b3 tools\b/);
+    expect(page.split("\n").filter((line) => line.startsWith("| [`")).length).toBe(HUB_TOOLS.length);
+  });
+
+  /**
+   * The load-bearing one. This column is what billing-and-credits.mdx sends the reader here for, so
+   * it must follow the predicate the credit guard calls — not a list maintained beside it. Flipping
+   * the predicate must move the cell; a page that renders identically either way would be a hub
+   * that LOOKS authoritative and is not.
+   */
+  it("reads the paid-balance column from the injected runtime predicate", () => {
+    const gated = hubPage((name) => name === "serp_snapshot");
+    const ungated = hubPage(() => false);
+    expect(gated).toMatch(/serp_snapshot.*\| Required \|/);
+    expect(ungated).not.toContain("| Required |");
+    expect(gated).not.toBe(ungated);
+  });
+
+  it("keeps the hub's own meta description inside the page budget", () => {
+    expect(frontmatterDescription(hubPage()).length).toBeLessThanOrEqual(FRONTMATTER_DESCRIPTION_MAX);
+  });
+
+  it("escapes summary text so a pipe cannot break a table row", () => {
+    const page = renderIndexPage(
+      [{ name: "t_one", description: "A | B and <tag>." }],
+      { t_one: 0 },
+      {},
+      () => false,
+    );
+    expect(page).toContain("A \\| B and &lt;tag&gt;.");
+  });
+});
+
+describe("checkToolsMetaSync with the hub present", () => {
+  it("ignores the allowlisted index page and still pins tool ORDER", () => {
+    expect(checkToolsMetaSync(["setup_project", "crawl_site"], ["index", "setup-project", "crawl-site"]).ok).toBe(true);
+    // Order is still the assertion: swapping two tools is a failure even with index in front.
+    expect(checkToolsMetaSync(["setup_project", "crawl_site"], ["index", "crawl-site", "setup-project"]).ok).toBe(false);
+    // And a MISSING tool is still a failure — the allowlist must not become a hole.
+    expect(checkToolsMetaSync(["setup_project", "crawl_site"], ["index", "setup-project"]).ok).toBe(false);
   });
 });

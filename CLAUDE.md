@@ -133,9 +133,33 @@ Haftalık compost: haftanın FAIL'lerinden ≤3 kural önerisi; insan imzalamada
 
 | komut | ne ölçer | **NEYİ ÖLÇMEZ** |
 |---|---|---|
-| `make verify` (`guardrails/verify.sh`) | guard-selftest + RLS/append-only/grants + lisans + typecheck·lint·test·build + tool-docs drift | **secret taraması YOK · DB şeritleri YOK** |
+| `make verify` (`guardrails/verify.sh`) | guard-selftest + RLS/append-only/grants + lisans + typecheck·lint·test·build + tool-docs drift + deploy-paths·text-sources·sweep-selftest·migration-journal öz-testleri (aşağıda) | **secret taraması YOK · DB şeritleri YOK** |
 | `make verify-db` (`verify-db.sh`) | `*.db.test.ts` şeritleri (Docker + pinli supabase CLI) | 00:00–00:30 UTC'de her dalda deterministik kırmızı |
 | `make goals` (`verify-goals.sh`) | `goals/*.md` predicate'leri + `gitleaks` | env yüklü değilse canlı-uç hedefleri sessizce SKIP (çıkış kodu 97) |
 | `make dev` | web dev server | — |
 
 Kapı tarifinin tek yeri burasıdır; global `qa-loop.md` bu tabloyu TEKRAR ETMEZ.
+
+### Kapı kapsamı — 2026-08-27 audit remediation turunda genişledi
+
+`verify.sh`'e eklenen ve HEPSİ kendi `--self-test`'iyle gelen dört kontrol. Her biri, kapanan
+bulgunun ADIYLA duruyor; hiçbiri ağ, DB ya da saat istemez:
+
+| kontrol | ne ölçer | kapattığı bulgu |
+|---|---|---|
+| `check-deploy-paths.mjs` | MCP image'inin paket listesi (`apps/mcp/package.json` → Dockerfile ×2 → deploy workflow) | H-03 |
+| `check-text-sources.mjs` | izlenen metin kaynaklarında literal NUL — **gitleaks'in atladığı sınıf** | L-09 |
+| `tool-sweep.mjs --self-test` | 38 canlı tool'un PLAN ya da gerekçeli EXCLUDED'da olduğu | M-01 |
+| `check-migration-journal.sh --self-test` | depo↔journal karşılaştırma mantığı (canlı yarısı `make goals`'ta) | M-08 |
+
+**CI'a eklenen:** `advisories` job'ı (`check-advisories.sh`) — prod ağacındaki bilinen açıklar,
+yüksek/kritik bloklar. `verify.sh`'e KONMADI: `pnpm audit` canlı bir besleme sorgular, yani cevabı
+kod değişmeden değişir; yerel deterministik kapının içinde bu, kimsenin hiçbir şeye dokunmadığı bir
+sabah kırmızı verirdi (gitleaks'in CI-only olmasıyla aynı gerekçe).
+
+**`make goals`'a eklenen:** `migration-journal-sync` — `SUPABASE_DB_URL` yoksa SKIP (97), sessiz OK
+değil.
+
+**Hâlâ HİÇBİR kapının bakmadığı:** `verify.sh` secret taraması ve DB şeritleri koşmaz · hiçbir kapı
+CI'da bulut grant'ini okumaz · `check-migration-journal.sh` **çalışan SQL'in dosyayla aynı olduğunu
+ölçmez**, yalnız sürüm adlarını karşılaştırır.

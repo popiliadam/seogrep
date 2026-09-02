@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   assertCoverage,
   buildCells,
+  EXCLUDED,
   ID_TOOLS,
   projectCost,
   SCENARIOS,
@@ -143,17 +144,49 @@ async function assertOutInsideRepoRefused(pass) {
 async function assertCoverageCatchesAnUnplannedTool(pass) {
   const known = Object.keys(TOOL_COSTS);
   const planned = new Set(buildCells({}).map((cell) => cell.tool));
+  const excluded = Object.keys(EXCLUDED);
   assertCoverage(null, planned);
-  check(planned.size === known.length, `PLAN covers ${planned.size} tools, TOOL_COSTS has ${known.length}`);
+
+  // PLAN ∪ EXCLUDED must be the whole surface. This used to assert `planned.size === known.length`
+  // — PLAN alone covering everything — which silently assumed EXCLUDED would stay empty forever.
+  // It did stay empty, while nineteen tools sat in NEITHER table and the run exited 1 on every
+  // branch with nothing running it (M-01). The union is the real invariant.
+  const covered = new Set([...planned, ...excluded]);
+  check(
+    covered.size === known.length,
+    `PLAN covers ${planned.size} and EXCLUDED ${excluded.length}, union ${covered.size}, TOOL_COSTS has ${known.length}`,
+  );
+
+  // A tool must not be in both: an exclusion reason beside a cell that runs anyway is a reason
+  // nobody will notice has stopped being true.
+  const both = [...planned].filter((tool) => excluded.includes(tool));
+  check(both.length === 0, `${both.length} tool(s) are in BOTH PLAN and EXCLUDED: ${both.join(", ")}`);
 
   // (a) a tool in neither PLAN nor EXCLUDED. Exercised with liveToolNames=null so ONLY the
   //     uncovered-tool branch can fire — otherwise the drift branch below masks its removal.
-  const gapped = new Set([...planned].filter((tool) => tool !== known[0]));
+  //     The victim is taken from PLAN rather than from TOOL_COSTS: with EXCLUDED non-empty,
+  //     `known[0]` can be an excluded tool, and removing it from `planned` would then change
+  //     nothing — a self-test case that passes because it tested nothing.
+  const victim = [...planned][0];
+  const gapped = new Set([...planned].filter((tool) => tool !== victim));
   const missing = await expectThrow(() => assertCoverage(null, gapped), "coverage accepted an unplanned tool");
   check(
-    /neither PLAN nor EXCLUDED/.test(missing.message) && missing.message.includes(known[0]),
+    /neither PLAN nor EXCLUDED/.test(missing.message) && missing.message.includes(victim),
     `coverage failed for the wrong reason: ${missing.message}`,
   );
+
+  // (c) an EXCLUDED entry with no written reason. EXCLUDED is the only sanctioned way for a live
+  //     tool to skip the sweep, so a blank reason turns the mechanism into an escape hatch.
+  for (const blank of [undefined, "", "   "]) {
+    const error = await expectThrow(
+      () => assertCoverage(null, planned, { ...EXCLUDED, some_tool: blank }),
+      `coverage accepted an EXCLUDED entry whose reason was ${JSON.stringify(blank)}`,
+    );
+    check(
+      /no written reason/.test(error.message) && error.message.includes("some_tool"),
+      `blank-reason check failed for the wrong reason: ${error.message}`,
+    );
+  }
 
   // (b) the server serves something TOOL_COSTS has never heard of — the "16 vs 19" drift.
   const drift = await expectThrow(
@@ -161,7 +194,11 @@ async function assertCoverageCatchesAnUnplannedTool(pass) {
     "coverage accepted a live tool that TOOL_COSTS does not know",
   );
   check(/brand_new_tool/.test(drift.message), `drift check failed for the wrong reason: ${drift.message}`);
-  pass(`coverage: all ${planned.size} tools planned; an unplanned tool and a live/TOOL_COSTS drift are both rejected; ID_TOOLS lists ${ID_TOOLS.length}`);
+  pass(
+    `coverage: ${known.length} live tools accounted for (${planned.size} planned + ${excluded.length} excluded, ` +
+      `no overlap); an unplanned tool, a blank exclusion reason and a live/TOOL_COSTS drift are all ` +
+      `rejected; ID_TOOLS lists ${ID_TOOLS.length}`,
+  );
 }
 
 /** Run every assertion in order, printing one line each. Throws on the first failure. */
@@ -178,6 +215,7 @@ export async function runSelfTest(log) {
   log("self-test: 7/7 PASS.");
   log(
     "NOT MEASURED by this run: the live schemas, the plan's SEO judgement, the argument values, " +
-      "and anything requiring a socket. guardrails/verify.sh does not see scripts/ at all.",
+      "and anything requiring a socket. guardrails/verify.sh runs THIS self-test (since 2026-08-27, "
+        + "M-01) but never the live sweep, so nothing in CI touches a real tool or a real credit.",
   );
 }

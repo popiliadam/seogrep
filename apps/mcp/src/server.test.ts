@@ -100,6 +100,59 @@ describe("mcp gateway app", () => {
     await app.close();
   });
 
+  /**
+   * L-03. Everything this server routes answers in JSON-RPC; everything it does NOT route fell
+   * through to Express's built-in handlers and answered in HTML. MEASURED against production
+   * 2026-08-27: `GET /no-such-route` -> 404 text/html "Cannot GET /no-such-route", and a malformed
+   * POST body -> 400 text/html "Bad Request".
+   *
+   * Nothing sensitive leaked, and that was checked — this is a consistency defect, not a
+   * disclosure one. It still matters: handed HTML, an MCP client reports a JSON parse failure
+   * instead of the server's answer, so the operator debugging it starts from the wrong error.
+   *
+   * CONTENT TYPE IS ASSERTED, NOT JUST THE STATUS. The status codes were already right; it was the
+   * BODY that was HTML, so a test on status alone would have been green throughout the defect.
+   */
+  it("answers an unknown path in JSON-RPC, not Express HTML (L-03)", async () => {
+    const res = await fetch(`${app.baseUrl}/no-such-route`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "No such endpoint" },
+      id: null,
+    });
+  });
+
+  it("answers a malformed JSON body with JSON-RPC parse error -32700 (L-03)", async () => {
+    const res = await fetch(`${app.baseUrl}/mcp/${VALID_KEY}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32700);
+    // Our wording, not body-parser's: its own message quotes the offending input back, and echoing
+    // a request body into an error response is how an error surface starts leaking what was sent.
+    expect(body.error.message).toBe("Parse error: body is not valid JSON");
+    expect(body.error.message).not.toContain("not json");
+  });
+
+  it("refuses an oversized body with 413 in JSON-RPC, and says the limit (L-03)", async () => {
+    const res = await fetch(`${app.baseUrl}/mcp/${VALID_KEY}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", padding: "x".repeat(200_000) }),
+    });
+    expect(res.status).toBe(413);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as { error: { code: number; message: string } };
+    expect(body.error.code).toBe(-32600);
+    expect(body.error.message).toContain("100kb");
+  });
+
   it("GET /healthz returns { ok: true }", async () => {
     const res = await fetch(`${app.baseUrl}/healthz`);
     expect(res.status).toBe(200);

@@ -1,7 +1,17 @@
 name: Deploy MCP
 # First deploy was a human gate (workflow_dispatch, done 2026-07-20 — success). Now also
-# auto-deploys on main pushes that touch the MCP image inputs: the app itself, the
-# workspace package the image builds (@pseo/core), or this workflow. Manual dispatch stays.
+# auto-deploys on main pushes that touch the MCP image inputs: the app itself, EVERY workspace
+# package the image builds (@pseo/core AND @pseo/db), or this workflow. Manual dispatch stays.
+#
+# THE PACKAGE LIST HERE IS A COPY OF THE DOCKERFILE'S, AND A COPY GOES STALE. It said "@pseo/core"
+# alone from 2026-07-20 until 2026-08-27 — including the two weeks after 2026-08-14, when
+# apps/mcp/Dockerfile gained `pnpm --filter @pseo/db run build` and started COPYing
+# packages/db/dist into the runtime image. For those two weeks a main commit touching only
+# packages/db would have passed CI, produced NO new image, and left prod running yesterday's DB
+# code with a GREEN deploy history — the silent failure mode, since nothing turns red (H-03,
+# audit 2026-08-26). scripts/testing/check-deploy-paths.mjs now derives the required package list
+# from the Dockerfile itself and fails when this block and that build diverge, so the next
+# package the image picks up cannot be forgotten here.
 on:
   workflow_dispatch:
     inputs:
@@ -14,7 +24,9 @@ on:
     paths:
       - "apps/mcp/**"
       - "packages/core/**"
+      - "packages/db/**"
       - ".github/workflows/deploy-mcp.yml"
+      - "scripts/testing/check-deploy-paths.mjs"
       # Repo-root inputs the Docker image consumes (Dockerfile: COPY . . -> turbo prune ->
       # pnpm install --frozen-lockfile -> COPY tsconfig.base.json). A root-only change — e.g. a
       # pnpm-lock.yaml security bump — must ship a fresh image, not a silently stale one (D-I1).

@@ -177,7 +177,9 @@ function aggregate(rows: readonly ContentQueryRow[]): Demand[] {
   const byPair = new Map<string, Demand>();
   for (const row of rows) {
     const key = contentPageKey(row.page);
-    const id = `${row.query} ${key}`;
+    // NUL separator, written as an ESCAPE -- see the note in apps/mcp/src/audit/rules/schema.ts.
+    // The literal byte classified this production module as binary and hid it from gitleaks.
+    const id = `${row.query}\0${key}`;
     const existing = byPair.get(id);
     if (existing) {
       existing.impressions += row.impressions;

@@ -181,7 +181,12 @@ function validatePage(page: AuditPage): {
         // One row per (page, type, missing SET): two Products both missing `offers` are one
         // finding, while a Product missing `name` and another missing `offers` stay two — a
         // union over the type would report both fields missing from both, which is false.
-        const key = `${type} ${missing.join(",")}`;
+        // The separator is a NUL, written as an ESCAPE. As a literal byte it made this file `data`
+        // to file(1) and binary to Git, which hides a PRODUCTION module from review diffs, text
+        // search and every scanner that skips binaries -- gitleaks, a required check, among them
+        // (L-09 class, found by check-text-sources.mjs 2026-08-27; the audit saw only the test
+        // file). `\0` is the same code unit, so the key is byte-for-byte what it always was.
+        const key = `${type}\0${missing.join(",")}`;
         if (seen.has(key)) continue;
         seen.add(key);
         issues.push({ url: page.url, type, missing });

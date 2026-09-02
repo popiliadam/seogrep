@@ -9,3 +9,34 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - fumadocs-core@16.11.2
   - fumadocs-ui@16.11.2
+
+# Transitive security patches (M-02, audit 2026-08-26: 17 advisories in the PROD tree, 0 critical /
+# 8 high / 8 moderate / 1 low, and no SCA gate in CI). Every one of these arrives through a direct
+# dependency's own dependency tree — @modelcontextprotocol/sdk, next, fumadocs — so none can be
+# fixed by bumping something we declare. An override is the only lever short of waiting for each
+# upstream to ship its own bump.
+#
+# THE RULE APPLIED HERE: same MAJOR only. Each pin is the advisory's own `patched` floor, and the
+# tree it lands in is exercised by verify.sh (typecheck + lint + test + build) before it is kept.
+# `sharp` is deliberately NOT in this list — it is next's image binary at 0.34.x with a patched
+# floor of 0.35.0, and under semver a 0.x minor may break. A wrong pin there fails at image
+# optimisation in production, which the local gate does not exercise. It is left open, on purpose.
+#
+# These are overrides, not upgrades: when an upstream ships its own bump, the matching line here
+# becomes dead weight and should be dropped rather than kept forever.
+overrides:
+  # host confusion; reaches us through ajv <- @modelcontextprotocol/sdk
+  fast-uri: "^3.1.5"
+  # SSRF / trust-boundary parsing; through express-rate-limit <- @modelcontextprotocol/sdk
+  ip-address: "^10.3.1"
+  # source-map file read + stringify XSS; through next and the fumadocs build chain
+  postcss: "^8.5.23"
+  # DoS; through postcss
+  nanoid: "^3.3.18"
+  # DoS advisories; through @hono/node-server <- @modelcontextprotocol/sdk. This app serves MCP
+  # over Express, so the hono path has no proven reachability here — patched anyway, cheaply.
+  hono: "^4.12.34"
+  "@hono/node-server": "^1.19.15"
+  # DoS; through the fumadocs docs build chain
+  js-yaml: "^5.2.2"
+  sharp: "^0.35.0"
