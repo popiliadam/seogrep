@@ -9,12 +9,12 @@ description: "Audit technical SEO for a project's latest crawl. Always reported:
 
 ## What it does
 
-Summarizes the crawl from a technical angle. Twelve sections, each named below by the exact heading it carries in the reply, so what you read here is what you can search for in the output:
+Summarizes the crawl from a technical angle. Fifteen sections, each named below by the exact heading it carries in the reply, so what you read here is what you can search for in the output:
 
 - **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx page URLs listed. A page whose stored status is missing or unreadable belongs to none of those four, and where there is one the section says how many and names them — so the four counts and the page total in the heading are never quietly different numbers.
 - **Redirects surfaced** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and redirects onto an already-crawled URL).
 - **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by `robots.txt`, timed out, non-HTML, and so on).
-- **Robots conflicts** — pages marked `noindex` that are still linked internally.
+- **Robots conflicts** — pages marked `noindex` that are still linked internally. `none` counts as `noindex` here, because that is what Google reads it as.
 - **Slow pages** — a fetch that took over three seconds, redirect hops included, because that is what a visitor actually waits for.
 - **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images are never counted here.
 - **Redirect chains** — two or more hops to reach the destination, printed as the whole trail.
@@ -23,12 +23,17 @@ Summarizes the crawl from a technical angle. Twelve sections, each named below b
 - **No internal links found** — the orphan signal: no page in this crawl links there.
 - **Sitemap vs crawl** — what is in the sitemap and was never crawled, and what was crawled and is absent from the sitemap.
 - **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx from.
+- **Hreflang codes not valid** — an alternate whose language code cannot work: a region given where a language belongs (`hreflang="us"`), a three-letter code, or a reserved region like `EU`. Google needs an ISO 639-1 language, optionally with an ISO 3166-1 region.
+- **Hreflang sets with no x-default** — a page offering several languages and no fallback for a visitor whose language is not among them. x-default is **recommended, not required**, and the heading says so.
+- **Hreflang not reciprocated** — this page names that one as its alternate and gets no return link, so Google ignores the pair. Only alternates whose target THIS crawl also fetched can be checked, and the section says how many pointed elsewhere; only the HTML channel is read, so a return link served in a header or a sitemap is not seen.
 
 Redirects appear in three places, on purpose, and only one of the three is a repeat. The crawler follows a successful redirect and records the destination, so a redirect never becomes a duplicate page — it surfaces as a **skip reason**. **Redirects surfaced** is that one skip category promoted to a section of its own, which is the repeat: the same URL is printed there with its reason, and again under **Not crawled** inside the full skip ledger, whose per-reason grouping is what lets the skip counts reconcile. The third is different data rather than a repeat — a page's own hop trail, read back as a **chain** when it took more than one hop.
 
-Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, **Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a count this engine always takes, so a zero there is a measurement rather than a silence. Every section after them prints only when it has rows, and that too is deliberate: on a crawl stored before a signal existed the list is empty because nobody looked, and a heading reading "Slow pages: 0" would report a measurement that never happened.
+Four of the fifteen print on every run, at zero as readily as at fifty — **HTTP status**, **Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a count this engine always takes, so a zero there is a measurement rather than a silence. Every section after them prints only when it has rows, and that too is deliberate: on a crawl stored before a signal existed the list is empty because nobody looked, and a heading reading "Slow pages: 0" would report a measurement that never happened.
 
-The sitemap comparison is the one exception in the other direction. It prints even at zero and zero, because a diff that exists means the sitemap **was read**, and a measured agreement is worth stating where an empty list elsewhere would only mean an unmeasured axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only linking page was never fetched lands there too.
+Two sections are exceptions in the other direction, and both print at zero because a zero there is a measurement rather than a silence. The **sitemap comparison** prints even at zero and zero, because a diff that exists means the sitemap **was read**, and a measured agreement is worth stating where an empty list elsewhere would only mean an unmeasured axis. **Hreflang not reciprocated** prints at zero whenever an alternate pointed at a page this crawl did not fetch, and says how many: those alternates were not checked, and a reader told nothing would read the silence as "they all point back".
+
+The orphan list carries its own caveat: the crawl is bounded, so a page whose only linking page was never fetched lands there too.
 
 ## Example
 

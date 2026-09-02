@@ -58,7 +58,6 @@ describe("required fields per type", () => {
       crawl([
         withBlocks("https://e/a", [{ "@type": "Article", headline: "H" }]),
         withBlocks("https://e/b", [{ "@type": "BlogPosting", datePublished: "2026-01-01" }]),
-        withBlocks("https://e/c", [{ "@type": "FAQPage" }]),
         withBlocks("https://e/d", [{ "@type": "BreadcrumbList" }]),
         withBlocks("https://e/e", [{ "@type": "Organization" }]),
         withBlocks("https://e/f", [{ "@type": "WebSite", name: "S" }]),
@@ -68,11 +67,24 @@ describe("required fields per type", () => {
     expect(report.missingFields).toEqual([
       { url: "https://e/a", type: "Article", missing: ["datePublished"] },
       { url: "https://e/b", type: "BlogPosting", missing: ["headline"] },
-      { url: "https://e/c", type: "FAQPage", missing: ["mainEntity"] },
       { url: "https://e/d", type: "BreadcrumbList", missing: ["itemListElement"] },
       { url: "https://e/e", type: "Organization", missing: ["name"] },
       { url: "https://e/f", type: "WebSite", missing: ["url"] },
       { url: "https://e/g", type: "LocalBusiness", missing: ["address"] },
+    ]);
+  });
+
+  it("POSITIVE: an ARRAY of @type names is judged on each name it declares", () => {
+    // `"@type": ["Product", "IndividualProduct"]` is standard JSON-LD and common in real
+    // templates. Deleting the array branch of typesOf left the whole package green (3766/3766)
+    // on 2026-09-02, and the failure it hid is the worst shape there is: the page still appears
+    // under "Types across the site" — that count reads the crawler's own type names — so the
+    // report says "you have a Product" while the missing `offers` is never mentioned.
+    const report = auditSchema(
+      crawl([withBlocks("https://e/p", [{ "@type": ["Product", "IndividualProduct"], name: "T" }])]),
+    );
+    expect(report.missingFields).toEqual([
+      { url: "https://e/p", type: "Product", missing: ["offers"] },
     ]);
   });
 
@@ -82,12 +94,73 @@ describe("required fields per type", () => {
       Product: ["name", "offers"],
       Article: ["headline", "datePublished"],
       BlogPosting: ["headline", "datePublished"],
-      FAQPage: ["mainEntity"],
       BreadcrumbList: ["itemListElement"],
       Organization: ["name"],
       WebSite: ["name", "url"],
       LocalBusiness: ["name", "address"],
     });
+  });
+
+  /**
+   * NOTHING IS JUDGED THAT THE GALLERY DOES NOT BACK (R-2.1, measured 2026-09-02).
+   *
+   * `FAQPage` sat in the table for months after Google dropped it, and no gate said a word —
+   * the only pin was the table's own copy of itself, which agrees with whatever the table says.
+   * So the gallery is pinned HERE, as data, and every judged type must trace to a row in it or
+   * to a NAMED rule that backs it instead. A type leaving the gallery now turns this red.
+   */
+  const R_2_1_GALLERY = [
+    "Article", "Breadcrumb", "Carousel", "Course list", "Dataset", "Discussion forum",
+    "Education Q&A", "Employer aggregate rating", "Event", "Image metadata", "Job posting",
+    "Local business", "Math solver", "Movie", "Organization", "Product", "Profile page", "Q&A",
+    "Recipe", "Review snippet", "Software app", "Speakable", "Subscription/paywalled content",
+    "Vacation rental", "Video",
+  ];
+
+  /** Judged type -> the gallery row it is, or the reference rule that backs it instead. */
+  const BACKED_BY: Record<string, string> = {
+    Product: "Product",
+    Article: "Article",
+    // schema.org subtype of Article — the gallery names the parent.
+    BlogPosting: "Article",
+    BreadcrumbList: "Breadcrumb",
+    Organization: "Organization",
+    // NOT a gallery type: R-4.1 names `WebSite` structured data as a title-link source, which is
+    // a documented Google use of its own.
+    WebSite: "R-4.1",
+    LocalBusiness: "Local business",
+  };
+
+  it("every judged type is backed by the R-2.1 gallery, or by a rule named here", () => {
+    expect(R_2_1_GALLERY).toHaveLength(25);
+    expect(Object.keys(REQUIRED_FIELDS).sort()).toEqual(Object.keys(BACKED_BY).sort());
+    for (const backing of Object.values(BACKED_BY)) {
+      if (backing.startsWith("R-")) continue;
+      expect(R_2_1_GALLERY).toContain(backing);
+    }
+    // R-2.2 by name, because this is the entry that was wrong: neither retired type is judged.
+    expect(REQUIRED_FIELDS).not.toHaveProperty("FAQPage");
+    expect(REQUIRED_FIELDS).not.toHaveProperty("HowTo");
+  });
+
+  it("R-2.2: a retired type is NOT judged — it is named, once, with what it now means", () => {
+    // A customer whose FAQPage markup lacks `mainEntity` used to be handed a repair job that buys
+    // nothing: Google stopped showing the rich result. The markup is still reported as PRESENT,
+    // because it is, and the reply says what it is now worth rather than pretending it is a defect.
+    const report = auditSchema(crawl([withBlocks("https://e/faq", [{ "@type": "FAQPage" }])]));
+    expect(report.missingFields).toEqual([]);
+    expect(report.retiredTypes).toEqual(["FAQPage"]);
+    expect(report.typeCoverage).toEqual([{ type: "FAQPage", pages: 1 }]);
+  });
+
+  it("R-2.2: HowTo is retired too, and a live type is never named as retired", () => {
+    const report = auditSchema(
+      crawl([
+        withBlocks("https://e/h", [{ "@type": "HowTo" }]),
+        withBlocks("https://e/p", [{ "@type": "Product", name: "T", offers: { price: "1" } }]),
+      ]),
+    );
+    expect(report.retiredTypes).toEqual(["HowTo"]);
   });
 
   it("NEGATIVE: a complete node produces nothing, and neither does an UNKNOWN type", () => {

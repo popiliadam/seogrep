@@ -28,7 +28,6 @@ import type { AuditCrawl, AuditPage } from "../crawl-data.ts";
  *  - Article /
  *    BlogPosting    headline + datePublished — an article is a headline at a point in time; with
  *                   no date, freshness (the reason articles are marked up at all) is unstateable.
- *  - FAQPage        mainEntity     — the questions ARE the FAQ; an FAQPage without them is empty.
  *  - BreadcrumbList itemListElement — the trail IS the list; without it there is no breadcrumb.
  *  - Organization   name           — an organization is identified by its name.
  *  - WebSite        name + url     — the two things a site node exists to bind together.
@@ -36,17 +35,35 @@ import type { AuditCrawl, AuditPage } from "../crawl-data.ts";
  *
  * A type NOT listed here is not judged: schema.org has hundreds of types, and inventing
  * requirements for the ones we did not think about would produce findings nobody can trust.
+ *
+ * `FAQPage` WAS here until 2026-09-02, with `mainEntity`. It left because the finding stopped
+ * being worth acting on: Google's gallery no longer lists FAQPage (R-2.2), so a customer told
+ * their FAQ markup was incomplete was being handed repair work that buys nothing. The type is
+ * still COUNTED — coverage reports what a site declares — and is named under RETIRED_TYPES with
+ * what it is now worth. Every entry that remains is backed by the gallery or by a named rule, and
+ * rules/schema-fields.test.ts pins that mapping against the gallery itself rather than against a
+ * second copy of this table.
  */
 export const REQUIRED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   Product: ["name", "offers"],
   Article: ["headline", "datePublished"],
   BlogPosting: ["headline", "datePublished"],
-  FAQPage: ["mainEntity"],
   BreadcrumbList: ["itemListElement"],
   Organization: ["name"],
   WebSite: ["name", "url"],
   LocalBusiness: ["name", "address"],
 };
+
+/**
+ * Types a site may still declare that no longer produce a Google rich result (R-2.2), and the
+ * sentence the reply gives for each.
+ *
+ * Reported rather than dropped: the markup EXISTS, the reader can see it in their template, and a
+ * report that said nothing would leave them to discover on their own why the rich result never
+ * came back. It is not a finding either — nothing here is broken — so the wording says what the
+ * type is now worth and stops.
+ */
+export const RETIRED_TYPES: readonly string[] = ["FAQPage", "HowTo"];
 
 /** One page + one @type that is missing one or more of that type's required fields. */
 export interface SchemaFieldIssue {
@@ -79,6 +96,12 @@ export interface SchemaReport {
   readonly pagesWithout: string[];
   /** @type name -> number of pages declaring it, sorted desc then by name. */
   readonly typeCoverage: { readonly type: string; readonly pages: number }[];
+  /**
+   * The RETIRED_TYPES this site actually declares, in the order RETIRED_TYPES lists them. Read
+   * off the type NAMES, so it works on a crawl that stored no bodies — the reader learns their
+   * FAQ markup is now decorative whether or not this crawl could validate anything.
+   */
+  readonly retiredTypes: string[];
 
   // --- Faz 3: what the BODIES say ---------------------------------------------------
 
@@ -233,11 +256,13 @@ export function auditSchema(crawl: AuditCrawl): SchemaReport {
     // Most-common first; ties broken by name for deterministic output.
     .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type));
 
+  const declared = new Set(typeCoverage.map((entry) => entry.type));
   return {
     pageCount: crawl.pages.length,
     pagesWithSchema,
     pagesWithout,
     typeCoverage,
+    retiredTypes: RETIRED_TYPES.filter((type) => declared.has(type)),
     pagesValidated,
     missingFields,
     invalidJson,

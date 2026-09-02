@@ -137,6 +137,94 @@ describe("x_robots_conflict", () => {
   });
 });
 
+/**
+ * A ROBOTS DIRECTIVE IS A TOKEN, not a substring — and `none` is one of the tokens (R-3.15).
+ *
+ * Both halves were unprotected until 2026-09-02. The token boundary was written twice (a helper
+ * and an inline copy in robotsConflicts) and NEITHER copy was measured: replacing `/\bnoindex\b/i`
+ * with `/noindex/i` in either place left the whole package green, 3766/3766. And `none` — which
+ * Google defines as `noindex, nofollow` — was read as neither, so a page hidden with it was absent
+ * from both conflict sections of a 15-credit technical audit.
+ *
+ * The two directions are asserted separately because they fail apart: a substring match invents
+ * conflicts on values that merely CONTAIN the letters, while a missing `none` stays silent on the
+ * shortest way there is to say noindex. The false-positive guard on `max-image-preview:none` is
+ * the reason the check is a token parse rather than a widened regex — that value carries the word
+ * `none` and means nothing of the kind.
+ */
+describe("robots directives are tokens (R-3.15)", () => {
+  /** A page whose meta says `value`, linked from a home page — the robotsConflicts shape. */
+  const linkedWithMeta = (value: string): AuditCrawl =>
+    crawl([
+      page({ url: "https://e/home", links: ["https://e/target"] }),
+      page({ url: "https://e/target", robotsMeta: value }),
+    ]);
+
+  it("NEGATIVE: a value that merely CONTAINS the letters is not a directive — both channels", () => {
+    // The header channel (hasNoindex).
+    expect(
+      auditTech(crawl([page({ url: "https://e/a", xRobotsTag: "x-noindexing", robotsMeta: null })]))
+        .xRobotsConflicts,
+    ).toEqual([]);
+    // The meta channel — the SECOND copy of the same rule, and the one no spec ever read.
+    expect(auditTech(linkedWithMeta("noindexed")).robotsConflicts).toEqual([]);
+    expect(auditTech(linkedWithMeta("nonoindex")).robotsConflicts).toEqual([]);
+  });
+
+  it("POSITIVE: `none` means noindex — the meta channel says so and the report says it", () => {
+    expect(auditTech(linkedWithMeta("none")).robotsConflicts).toEqual([
+      { url: "https://e/target", linkedFrom: 1 },
+    ]);
+    // …with the surrounding directives it really ships with.
+    expect(auditTech(linkedWithMeta("none, noarchive")).robotsConflicts).toHaveLength(1);
+  });
+
+  it("POSITIVE: `none` in the header, with a silent meta, is the same disagreement", () => {
+    expect(
+      auditTech(crawl([page({ url: "https://e/h", xRobotsTag: "none", robotsMeta: null })]))
+        .xRobotsConflicts,
+    ).toEqual([{ url: "https://e/h", xRobotsTag: "none" }]);
+  });
+
+  it("NEGATIVE: header `none` and meta `noindex` agree, so there is no conflict to report", () => {
+    expect(
+      auditTech(crawl([page({ url: "https://e/a", xRobotsTag: "none", robotsMeta: "noindex" })]))
+        .xRobotsConflicts,
+    ).toEqual([]);
+    // …and the mirror: header noindex, meta `none`.
+    expect(
+      auditTech(crawl([page({ url: "https://e/b", xRobotsTag: "noindex", robotsMeta: "none" })]))
+        .xRobotsConflicts,
+    ).toEqual([]);
+  });
+
+  it("NEGATIVE: `max-image-preview:none` carries the word and is not a noindex", () => {
+    expect(
+      auditTech(
+        crawl([
+          page({
+            url: "https://e/a",
+            xRobotsTag: "max-image-preview:none, max-snippet:-1",
+            robotsMeta: null,
+          }),
+        ]),
+      ).xRobotsConflicts,
+    ).toEqual([]);
+    expect(auditTech(linkedWithMeta("max-image-preview: none")).robotsConflicts).toEqual([]);
+  });
+
+  it("POSITIVE: an X-Robots-Tag user-agent prefix still names its directive", () => {
+    // `X-Robots-Tag: googlebot: noindex` is the header's documented per-crawler form, and the
+    // colon in it is NOT the `max-snippet:-1` kind. Pinned because a token parse that split on
+    // commas alone would quietly stop seeing this whole family.
+    expect(
+      auditTech(
+        crawl([page({ url: "https://e/a", xRobotsTag: "googlebot: noindex", robotsMeta: null })]),
+      ).xRobotsConflicts,
+    ).toHaveLength(1);
+  });
+});
+
 describe("deep_pages", () => {
   it("POSITIVE: a page four or more clicks from a seed is listed with its depth", () => {
     expect(auditTech(crawl([page({ url: "https://e/deep", depth: 5 })])).deepPages).toEqual([

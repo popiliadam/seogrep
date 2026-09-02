@@ -1,4 +1,6 @@
 import type { AuditCrawl, AuditPage, AuditSkipped } from "../crawl-data.ts";
+import { auditHreflang, type HreflangReport } from "./hreflang.ts";
+import { urlKey } from "./url-key.ts";
 
 /**
  * Technical rule engine (audit_tech, 15 credits). Pure — takes an AuditCrawl, returns a
@@ -39,9 +41,49 @@ export const REDIRECT_CHAIN_MIN = 2;
 /** BFS depth at which a page counts as buried — 4 clicks from a seed (homepage / sitemap URL). */
 export const DEEP_PAGE_DEPTH = 4;
 
-/** Does a robots directive string (meta or header) contain a `noindex` token? */
+/**
+ * The directives that take a `:value` — the ONLY place a colon is not a user-agent prefix.
+ * `max-snippet:-1` names its directive before the colon; `X-Robots-Tag: googlebot: noindex` names
+ * it after. Without this split one of the two families is always misread.
+ */
+const VALUED_DIRECTIVES = new Set([
+  "max-snippet",
+  "max-image-preview",
+  "max-video-preview",
+  "unavailable_after",
+]);
+
+/**
+ * The directive NAMES in a robots value (meta or X-Robots-Tag), lower-cased.
+ *
+ * A parse rather than a regex, because the two mistakes it has to avoid pull in opposite
+ * directions: `x-noindexing` contains `noindex` and is not one, while `max-image-preview:none`
+ * contains `none` — the token that MEANS noindex — and is not one either. Comma-separated per the
+ * spec; whitespace is also split, because `content="noindex nofollow"` is written in the wild and
+ * was accepted by the regex this replaced.
+ */
+function directiveNames(value: string): string[] {
+  return value.split(",").flatMap((part) => {
+    const trimmed = part.trim().toLowerCase();
+    if (trimmed === "") return [];
+    const colon = trimmed.indexOf(":");
+    if (colon === -1) return trimmed.split(/\s+/u);
+    const head = trimmed.slice(0, colon).trim();
+    if (VALUED_DIRECTIVES.has(head)) return [head];
+    return trimmed.slice(colon + 1).trim().split(/\s+/u).filter(Boolean);
+  });
+}
+
+/**
+ * Does a robots directive string (meta or header) suppress indexing?
+ *
+ * `none` counts: Google defines it as `noindex, nofollow` (R-3.15), so a page carrying it is as
+ * hidden as one carrying `noindex` and belongs in the same two sections. ONE function for both
+ * channels — the rule used to be written twice (here and inline in robotsConflicts) and neither
+ * copy was pinned, which is how a token boundary survived being deleted from both.
+ */
 function hasNoindex(value: string): boolean {
-  return /\bnoindex\b/i.test(value);
+  return directiveNames(value).some((name) => name === "noindex" || name === "none");
 }
 
 export interface StatusCounts {
@@ -190,6 +232,14 @@ export interface TechReport {
    * not "unmeasured".
    */
   readonly brokenInternalLinks: BrokenInternalLink[];
+  /**
+   * The hreflang findings, or `null` when NO page in this crawl carried the field.
+   *
+   * Null for the same reason sitemapDiff is: an empty hreflang report is the claim "we read
+   * your alternates and they are consistent", and a crawl stored before hreflangs existed
+   * cannot make it. See rules/hreflang.ts for what the rules do and do not prove.
+   */
+  readonly hreflang: HreflangReport | null;
 }
 
 /** Bucket a crawler skip `reason` into a stable category for grouping. */
@@ -244,7 +294,7 @@ function robotsConflicts(pages: AuditPage[]): RobotsConflict[] {
   }
   const conflicts: RobotsConflict[] = [];
   for (const page of pages) {
-    const noindex = page.robotsMeta !== null && /\bnoindex\b/i.test(page.robotsMeta);
+    const noindex = page.robotsMeta !== null && hasNoindex(page.robotsMeta);
     const linkedFrom = inbound.get(page.url) ?? 0;
     if (noindex && linkedFrom > 0) conflicts.push({ url: page.url, linkedFrom });
   }
@@ -306,29 +356,6 @@ function signalSections(pages: AuditPage[]): {
   }
 
   return { slowPages, heavyPages, redirectChains, xRobotsConflicts, deepPages, orphanSignals };
-}
-
-/**
- * The comparison key for two URLs that mean the same page: fragment dropped, one trailing slash
- * dropped (except on the root). `/about/` in a sitemap and `/about` in the crawl are one page,
- * and a diff that called them two would report every site's whole sitemap as missing.
- *
- * Written here rather than imported from the crawler: these rule engines take a parsed AuditCrawl
- * and nothing else — a dependency on crawl.ts would drag undici and the fetch stack into a pure
- * module. An unparseable string falls back to a trimmed form of itself so it can still match
- * ITSELF (two identical unparseable strings are still the same URL).
- */
-function urlKey(raw: string): string {
-  try {
-    const url = new URL(raw);
-    url.hash = "";
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
-      url.pathname = url.pathname.slice(0, -1);
-    }
-    return url.toString();
-  } catch {
-    return raw.replace(/#.*$/, "").replace(/\/$/, "");
-  }
 }
 
 /**
@@ -417,5 +444,6 @@ export function auditTech(crawl: AuditCrawl): TechReport {
     ...signalSections(crawl.pages),
     sitemapDiff: sitemapDiff(crawl),
     brokenInternalLinks: brokenInternalLinks(crawl.pages),
+    hreflang: auditHreflang(crawl.pages),
   };
 }

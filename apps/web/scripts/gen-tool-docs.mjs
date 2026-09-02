@@ -1195,7 +1195,7 @@ export const DOC_PROSE = {
       "findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and " +
       "charges nothing.",
     whatItDoes:
-      "Summarizes the crawl from a technical angle. Twelve sections, each named below by the " +
+      "Summarizes the crawl from a technical angle. Fifteen sections, each named below by the " +
       "exact heading it carries in the reply, so what you read here is what you can search for " +
       "in the output:\n\n" +
       "- **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
@@ -1207,7 +1207,8 @@ export const DOC_PROSE = {
       "redirect loops, and redirects onto an already-crawled URL).\n" +
       "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked " +
       "by `robots.txt`, timed out, non-HTML, and so on).\n" +
-      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n" +
+      "- **Robots conflicts** — pages marked `noindex` that are still linked internally. " +
+      "`none` counts as `noindex` here, because that is what Google reads it as.\n" +
       "- **Slow pages** — a fetch that took over three seconds, redirect hops included, because " +
       "that is what a visitor actually waits for.\n" +
       "- **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images " +
@@ -1221,7 +1222,18 @@ export const DOC_PROSE = {
       "- **Sitemap vs crawl** — what is in the sitemap and was never crawled, and what was " +
       "crawled and is absent from the sitemap.\n" +
       "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
-      "from.\n\n" +
+      "from.\n" +
+      "- **Hreflang codes not valid** — an alternate whose language code cannot work: a region " +
+      "given where a language belongs (`hreflang=\"us\"`), a three-letter code, or a reserved " +
+      "region like `EU`. Google needs an ISO 639-1 language, optionally with an ISO 3166-1 " +
+      "region.\n" +
+      "- **Hreflang sets with no x-default** — a page offering several languages and no " +
+      "fallback for a visitor whose language is not among them. x-default is **recommended, " +
+      "not required**, and the heading says so.\n" +
+      "- **Hreflang not reciprocated** — this page names that one as its alternate and gets no " +
+      "return link, so Google ignores the pair. Only alternates whose target THIS crawl also " +
+      "fetched can be checked, and the section says how many pointed elsewhere; only the HTML " +
+      "channel is read, so a return link served in a header or a sitemap is not seen.\n\n" +
       "Redirects appear in three places, on purpose, and only one of the three is a repeat. The " +
       "crawler follows a successful redirect and records the destination, so a redirect never " +
       "becomes a duplicate page — it surfaces as a **skip reason**. **Redirects surfaced** is " +
@@ -1230,16 +1242,20 @@ export const DOC_PROSE = {
       "skip ledger, whose per-reason grouping is what lets the skip counts reconcile. The " +
       "third is different data rather than a repeat — a page's own hop trail, read back as a " +
       "**chain** when it took more than one hop.\n\n" +
-      "Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, " +
+      "Four of the fifteen print on every run, at zero as readily as at fifty — **HTTP status**, " +
       "**Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a " +
       "count this engine always takes, so a zero there is a measurement rather than a silence. " +
       "Every section after them prints only when it has rows, and that too is deliberate: on a " +
       "crawl stored before a signal existed the list is empty because nobody looked, and a " +
       "heading reading \"Slow pages: 0\" would report a measurement that never happened.\n\n" +
-      "The sitemap comparison is the one exception in the other direction. It prints even at " +
+      "Two sections are exceptions in the other direction, and both print at zero because a zero " +
+      "there is a measurement rather than a silence. The **sitemap comparison** prints even at " +
       "zero and zero, because a diff that exists means the sitemap **was read**, and a measured " +
       "agreement is worth stating where an empty list elsewhere would only mean an unmeasured " +
-      "axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
+      "axis. **Hreflang not reciprocated** prints at zero whenever an alternate pointed at a page " +
+      "this crawl did not fetch, and says how many: those alternates were not checked, and a " +
+      "reader told nothing would read the silence as \"they all point back\".\n\n" +
+      "The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
       "linking page was never fetched lands there too.",
     example:
       "Ask your MCP client in plain language:\n\n> Run a technical audit for my example.com project.",
@@ -1263,7 +1279,11 @@ export const DOC_PROSE = {
       "- **Coverage** — how many pages carry JSON-LD structured data and how many have none.\n" +
       "- **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, " +
       "`WebSite`, `Article`, `Product`, and so on).\n" +
-      "- **Gaps** — the URLs of pages with no structured data at all.\n\n" +
+      "- **Gaps** — the URLs of pages with no structured data at all.\n" +
+      "- **Types that no longer produce a Google rich result** — printed only when the site " +
+      "declares one. `FAQPage` and `HowTo` are no longer in Google's rich-result gallery, so " +
+      "the markup is reported as present and left alone: it is not checked for missing fields, " +
+      "because repairing it would buy nothing.\n\n" +
       "**Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked " +
       "up that way counts here as having no structured data.\n\n" +
       "Coverage is what this tool is for, and coverage is what it always reports. On a crawl " +
@@ -1276,7 +1296,8 @@ export const DOC_PROSE = {
       {
         heading: "What it checks in a stored JSON-LD body",
         body:
-          "For a short, fixed list of schema.org types it checks that the fields without which " +
+          "For a short, fixed list of schema.org types — each one backed by a type Google's own " +
+          "gallery documents — it checks that the fields without which " +
           "the markup says nothing are declared — a `Product` with no `offers`, an `Article` " +
           "with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no " +
           "address. A type **not** on that list is **not judged at all**: schema.org has " +
