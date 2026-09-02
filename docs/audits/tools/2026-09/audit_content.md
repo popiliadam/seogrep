@@ -12,16 +12,18 @@
 |---|---|---|
 | 1 Statik | ÖLÇÜLDÜ | `audit-content.ts:74-375`; kredi `costs.ts:126` = `  audit_content: 12,`; docs "**Cost:** 12 credits."; `grep dfs\|dataforseo` → **sıfır eşleşme**, vendor yolu yok |
 | 2 Mutasyon | ÖLÇÜLDÜ | 4 mutasyon: M5/M8 KIRMIZI · **M6 (`UNCAPPED` → motor kapağı) ve M7 (`total` yeniden türetimi) YEŞİL KALDI** — ikisi de kaynağın KENDİ yorumunun önlediğini iddia ettiği hata |
-| 3 Canlı negatif | ÖLÇÜLDÜ | 6 senaryonun 6'sı doğru reddedildi, net kredi Δ **0**; precondition sırası (önce pull, sonra crawl) canlıda doğrulandı; defterde charge+refund çifti |
+| 3 Canlı negatif | ÖLÇÜLDÜ | 6 senaryonun 6'sı doğru reddedildi, net kredi Δ **0**; precondition sırası (önce pull, sonra crawl) canlıda doğrulandı; defterde **dört** charge+refund çifti (hakem turunda düzeltildi — ilk kayıt üç saymıştı) |
 | 4 Canlı mutlu yol | ÖLÇÜLDÜ | 1 ücretli çağrı, Δ **−12**, 676 ms. Kapsam cümlesi, marka istisnası ve pencere/provenans satırları BASILDI (birebir §4) |
 | 5 SEO güncelliği | ÖLÇÜLDÜ | 10 kural tek tek; **BAYAT KURAL YOK ve bu ölçülerek söyleniyor:** "helpful content", "E-E-A-T", "AI-generated", "scaled content" → depoda **sıfır** eşleşme (R-4.6/R-4.8/R-6.4 temiz) |
 | 6 Kart | PLANLI, SEVK EDİLMEMİŞ | `card-map.ts:33` `audit_content: "report"`; `CARDED_TOOLS` (`:62`) yalnız `get_credit_balance`; canlı cevap `structuredContent`/`_meta` taşımıyor |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | Bu dosya ✔ · `plan.mjs` PLAN girişi **YOK** — `EXCLUDED:134`'te gerekçesiyle var, **ama `ID_TOOLS`'ta da yok ve bu bir sürüklenme** (B-3) · `goals/` hedefi **YOK** |
 
-**Karar:** DÜZELTME GEREKLİ — tool ölçülen her SEO ekseninde temiz ve dürüst (kapsam cümlesi, marka
+**Karar (ölçüm turu, 2026-09-02):** DÜZELTME GEREKLİ — tool ölçülen her SEO ekseninde temiz ve dürüst (kapsam cümlesi, marka
 istisnası, pencere provenansı, "calls no outside service"), ürünün en iyi yazılmış açıklama metnine
 sahip; ama **kaynağın kendi yorumlarının "bu yüzden böyle yazıldı" dediği iki değişmez hiçbir testin
 bakmadığı yerde duruyor** (M6, M7) ve `plan.mjs`'in kimlik tablosunda yok.
+
+**Karar (kapanış, <YYYY-MM-DD>):** — düzeltme dalgası bittiğinde KAPATAN tur yazar; ölçüm turunun kararı SİLİNMEZ, yanına yazılır (ders 16).
 
 ## 1. Statik okuma
 
@@ -107,14 +109,15 @@ Uç: `MCP_SMOKE_URL` (basılmadı). Bakiye önce **4459**, altı senaryodan sonr
 | senaryo | argüman | HTTP / envelope | kredi Δ | gözlem |
 |---|---|---|---|---|
 | bozuk id | `{"project_id":"not-a-uuid"}` | 200, `isError: true`, 533 ms | **0** | `Invalid input for "audit_content": ✖ Invalid UUID` / `  → at project_id You were not charged.` — zod, rezervden ÖNCE; defterde satır yok |
-| geçersiz project_id (rastgele uuid) | `{"project_id":"00000000-0000-4000-8000-000000000000"}` | 200, `isError: true`, 518 ms | **0** | `No Search Console data found for this project. Run pull_gsc_data first. You were not charged.` — **varlık sızdırmıyor**; `audit-content.ts:292-296` yorumunun tarif ettiği davranış (çözülemeyen proje arşiv kapısında DEĞİL, pull okumasında düşüyor) canlıda doğrulandı |
+| geçersiz project_id (rastgele uuid) | `{"project_id":"00000000-0000-4000-8000-000000000000"}` | 200, `isError: true`, 518 ms | **0** | `No Search Console data found for this project. Run pull_gsc_data first. You were not charged.` — **varlık sızdırmıyor**; `audit-content.ts:292-296` yorumunun tarif ettiği davranış (çözülemeyen proje arşiv kapısında DEĞİL, pull okumasında düşüyor) canlıda doğrulandı. Defterde `-12 charge` + `+12 refund` çifti (`14:44:56.794` / `14:44:56.917`) — bu ret de handler seviyesinde, rezerv AÇILIP iade ediliyor |
 | **crawl'ı da pull'u da olmayan proje** | `{"project_id":"257ad998-…"}` (example.net, soğuk fikstür) | 200, `isError: true`, 553 ms | **0** | Aynı cümle. **Precondition SIRASI doğrulandı:** iki eksik girdiden ÖNCE `pull_gsc_data` adlandırılıyor (`audit-content.ts:302-311`'nin ürün kararı: "Naming the harder missing step first") |
 | **crawl'ı VAR, pull'u YOK** | `{"project_id":"4e0caff0-…"}` (seogrep.com — kampanyanın GSC kontrol grubu) | 200, `isError: true`, 553 ms | **0** | Aynı cümle. Defterde `-12 charge` + `+12 refund` çifti (`14:44:57.867481` / `14:44:57.998064`) — **refund yolu ÖLÇÜLDÜ** |
 | **şema dışı anahtar** | `{"project_id":"e2785bf7-…","limit":5}` | 200, `isError: true`, 336 ms | **0** | `Invalid input for "audit_content": ✖ Unrecognized key: "limit" You were not charged.` — sessiz yutma YOK |
 | arşivli proje | `{"project_id":"77f40d69-…"}` | 200, `isError: true`, 557 ms | **0** | `That project is archived, so it is not being tracked right now. Restore it with setup_project for the same domain — which works whether or not the project has a Search Console property — or with track_gsc_property for its property, or from the Connection page in SeoGrep. You were not charged.` — arşiv kapısı pull okumasından ÖNCE (`:301`) |
 | pull/crawl job id'siz yükleme | — | — | — | **ÖLÇÜLEMEDİ — yapısal.** `audit-content.ts:331-333` düz `Error` fırlatıyor; bu dal ancak yükleyicinin job id'siz döndüğü bir depo durumunda görülür ve canlıdan tetiklenemez. Not: TİPLİ olmadığı için müşteri **jenerik çökme cümlesi** görürdü (B-5) |
 
-Defter kanıtı (birebir, `list_credit_activity`):
+Defter kanıtı (`list_credit_activity`) — **ilk altı satır birebir; son iki satır hakem turunda eklendi
+ve `…` ile işaretli kısmı transkribe edilmemiştir** (aşağıdaki düzeltme notu):
 
 ```
 - 2026-09-02T14:44:58.89618+00:00  · +12 credits · refund · audit_content · project: dilim1-tek-kullanimlik-8b3f7c.com
@@ -123,9 +126,19 @@ Defter kanıtı (birebir, `list_credit_activity`):
 - 2026-09-02T14:44:57.867481+00:00 · -12 credits · charge · audit_content · project: seogrep.com
 - 2026-09-02T14:44:57.453095+00:00 · +12 credits · refund · audit_content · project: example.net
 - 2026-09-02T14:44:57.318539+00:00 · -12 credits · charge · audit_content · project: example.net
+- 2026-09-02T14:44:56.917…+00:00   · +12 credits · refund · audit_content · (çözülemeyen proje: 00000000-0000-4000-8000-000000000000)
+- 2026-09-02T14:44:56.794…+00:00   · -12 credits · charge · audit_content · (çözülemeyen proje: 00000000-0000-4000-8000-000000000000)
 ```
 
-Üç handler-seviyesi ret, üç charge+refund çifti; net Δ 0 ve "You were not charged" **doğru**.
+> **Düzeltme (hakem turu, 2026-09-02).** İlk kayıt bu çifti alıntıdan düşürmüş ve toplamı ÜÇ saymıştı;
+> defterde **DÖRT** charge+refund çifti var. Son iki satırın saniye-altı kısmı hakemin verdiği kesinlikte
+> (`.794` / `.917`) yazıldı — kalan basamaklar ve `project:` sütununun defterdeki tam biçimi ölçüm turunda
+> transkribe edilmediği için **uydurulmadı**, `…` ile işaretlendi. Yukarıdaki ilk altı satır birebirdir.
+
+**DÖRT** handler-seviyesi ret, **DÖRT** charge+refund çifti; net Δ 0 ve "You were not charged" **doğru**.
+Dördü §3 tablosundaki dört handler-seviyesi senaryoya birebir oturuyor ve zaman sırası da tutuyor:
+`00000000-…` (.794) → example.net (57.318) → seogrep.com (57.867) → arşivli proje (58.752). Kalan iki
+senaryo (bozuk uuid, şema dışı anahtar) zod'da, yani rezervden ÖNCE düşüyor — defterde satırları YOK.
 `list_credit_activity` bunu kendi cümlesiyle açıklıyor: `a refunded run shows both its charge and its refund.`
 
 ## 4. Canlı mutlu yol
@@ -237,12 +250,12 @@ okuyacağı veri var, yalnız cevaba iliştirilmiyor.
 
 ## Bulgular
 
-| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) |
-|---|---|---|---|---|
-| B-1 | **P1** | **`UNCAPPED` değişmezi ölçülmüyor** (M6 yeşil): motor kapağı filtrelerden önce uygulanırsa cevap sessizce küçülür — kaynağın kendi yorumunun adıyla anlattığı hata. Sebep ölçüldü: hiçbir fikstür `MAX_CONTENT_MISMATCHES = 50`'ye ulaşmıyor (en büyüğü 9 çift) | M6: `audit-content.ts:243` `UNCAPPED` → `MAX_CONTENT_MISMATCHES`, **244/244 yeşil**; yorum `:130-135`; kapak `title-query-match.ts:57` | `audit-content.test.ts`'e **51+ eşleşmezlik üreten** bir fikstür: marka + fonksiyon kelimesi istisnaları kapağın ötesinde kalsın, ve `total` ile shortlist'in doğru sayıları pinlensin. Fikstür üretimi ucuz (döngüyle kurulabilir); eksik olan fikstür, kural değil |
-| B-2 | **P1** | **`total`'ın filtrelenmiş listeden türetilmesi ölçülmüyor** (M7 yeşil): geri alınırsa rapor `…and N more query/page pairs mismatch.` derken filtrelerin ZATEN attığı satırları sayar — müşteriye var olmayan bulgu vaat eder | M7: `audit-content.ts:225` `functionWords.kept.length` → `result.total`, **244/244 yeşil**; yorum `:220-221`; tek yakın pin `audit-content.test.ts:419` `expect(report?.total).toBe(2)` (istisnasız fikstür) | Var olan `total` pinini **istisnaların BULUNDUĞU** bir fikstüre taşımak yeter: marka + fonksiyon istisnası olan bir senaryoda `total`'ın motor toplamından KÜÇÜK olduğunu pinle. B-1 ile aynı fikstür ikisini birden kapatabilir |
-| B-3 | P2 | **`audit_content` (ve 14 tool daha) `plan.mjs` `ID_TOOLS`'ta yok**, oysa `project_id` alıyor; `assertIdToolTable` canlı listeye karşı 15 problemle fırlar → sweep'in S3/S4 hücreleri bu tool'lar için hiç üretilmiyor | `plan.mjs:69-84` (ID_TOOLS), `:455-479` (assertion); canlı `tools/list`'ten hesaplanan 15 adlı liste (§7) | Ya `ID_TOOLS` canlı yüzeye göre tamamlansın, ya da assertion'ın `EXCLUDED`'ı da kabul etmesi sağlansın. Kararın kendisi ucuz değil (S3/S4 hücreleri ücretsiz olsa da hedef siteleri var) — ama şu anki hâl "gate var" görüntüsü veriyorken hiçbir dalda koşmuyor |
-| B-4 | P2 | **`goals/` altında bu tool'un davranışını ölçen hiçbir hedef yok** | `grep -rln "audit_content" goals/` → yalnız `migration-journal-sync.md` | B-1/B-2 test şeridinde kapatıldıktan sonra, "filtrelenmiş liste filtresiz toplamla anılmaz" predicate'i `goals/`a yazılsın |
-| B-5 | P2 | **Job id'siz yükleme dalı TİPLİ DEĞİL** — `throw new Error(...)`; registry `PreconditionNotMetError` dışını jenerik çökme cümlesine düşürüyor (2026-08-09'da 26 canlı çağrının aldığı cümle, `audit-content.ts:60-63` yorumu) | `audit-content.ts:331-333`; karşılaştırma: aynı dosyadaki üç ret TİPLİ (`:299,:313,:316`) | Bu dal gerçekten "olmamalı" bir durum ve fail-closed olması doğru; ama müşteriye giden cümle tasarlanmamış. Tipli bir iç hata sınıfı ya da en azından tasarlanmış bir cümle önerilir. (Rezerv zaten serbest kalıyor — para riski YOK) |
-| B-6 | P2 | **Tool'un adı vaat ettiğinden geniş:** "audit_content" içeriği denetlemiyor; yalnız sorgu kelimelerini title/h1 ile eşleştiriyor. LLM "içerik denetimi yap" cümlesinde bu tool'u seçer ve müşteri içerik kalitesi denetimi bekler | description ve mdx doğru anlatıyor, ama AD anlatmıyor; `renderContentAudit` yalnız title/h1 okuyor (`audit-content.ts:120`) | Ad NEVER kapsamında değil ama değiştirilmesi kırıcı olur. En ucuz düzeltme: description'ın ilk cümlesi zaten dar ve doğru — mdx'in ilk paragrafına "this is not a content-quality audit" cümlesi eklensin |
-| B-7 | P2 | Tool'un tavsiyesi (*"Rewrite that page's title so it covers the missing words"*) otomatikleştirilirse R-4.3 (title keyword stuffing) ve R-6.4 (scaled content abuse) riskine açık; hiçbir yerde bir sınır cümlesi yok | `audit-content.mdx:32`; R-4.3 / R-6.4 | mdx'e tek cümle: eksik kelimeleri title'a doldurmak değil, sayfanın gerçekten o sorguyu KARŞILADIĞINDAN emin olmak amaçlanır. Bulgu listesinin sonuna aynı cümlenin kısası konabilir |
+| # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, <YYYY-MM-DD>) |
+|---|---|---|---|---|---|
+| B-1 | **P1** | **`UNCAPPED` değişmezi ölçülmüyor** (M6 yeşil): motor kapağı filtrelerden önce uygulanırsa cevap sessizce küçülür — kaynağın kendi yorumunun adıyla anlattığı hata. Sebep ölçüldü: hiçbir fikstür `MAX_CONTENT_MISMATCHES = 50`'ye ulaşmıyor (en büyüğü 9 çift) | M6: `audit-content.ts:243` `UNCAPPED` → `MAX_CONTENT_MISMATCHES`, **244/244 yeşil**; yorum `:130-135`; kapak `title-query-match.ts:57` | `audit-content.test.ts`'e **51+ eşleşmezlik üreten** bir fikstür: marka + fonksiyon kelimesi istisnaları kapağın ötesinde kalsın, ve `total` ile shortlist'in doğru sayıları pinlensin. Fikstür üretimi ucuz (döngüyle kurulabilir); eksik olan fikstür, kural değil |  |
+| B-2 | **P1** | **`total`'ın filtrelenmiş listeden türetilmesi ölçülmüyor** (M7 yeşil): geri alınırsa rapor `…and N more query/page pairs mismatch.` derken filtrelerin ZATEN attığı satırları sayar — müşteriye var olmayan bulgu vaat eder | M7: `audit-content.ts:225` `functionWords.kept.length` → `result.total`, **244/244 yeşil**; yorum `:220-221`; tek yakın pin `audit-content.test.ts:419` `expect(report?.total).toBe(2)` (istisnasız fikstür) | Var olan `total` pinini **istisnaların BULUNDUĞU** bir fikstüre taşımak yeter: marka + fonksiyon istisnası olan bir senaryoda `total`'ın motor toplamından KÜÇÜK olduğunu pinle. B-1 ile aynı fikstür ikisini birden kapatabilir |  |
+| B-3 | P2 | **`audit_content` (ve 14 tool daha) `plan.mjs` `ID_TOOLS`'ta yok**, oysa `project_id` alıyor; `assertIdToolTable` canlı listeye karşı 15 problemle fırlar → sweep'in S3/S4 hücreleri bu tool'lar için hiç üretilmiyor | `plan.mjs:69-84` (ID_TOOLS), `:455-479` (assertion); canlı `tools/list`'ten hesaplanan 15 adlı liste (§7) | Ya `ID_TOOLS` canlı yüzeye göre tamamlansın, ya da assertion'ın `EXCLUDED`'ı da kabul etmesi sağlansın. Kararın kendisi ucuz değil (S3/S4 hücreleri ücretsiz olsa da hedef siteleri var) — ama şu anki hâl "gate var" görüntüsü veriyorken hiçbir dalda koşmuyor |  |
+| B-4 | P2 | **`goals/` altında bu tool'un davranışını ölçen hiçbir hedef yok** | `grep -rln "audit_content" goals/` → yalnız `migration-journal-sync.md` | B-1/B-2 test şeridinde kapatıldıktan sonra, "filtrelenmiş liste filtresiz toplamla anılmaz" predicate'i `goals/`a yazılsın |  |
+| B-5 | P2 | **Job id'siz yükleme dalı TİPLİ DEĞİL** — `throw new Error(...)`; registry `PreconditionNotMetError` dışını jenerik çökme cümlesine düşürüyor (2026-08-09'da 26 canlı çağrının aldığı cümle, `audit-content.ts:60-63` yorumu) | `audit-content.ts:331-333`; karşılaştırma: aynı dosyadaki üç ret TİPLİ (`:299,:313,:316`) | Bu dal gerçekten "olmamalı" bir durum ve fail-closed olması doğru; ama müşteriye giden cümle tasarlanmamış. Tipli bir iç hata sınıfı ya da en azından tasarlanmış bir cümle önerilir. (Rezerv zaten serbest kalıyor — para riski YOK) |  |
+| B-6 | P2 | **Tool'un adı vaat ettiğinden geniş:** "audit_content" içeriği denetlemiyor; yalnız sorgu kelimelerini title/h1 ile eşleştiriyor. LLM "içerik denetimi yap" cümlesinde bu tool'u seçer ve müşteri içerik kalitesi denetimi bekler | description ve mdx doğru anlatıyor, ama AD anlatmıyor; `renderContentAudit` yalnız title/h1 okuyor (`audit-content.ts:120`) | Ad NEVER kapsamında değil ama değiştirilmesi kırıcı olur. En ucuz düzeltme: description'ın ilk cümlesi zaten dar ve doğru — mdx'in ilk paragrafına "this is not a content-quality audit" cümlesi eklensin |  |
+| B-7 | P2 | Tool'un tavsiyesi (*"Rewrite that page's title so it covers the missing words"*) otomatikleştirilirse R-4.3 (title keyword stuffing) ve R-6.4 (scaled content abuse) riskine açık; hiçbir yerde bir sınır cümlesi yok | `audit-content.mdx:32`; R-4.3 / R-6.4 | mdx'e tek cümle: eksik kelimeleri title'a doldurmak değil, sayfanın gerçekten o sorguyu KARŞILADIĞINDAN emin olmak amaçlanır. Bulgu listesinin sonuna aynı cümlenin kısası konabilir |  |
