@@ -13,7 +13,7 @@
 | 2 Mutasyon | ÖLÇÜLDÜ (2/2) | **İKİSİ DE YEŞİL KALDI** — bu tool'un handler'ının TAMAMI hızlı şeritte ölçülmüyor |
 | 3 Canlı negatif | ÖLÇÜLDÜ (4 hücre) | arşivli / yabancı-uuid / bozuk-uuid / eksik-alan — dördü de `isError:true`, Δ = 0 |
 | 4 Canlı mutlu yol | ÖLÇÜLDÜ (2 hücre) | "already connected + property" ve "not connected → link" dallarının ikisi de görüldü, Δ = 0 |
-| 5 SEO güncelliği | ÖLÇÜLDÜ | R-7.7 İLGİSİZ (bu tool Search Analytics'e hiç dokunmuyor) · R-7.9 UYUYOR ama 429 için özel bir yol yok |
+| 5 SEO güncelliği | ÖLÇÜLDÜ | R-7.7 İLGİSİZ (bu tool Search Analytics'e hiç dokunmuyor) · R-7.9 İLGİSİZ (hakem düzeltti: tool Google'a hiç istek atmıyor; dokunulmayan kural uyumlu değil, ilgisizdir) |
 | 6 Kart | ÖLÇÜLDÜ | `card-map.ts:48` `connect_gsc: "action"` VAR; sevk edilmemiş; canlı payload'da `_meta` yok |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | bu dosya ✔ · `plan.mjs` PLAN girişi VAR (satır 199) · `goals/` hedefi HAYIR |
 
@@ -80,7 +80,7 @@ Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/37f05938-81d
 | kural | tool'da nasıl görünüyor | uyum | not |
 |---|---|---|---|
 | R-7.7 (Search Analytics kotası: site başına 1.200 QPM, kullanıcı başına 1.200 QPM, proje başına 30M QPD / 40K QPM) | Görünmüyor — `connect_gsc` Google'a HİÇ istek atmıyor. Handler yalnız `projects` ve `gsc_connections` okur, sonra bir string döndürür (canlı süre 800–1.400 ms, tamamı DB + ağ) | İLGİSİZ | Referans listesinin `connect_gsc` için işaret ettiği risk ("OAuth scope ve kota varsayımı") burada karşılıksız: tool ne scope ne kota hakkında bir sayı taşıyor. Scope iddiası yalnız METİNDE ("READ-ONLY … never write access") ve docs'ta (`webmasters.readonly`) — gerçek scope web tarafındaki route'ta, bu tool'un yüzeyinde değil. |
-| R-7.9 (diğer tüm kaynaklar — sitemaps/sites dahil: kullanıcı başına 20 QPS ve 200 QPM) | Yine görünmüyor, çünkü `sites.list` bu tool'dan çağrılmıyor | UYUYOR | Kota sınıfları karıştırılmıyor. Ailedeki kota yükü `list_gsc_properties` ve `track_gsc_property`'de; oradaki not ilgili dosyalarda. |
+| R-7.9 (diğer tüm kaynaklar — sitemaps/sites dahil: kullanıcı başına 20 QPS ve 200 QPM) | Yine görünmüyor, çünkü `sites.list` bu tool'dan çağrılmıyor | İLGİSİZ (hakem düzeltti) | Kota sınıfları karıştırılmıyor. Ailedeki kota yükü `list_gsc_properties` ve `track_gsc_property`'de; oradaki not ilgili dosyalarda. |
 
 **Ek gözlem (referans listesinde YOK, uydurulmadı, yalnız kayda geçiriliyor):** description "grants SeoGrep read-only access" diyor; bu bir SEO kuralı değil, bir güvenlik iddiası ve doğruluğu bu tool'un kapsamı dışında (web route'unda) — ölçülmedi.
 

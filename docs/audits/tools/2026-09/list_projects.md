@@ -60,7 +60,7 @@ Taban: **156 passed / 5 files**. `list-projects.db.test.ts` Docker ister — **d
 | # | kırılan şey (kaynak, satır) | beklenen kırmızı test | sonuç | not |
 |---|---|---|---|---|
 | M5 | `list-projects.ts:305` `row.account_id === null ? …` → `false ? …` (defect #52'nin birebir geri gelişi: bağlantısı kopmuş proje "connected" okunur) | GSC durumunu pinleyen bir test | **YEŞİL KALDI** | 156/156 geçti. Hızlı şerit yalnız saf `formatProjectList`'i ve description'ı sürüyor; `readGscStates` hiç çağrılmıyor. Koruma **var ama** `list-projects.db.test.ts:292`'de ("This tool was the last surface deciding on the ROW rather than on `account_id`") — yani `make verify-db` şeridinde |
-| M6 | `list-projects.ts:158` `const site = stripWwwLabel(project.domain)` → `= project.domain` | "aynı site" uyarısını pinleyen testler | **KIRMIZI** (4 test) | `list-projects.test.ts` "apex and www. tracked as two projects" bloğu: `expected … to match /same site/i`, `expected [] to have a length of 1` |
+| M6 | `list-projects.ts:159` `const site = stripWwwLabel(project.domain)` → `= project.domain` | "aynı site" uyarısını pinleyen testler | **KIRMIZI** (4 test) | `list-projects.test.ts` "apex and www. tracked as two projects" bloğu: `expected … to match /same site/i`, `expected [] to have a length of 1` |
 
 Yeşil kalan her mutasyon bir bulgudur (ders 12/13). M5, iş emrinin değil benim hipotezimdi ve
 yeşil kaldı: bir kez canlıya çıkmış bir kusurun (defect #52, 2026-08-27'de 18 projenin 4'ünde

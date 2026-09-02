@@ -137,7 +137,7 @@ Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/37f05938-81d
 ## 6. Kart (MCP Apps)
 
 `apps/mcp/src/ui/card-map.ts` eşlemesi: **VAR** — `card-map.ts:50` → `track_keywords: "action"`.
-`card-map.ts:64` → `CARDED_TOOLS = new Set(["get_credit_balance"])` — PLANLI, henüz SEVK EDİLMEMİŞ.
+`card-map.ts:62` → `CARDED_TOOLS = new Set(["get_credit_balance"])` — PLANLI, henüz SEVK EDİLMEMİŞ.
 Canlı doğrulama: 21 `track_keywords` çağrısının hiçbirinde `structuredContent` yok; aynı oturumda `get_credit_balance` `structuredContent.card` döndürdü. Plan ↔ canlı **tutarlı**.
 Canlı payload bir "action" kartının beklediği alanları taşıyor mu: **ÖLÇÜLEMEDİ** — bugün çıktı tek parça `content[0].text`. Kart geldiğinde ayrık alanlar hazır: `classify()` zaten `{created, revived, unchanged}` üçlüsünü, `describeIdentity()` kimlik satırını ayrı üretiyor.
 
