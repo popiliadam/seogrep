@@ -6,15 +6,19 @@ import {
   CONFIRMATION_THRESHOLD_CREDITS,
   confirmationGate,
   declaredProjectId,
+  canRequireConfirmation,
   defineTool,
   evaluateConfirmation,
   readConfirmFlag,
   registerAll,
   textResult,
+  toInputJsonSchema,
   textResultWithCard,
   textResultWithData,
   type RegisteredTool,
 } from "./registry.ts";
+import { CREDIT_UNITS, creditCostFor } from "../credits/costs.ts";
+import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
 import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
 import type { AuthContext } from "../auth.ts";
@@ -697,5 +701,282 @@ describe("card wiring gate (spec §8.2) — a tool carries ui.resourceUri iff it
     for (const name of CARDED_TOOLS) {
       expect(ALL_TOOLS.some((tool) => tool.name === name)).toBe(true);
     }
+  });
+});
+
+/**
+ * S1 — UNKNOWN KEYS ARE REFUSED, AND THE ADVERTISED SCHEMA SAYS SO.
+ *
+ * Measured on the live surface 2026-09-02: not one of the 38 `inputSchema`s in `tools/list`
+ * carried `additionalProperties: false`, and zod's default object parse STRIPS what it does not
+ * recognise. So `{"limit": 5, "limitt": 500}` ran with the default limit and answered as if the
+ * caller had asked for it — a typo, a stale parameter name, or a client sending a field this
+ * server no longer supports all looked exactly like a correct call. The four control records that
+ * caught it: get_credit_balance B-2, list_jobs B-1, list_projects B-2, list_gsc_properties LGP-4.
+ *
+ * The fix is at the REGISTRY, not in 38 schemas, so these tests are written against the registry:
+ * one loop over every registered tool (a per-tool `.strict()` would be a hand-maintained list, and
+ * this repo has paid for that shape before), plus the refusal's own behaviour.
+ */
+describe("S1 — unknown input keys are refused, not silently dropped", () => {
+  const ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
+  let saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>;
+  beforeEach(() => {
+    saved = {};
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("every registered tool ADVERTISES additionalProperties:false in tools/list", () => {
+    const loose = ALL_TOOLS.filter(
+      (tool) =>
+        (tool.inputJsonSchema as { additionalProperties?: unknown }).additionalProperties !== false,
+    ).map((tool) => tool.name);
+    expect(loose).toEqual([]);
+    // Not vacuous: the filter above is silent on an empty ALL_TOOLS, and the surface is 38 tools.
+    expect(ALL_TOOLS.length).toBe(38);
+  });
+
+  /**
+   * The deriver is pinned where the promise is MADE, not only where it happens to be pre-applied.
+   * Measured 2026-09-02: with `refuseUnknownKeys` removed from `toInputJsonSchema` and left in
+   * `defineTool`, the loop above stayed GREEN — defineTool hands the deriver an already-strict
+   * schema, so the deriver's own half was untested and a caller passing a raw spec schema (it is
+   * exported) would have advertised a permissive schema over a strict parse.
+   */
+  it("toInputJsonSchema adds additionalProperties:false to a schema handed to it untightened", () => {
+    expect(toInputJsonSchema(z.object({ focus: z.string() }))).toMatchObject({
+      type: "object",
+      properties: { focus: { type: "string" } },
+      additionalProperties: false,
+    });
+  });
+
+  it("refuses an unknown key and NAMES it, without running the handler", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "whats_next",
+      description: "d",
+      inputSchema: z.object({ focus: z.string().optional() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { focus: "titles", fokus: "titles" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/invalid input for "whats_next"/i);
+    expect(result.content[0]?.text).toMatch(/fokus/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The refusal is free BY CONSTRUCTION — it returns before any charge mode — and on a PRICED
+   * tool it must say so. With every SUPABASE_* var stripped, any reserve would throw loadEnv, so
+   * an ordinary isError result is itself the proof that the guard never ran.
+   */
+  it("charges nothing for an unknown key on a PRICED surface tool, and says so", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "research_keywords", // priced (25); a surface charge here would need the DB
+      description: "d",
+      inputSchema: z.object({ keywords: z.array(z.string()).optional() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { keywords: ["a"], keyword: "a" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain(NOT_CHARGED_SENTENCE);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `confirm` is the ONE reserved registry parameter (D17), deliberately absent from every tool's
+   * zod schema. Strictness must not turn it into an unknown key: a caller told to "run it again
+   * with confirm: true" would then be refused for doing exactly that, and the only tools the D17
+   * gate ever fires for — ai_visibility_compare at 90 x targets, crawl_site's large-site prompt —
+   * are precisely the ones that would become uncallable.
+   */
+  it("still accepts the reserved `confirm` flag, which no tool schema declares", async () => {
+    const handler = vi.fn(async (_ctx: AuthContext, input: { targets: string[] }) =>
+      textResult(`compared ${input.targets.length}`),
+    );
+    const tool = defineTool({
+      name: "ai_visibility_compare", // 90 per target: ten targets is 900, over the D17 threshold
+      description: "d",
+      inputSchema: z.object({ targets: z.array(z.string()) }),
+      charge: "handler",
+      units: (input: { targets: string[] }) => input.targets.length,
+      handler,
+    });
+
+    const targets = Array.from({ length: 10 }, (_value, index) => `t${index}.example`);
+    const result = await tool.run(CTX, { targets, confirm: true });
+    expect(result).toEqual(textResult("compared 10"));
+    // The flag is stripped before the handler sees it — it is the registry's, not the tool's.
+    expect(handler.mock.calls[0]?.[1]).toEqual({ targets });
+  });
+});
+
+/**
+ * S1 follow-up (operator ruling 2026-09-02): DECLARE the reserved flag, do not loosen the schema.
+ *
+ * `additionalProperties: false` made an honest promise that contradicted the one instruction a
+ * confirmation prompt gives — "run it again with confirm: true". The server still accepts the
+ * flag (withoutReservedParams strips it before the parse), but a client that VALIDATES against
+ * the advertised schema would refuse to send it, and the only calls D17 ever fires for would
+ * become the calls that cannot be completed.
+ *
+ * So the registry ADVERTISES `confirm` — on the tools where the gate can actually fire, and
+ * nowhere else, because a flag offered on a call that can never need it is noise the model has
+ * to reason about 38 times. Which tools those are is DERIVED from the signed price table (worst
+ * case above the threshold), never from a name list: a price change moves the advertisement with
+ * it, and a new tool needs no one to remember.
+ */
+describe("S1 — the reserved `confirm` flag is advertised exactly where D17 can fire", () => {
+  const confirmProperty = (tool: RegisteredTool): unknown =>
+    (tool.inputJsonSchema as { properties?: Record<string, unknown> }).properties?.confirm;
+
+  it("advertises confirm on every confirmable tool and on no other (both directions)", () => {
+    const advertised = ALL_TOOLS.filter((tool) => confirmProperty(tool) !== undefined)
+      .map((tool) => tool.name)
+      .sort();
+    const flagged = ALL_TOOLS.filter((tool) => tool.confirmable)
+      .map((tool) => tool.name)
+      .sort();
+    expect(advertised).toEqual(flagged);
+    // Not vacuous: both sides are empty if the derivation breaks. The surface measured today is
+    // two tools, and they get there by DIFFERENT routes — ai_visibility_compare because D17 can
+    // fire on its price (90 x up to 10 targets), crawl_site because its own handler prompts.
+    expect(advertised).toEqual(["ai_visibility_compare", "crawl_site"]);
+    // The D17 half on its own: a price that can trip the gate always advertises, spec field or not.
+    for (const tool of ALL_TOOLS) {
+      if (canRequireConfirmation(tool.name)) expect(advertised).toContain(tool.name);
+    }
+  });
+
+  /**
+   * crawl_site's confirmation is NOT D17's: it costs a flat 20 credits and can never trip the
+   * threshold. Its handler runs its OWN large-site prompt off the raw input, and the docs tell the
+   * reader to `Re-run with "confirm": true` — an instruction `additionalProperties: false` would
+   * have forbidden while the server went on accepting the flag. The spec declares it; the price
+   * table cannot know it.
+   */
+  it("advertises confirm for a handler-run prompt that D17 itself would never fire for", () => {
+    const crawl = ALL_TOOLS.find((tool) => tool.name === "crawl_site");
+    expect(canRequireConfirmation("crawl_site")).toBe(false);
+    expect(crawl?.confirmable).toBe(true);
+    expect(confirmProperty(crawl as RegisteredTool)).toEqual({
+      type: "boolean",
+      description: expect.stringMatching(/confirmation threshold/i) as unknown as string,
+    });
+  });
+
+  /**
+   * The flag is stripped ONLY for a tool that advertises it. Anywhere else `confirm` is an
+   * unrecognised key like any other, and the schema's promise is kept exactly: a tool whose
+   * tools/list entry does not mention `confirm` refuses one. The referee's P2 — before this, the
+   * server quietly swallowed it on all 36 unadvertised tools while their schemas said they would
+   * not, which is the same silent-drop this slice exists to end, wearing the registry's own name.
+   *
+   * The D17 gate cannot be reached this way either: an unadvertised tool refuses at the parse,
+   * which returns BEFORE the gate reads the raw input, so `readConfirmFlag` never runs for it.
+   */
+  it("refuses `confirm` on a tool that does not advertise it, naming the key", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "whats_next", // 0 credits, no units hook, no confirmsInHandler -> advertises nothing
+      description: "d",
+      inputSchema: z.object({ focus: z.string().optional() }),
+      handler,
+    });
+
+    expect(tool.confirmable).toBe(false);
+    const result = await tool.run(CTX, { focus: "titles", confirm: true });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/unrecognized key.*confirm/i);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /** The other direction for the handler-prompt route (crawl_site's shape), not just D17's. */
+  it("accepts and hides `confirm` on a tool that advertises it through the spec", async () => {
+    const handler = vi.fn(async (_ctx: AuthContext, input: { project_id: string }) =>
+      textResult(`crawling ${input.project_id}`),
+    );
+    const tool = defineTool({
+      name: "crawl_site",
+      description: "d",
+      inputSchema: z.object({ project_id: z.uuid() }),
+      charge: "worker",
+      confirmsInHandler: true,
+      handler,
+    });
+
+    const project_id = "11111111-2222-4333-8444-555555555555";
+    const result = await tool.run(CTX, { project_id, confirm: true });
+    expect(result).toEqual(textResult(`crawling ${project_id}`));
+    expect(handler.mock.calls[0]?.[1]).toEqual({ project_id });
+    // The handler still sees the flag on the RAW third argument — that is how its own prompt
+    // works. Read positionally: this spy declares two parameters (the ones it uses), and the
+    // registry passes three.
+    expect((handler.mock.calls[0] as unknown[])[2]).toEqual({ project_id, confirm: true });
+  });
+
+  it("declares the field ONLY when the spec asks: the same sub-threshold tool without it stays bare", () => {
+    const spec = {
+      name: "audit_speed",
+      description: "d",
+      inputSchema: z.object({ project_id: z.uuid() }),
+      handler: async () => textResult("ok"),
+    } as const;
+    expect(confirmProperty(defineTool(spec))).toBeUndefined();
+    expect(confirmProperty(defineTool({ ...spec, confirmsInHandler: true }))).toBeDefined();
+  });
+
+  /**
+   * The predicate reads the WORST CASE the price table allows, which is the only reading that
+   * separates the two per-unit tools — one clears the threshold at its cap and the other does not.
+   * "Has a units hook" would have advertised the flag on both.
+   *
+   * The two worst cases are COMPUTED from CREDIT_UNITS + creditCostFor rather than typed in. A
+   * referee found a wrong number in this very comment (it said 55; the table says 85), and a
+   * number typed into a test about a price table is a second copy of that table, free to go stale
+   * without anything going red.
+   */
+  it("derives confirmability from the worst case in the price table, not from a units hook", () => {
+    const worst = (tool: keyof typeof CREDIT_UNITS): number =>
+      creditCostFor(tool, CREDIT_UNITS[tool].max_units);
+    expect(worst("ai_visibility_compare")).toBeGreaterThan(CONFIRMATION_THRESHOLD_CREDITS);
+    expect(worst("serp_snapshot")).toBeLessThanOrEqual(CONFIRMATION_THRESHOLD_CREDITS);
+
+    expect(canRequireConfirmation("ai_visibility_compare")).toBe(true);
+    expect(canRequireConfirmation("serp_snapshot")).toBe(false);
+    expect(canRequireConfirmation("crawl_site")).toBe(false);
+    expect(canRequireConfirmation("whats_next")).toBe(false);
+  });
+
+  it("advertises it as an OPTIONAL boolean, in the words the D17 prompt uses", () => {
+    const tool = ALL_TOOLS.find((candidate) => candidate.name === "ai_visibility_compare");
+    const schema = tool?.inputJsonSchema as {
+      properties: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: unknown;
+    };
+    expect(schema.properties.confirm).toEqual({
+      type: "boolean",
+      description: expect.stringMatching(/confirmation threshold/i) as unknown as string,
+    });
+    expect(schema.required ?? []).not.toContain("confirm");
+    // The advertisement does not reopen the door this slice closed.
+    expect(schema.additionalProperties).toBe(false);
+    // It is advertised, never PARSED: no tool's zod schema declares it (gen-tool-docs gate ii).
+    expect(Object.keys(schema.properties)).toContain("targets");
   });
 });

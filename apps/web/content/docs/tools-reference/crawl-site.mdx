@@ -55,6 +55,7 @@ The tool replies with a `job_id`. Poll it until the job is done:
 | `max_urls` | integer | No | Maximum pages to crawl (1–100, default 100). |
 | `include_paths` | string[] | No | Limit the crawl to URL paths starting with these prefixes, e.g. ["/blog"]. Omit to crawl the whole site (up to the page cap). |
 | `seed_from_ranking_pages` | boolean | No | OPT-IN, off by default: start the crawl from the pages DataForSEO reports as ranking for this domain, so they are fetched before the 100-page cap is reached. This is a paid DataForSEO lookup and is charged SEPARATELY at the my_pages price (40 credits, its own ledger line); the crawl itself still costs 20. If the lookup returns nothing this crawl can use, or cannot run at all, the crawl runs without the seeds and the seeding is not charged. The lookup uses the same defaults as my_pages (United States, English) — for another market, run my_pages yourself. |
+| `confirm` | boolean | No | Set to true to re-run a call this tool answered with a confirmation prompt — an estimated cost above the confirmation threshold, or a scope the tool asks you to confirm. Optional, and only meaningful after such a prompt: nothing is charged until the call is re-run with it. |
 
 ### Returns
 

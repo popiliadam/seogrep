@@ -16,7 +16,13 @@ import { isInsufficientCredits } from "../credits/insufficient-credits.ts";
 import { isPreconditionNotMet } from "./precondition.ts";
 import { isGscReauthRequired, renderReconnectInstruction } from "../gsc-data/reauth-error.ts";
 import { isDfsBudgetExhausted } from "../dfs/budget-error.ts";
-import { TOOL_COSTS, creditCostFor, isPerUnitTool, type ToolName } from "../credits/costs.ts";
+import {
+  CREDIT_UNITS,
+  TOOL_COSTS,
+  creditCostFor,
+  isPerUnitTool,
+  type ToolName,
+} from "../credits/costs.ts";
 
 /**
  * Zod-based tool registry — the foundation the docs automation (D11) builds on: a
@@ -91,6 +97,22 @@ export interface ToolSpec<TIn> {
   /** Credit-settlement mode. Defaults to "surface" (sync charge under the guard). */
   readonly charge?: ChargeMode;
   /**
+   * The HANDLER runs a confirmation prompt of its OWN, independent of the registry's D17 gate —
+   * declared so the advertised schema carries the reserved `confirm` flag for it.
+   *
+   * D17 is derived from the signed price table and covers every tool whose worst case can trip
+   * the threshold (canRequireConfirmation). This field covers the case the table CANNOT know:
+   * crawl_site costs a flat 20 credits and can never trip the gate, yet its handler answers a
+   * large site with a confirmation and the docs tell the reader to re-run with `"confirm": true`.
+   * Since the schemas refuse unknown keys, an unadvertised flag is an instruction a
+   * schema-validating client may not be able to follow.
+   *
+   * It changes the ADVERTISEMENT only. Nothing about parsing, charging or the handler's own logic
+   * depends on it: `confirm` stays a reserved registry parameter, read off the raw input and
+   * stripped before the parse, exactly as before.
+   */
+  readonly confirmsInHandler?: true;
+  /**
    * The MCP Apps view (SEP-1865) a supporting host renders for this tool's results, named by the
    * `ui://` resource URI that `resources/list` advertises.
    *
@@ -139,6 +161,14 @@ export interface RegisteredTool {
   readonly charge: ChargeMode;
   /** The tool's MCP Apps view URI, or undefined when it has none. See ToolSpec.ui. */
   readonly uiResourceUri?: string;
+  /**
+   * Whether `inputJsonSchema` advertises the reserved `confirm` flag — true when the D17 gate can
+   * fire on this tool's signed price (canRequireConfirmation) OR the spec declares that its
+   * handler prompts for itself (ToolSpec.confirmsInHandler). Carried here so the docs gate can
+   * tell a REGISTRY-injected advertisement from a tool that wrongly declared `confirm` in its own
+   * zod schema; the two look identical in the JSON Schema alone.
+   */
+  readonly confirmable: boolean;
   run(ctx: AuthContext, rawInput: unknown): Promise<ToolResult>;
 }
 
@@ -303,10 +333,16 @@ export function evaluateConfirmation(estimate: number, confirmed: boolean): Conf
 
 /**
  * Read the registry-level `confirm` flag from the RAW tool arguments. `confirm` is a RESERVED
- * registry parameter, deliberately NOT part of any tool's zod schema — the schemas strip unknown
- * keys, so the flag would be lost after parsing; it is read here from the raw input instead, so it
- * never appears in tools/list. Only the literal boolean `true` counts as confirmation (a string
- * "true" or any truthy value does not), so a client must send `"confirm": true` explicitly.
+ * registry parameter: it is in NO tool's zod schema, and `defineTool` advertises it — in the JSON
+ * Schema alone — only on a confirmable tool. Only the literal boolean `true` counts as
+ * confirmation (a string "true" or any truthy value does not), so a client must send
+ * `"confirm": true` explicitly.
+ *
+ * It is read from the RAW input because the parsed input never carries it: the schemas REFUSE
+ * unknown keys (S1), and on a confirmable tool `withoutReservedParams` strips this one before the
+ * parse so the caller a confirmation prompt just told to "run it again with confirm: true" is not
+ * then refused for doing exactly that. On a tool that advertises nothing the parse refuses it as
+ * an unknown key, which returns BEFORE the dispatch gate — so this never runs for one.
  */
 export function readConfirmFlag(rawInput: unknown): boolean {
   return (
@@ -343,6 +379,118 @@ export function confirmationGate(
 }
 
 /**
+ * Whether the D17 confirmation gate can EVER fire for `tool` — the worst call this tool's signed
+ * price allows, weighed against the threshold.
+ *
+ * Derived from the price table rather than from a list of tool names, so a signed price change
+ * moves the advertisement with it and a new tool needs nobody to remember. It reads the WORST
+ * case because that is the only reading that separates the two per-unit tools: at the vendor's
+ * own cap one clears the threshold and the other does not, so "declares a units hook" would offer
+ * the flag on a call whose price can never need it. The two figures are deliberately NOT quoted
+ * here — a price written into a comment is a second copy of CREDIT_UNITS, free to go stale
+ * (a referee caught exactly that in this docstring); registry.test.ts computes them instead.
+ *
+ * It answers about the REGISTRY's gate only. A tool whose handler asks for a confirmation of its
+ * own — crawl_site's large-site prompt — is invisible to the price table and declares itself
+ * instead (ToolSpec.confirmsInHandler); defineTool advertises the flag for either route.
+ */
+export function canRequireConfirmation(tool: ToolName): boolean {
+  const worstCase = isPerUnitTool(tool)
+    ? creditCostFor(tool, CREDIT_UNITS[tool].max_units)
+    : TOOL_COSTS[tool];
+  return worstCase > CONFIRMATION_THRESHOLD_CREDITS;
+}
+
+/**
+ * How the reserved `confirm` flag is ADVERTISED (never parsed — no zod schema declares it).
+ *
+ * English, the UI-copy language of this product, and deliberately the same vocabulary the prompts
+ * use ("estimated to cost … above the … confirmation threshold"): a reader who meets a prompt and
+ * then the schema must not have to work out that the two name the same flag. It names BOTH routes
+ * that can produce one, because one sentence is advertised for both — D17's cost estimate, and a
+ * handler's own scope prompt (crawl_site's large site), which is about no cost at all.
+ */
+const CONFIRM_INPUT_FIELD = {
+  type: "boolean",
+  description:
+    "Set to true to re-run a call this tool answered with a confirmation prompt — an estimated " +
+    "cost above the confirmation threshold, or a scope the tool asks you to confirm. Optional, " +
+    "and only meaningful after such a prompt: nothing is charged until the call is re-run with it.",
+} as const;
+
+/**
+ * The advertised schema with `confirm` added as an OPTIONAL property — a NEW object, and `required`
+ * is left exactly as it was.
+ *
+ * Applied ONLY to a confirmable tool. Offering the flag on all 38 would put a parameter that can
+ * never do anything in front of the model 37 times, and the schema is what the model reasons from.
+ */
+export function withConfirmField(jsonSchema: Record<string, unknown>): Record<string, unknown> {
+  const properties = (jsonSchema.properties ?? {}) as Record<string, unknown>;
+  return { ...jsonSchema, properties: { ...properties, confirm: CONFIRM_INPUT_FIELD } };
+}
+
+/**
+ * The registry's RESERVED input parameters — names a caller may send that belong to the REGISTRY
+ * rather than to any tool, and which therefore appear in NO tool's zod schema. They are not
+ * invisible: `defineTool` advertises `confirm` in the JSON Schema of a confirmable tool, and
+ * only there. Today there is exactly one, read straight off the raw input by readConfirmFlag and
+ * by crawl_site's large-site prompt.
+ */
+const RESERVED_INPUT_PARAMS: readonly string[] = ["confirm"];
+
+/**
+ * The caller's arguments with the reserved registry parameters removed, as a NEW object.
+ *
+ * It exists because of what refuseUnknownKeys below does: once a schema refuses what it does not
+ * recognise, `confirm` — which by design no schema recognises — would be refused too, and the one
+ * instruction a confirmation prompt gives ("run it again with confirm: true") would become the
+ * one call that cannot succeed. Stripping it keeps the flag exactly where it has always been read
+ * from (the raw input, which every path still receives untouched) while the tool's own fields
+ * face a schema that names a typo instead of dropping it.
+ *
+ * APPLIED ONLY TO A TOOL THAT ADVERTISES THE FLAG (referee P2). Stripping it everywhere made the
+ * other 36 tools swallow `confirm` in silence while their schemas promised to refuse it — the
+ * same silent drop this slice exists to end, this time wearing the registry's own name. Where the
+ * flag is not advertised it is an unknown key like any other.
+ *
+ * A non-object is returned unchanged so zod still produces its own "expected object" message.
+ */
+export function withoutReservedParams(rawInput: unknown): unknown {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) return rawInput;
+  return Object.fromEntries(
+    Object.entries(rawInput as Record<string, unknown>).filter(
+      ([key]) => !RESERVED_INPUT_PARAMS.includes(key),
+    ),
+  );
+}
+
+/**
+ * The same schema, made to REFUSE an unrecognised key instead of silently dropping it (S1) — the
+ * ONE place strictness is applied, for every tool at once.
+ *
+ * WHY IT IS HERE AND NOT IN 38 SCHEMAS. Zod's default object parse strips unknown keys, so until
+ * this existed `{"limit": 5, "limitt": 500}` ran with the DEFAULT limit and answered as though
+ * the caller had asked for it: a typo, a stale parameter name, and a client sending a field this
+ * server no longer supports were all indistinguishable from a correct call, on all 38 tools
+ * (measured on the live surface 2026-09-02 — not one advertised `additionalProperties: false`).
+ * Adding `.strict()` tool by tool would be a hand-maintained list of 38 places to remember, which
+ * is the shape this repo has already paid for; here it cannot be forgotten by a new tool, because
+ * a new tool has nowhere else to be built.
+ *
+ * It is applied to both halves of the contract from this single call — the advertised JSON Schema
+ * (toInputJsonSchema, so `additionalProperties: false` reaches tools/list) and the parse
+ * (defineTool) — so the promise and the behaviour cannot drift apart.
+ *
+ * A schema that is not a plain object (none today) is returned untouched rather than wrapped: it
+ * has no unknown-key notion to tighten. The gate against that going unnoticed is the loop over
+ * ALL_TOOLS in registry.test.ts, which reads what each tool actually ADVERTISES.
+ */
+export function refuseUnknownKeys<TIn>(schema: z.ZodType<TIn>): z.ZodType<TIn> {
+  return schema instanceof z.ZodObject ? (schema.strict() as unknown as z.ZodType<TIn>) : schema;
+}
+
+/**
  * Convert a zod schema to the MCP inputSchema (a bare JSON Schema object). The
  * $schema dialect marker z.toJSONSchema adds is dropped — MCP expects just the
  * object schema (type/properties/required). A new object is returned (no mutation).
@@ -355,7 +503,10 @@ export function confirmationGate(
  * is no second copy of this conversion to drift.
  */
 export function toInputJsonSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
-  const json = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+  const json = z.toJSONSchema(refuseUnknownKeys(schema), { io: "input" }) as Record<
+    string,
+    unknown
+  >;
   // MCP inputSchema is a bare object schema — drop the JSON Schema dialect marker.
   return Object.fromEntries(Object.entries(json).filter(([key]) => key !== "$schema"));
 }
@@ -407,7 +558,15 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
         `unit's price instead.`,
     );
   }
-  const inputJsonSchema = toInputJsonSchema(spec.inputSchema);
+  const parseSchema = refuseUnknownKeys(spec.inputSchema);
+  // The advertised schema is the parsed one PLUS the reserved flag, on the tools where the D17
+  // gate can fire. Without it `additionalProperties: false` would forbid the one retry the
+  // confirmation prompt asks for; the parse still strips the flag, so no tool schema gains it.
+  // Two independent routes to the same advertisement: a price that can trip D17, or a handler
+  // that prompts on its own. Neither is a list of tool names.
+  const confirmable = canRequireConfirmation(spec.name) || spec.confirmsInHandler === true;
+  const derivedJsonSchema = toInputJsonSchema(parseSchema);
+  const inputJsonSchema = confirmable ? withConfirmField(derivedJsonSchema) : derivedJsonSchema;
   const charge: ChargeMode = spec.charge ?? "surface";
   return {
     name: spec.name,
@@ -415,8 +574,13 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     inputJsonSchema,
     charge,
     uiResourceUri: spec.ui?.resourceUri,
+    confirmable,
     async run(ctx, rawInput) {
-      const parsed = spec.inputSchema.safeParse(rawInput ?? {});
+      // The reserved flag is stripped only where it is ADVERTISED; anywhere else the schema
+      // promised to refuse an unknown key and must keep that promise. A refusal returns before
+      // the D17 gate below, so an unadvertised tool never reaches readConfirmFlag at all.
+      const candidate = confirmable ? withoutReservedParams(rawInput) : rawInput;
+      const parsed = parseSchema.safeParse(candidate ?? {});
       if (!parsed.success) {
         // Free by construction — this returns before ANY charge mode runs, so the guard, the
         // handler and the enqueue are all unreached and the ledger is never touched. Said out

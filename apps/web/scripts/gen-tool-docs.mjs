@@ -428,10 +428,25 @@ export function checkToolsMetaSync(toolNames, metaPages) {
   return { ok: errors.length === 0, errors };
 }
 
-/** Tool names that declare a reserved `confirm` field in their input schema (D17 — must be none). */
+/**
+ * Tool names that WRONGLY carry a reserved `confirm` field in their input schema (D17).
+ *
+ * The rule it enforces is unchanged: `confirm` is the REGISTRY's parameter and may never become
+ * a tool's — no zod schema declares it. What changed is that the advertised JSON Schema is no
+ * longer a pure view of one tool's zod schema: since 2026-09-02 the registry INJECTS `confirm`
+ * into the schema of a tool whose worst-case price can trip the D17 gate, because the schemas now
+ * refuse unknown keys and a bare `additionalProperties: false` would have forbidden the very
+ * retry the confirmation prompt asks for.
+ *
+ * A registry-injected advertisement and a tool that declared the field look identical in the JSON
+ * Schema, so the two are told apart by `confirmable` — derived in the registry from the signed
+ * price table (registry.ts canRequireConfirmation). A tool the gate can never fire for still
+ * offends, which is the case this gate was written for.
+ */
 export function findConfirmFields(tools) {
   const offenders = [];
   for (const tool of tools) {
+    if (tool.confirmable === true) continue;
     const props = (tool.inputJsonSchema && tool.inputJsonSchema.properties) || {};
     if (Object.prototype.hasOwnProperty.call(props, "confirm")) offenders.push(tool.name);
   }
@@ -3665,7 +3680,9 @@ async function main() {
       process.exit(1);
     }
     console.error(
-      `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, no confirm fields, ` +
+      `gen-tool-docs --check OK — ${registry.ALL_TOOLS.length} tool pages in sync, confirm declared ` +
+        `by no tool schema (advertised by the registry on ` +
+        `${registry.ALL_TOOLS.filter((tool) => tool.confirmable).length}), ` +
         `meta + nav synced, all descriptions ≤${FRONTMATTER_DESCRIPTION_MAX} chars; ` +
         `apps/mcp/dist verified fresh (${freshness.measured}` +
         `${freshness.rescued ? ", timestamps forgiven by an identical source fingerprint" : ""}).`,
