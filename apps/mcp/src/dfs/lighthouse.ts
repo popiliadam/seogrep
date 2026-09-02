@@ -144,6 +144,54 @@ export const CORE_METRIC_AUDITS: readonly {
 /** How many improvement opportunities one page block prints, largest estimated saving first. */
 export const MAX_OPPORTUNITIES = 5;
 
+/** Which band a Core Web Vital fell in — Google's own three words, verbatim. */
+export type VitalRating = "good" | "needs improvement" | "poor";
+
+/**
+ * The Core Web Vitals band boundaries — THE ONLY PLACE they are written down.
+ *
+ * Each pair is (upper bound of "good", upper bound of "needs improvement"), inclusive, in the unit
+ * that audit's `numericValue` arrives in: milliseconds for LCP, unitless for CLS. Source, and the
+ * reason this table can be checked rather than believed: web.dev/articles/vitals, read 2026-09-02
+ * for the 2026-09 reference list — R-1.1 (LCP good = 2.5 s) and R-1.3 (CLS good = 0.1); the
+ * "poor" boundaries (4 s and 0.25) come off the same page.
+ *
+ * WHAT IS DELIBERATELY NOT HERE:
+ *   - **INP (R-1.2, good = 200 ms).** Not because the threshold is in doubt, but because this is a
+ *     LAB tool and Lighthouse does not produce INP at all (see CORE_METRIC_AUDITS above). An entry
+ *     here would be a threshold with nothing to apply it to, and the first thing a reader would
+ *     conclude from its presence is that we measure INP. We do not, and cannot.
+ *   - **2.0 s for LCP.** That figure circulates in SEO blogs (reference list D-1) and is
+ *     CONTRADICTED by the primary source, which still says 2.5 s. It is not a rule and does not
+ *     enter the code.
+ *   - **A band for FCP, Speed Index, TBT or TTI.** They are diagnostics, not Core Web Vitals; the
+ *     reference list carries no threshold for them, and inventing one would be exactly the
+ *     fabricated-rule failure this table exists to avoid.
+ *
+ * These boundaries are Google's and they move on Google's cadence (R-1.6), so a change here is a
+ * change to a SOURCED number: re-read the reference list first, never the other way round.
+ */
+export const CORE_VITAL_THRESHOLDS: Readonly<
+  Record<string, { readonly good: number; readonly needsImprovement: number }>
+> = {
+  "largest-contentful-paint": { good: 2500, needsImprovement: 4000 },
+  "cumulative-layout-shift": { good: 0.1, needsImprovement: 0.25 },
+};
+
+/**
+ * Which band `numeric` falls in for the audit `id`, or null when no band can honestly be given —
+ * either the metric has no published threshold (every diagnostic above) or the vendor sent no raw
+ * number to compare. Null means "say nothing", never "good": an unrated metric printed as passing
+ * is the same fabricated-good-news lie a zero-filled metric would be.
+ */
+export function rateCoreVital(id: string, numeric: number | null): VitalRating | null {
+  const threshold = CORE_VITAL_THRESHOLDS[id];
+  if (threshold === undefined || numeric === null) return null;
+  if (numeric <= threshold.good) return "good";
+  if (numeric <= threshold.needsImprovement) return "needs improvement";
+  return "poor";
+}
+
 /** One reported lab metric. Absent metrics are NOT represented — see projectMetrics. */
 export interface SpeedMetric {
   /** The Lighthouse audit id (`largest-contentful-paint`, …). */

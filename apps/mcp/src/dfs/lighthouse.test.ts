@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUDGET_SAFETY_FACTOR,
   CORE_METRIC_AUDITS,
+  CORE_VITAL_THRESHOLDS,
   DFS_LIGHTHOUSE_ENDPOINT,
   DFS_REQUEST_TIMEOUT_MS,
   LIGHTHOUSE_PAGE_USD,
@@ -14,6 +15,7 @@ import {
   estimateLighthouseUsd,
   extractLighthouseCostUsd,
   parseLighthouseResponse,
+  rateCoreVital,
   resolveDefaultSpeedPort,
   type DfsTimedTransport,
 } from "./lighthouse.ts";
@@ -363,6 +365,75 @@ describe("parseLighthouseResponse", () => {
     expect(() =>
       parseLighthouseResponse({ status_code: 20000, tasks: [{ status_code: 20000, result: [] }] }, URL_UNDER_TEST),
     ).toThrow(/no Lighthouse result/i);
+  });
+});
+
+/**
+ * B-4 — the bands, and the ONE place their numbers live. Measured 2026-09-02: the code carried no
+ * threshold at all, so LCP 2.9 s and LCP 2.4 s were printed in the same voice and the customer
+ * could not tell from the output which of them crossed the line.
+ *
+ * Every boundary is pinned to a LITERAL rather than to the constant it came from. A spec written
+ * against `CORE_VITAL_THRESHOLDS.…good` moves with any edit to the table and would report a
+ * changed Google threshold as green — and these are SOURCED numbers (reference list R-1.1/R-1.3,
+ * web.dev/articles/vitals, 2026-09-02), so they must fail loudly exactly the way the TOOL_COSTS
+ * table does.
+ */
+describe("the Core Web Vitals bands (B-4)", () => {
+  it("pins the sourced thresholds: LCP 2,500/4,000 ms (R-1.1), CLS 0.1/0.25 (R-1.3)", () => {
+    expect(CORE_VITAL_THRESHOLDS["largest-contentful-paint"]).toEqual({
+      good: 2500,
+      needsImprovement: 4000,
+    });
+    expect(CORE_VITAL_THRESHOLDS["cumulative-layout-shift"]).toEqual({
+      good: 0.1,
+      needsImprovement: 0.25,
+    });
+    // D-1's 2.0 s is a blog claim the primary source contradicts; it must never reach the code.
+    expect(CORE_VITAL_THRESHOLDS["largest-contentful-paint"]?.good).not.toBe(2000);
+  });
+
+  it.each([
+    [2400, "good"],
+    [2500, "good"],
+    [2501, "needs improvement"],
+    [2900, "needs improvement"],
+    [4000, "needs improvement"],
+    [4001, "poor"],
+  ])("rates an LCP of %d ms as %s", (numeric, rating) => {
+    expect(rateCoreVital("largest-contentful-paint", numeric)).toBe(rating);
+  });
+
+  it.each([
+    [0, "good"],
+    [0.1, "good"],
+    [0.11, "needs improvement"],
+    [0.25, "needs improvement"],
+    [0.26, "poor"],
+  ])("rates a CLS of %s as %s", (numeric, rating) => {
+    expect(rateCoreVital("cumulative-layout-shift", numeric)).toBe(rating);
+  });
+
+  /**
+   * The silences, and each one is a rule rather than an omission: a metric with no PUBLISHED
+   * threshold gets no verdict, and neither does one the vendor sent no number for. Rating either
+   * "good" by default would be the fabricated-good-news lie this whole tool is written against.
+   *
+   * INP is the case worth naming: R-1.2 does publish 200 ms for it, and it is still absent here
+   * because Lighthouse is a LAB tool and produces no INP to rate.
+   */
+  it.each([
+    ["interaction-to-next-paint", 150],
+    ["first-contentful-paint", 1000],
+    ["speed-index", 1600],
+    ["total-blocking-time", 0],
+    ["interactive", 2900],
+  ])("gives %s no band — no published threshold applies to it here", (id, numeric) => {
+    expect(rateCoreVital(id, numeric)).toBeNull();
+  });
+
+  it("gives no band when the vendor sent no raw number to compare", () => {
+    expect(rateCoreVital("largest-contentful-paint", null)).toBeNull();
   });
 });
 
