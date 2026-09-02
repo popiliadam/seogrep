@@ -6,9 +6,11 @@ import {
   getJobStatusTool,
   jobTiming,
   makeGetJobStatusTool,
+  NEXT_AFTER_SUCCESS,
 } from "./get-job-status.ts";
 import { formatJobLine } from "./list-jobs.ts";
 import type { AuthContext } from "../auth.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import type { JobRow } from "../db.ts";
 import type { RegisteredTool } from "./registry.ts";
 
@@ -652,5 +654,80 @@ describe("failureClause trims what the renderer will punctuate", () => {
 describe("get_job_status states its price", () => {
   it("says the check is free, in the same words the other 35 use", () => {
     expect(getJobStatusTool.description).toMatch(/costs 0 credits/i);
+  });
+});
+
+/**
+ * GJS B-3, measured live 2026-09-02: NONE of the four statuses said what to do next. The two
+ * sibling read-backs both close with the step that follows — list_jobs with "Run get_job_status
+ * with one of these job_id values…", list_credit_activity with "Run get_credit_balance for your
+ * current total." — and this tool is the LAST link of that chain. A `failed` answer told the
+ * customer the failure was on our side and stopped; a `succeeded` answer summarised a crawl the
+ * customer had paid 20 credits for and pointed nowhere.
+ *
+ * The tool names are NOT invented here: they are the ladder's own (packages/core
+ * guide/next-step.ts — AUDIT_TRIO, and the pull rung's discovery trio, which pull_gsc_data's own
+ * description already names). The last spec in this block is what keeps that true.
+ */
+describe("the last link of the chain says what comes next", () => {
+  const succeeded = (tool: string): string =>
+    formatJobStatus(job({ status: "succeeded", tool, finished_at: "2026-07-19T00:02:00.000Z" }));
+
+  it("tells a failed job how to retry, and where to go if it keeps failing", () => {
+    const line = formatJobStatus(job({ status: "failed", tool: "crawl_site", error: "nope" }));
+    expect(line).toMatch(/run crawl_site again/i);
+    expect(line).toMatch(/contact support/i);
+  });
+
+  it("names the failed job's OWN tool, not a hardcoded one", () => {
+    expect(formatJobStatus(job({ status: "failed", tool: "pull_gsc_data" }))).toMatch(
+      /run pull_gsc_data again/i,
+    );
+  });
+
+  it("points a finished crawl at the audits that read it", () => {
+    const line = succeeded("crawl_site");
+    expect(line).toMatch(/audit_onpage/);
+    expect(line).toMatch(/audit_tech/);
+    expect(line).toMatch(/audit_schema/);
+  });
+
+  it("points a finished Search Console pull at the tools that read it", () => {
+    const line = succeeded("pull_gsc_data");
+    expect(line).toMatch(/find_quick_wins/);
+    expect(line).toMatch(/detect_cannibalization/);
+    expect(line).toMatch(/analyze_content_decay/);
+    expect(line).not.toMatch(/audit_onpage/);
+  });
+
+  /**
+   * SILENCE FOR A TOOL NOBODY HAS ROUTED YET. Guessing a follow-up for an unknown producer is how
+   * a catalog gets invented: the answer would name a tool that cannot read this result.
+   */
+  it("says nothing about next steps for a job whose tool it does not route", () => {
+    const line = succeeded("some_future_tool");
+    expect(line).toMatch(/succeeded/);
+    expect(line).not.toMatch(/ready to analyze/i);
+    expect(line).not.toMatch(/audit_onpage|find_quick_wins/);
+  });
+
+  /** queued and running are unchanged: "call again" is what the caller is already doing. */
+  it.each(["queued", "running"] as const)("leaves a %s job's line as it was", (status) => {
+    const line = formatJobStatus(job({ status }));
+    expect(line).not.toMatch(/ready to analyze|contact support/i);
+  });
+
+  /**
+   * THE ANTI-INVENTION PIN. Every tool this file routes to must be a tool that EXISTS — checked
+   * against the signed cost table, which is the registry's own list of names. A follow-up
+   * recommending a tool the server does not publish is worse than no follow-up: the model calls
+   * it, the call fails, and the failure looks like the customer's fault.
+   */
+  it("only ever names tools this server actually publishes", () => {
+    const named = Object.values(NEXT_AFTER_SUCCESS).flat();
+    expect(named.length).toBeGreaterThan(0);
+    for (const tool of named) {
+      expect(Object.keys(TOOL_COSTS)).toContain(tool);
+    }
   });
 });
