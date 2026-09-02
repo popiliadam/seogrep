@@ -3069,7 +3069,23 @@ export const DOC_PROSE = {
           "a different site and is never offered: `blog.example.com` is not `example.com`. And " +
           "only a project that reads **no** property qualifies — a project already bound to a " +
           "different property is in a deliberate state, and offering to link it would really be " +
-          "offering to repoint it.",
+          "offering to repoint it.\n\n" +
+          "A project that still holds a property but lost the Google account behind it is named " +
+          "on that property's line too, with " +
+          "[`connect_gsc`](/docs/tools-reference/connect-gsc) as the repair. Disconnecting an " +
+          "account leaves the mapping in place and clears the account, and such a project used " +
+          "to appear in neither hint — it was printed as \"not used by any project\" while " +
+          "[`list_projects`](/docs/tools-reference/list-projects) said of the very same project " +
+          "that it was still mapped. It is not offered `track_gsc_property`: the mapping is " +
+          "already there, and it is the account that has to come back.",
+      },
+      {
+        heading: "The order is fixed",
+        body:
+          "For one account, the properties are always listed in the same order, so two reads of " +
+          "the same inventory line up against each other. Google's own listing carries no " +
+          "ordering promise, and printing it as it arrived returned the same 27 properties in " +
+          "two different orders on two calls a second apart.",
       },
       {
         heading: "When an account cannot be read",
@@ -3126,6 +3142,17 @@ export const DOC_PROSE = {
           "`example.com` finds a project stored as `www.example.com` rather than opening a " +
           "second project beside it. Only the leading `www.` label is ignored — a subdomain is a " +
           "different site.",
+      },
+      {
+        heading: "Domain properties and disavow",
+        body:
+          "When the property you bind is a **Domain** property (`sc-domain:example.com`), the " +
+          "answer carries one extra note: Google's disavow links tool does not support Domain " +
+          "properties, so a disavow file for that site has to be submitted through a URL-prefix " +
+          "property instead. It is said here because this is where the kind of property is " +
+          "known — [`disavow_candidates`](/docs/tools-reference/disavow-candidates) is where you " +
+          "would otherwise find out. A URL-prefix property gets no such note; the limitation " +
+          "does not apply to it.",
       },
       {
         heading: "When it refuses",
