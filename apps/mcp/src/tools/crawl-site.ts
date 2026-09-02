@@ -288,6 +288,11 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       "get_job_status. Costs 20 credits, charged when the crawl runs.",
     inputSchema,
     charge: "worker",
+    // The large-site prompt below is this handler's own, not the registry's D17 gate (a flat 20
+    // credits can never trip that threshold). Declaring it is what puts `confirm` in the
+    // advertised schema, so the "Re-run with confirm: true" the prompt asks for is a call the
+    // schema permits.
+    confirmsInHandler: true,
     handler: async (
       ctx: AuthContext,
       { project_id, max_urls, include_paths, seed_from_ranking_pages },

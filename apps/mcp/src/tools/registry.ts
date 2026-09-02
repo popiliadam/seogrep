@@ -97,6 +97,22 @@ export interface ToolSpec<TIn> {
   /** Credit-settlement mode. Defaults to "surface" (sync charge under the guard). */
   readonly charge?: ChargeMode;
   /**
+   * The HANDLER runs a confirmation prompt of its OWN, independent of the registry's D17 gate —
+   * declared so the advertised schema carries the reserved `confirm` flag for it.
+   *
+   * D17 is derived from the signed price table and covers every tool whose worst case can trip
+   * the threshold (canRequireConfirmation). This field covers the case the table CANNOT know:
+   * crawl_site costs a flat 20 credits and can never trip the gate, yet its handler answers a
+   * large site with a confirmation and the docs tell the reader to re-run with `"confirm": true`.
+   * Since the schemas refuse unknown keys, an unadvertised flag is an instruction a
+   * schema-validating client may not be able to follow.
+   *
+   * It changes the ADVERTISEMENT only. Nothing about parsing, charging or the handler's own logic
+   * depends on it: `confirm` stays a reserved registry parameter, read off the raw input and
+   * stripped before the parse, exactly as before.
+   */
+  readonly confirmsInHandler?: true;
+  /**
    * The MCP Apps view (SEP-1865) a supporting host renders for this tool's results, named by the
    * `ui://` resource URI that `resources/list` advertises.
    *
@@ -146,10 +162,11 @@ export interface RegisteredTool {
   /** The tool's MCP Apps view URI, or undefined when it has none. See ToolSpec.ui. */
   readonly uiResourceUri?: string;
   /**
-   * Whether the D17 gate can ever fire for this tool — derived from the signed price table, and
-   * therefore whether `inputJsonSchema` advertises the reserved `confirm` flag. Carried here so
-   * the docs gate can tell a REGISTRY-injected advertisement from a tool that wrongly declared
-   * `confirm` in its own zod schema; the two look identical in the JSON Schema alone.
+   * Whether `inputJsonSchema` advertises the reserved `confirm` flag — true when the D17 gate can
+   * fire on this tool's signed price (canRequireConfirmation) OR the spec declares that its
+   * handler prompts for itself (ToolSpec.confirmsInHandler). Carried here so the docs gate can
+   * tell a REGISTRY-injected advertisement from a tool that wrongly declared `confirm` in its own
+   * zod schema; the two look identical in the JSON Schema alone.
    */
   readonly confirmable: boolean;
   run(ctx: AuthContext, rawInput: unknown): Promise<ToolResult>;
@@ -370,9 +387,9 @@ export function confirmationGate(
  * own cap ai_visibility_compare reaches 900 and serp_snapshot tops out at 55, so "declares a
  * units hook" would offer the flag on a call whose price can never need it.
  *
- * It answers about the REGISTRY's gate only. A tool whose own handler asks for a confirmation of
- * its own — crawl_site's large-site prompt — is not visible here, and its flag is still accepted
- * at parse time (withoutReservedParams) but not advertised. See the slice report.
+ * It answers about the REGISTRY's gate only. A tool whose handler asks for a confirmation of its
+ * own — crawl_site's large-site prompt — is invisible to the price table and declares itself
+ * instead (ToolSpec.confirmsInHandler); defineTool advertises the flag for either route.
  */
 export function canRequireConfirmation(tool: ToolName): boolean {
   const worstCase = isPerUnitTool(tool)
@@ -384,16 +401,18 @@ export function canRequireConfirmation(tool: ToolName): boolean {
 /**
  * How the reserved `confirm` flag is ADVERTISED (never parsed — no zod schema declares it).
  *
- * English, the UI-copy language of this product, and deliberately the same vocabulary the D17
- * prompt uses ("estimated to cost … above the … confirmation threshold"): a reader who meets the
- * prompt and then the schema must not have to work out that the two name the same flag.
+ * English, the UI-copy language of this product, and deliberately the same vocabulary the prompts
+ * use ("estimated to cost … above the … confirmation threshold"): a reader who meets a prompt and
+ * then the schema must not have to work out that the two name the same flag. It names BOTH routes
+ * that can produce one, because one sentence is advertised for both — D17's cost estimate, and a
+ * handler's own scope prompt (crawl_site's large site), which is about no cost at all.
  */
 const CONFIRM_INPUT_FIELD = {
   type: "boolean",
   description:
-    "Set to true to re-run a call whose estimated cost exceeded the confirmation threshold. " +
-    "Optional, and only meaningful after this tool has answered with a confirmation prompt: " +
-    "nothing is charged until the call is re-run with it.",
+    "Set to true to re-run a call this tool answered with a confirmation prompt — an estimated " +
+    "cost above the confirmation threshold, or a scope the tool asks you to confirm. Optional, " +
+    "and only meaningful after such a prompt: nothing is charged until the call is re-run with it.",
 } as const;
 
 /**
@@ -534,7 +553,9 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
   // The advertised schema is the parsed one PLUS the reserved flag, on the tools where the D17
   // gate can fire. Without it `additionalProperties: false` would forbid the one retry the
   // confirmation prompt asks for; the parse still strips the flag, so no tool schema gains it.
-  const confirmable = canRequireConfirmation(spec.name);
+  // Two independent routes to the same advertisement: a price that can trip D17, or a handler
+  // that prompts on its own. Neither is a list of tool names.
+  const confirmable = canRequireConfirmation(spec.name) || spec.confirmsInHandler === true;
   const derivedJsonSchema = toInputJsonSchema(parseSchema);
   const inputJsonSchema = confirmable ? withConfirmField(derivedJsonSchema) : derivedJsonSchema;
   const charge: ChargeMode = spec.charge ?? "surface";

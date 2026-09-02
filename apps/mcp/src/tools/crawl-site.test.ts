@@ -23,13 +23,14 @@ const spyEnqueue = (): ReturnType<typeof vi.fn<EnqueueFn>> =>
   vi.fn<EnqueueFn>(async () => ({ jobId: "job-should-not-happen" }));
 
 describe("crawl_site input schema (referee: project_id + max_urls + include_paths)", () => {
-  it("advertises project_id + max_urls + include_paths — never timing knobs or the reserved confirm", () => {
+  it("advertises project_id + max_urls + include_paths + the reserved confirm — never timing knobs", () => {
     const tool = makeCrawlSiteTool({ enqueue: spyEnqueue() });
     const schema = tool.inputJsonSchema as {
       properties: Record<string, unknown>;
       required?: string[];
     };
     expect(Object.keys(schema.properties).sort()).toEqual([
+      "confirm",
       "include_paths",
       "max_urls",
       "project_id",
@@ -41,9 +42,13 @@ describe("crawl_site input schema (referee: project_id + max_urls + include_path
     for (const knob of ["pageTimeoutMs", "timeBudgetMs", "crawlDelayCapMs"]) {
       expect(schema.properties).not.toHaveProperty(knob);
     }
-    // `confirm` is a RESERVED registry param read from raw input — it must NEVER be advertised
-    // in tools/list (the D17 gen-tool-docs guard enforces this too).
-    expect(schema.properties).not.toHaveProperty("confirm");
+    // `confirm` REVERSED, on an operator ruling (2026-09-02), and the reason is S1: the schemas now
+    // REFUSE unknown keys, so leaving the flag unadvertised turned this tool's own large-site
+    // prompt — "Re-run with `confirm: true`" — into an instruction a schema-validating client
+    // could not follow. It is still a RESERVED REGISTRY parameter: no zod schema declares it, the
+    // registry injects it into the advertised schema alone (ToolSpec.confirmsInHandler), and the
+    // parse strips it before the tool's own fields are validated. Optional, and never required.
+    expect(schema.properties.confirm).toMatchObject({ type: "boolean" });
     // max_urls + include_paths are optional; only project_id is required.
     expect(schema.required).toEqual(["project_id"]);
     expect(schema.properties.max_urls).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });

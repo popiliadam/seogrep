@@ -847,13 +847,46 @@ describe("S1 — the reserved `confirm` flag is advertised exactly where D17 can
     const advertised = ALL_TOOLS.filter((tool) => confirmProperty(tool) !== undefined)
       .map((tool) => tool.name)
       .sort();
-    const confirmable = ALL_TOOLS.filter((tool) => canRequireConfirmation(tool.name))
+    const flagged = ALL_TOOLS.filter((tool) => tool.confirmable)
       .map((tool) => tool.name)
       .sort();
-    expect(advertised).toEqual(confirmable);
-    // Not vacuous: both sides are empty if the predicate breaks, and the surface measured today
-    // is exactly one tool — 90 credits x up to 10 compared targets.
-    expect(advertised).toEqual(["ai_visibility_compare"]);
+    expect(advertised).toEqual(flagged);
+    // Not vacuous: both sides are empty if the derivation breaks. The surface measured today is
+    // two tools, and they get there by DIFFERENT routes — ai_visibility_compare because D17 can
+    // fire on its price (90 x up to 10 targets), crawl_site because its own handler prompts.
+    expect(advertised).toEqual(["ai_visibility_compare", "crawl_site"]);
+    // The D17 half on its own: a price that can trip the gate always advertises, spec field or not.
+    for (const tool of ALL_TOOLS) {
+      if (canRequireConfirmation(tool.name)) expect(advertised).toContain(tool.name);
+    }
+  });
+
+  /**
+   * crawl_site's confirmation is NOT D17's: it costs a flat 20 credits and can never trip the
+   * threshold. Its handler runs its OWN large-site prompt off the raw input, and the docs tell the
+   * reader to `Re-run with "confirm": true` — an instruction `additionalProperties: false` would
+   * have forbidden while the server went on accepting the flag. The spec declares it; the price
+   * table cannot know it.
+   */
+  it("advertises confirm for a handler-run prompt that D17 itself would never fire for", () => {
+    const crawl = ALL_TOOLS.find((tool) => tool.name === "crawl_site");
+    expect(canRequireConfirmation("crawl_site")).toBe(false);
+    expect(crawl?.confirmable).toBe(true);
+    expect(confirmProperty(crawl as RegisteredTool)).toEqual({
+      type: "boolean",
+      description: expect.stringMatching(/confirmation threshold/i) as unknown as string,
+    });
+  });
+
+  it("declares the field ONLY when the spec asks: the same sub-threshold tool without it stays bare", () => {
+    const spec = {
+      name: "audit_speed",
+      description: "d",
+      inputSchema: z.object({ project_id: z.uuid() }),
+      handler: async () => textResult("ok"),
+    } as const;
+    expect(confirmProperty(defineTool(spec))).toBeUndefined();
+    expect(confirmProperty(defineTool({ ...spec, confirmsInHandler: true }))).toBeDefined();
   });
 
   /**

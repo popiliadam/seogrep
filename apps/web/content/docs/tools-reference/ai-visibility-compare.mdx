@@ -54,7 +54,7 @@ The client will ask you to confirm before a wide comparison runs — see Billing
 | `internal_list_limit` | integer | No | How many entries DataForSEO may put inside its internal `sources_domain` and `search_results_domain` arrays (1-10, default 10) — the vendor's own `internal_list_limit`, whose published ceiling is 10 on this endpoint. It controls how much supporting detail comes back, NOT what the lookup costs you. Asking for fewer rows costs the same; asking for more is refused. |
 | `location_name` | string | No | OPTIONAL DataForSEO `location_name` — a NAME, e.g. "United States", not the numeric location_code the other SeoGrep tools take (this vendor family publishes no code). Omitted by default, in which case DataForSEO applies its own default and the answer says the location was not specified rather than naming one nobody asked for. |
 | `language_code` | string | No | OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the answer says the language was not specified rather than naming one nobody asked for. |
-| `confirm` | boolean | No | Set to true to re-run a call whose estimated cost exceeded the confirmation threshold. Optional, and only meaningful after this tool has answered with a confirmation prompt: nothing is charged until the call is re-run with it. |
+| `confirm` | boolean | No | Set to true to re-run a call this tool answered with a confirmation prompt — an estimated cost above the confirmation threshold, or a scope the tool asks you to confirm. Optional, and only meaningful after such a prompt: nothing is charged until the call is re-run with it. |
 
 ### Returns
 
