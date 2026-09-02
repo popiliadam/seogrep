@@ -673,15 +673,38 @@ export const DOC_PROSE = {
           "[`get_job_status`](/docs/tools-reference/get-job-status) for that one job's detail: its " +
           "crawl summary, how far a running job has got, or why it failed.",
       },
+      {
+        heading: "Narrowing the list, and reading past the first page",
+        body:
+          "Pass `status` to see only the jobs in one state — `queued`, `running`, `succeeded` or " +
+          "`failed` — and `project_id` to see only the ones that ran against a single site. The " +
+          "two combine, so \"the failed crawls for this domain\" is one call. A `status` the jobs " +
+          "table cannot hold is **refused** rather than quietly ignored.\n\n" +
+          "**A narrowed reply says so.** The heading names the filter it applied — *your 3 most " +
+          "recent failed job(s) of 3 for example.com* — and the count is of the filtered set " +
+          "rather than of your whole history, so a short list is never read as \"this is " +
+          "everything\". When nothing matches, the reply names what you asked for (*No failed " +
+          "job(s) for example.com found*) and points at the call that drops the filter, instead " +
+          "of telling you that you have never run a job.\n\n" +
+          "The list is capped, and the reply says how many jobs it did **not** show along with " +
+          "the `before_id` to pass for the next page. Each page names the next value, so a busy " +
+          "account can be read all the way down; page two calls itself a continuation and counts " +
+          "what remains past the cursor. A `before_id` that names no job of yours is refused " +
+          "outright — never treated as \"start from the top\" — while reaching your oldest job " +
+          "says the history **ends** there.",
+      },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> How is the crawl I started doing?\n\n" +
       "The tool replies with your recent jobs; pick the one you mean and ask " +
       "[`get_job_status`](/docs/tools-reference/get-job-status) about its `job_id`.",
     returns:
-      "One line per job — tool, status, timestamps, `project_id` where there is one, and `job_id` — " +
-      "newest first, followed by a pointer to `get_job_status` for the full result. Guidance to the " +
-      "two tools that create jobs when you have run none.",
+      "One line per job — tool, status, timestamps, which of your sites it ran against, and " +
+      "`job_id` — newest first, followed by a pointer to `get_job_status` for the full result, " +
+      "and the `before_id` for the next page when the list was cut. When `status` or " +
+      "`project_id` narrowed the list, the heading names the filter and the count is of the " +
+      "filtered set; when nothing matched, the reply names the filter rather than reporting an " +
+      "empty account. Guidance to the two tools that create jobs when you have run none.",
   },
 
   list_credit_activity: {

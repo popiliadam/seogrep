@@ -556,6 +556,18 @@ describe("scoping the ledger to one project", () => {
     expect(text).toMatch(/without project_id/i);
   });
 
+  /**
+   * WHOSE HISTORY THE CUTOFF BELONGS TO (referee finding, 2026-09-02). The sentence used to say
+   * the column arrived "partway through this account's history" — false for every account opened
+   * after migration 0033, which has no project-less entries at all and is being told its own past
+   * predates a column it never lived without. The cutoff is a fact about the LEDGER.
+   */
+  it("blames the ledger for the cutoff, never the reader's own history", () => {
+    const text = formatCreditActivity({ rows: [], total: 0 }, domains, undefined, false, "p-1");
+    expect(text).toMatch(/the ledger only began storing/i);
+    expect(text).not.toMatch(/this account's|your history|since you (signed up|joined)/i);
+  });
+
   it("keeps the account-wide empty sentence when no project was asked for", () => {
     expect(formatCreditActivity({ rows: [], total: 0 }, domains)).toMatch(
       /nothing has moved your balance/i,

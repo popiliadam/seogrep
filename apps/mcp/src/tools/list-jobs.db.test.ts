@@ -59,6 +59,7 @@ async function makeJob(
     created_at?: string;
     finished_at?: string | null;
     result?: Json | null;
+    project_id?: string | null;
   } = {},
 ): Promise<string> {
   const { tool = "crawl_site", status = "queued", ...rest } = patch;
@@ -69,6 +70,24 @@ async function makeJob(
     .single();
   if (inserted.error || !inserted.data) {
     throw new Error(`jobs insert failed: ${inserted.error?.message ?? "no row"}`);
+  }
+  return inserted.data.id;
+}
+
+/**
+ * Insert one project for `userId`. A REAL row, not a made-up uuid: 0017 replaced
+ * `jobs.project_id -> projects.id` with the COMPOSITE `(user_id, project_id) -> (user_id, id)`,
+ * so a job cannot even be written against a project its tenant does not own — which is why the
+ * cross-tenant filter spec below has to seed the stranger a project of their own.
+ */
+async function makeProject(userId: string): Promise<string> {
+  const inserted = await service
+    .from("projects")
+    .insert({ user_id: userId, domain: `p-${randomUUID().slice(0, 8)}.example.test` })
+    .select("id")
+    .single();
+  if (inserted.error || !inserted.data) {
+    throw new Error(`projects insert failed: ${inserted.error?.message ?? "no row"}`);
   }
   return inserted.data.id;
 }
@@ -197,6 +216,85 @@ describe("list_jobs against the local stack", () => {
     expect((await listOwnJobs(owner.userId, MAX_JOB_LIST_LIMIT)).rows.map((r) => r.id)).toContain(
       ownerJob,
     );
+  });
+
+  /**
+   * THE FILTERS, against the real `jobs` table (referee finding, 2026-09-02).
+   *
+   * The fast lane proves the HANDLER hands `status` / `project_id` to the read port and that the
+   * answer names them. It cannot prove the port then narrows anything: it injects a recorder that
+   * returns whatever it is handed, so `.filter("status", "eq", …)` could be a no-op — or filter on
+   * the wrong column, since `.filter()` takes the column name as an UNTYPED string and buys that
+   * looseness precisely to keep `forUser`'s tenant guard. Only Postgres can tell the difference.
+   *
+   * `total` is asserted alongside the rows on every branch: `count: "exact"` rides on the same
+   * builder, so a filter applied to the ROWS but not to the COUNT would print "2 of 4 failed
+   * job(s)" — the cut sentence would then offer a next page that does not exist.
+   */
+  it("narrows the tenant's rows by status, by project, and by both together", async () => {
+    const ctx = await makeCtx();
+    const p1 = await makeProject(ctx.userId);
+    const p2 = await makeProject(ctx.userId);
+    const succeededP1 = await makeJob(ctx.userId, { status: "succeeded", project_id: p1 });
+    const failedP1 = await makeJob(ctx.userId, { status: "failed", project_id: p1 });
+    const failedP2 = await makeJob(ctx.userId, { status: "failed", project_id: p2 });
+    const unscoped = await makeJob(ctx.userId, { status: "succeeded", project_id: null });
+
+    const all = await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT);
+    expect(all.total).toBe(4);
+
+    const failed = await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT, undefined, {
+      status: "failed",
+    });
+    expect(failed.rows.map((row) => row.id).sort()).toEqual([failedP1, failedP2].sort());
+    expect(failed.total).toBe(2);
+
+    const byProject = await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT, undefined, {
+      projectId: p1,
+    });
+    expect(byProject.rows.map((row) => row.id).sort()).toEqual([succeededP1, failedP1].sort());
+    expect(byProject.total).toBe(2);
+    expect(byProject.rows.map((row) => row.id)).not.toContain(unscoped);
+
+    // Both at once must INTERSECT, not pick one and drop the other.
+    const both = await listOwnJobs(ctx.userId, MAX_JOB_LIST_LIMIT, undefined, {
+      status: "failed",
+      projectId: p1,
+    });
+    expect(both.rows.map((row) => row.id)).toEqual([failedP1]);
+    expect(both.total).toBe(1);
+  });
+
+  /**
+   * A PROJECT ID THAT IS NOT YOURS SELECTS NOTHING — the filter goes ON TOP of the tenant guard,
+   * never instead of it. `project_id` arrives as a caller-supplied uuid with nothing to prove it
+   * belongs to anyone, so the only thing standing between it and another tenant's jobs is the
+   * `.eq("user_id", …)` that `forUser` put there. Seeded so the stranger's job REALLY exists and
+   * REALLY carries that project: an empty answer must be the filter working, not an empty table.
+   */
+  it("returns nothing for another tenant's project_id, whose jobs really do exist", async () => {
+    const owner = await makeCtx();
+    const stranger = await makeCtx();
+    const ownerProject = await makeProject(owner.userId);
+    const strangerProject = await makeProject(stranger.userId);
+    await makeJob(owner.userId, { status: "failed", project_id: ownerProject });
+    const strangerJob = await makeJob(stranger.userId, {
+      status: "failed",
+      project_id: strangerProject,
+    });
+
+    const leaked = await listOwnJobs(owner.userId, MAX_JOB_LIST_LIMIT, undefined, {
+      projectId: strangerProject,
+    });
+    expect(leaked.rows).toEqual([]);
+    expect(leaked.total).toBe(0);
+
+    // The stranger's row is there and matches that project — so the empty read above is the
+    // tenant guard, not an absent fixture.
+    const asStranger = await listOwnJobs(stranger.userId, MAX_JOB_LIST_LIMIT, undefined, {
+      projectId: strangerProject,
+    });
+    expect(asStranger.rows.map((row) => row.id)).toEqual([strangerJob]);
   });
 });
 

@@ -468,7 +468,7 @@ export const NO_MORE_ACTIVITY_MESSAGE =
 export function noProjectActivityMessage(label: string): string {
   return (
     `No credit entries recorded for ${label}. The ledger only began storing which project a ` +
-    "spend was for partway through this account's history, and it is append-only, so entries " +
+    "spend was for partway through its own history, and it is append-only, so any entries " +
     "written before that can never carry a project and never match this filter — call " +
     "list_credit_activity without project_id to see them."
   );
