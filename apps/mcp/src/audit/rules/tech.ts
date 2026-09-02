@@ -1,4 +1,6 @@
 import type { AuditCrawl, AuditPage, AuditSkipped } from "../crawl-data.ts";
+import { auditHreflang, type HreflangReport } from "./hreflang.ts";
+import { urlKey } from "./url-key.ts";
 
 /**
  * Technical rule engine (audit_tech, 15 credits). Pure — takes an AuditCrawl, returns a
@@ -230,6 +232,14 @@ export interface TechReport {
    * not "unmeasured".
    */
   readonly brokenInternalLinks: BrokenInternalLink[];
+  /**
+   * The hreflang findings, or `null` when NO page in this crawl carried the field.
+   *
+   * Null for the same reason sitemapDiff is: an empty hreflang report is the claim "we read
+   * your alternates and they are consistent", and a crawl stored before hreflangs existed
+   * cannot make it. See rules/hreflang.ts for what the rules do and do not prove.
+   */
+  readonly hreflang: HreflangReport | null;
 }
 
 /** Bucket a crawler skip `reason` into a stable category for grouping. */
@@ -349,29 +359,6 @@ function signalSections(pages: AuditPage[]): {
 }
 
 /**
- * The comparison key for two URLs that mean the same page: fragment dropped, one trailing slash
- * dropped (except on the root). `/about/` in a sitemap and `/about` in the crawl are one page,
- * and a diff that called them two would report every site's whole sitemap as missing.
- *
- * Written here rather than imported from the crawler: these rule engines take a parsed AuditCrawl
- * and nothing else — a dependency on crawl.ts would drag undici and the fetch stack into a pure
- * module. An unparseable string falls back to a trimmed form of itself so it can still match
- * ITSELF (two identical unparseable strings are still the same URL).
- */
-function urlKey(raw: string): string {
-  try {
-    const url = new URL(raw);
-    url.hash = "";
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
-      url.pathname = url.pathname.slice(0, -1);
-    }
-    return url.toString();
-  } catch {
-    return raw.replace(/#.*$/, "").replace(/\/$/, "");
-  }
-}
-
-/**
  * sitemap ∖ crawl and crawl ∖ sitemap, or null when there is no sitemap to compare against.
  *
  * The null case covers BOTH "the stored crawl predates sitemapUrls" (undefined) and "the crawl
@@ -457,5 +444,6 @@ export function auditTech(crawl: AuditCrawl): TechReport {
     ...signalSections(crawl.pages),
     sitemapDiff: sitemapDiff(crawl),
     brokenInternalLinks: brokenInternalLinks(crawl.pages),
+    hreflang: auditHreflang(crawl.pages),
   };
 }
