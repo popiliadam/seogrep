@@ -526,6 +526,59 @@ describe("track_gsc_property", () => {
     expect(restored.text).toMatch(/^Restored "katrenur\.com" from your archive \(project_id: .+\) and set it to read /);
   });
 
+  /**
+   * TGP-5 / R-6.7 — Google's disavow tool does not accept Domain properties. The product KNOWS
+   * which kind it just bound (the two are separate properties with separate data, and this tool
+   * refuses to choose between them for exactly that reason), and said nothing about it: a tenant
+   * connected only to `sc-domain:` had no way to learn this before running disavow_candidates.
+   *
+   * It is ONE sentence, on the Domain branch ONLY. On a URL-prefix property the limitation does
+   * not apply, and printing it there would be noise on every successful call.
+   */
+  describe("a Domain property carries Google's disavow limitation (R-6.7)", () => {
+    const URL_PREFIX: GscSite = {
+      siteUrl: "https://katrenur.com/",
+      permissionLevel: "siteOwner",
+    };
+
+    it("says so when the property bound is a Domain property", async () => {
+      const run = await callTool({ property: TRACKED.siteUrl }, { sites: [TRACKED] });
+      expect(run.isError).toBe(false);
+      expect(run.text).toMatch(/disavow/i);
+      expect(run.text).toMatch(/does not support domain properties/i);
+    });
+
+    it("says it on the already-tracked and restored outcomes too, not only on created", async () => {
+      for (const outcome of ["existing", "restored"] as const) {
+        const run = await callTool({ property: TRACKED.siteUrl }, { sites: [TRACKED] }, () =>
+          Promise.resolve({
+            ok: true,
+            project: {
+              id: "3d4e5f6a-7b8c-4d9e-8f01-2a3b4c5d6e7f",
+              domain: "katrenur.com",
+              outcome,
+            },
+          }),
+        );
+        expect(run.text).toMatch(/does not support domain properties/i);
+      }
+    });
+
+    it("says NOTHING of the sort for a URL-prefix property", async () => {
+      const run = await callTool({ property: URL_PREFIX.siteUrl }, { sites: [URL_PREFIX] });
+      expect(run.isError).toBe(false);
+      // The success sentence is still there — this is not an empty answer passing by accident.
+      expect(run.text).toContain("https://katrenur.com/");
+      expect(run.text).not.toMatch(/disavow/i);
+    });
+
+    it("says nothing of the sort on a REFUSAL — no property was bound to warn about", async () => {
+      const run = await callTool({ property: UNQUERYABLE.siteUrl }, { sites: [UNQUERYABLE] });
+      expect(run.isError).toBe(true);
+      expect(run.text).not.toMatch(/disavow/i);
+    });
+  });
+
   it("is a 0-credit tool that takes a property and an optional account_id", () => {
     const tool = toolFor({}, { opened: [], mapped: [] });
     expect(tool.name).toBe("track_gsc_property");
