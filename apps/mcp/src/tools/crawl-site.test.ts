@@ -359,6 +359,151 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   });
 });
 
+// --- One crawl per project at a time (B-1) -------------------------------------------
+//
+// MEASURED 2026-09-02 (docs/audits/tools/2026-09/crawl_site.md, B-1): enqueueJob INSERTs
+// unconditionally and this handler asked nothing before it, so a second crawl_site for a project
+// whose first crawl was still running opened a SECOND job — and the worker bound a second
+// 20-credit reserve for the same pages. The scenario has a named cell in the live sweep plan
+// ("does a second identical crawl charge again", plan.mjs:273) that has never been run.
+//
+// What these specs measure is the SURFACE's decision, with every paid path injected: the enqueue
+// (whose job is what the worker's reserve is keyed to), the free pre-discovery, and the SEPARATELY
+// CHARGED ranking-seed lookup. "Nothing was charged" is asserted as "none of those three was
+// reached", which is the only form of it this lane can honestly prove.
+
+/** An active-crawl finder that reports one in-flight job, and records what it was asked. */
+function activeCrawlSpy(
+  active: { jobId: string; status: "queued" | "running" } | null,
+): { fn: ActiveCrawlFinder; calls: { userId: string; projectId: string }[] } {
+  const calls: { userId: string; projectId: string }[] = [];
+  const fn: ActiveCrawlFinder = async (ctx, projectId) => {
+    calls.push({ userId: ctx.userId, projectId });
+    return active;
+  };
+  return { fn, calls };
+}
+
+describe("crawl_site refuses to queue a SECOND crawl while one is in flight", () => {
+  it("returns the running job instead of opening a new one — no enqueue, no size check, no paid seeding", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    let estimateCalls = 0;
+    const spyEstimate: EstimateFn = async () => {
+      estimateCalls++;
+      return { pages: 30, source: "sitemap" };
+    };
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-1", status: "running" });
+
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: spyEstimate,
+      fetchSeeds: seed.fn,
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID, seed_from_ranking_pages: true });
+
+    // NOTHING was opened and nothing was bought on this call's behalf.
+    expect(calls).toHaveLength(0); // no second jobs row -> no second worker reserve
+    expect(seed.calls).toHaveLength(0); // the separately-charged lookup was never made
+    expect(estimateCalls).toBe(0); // the 8-second free size check was skipped too
+
+    // It is a NORMAL answer, not an error: the caller asked for a crawl and there is one.
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text).toMatch(/already running — poll it with get_job_status/);
+    expect(text).toContain("job_id: job-in-flight-1");
+    expect(text).toContain("status: running");
+    expect(text).toMatch(/not charged/i);
+  });
+
+  it("asks for THIS caller's job on THIS project — the finder is tenant-scoped by its arguments", async () => {
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-2", status: "queued" });
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject,
+      estimate: estimateOf(null),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    expect(finder.calls).toEqual([{ userId: CTX.userId, projectId: PID }]);
+  });
+
+  it("reports the QUEUED state as queued — it does not relabel a job it did not start", async () => {
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-3", status: "queued" });
+    const result = await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject,
+      estimate: estimateOf(null),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    expect(result.content[0]!.text).toContain("status: queued");
+    expect(result.content[0]!.text).toContain("job_id: job-in-flight-3");
+  });
+
+  /**
+   * The CONTROL. Without it a guard that refused EVERY crawl would pass every spec above, and
+   * the tool would be broken in the one way nobody would test for.
+   */
+  it("queues normally when nothing is in flight for the project", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const finder = activeCrawlSpy(null);
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(30),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    expect(calls).toHaveLength(1);
+    expect(result.content[0]!.text).toContain("job_id: job-crawl-1");
+    expect(result.content[0]!.text).not.toMatch(/already running/);
+  });
+
+  /**
+   * ORDER MATTERS, and this is the half a "does it refuse?" spec cannot see: the in-flight check
+   * must sit BEHIND the ownership and archive gates. A project that is missing or another
+   * tenant's must never reach a query about its jobs — asking would be a read on behalf of a
+   * caller who has not been shown to own the row.
+   */
+  it("never asks about jobs for a project the caller does not own, or an archived one", async () => {
+    const missing = activeCrawlSpy(null);
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => null,
+      findActiveCrawl: missing.fn,
+    }).run(CTX, { project_id: PID });
+    expect(missing.calls).toHaveLength(0);
+
+    const archived = activeCrawlSpy(null);
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => ({
+        id: PID,
+        domain: "retired.example.com",
+        archivedAt: "2026-08-13T00:00:00Z",
+      }),
+      findActiveCrawl: archived.fn,
+    }).run(CTX, { project_id: PID });
+    expect(archived.calls).toHaveLength(0);
+  });
+
+  /**
+   * `confirm: true` is the flag that SKIPS pre-discovery, and it is exactly the call a caller
+   * makes twice in a row after reading a large-site prompt. It must not skip this gate too.
+   */
+  it("a confirmed re-run does not bypass the in-flight check", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-4", status: "running" });
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(1500),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID, confirm: true });
+    expect(calls).toHaveLength(0);
+    expect(result.content[0]!.text).toContain("job_id: job-in-flight-4");
+  });
+});
+
 // --- OPT-IN ranking-page seeding (imza paketi madde 12) -------------------------------
 // The seeding step itself is injected: what is measured here is the SURFACE's decisions —
 // whether it runs at all, what reaches the queue payload, and what the caller is told.
