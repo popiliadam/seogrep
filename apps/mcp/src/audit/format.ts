@@ -176,6 +176,46 @@ function renderSkippedCategory(skips: readonly AuditSkipped[]): string[] {
   ];
 }
 
+/**
+ * The three hreflang sections, or nothing at all.
+ *
+ * Nothing when the crawl never stored alternates (`null`) — the sitemapDiff rule read from the
+ * other side: silence there is "nobody looked", and a heading at zero would claim otherwise.
+ *
+ * The reciprocity section is the one that prints WITHOUT rows, and only in one case: alternates
+ * whose target this crawl did not fetch. Their absence from the finding list is a bound of the
+ * crawl, not a property of the site, and a reader who is told nothing reads "they are returned".
+ */
+function hreflangSections(report: TechReport["hreflang"]): string[] {
+  if (report === null) return [];
+  const lines: string[] = [];
+  if (report.invalidCodes.length > 0) {
+    lines.push("", `Hreflang codes not valid (ISO 639-1 language, optional region): ${report.invalidCodes.length}`);
+    lines.push(bulletList(report.invalidCodes.map((c) => `${c.url} — ${c.reason}`)));
+  }
+  if (report.missingXDefault.length > 0) {
+    lines.push("", `Hreflang sets with no x-default: ${report.missingXDefault.length}`);
+    lines.push(bulletList(report.missingXDefault));
+    lines.push("  Note: x-default is the fallback for a visitor whose language the set does not list.");
+  }
+  if (report.notReciprocated.length > 0 || report.unmeasuredTargets > 0) {
+    lines.push(
+      "",
+      `Hreflang not reciprocated (a pair is ignored unless both pages point at each other): ${report.notReciprocated.length}`,
+    );
+    if (report.notReciprocated.length > 0) {
+      lines.push(bulletList(report.notReciprocated.map((g) => `${g.from} → ${g.to} (hreflang="${g.lang}")`)));
+    }
+    if (report.unmeasuredTargets > 0) {
+      lines.push(
+        `  Note: ${report.unmeasuredTargets} alternate(s) point at pages this crawl did not fetch, so whether they point back was not measured.`,
+      );
+    }
+    lines.push("  Note: only the HTML channel is read here; a return link served in a header or a sitemap is not seen.");
+  }
+  return lines;
+}
+
 export function formatTechReport(report: TechReport, fetchedAt: string | null): string {
   const { status } = report;
   const lines = [
@@ -275,6 +315,7 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
     lines.push("", `Broken internal links (target crawled, answered 4xx/5xx): ${report.brokenInternalLinks.length}`);
     lines.push(bulletList(report.brokenInternalLinks.map((l) => `${l.from} → ${l.to} (${l.status})`)));
   }
+  lines.push(...hreflangSections(report.hreflang));
   return lines.join("\n");
 }
 

@@ -1195,7 +1195,7 @@ export const DOC_PROSE = {
       "findings immediately. Run `crawl_site` first — with no crawl on record the tool says so and " +
       "charges nothing.",
     whatItDoes:
-      "Summarizes the crawl from a technical angle. Twelve sections, each named below by the " +
+      "Summarizes the crawl from a technical angle. Fifteen sections, each named below by the " +
       "exact heading it carries in the reply, so what you read here is what you can search for " +
       "in the output:\n\n" +
       "- **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx " +
@@ -1222,7 +1222,17 @@ export const DOC_PROSE = {
       "- **Sitemap vs crawl** — what is in the sitemap and was never crawled, and what was " +
       "crawled and is absent from the sitemap.\n" +
       "- **Broken internal links** — a link whose target the crawl fetched and got a 4xx or 5xx " +
-      "from.\n\n" +
+      "from.\n" +
+      "- **Hreflang codes not valid** — an alternate whose language code cannot work: a region " +
+      "given where a language belongs (`hreflang=\"us\"`), a three-letter code, or a reserved " +
+      "region like `EU`. Google needs an ISO 639-1 language, optionally with an ISO 3166-1 " +
+      "region.\n" +
+      "- **Hreflang sets with no x-default** — a page offering several languages and no " +
+      "fallback for a visitor whose language is not among them.\n" +
+      "- **Hreflang not reciprocated** — this page names that one as its alternate and gets no " +
+      "return link, so Google ignores the pair. Only alternates whose target THIS crawl also " +
+      "fetched can be checked, and the section says how many pointed elsewhere; only the HTML " +
+      "channel is read, so a return link served in a header or a sitemap is not seen.\n\n" +
       "Redirects appear in three places, on purpose, and only one of the three is a repeat. The " +
       "crawler follows a successful redirect and records the destination, so a redirect never " +
       "becomes a duplicate page — it surfaces as a **skip reason**. **Redirects surfaced** is " +
@@ -1231,7 +1241,7 @@ export const DOC_PROSE = {
       "skip ledger, whose per-reason grouping is what lets the skip counts reconcile. The " +
       "third is different data rather than a repeat — a page's own hop trail, read back as a " +
       "**chain** when it took more than one hop.\n\n" +
-      "Four of the twelve print on every run, at zero as readily as at fifty — **HTTP status**, " +
+      "Four of the fifteen print on every run, at zero as readily as at fifty — **HTTP status**, " +
       "**Redirects surfaced**, **Not crawled** and **Robots conflicts** — because each is a " +
       "count this engine always takes, so a zero there is a measurement rather than a silence. " +
       "Every section after them prints only when it has rows, and that too is deliberate: on a " +

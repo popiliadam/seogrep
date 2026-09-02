@@ -234,6 +234,86 @@ describe("the appended graph sections render their data", () => {
     expect(text).toContain("· https://e/ → https://e/gone (404)");
   });
 
+  /**
+   * THE HREFLANG SECTIONS (R-4.10 / R-4.11). Each prints only when it has rows, with one
+   * deliberate exception: the reciprocity section also prints when every alternate it could NOT
+   * check points outside the crawl, because silence there would be read as "your alternates are
+   * returned" — the one thing a bounded crawl cannot claim.
+   */
+  it("technical: the hreflang sections name the code, the page and both ends of an unreturned pair", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "de", href: "https://e/de" },
+            { lang: "us", href: "https://e/us" },
+            { lang: "fr", href: "https://other.test/fr" },
+          ],
+        }),
+        page({ url: "https://e/de", hreflangs: [{ lang: "de", href: "https://e/de" }] }),
+        page({ url: "https://e/us", hreflangs: [{ lang: "en", href: "https://e/en" }] }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatTechReport(auditTech(crawl), AT);
+    expect(text).toContain("Hreflang codes not valid");
+    expect(text).toContain('· https://e/en — "us" does not start with an ISO 639-1 language code');
+    expect(text).toContain("Hreflang sets with no x-default: 1");
+    expect(text).toContain("· https://e/en");
+    expect(text).toContain("Hreflang not reciprocated");
+    expect(text).toContain('· https://e/en → https://e/de (hreflang="de")');
+    // The unmeasured half is STATED rather than counted into the finding.
+    expect(text).toContain("1 alternate(s) point at pages this crawl did not fetch");
+  });
+
+  it("technical: an unreturnable pair the crawl could not check still says so, at zero findings", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "fr", href: "https://other.test/fr" },
+          ],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatTechReport(auditTech(crawl), AT);
+    expect(text).toContain("Hreflang not reciprocated");
+    expect(text).toContain("1 alternate(s) point at pages this crawl did not fetch");
+  });
+
+  it("technical: a crawl whose pages carry correct hreflang prints no hreflang section at all", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "de", href: "https://e/de" },
+            { lang: "x-default", href: "https://e/en" },
+          ],
+        }),
+        page({
+          url: "https://e/de",
+          hreflangs: [
+            { lang: "de", href: "https://e/de" },
+            { lang: "en", href: "https://e/en" },
+            { lang: "x-default", href: "https://e/en" },
+          ],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    expect(formatTechReport(auditTech(crawl), AT)).not.toContain("Hreflang");
+  });
+
   it("structured data: missing fields, invalid JSON, partial storage, and a truthful note", () => {
     const crawl: AuditCrawl = {
       pages: [
