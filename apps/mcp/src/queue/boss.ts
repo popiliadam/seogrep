@@ -4,6 +4,7 @@ import {
   getServiceClient,
   type Json,
   type JobRow,
+  type JobStatus,
   type JobUpdate,
   type ServiceClient,
 } from "../db.ts";
@@ -190,6 +191,58 @@ export async function getJobForUser(
     throw new Error(`getJobForUser failed: ${error.message}`);
   }
   return data;
+}
+
+/** A job of one tool that has not reached a terminal state yet: still `queued`, or `running`. */
+export interface ActiveJob {
+  readonly jobId: string;
+  readonly status: Extract<JobStatus, "queued" | "running">;
+}
+
+/**
+ * The newest NON-TERMINAL (`queued` or `running`) `tool` job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). Null when that project has nothing in
+ * flight for that tool.
+ *
+ * WHY IT EXISTS (crawl_site, B-1, measured 2026-09-02): enqueueJob INSERTs unconditionally and
+ * carries no dedupe or singleton key, so a second crawl_site call for a project whose first crawl
+ * was still running opened a second job — and the worker bound a second 20-credit reserve to fetch
+ * the same pages. A caller cannot see the first job unless they kept its id, so the duplicate is
+ * the ordinary mistake, not the exotic one.
+ *
+ * The user_id filter is the tenant guard on the RLS-bypassing service client (constitution
+ * NEVER #4). It is a READ ONLY: it decides nothing about credits and writes nothing — the caller
+ * decides what to do with an in-flight job.
+ *
+ * NOT A LOCK, and it must not be mistaken for one. Two requests that arrive close enough together
+ * can both read "nothing in flight" and both enqueue; this closes the ordinary window (a human or
+ * a model re-asking seconds later), not a concurrent race. The DB-level second line of defence — a
+ * partial unique index on (project_id, tool) WHERE status IN ('queued','running') — is a migration
+ * and therefore a human-queued decision; see the crawl_site record's B-1 note.
+ */
+export async function findActiveJobForProject(
+  client: ServiceClient,
+  params: { projectId: string; userId: string; tool: string },
+): Promise<ActiveJob | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, status")
+    .eq("user_id", params.userId)
+    .eq("project_id", params.projectId)
+    .eq("tool", params.tool)
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`findActiveJobForProject(${params.tool}) failed: ${error.message}`);
+  }
+  if (!data) return null;
+  // The `.in` filter above is the one that decides this, but the row's own status is what the
+  // caller reports to a customer — so it is narrowed here rather than asserted.
+  return data.status === "queued" || data.status === "running"
+    ? { jobId: data.id, status: data.status }
+    : null;
 }
 
 /**
