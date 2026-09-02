@@ -457,3 +457,63 @@ describe("filtering the job list", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+/**
+ * LJ B-1, second half. A filter that is APPLIED but not NAMED trades one wrong for a quieter
+ * one: "You have not run any background jobs yet" is a claim about the account, and answering a
+ * narrowed query with it is the same shape as telling a 512-entry ledger it is empty. The heading
+ * carries the filter for the reason it already carries the total — "your 3 most recent job(s) of
+ * 3" is read as the whole history.
+ */
+describe("what a filtered answer calls itself", () => {
+  const domains = new Map([["p-1", "seogrep.com"]]);
+
+  it("names the filter when nothing matched, instead of saying you have run no jobs", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, { status: "failed" });
+    expect(text).toMatch(/no failed job/i);
+    expect(text).not.toBe(NO_JOBS_MESSAGE);
+  });
+
+  it("names the project when nothing matched for it", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, { projectId: "p-1" });
+    expect(text).toMatch(/seogrep\.com/);
+    expect(text).not.toBe(NO_JOBS_MESSAGE);
+  });
+
+  it("names both when both were asked for", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, {
+      status: "queued",
+      projectId: "p-1",
+    });
+    expect(text).toMatch(/no queued job/i);
+    expect(text).toMatch(/seogrep\.com/);
+  });
+
+  it("says in the heading that the list was filtered", () => {
+    const text = formatJobList({ rows: [job()], total: 1 }, domains, false, {
+      status: "failed",
+      projectId: "p-1",
+    });
+    expect(text).toMatch(/most recent failed job\(s\) of 1 for seogrep\.com/i);
+  });
+
+  it("carries the filter from the HANDLER, not only from a hand-passed argument", async () => {
+    const listJobs: ListJobsFn = async () => ({ rows: [], total: 0 });
+    const tool = makeListJobsTool({ listJobs, listDomains: async () => domains });
+    const text = textOf(await tool.run(CTX, { status: "failed" }));
+    expect(text).toMatch(/no failed job/i);
+  });
+
+  /**
+   * The unfiltered wordings are BYTE-IDENTICAL to what shipped — the smoke tour measured them
+   * live, and a filter feature that quietly reworded the ordinary answer would invalidate that
+   * record without failing anything.
+   */
+  it("leaves every unfiltered wording exactly as it was", () => {
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), false)).toBe(NO_JOBS_MESSAGE);
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), true)).toBe(NO_MORE_JOBS_MESSAGE);
+    expect(formatJobList({ rows: [job()], total: 1 }, new Map(), false)).toMatch(
+      /Your 1 most recent job\(s\) of 1, newest first:/,
+    );
+  });
+});

@@ -227,6 +227,36 @@ export const NO_JOBS_MESSAGE =
 
 
 /**
+ * The words a filter is named by — `failed ` and ` for seogrep.com` — shared by the heading and
+ * the empty answer so the two cannot describe one call differently.
+ */
+function filterWords(
+  filters: JobFilters,
+  domains: ReadonlyMap<string, string>,
+): { readonly status: string; readonly project: string } {
+  return {
+    status: filters.status === undefined ? "" : `${filters.status} `,
+    project:
+      filters.projectId === undefined ? "" : ` for ${projectLabel(filters.projectId, domains)}`,
+  };
+}
+
+/**
+ * What a FILTERED call with no matching rows says. NO_JOBS_MESSAGE would be a claim about the
+ * ACCOUNT ("you have not run any background jobs yet") made on the evidence of a narrowed query.
+ */
+export function noMatchingJobsMessage(
+  filters: JobFilters,
+  domains: ReadonlyMap<string, string>,
+): string {
+  const { status, project } = filterWords(filters, domains);
+  return (
+    `No ${status}job(s)${project} found. Call list_jobs without that filter to see your recent ` +
+    "jobs, or list_projects for the sites you are tracking."
+  );
+}
+
+/**
  * What a line says when the stored stamps contradict each other — measured live on 2026-08-26,
  * where two of one tenant's 27 `pull_gsc_data` rows read `created …16:14:18 · finished
  * …16:14:17`, a job that finished 13.9 seconds before it began.
@@ -296,10 +326,16 @@ export function formatJobList(
    * itself" axis unvaried.
    */
   paged = false,
+  /** What the caller narrowed the list to, so the answer can say so rather than imply nothing. */
+  filters: JobFilters = {},
 ): string {
   const { rows, total } = page;
+  const narrowed = filters.status !== undefined || filters.projectId !== undefined;
   if (page.unknownCursor === true) return UNKNOWN_CURSOR_MESSAGE;
-  if (rows.length === 0) return paged ? NO_MORE_JOBS_MESSAGE : NO_JOBS_MESSAGE;
+  if (rows.length === 0) {
+    if (paged) return NO_MORE_JOBS_MESSAGE;
+    return narrowed ? noMatchingJobsMessage(filters, domains) : NO_JOBS_MESSAGE;
+  }
   const lines = rows.map((job) => formatJobLine(job, domains)).join("\n");
   // WHAT WAS LEFT OUT, AND HOW TO REACH IT. "Your 10 most recent" is true and reads as the whole
   // history; a reader with no way to know a list was cut has no reason to ask for more.
@@ -316,9 +352,12 @@ export function formatJobList(
     remaining > 0 && oldest !== undefined
       ? ` ${remaining} older job(s) not shown — call again with \`before_id: ${oldest}\` for the next page.`
       : "";
+  // THE HEADING CARRIES THE FILTER for the reason it already carries the total: a narrowed list
+  // that calls itself "your 3 most recent job(s) of 3" is read as the whole history.
+  const { status, project } = filterWords(filters, domains);
   const heading = paged
-    ? `Continuing from your cursor: ${rows.length} of ${total} older job(s), newest first:`
-    : `Your ${rows.length} most recent job(s) of ${total}, newest first:`;
+    ? `Continuing from your cursor: ${rows.length} of ${total} older ${status}job(s)${project}, newest first:`
+    : `Your ${rows.length} most recent ${status}job(s) of ${total}${project}, newest first:`;
   return (
     `${heading}\n${lines}\n` +
     "Run get_job_status with one of these job_id values for that job's full result — its crawl " +
@@ -373,7 +412,7 @@ export function makeListJobsTool(deps: ListJobsDeps = {}): RegisteredTool {
         listJobs(ctx.userId, limit, before_id, filters),
         listDomains(ctx.userId),
       ]);
-      return textResult(formatJobList(page, domains, before_id !== undefined));
+      return textResult(formatJobList(page, domains, before_id !== undefined, filters));
     },
   });
 }
