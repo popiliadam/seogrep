@@ -4,8 +4,8 @@ import { formatSchemaReport, formatTechReport } from "./format.ts";
 import { parseCrawlResult, type AuditCrawl, type AuditPage } from "./crawl-data.ts";
 import { formatOnpageReport } from "./format.ts";
 import { auditOnpage } from "./rules/onpage.ts";
-import { auditSchema } from "./rules/schema.ts";
-import { auditTech } from "./rules/tech.ts";
+import { auditSchema, type SchemaReport } from "./rules/schema.ts";
+import { auditTech, type TechReport } from "./rules/tech.ts";
 import type { Json } from "../db.ts";
 
 /**
@@ -252,6 +252,135 @@ describe("the appended graph sections render their data", () => {
     const text = formatTechReport(auditTech(crawl), AT);
     expect(text).toContain("Broken internal links (target crawled, answered 4xx/5xx): 1");
     expect(text).toContain("· https://e/ → https://e/gone (404)");
+  });
+
+  /**
+   * THE HREFLANG SECTIONS (R-4.10 / R-4.11). Each prints only when it has rows, with one
+   * deliberate exception: the reciprocity section also prints when every alternate it could NOT
+   * check points outside the crawl, because silence there would be read as "your alternates are
+   * returned" — the one thing a bounded crawl cannot claim.
+   */
+  it("technical: the hreflang sections name the code, the page and both ends of an unreturned pair", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "de", href: "https://e/de" },
+            { lang: "us", href: "https://e/us" },
+            { lang: "fr", href: "https://other.test/fr" },
+          ],
+        }),
+        page({ url: "https://e/de", hreflangs: [{ lang: "de", href: "https://e/de" }] }),
+        page({ url: "https://e/us", hreflangs: [{ lang: "en", href: "https://e/en" }] }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatTechReport(auditTech(crawl), AT);
+    expect(text).toContain("Hreflang codes not valid");
+    expect(text).toContain('· https://e/en — "us" does not start with an ISO 639-1 language code');
+    expect(text).toContain("Hreflang sets with no x-default (recommended, not required): 1");
+    expect(text).toContain("· https://e/en");
+    expect(text).toContain("Hreflang not reciprocated");
+    expect(text).toContain('· https://e/en → https://e/de (hreflang="de")');
+    // The unmeasured half is STATED rather than counted into the finding.
+    expect(text).toContain("1 alternate(s) point at pages this crawl did not fetch");
+  });
+
+  it("technical: an unreturnable pair the crawl could not check still says so, at zero findings", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "fr", href: "https://other.test/fr" },
+          ],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatTechReport(auditTech(crawl), AT);
+    expect(text).toContain("Hreflang not reciprocated");
+    expect(text).toContain("1 alternate(s) point at pages this crawl did not fetch");
+  });
+
+  it("technical: a crawl whose pages carry correct hreflang prints no hreflang section at all", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/en",
+          hreflangs: [
+            { lang: "en", href: "https://e/en" },
+            { lang: "de", href: "https://e/de" },
+            { lang: "x-default", href: "https://e/en" },
+          ],
+        }),
+        page({
+          url: "https://e/de",
+          hreflangs: [
+            { lang: "de", href: "https://e/de" },
+            { lang: "en", href: "https://e/en" },
+            { lang: "x-default", href: "https://e/en" },
+          ],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    expect(formatTechReport(auditTech(crawl), AT)).not.toContain("Hreflang");
+  });
+
+  /**
+   * A REPORT READ BACK FROM `audit_runs.report` IS `Json`, NOT A `TechReport` (P2-1).
+   *
+   * The rows written before 2026-09-02 carry no `hreflang` and no `retiredTypes` key at all, and
+   * `undefined` is not `null`: a renderer guarding only the null case would reach into an absent
+   * object and throw on a row a customer is entitled to read. The type says it cannot happen; the
+   * stored jsonb is older than the type. Both renderers are asserted on a report with the field
+   * REMOVED, which is exactly what those rows deserialize to.
+   */
+  it("a stored report from before these fields existed still renders, and says nothing new", () => {
+    const crawl: AuditCrawl = {
+      pages: [page({ url: "https://e/", jsonLdTypes: ["FAQPage"] })],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const tech = { ...auditTech(crawl) } as Record<string, unknown>;
+    delete tech.hreflang;
+    const techText = formatTechReport(tech as unknown as TechReport, AT);
+    expect(techText).toContain("Technical audit — 1 page(s)");
+    expect(techText).not.toContain("Hreflang");
+
+    const schema = { ...auditSchema(crawl) } as Record<string, unknown>;
+    delete schema.retiredTypes;
+    const schemaText = formatSchemaReport(schema as unknown as SchemaReport, AT);
+    expect(schemaText).toContain("Structured-data audit — 1 page(s)");
+    expect(schemaText).not.toContain("no longer produce a Google rich result");
+  });
+
+  it("structured data: a retired type is named with what it is now worth, and is not a defect", () => {
+    const crawl: AuditCrawl = {
+      pages: [
+        page({
+          url: "https://e/faq",
+          jsonLdTypes: ["FAQPage"],
+          jsonLdBlocks: ['{"@type":"FAQPage"}'],
+        }),
+      ],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const text = formatSchemaReport(auditSchema(crawl), AT);
+    expect(text).toContain("FAQPage: 1 page(s)");
+    expect(text).toContain(
+      "· FAQPage is no longer a Google rich result; keep it only if it serves users.",
+    );
+    // …and it is NOT reported as a missing required field, which is the work that buys nothing.
+    expect(text).not.toContain("Required fields missing");
   });
 
   it("structured data: missing fields, invalid JSON, partial storage, and a truthful note", () => {

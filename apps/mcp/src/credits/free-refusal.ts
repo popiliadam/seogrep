@@ -51,5 +51,10 @@ export function withNoChargeNote(
   note: string | null = NOT_CHARGED_SENTENCE,
 ): string {
   if (note === null || statesNoCharge(message)) return message;
-  return `${message} ${note}`;
+  // THE SEPARATOR IS DECIDED BY WHAT CAME BEFORE IT. A one-line refusal is prose, and a sentence
+  // follows a sentence after a space. A MULTI-LINE refusal is not prose — zod's input errors end
+  // with an indented field path — and a space there produced `→ at project_id You were not
+  // charged.`, in which the fee sentence reads as part of the path (measured live on three of six
+  // audit_tech refusals, 2026-09-02). One rule, in the one place the append happens.
+  return message.includes("\n") ? `${message}\n\n${note}` : `${message} ${note}`;
 }

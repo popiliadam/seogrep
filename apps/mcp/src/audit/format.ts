@@ -197,6 +197,55 @@ function renderSkippedCategory(skips: readonly AuditSkipped[]): string[] {
   ];
 }
 
+/**
+ * The three hreflang sections, or nothing at all.
+ *
+ * Nothing when the crawl never stored alternates (`null`) — the sitemapDiff rule read from the
+ * other side: silence there is "nobody looked", and a heading at zero would claim otherwise.
+ *
+ * The reciprocity section is the one that prints WITHOUT rows, and only in one case: alternates
+ * whose target this crawl did not fetch. Their absence from the finding list is a bound of the
+ * crawl, not a property of the site, and a reader who is told nothing reads "they are returned".
+ */
+function hreflangSections(report: TechReport["hreflang"] | undefined): string[] {
+  // `undefined` AS WELL AS `null`, and they arrive from different places: null is this engine
+  // saying "no page carried alternates", undefined is a row written to audit_runs.report before
+  // the field existed. The type cannot see the second — stored jsonb is older than the type —
+  // and a guard on null alone would throw while rendering a report a tenant already paid for.
+  if (report === null || report === undefined) return [];
+  const lines: string[] = [];
+  if (report.invalidCodes.length > 0) {
+    lines.push("", `Hreflang codes not valid (ISO 639-1 language, optional region): ${report.invalidCodes.length}`);
+    lines.push(bulletList(report.invalidCodes.map((c) => `${c.url} — ${c.reason}`)));
+  }
+  if (report.missingXDefault.length > 0) {
+    lines.push(
+      "",
+      // R-4.11 makes x-default a FALLBACK, not a requirement, and the heading has to carry
+      // that: "sets with no x-default" alone reads as a missing mandatory tag.
+      `Hreflang sets with no x-default (recommended, not required): ${report.missingXDefault.length}`,
+    );
+    lines.push(bulletList(report.missingXDefault));
+    lines.push("  Note: x-default is the fallback for a visitor whose language the set does not list.");
+  }
+  if (report.notReciprocated.length > 0 || report.unmeasuredTargets > 0) {
+    lines.push(
+      "",
+      `Hreflang not reciprocated (a pair is ignored unless both pages point at each other): ${report.notReciprocated.length}`,
+    );
+    if (report.notReciprocated.length > 0) {
+      lines.push(bulletList(report.notReciprocated.map((g) => `${g.from} → ${g.to} (hreflang="${g.lang}")`)));
+    }
+    if (report.unmeasuredTargets > 0) {
+      lines.push(
+        `  Note: ${report.unmeasuredTargets} alternate(s) point at pages this crawl did not fetch, so whether they point back was not measured.`,
+      );
+    }
+    lines.push("  Note: only the HTML channel is read here; a return link served in a header or a sitemap is not seen.");
+  }
+  return lines;
+}
+
 export function formatTechReport(report: TechReport, fetchedAt: string | null): string {
   const { status } = report;
   const lines = [
@@ -296,6 +345,7 @@ export function formatTechReport(report: TechReport, fetchedAt: string | null): 
     lines.push("", `Broken internal links (target crawled, answered 4xx/5xx): ${report.brokenInternalLinks.length}`);
     lines.push(bulletList(report.brokenInternalLinks.map((l) => `${l.from} → ${l.to} (${l.status})`)));
   }
+  lines.push(...hreflangSections(report.hreflang));
   return lines.join("\n");
 }
 
@@ -314,6 +364,23 @@ export function formatSchemaReport(report: SchemaReport, fetchedAt: string | nul
     lines.push(bulletList(report.typeCoverage.map((t) => `${t.type}: ${t.pages} page(s)`)));
   } else {
     lines.push("", "No JSON-LD @type found anywhere on the site.");
+  }
+
+  // NOT a findings section: nothing here is broken. It exists so a reader whose FAQ markup stopped
+  // producing a rich result learns it from the audit rather than from a traffic chart, and it is
+  // read off the type NAMES, so a crawl that stored no bodies still says it (R-2.2).
+  // `?? []` for the same reason hreflangSections tolerates undefined: a row stored before this
+  // field existed has no such key, and rendering it must not throw.
+  const retiredTypes = report.retiredTypes ?? [];
+  if (retiredTypes.length > 0) {
+    lines.push("", "Types that no longer produce a Google rich result:");
+    lines.push(
+      bulletList(
+        retiredTypes.map(
+          (type) => `${type} is no longer a Google rich result; keep it only if it serves users.`,
+        ),
+      ),
+    );
   }
 
   if (report.pagesWithout.length > 0) {

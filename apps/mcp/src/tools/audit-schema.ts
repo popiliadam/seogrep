@@ -28,7 +28,8 @@ const DESCRIPTION =
   "Report structured-data coverage AND required-field validation for a project's latest crawl: " +
   "which pages carry JSON-LD, which carry none, how often each schema.org @type name appears " +
   "site-wide, which blocks fail to parse, and — on pages whose crawl stored the JSON-LD bodies — " +
-  "which known types are missing required fields. Detection is JSON-LD only; microdata and RDFa " +
+  "which known types are missing required fields. Types Google no longer shows a rich result for " +
+  "(FAQPage, HowTo) are reported as present and are not judged. Detection is JSON-LD only; microdata and RDFa " +
   "are not read, unknown @type names are never judged, and a crawl made before bodies were stored " +
   "counts for coverage but is not validated. Costs 5 credits. Run crawl_site first.";
 

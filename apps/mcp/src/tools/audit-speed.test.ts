@@ -149,12 +149,116 @@ describe("formatSpeedAudit", () => {
     expect(text).toMatch(/not field data from real visitors/i);
   });
 
+  /**
+   * B-9 — the form factor. The vendor's `for_mobile` defaults to `false`, so every measurement
+   * this tool has ever taken was a DESKTOP one (docs.dataforseo.com/v3/on_page/lighthouse/live/
+   * json/, read 2026-09-02: "if set to `false`, the results will be provided for desktop … default
+   * value: `false`"). The output said nothing about it, so a reader with a mobile-first audience
+   * had no way to tell which device these numbers describe (R-1.4, R-1.8, R-3.14).
+   */
+  it("names the form factor — these are desktop numbers, and mobile is not measured (B-9)", () => {
+    const text = formatSpeedAudit([page()]);
+    expect(text).toMatch(/desktop run/i);
+    expect(text).toMatch(/mobile is not measured/i);
+  });
+
+  /**
+   * B-2 — one lab run is a sample, not a verdict. Measured live 2026-09-02: the SAME page, twice,
+   * two minutes apart, scored 74 then 84, with Speed Index 3.5 s then 1.6 s and LCP 2.9 s then
+   * 2.4 s — the run-to-run spread straddled the very 2.5 s boundary the metric lines now print a
+   * band against. The heading has to say so BEFORE the bands are read, or the tool hands the
+   * reader a coin flip wearing a threshold's clothes (R-1.4: the ranking signal is field data at
+   * the 75th percentile, which this tool does not read).
+   */
+  it("warns that one lab run is a single sample that moves between runs (B-2)", () => {
+    const text = formatSpeedAudit([page()]);
+    expect(text).toMatch(/single sample/i);
+    expect(text).toMatch(/75th percentile/i);
+    // …and it is in the HEADING — before any number, not in a footnote after them.
+    const heading = text.split("\n\n")[0] ?? "";
+    expect(heading).toMatch(/single sample/i);
+    expect(heading).toMatch(/desktop run/i);
+  });
+
   it("renders the score on Lighthouse's own 0–100 presentation", () => {
     expect(formatSpeedAudit([page()])).toContain("Performance score: 41 / 100");
   });
 
   it("prints the vendor's own formatted metric value", () => {
     expect(formatSpeedAudit([page()])).toContain("Largest Contentful Paint: 6.1 s");
+  });
+
+  /**
+   * B-4 — the band, printed against the value. Before this, LCP 2.9 s and LCP 2.4 s came out in
+   * the same voice and the reader could not tell which one crossed Google's 2.5 s line.
+   *
+   * The boundary is quoted from the SAME constant the verdict is computed from, formatted rather
+   * than retyped, so the sentence cannot drift from the rule it describes.
+   */
+  it("rates a Core Web Vital against its published threshold, and names the threshold (B-4)", () => {
+    const text = formatSpeedAudit([page()]);
+    expect(text).toContain(
+      "Largest Contentful Paint: 6.1 s — poor (good is 2,500 ms or less)",
+    );
+  });
+
+  it.each([
+    [2400, "good"],
+    [2900, "needs improvement"],
+    [6104.2, "poor"],
+  ])("prints an LCP of %d ms as %s", (numeric, rating) => {
+    const text = formatSpeedAudit([
+      page({
+        metrics: [
+          {
+            id: "largest-contentful-paint",
+            label: "Largest Contentful Paint",
+            display: null,
+            numeric,
+            unit: "ms",
+          },
+        ],
+        opportunities: [],
+      }),
+    ]);
+    expect(text).toContain(`— ${rating} (good is 2,500 ms or less)`);
+  });
+
+  it("rates CLS on its own unitless scale, without inventing a unit for the threshold", () => {
+    const text = formatSpeedAudit([
+      page({
+        metrics: [
+          {
+            id: "cumulative-layout-shift",
+            label: "Cumulative Layout Shift",
+            display: "0.19",
+            numeric: 0.19,
+            unit: "",
+          },
+        ],
+        opportunities: [],
+      }),
+    ]);
+    expect(text).toContain("Cumulative Layout Shift: 0.19 — needs improvement (good is 0.1 or less)");
+    expect(text).not.toMatch(/0\.1 ms/);
+  });
+
+  /**
+   * The silence, and it is the load-bearing half: a metric with no published threshold gets no
+   * verdict at all. Printing "good" for a Speed Index nobody publishes a band for would be a
+   * fabricated rule — the same class of claim as a fabricated zero, and read the same way.
+   */
+  it("prints NO band for a diagnostic metric that has no published threshold (B-4)", () => {
+    const text = formatSpeedAudit([
+      page({
+        metrics: [
+          { id: "interactive", label: "Time to Interactive", display: null, numeric: 9412.7, unit: "ms" },
+        ],
+        opportunities: [],
+      }),
+    ]);
+    expect(text).toContain("Time to Interactive: 9,413 ms");
+    expect(text).not.toMatch(/good|needs improvement|poor/i);
   });
 
   it("falls back to the raw number WITH its unit when the vendor sent no formatted value", () => {

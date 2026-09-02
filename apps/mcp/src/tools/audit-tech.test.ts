@@ -82,9 +82,21 @@ const LOADED_CRAWL: AuditCrawl = {
       links: ["https://loaded.test/noindex", "https://loaded.test/gone"],
       depth: 0,
       inLinkCount: 0,
+      // One row for each hreflang section: an unusable code, a set with no x-default, and an
+      // alternate whose target (below) declares alternates of its own and does not point back.
+      hreflangs: [
+        { lang: "en", href: "https://loaded.test/" },
+        { lang: "us", href: "https://loaded.test/gone" },
+      ],
     }),
     page({ url: "https://loaded.test/noindex", robotsMeta: "noindex", depth: 1, inLinkCount: 1 }),
-    page({ url: "https://loaded.test/gone", status: 404, depth: 1, inLinkCount: 1 }),
+    page({
+      url: "https://loaded.test/gone",
+      status: 404,
+      depth: 1,
+      inLinkCount: 1,
+      hreflangs: [{ lang: "en", href: "https://loaded.test/gone" }],
+    }),
     page({ url: "https://loaded.test/boom", status: 503, depth: 1, inLinkCount: 0 }),
     page({
       url: "https://loaded.test/buried",
@@ -197,12 +209,14 @@ function docsGuaranteedLabels(): string[] {
 }
 
 describe("audit_tech — the ground truth the prose has to match", () => {
-  it("prints twelve sections, four of which appear on every run", () => {
+  it("prints fifteen sections, four of which appear on every run", () => {
     // Pinned so a formatter that GAINS or LOSES a section is visible as itself, not only as a
-    // knock-on failure of the prose specs below. The counts are the 2026-08-26 measurement.
+    // knock-on failure of the prose specs below. The counts were 4/12/8 on 2026-08-26 and became
+    // 4/15/11 on 2026-09-02, when the three hreflang sections shipped (R-4.10 / R-4.11) — and
+    // this spec is why the description and the docs page could not ship without them.
     expect(ALWAYS_PRINTED).toHaveLength(4);
-    expect(EVERY_SECTION).toHaveLength(12);
-    expect(ONLY_WHEN_PRESENT).toHaveLength(8);
+    expect(EVERY_SECTION).toHaveLength(15);
+    expect(ONLY_WHEN_PRESENT).toHaveLength(11);
   });
 
   it("prints every guaranteed section on the loaded crawl too", () => {

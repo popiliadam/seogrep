@@ -14,6 +14,7 @@ Reports on the JSON-LD found across the site:
 - **Coverage** — how many pages carry JSON-LD structured data and how many have none.
 - **Type spread** — a site-wide count of the schema.org `@type` names in use (`Organization`, `WebSite`, `Article`, `Product`, and so on).
 - **Gaps** — the URLs of pages with no structured data at all.
+- **Types that no longer produce a Google rich result** — printed only when the site declares one. `FAQPage` and `HowTo` are no longer in Google's rich-result gallery, so the markup is reported as present and left alone: it is not checked for missing fields, because repairing it would buy nothing.
 
 **Detection is JSON-LD only** — microdata and RDFa are not read at all, so a page marked up that way counts here as having no structured data.
 
@@ -21,7 +22,7 @@ Coverage is what this tool is for, and coverage is what it always reports. On a 
 
 ## What it checks in a stored JSON-LD body
 
-For a short, fixed list of schema.org types it checks that the fields without which the markup says nothing are declared — a `Product` with no `offers`, an `Article` with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no address. A type **not** on that list is **not judged at all**: schema.org has hundreds of types, and inventing requirements for the ones nobody considered would produce findings you could not trust.
+For a short, fixed list of schema.org types — each one backed by a type Google's own gallery documents — it checks that the fields without which the markup says nothing are declared — a `Product` with no `offers`, an `Article` with no `datePublished`, a `BreadcrumbList` with no trail, a `LocalBusiness` with no address. A type **not** on that list is **not judged at all**: schema.org has hundreds of types, and inventing requirements for the ones nobody considered would produce findings you could not trust.
 
 A block that is not valid JSON is **reported, not skipped**. A parser that cannot read it is a stand-in for a search engine that cannot read it either, and it is invisible in the rendered page — nobody finds it by looking.
 
