@@ -96,6 +96,33 @@ describe("withNoChargeNote", () => {
     }
   });
 
+  /**
+   * A MULTI-LINE REFUSAL GETS THE SENTENCE ON ITS OWN LINE (T-B6, measured live 2026-09-02).
+   *
+   * Three of the six live refusals read like this:
+   *
+   *     Invalid input for "audit_tech": ✖ Invalid UUID
+   *       → at project_id You were not charged.
+   *
+   * The fee sentence had been glued to the end of zod's field PATH, where it reads as part of the
+   * path rather than as a sentence. The join is decided once, here, by the shape of what came
+   * before it — the same "one place, one rule" reason this module exists at all.
+   */
+  it("puts the sentence on its own line when the refusal is multi-line", () => {
+    const zodShaped = 'Invalid input for "audit_tech": ✖ Invalid UUID\n  → at project_id';
+    const out = withNoChargeNote(zodShaped);
+    expect(out).toBe(`${zodShaped}\n\n${NOT_CHARGED_SENTENCE}`);
+    // The structured last line survives intact — nothing is appended INSIDE it.
+    expect(out).toMatch(/→ at project_id$/m);
+    expect(out).not.toContain("project_id You were");
+  });
+
+  it("keeps the single-line join a plain space — one sentence after another", () => {
+    expect(withNoChargeNote("That project is archived.")).toBe(
+      `That project is archived. ${NOT_CHARGED_SENTENCE}`,
+    );
+  });
+
   it("promises NOTHING when the caller has nothing to promise (note === null)", () => {
     // The charge:"worker" carve-out: the reserve belongs to a background job this request
     // cannot see, so a blanket "you were not charged" would be a claim about an undecided charge.
