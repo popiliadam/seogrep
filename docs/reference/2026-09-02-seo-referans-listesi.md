@@ -204,18 +204,18 @@ birincil kaynakla **çelişti**. Hiçbiri koda kural olarak gömülmemelidir.
 
 | tool | uyacağı kurallar | en olası bayatlama riski |
 |---|---|---|
-| setup_project | R-9.1, R-9.2, R-9.3, R-9.5 | ccTLD/dil varsayımının `.tr` için sabit kodlanması; vanity ccTLD istisnası (R-9.2) atlanır |
-| connect_gsc | R-7.7, R-7.9 | OAuth scope ve kota varsayımı; "diğer kaynaklar" 20 QPS sınırının (R-7.9) hesaba katılmaması |
+| setup_project | R-9.1, R-9.2, R-9.3, R-9.5 | (2026-09-02 ölçüldü: kodda TLD dallanması YOK — risk bugün karşılıksız) ccTLD/dil varsayımı ileride sabit kodlanırsa; vanity ccTLD istisnası (R-9.2) |
+| connect_gsc | — (R-7.7, R-7.9 İLGİSİZ — 2026-09-02 ölçüldü: tool Google'a istek atmıyor) | Dış kural yok |
 | list_projects | — (yalnız kiracı verisi) | Dış kural yok; risk yalnız iç şema |
 | get_credit_balance | — | Dış kural yok |
 | list_credit_activity | — | Dış kural yok |
-| list_jobs | R-8.3 | DFS'in 30 gün JSON / 7 gün HTML saklama penceresi dolduktan sonra job'ın "var" görünmesi |
-| get_job_status | R-8.3 | Aynı saklama penceresi; süresi geçmiş task ID'sinin hâlâ sorgulanabilir sanılması |
+| list_jobs | — (R-8.3 İLGİSİZ — 2026-09-02 ölçüldü: `jobs` satırlarını DFS değil kendi tarayıcımız + GSC yazıyor; DFS tabanlı asenkron tool eklenirse yeniden ölç) | Dış kural yok |
+| get_job_status | — (R-8.3 İLGİSİZ — aynı ölçüm; canlıda 43 günlük iş tam cevap verdi) | Dış kural yok |
 | whats_next | R-3.17, R-3.19, R-6.9, R-7.12 | Öneri metninin kaldırılmış bir özelliğe (ör. FAQ schema, disavow) yönlendirmesi |
 | list_gsc_properties | R-7.9 | Kota sınıfının Search Analytics ile karıştırılması |
 | track_gsc_property | R-6.7, R-7.9 | Domain property ile URL-prefix property farkının (disavow desteklemez) gözden kaçması |
 | untrack_project | — | Dış kural yok |
-| track_keywords | R-6.5, R-8.8, R-8.9 | Hacim semantiği: yuvarlanmış, 12 ay ortalaması, yakın varyant dahil (R-8.9) |
+| track_keywords | R-6.5 (R-8.8, R-8.9 İLGİSİZ — 2026-09-02 ölçüldü: tool hacim/intent göstermiyor; o risk `research_keywords`/`discover_keywords`/`keyword_gap`te) | Google'a otomatik sorgu ToS (R-6.5) — SERP çekimi vendor üzerinden olmalı |
 | crawl_site | R-3.1–R-3.8, R-3.11–R-3.14, R-3.18, R-3.21, R-4.9 | 500 KiB robots.txt sınırı ve `crawl-delay`'in Google'da geçersizliği; `priority`/`changefreq` üretmek |
 | pull_gsc_data | R-7.1–R-7.7, R-7.10, R-7.12 | `rowLimit` 25.000 tavanı ve `dataState` seçimi; preliminary veriyi final sanmak |
 | research_keywords | R-8.1, R-8.8, R-8.9 | Keyword Planner hacminin exact-match-only ve yuvarlanmış olduğunun raporda söylenmemesi |
