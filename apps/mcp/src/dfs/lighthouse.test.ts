@@ -25,13 +25,21 @@ import fixtureResponse from "./fixtures/lighthouse.json";
  * NEVER #5): the live path is driven only through an injected fake transport, and the
  * env-resolution path through pinned env sources.
  *
- * The fixture mirrors the Lighthouse result DataForSEO passes through, and three of its details
+ * The fixture mirrors the Lighthouse result DataForSEO passes through, and four of its details
  * are deliberate rather than incidental — each one exists so an honesty rule can be PROVEN on the
  * real fixture rather than only on a hand-built object:
  *   - `speed-index` is ABSENT, so "a metric the vendor did not send prints no line" is measurable.
  *   - `interactive` carries a numericValue but NO displayValue, so the numeric fallback is real.
  *   - `uses-long-cache-ttl` is an opportunity with `overallSavingsMs: 0`, and `viewport` is an
  *     audit whose details are not an opportunity at all.
+ *   - the result's own keys are the vendor's REAL ones — `lighthouseVersion`, `requestedUrl`,
+ *     `finalUrl`, `fetchTime` (B-1). They used to be snake_case, which DataForSEO does not send:
+ *     the parser therefore read null for all four in production, the provenance line was never
+ *     printed on any live call, and a redirect could never be detected — while this fixture kept
+ *     the whole suite green. The camelCase shape is the documented one
+ *     (https://docs.dataforseo.com/v3/on_page/lighthouse/live/json/, read 2026-09-02: the result
+ *     carries "lighthouseVersion", "requestedUrl", "mainDocumentUrl", "finalDisplayedUrl",
+ *     "finalUrl", "fetchTime"); only the REQUEST parameters are snake_case.
  */
 
 const URL_UNDER_TEST = "https://slowshop.org/";
@@ -50,6 +58,69 @@ describe("parseLighthouseResponse", () => {
     expect(page.lighthouse_version).toBe("11.4.0");
     // Kept on Lighthouse's own 0–1 scale here; the 0–100 presentation is the renderer's job.
     expect(page.performance_score).toBe(0.41);
+  });
+
+  /**
+   * B-1, the axis the fixture used to hide. The provenance fields are read from the keys the
+   * vendor ACTUALLY sends, and this spec hands the parser an object carrying ONLY those keys —
+   * so it cannot pass by way of a snake_case sibling the way the old fixture let it.
+   */
+  it("reads the provenance from the vendor's camelCase keys (B-1)", () => {
+    const page = parseLighthouseResponse(
+      {
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                lighthouseVersion: "13.0.3",
+                requestedUrl: "https://slowshop.org/",
+                finalUrl: "https://www.slowshop.org/",
+                fetchTime: "2026-03-25T13:27:53.339Z",
+              },
+            ],
+          },
+        ],
+      },
+      URL_UNDER_TEST,
+    );
+    expect(page.lighthouse_version).toBe("13.0.3");
+    expect(page.fetch_time).toBe("2026-03-25T13:27:53.339Z");
+    expect(page.requested_url).toBe("https://slowshop.org/");
+    // The redirect axis, which was equally unreachable: a page measured at a DIFFERENT URL from
+    // the one paid for must be attributable, and `finalUrl` is the only thing that says so.
+    expect(page.final_url).toBe("https://www.slowshop.org/");
+  });
+
+  /**
+   * The transition half of the same fix. Nothing observed sends snake_case here, but the aliases
+   * cost one line each and the alternative is a paid measurement thrown away on the day a vendor
+   * (or a proxy) hands back the other convention.
+   */
+  it("still accepts a snake_case body, so neither convention loses the provenance (B-1)", () => {
+    const page = parseLighthouseResponse(
+      {
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                lighthouse_version: "11.4.0",
+                requested_url: "https://slowshop.org/",
+                final_url: "https://www.slowshop.org/",
+                fetch_time: "2026-08-17T09:12:44.831Z",
+              },
+            ],
+          },
+        ],
+      },
+      URL_UNDER_TEST,
+    );
+    expect(page.lighthouse_version).toBe("11.4.0");
+    expect(page.fetch_time).toBe("2026-08-17T09:12:44.831Z");
+    expect(page.final_url).toBe("https://www.slowshop.org/");
   });
 
   it("carries the vendor's own formatted value for every metric that has one", () => {
@@ -160,6 +231,64 @@ describe("parseLighthouseResponse", () => {
         savings_ms: 1840,
       },
       { id: "unused-javascript", title: "Reduce unused JavaScript", savings_ms: 620 },
+    ]);
+  });
+
+  /**
+   * B-7 — the axis `savings <= 0` cannot see. Lighthouse keeps emitting an opportunity audit
+   * after the page PASSES it: the score goes to 1, the title flips to the past tense, and the
+   * saving stays positive. Measured live on 2026-09-02, where the second run of the same page
+   * printed "Initial server response time was short — an estimated 180 ms saved" under a heading
+   * reading "Biggest opportunities" — i.e. the report told the customer to fix something
+   * Lighthouse had just told it was already done.
+   *
+   * `score` was parsed and then never read, so this needed no new field, only the missing filter.
+   */
+  it("drops an opportunity Lighthouse already PASSED, even with a positive saving (B-7)", () => {
+    const page = parseLighthouseResponse(fixtureResponse, URL_UNDER_TEST);
+    expect(page.opportunities.map((opportunity) => opportunity.id)).not.toContain(
+      "server-response-time",
+    );
+  });
+
+  /**
+   * The other side of that filter, and the one a "score >= 0.9" reading would get wrong: an
+   * opportunity the vendor scored NOT AT ALL is unjudged, not passed. Dropping it would hide a
+   * real saving, which is the opposite failure and the more expensive one.
+   */
+  it("KEEPS an opportunity whose score the vendor omitted — unscored is not passed (B-7)", () => {
+    const page = parseLighthouseResponse(
+      {
+        status_code: 20000,
+        tasks: [
+          {
+            status_code: 20000,
+            result: [
+              {
+                audits: {
+                  "uses-responsive-images": {
+                    id: "uses-responsive-images",
+                    title: "Properly size images",
+                    details: { type: "opportunity", overallSavingsMs: 300 },
+                  },
+                  "modern-image-formats": {
+                    id: "modern-image-formats",
+                    title: "Serve images in next-gen formats",
+                    score: 0.99,
+                    details: { type: "opportunity", overallSavingsMs: 120 },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      URL_UNDER_TEST,
+    );
+    // …and 0.99 is kept too: the boundary is "passed" (exactly 1), not "nearly passed".
+    expect(page.opportunities.map((opportunity) => opportunity.id)).toEqual([
+      "uses-responsive-images",
+      "modern-image-formats",
     ]);
   });
 

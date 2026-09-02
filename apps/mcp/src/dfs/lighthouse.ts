@@ -222,8 +222,32 @@ type RawAudit = z.infer<typeof auditSchema>;
  * degrades in pieces: a page can score on some categories and not others, an audit can be marked
  * not-applicable and carry no numbers, and a strict schema would throw away a PAID measurement
  * because one optional field was missing.
+ *
+ * THE KEYS ARE camelCase, and that is the fix for B-1 rather than a style choice. A Lighthouse
+ * result (LHR) is a Lighthouse document that DataForSEO passes through verbatim, so the ENVELOPE
+ * around it is snake_case — `status_code`, `tasks`, `result` — while the result INSIDE it keeps
+ * Lighthouse's own casing. The vendor's own documented example carries `lighthouseVersion`,
+ * `requestedUrl`, `mainDocumentUrl`, `finalDisplayedUrl`, `finalUrl` and `fetchTime`
+ * (https://docs.dataforseo.com/v3/on_page/lighthouse/live/json/, read 2026-09-02); only the
+ * REQUEST parameters (`url`, `for_mobile`, …) are snake_case.
+ *
+ * This schema used to ask for the snake_case names, so all four fields parsed as null on every
+ * live call: the provenance line was never printed once in production, and a redirect could not
+ * be detected at all — a redirected page's numbers were reported under the URL that was asked
+ * for. The fixture asked for the same wrong names, so the whole suite stayed green over it
+ * (signed lesson 12: a double more forgiving than the real runtime turns a missing field into a
+ * PASSING test).
+ *
+ * The snake_case names are kept as ALIASES rather than deleted. They are not a claim that anyone
+ * sends them — nothing observed does — they are one line each of insurance against throwing away
+ * a measurement the customer already paid for, and the camelCase key wins whenever both appear.
  */
 const lighthouseResultSchema = z.object({
+  lighthouseVersion: z.string().nullish(),
+  requestedUrl: z.string().nullish(),
+  finalUrl: z.string().nullish(),
+  fetchTime: z.string().nullish(),
+  // Transition aliases — see the note above. Never preferred over the camelCase key.
   lighthouse_version: z.string().nullish(),
   requested_url: z.string().nullish(),
   final_url: z.string().nullish(),
@@ -304,11 +328,21 @@ function projectMetrics(audits: Readonly<Record<string, RawAudit>>): readonly Sp
 /**
  * The improvement opportunities, largest estimated saving first, capped.
  *
- * Two filters, both deliberate. `details.type === "opportunity"` is Lighthouse's own marker for
+ * Three filters, all deliberate. `details.type === "opportunity"` is Lighthouse's own marker for
  * "this audit estimates a load-time saving" — every other audit type (debugdata, table, …) carries
  * no such estimate and would be listed under a heading that promises one. And a saving of zero is
  * dropped: Lighthouse emits passing opportunity audits with `overallSavingsMs: 0`, and printing
  * them as "opportunities" would pad the list with things already done.
+ *
+ * The THIRD is B-7, and the reason the rule above was stated correctly but enforced by half. A
+ * PASSING opportunity audit does not always carry a zero saving: Lighthouse scores it 1, flips its
+ * title to the past tense, and keeps the estimate. Measured live on 2026-09-02 — "Initial server
+ * response time was short — an estimated 180 ms saved" printed under "Biggest opportunities", i.e.
+ * a completed item listed as work to do. `score` was already parsed here and simply never read.
+ *
+ * The boundary is `score === 1` — PASSED — not a threshold near it. An audit scored 0.99 is not
+ * passed, and an audit the vendor did not score at all is UNJUDGED rather than done: dropping
+ * either would hide a real saving, which is the more expensive direction to be wrong in.
  */
 function projectOpportunities(
   audits: Readonly<Record<string, RawAudit>>,
@@ -316,6 +350,7 @@ function projectOpportunities(
   return Object.entries(audits)
     .flatMap(([key, audit]) => {
       if (audit.details?.type !== "opportunity") return [];
+      if (audit.score === 1) return [];
       const savings = audit.details.overallSavingsMs ?? null;
       if (savings === null || savings <= 0) return [];
       return [{ id: audit.id ?? key, title: audit.title ?? (audit.id ?? key), savings_ms: savings }];
@@ -343,10 +378,10 @@ export function parseLighthouseResponse(raw: unknown, requestedUrl: string): Pag
   const lhr = parsed.data;
   const audits = lhr.audits ?? {};
   return {
-    requested_url: lhr.requested_url ?? requestedUrl,
-    final_url: lhr.final_url ?? null,
-    fetch_time: lhr.fetch_time ?? null,
-    lighthouse_version: lhr.lighthouse_version ?? null,
+    requested_url: lhr.requestedUrl ?? lhr.requested_url ?? requestedUrl,
+    final_url: lhr.finalUrl ?? lhr.final_url ?? null,
+    fetch_time: lhr.fetchTime ?? lhr.fetch_time ?? null,
+    lighthouse_version: lhr.lighthouseVersion ?? lhr.lighthouse_version ?? null,
     performance_score: lhr.categories?.performance?.score ?? null,
     metrics: projectMetrics(audits),
     opportunities: projectOpportunities(audits),

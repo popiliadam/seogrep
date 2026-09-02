@@ -23,10 +23,12 @@
       },
       "result": [
         {
-          "lighthouse_version": "11.4.0",
-          "requested_url": "https://slowshop.org/",
-          "final_url": "https://www.slowshop.org/",
-          "fetch_time": "2026-08-17T09:12:44.831Z",
+          "lighthouseVersion": "11.4.0",
+          "requestedUrl": "https://slowshop.org/",
+          "mainDocumentUrl": "https://www.slowshop.org/",
+          "finalDisplayedUrl": "https://www.slowshop.org/",
+          "finalUrl": "https://www.slowshop.org/",
+          "fetchTime": "2026-08-17T09:12:44.831Z",
           "categories": {
             "performance": {
               "id": "performance",
@@ -102,6 +104,18 @@
                 "type": "opportunity",
                 "overallSavingsMs": 620,
                 "overallSavingsBytes": 215040
+              }
+            },
+            "server-response-time": {
+              "id": "server-response-time",
+              "title": "Initial server response time was short",
+              "score": 1,
+              "numericValue": 180,
+              "numericUnit": "millisecond",
+              "displayValue": "Root document took 180 ms",
+              "details": {
+                "type": "opportunity",
+                "overallSavingsMs": 180
               }
             },
             "uses-long-cache-ttl": {
