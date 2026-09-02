@@ -122,6 +122,29 @@ describe("auditOnpage — heading, canonical, thin-content rules", () => {
     const selfSlash = auditOnpage(crawl([page({ url: "https://e/c", canonical: "https://e/c/" })]));
     expect(typesFor(selfSlash, "https://e/c")).not.toContain("canonical_elsewhere");
   });
+
+  /**
+   * THE FRAGMENT AXIS OF THE SAME TOLERANCE, and it was measured UNPINNED (2026-09-02).
+   *
+   * `sameUrl` normalizes away BOTH a trailing slash and a fragment, and its comment says so — but
+   * only the slash axis had a test. Deleting `url.hash = ""` from the source left the whole audit
+   * suite green at 244/244, so a page whose self-canonical carries `#top` — an ordinary shape, a
+   * skip-link target or a CMS anchor — would have started collecting a false
+   * `canonical_elsewhere` in a 30-credit report with no gate to notice. Varying the axis rather
+   * than the value is the whole lesson here (signed lesson 14): the tolerance had two, and one of
+   * them was defended.
+   *
+   * Both directions are asserted, because normalization that ran on only one side would still
+   * pass a one-sided test.
+   */
+  it.each([
+    ["fragment on the canonical", "https://e/d", "https://e/d#top"],
+    ["fragment on the page url", "https://e/e#section", "https://e/e"],
+  ])("self-canonical tolerance ignores a %s", (_axis, url, canonical) => {
+    expect(typesFor(auditOnpage(crawl([page({ url, canonical })])), url)).not.toContain(
+      "canonical_elsewhere",
+    );
+  });
   it("flags thin content under 200 words", () => {
     const report = auditOnpage(crawl([page({ url: "https://e/a", wordCount: 120 })]));
     expect(typesFor(report, "https://e/a")).toContain("thin_content");
