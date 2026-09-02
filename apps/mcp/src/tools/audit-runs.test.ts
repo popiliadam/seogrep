@@ -72,7 +72,22 @@ const CRAWL: AuditCrawl = {
 };
 
 /** A loader that answers with the fixture above, standing in for the tenant-scoped query. */
-const LOAD_OK = async () => ({ ok: true as const, crawl: CRAWL, jobId: CRAWL_JOB_ID });
+const LOAD_OK = async (_u: string, _p: string, jobId?: string) => ({
+  ok: true as const,
+  crawl: CRAWL,
+  jobId: jobId ?? CRAWL_JOB_ID,
+  requested: jobId !== undefined,
+});
+
+/**
+ * THE SCOPE SENTENCE every audit now opens with (audit/load.ts states why it exists). It is
+ * spelled out here rather than computed, because it is the customer's first line and this file is
+ * where the three audits' delivered text is frozen.
+ */
+const SCOPE =
+  "Audited crawl 99999999 from 2026-08-14: 2 page(s), 1 URL(s) skipped. That is this project's " +
+  "most recent crawl — pass job_id (from list_jobs) to audit a different one, or run crawl_site " +
+  "again to widen it.";
 
 /**
  * What each audit produced BEFORE this slice: the engine's report and `format<X>Report`'s
@@ -244,7 +259,7 @@ describe("the returned text is byte-identical to what the audit returned before 
 
     const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
 
-    expect(result.content[0]?.text).toBe(SNAPSHOTS[name]);
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\n${SNAPSHOTS[name]}`);
   });
 
   /**
@@ -263,8 +278,59 @@ describe("the returned text is byte-identical to what the audit returned before 
 
     const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
 
-    expect(result.content[0]?.text).toBe(before().text);
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\n${before().text}`);
     expect(sink.runs[0]?.report).toEqual(before().report);
+  });
+});
+
+/**
+ * WHICH CRAWL WAS JUDGED — the fix for the hole measured live on 2026-09-02 (audit/load.ts states
+ * it in full: a 30-credit audit read a one-page crawl that had displaced a 51-page one, and said
+ * nothing about either). Three things have to hold, and each is a separate way to lose it:
+ * the caller's `job_id` must REACH the loader, the scope sentence must come FIRST, and the
+ * "you could have chosen" note must appear only when they did not choose.
+ */
+describe("every audit says which crawl it judged", () => {
+  const CHOSEN = "12345678-aaaa-4bbb-8ccc-dddddddddddd";
+
+  it.each(RENDERS)("$name opens with the scope sentence, before any finding", async ({ render }) => {
+    const sink = recorder();
+
+    const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.content[0]?.text?.startsWith(SCOPE)).toBe(true);
+  });
+
+  it("passes the caller's job_id to the loader and audits THAT crawl", async () => {
+    const seen: (string | undefined)[] = [];
+    const sink = recorder();
+    const tool = makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: async (u, p, jobId) => {
+        seen.push(jobId);
+        return LOAD_OK(u, p, jobId);
+      },
+      loadProject: NO_PROJECT,
+      writeRun: sink.writeRun,
+    });
+
+    const result = await tool.run(CTX, { project_id: PROJECT_ID, job_id: CHOSEN });
+
+    expect(seen).toEqual([CHOSEN]);
+    expect(result.content[0]?.text).toContain("Audited crawl 12345678 from 2026-08-14");
+    // The row points at the crawl the caller named, not at whatever was newest.
+    expect(sink.runs[0]?.target.crawlJobId).toBe(CHOSEN);
+  });
+
+  it("drops the 'pass job_id' note once the caller has passed one", async () => {
+    const sink = recorder();
+
+    const result = await toolFor(renderOnpageAudit, sink.writeRun).run(CTX, {
+      project_id: PROJECT_ID,
+      job_id: CHOSEN,
+    });
+
+    expect(result.content[0]?.text).not.toMatch(/list_jobs/);
+    expect(result.content[0]?.text).not.toMatch(/most recent crawl/);
   });
 });
 
@@ -317,7 +383,7 @@ describe("a lost run is not a delivered audit", () => {
       project_id: PROJECT_ID,
     });
 
-    expect(result.content[0]?.text).toBe("pages=2");
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\npages=2`);
     expect(sink.runs).toHaveLength(0);
   });
 });

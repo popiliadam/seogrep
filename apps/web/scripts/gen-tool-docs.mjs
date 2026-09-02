@@ -483,6 +483,18 @@ const INHERITED_LIMITS_FRESHNESS =
   "newest days are not analyzed yet. See " +
   "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.";
 
+/**
+ * THE SCOPE SENTENCE the four audits open with. One constant because it describes ONE mechanism —
+ * `audit/load.ts` picks the crawl and prints which one it picked — and four copies of a sentence
+ * about a shared mechanism drift the moment one of them is edited.
+ */
+const AUDIT_SCOPE_LINE =
+  "\n\n**The reply opens by naming the crawl it judged** — a short job id, the date it was taken, " +
+  "how many pages it covered and how many URLs it skipped. If you did not pass `job_id`, it also " +
+  "says so and tells you how to choose a different crawl. That line exists because the newest " +
+  "crawl is not always the widest one: a narrow re-crawl of one section becomes the newest, and " +
+  "an audit that silently judged it would charge full price for a fraction of your site.";
+
 export const DOC_PROSE = {
   setup_project: {
     lead:
@@ -1194,7 +1206,7 @@ export const DOC_PROSE = {
       "A summary of issue counts, then the duplicate-content groups with their member URLs, then " +
       "a per-page list of findings. Pages with no issues are counted but not listed. The per-page " +
       "list is capped, and past the cap the reply says how many further pages had findings — a " +
-      "short list never reads as a short audit.",
+      "short list never reads as a short audit." + AUDIT_SCOPE_LINE,
   },
 
   audit_tech: {
@@ -1258,7 +1270,7 @@ export const DOC_PROSE = {
       "its own count, zero included. Then whichever of the remaining sections this crawl gave " +
       "rows for, plus the sitemap comparison whenever a sitemap was read. So a short reply is a " +
       "clean crawl, not a shallow audit. Every list is capped, and past the cap says how many " +
-      "more there were.",
+      "more there were." + AUDIT_SCOPE_LINE,
   },
 
   audit_schema: {
@@ -1310,7 +1322,7 @@ export const DOC_PROSE = {
       "field (naming the type and the fields), the pages whose JSON-LD could not be parsed, and " +
       "the pages whose blocks were only partly stored. Each of those three sections is printed " +
       "only when it has rows, so a crawl carrying no bodies returns exactly the coverage report " +
-      "it always did — an absent section is never a clean result.",
+      "it always did — an absent section is never a clean result." + AUDIT_SCOPE_LINE,
   },
 
   audit_speed: {
@@ -1443,7 +1455,7 @@ export const DOC_PROSE = {
       "impressions and clicks, the words that are missing, how many of the query's words the " +
       "page does carry, and the page's current title — biggest opportunity first. The list is " +
       "capped; past the cap the reply says how many more pairs mismatch. If nothing mismatches, " +
-      "it says so (and you are still charged for the delivered analysis).",
+      "it says so (and you are still charged for the delivered analysis)." + AUDIT_SCOPE_LINE,
     postReturnsSections: [
       {
         heading: "Inherited limits",

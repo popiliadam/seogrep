@@ -250,6 +250,34 @@ export async function getLatestSucceededCrawl(
   return getLatestSucceededResult(client, { projectId, userId, tool: "crawl_site" });
 }
 
+/**
+ * ONE NAMED crawl rather than the newest one — the audits' second input port, for a caller who
+ * says WHICH crawl to judge (`job_id`).
+ *
+ * The tenant guard is the sibling's, filter for filter (`user_id` AND `project_id`), and the id is
+ * a FOURTH filter rather than the only one. Selecting on `id` alone would let any caller audit any
+ * tenant's crawl by quoting its uuid, so the id narrows a set that is already the caller's own and
+ * can never widen it (constitution NEVER #4). A job that is not this project's, not this tenant's,
+ * not a `crawl_site` run, or not succeeded all resolve to `null` — one answer, so nothing about a
+ * row's existence is observable from which refusal comes back.
+ */
+export async function getSucceededCrawlById(
+  client: ServiceClient,
+  params: { jobId: string; projectId: string; userId: string },
+): Promise<LatestCrawl | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, result, created_at")
+    .eq("id", params.jobId)
+    .eq("user_id", params.userId)
+    .eq("project_id", params.projectId)
+    .eq("tool", "crawl_site")
+    .eq("status", "succeeded")
+    .maybeSingle();
+  if (error) throw new Error(`getSucceededCrawlById failed: ${error.message}`);
+  return data ? { jobId: data.id, result: data.result, createdAt: data.created_at } : null;
+}
+
 /** The latest pull the discovery tools read: its stored PullData jsonb and when it ran. */
 export type LatestPull = LatestResult;
 

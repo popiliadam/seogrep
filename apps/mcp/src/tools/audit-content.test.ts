@@ -149,13 +149,45 @@ describe("the tool surface", () => {
     expect(auditContentTool.description).toContain(`Costs ${TOOL_COSTS.audit_content} credits.`);
   });
 
-  it("requires project_id and nothing else", () => {
+  /**
+   * `job_id` REACHES THE CRAWL LOADER. The schema assertion below proves the field is ACCEPTED;
+   * this proves it is USED — a tool that declared the selector and then loaded the newest crawl
+   * anyway would pass every schema check and still audit the wrong pages, which is the failure the
+   * field exists to end.
+   */
+  it("hands the caller's job_id to the crawl loader, and names that crawl", async () => {
+    const seen: (string | undefined)[] = [];
+    const chosen = "12345678-aaaa-4bbb-8ccc-dddddddddddd";
+    const tool = makeContentAuditTool("whats_next", {
+      loadPull: async () => OK_PULL,
+      loadCrawl: async (_u, _p, jobId) => {
+        seen.push(jobId);
+        return { ok: true, crawl: CRAWL, jobId: jobId ?? CRAWL_JOB_ID, requested: true };
+      },
+      loadProject: async () => null,
+      writeRun: async () => {},
+    });
+
+    const result = await tool.run(CTX, { project_id: PROJECT_ID, job_id: chosen });
+
+    expect(seen).toEqual([chosen]);
+    expect(result.content[0]?.text).toMatch(/^Audited crawl 12345678 from /);
+  });
+
+  /**
+   * `project_id` is the ONLY required field, and `job_id` is the only optional one. The two halves
+   * are asserted separately on purpose: `required` is the money-shaped claim (nothing else may be
+   * demanded before a 12-credit call), and the property list is the surface claim — a third field
+   * appearing here is a change to what the LLM may send and should cost a deliberate edit.
+   */
+  it("requires project_id and offers job_id, and nothing else", () => {
     expect(auditContentTool.inputJsonSchema).toMatchObject({
       type: "object",
       required: ["project_id"],
     });
     expect(Object.keys((auditContentTool.inputJsonSchema as { properties: object }).properties)).toEqual([
       "project_id",
+      "job_id",
     ]);
   });
 });
@@ -320,7 +352,12 @@ describe("the delivered report", () => {
    */
   it("LEADS with the coverage disclosure, before any finding", async () => {
     const text = await textOf();
-    expect(text.startsWith("Checked 3 of 4 query/page pairs")).toBe(true);
+    // The scope sentence (which crawl was judged, audit/load.ts) now sits above it — one line
+    // about the INPUT, then the coverage ratio about the ANSWER. Both are still before the list,
+    // which is the property this test was cut to defend.
+    const lines = text.split("\n\n");
+    expect(lines[0]).toMatch(/^Audited /);
+    expect(lines[1]?.startsWith("Checked 3 of 4 query/page pairs")).toBe(true);
     expect(text.indexOf("could not be checked")).toBeLessThan(text.indexOf("Current title:"));
   });
 });

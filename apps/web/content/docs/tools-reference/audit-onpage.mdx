@@ -39,7 +39,10 @@ Ask your MCP client in plain language:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project_id` | string (uuid) | Yes | The project to audit (from setup_project / list_projects). |
+| `job_id` | string (uuid) | No | Optional: the crawl_site job to audit (from list_jobs). Omit to audit the project's most recent crawl. |
 
 ### Returns
 
 A summary of issue counts, then the duplicate-content groups with their member URLs, then a per-page list of findings. Pages with no issues are counted but not listed. The per-page list is capped, and past the cap the reply says how many further pages had findings — a short list never reads as a short audit.
+
+**The reply opens by naming the crawl it judged** — a short job id, the date it was taken, how many pages it covered and how many URLs it skipped. If you did not pass `job_id`, it also says so and tells you how to choose a different crawl. That line exists because the newest crawl is not always the widest one: a narrow re-crawl of one section becomes the newest, and an audit that silently judged it would charge full price for a fraction of your site.

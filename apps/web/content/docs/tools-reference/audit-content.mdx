@@ -36,12 +36,15 @@ Then hand a finding straight back to your assistant:
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `project_id` | string (uuid) | Yes | The project to audit (must have run pull_gsc_data and crawl_site first). |
+| `job_id` | string (uuid) | No | Optional: the crawl_site job to audit against (from list_jobs). Omit to use the project's most recent crawl. |
 
 ### Returns
 
 **The coverage line comes first**, above the findings, together with the window the Search Console figures cover, when that data was pulled, when the crawl was taken, and how many queries were dropped as brand-only. A ratio that changes how you read the list has to arrive before the list, not under it.
 
 Then one line per mismatching query — the query, the page ranking for it, its impressions and clicks, the words that are missing, how many of the query's words the page does carry, and the page's current title — biggest opportunity first. The list is capped; past the cap the reply says how many more pairs mismatch. If nothing mismatches, it says so (and you are still charged for the delivered analysis).
+
+**The reply opens by naming the crawl it judged** — a short job id, the date it was taken, how many pages it covered and how many URLs it skipped. If you did not pass `job_id`, it also says so and tells you how to choose a different crawl. That line exists because the newest crawl is not always the widest one: a narrow re-crawl of one section becomes the newest, and an audit that silently judged it would charge full price for a fraction of your site.
 
 ### Inherited limits
 

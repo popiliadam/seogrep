@@ -8,7 +8,12 @@ import {
   type ContentQueryRow,
 } from "@pseo/core";
 import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
-import { loadLatestCrawl, type AuditCrawl, type LoadCrawlFn } from "../audit/index.ts";
+import {
+  crawlScopeLine,
+  loadLatestCrawl,
+  type AuditCrawl,
+  type LoadCrawlFn,
+} from "../audit/index.ts";
 import {
   brandTokenOf,
   foldBrandWord,
@@ -98,6 +103,17 @@ const inputSchema = z.object({
   project_id: z
     .uuid()
     .describe("The project to audit (must have run pull_gsc_data and crawl_site first)."),
+  // The crawl half of this join gets the same optional selector the three structural audits took
+  // (audit-shared.ts states why). The PULL half deliberately has no twin: this tool reads the
+  // pull's CURRENT window and its footer already names it, so a second selector would double the
+  // surface for an axis nobody has been unable to reach.
+  job_id: z
+    .uuid()
+    .optional()
+    .describe(
+      "Optional: the crawl_site job to audit against (from list_jobs). Omit to use the " +
+        "project's most recent crawl.",
+    ),
 });
 
 /** The demand side, as the engine takes it: the pull's CURRENT window, flattened. */
@@ -284,7 +300,7 @@ export function makeContentAuditTool(
     description: DESCRIPTION,
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
-    handler: async (ctx, { project_id }) => {
+    handler: async (ctx, { project_id, job_id }) => {
       // THE ARCHIVE GATE, first — before either read, because an archived project has nothing to
       // audit whatever is stored against it, and "run pull_gsc_data first" would be the wrong
       // instruction for a site the tenant removed.
@@ -312,7 +328,7 @@ export function makeContentAuditTool(
       const pull = await loadPull(ctx.userId, project_id);
       if (!pull.ok) throw new PreconditionNotMetError(pull.error);
 
-      const crawl = await loadCrawl(ctx.userId, project_id);
+      const crawl = await loadCrawl(ctx.userId, project_id, job_id);
       if (!crawl.ok) throw new PreconditionNotMetError(crawl.error);
 
       const rendered = renderContentAudit(pull.pull, crawl.crawl);
@@ -363,7 +379,7 @@ export function makeContentAuditTool(
         renderPullProvenance(pull.pulledAt),
         crawledAt,
       ].filter((line): line is string => line !== null);
-      return textResult(`${rendered.text}\n\n${footer.join("\n")}`);
+      return textResult(`${crawlScopeLine(crawl)}\n\n${rendered.text}\n\n${footer.join("\n")}`);
     },
   });
 }

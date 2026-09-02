@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
 import {
+  crawlScopeLine,
   loadLatestCrawl,
   writeAuditRun,
   type AuditCrawl,
@@ -69,8 +70,25 @@ export interface AuditToolDeps {
   readonly loadProject?: LoadProjectFn;
 }
 
+/**
+ * `job_id` IS OPTIONAL AND IT IS THE POINT OF THE FIELD (measured live 2026-09-02).
+ *
+ * Until it existed the audits judged whichever crawl was newest and the caller could not say
+ * otherwise. On adstark.com.tr a one-page `include_paths` crawl finished three minutes after a
+ * 51-page crawl of the same site; `audit_onpage` charged 30 credits, audited the one page, and
+ * the reader had no way to reach the wider crawl that already existed and was already paid for.
+ * Omitting the field keeps the old behavior exactly, and the scope sentence now says which crawl
+ * that behavior picked.
+ */
 const inputSchema = z.object({
   project_id: z.uuid().describe("The project to audit (from setup_project / list_projects)."),
+  job_id: z
+    .uuid()
+    .optional()
+    .describe(
+      "Optional: the crawl_site job to audit (from list_jobs). Omit to audit the project's " +
+        "most recent crawl.",
+    ),
 });
 
 export function makeAuditTool(
@@ -87,7 +105,7 @@ export function makeAuditTool(
     description,
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
-    handler: async (ctx, { project_id }) => {
+    handler: async (ctx, { project_id, job_id }) => {
       // THE ARCHIVE GATE, first — before the crawl read, because an archived project has nothing
       // to audit whatever crawl is stored against it, and "run crawl_site first" would be the
       // wrong instruction for a site the tenant removed (crawl_site refuses it too).
@@ -111,7 +129,7 @@ export function makeAuditTool(
         throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
       }
 
-      const load = await loadCrawl(ctx.userId, project_id);
+      const load = await loadCrawl(ctx.userId, project_id, job_id);
       if (!load.ok) {
         // THROW so withCredits RELEASES the reserve — no charge when there is nothing to
         // audit. TYPED, because the registry's catch cannot otherwise tell this designed
@@ -125,8 +143,14 @@ export function makeAuditTool(
         throw new PreconditionNotMetError(load.error);
       }
 
+      // THE SCOPE SENTENCE COMES FIRST, and it is prepended here rather than folded into the three
+      // formatters on purpose. It is a fact about the CRAWL — which one, how big — and this is the
+      // one place that resolved it; a formatter takes a report and has never been told which job
+      // produced it. Prepending also leaves the formatters' byte-for-byte snapshots measuring what
+      // they were cut to measure: the rendering of a report, unchanged by this slice.
+      const scope = crawlScopeLine(load);
       const rendered = render(load.crawl);
-      if (typeof rendered === "string") return textResult(rendered);
+      if (typeof rendered === "string") return textResult(`${scope}\n\n${rendered}`);
 
       // THE RUN IS RECORDED BEFORE THE REPORT IS HANDED OVER, and the write is not guarded.
       // withCredits commits a handler that RETURNS and releases one that THROWS, so an error
@@ -145,7 +169,7 @@ export function makeAuditTool(
         { userId: ctx.userId, projectId: project_id, crawlJobId: load.jobId, tool: name },
         rendered.report,
       );
-      return textResult(rendered.text);
+      return textResult(`${scope}\n\n${rendered.text}`);
     },
   });
 }
