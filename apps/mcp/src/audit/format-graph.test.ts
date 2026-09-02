@@ -4,8 +4,8 @@ import { formatSchemaReport, formatTechReport } from "./format.ts";
 import { parseCrawlResult, type AuditCrawl, type AuditPage } from "./crawl-data.ts";
 import { formatOnpageReport } from "./format.ts";
 import { auditOnpage } from "./rules/onpage.ts";
-import { auditSchema } from "./rules/schema.ts";
-import { auditTech } from "./rules/tech.ts";
+import { auditSchema, type SchemaReport } from "./rules/schema.ts";
+import { auditTech, type TechReport } from "./rules/tech.ts";
 import type { Json } from "../db.ts";
 
 /**
@@ -261,7 +261,7 @@ describe("the appended graph sections render their data", () => {
     const text = formatTechReport(auditTech(crawl), AT);
     expect(text).toContain("Hreflang codes not valid");
     expect(text).toContain('· https://e/en — "us" does not start with an ISO 639-1 language code');
-    expect(text).toContain("Hreflang sets with no x-default: 1");
+    expect(text).toContain("Hreflang sets with no x-default (recommended, not required): 1");
     expect(text).toContain("· https://e/en");
     expect(text).toContain("Hreflang not reciprocated");
     expect(text).toContain('· https://e/en → https://e/de (hreflang="de")');
@@ -312,6 +312,34 @@ describe("the appended graph sections render their data", () => {
       fetchedAt: AT,
     };
     expect(formatTechReport(auditTech(crawl), AT)).not.toContain("Hreflang");
+  });
+
+  /**
+   * A REPORT READ BACK FROM `audit_runs.report` IS `Json`, NOT A `TechReport` (P2-1).
+   *
+   * The rows written before 2026-09-02 carry no `hreflang` and no `retiredTypes` key at all, and
+   * `undefined` is not `null`: a renderer guarding only the null case would reach into an absent
+   * object and throw on a row a customer is entitled to read. The type says it cannot happen; the
+   * stored jsonb is older than the type. Both renderers are asserted on a report with the field
+   * REMOVED, which is exactly what those rows deserialize to.
+   */
+  it("a stored report from before these fields existed still renders, and says nothing new", () => {
+    const crawl: AuditCrawl = {
+      pages: [page({ url: "https://e/", jsonLdTypes: ["FAQPage"] })],
+      skipped: [],
+      fetchedAt: AT,
+    };
+    const tech = { ...auditTech(crawl) } as Record<string, unknown>;
+    delete tech.hreflang;
+    const techText = formatTechReport(tech as unknown as TechReport, AT);
+    expect(techText).toContain("Technical audit — 1 page(s)");
+    expect(techText).not.toContain("Hreflang");
+
+    const schema = { ...auditSchema(crawl) } as Record<string, unknown>;
+    delete schema.retiredTypes;
+    const schemaText = formatSchemaReport(schema as unknown as SchemaReport, AT);
+    expect(schemaText).toContain("Structured-data audit — 1 page(s)");
+    expect(schemaText).not.toContain("no longer produce a Google rich result");
   });
 
   it("structured data: a retired type is named with what it is now worth, and is not a defect", () => {

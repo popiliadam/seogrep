@@ -1228,7 +1228,8 @@ export const DOC_PROSE = {
       "region like `EU`. Google needs an ISO 639-1 language, optionally with an ISO 3166-1 " +
       "region.\n" +
       "- **Hreflang sets with no x-default** — a page offering several languages and no " +
-      "fallback for a visitor whose language is not among them.\n" +
+      "fallback for a visitor whose language is not among them. x-default is **recommended, " +
+      "not required**, and the heading says so.\n" +
       "- **Hreflang not reciprocated** — this page names that one as its alternate and gets no " +
       "return link, so Google ignores the pair. Only alternates whose target THIS crawl also " +
       "fetched can be checked, and the section says how many pointed elsewhere; only the HTML " +
@@ -1247,10 +1248,14 @@ export const DOC_PROSE = {
       "Every section after them prints only when it has rows, and that too is deliberate: on a " +
       "crawl stored before a signal existed the list is empty because nobody looked, and a " +
       "heading reading \"Slow pages: 0\" would report a measurement that never happened.\n\n" +
-      "The sitemap comparison is the one exception in the other direction. It prints even at " +
+      "Two sections are exceptions in the other direction, and both print at zero because a zero " +
+      "there is a measurement rather than a silence. The **sitemap comparison** prints even at " +
       "zero and zero, because a diff that exists means the sitemap **was read**, and a measured " +
       "agreement is worth stating where an empty list elsewhere would only mean an unmeasured " +
-      "axis. The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
+      "axis. **Hreflang not reciprocated** prints at zero whenever an alternate pointed at a page " +
+      "this crawl did not fetch, and says how many: those alternates were not checked, and a " +
+      "reader told nothing would read the silence as \"they all point back\".\n\n" +
+      "The orphan list carries its own caveat: the crawl is bounded, so a page whose only " +
       "linking page was never fetched lands there too.",
     example:
       "Ask your MCP client in plain language:\n\n> Run a technical audit for my example.com project.",

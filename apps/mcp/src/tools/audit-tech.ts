@@ -18,9 +18,11 @@ import type { RegisteredTool } from "./registry.ts";
  * takes, so they print at zero as readily as at fifty. The rest print only when they have rows —
  * because on a crawl predating the signal an empty list means "nobody looked", and a header
  * reading "Slow pages: 0" would report a measurement that never happened (format.ts states this
- * rule at the sections themselves). The sitemap diff is the one exception in the other direction:
- * it prints whenever a sitemap was READ, since a diff that exists makes "0 and 0" a measured
- * agreement. Promising twelve sections unconditionally would be a second falsehood, not a fix.
+ * rule at the sections themselves). TWO sections are exceptions in the other direction, and both
+ * print at zero because a zero there is a MEASUREMENT: the sitemap diff, whenever a sitemap was
+ * READ, and hreflang reciprocity, whenever an alternate pointed outside the crawl — silence there
+ * would read as "your alternates are returned", which a bounded crawl cannot claim. Promising
+ * every section unconditionally would be a second falsehood, not a fix.
  *
  * This is the LLM-facing surface (tools/list), so it names the sections and nothing else; the
  * long form lives on the docs page (gen-tool-docs.mjs → DOC_PROSE.audit_tech), and BOTH are
@@ -33,7 +35,8 @@ const DESCRIPTION =
   "Reported only when the crawl has them: Slow pages, Heavy pages, Redirect chains, " +
   "X-Robots-Tag conflicts, Deep pages, No internal links found (orphan signal), " +
   "Broken internal links, Hreflang codes not valid, Hreflang sets with no x-default, " +
-  "Hreflang not reciprocated, Sitemap vs crawl (printed whenever a sitemap was read — even at zero). " +
+  "Hreflang not reciprocated (printed whenever an alternate pointed outside the crawl — even at zero), " +
+  "Sitemap vs crawl (printed whenever a sitemap was read — even at zero). " +
   "Costs 15 credits. Run crawl_site first.";
 
 /** One engine run, two consumers — the recorded report and the returned text (audit-onpage.ts). */

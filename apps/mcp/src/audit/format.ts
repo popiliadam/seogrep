@@ -186,15 +186,24 @@ function renderSkippedCategory(skips: readonly AuditSkipped[]): string[] {
  * whose target this crawl did not fetch. Their absence from the finding list is a bound of the
  * crawl, not a property of the site, and a reader who is told nothing reads "they are returned".
  */
-function hreflangSections(report: TechReport["hreflang"]): string[] {
-  if (report === null) return [];
+function hreflangSections(report: TechReport["hreflang"] | undefined): string[] {
+  // `undefined` AS WELL AS `null`, and they arrive from different places: null is this engine
+  // saying "no page carried alternates", undefined is a row written to audit_runs.report before
+  // the field existed. The type cannot see the second — stored jsonb is older than the type —
+  // and a guard on null alone would throw while rendering a report a tenant already paid for.
+  if (report === null || report === undefined) return [];
   const lines: string[] = [];
   if (report.invalidCodes.length > 0) {
     lines.push("", `Hreflang codes not valid (ISO 639-1 language, optional region): ${report.invalidCodes.length}`);
     lines.push(bulletList(report.invalidCodes.map((c) => `${c.url} — ${c.reason}`)));
   }
   if (report.missingXDefault.length > 0) {
-    lines.push("", `Hreflang sets with no x-default: ${report.missingXDefault.length}`);
+    lines.push(
+      "",
+      // R-4.11 makes x-default a FALLBACK, not a requirement, and the heading has to carry
+      // that: "sets with no x-default" alone reads as a missing mandatory tag.
+      `Hreflang sets with no x-default (recommended, not required): ${report.missingXDefault.length}`,
+    );
     lines.push(bulletList(report.missingXDefault));
     lines.push("  Note: x-default is the fallback for a visitor whose language the set does not list.");
   }
@@ -339,11 +348,14 @@ export function formatSchemaReport(report: SchemaReport, fetchedAt: string | nul
   // NOT a findings section: nothing here is broken. It exists so a reader whose FAQ markup stopped
   // producing a rich result learns it from the audit rather than from a traffic chart, and it is
   // read off the type NAMES, so a crawl that stored no bodies still says it (R-2.2).
-  if (report.retiredTypes.length > 0) {
+  // `?? []` for the same reason hreflangSections tolerates undefined: a row stored before this
+  // field existed has no such key, and rendering it must not throw.
+  const retiredTypes = report.retiredTypes ?? [];
+  if (retiredTypes.length > 0) {
     lines.push("", "Types that no longer produce a Google rich result:");
     lines.push(
       bulletList(
-        report.retiredTypes.map(
+        retiredTypes.map(
           (type) => `${type} is no longer a Google rich result; keep it only if it serves users.`,
         ),
       ),
