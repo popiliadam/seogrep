@@ -94,7 +94,12 @@ interface World {
   readonly mappings?: readonly {
     property?: string | null;
     domain: string;
-    accountId?: string;
+    /**
+     * `null` is a REAL state, not "unset": disconnecting a Google account nulls `account_id` on
+     * every project of that account (`on delete set null`) and leaves `gsc_property` in place.
+     * The fixture could not express it before, which is why LGP-2 went unmeasured.
+     */
+    accountId?: string | null;
   }[];
   /** Call as somebody else — their own account lists their own property. */
   readonly asUser?: string;
@@ -149,7 +154,8 @@ function toolFor(world: World) {
         userId === USER
           ? (world.mappings ?? []).map((mapping) => ({
               domain: mapping.domain,
-              accountId: mapping.accountId ?? ACCOUNT_ID,
+              // `=== undefined`, not `??`: an explicit null must survive as null.
+              accountId: mapping.accountId === undefined ? ACCOUNT_ID : mapping.accountId,
               property: mapping.property ?? null,
             }))
           : [],
@@ -274,6 +280,70 @@ describe("list_gsc_properties", () => {
         "https://a-lower.test/",
         "sc-domain:zeta.test",
       ]);
+    });
+  });
+
+  /**
+   * LGP-2 — MEASURED LIVE 2026-09-02, and it is the hole this tool exists to close. A project
+   * whose Google account was disconnected keeps its `gsc_property` and loses its `account_id`.
+   * Neither hint saw it: `readBy` requires the account to match (it is null), and the same-site
+   * hint requires the property to be null (it is not). So `https://rkturizm.com/` and
+   * `https://bayder.com.tr/` printed as "not used by any project" — with no hint at all — while
+   * `list_projects` said of the same projects "still mapped and comes back when you run
+   * connect_gsc". Two free tools, one truth, two answers.
+   */
+  describe("a property still mapped by a project whose Google account is gone", () => {
+    it("names the project and the call that brings it back", async () => {
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [
+            { property: "https://rkturizm.com/", domain: "rkturizm.com", accountId: null },
+          ],
+        },
+      );
+      expect(out).toContain('your project "rkturizm.com"');
+      expect(out).toMatch(/no longer connected/i);
+      expect(out).toMatch(/connect_gsc/);
+      // NOT the empty answer, which is what the two hints produced before.
+      expect(out).not.toMatch(/not used by any project/);
+      // …and not the same-site hint either: that one offers track_gsc_property, which links a
+      // property this project ALREADY holds. The repair here is the account, not the mapping.
+      expect(out).not.toMatch(/track_gsc_property/);
+    });
+
+    it("still names it when ANOTHER project reads the same property live", async () => {
+      // The axis lesson 14 names: a disconnected project must not become invisible merely
+      // because a healthy sibling occupies the "read by" clause of the same line.
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [
+            { property: "https://rkturizm.com/", domain: "live-reader.test" },
+            { property: "https://rkturizm.com/", domain: "rkturizm.com", accountId: null },
+          ],
+        },
+      );
+      expect(out).toContain("read by live-reader.test");
+      expect(out).toContain('your project "rkturizm.com"');
+      expect(out).toMatch(/connect_gsc/);
+    });
+
+    it("says nothing of the sort for a project mapped to a DIFFERENT property", async () => {
+      const out = await callTool(
+        {},
+        {
+          sites: [{ siteUrl: "https://rkturizm.com/", permissionLevel: "siteOwner" }],
+          mappings: [
+            { property: "sc-domain:somewhere-else.test", domain: "elsewhere.test", accountId: null },
+          ],
+        },
+      );
+      expect(out).toMatch(/not used by any project/);
+      expect(out).not.toMatch(/no longer connected/i);
+      expect(out).not.toContain("elsewhere.test");
     });
   });
 

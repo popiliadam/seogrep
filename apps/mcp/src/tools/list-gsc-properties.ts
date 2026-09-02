@@ -223,6 +223,42 @@ function unlinkedProjectsFor(
     .sort(compareStrings);
 }
 
+/**
+ * The caller's projects that STILL HOLD this property but read it through NO account.
+ *
+ * WHY IT IS HERE. Disconnecting a Google account nulls `account_id` on every project of that
+ * account (`on delete set null`) and leaves `gsc_property` exactly where it was. Such a project
+ * fell out of BOTH hints: `readBy` requires the account to match — it is null — and
+ * `unlinkedProjectsFor` requires the property to be null — it is not. Measured live 2026-09-02:
+ * `https://rkturizm.com/` and `https://bayder.com.tr/` printed as "not used by any project", with
+ * no hint at all, in the same run where `list_projects` said of those very projects "still mapped
+ * and comes back when you run connect_gsc (free)". Two free tools, one truth, two answers — and
+ * the missing side was this tool's, which exists to say that two printed halves belong together.
+ *
+ * The repair is the ACCOUNT, not the mapping, so this must never offer `track_gsc_property`: the
+ * project already holds this property, and re-linking it would change nothing.
+ */
+function disconnectedProjectsFor(
+  mappings: readonly ProjectPropertyMapping[],
+  siteUrl: string,
+): string[] {
+  return mappings
+    .filter((mapping) => mapping.accountId === null && mapping.property === siteUrl)
+    .map((mapping) => mapping.domain)
+    .sort(compareStrings);
+}
+
+/** What a project that still holds this property but lost its account needs to hear. */
+function disconnectedNote(domains: readonly string[]): string {
+  const named = domains.map((domain) => `"${domain}"`).join(", ");
+  const subject = domains.length === 1 ? "your project" : "your projects";
+  const verb = domains.length === 1 ? "is" : "are";
+  return (
+    `${subject} ${named} ${verb} still mapped to it, but the Google account that read it is no ` +
+    "longer connected; run connect_gsc for that project to bring it back"
+  );
+}
+
 /** How an unread property is described: plainly, or with the project it plainly belongs to. */
 function unusedNote(mappings: readonly ProjectPropertyMapping[], siteUrl: string): string {
   const candidates = unlinkedProjectsFor(mappings, siteUrl);
@@ -243,8 +279,14 @@ function renderSite(
   accountId: string,
 ): string {
   const readers = readBy(mappings, accountId, site.siteUrl);
-  const usage =
-    readers.length > 0 ? `read by ${readers.join(", ")}` : unusedNote(mappings, site.siteUrl);
+  const disconnected = disconnectedProjectsFor(mappings, site.siteUrl);
+  // BOTH clauses, not the first that applies: a live reader on one project must not hide a
+  // second project that lost its account, which is the same axis-blindness (signed lesson 14)
+  // that let the disconnected case fall between the two hints in the first place.
+  const clauses: string[] = [];
+  if (readers.length > 0) clauses.push(`read by ${readers.join(", ")}`);
+  if (disconnected.length > 0) clauses.push(disconnectedNote(disconnected));
+  const usage = clauses.length > 0 ? clauses.join("; ") : unusedNote(mappings, site.siteUrl);
   const note = canQuerySearchAnalytics(site.permissionLevel)
     ? ""
     : " — NOT QUERYABLE: SeoGrep cannot read Search Console data at this permission level";
