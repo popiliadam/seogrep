@@ -365,6 +365,22 @@ describe("the description says what the tool does", () => {
     expect(tool.description).toMatch(/cost/i);
   });
 
+  /**
+   * S7 — MEASURED 2026-09-02: thirty-five tools end their tools/list sentence with
+   * "Costs N credits."; `whats_next` alone said "Free (0 credits)." in the middle of its own.
+   * The price is the fact a client scanning descriptions is most likely to compare across tools,
+   * and one tool phrasing it differently is one tool a comparison can miss. The A4 spec in
+   * list-projects.test.ts made the same ruling for the same reason.
+   *
+   * Asserted as a REGEX on the shortest distinguishing part (signed lesson 11), not against a
+   * copy of the sentence.
+   */
+  it("states the price in the family's own wording", () => {
+    expect(tool.description).toMatch(/costs 0 credits\./i);
+    // …and only once: the old mid-sentence wording is gone rather than doubled up.
+    expect(tool.description).not.toMatch(/free \(0 credits\)/i);
+  });
+
   it("answers a multi-project account with the rule, not a bare copy of list_projects", () => {
     const text = renderWhatsNext({
       kind: "choose_project",

@@ -497,10 +497,11 @@ export const DOC_PROSE = {
     ],
     example: "Ask your MCP client in plain language:\n\n> Set up example.com as a project.",
     returns:
-      "The `project_id`, the canonical `domain`, and `created` — in one of **three** wordings, " +
-      "not two: the project was created, it already existed, or it was **restored from your " +
-      "archive** and is tracked again on its original id. The resolution warning above follows " +
-      "when DNS says the name does not exist.",
+      "One sentence of plain text — not a structured object — naming the canonical `domain` and " +
+      "carrying `project_id` and `created` inside it, as in `(project_id: …, created: false)`. " +
+      "It comes in one of **three** wordings, not two: the project was created, it already " +
+      "existed, or it was **restored from your archive** and is tracked again on its original " +
+      "id. The resolution warning above follows when DNS says the name does not exist.",
   },
 
   connect_gsc: {
@@ -3007,6 +3008,10 @@ export const DOC_PROSE = {
       "[`pull_gsc_data`](/docs/tools-reference/pull-gsc-data).\n" +
       "- **A pull or a crawl has gone stale** → refresh that one first, so the numbers describe " +
       "the site as it is now.\n" +
+      "- **Everything fresh, but nothing analysed yet** → " +
+      "[`find_quick_wins`](/docs/tools-reference/find-quick-wins) first: it reads the Search " +
+      "Console data you already pulled and names the pages closest to moving up. A report is " +
+      "worth generating once there are findings to put in it.\n" +
       "- **Everything fresh** → you're all set: " +
       "[`generate_report`](/docs/tools-reference/generate-report) for a shareable summary, and the " +
       "`monthly-routine` prompt to keep it up to date.",
