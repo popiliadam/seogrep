@@ -169,8 +169,67 @@ function stampsOf(job: JobRow, domains: ReadonlyMap<string, string>): string {
  * "!" keeps what it has, because trimming those would change what the sentence means.
  */
 export function failureClause(error: string | null): string {
-  const text = error ?? "unknown error";
+  // TRAILING WHITESPACE COMES OFF FIRST, and the ORDER is the whole fix (B-2, measured
+  // out-of-tree 2026-09-02). F-6 varied the TERMINATING CHARACTER — ".", "?", "!", "…", "..." —
+  // and left the axis beside it unvaried: `"…engineering record. "` fails `endsWith(".")`, so
+  // nothing was absorbed and the renderer appended its own stop after the space, printing
+  // `record. . created`. Trimming the end makes the stop the last character again, after which
+  // every rule below applies exactly as it was written and as F-6's specs pin it.
+  const text = (error ?? "unknown error").trimEnd();
   return text.endsWith("..") || !text.endsWith(".") ? text : text.slice(0, -1);
+}
+
+/**
+ * WHICH TOOLS READ WHAT A FINISHED JOB PRODUCED — keyed on `jobs.tool`, i.e. on the tool that
+ * WROTE the result, which is the only thing that decides who can read it.
+ *
+ * Deliberately unlike `summarizeJobResult` above, which dispatches on SHAPE: that function is
+ * asking "can I describe this?", and a renamed tool whose result is still crawl-shaped must keep
+ * its summary. This is asking "where does the customer go next?", and that is a routing decision
+ * about a named producer. An unrouted tool gets SILENCE rather than a guess — naming a tool that
+ * cannot read this result is worse than naming none, because the model calls it and the failure
+ * reads as the customer's fault.
+ *
+ * NO NEW CATALOG. `crawl_site`'s three are the ladder's own AUDIT_TRIO and `pull_gsc_data`'s
+ * three are the rung that follows a pull (packages/core, guide/next-step.ts) — the same three
+ * that tool's own description already names. Kept as NAMES rather than as a finished sentence so
+ * the specs can check every one of them against the registry's cost table.
+ */
+export const NEXT_AFTER_SUCCESS: Readonly<Record<string, readonly string[]>> = {
+  crawl_site: ["audit_onpage", "audit_tech", "audit_schema"],
+  pull_gsc_data: ["find_quick_wins", "detect_cannibalization", "analyze_content_decay"],
+};
+
+/** "a, b or c" — the last separator is a word, because the reader picks ONE of them. */
+function orList(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1] as string}`;
+}
+
+/**
+ * The step that follows this job, or "" when there is nothing truthful to point at.
+ *
+ * WHY THIS TOOL NEEDED ONE (B-3, measured live 2026-09-02). Both sibling read-backs close with
+ * the next step — list_jobs sends the reader to get_job_status, list_credit_activity to
+ * get_credit_balance — and this tool is the LAST link of that chain. It ended four of four
+ * statuses with a full stop: a `failed` answer said the problem was on our side and did not say
+ * what to do about it, and a `succeeded` answer summarised a crawl the customer paid 20 credits
+ * for and pointed nowhere.
+ *
+ * `queued` and `running` get nothing on purpose: "call get_job_status again" is what the reader
+ * is already doing, and a sentence that tells someone to keep doing what they are doing is noise.
+ */
+export function nextStepClause(job: JobRow): string {
+  if (job.status === "failed") {
+    // The job's OWN tool, never a hardcoded one — a failed pull must not be told to re-crawl.
+    return (
+      `Run ${job.tool} again to retry it; if it fails the same way, contact support and quote ` +
+      "this job_id."
+    );
+  }
+  if (job.status !== "succeeded") return "";
+  const next = NEXT_AFTER_SUCCESS[job.tool];
+  return next === undefined ? "" : `Its result is ready to analyze — run ${orList(next)}.`;
 }
 
 /**
@@ -183,6 +242,11 @@ export function formatJobStatus(
 ): string {
   const head = `Job ${job.id} (${job.tool})`;
   const stamps = stampsOf(job, domains);
+  /** The trailing next-step sentence with its leading space, or nothing at all. */
+  const next = (row: JobRow): string => {
+    const clause = nextStepClause(row);
+    return clause === "" ? "" : ` ${clause}`;
+  };
   switch (job.status) {
     case "queued":
       return `${head} is queued. ${stamps}.`;
@@ -202,30 +266,55 @@ export function formatJobStatus(
     }
     case "succeeded": {
       const summary = summarizeJobResult(job.result);
-      return `${head} succeeded. ${stamps}.${summary ? ` ${summary}.` : ""}`;
+      // The next step goes LAST, after the summary it refers to: "run the audits" reads as advice
+      // about a crawl the reader has just been told the size of.
+      return `${head} succeeded. ${stamps}.${summary ? ` ${summary}.` : ""}${next(job)}`;
     }
     case "failed":
-      return `${head} failed: ${failureClause(job.error)}. ${stamps}.`;
+      return `${head} failed: ${failureClause(job.error)}. ${stamps}.${next(job)}`;
   }
 }
+
+/**
+ * The tenant-scoped job read, as a port.
+ *
+ * The argument order is `(jobId, userId)` — `getJobForUser`'s own, minus the client it resolves
+ * for itself. The tenant id is NOT optional and never will be: this signature is the only job
+ * read a tool surface may use, and the id-only `getJob` must never be wired here.
+ */
+export type GetJobFn = (jobId: string, userId: string) => Promise<JobRow | null>;
 
 export interface GetJobStatusDeps {
   /** Project-domain lookup (default: the real single-project read). Injectable for the fast lane. */
   readonly lookupDomain?: LookupProjectDomainFn;
+  /**
+   * The job read (default: the real tenant-scoped one). A PORT because of B-1: with the read
+   * hardwired, the fast lane could not drive the not-found branch at all, and turning its
+   * `errorResult` into a `textResult` left 156 specs green — a client would have read "No job
+   * found" as a successful answer. The only guard lived in the db lane, which `make verify` does
+   * not run.
+   */
+  readonly readJob?: GetJobFn;
 }
 
-/** Build the tool. The label read is a port, so the wording is provable with no database. */
+/** Build the tool. Both reads are ports, so every wording and flag is provable with no database. */
 export function makeGetJobStatusTool(deps: GetJobStatusDeps = {}): RegisteredTool {
   const lookupDomain = deps.lookupDomain ?? lookupOwnProjectDomain;
+  // The default resolves the client at CALL time, exactly as the inline read did: building the
+  // production tool at import must not require the env a service client needs.
+  const readJob =
+    deps.readJob ??
+    ((jobId: string, userId: string) => getJobForUser(getServiceClient(), jobId, userId));
   return defineTool({
     name: "get_job_status",
     description:
-      "Check the status and result summary of an async job (e.g. a crawl_site run), by its job_id.",
+      "Check the status and result summary of an async job (e.g. a crawl_site run), by its " +
+      "job_id. Costs 0 credits.",
     inputSchema: z.object({
       job_id: z.uuid().describe("The job_id returned by an async tool such as crawl_site."),
     }),
     handler: async (ctx, { job_id }) => {
-      const job = await getJobForUser(getServiceClient(), job_id, ctx.userId);
+      const job = await readJob(job_id, ctx.userId);
       if (!job) {
         // Unknown id and another tenant's job both land here (see getJobForUser) — one
         // message, no cross-tenant existence leak.

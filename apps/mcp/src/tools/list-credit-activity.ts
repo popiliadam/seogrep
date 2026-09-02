@@ -76,12 +76,25 @@ export interface CreditActivityRow {
 export interface CreditActivityPage {
   readonly rows: readonly CreditActivityRow[];
   readonly total: number;
+  /**
+   * True only when a `before_id` was given and named no ledger row this tenant can reach. The
+   * same flag list_jobs carries, for the same reason and with the same tenant-scoped resolution.
+   *
+   * Measured live 2026-09-02: `before_id: 99999999` on an account with 512 entries was ACCEPTED,
+   * and the account's two NEWEST rows came back headed "older credit entries". A cursor this
+   * tenant was never handed has to be refused, or paging reports the top of the ledger as its
+   * bottom — and another tenant's row id must be refused the same way, so paging cannot be used
+   * to learn whether some id exists on somebody else's account.
+   */
+  readonly unknownCursor?: boolean;
 }
 
 export type ListCreditActivityFn = (
   userId: string,
   limit: number,
   beforeId?: number,
+  /** Migration 0033's column as a FILTER. Undefined means the whole account, exactly as before. */
+  projectId?: string,
 ) => Promise<CreditActivityPage>;
 
 /**
@@ -105,7 +118,8 @@ export interface SpendSummary {
   readonly rowsTotal: number;
 }
 
-export type SummarizeSpendFn = (userId: string) => Promise<SpendSummary>;
+/** `projectId` scopes the arithmetic to the SAME rows the list is scoped to (see the handler). */
+export type SummarizeSpendFn = (userId: string, projectId?: string) => Promise<SpendSummary>;
 
 /** How many entries a call returns when it does not say. */
 export const DEFAULT_ACTIVITY_LIMIT = 10;
@@ -149,18 +163,44 @@ export async function listOwnCreditActivity(
   userId: string,
   limit: number,
   beforeId?: number,
+  projectId?: string,
 ): Promise<CreditActivityPage> {
-  const query = getServiceClient()
+  const base = getServiceClient()
     .from("credit_ledger")
     .select("id, delta, kind, reason, tool, project_id, created_at", { count: "exact" })
     // The tenant guard on an RLS-bypassing client (NEVER #4). Not decorative: proven load-bearing
     // in list-credit-activity.db.test.ts by calling this function with the wrong tenant's id.
     .eq("user_id", userId)
     .neq("delta", 0);
+  // THE PROJECT FILTER SITS ON TOP OF THE TENANT FILTER, never instead of it: `project_id` is a
+  // caller-supplied uuid with NO foreign key (0033 explains why), so it names nothing that could
+  // be trusted to imply ownership. Another tenant's project id therefore selects none of their
+  // rows — it simply intersects with an empty set inside this tenant's ledger.
+  const query = projectId === undefined ? base : base.eq("project_id", projectId);
   // THE CURSOR IS THE ID, NOT THE TIMESTAMP, and that is the whole reason older entries can now
   // be reached at all. This module's own header warns that a reserve and its release can land in
   // the same millisecond; a `created_at < …` cursor would then either skip a row or repeat one.
   // `id` is the ledger's monotonic insert order on an append-only table, so it is exact.
+  //
+  // BUT AN EXACT CURSOR IS NOT A VALID ONE. `id` is a monotonic bigint, so ANY number is a
+  // well-formed cursor and `id < 99999999` matches the whole ledger — which is precisely what was
+  // measured on 2026-09-02: a value nobody was handed returned the newest rows under an "older
+  // entries" heading. Resolving the anchor first turns "a number" back into "a position in YOUR
+  // ledger". The probe is tenant-scoped, so another tenant's row id resolves to nothing and is
+  // answered exactly as an id that is nobody's (no existence leak) — the rule list_jobs already
+  // applies to its uuid cursor.
+  if (beforeId !== undefined) {
+    const { data: anchor, error: anchorError } = await getServiceClient()
+      .from("credit_ledger")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("id", beforeId)
+      .maybeSingle();
+    if (anchorError) {
+      throw new Error(`credit activity cursor lookup failed: ${anchorError.message}`);
+    }
+    if (!anchor) return { rows: [], total: 0, unknownCursor: true };
+  }
   const paged = beforeId === undefined ? query : query.lt("id", beforeId);
   const { data, error, count } = await paged
     .order("created_at", { ascending: false })
@@ -184,12 +224,18 @@ export async function listOwnCreditActivity(
  * Tenant guard written out by hand for the same reason `listOwnCreditActivity` writes it out
  * (NEVER #4, service-role client), and driven head-on by the DB lane.
  */
-export async function summarizeOwnSpend(userId: string): Promise<SpendSummary> {
-  const { data, error, count } = await getServiceClient()
+export async function summarizeOwnSpend(
+  userId: string,
+  projectId?: string,
+): Promise<SpendSummary> {
+  const base = getServiceClient()
     .from("credit_ledger")
     .select("tool, delta", { count: "exact" })
     .eq("user_id", userId)
-    .in("kind", ["spend_reserve", "spend_release"])
+    .in("kind", ["spend_reserve", "spend_release"]);
+  // Scoped with the list, or the total under a one-project heading is the account's.
+  const scoped = projectId === undefined ? base : base.eq("project_id", projectId);
+  const { data, error, count } = await scoped
     .order("id", { ascending: false })
     .limit(SUMMARY_ROW_CAP);
   if (error) {
@@ -240,8 +286,13 @@ export const SUMMARY_TOP_TOOLS = 5;
  * shape of the spend and the tail is named as a number, so nothing is hidden and nothing is
  * repeated at length.
  */
-export function formatSpendSummary(summary: SpendSummary): string {
+export function formatSpendSummary(
+  summary: SpendSummary,
+  /** The project the arithmetic was scoped to, already rendered as a label. */
+  scopeLabel?: string,
+): string {
   if (summary.byTool.length === 0) return "";
+  const on = scopeLabel === undefined ? "" : ` on ${scopeLabel}`;
   const top = summary.byTool.slice(0, SUMMARY_TOP_TOOLS);
   const rest = summary.byTool.slice(SUMMARY_TOP_TOOLS);
   const restNet = rest.reduce((sum, entry) => sum + entry.net, 0);
@@ -255,7 +306,7 @@ export function formatSpendSummary(summary: SpendSummary): string {
       ? ` (the most recent ${summary.rowsCovered} of ${summary.rowsTotal} spend entries)`
       : "";
   return (
-    `\nSpent so far${scope}: ${summary.totalNet} credits, net of refunds, across ` +
+    `\nSpent so far${on}${scope}: ${summary.totalNet} credits, net of refunds, across ` +
     `${summary.byTool.length} tool${summary.byTool.length === 1 ? "" : "s"}. Top: ` +
     `${top.map((entry) => `${entry.tool} ${entry.net}`).join(" · ")}${tail}.`
   );
@@ -384,6 +435,46 @@ export const NO_ACTIVITY_MESSAGE =
   "tool charged — nothing has moved your balance so far.";
 
 /**
+ * What a cursor that names no reachable entry gets told.
+ *
+ * ONE message for an id that is nobody's and for ANOTHER TENANT's row, exactly as list_jobs
+ * answers an unreachable before_id: the anchor is resolved by a tenant-scoped read, so paging
+ * cannot be used to learn whether an id exists on somebody else's account.
+ */
+export const UNKNOWN_ACTIVITY_CURSOR_MESSAGE =
+  "No credit entry found with that before_id, so there is no page to continue from. Call " +
+  "list_credit_activity without before_id to start again from your most recent entries.";
+
+/**
+ * What the BOTTOM of the ledger says. Measured live 2026-09-02: an account with 512 entries
+ * paged to `before_id: 1` and was told "No credit activity yet … nothing has moved your balance
+ * so far" — a false statement about the customer's own ledger, produced by reaching its end.
+ * "There is nothing older" is the true claim; "there is nothing" is not.
+ */
+export const NO_MORE_ACTIVITY_MESSAGE =
+  "That is the end of your credit history — there is nothing older than the cursor you passed.";
+
+/**
+ * What a project-scoped call with no matching rows says — and why it must NOT be read as "this
+ * site cost you nothing".
+ *
+ * `credit_ledger.project_id` was written for the first time when the 0033 deploy went live
+ * (LEDGER_PROJECT_SCOPE_SINCE_MS). Every row older than that carries null for one reason only —
+ * the column could not be written — and the ledger is append-only, so those rows can NEVER be
+ * backfilled and can never match a project filter. On an account whose history predates the
+ * column, "no entries for dentnotion.com" is therefore true of the FILTER and false of the site.
+ * The sentence says which, and names the call that shows the rest.
+ */
+export function noProjectActivityMessage(label: string): string {
+  return (
+    `No credit entries recorded for ${label}. The ledger only began storing which project a ` +
+    "spend was for partway through its own history, and it is append-only, so any entries " +
+    "written before that can never carry a project and never match this filter — call " +
+    "list_credit_activity without project_id to see them."
+  );
+}
+
+/**
  * Render the whole answer. Pure, so every wording is pinned in the fast lane while the DB lane
  * proves the read underneath it.
  */
@@ -401,9 +492,16 @@ export function formatCreditActivity(
    * unvaried was "what does the next page call itself".
    */
   paged = false,
+  /** The project this answer was scoped to, as the caller's raw id (rendered through `domains`). */
+  projectScope?: string,
 ): string {
   const { rows, total } = page;
-  if (rows.length === 0) return NO_ACTIVITY_MESSAGE;
+  const scopeLabel = projectScope === undefined ? undefined : projectLabel(projectScope, domains);
+  if (page.unknownCursor === true) return UNKNOWN_ACTIVITY_CURSOR_MESSAGE;
+  if (rows.length === 0) {
+    if (paged) return NO_MORE_ACTIVITY_MESSAGE;
+    return scopeLabel === undefined ? NO_ACTIVITY_MESSAGE : noProjectActivityMessage(scopeLabel);
+  }
   const lines = rows.map((row) => formatActivityLine(row, domains)).join("\n");
   // WHAT WAS LEFT OUT, AND HOW TO REACH IT. Measured 2026-08-26: 512 balance-moving rows behind a
   // 50-entry answer whose advice was "raise `limit` (max 50)" — TO A CALLER ALREADY AT 50. The
@@ -422,14 +520,18 @@ export function formatCreditActivity(
   )
     ? NOT_RECORDED_NOTE
     : "";
+  // THE SCOPE IS NAMED IN THE HEADING, not only in the arguments the caller sent. A filtered list
+  // that calls itself "your 3 most recent credit entries of 3" is the same failure as an
+  // uncounted cut: true of the rows shown, and read as the whole ledger.
+  const forProject = scopeLabel === undefined ? "" : ` for ${scopeLabel}`;
   const heading = paged
-    ? `Continuing from your cursor: ${rows.length} of ${total} older credit entries, newest first:`
-    : `Your ${rows.length} most recent credit entries of ${total}, newest first:`;
+    ? `Continuing from your cursor: ${rows.length} of ${total} older credit entries${forProject}, newest first:`
+    : `Your ${rows.length} most recent credit entries of ${total}${forProject}, newest first:`;
   return (
     `${heading}\n${lines}\n` +
     "These are the entries that moved your balance, so a refunded run shows both its charge and " +
     `its refund. Run get_credit_balance for your current total.${cut}${explainsNotRecorded}` +
-    `${summary === undefined ? "" : formatSpendSummary(summary)}`
+    `${summary === undefined ? "" : formatSpendSummary(summary, scopeLabel)}`
   );
 }
 
@@ -442,7 +544,8 @@ export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): R
     name: "list_credit_activity",
     description:
       "List your credit ledger entries, newest first — what each tool charged, for which " +
-      "project, plus net spend per tool. Pages with before_id. Costs 0 credits.",
+      "project, plus net spend per tool. Scope it to one site with project_id. Pages with " +
+      "before_id. Costs 0 credits.",
     inputSchema: z.object({
       limit: z
         .int()
@@ -460,16 +563,28 @@ export function makeListCreditActivityTool(deps: ListCreditActivityDeps = {}): R
           "Paging cursor: return only entries older than this entry id. Each answer names the " +
             "value to pass for the next page. Omit for the newest entries.",
         ),
+      project_id: z
+        .uuid()
+        .optional()
+        .describe(
+          "Show only the spends recorded against this project (from list_projects). Entries " +
+            "written before the ledger started storing a project cannot match it; omit this to " +
+            "see the whole account.",
+        ),
     }),
-    handler: async (ctx, { limit, before_id }) => {
+    handler: async (ctx, { limit, before_id, project_id }) => {
       // In parallel: the three reads are independent. The domain map is small (one row per
       // project) however long the requested page is, and the summary is two columns.
       const [page, domains, summary] = await Promise.all([
-        listActivity(ctx.userId, limit, before_id),
+        listActivity(ctx.userId, limit, before_id, project_id),
         listDomains(ctx.userId),
-        summarizeSpend(ctx.userId),
+        // Scoped WITH the list: an account-wide total under a one-project heading reads as that
+        // project's, which is the same class of wrong as an uncounted cut.
+        summarizeSpend(ctx.userId, project_id),
       ]);
-      return textResult(formatCreditActivity(page, domains, summary, before_id !== undefined));
+      return textResult(
+        formatCreditActivity(page, domains, summary, before_id !== undefined, project_id),
+      );
     },
   });
 }

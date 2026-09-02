@@ -11,6 +11,7 @@ import {
   NO_JOBS_MESSAGE,
   NO_MORE_JOBS_MESSAGE,
   UNKNOWN_CURSOR_MESSAGE,
+  type JobFilters,
   type JobListRow,
   type ListJobsFn,
 } from "./list-jobs.ts";
@@ -392,5 +393,127 @@ describe("list_jobs paging — the advice names a value that works", () => {
     await tool.run({ userId: "user-1" } as AuthContext, { before_id: cursor });
 
     expect(calls).toEqual([{ limit: DEFAULT_JOB_LIST_LIMIT, beforeId: cursor }]);
+  });
+});
+
+/**
+ * LJ B-1, measured live 2026-09-02 on an account with 56 jobs. `{"status":"failed"}` came back
+ * with three `succeeded` rows under the heading "Your 3 most recent job(s) of 56", and
+ * `{"project_id":"4e0caff0-…"}` came back with jobs belonging to two OTHER projects. Neither
+ * field existed in the schema, so both were swallowed in silence.
+ *
+ * "Show me my failed jobs" and "the jobs for this site" are the two most natural things anyone
+ * asks a job list, and a model that believes it filtered will describe the answer as filtered.
+ * `jobs` has both columns (migration 0001's status CHECK; project_id since the table existed).
+ */
+describe("filtering the job list", () => {
+  const CTX_F: AuthContext = { userId: "user-1", keyId: "key-1" };
+  const PROJECT = "4e0caff0-1111-4111-8111-111111111111";
+
+  function filterPort() {
+    const calls: { limit: number; beforeId?: string; filters?: JobFilters }[] = [];
+    const listJobs: ListJobsFn = async (_userId, limit, beforeId, filters) => {
+      calls.push({ limit, beforeId, filters });
+      return { rows: [], total: 0 };
+    };
+    return { calls, tool: makeListJobsTool({ listJobs, listDomains: async () => new Map() }) };
+  }
+
+  it("passes status through to the read port instead of swallowing it", async () => {
+    const { calls, tool } = filterPort();
+    await tool.run(CTX_F, { status: "failed" });
+    expect(calls[0]?.filters?.status).toBe("failed");
+  });
+
+  it("passes project_id through to the read port instead of swallowing it", async () => {
+    const { calls, tool } = filterPort();
+    await tool.run(CTX_F, { project_id: PROJECT });
+    expect(calls[0]?.filters?.projectId).toBe(PROJECT);
+  });
+
+  /**
+   * The four the `jobs.status` CHECK allows, and ONLY those — a status the table cannot hold is a
+   * question with no possible answer, and answering it with an unfiltered list is the defect.
+   */
+  it("refuses a status the jobs table cannot hold, and never reaches the read port", async () => {
+    const { calls, tool } = filterPort();
+    const result = await tool.run(CTX_F, { status: "cancelled" });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("accepts every status the table CAN hold", async () => {
+    for (const status of ["queued", "running", "succeeded", "failed"]) {
+      const { calls, tool } = filterPort();
+      const result = await tool.run(CTX_F, { status });
+      expect(result.isError).toBeUndefined();
+      expect(calls[0]?.filters?.status).toBe(status);
+    }
+  });
+
+  it("refuses a project_id that is not a uuid", async () => {
+    const { calls, tool } = filterPort();
+    expect((await tool.run(CTX_F, { project_id: "not-a-uuid" })).isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * LJ B-1, second half. A filter that is APPLIED but not NAMED trades one wrong for a quieter
+ * one: "You have not run any background jobs yet" is a claim about the account, and answering a
+ * narrowed query with it is the same shape as telling a 512-entry ledger it is empty. The heading
+ * carries the filter for the reason it already carries the total — "your 3 most recent job(s) of
+ * 3" is read as the whole history.
+ */
+describe("what a filtered answer calls itself", () => {
+  const domains = new Map([["p-1", "seogrep.com"]]);
+
+  it("names the filter when nothing matched, instead of saying you have run no jobs", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, { status: "failed" });
+    expect(text).toMatch(/no failed job/i);
+    expect(text).not.toBe(NO_JOBS_MESSAGE);
+  });
+
+  it("names the project when nothing matched for it", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, { projectId: "p-1" });
+    expect(text).toMatch(/seogrep\.com/);
+    expect(text).not.toBe(NO_JOBS_MESSAGE);
+  });
+
+  it("names both when both were asked for", () => {
+    const text = formatJobList({ rows: [], total: 0 }, domains, false, {
+      status: "queued",
+      projectId: "p-1",
+    });
+    expect(text).toMatch(/no queued job/i);
+    expect(text).toMatch(/seogrep\.com/);
+  });
+
+  it("says in the heading that the list was filtered", () => {
+    const text = formatJobList({ rows: [job()], total: 1 }, domains, false, {
+      status: "failed",
+      projectId: "p-1",
+    });
+    expect(text).toMatch(/most recent failed job\(s\) of 1 for seogrep\.com/i);
+  });
+
+  it("carries the filter from the HANDLER, not only from a hand-passed argument", async () => {
+    const listJobs: ListJobsFn = async () => ({ rows: [], total: 0 });
+    const tool = makeListJobsTool({ listJobs, listDomains: async () => domains });
+    const text = textOf(await tool.run(CTX, { status: "failed" }));
+    expect(text).toMatch(/no failed job/i);
+  });
+
+  /**
+   * The unfiltered wordings are BYTE-IDENTICAL to what shipped — the smoke tour measured them
+   * live, and a filter feature that quietly reworded the ordinary answer would invalidate that
+   * record without failing anything.
+   */
+  it("leaves every unfiltered wording exactly as it was", () => {
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), false)).toBe(NO_JOBS_MESSAGE);
+    expect(formatJobList({ rows: [], total: 0 }, new Map(), true)).toBe(NO_MORE_JOBS_MESSAGE);
+    expect(formatJobList({ rows: [job()], total: 1 }, new Map(), false)).toMatch(
+      /Your 1 most recent job\(s\) of 1, newest first:/,
+    );
   });
 });

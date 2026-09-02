@@ -17,6 +17,12 @@ While a crawl is running, each poll reports the pages crawled and skipped **so f
 
 Every status line also carries a duration. When a job's stored timestamps contradict each other, the line says **timing unavailable** rather than printing a figure; a negative or impossible duration is not a measurement, and rows written before that was fixed still exist.
 
+## Which site, and what to do next
+
+Every reply names the project the job ran against — by DOMAIN, in the same clause and the same words [`list_jobs`](/docs/tools-reference/list-jobs) uses, so the list you came from and the detail you asked for cannot describe one job two ways. A job with no project scope says so, and a project you have since removed falls back to the id it was recorded with.
+
+A finished job ends with the step that follows it: a crawl points at the audits that read it, a Search Console pull at the tools that read a pull. A failed job says how to retry and where to go if it keeps failing. A job whose tool has no follow-up routed for it says nothing rather than guessing one — a suggestion that cannot read the result is worse than none.
+
 ## Example
 
 After `crawl_site` gives you a `job_id`, ask your MCP client:
@@ -33,4 +39,4 @@ Repeat until the status is `succeeded`. A finished crawl summarizes how many pag
 
 ### Returns
 
-The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / finished timestamps and elapsed time, a live page count while a crawl runs, and — on success — a result summary, or the error message on failure. A crawl summary also names the **dominant reason** pages were skipped, and says outright when the **homepage** was among them: "0 issues found" must not be readable as "clean" while the homepage never got fetched.
+The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / finished timestamps and elapsed time, **which of your sites it ran against**, a live page count while a crawl runs, and — on success — a result summary, or the error message on failure. A crawl summary also names the **dominant reason** pages were skipped, and says outright when the **homepage** was among them: "0 issues found" must not be readable as "clean" while the homepage never got fetched. A finished or failed job also ends with the step that follows it. A job you cannot reach — an unknown `job_id` or somebody else's — comes back as an **error**, not as an empty answer.

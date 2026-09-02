@@ -615,7 +615,14 @@ export const DOC_PROSE = {
           "names that property and both projects underneath the list. Each pull fetches one set " +
           "of rows and is billed once per project, so the pair costs credits twice for the same " +
           "data. Nothing is deduplicated for you — which of the two to keep is a decision only " +
-          "you can make.",
+          "you can make.\n\n" +
+          "**If two tracked projects are the same site** — an apex and its `www.` twin, say — " +
+          "the reply names them together as well. This is a different warning and it fires " +
+          "independently: a pair with no Google account at all still has it, because each of the " +
+          "two is crawled, audited and billed on its own. New projects can no longer split this " +
+          "way, so a pair you see is left over from before that changed; " +
+          "[`untrack_project`](/docs/tools-reference/untrack-project) archives the one you do " +
+          "not want, and nothing it holds is deleted.",
       },
       {
         heading: "You do not always need the project_id",
@@ -682,15 +689,38 @@ export const DOC_PROSE = {
           "[`get_job_status`](/docs/tools-reference/get-job-status) for that one job's detail: its " +
           "crawl summary, how far a running job has got, or why it failed.",
       },
+      {
+        heading: "Narrowing the list, and reading past the first page",
+        body:
+          "Pass `status` to see only the jobs in one state — `queued`, `running`, `succeeded` or " +
+          "`failed` — and `project_id` to see only the ones that ran against a single site. The " +
+          "two combine, so \"the failed crawls for this domain\" is one call. A `status` the jobs " +
+          "table cannot hold is **refused** rather than quietly ignored.\n\n" +
+          "**A narrowed reply says so.** The heading names the filter it applied — *your 3 most " +
+          "recent failed job(s) of 3 for example.com* — and the count is of the filtered set " +
+          "rather than of your whole history, so a short list is never read as \"this is " +
+          "everything\". When nothing matches, the reply names what you asked for (*No failed " +
+          "job(s) for example.com found*) and points at the call that drops the filter, instead " +
+          "of telling you that you have never run a job.\n\n" +
+          "The list is capped, and the reply says how many jobs it did **not** show along with " +
+          "the `before_id` to pass for the next page. Each page names the next value, so a busy " +
+          "account can be read all the way down; page two calls itself a continuation and counts " +
+          "what remains past the cursor. A `before_id` that names no job of yours is refused " +
+          "outright — never treated as \"start from the top\" — while reaching your oldest job " +
+          "says the history **ends** there.",
+      },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> How is the crawl I started doing?\n\n" +
       "The tool replies with your recent jobs; pick the one you mean and ask " +
       "[`get_job_status`](/docs/tools-reference/get-job-status) about its `job_id`.",
     returns:
-      "One line per job — tool, status, timestamps, `project_id` where there is one, and `job_id` — " +
-      "newest first, followed by a pointer to `get_job_status` for the full result. Guidance to the " +
-      "two tools that create jobs when you have run none.",
+      "One line per job — tool, status, timestamps, which of your sites it ran against, and " +
+      "`job_id` — newest first, followed by a pointer to `get_job_status` for the full result, " +
+      "and the `before_id` for the next page when the list was cut. When `status` or " +
+      "`project_id` narrowed the list, the heading names the filter and the count is of the " +
+      "filtered set; when nothing matched, the reply names the filter rather than reporting an " +
+      "empty account. Guidance to the two tools that create jobs when you have run none.",
   },
 
   list_credit_activity: {
@@ -715,13 +745,39 @@ export const DOC_PROSE = {
           "[`get_credit_balance`](/docs/tools-reference/get-credit-balance). For charts and a full " +
           "history, use the Usage page in your dashboard.",
       },
+      {
+        heading: "Where the credits went, and how to read past the first page",
+        body:
+          "Every reply ends with one **Spent so far** line: your net spend, how many tools it " +
+          "covers, and the five that took the most, with the tail collapsed into a single " +
+          "number. *Net*, not gross — a run that was refunded cost nothing, so a tool whose " +
+          "every call was released is left out rather than printed as a zero. If your ledger is " +
+          "larger than one summary can read, the line says how many entries it covered: a " +
+          "partial total that calls itself complete is worse than no total at all.\n\n" +
+          "The list is capped, and the reply says how many entries it did **not** show along " +
+          "with the `before_id` to pass for the next page. Each page names the next value, so an " +
+          "account with hundreds of entries can be read all the way down. Page two calls itself " +
+          "a continuation rather than \"your most recent\", and counts what remains past the " +
+          "cursor rather than the size of the whole ledger.\n\n" +
+          "The two ways of running out are told apart, and neither is reported as an empty " +
+          "ledger: a `before_id` that names no entry of yours is refused outright rather than " +
+          "quietly restarting from the top, while reaching your oldest entry says the history " +
+          "**ends** there.\n\n" +
+          "Pass `project_id` to see what one site cost you. The ledger only began storing which " +
+          "project a spend was for partway through, and it is append-only, so entries older than " +
+          "that carry no project and can never match the filter — they are marked **project not " +
+          "recorded** in the list, and the scoped reply says so, rather than letting an empty " +
+          "answer read as \"this site cost nothing\".",
+      },
     ],
     example:
       "Ask your MCP client in plain language:\n\n> What have I spent credits on lately?",
     returns:
-      "One line per ledger entry — timestamp, signed credits, kind, and the tool where there is one " +
-      "— newest first, with a pointer to `get_credit_balance` for your current total. Guidance when " +
-      "nothing has moved your balance yet.",
+      "One line per ledger entry — timestamp, signed credits, kind, the tool where there is one, " +
+      "and which project the spend was for — newest first, with a pointer to " +
+      "`get_credit_balance` for your current total, the `before_id` for the next page when the " +
+      "list was cut, and a closing **Spent so far** line. Guidance when nothing has moved your " +
+      "balance yet, when a cursor names no entry of yours, and when the history ends.",
   },
 
   get_credit_balance: {
@@ -865,6 +921,20 @@ export const DOC_PROSE = {
           "negative or impossible duration is not a measurement, and rows written before that was " +
           "fixed still exist.",
       },
+      {
+        heading: "Which site, and what to do next",
+        body:
+          "Every reply names the project the job ran against — by DOMAIN, in the same clause and " +
+          "the same words [`list_jobs`](/docs/tools-reference/list-jobs) uses, so the list you " +
+          "came from and the detail you asked for cannot describe one job two ways. A job with " +
+          "no project scope says so, and a project you have since removed falls back to the id " +
+          "it was recorded with.\n\n" +
+          "A finished job ends with the step that follows it: a crawl points at the audits that " +
+          "read it, a Search Console pull at the tools that read a pull. A failed job says how " +
+          "to retry and where to go if it keeps failing. A job whose tool has no follow-up " +
+          "routed for it says nothing rather than guessing one — a suggestion that cannot read " +
+          "the result is worse than none.",
+      },
     ],
     example:
       "After `crawl_site` gives you a `job_id`, ask your MCP client:\n\n> What's the status of job " +
@@ -872,11 +942,13 @@ export const DOC_PROSE = {
       "pages were crawled, how many were skipped, and how many issues were found.",
     returns:
       "The job `status` (`queued`, `running`, `succeeded`, or `failed`), its created / started / " +
-      "finished timestamps and elapsed time, a live page count while a crawl runs, and — on " +
-      "success — a result summary, or the error message on failure. A crawl summary also names " +
-      "the **dominant reason** pages were skipped, and says outright when the **homepage** was " +
-      "among them: \"0 issues found\" must not be readable as \"clean\" while the homepage never " +
-      "got fetched.",
+      "finished timestamps and elapsed time, **which of your sites it ran against**, a live page " +
+      "count while a crawl runs, and — on success — a result summary, or the error message on " +
+      "failure. A crawl summary also names the **dominant reason** pages were skipped, and says " +
+      "outright when the **homepage** was among them: \"0 issues found\" must not be readable as " +
+      "\"clean\" while the homepage never got fetched. A finished or failed job also ends with " +
+      "the step that follows it. A job you cannot reach — an unknown `job_id` or somebody " +
+      "else's — comes back as an **error**, not as an empty answer.",
   },
 
   pull_gsc_data: {

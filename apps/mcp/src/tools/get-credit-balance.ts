@@ -32,7 +32,14 @@ import { defineTool, textResultWithCard } from "./registry.ts";
  */
 export const getCreditBalanceTool = defineTool({
   name: "get_credit_balance",
-  description: "Show your available credit balance (the running total of your credit ledger).",
+  // THE PRICE BELONGS IN THE SENTENCE THE MODEL READS. Counted on the live tools/list 2026-09-02:
+  // 35 of 38 descriptions state their cost, and this was one of the three that did not — so a
+  // model asked what checking a balance costs had to leave the surface to find out. The docs page
+  // is unaffected: `stripCostSentences` removes exactly this clause from the generated
+  // frontmatter, and the page's `**Cost:**` line is derived from TOOL_COSTS as before.
+  description:
+    "Show your available credit balance (the running total of your credit ledger). " +
+    "Costs 0 credits.",
   inputSchema: z.object({}),
   /**
    * THE MCP APPS RENDERING PROBE (2026-08-27) — see ui/card.ts for what it is measuring and

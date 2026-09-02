@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { failureClause, formatDuration, formatJobStatus, jobTiming } from "./get-job-status.ts";
+import {
+  failureClause,
+  formatDuration,
+  formatJobStatus,
+  getJobStatusTool,
+  jobTiming,
+  makeGetJobStatusTool,
+  NEXT_AFTER_SUCCESS,
+} from "./get-job-status.ts";
 import { formatJobLine } from "./list-jobs.ts";
+import type { AuthContext } from "../auth.ts";
+import { TOOL_COSTS } from "../credits/costs.ts";
 import type { JobRow } from "../db.ts";
+import type { RegisteredTool } from "./registry.ts";
 
 /**
  * Fast-lane specs for the pure status renderer. Every job status has a distinct line,
@@ -531,5 +542,192 @@ describe("formatJobStatus punctuates a failed job exactly once", () => {
     expect(failureClause("A fragment")).toBe("A fragment");
     expect(failureClause(null)).toBe("unknown error");
     expect(failureClause("Wait...")).toBe("Wait...");
+  });
+});
+
+/**
+ * GJS B-1 — measured by mutation, 2026-09-02. Turning the not-found `errorResult` into a plain
+ * `textResult` left all 156 specs of the account family GREEN: a client would have read "No job
+ * found with id …" as a SUCCESSFUL result, and an agent polling a mistyped id would have treated
+ * the refusal as an answer. The guard existed only in get-job-status.db.test.ts, which
+ * `make verify` does not run — so the fast lane could not see the flag fall.
+ *
+ * It could not see it because the job read was not a port: `makeGetJobStatusTool` injected the
+ * domain lookup and reached `getJobForUser` directly. It now injects both, which is the whole
+ * change — the not-found sentence and the tenant-scoped read are untouched.
+ */
+describe("a job that cannot be reached is an ERROR, not an answer", () => {
+  const CTX_J = { userId: "user-1", keyId: "key-1" } as AuthContext;
+  const ABSENT = "00000000-0000-4000-8000-000000000000";
+
+  const notFoundTool = (): RegisteredTool =>
+    makeGetJobStatusTool({
+      readJob: async () => null,
+      lookupDomain: async () => new Map(),
+    });
+
+  it("flags the not-found reply so a client cannot read it as a result", async () => {
+    const result = await notFoundTool().run(CTX_J, { job_id: ABSENT });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text ?? "").toMatch(/no job found with id/i);
+  });
+
+  /**
+   * ANTI-ENUMERATION, pinned beside the flag it travels with: an unknown id and another tenant's
+   * job reach this branch through the SAME tenant-scoped read, so the answer must not hint that
+   * the id exists elsewhere.
+   */
+  it("says nothing about where the job might live instead", async () => {
+    const text = (await notFoundTool().run(CTX_J, { job_id: ABSENT })).content[0]?.text ?? "";
+    expect(text).not.toMatch(/another|other account|belongs to|different tenant/i);
+  });
+
+  it("does NOT flag a job it could read", async () => {
+    const tool = makeGetJobStatusTool({
+      readJob: async () => job({ status: "succeeded" }),
+      lookupDomain: async () => new Map(),
+    });
+    const result = await tool.run(CTX_J, { job_id: ABSENT });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text ?? "").toMatch(/succeeded/);
+  });
+
+  /** The read is asked for THIS caller's job — the tenant argument is not dropped on the way. */
+  it("asks the read port for the caller's own job", async () => {
+    const calls: { jobId: string; userId: string }[] = [];
+    const tool = makeGetJobStatusTool({
+      readJob: async (jobId, userId) => {
+        calls.push({ jobId, userId });
+        return null;
+      },
+      lookupDomain: async () => new Map(),
+    });
+    await tool.run(CTX_J, { job_id: ABSENT });
+    expect(calls).toEqual([{ jobId: ABSENT, userId: CTX_J.userId }]);
+  });
+});
+
+/**
+ * GJS B-2 — the axis F-6 did not vary. F-6 varied the TERMINATING CHARACTER (".", "?", "!", "…")
+ * and stopped; measured out-of-tree on 2026-09-02, an error text ending in a full stop AND A
+ * TRAILING SPACE still rendered `…engineering record. . created …` — `endsWith(".")` is false, so
+ * nothing was absorbed and the renderer added its own stop after the space.
+ *
+ * Not reachable from today's stored rows, which is why it is P2 and not P1. It is reachable from
+ * any message a human edits.
+ */
+describe("failureClause trims what the renderer will punctuate", () => {
+  it("absorbs the stop even when the stored text ends in whitespace", () => {
+    expect(failureClause("…preserved in the engineering record. ")).toBe(
+      "…preserved in the engineering record",
+    );
+  });
+
+  it.each([
+    ["a trailing space", "This was a problem on our side. "],
+    ["a trailing newline", "This was a problem on our side.\n"],
+    ["a trailing tab", "This was a problem on our side.\t"],
+  ])("renders one stop, not two, for %s", (_label, error) => {
+    const line = formatJobStatus(job({ status: "failed", error }));
+    expect(line).not.toContain(". .");
+    expect(line).not.toContain("..");
+    expect(line).toContain("on our side. created");
+  });
+
+  /** The values that must still keep what they have — the axis F-6 DID vary, re-pinned with the
+   * trailing whitespace added, so trimming cannot start eating question marks. */
+  it.each([
+    ["a question", "Did your site block our crawler? "],
+    ["an exclamation", "Your trial expired! "],
+    ["an ellipsis", "The crawl stopped early… "],
+  ])("leaves %s intact after trimming the whitespace", (_label, error) => {
+    expect(formatJobStatus(job({ status: "failed", error }))).toContain(
+      `failed: ${error.trimEnd()}. created`,
+    );
+  });
+});
+
+/**
+ * GJS B-4 / S7 — counted on the live tools/list 2026-09-02: 35 of 38 descriptions state their
+ * price; this was one of the three that did not.
+ */
+describe("get_job_status states its price", () => {
+  it("says the check is free, in the same words the other 35 use", () => {
+    expect(getJobStatusTool.description).toMatch(/costs 0 credits/i);
+  });
+});
+
+/**
+ * GJS B-3, measured live 2026-09-02: NONE of the four statuses said what to do next. The two
+ * sibling read-backs both close with the step that follows — list_jobs with "Run get_job_status
+ * with one of these job_id values…", list_credit_activity with "Run get_credit_balance for your
+ * current total." — and this tool is the LAST link of that chain. A `failed` answer told the
+ * customer the failure was on our side and stopped; a `succeeded` answer summarised a crawl the
+ * customer had paid 20 credits for and pointed nowhere.
+ *
+ * The tool names are NOT invented here: they are the ladder's own (packages/core
+ * guide/next-step.ts — AUDIT_TRIO, and the pull rung's discovery trio, which pull_gsc_data's own
+ * description already names). The last spec in this block is what keeps that true.
+ */
+describe("the last link of the chain says what comes next", () => {
+  const succeeded = (tool: string): string =>
+    formatJobStatus(job({ status: "succeeded", tool, finished_at: "2026-07-19T00:02:00.000Z" }));
+
+  it("tells a failed job how to retry, and where to go if it keeps failing", () => {
+    const line = formatJobStatus(job({ status: "failed", tool: "crawl_site", error: "nope" }));
+    expect(line).toMatch(/run crawl_site again/i);
+    expect(line).toMatch(/contact support/i);
+  });
+
+  it("names the failed job's OWN tool, not a hardcoded one", () => {
+    expect(formatJobStatus(job({ status: "failed", tool: "pull_gsc_data" }))).toMatch(
+      /run pull_gsc_data again/i,
+    );
+  });
+
+  it("points a finished crawl at the audits that read it", () => {
+    const line = succeeded("crawl_site");
+    expect(line).toMatch(/audit_onpage/);
+    expect(line).toMatch(/audit_tech/);
+    expect(line).toMatch(/audit_schema/);
+  });
+
+  it("points a finished Search Console pull at the tools that read it", () => {
+    const line = succeeded("pull_gsc_data");
+    expect(line).toMatch(/find_quick_wins/);
+    expect(line).toMatch(/detect_cannibalization/);
+    expect(line).toMatch(/analyze_content_decay/);
+    expect(line).not.toMatch(/audit_onpage/);
+  });
+
+  /**
+   * SILENCE FOR A TOOL NOBODY HAS ROUTED YET. Guessing a follow-up for an unknown producer is how
+   * a catalog gets invented: the answer would name a tool that cannot read this result.
+   */
+  it("says nothing about next steps for a job whose tool it does not route", () => {
+    const line = succeeded("some_future_tool");
+    expect(line).toMatch(/succeeded/);
+    expect(line).not.toMatch(/ready to analyze/i);
+    expect(line).not.toMatch(/audit_onpage|find_quick_wins/);
+  });
+
+  /** queued and running are unchanged: "call again" is what the caller is already doing. */
+  it.each(["queued", "running"] as const)("leaves a %s job's line as it was", (status) => {
+    const line = formatJobStatus(job({ status }));
+    expect(line).not.toMatch(/ready to analyze|contact support/i);
+  });
+
+  /**
+   * THE ANTI-INVENTION PIN. Every tool this file routes to must be a tool that EXISTS — checked
+   * against the signed cost table, which is the registry's own list of names. A follow-up
+   * recommending a tool the server does not publish is worse than no follow-up: the model calls
+   * it, the call fails, and the failure looks like the customer's fault.
+   */
+  it("only ever names tools this server actually publishes", () => {
+    const named = Object.values(NEXT_AFTER_SUCCESS).flat();
+    expect(named.length).toBeGreaterThan(0);
+    for (const tool of named) {
+      expect(Object.keys(TOOL_COSTS)).toContain(tool);
+    }
   });
 });

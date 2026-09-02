@@ -183,6 +183,52 @@ describe("list_credit_activity against the local stack", () => {
   });
 
   /**
+   * A CURSOR THAT IS A NUMBER IS NOT YET A POSITION (measured live 2026-09-02). `credit_ledger.id`
+   * is a monotonic bigint, so `id < 99999999` is a perfectly valid predicate that matches the whole
+   * ledger — and the tool answered it with the account's NEWEST rows under an "older credit
+   * entries" heading. Only real rows can show that the anchor probe refuses such a value, and only
+   * two real tenants can show that ANOTHER tenant's row id is refused the same way: the fast lane
+   * injects a recorder that returns whatever it is handed, so it can prove the sentence and never
+   * the read that chooses it.
+   */
+  it("refuses a before_id that is nobody's, and another tenant's id the same way", async () => {
+    const owner = await makeCtx();
+    const stranger = await makeCtx();
+    await seedLedger(owner.userId, [{ delta: 200, kind: "grant", reason: "mine" }]);
+    await seedLedger(stranger.userId, [{ delta: 200, kind: "grant", reason: "theirs" }]);
+    const strangerRow = (await listOwnCreditActivity(stranger.userId, 1)).rows[0];
+    if (strangerRow === undefined) throw new Error("stranger seed produced no ledger row");
+
+    const foreign = await listOwnCreditActivity(owner.userId, 10, strangerRow.id);
+
+    expect(foreign.unknownCursor).toBe(true);
+    expect(foreign.rows).toEqual([]);
+    // Indistinguishable from an id that is nobody's — otherwise paging leaks existence.
+    expect(await listOwnCreditActivity(owner.userId, 10, 99_999_999)).toEqual(foreign);
+  });
+
+  /**
+   * The other half of the same defect: a cursor at the BOTTOM of a real ledger must come back as
+   * an ordinary empty page — NOT as `unknownCursor` — so the renderer says "there is nothing
+   * older" rather than "no entry found with that before_id".
+   */
+  it("reaches the end of a real ledger without calling the last id unknown", async () => {
+    const ctx = await makeCtx();
+    await seedLedger(ctx.userId, [
+      { delta: 200, kind: "grant", reason: "oldest" },
+      { delta: 50, kind: "purchase", reason: "newest" },
+    ]);
+    const rows = (await listOwnCreditActivity(ctx.userId, 10)).rows;
+    const oldest = rows[rows.length - 1];
+    if (oldest === undefined) throw new Error("ledger seed produced no rows");
+
+    const past = await listOwnCreditActivity(ctx.userId, 10, oldest.id);
+
+    expect(past.rows).toEqual([]);
+    expect(past.unknownCursor).toBeUndefined();
+  });
+
+  /**
    * The summary's own arithmetic against real rows: a released reserve must net to nothing, which
    * is the difference between "what this tool charged" and "what it COST you".
    */
