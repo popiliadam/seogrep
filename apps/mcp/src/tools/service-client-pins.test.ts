@@ -28,7 +28,8 @@ import {
  * spec's own answer callback handed over. The single exception is the last block, which is a
  * claim about how a CALLER INTERPRETS an answer it was given, not about the query.
  *
- * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1 · CG-1 (mapping read).
+ * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1 · CG-1 (mapping read)
+ * · the two audit crawl reads added by the 2026-09 audit slice (last block).
  */
 
 const USER = "user-under-test";
@@ -55,6 +56,8 @@ import {
   listActiveTrackedKeywords,
   untrackKeywords,
 } from "./tracked-keywords-store.ts";
+import { getSucceededCrawlById } from "../queue/boss.ts";
+import { findPriorAuditRun } from "../audit/runs.ts";
 import { archiveOwnProject } from "./untrack-project.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
@@ -468,5 +471,68 @@ describe("the connect_gsc mapping read is scoped to one tenant's one project (CG
     const columns = String(callsTo(await readMapping(), "select")[0]?.args[0] ?? "");
     expect(columns).toContain("account_id");
     expect(columns).toContain("gsc_property");
+  });
+});
+
+/**
+ * THE TWO AUDIT READS ADDED ON 2026-09-02, pinned the day they shipped rather than the day
+ * somebody deletes a filter from them.
+ *
+ * Both were measured: removing `.eq("user_id", …)` from EITHER left the whole fast lane green at
+ * 3820/3820. The reason is this file's opening paragraph, unchanged — the audits inject their
+ * readers as PORTS, so the tool-level specs drive a fake and the production query never runs.
+ *
+ * They are two different failures, not one shape twice:
+ *   · `getSucceededCrawlById` takes a caller-supplied JOB ID. Without the tenant filter, `job_id`
+ *     becomes a lookup key over the whole fleet's `jobs` table, and quoting a uuid audits — and
+ *     reads back the page list of — another tenant's crawl. It is the one new field on the audit
+ *     surface that a caller controls, which is exactly why the id must NARROW an already-scoped
+ *     set rather than select from an unscoped one.
+ *   · `findPriorAuditRun` only feeds a sentence, and that is not a reason to leave it open: the
+ *     sentence carries a TIMESTAMP, so an unscoped read tells a caller when somebody else audited
+ *     a crawl, which is the existence oracle project-target.ts's ordering rule exists to prevent.
+ *
+ * THE ROWS ARE NEVER THE EVIDENCE (this file's rule). Each spec asserts on the chain, and asserts
+ * the WHOLE key rather than the tenant column alone — a read that kept `user_id` and lost
+ * `project_id` would still be wrong, and `toContainEqual` on one call cannot see that.
+ */
+describe("the audit crawl reads carry their whole key (2026-09 audit slice)", () => {
+  const PROJECT = "0e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7";
+  const CRAWL_JOB = "53907ab7-1111-4222-8333-444444444444";
+
+  it("getSucceededCrawlById narrows the tenant's own jobs — it does not select on the id alone", async () => {
+    db = createFakeQueryDb(() => ({ data: null }));
+
+    await getSucceededCrawlById(db.client, {
+      jobId: CRAWL_JOB,
+      projectId: PROJECT,
+      userId: USER,
+    });
+
+    const jobs = db.onlyStatementFor("jobs");
+    expect(jobs.calls).toContainEqual(tenantFilter);
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    // The id is a FOURTH filter beside the guards, and the last two keep a running or failed job
+    // — or a job of some other tool — from being handed to the rule engines as a crawl.
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["id", CRAWL_JOB] });
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["tool", "crawl_site"] });
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["status", "succeeded"] });
+  });
+
+  it("findPriorAuditRun asks only about this tenant's own earlier run", async () => {
+    db = createFakeQueryDb(() => ({ data: null }));
+
+    await findPriorAuditRun({
+      userId: USER,
+      projectId: PROJECT,
+      crawlJobId: CRAWL_JOB,
+      tool: "audit_onpage",
+    });
+
+    const runs = db.onlyStatementFor("audit_runs");
+    expect(runs.calls).toContainEqual(tenantFilter);
+    expect(runs.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    expect(runs.calls).toContainEqual({ method: "eq", args: ["crawl_job_id", CRAWL_JOB] });
+    expect(runs.calls).toContainEqual({ method: "eq", args: ["tool", "audit_onpage"] });
   });
 });

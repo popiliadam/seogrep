@@ -375,6 +375,37 @@ describe("re-auditing a crawl that was already audited says so", () => {
     expect(text.indexOf("already audited")).toBeLessThan(text.indexOf("On-page audit —"));
   });
 
+  /**
+   * THE LOOKUP RUNS BEFORE THE WRITE, and nothing else in this file can see it.
+   *
+   * Measured 2026-09-02: moving `findPriorRun` BELOW `writeRun` left the whole fast lane green at
+   * 3820/3820. The ordering is not cosmetic — after the write, the row this very call just
+   * inserted IS the row the lookup finds, so every FIRST audit of a crawl would answer "this crawl
+   * was already audited by X on <the current minute>". The customer-visible failure is a warning
+   * that is always on, which is a warning nobody reads.
+   *
+   * The two ports cannot catch it separately: each fake sees only its own invocation and both are
+   * called exactly once either way. ONE SHARED LOG is what makes the sequence observable at all.
+   */
+  it("looks the prior run up BEFORE recording this one, so it cannot find itself", async () => {
+    const calls: string[] = [];
+    const tool = makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: LOAD_OK,
+      loadProject: NO_PROJECT,
+      findPriorRun: async () => {
+        calls.push("findPriorRun");
+        return null;
+      },
+      writeRun: async () => {
+        calls.push("writeRun");
+      },
+    });
+
+    await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(calls).toEqual(["findPriorRun", "writeRun"]);
+  });
+
   it("says nothing when this crawl has not been audited by this tool before", async () => {
     const result = await toolWithPrior(null).run(CTX, { project_id: PROJECT_ID });
 
