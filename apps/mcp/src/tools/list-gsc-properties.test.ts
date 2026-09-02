@@ -237,6 +237,46 @@ describe("list_gsc_properties", () => {
     expect(out).toMatch(/siteOwner/);
   });
 
+  /**
+   * LGP-1 — MEASURED LIVE 2026-09-02: two identical calls returned the SAME 27 properties in two
+   * DIFFERENT orders, because the listing was printed in whatever order Google answered in. An
+   * inventory a user compares against Search Console cannot reshuffle itself between two reads.
+   *
+   * The order is BYTE value, not `localeCompare`, for the reason track_gsc_property's own
+   * `compareStrings` states: a locale-dependent answer differs between a developer's machine and
+   * the server. The fixture is chosen so the two rules DISAGREE — byte order puts "B" before "a",
+   * an English collation does not — so a `localeCompare` implementation cannot pass this.
+   */
+  describe("the property listing is in a fixed order", () => {
+    const SHUFFLED: readonly GscSite[] = [
+      { siteUrl: "sc-domain:zeta.test", permissionLevel: "siteOwner" },
+      { siteUrl: "https://a-lower.test/", permissionLevel: "siteOwner" },
+      { siteUrl: "https://B-upper.test/", permissionLevel: "siteOwner" },
+    ];
+
+    /** The property strings, in the order the answer actually printed them. */
+    const listed = (out: string): string[] =>
+      out
+        .split("\n")
+        .map((line) => /^ {2}- (\S+) /.exec(line)?.[1])
+        .filter((property): property is string => property !== undefined);
+
+    it("prints the same order whichever order Google answers in", async () => {
+      const forward = await callTool({}, { sites: SHUFFLED });
+      const reversed = await callTool({}, { sites: [...SHUFFLED].reverse() });
+      expect(listed(forward)).toHaveLength(SHUFFLED.length);
+      expect(reversed).toBe(forward);
+    });
+
+    it("orders properties by BYTE value, not by locale collation", async () => {
+      expect(listed(await callTool({}, { sites: SHUFFLED }))).toEqual([
+        "https://B-upper.test/",
+        "https://a-lower.test/",
+        "sc-domain:zeta.test",
+      ]);
+    });
+  });
+
   it("never shows another tenant's account or its properties", async () => {
     const out = await callTool(
       {},
@@ -578,6 +618,28 @@ describe("list_gsc_properties", () => {
       // indistinguishable from no account — status column included.
       expect(scopedUserIds).toEqual([USER]);
       expect(accounts.map((account) => account.email)).not.toContain("stranger@mail.test");
+    });
+
+    /**
+     * LGP-3 — the reader's own header declares "Accounts, ordered by email so the output does not
+     * depend on scan order", and on 2026-09-02 nothing measured it: dropping the sort left all
+     * 3680 tests green. With one connected account the promise is invisible; the second account
+     * makes every block of the answer depend on whatever order the table was scanned in.
+     */
+    it("orders accounts by email, whatever order the table answers in", async () => {
+      accountTableRows = [
+        { id: "acct-c", user_id: USER, google_account_email: "ccc@mail.test", token_status: null },
+        { id: "acct-a", user_id: USER, google_account_email: "aaa@mail.test", token_status: null },
+        { id: "acct-b", user_id: USER, google_account_email: "bbb@mail.test", token_status: null },
+      ];
+
+      const accounts = await loadGscAccounts(USER);
+
+      expect(accounts.map((account) => account.email)).toEqual([
+        "aaa@mail.test",
+        "bbb@mail.test",
+        "ccc@mail.test",
+      ]);
     });
 
     it("reads a row that has never been checked as null, never as dead", async () => {

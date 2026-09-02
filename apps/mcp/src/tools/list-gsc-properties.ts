@@ -173,6 +173,15 @@ export const listAccountSitesFor: ListAccountSitesFn = async (accountId, userId)
   return listSites(accessToken);
 };
 
+/**
+ * BYTE-order comparison, the ONE ordering rule this file has, and NOT `localeCompare`: a
+ * locale-dependent answer differs between a developer's machine and the server (the same ruling
+ * track_gsc_property's `compareStrings` states, in the same words, for the same reason).
+ */
+function compareStrings(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** The domains reading `siteUrl` THROUGH `accountId` — never through a namesake elsewhere. */
 function readBy(
   mappings: readonly ProjectPropertyMapping[],
@@ -211,9 +220,7 @@ function unlinkedProjectsFor(
   return mappings
     .filter((mapping) => mapping.property === null && stripWwwLabel(mapping.domain) === host)
     .map((mapping) => mapping.domain)
-    // Byte order, not localeCompare: the sentence must not differ between a developer's machine
-    // and the server (the same ruling track_gsc_property's compareStrings states).
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    .sort(compareStrings);
 }
 
 /** How an unread property is described: plainly, or with the project it plainly belongs to. */
@@ -296,10 +303,18 @@ function renderAccount(
           "what it can reach is unknown. Try again shortly, or reconnect the account on the " +
           "Connection page.";
   }
+  // ORDERED BY siteUrl, NEVER BY GOOGLE'S ANSWER. Measured live 2026-09-02: two identical calls
+  // returned the same 27 properties in two different orders, because `sites.list` carries no
+  // ordering promise and this line printed whatever arrived. An inventory a user reads against
+  // Search Console — and, once the "list" card ships, a list that redraws on every refresh —
+  // cannot reshuffle itself between two reads of the same account.
   const listing =
     sites.length === 0
       ? "  No Search Console properties on this account."
-      : sites.map((site) => renderSite(site, mappings, account.id)).join("\n");
+      : [...sites]
+          .sort((a, b) => compareStrings(a.siteUrl, b.siteUrl))
+          .map((site) => renderSite(site, mappings, account.id))
+          .join("\n");
   return expired ? `${header}\n${RECONNECT_LINE}\n${listing}` : `${header}\n${listing}`;
 }
 
