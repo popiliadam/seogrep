@@ -6,6 +6,7 @@ import {
   CONFIRMATION_THRESHOLD_CREDITS,
   confirmationGate,
   declaredProjectId,
+  canRequireConfirmation,
   defineTool,
   evaluateConfirmation,
   readConfirmFlag,
@@ -820,5 +821,69 @@ describe("S1 — unknown input keys are refused, not silently dropped", () => {
     expect(result).toEqual(textResult("compared 10"));
     // The flag is stripped before the handler sees it — it is the registry's, not the tool's.
     expect(handler.mock.calls[0]?.[1]).toEqual({ targets });
+  });
+});
+
+/**
+ * S1 follow-up (operator ruling 2026-09-02): DECLARE the reserved flag, do not loosen the schema.
+ *
+ * `additionalProperties: false` made an honest promise that contradicted the one instruction a
+ * confirmation prompt gives — "run it again with confirm: true". The server still accepts the
+ * flag (withoutReservedParams strips it before the parse), but a client that VALIDATES against
+ * the advertised schema would refuse to send it, and the only calls D17 ever fires for would
+ * become the calls that cannot be completed.
+ *
+ * So the registry ADVERTISES `confirm` — on the tools where the gate can actually fire, and
+ * nowhere else, because a flag offered on a call that can never need it is noise the model has
+ * to reason about 38 times. Which tools those are is DERIVED from the signed price table (worst
+ * case above the threshold), never from a name list: a price change moves the advertisement with
+ * it, and a new tool needs no one to remember.
+ */
+describe("S1 — the reserved `confirm` flag is advertised exactly where D17 can fire", () => {
+  const confirmProperty = (tool: RegisteredTool): unknown =>
+    (tool.inputJsonSchema as { properties?: Record<string, unknown> }).properties?.confirm;
+
+  it("advertises confirm on every confirmable tool and on no other (both directions)", () => {
+    const advertised = ALL_TOOLS.filter((tool) => confirmProperty(tool) !== undefined)
+      .map((tool) => tool.name)
+      .sort();
+    const confirmable = ALL_TOOLS.filter((tool) => canRequireConfirmation(tool.name))
+      .map((tool) => tool.name)
+      .sort();
+    expect(advertised).toEqual(confirmable);
+    // Not vacuous: both sides are empty if the predicate breaks, and the surface measured today
+    // is exactly one tool — 90 credits x up to 10 compared targets.
+    expect(advertised).toEqual(["ai_visibility_compare"]);
+  });
+
+  /**
+   * The predicate reads the WORST CASE the price table allows, which is the only reading that
+   * separates the two per-unit tools: ai_visibility_compare reaches 900 and serp_snapshot tops
+   * out at 55. "Has a units hook" would have advertised a flag on serp_snapshot that its price
+   * can never make relevant.
+   */
+  it("derives confirmability from the worst case in the price table, not from a units hook", () => {
+    expect(canRequireConfirmation("ai_visibility_compare")).toBe(true);
+    expect(canRequireConfirmation("serp_snapshot")).toBe(false);
+    expect(canRequireConfirmation("crawl_site")).toBe(false);
+    expect(canRequireConfirmation("whats_next")).toBe(false);
+  });
+
+  it("advertises it as an OPTIONAL boolean, in the words the D17 prompt uses", () => {
+    const tool = ALL_TOOLS.find((candidate) => candidate.name === "ai_visibility_compare");
+    const schema = tool?.inputJsonSchema as {
+      properties: Record<string, unknown>;
+      required?: string[];
+      additionalProperties?: unknown;
+    };
+    expect(schema.properties.confirm).toEqual({
+      type: "boolean",
+      description: expect.stringMatching(/confirmation threshold/i) as unknown as string,
+    });
+    expect(schema.required ?? []).not.toContain("confirm");
+    // The advertisement does not reopen the door this slice closed.
+    expect(schema.additionalProperties).toBe(false);
+    // It is advertised, never PARSED: no tool's zod schema declares it (gen-tool-docs gate ii).
+    expect(Object.keys(schema.properties)).toContain("targets");
   });
 });
