@@ -303,10 +303,15 @@ export function evaluateConfirmation(estimate: number, confirmed: boolean): Conf
 
 /**
  * Read the registry-level `confirm` flag from the RAW tool arguments. `confirm` is a RESERVED
- * registry parameter, deliberately NOT part of any tool's zod schema — the schemas strip unknown
- * keys, so the flag would be lost after parsing; it is read here from the raw input instead, so it
- * never appears in tools/list. Only the literal boolean `true` counts as confirmation (a string
- * "true" or any truthy value does not), so a client must send `"confirm": true` explicitly.
+ * registry parameter, deliberately NOT part of any tool's zod schema, so it is read here from the
+ * raw input and never appears in tools/list. Only the literal boolean `true` counts as
+ * confirmation (a string "true" or any truthy value does not), so a client must send
+ * `"confirm": true` explicitly.
+ *
+ * It is read from the RAW input because the parsed input no longer carries it: the schemas now
+ * REFUSE unknown keys (S1), and `withoutReservedParams` strips this one before the parse so the
+ * caller a confirmation prompt just told to "run it again with confirm: true" is not then refused
+ * for doing exactly that.
  */
 export function readConfirmFlag(rawInput: unknown): boolean {
   return (
@@ -343,6 +348,60 @@ export function confirmationGate(
 }
 
 /**
+ * The registry's RESERVED input parameters — names a caller may send that belong to the REGISTRY
+ * rather than to any tool, and which therefore appear in no tool's zod schema and in no
+ * tools/list entry. Today there is exactly one, `confirm` (the D17 gate), read straight off the
+ * raw input by readConfirmFlag and by crawl_site's large-site prompt.
+ */
+const RESERVED_INPUT_PARAMS: readonly string[] = ["confirm"];
+
+/**
+ * The caller's arguments with the reserved registry parameters removed, as a NEW object.
+ *
+ * It exists because of what refuseUnknownKeys below does: once a schema refuses what it does not
+ * recognise, `confirm` — which by design no schema recognises — would be refused too, and the one
+ * instruction a confirmation prompt gives ("run it again with confirm: true") would become the
+ * one call that cannot succeed. Stripping it here keeps the D17 flag exactly where it has always
+ * been read from (the raw input, which every path still receives untouched) while the tool's own
+ * fields face a schema that names a typo instead of dropping it.
+ *
+ * A non-object is returned unchanged so zod still produces its own "expected object" message.
+ */
+export function withoutReservedParams(rawInput: unknown): unknown {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) return rawInput;
+  return Object.fromEntries(
+    Object.entries(rawInput as Record<string, unknown>).filter(
+      ([key]) => !RESERVED_INPUT_PARAMS.includes(key),
+    ),
+  );
+}
+
+/**
+ * The same schema, made to REFUSE an unrecognised key instead of silently dropping it (S1) — the
+ * ONE place strictness is applied, for every tool at once.
+ *
+ * WHY IT IS HERE AND NOT IN 38 SCHEMAS. Zod's default object parse strips unknown keys, so until
+ * this existed `{"limit": 5, "limitt": 500}` ran with the DEFAULT limit and answered as though
+ * the caller had asked for it: a typo, a stale parameter name, and a client sending a field this
+ * server no longer supports were all indistinguishable from a correct call, on all 38 tools
+ * (measured on the live surface 2026-09-02 — not one advertised `additionalProperties: false`).
+ * Adding `.strict()` tool by tool would be a hand-maintained list of 38 places to remember, which
+ * is the shape this repo has already paid for; here it cannot be forgotten by a new tool, because
+ * a new tool has nowhere else to be built.
+ *
+ * It is applied to both halves of the contract from this single call — the advertised JSON Schema
+ * (toInputJsonSchema, so `additionalProperties: false` reaches tools/list) and the parse
+ * (defineTool) — so the promise and the behaviour cannot drift apart.
+ *
+ * A schema that is not a plain object (none today) is returned untouched rather than wrapped: it
+ * has no unknown-key notion to tighten. The gate against that going unnoticed is the loop over
+ * ALL_TOOLS in registry.test.ts, which reads what each tool actually ADVERTISES.
+ */
+export function refuseUnknownKeys<TIn>(schema: z.ZodType<TIn>): z.ZodType<TIn> {
+  return schema instanceof z.ZodObject ? (schema.strict() as unknown as z.ZodType<TIn>) : schema;
+}
+
+/**
  * Convert a zod schema to the MCP inputSchema (a bare JSON Schema object). The
  * $schema dialect marker z.toJSONSchema adds is dropped — MCP expects just the
  * object schema (type/properties/required). A new object is returned (no mutation).
@@ -355,7 +414,10 @@ export function confirmationGate(
  * is no second copy of this conversion to drift.
  */
 export function toInputJsonSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
-  const json = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
+  const json = z.toJSONSchema(refuseUnknownKeys(schema), { io: "input" }) as Record<
+    string,
+    unknown
+  >;
   // MCP inputSchema is a bare object schema — drop the JSON Schema dialect marker.
   return Object.fromEntries(Object.entries(json).filter(([key]) => key !== "$schema"));
 }
@@ -407,7 +469,8 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
         `unit's price instead.`,
     );
   }
-  const inputJsonSchema = toInputJsonSchema(spec.inputSchema);
+  const parseSchema = refuseUnknownKeys(spec.inputSchema);
+  const inputJsonSchema = toInputJsonSchema(parseSchema);
   const charge: ChargeMode = spec.charge ?? "surface";
   return {
     name: spec.name,
@@ -416,7 +479,7 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
     charge,
     uiResourceUri: spec.ui?.resourceUri,
     async run(ctx, rawInput) {
-      const parsed = spec.inputSchema.safeParse(rawInput ?? {});
+      const parsed = parseSchema.safeParse(withoutReservedParams(rawInput) ?? {});
       if (!parsed.success) {
         // Free by construction — this returns before ANY charge mode runs, so the guard, the
         // handler and the enqueue are all unreached and the ledger is never touched. Said out

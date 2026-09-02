@@ -15,6 +15,7 @@ import {
   textResultWithData,
   type RegisteredTool,
 } from "./registry.ts";
+import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { PaidBalanceRequiredError } from "../credits/paid-balance.ts";
 import { GscReauthRequiredError } from "../gsc-data/reauth-error.ts";
 import type { AuthContext } from "../auth.ts";
@@ -697,5 +698,111 @@ describe("card wiring gate (spec §8.2) — a tool carries ui.resourceUri iff it
     for (const name of CARDED_TOOLS) {
       expect(ALL_TOOLS.some((tool) => tool.name === name)).toBe(true);
     }
+  });
+});
+
+/**
+ * S1 — UNKNOWN KEYS ARE REFUSED, AND THE ADVERTISED SCHEMA SAYS SO.
+ *
+ * Measured on the live surface 2026-09-02: not one of the 38 `inputSchema`s in `tools/list`
+ * carried `additionalProperties: false`, and zod's default object parse STRIPS what it does not
+ * recognise. So `{"limit": 5, "limitt": 500}` ran with the default limit and answered as if the
+ * caller had asked for it — a typo, a stale parameter name, or a client sending a field this
+ * server no longer supports all looked exactly like a correct call. The four control records that
+ * caught it: get_credit_balance B-2, list_jobs B-1, list_projects B-2, list_gsc_properties LGP-4.
+ *
+ * The fix is at the REGISTRY, not in 38 schemas, so these tests are written against the registry:
+ * one loop over every registered tool (a per-tool `.strict()` would be a hand-maintained list, and
+ * this repo has paid for that shape before), plus the refusal's own behaviour.
+ */
+describe("S1 — unknown input keys are refused, not silently dropped", () => {
+  const ENV_KEYS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"] as const;
+  let saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>>;
+  beforeEach(() => {
+    saved = {};
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = saved[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it("every registered tool ADVERTISES additionalProperties:false in tools/list", () => {
+    const loose = ALL_TOOLS.filter(
+      (tool) =>
+        (tool.inputJsonSchema as { additionalProperties?: unknown }).additionalProperties !== false,
+    ).map((tool) => tool.name);
+    expect(loose).toEqual([]);
+    // Not vacuous: the filter above is silent on an empty ALL_TOOLS, and the surface is 38 tools.
+    expect(ALL_TOOLS.length).toBe(38);
+  });
+
+  it("refuses an unknown key and NAMES it, without running the handler", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "whats_next",
+      description: "d",
+      inputSchema: z.object({ focus: z.string().optional() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { focus: "titles", fokus: "titles" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/invalid input for "whats_next"/i);
+    expect(result.content[0]?.text).toMatch(/fokus/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The refusal is free BY CONSTRUCTION — it returns before any charge mode — and on a PRICED
+   * tool it must say so. With every SUPABASE_* var stripped, any reserve would throw loadEnv, so
+   * an ordinary isError result is itself the proof that the guard never ran.
+   */
+  it("charges nothing for an unknown key on a PRICED surface tool, and says so", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "research_keywords", // priced (25); a surface charge here would need the DB
+      description: "d",
+      inputSchema: z.object({ keywords: z.array(z.string()).optional() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { keywords: ["a"], keyword: "a" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain(NOT_CHARGED_SENTENCE);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `confirm` is the ONE reserved registry parameter (D17), deliberately absent from every tool's
+   * zod schema. Strictness must not turn it into an unknown key: a caller told to "run it again
+   * with confirm: true" would then be refused for doing exactly that, and the only tools the D17
+   * gate ever fires for — ai_visibility_compare at 90 x targets, crawl_site's large-site prompt —
+   * are precisely the ones that would become uncallable.
+   */
+  it("still accepts the reserved `confirm` flag, which no tool schema declares", async () => {
+    const handler = vi.fn(async (_ctx: AuthContext, input: { targets: string[] }) =>
+      textResult(`compared ${input.targets.length}`),
+    );
+    const tool = defineTool({
+      name: "ai_visibility_compare", // 90 per target: ten targets is 900, over the D17 threshold
+      description: "d",
+      inputSchema: z.object({ targets: z.array(z.string()) }),
+      charge: "handler",
+      units: (input: { targets: string[] }) => input.targets.length,
+      handler,
+    });
+
+    const targets = Array.from({ length: 10 }, (_value, index) => `t${index}.example`);
+    const result = await tool.run(CTX, { targets, confirm: true });
+    expect(result).toEqual(textResult("compared 10"));
+    // The flag is stripped before the handler sees it — it is the registry's, not the tool's.
+    expect(handler.mock.calls[0]?.[1]).toEqual({ targets });
   });
 });
