@@ -99,3 +99,12 @@ Canlı payload kartın beklediği alanları taşıyor mu: **hayır** — canlı 
 | UP-2 | P2 | `projectNotFoundMessage` bu tool'da `You were not charged.` cümlesiyle bitiyor; `untrack_project` 0 kredilik bir tool olduğu için "ücretlendirilmedin" cümlesi anlamsız bir güvence veriyor — ve aynı durum için `connect_gsc` bambaşka, daha kısa bir cümle kullanıyor. Aynı hata, ailede iki farklı sesle. | `p6.jsonl` (up-unknown-uuid) vs `p2.jsonl` (cg-unknown-uuid); bkz. `connect-gsc.md` CG-2 | Paylaşılan cümlenin ücretsiz tool'larda son cümleyi düşürmesi (bir bayrakla), ya da `connect_gsc`'nin paylaşılan cümleye geçmesi. Karar: hangisinin tek ses olacağı — ikisini birden bırakmak en kötü seçenek. |
 | UP-3 | P2 | "İkinci çağrı arşiv tarihini yeniden damgalamaz" iddiası MCP yüzeyinden doğrulanamıyor: `archived_at` yalnız `list_projects`'in arşiv bölümünde basılıyor ve idempotent çağrının hemen ardından okunması bu koşuda yapılamadı (proje o an geri getirilip yeniden arşivlenmişti). Kodda okundu, canlıda ölçülmedi. | §4 not; `untrack-project.db.test.ts:171` tek pin | Sweep planına eklenecek `untrack_project` hücresi bu sırayı içersin: arşivle → `list_projects` (tarihi kaydet) → yeniden arşivle → `list_projects` (tarih aynı mı). Üç çağrının üçü de 0 kredi. |
 | UP-4 | P2 (ortak) | Sweep planında girişi yok; `EXCLUDED` boş olduğu için harness başlamıyor. Ayrıntı ve ortak öneri: `track-gsc-property.md` TGP-4. | `tool-sweep.mjs --dry-run` çıktısı | Bkz. TGP-4. |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün gerekçeli `EXCLUDED` (free but MUTATING) içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

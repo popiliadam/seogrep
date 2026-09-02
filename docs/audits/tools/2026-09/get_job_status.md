@@ -173,3 +173,12 @@ yok (ikisi de ölçüldü). Planlanan `action` kartının ihtiyacı olan alanlar
 | B-4 | P2 | Description maliyeti söylemiyor (38 canlı tool'un 35'i söylüyor) | canlı `tools/list` sayımı | Diğer 35'le aynı biçimde ` Costs 0 credits.` eklenmesi |
 | B-5 | P2 | Docs sayfası F-3'ü (cevabın projeyi adlandırması) hiç anmıyor; kardeş `list-jobs.mdx` aynı olguyu anlatıyor | §1 tutarsızlık 2 | mdx "### Returns" listesine proje maddesinin eklenmesi. Drift kontrolü yalnız frontmatter + Input tablosuna baktığı için elle |
 | B-6 | P2 | Şemada olmayan argüman sessizce yutuluyor | canlı §3 | 5 tool'da ortak (bkz. `get_credit_balance.md` B-2) |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

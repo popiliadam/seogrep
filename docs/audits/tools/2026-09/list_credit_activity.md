@@ -149,3 +149,12 @@ Canlı `tools/list` bu tool için `_meta` **yayınlamıyor** (ölçüldü), `too
 | B-4 | P1 | NEVER #4 kiracı filtresi hızlı şeritte ölçülmüyor: `.eq("user_id", userId)` silindiğinde 156 testin hepsi geçiyor. Koruma yalnız `*.db.test.ts`'te, o da `make verify`'da koşmuyor | M4 (§2) + `CLAUDE.md` kapı tablosu ("`make verify` … **DB şeritleri YOK**") | Kapının kapsam sorunu; bu tool'a özgü kod düzeltmesi değil. Öneri: `make verify-db`'nin hangi NEVER'ları tek başına taşıdığının zorlama haritasına yazılması |
 | B-5 | P2 | Docs sayfası description'ın vaat ettiği net harcama özetini ve imleç cümlesini hiç anlatmıyor | §1 tutarsızlık 1-2 | mdx gövdesine "Spent so far" satırının ve imleçle sayfalamanın anlatılması; drift kontrolü gövdeye bakmıyor, o yüzden bu elle yakalanmalı |
 | B-6 | P2 | Migration 0033'ün proje kapsamı canlıda hiç doğrulanamadı: ledger'ın en yeni satırı, sütunun yazılmaya başladığı andan **7 saat önce** | §4 | Ölçüm turunda bir kez ücretli bir iş koşup (operatör kararı) `project: <domain>` dalının canlıda göründüğünün kanıtlanması; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun yazılması |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

@@ -160,3 +160,12 @@ Canlı payload bir "action" kartının beklediği alanları taşıyor mu: **ÖL�
 | F-7 | P2 | Cevabın ilk satırı `Tracking 2 keywords for "adstark.com.tr" — …` — buradaki 2 sayısı İSTEĞİN toplamı (created+revived+unchanged), projenin toplamı değil. 100 kelime izleyen bir projede 2 kelimelik bir çağrı yine "Tracking 2 keywords" der; okur bunu proje toplamı sanabilir. Üst sınır reddi ise proje toplamını (`active`) doğru raporluyor, yani aynı tool iki farklı sayıyı aynı fiil ile anıyor | `renderTracked` (`track-keywords.ts:299-301`) ↔ `capRefusal` (`:159-168`); canlı H1/H2 çıktıları | Başlığın "In this request: 2 keywords" gibi kapsamını söylemesi, ya da `countActive`'in her başarılı cevapta proje toplamını da vermesi (ekstra bir sorgu, tool 0 kredi) |
 | F-8 | P2 | Şemada `additionalProperties` kısıtı yok — yazım hatalı alan sessizce yok sayılır (yüzey geneli davranış; `whats_next` F-9 ile aynı) | Canlı `whats_next` N5 ölçümü; `track_keywords` şeması aynı biçimde kısıtsız | Yüzey geneli karar; tek tool'da değiştirmek tutarsızlık üretir |
 | F-9 | P2 | Tool ölçümün nasıl yapılacağını söylerken üçüncü taraf bir sağlayıcıdan geçtiğini söylemiyor: `"A position appears only once a SERP snapshot has been taken"`. Kodda `"$0.02 per keyword per scrape"` yazıyor; kullanıcıya sunulan metinde "scrape" ya da sağlayıcı adı yok (R-6.5'in bağlamı) | `NO_MEASUREMENT_NOTE` (`track-keywords.ts:176-179`) ↔ `tracked-keywords-store.ts:39-44` | Ölçümün nasıl yapıldığını açıklayan cümlenin docs sayfasında olması yeterli olabilir; tool metnine eklemek gerekmez. **Metin değişikliği önerisidir, imza gerektirir** |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün gerekçeli `EXCLUDED` (free but MUTATING) içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

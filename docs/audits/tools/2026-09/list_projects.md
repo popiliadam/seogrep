@@ -136,3 +136,12 @@ son iş) ama bugün yalnız metin dönüyor.
 | B-3 | P2 | Tool'un **hiç** sınırı ve sayfalaması yok; kardeş iki liste tool'unda 50'lik tavan + imleç var. Ayrıca `readLastJobs` `jobs` tablosunu **tavansız** okuyor (satır 330 yorumunda bilerek yazılmış) | kaynak satır 318-330; canlı: 18 proje, `jobs` 56 satır | Bugün acil değil (18 × 56). Öneri: bir eşik geçildiğinde (ör. 50 proje) ya sayfalama ya proje-başına-özet sorgusu; kararın **şimdi** yazılması, tablo büyüdüğünde değil |
 | B-4 | P2 | Docs sayfası `sameSiteNotes` uyarısını hiç anlatmıyor; canlıda ateşleyen tek uyarı o | §1 tutarsızlık 1 + canlı §4 | mdx gövdesine "apex + www aynı site" paragrafı; drift kontrolü gövdeye bakmadığı için elle |
 | B-5 | P2 | GSC'nin dört dalından üçü ve iki boş-hesap cümlesi canlıda görülemiyor (hesapta o durumlar yok) | §4 | Ölçüm hesabında kasten bir "bağlı ama mülk seçilmemiş" proje tutulması (`example.org` aday); yoksa bu dallar sonsuza kadar yalnız birim testinde kalır |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

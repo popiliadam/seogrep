@@ -158,3 +158,12 @@ Canlı payload bir "action" kartının bekleyeceği alanları taşıyor mu: **Ö
 | F-8 | P2 | Çözülmeyen-domain basamağının gerekçesi `"If the domain was mistyped, run setup_project with the correct one"` diyor; `setup_project` doğru domain'le çağrılınca YENİ bir proje açar, yanlış yazılmış proje izlenmeye devam eder. `upcoming`'de `untrack_project` var ama gerekçe iki adımın birlikte gerektiğini söylemiyor | `next-step.ts:181-189` ↔ canlı smoke-dalga2-yok çıktısı | Gerekçeye "…and untrack_project removes the mistyped one" eklenmesi (öneri; `untrack_project` zaten listede) |
 | F-9 | P2 | Şemada `additionalProperties` kısıtı yok: `{"project_id": "…", "bogus_field":"x"}` sessizce kabul ediliyor. Yazım hatası yapan bir istemci uyarı almıyor | Canlı N5 | Yüzey geneli karar; tek tool'da değiştirmek tutarsızlık üretir |
 | F-10 | P2 (ortam) | `pnpm --filter @pseo/mcp test` `packages/*/dist` yokken 50 süiti `Failed to resolve entry for package "@pseo/core"` ile düşürüyor. Bu "kapı kırmızı" gibi görünüyor ama kapı değil kurulum | Taban ölçümü: build ÖNCE 50 fail / SONRA 143/143 pass | `apps/mcp`'nin test script'i workspace bağımlılıklarının derlenmiş olmasına bağlı; bunun `Makefile`/CI'da zaten sağlandığı doğrulanmalı, yerel kapı tarifine bir satır olarak yazılmalı |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

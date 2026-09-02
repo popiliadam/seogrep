@@ -134,3 +134,12 @@ kanalda yok.
 | B-2 | P1 | Bileşik imlecin nöbetçisi varsayılan kapının dışında: `created_at`-only imlece düşürüldüğünde 156 test yeşil kalıyor | M8 (§2) | `listOwnJobs`'un imleç mantığının saf bir yardımcıya ayrılması (sıralama+imleç karşılaştırması), ya da kapı kapsam tablosuna "bileşik imleç yalnız verify-db'de" satırı |
 | B-3 | P2 | `queued` / `running` satırları canlıda ölçülemiyor; bu iki durumun tek kanıtı birim testi | §4 | Operatör onaylı tek bir 20 kredilik `crawl_site` ile ölçüm penceresi; ya da bu iki dalın "yalnız birim testinde kanıtlı" olduğunun kayda geçmesi (2026-08-27 turundan **devreden** açık kalem) |
 | B-4 | P2 | `plan.mjs` PLAN/EXCLUDED kapsaması canlı sunucudan 19 tool geride; `assertCoverage` bugün canlıya karşı hata fırlatır | `plan.mjs:91` (`EXCLUDED` boş) + 19 planlı ad vs canlı 38 | Sweep'in ya PLAN'ının tamamlanması ya da eksik 19'un **yazılı gerekçeyle** `EXCLUDED`'a alınması. Bu bir depo-geneli kalem; bu turun 5 tool'undan 2'sini (list_jobs, list_credit_activity) doğrudan etkiliyor |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

@@ -99,3 +99,12 @@ Canlı payload kartın beklediği alanları taşıyor mu: **hayır** — canlı 
 | LGP-3 | P2 | `loadGscAccounts`'un e-postaya göre sıralama garantisi hiçbir şeritte pinli değil (hızlı şerit de, db şeridi de). Bugün tek hesap olduğu için canlıda görünmez; ikinci hesap eklendiği anda çıktı tarama sırasına bağlı hâle gelir. | M2 YEŞİL KALDI (§2); db test'te `sort`/`order` yalnız bir yorumda (satır 218) | Enjekte edilmiş `loadAccounts` yerine GERÇEK `loadGscAccounts`'u sahte istemciyle sürüp sırayı iddia eden bir spec — `list-gsc-properties.test.ts:551`'deki kalıp (gerçek fonksiyonu sahte client ile sürüyor) zaten var, ona bir `expect` eklemek yetiyor. |
 | LGP-4 | P2 | Şema `z.object({})` ve `.strict()` yok: `{account_id, limit}` gönderildiğinde hata YOK, argümanlar sessizce düşüyor ve tam liste dönüyor. Bir LLM istemcisi için bu, "filtreledim" sanıp filtrelenmemiş veriyle devam etmek demektir. | §3 canlı hücre (`p1.jsonl`, lgp-unknown-arg) | Aile geneli karar (bkz. `setup-project.md` SP-2): `defineTool` seviyesinde `.strict()`, ya da description'a "takes no parameters" ifadesinin eklenmesi — ki `list-gsc-properties.mdx` "### Input · No parameters." zaten diyor; eksik olan MAKİNE tarafı. |
 | LGP-5 | P2 | Sweep planında hiç girişi yok ve `EXCLUDED` boş olduğu için harness bu tool yüzünden (ve 18 kardeşi yüzünden) hiç başlamıyor. Yani bu tool'un canlı kanıtı yalnız elle üretilebiliyor. | `tool-sweep.mjs --dry-run` çıktısı (§7) | Bkz. ortak öneri `track-gsc-property.md` TGP-4: 19 tool ya PLAN'a ya da gerekçeli `EXCLUDED`'a yazılsın. |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

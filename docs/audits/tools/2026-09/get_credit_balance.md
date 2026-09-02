@@ -126,3 +126,12 @@ Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/37f05938-81d
 | B-2 | P2 | Şemada olmayan argüman sessizce yutuluyor (`{"foo":"bar"}`, `{"limit":5}` → HTTP 200, argümansız cevabın aynısı). Canlı 38 tool'un **hiçbirinde** `additionalProperties: false` yok | canlı ölçüm §3 | Sunucu genelinde bir karar konusu: ya `.strict()` (istemciye "bu argüman yok" denir) ya da bilerek hoşgörü — hangisi olursa olsun **yazılı** olmalı. Bu tool'a özgü düzeltme değil; §Bulgular'da 5 tool'da da tekrarlanıyor |
 | B-3 | P2 | Tekil/çoğul birim pinsiz: bakiyesi 1 olan hesap "1 credits" okur (hem cümle hem kart `unit`) | M2 mutasyonu yeşil kaldı (§2) | `formatBalanceSentence` benzeri saf bir yardımcıya `balance === 1` vakasını pinleyen bir test — mevcut testin `it.each` kalıbıyla (0, 1, 2) |
 | B-4 | P2 | "Trial" dalı canlıda ölçülemez: bu hesap ödemiş; ürünün ödememiş bir hesabı yok | §4 | Ölçüm turu için tek seferlik bir trial kiracı; ya da bu dalın "yalnız birim testinde kanıtlı" olduğunun kapı kapsam tablosuna yazılması |
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.

@@ -104,3 +104,12 @@ Canlı payload kartın beklediği alanları taşıyor mu: **hayır, ve taşımas
 1. **YENİ PROJE AÇILDI:** `dilim1-tek-kullanimlik-8b3f7c.com`, `project_id: 77f40d69-24c3-4cf8-90fd-66ba2865212b`. Tek-kullanımlıktır, çözümlenmeyen bir addır, `untrack_project` mutlu yolu YALNIZ bunun üstünde koştu ve koşu sonunda **arşivde bırakıldı**.
 2. Mevcut hiçbir proje açılmadı, kapatılmadı, yeniden adlandırılmadı. `example.net` ve `www.example.net` çağrıları yalnız var olan projeyi okudu (`created: false`).
 3. Kredi hareketi: 0. Koşu boyunca bakiye 4519 kredide sabit kaldı (her hücrenin öncesi ve sonrası `get_credit_balance` ile okundu).
+
+## Taban notu (şef, 2026-09-02, ölçüm sonrası)
+
+Bu kayıt `c8e0daa` tabanında yazıldı; o taban `origin/main`'in **bir PR gerisindeydi** (#198, `159535c`).
+Tool kaynağı iki tabanda bayt-özdeş, bu yüzden 1–6. adımların ölçümleri geçerli. **Yalnız 7. adımın sweep
+kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --self-test`'i ekledi.
+Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
+bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
+**#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.
