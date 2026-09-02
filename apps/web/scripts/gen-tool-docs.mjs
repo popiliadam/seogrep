@@ -1207,7 +1207,8 @@ export const DOC_PROSE = {
       "redirect loops, and redirects onto an already-crawled URL).\n" +
       "- **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked " +
       "by `robots.txt`, timed out, non-HTML, and so on).\n" +
-      "- **Robots conflicts** — pages marked `noindex` that are still linked internally.\n" +
+      "- **Robots conflicts** — pages marked `noindex` that are still linked internally. " +
+      "`none` counts as `noindex` here, because that is what Google reads it as.\n" +
       "- **Slow pages** — a fetch that took over three seconds, redirect hops included, because " +
       "that is what a visitor actually waits for.\n" +
       "- **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images " +

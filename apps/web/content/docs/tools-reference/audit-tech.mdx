@@ -14,7 +14,7 @@ Summarizes the crawl from a technical angle. Twelve sections, each named below b
 - **HTTP status** — how many pages returned 2xx / 3xx / 4xx / 5xx, with the 4xx and 5xx page URLs listed. A page whose stored status is missing or unreadable belongs to none of those four, and where there is one the section says how many and names them — so the four counts and the page total in the heading are never quietly different numbers.
 - **Redirects surfaced** — the redirects the crawler surfaced (off-origin redirects, redirect loops, and redirects onto an already-crawled URL).
 - **Not crawled** — the URLs that were discovered but skipped, grouped by reason (blocked by `robots.txt`, timed out, non-HTML, and so on).
-- **Robots conflicts** — pages marked `noindex` that are still linked internally.
+- **Robots conflicts** — pages marked `noindex` that are still linked internally. `none` counts as `noindex` here, because that is what Google reads it as.
 - **Slow pages** — a fetch that took over three seconds, redirect hops included, because that is what a visitor actually waits for.
 - **Heavy pages** — an HTML document over a megabyte and a half. The markup alone; images are never counted here.
 - **Redirect chains** — two or more hops to reach the destination, printed as the whole trail.

@@ -39,9 +39,49 @@ export const REDIRECT_CHAIN_MIN = 2;
 /** BFS depth at which a page counts as buried — 4 clicks from a seed (homepage / sitemap URL). */
 export const DEEP_PAGE_DEPTH = 4;
 
-/** Does a robots directive string (meta or header) contain a `noindex` token? */
+/**
+ * The directives that take a `:value` — the ONLY place a colon is not a user-agent prefix.
+ * `max-snippet:-1` names its directive before the colon; `X-Robots-Tag: googlebot: noindex` names
+ * it after. Without this split one of the two families is always misread.
+ */
+const VALUED_DIRECTIVES = new Set([
+  "max-snippet",
+  "max-image-preview",
+  "max-video-preview",
+  "unavailable_after",
+]);
+
+/**
+ * The directive NAMES in a robots value (meta or X-Robots-Tag), lower-cased.
+ *
+ * A parse rather than a regex, because the two mistakes it has to avoid pull in opposite
+ * directions: `x-noindexing` contains `noindex` and is not one, while `max-image-preview:none`
+ * contains `none` — the token that MEANS noindex — and is not one either. Comma-separated per the
+ * spec; whitespace is also split, because `content="noindex nofollow"` is written in the wild and
+ * was accepted by the regex this replaced.
+ */
+function directiveNames(value: string): string[] {
+  return value.split(",").flatMap((part) => {
+    const trimmed = part.trim().toLowerCase();
+    if (trimmed === "") return [];
+    const colon = trimmed.indexOf(":");
+    if (colon === -1) return trimmed.split(/\s+/u);
+    const head = trimmed.slice(0, colon).trim();
+    if (VALUED_DIRECTIVES.has(head)) return [head];
+    return trimmed.slice(colon + 1).trim().split(/\s+/u).filter(Boolean);
+  });
+}
+
+/**
+ * Does a robots directive string (meta or header) suppress indexing?
+ *
+ * `none` counts: Google defines it as `noindex, nofollow` (R-3.15), so a page carrying it is as
+ * hidden as one carrying `noindex` and belongs in the same two sections. ONE function for both
+ * channels — the rule used to be written twice (here and inline in robotsConflicts) and neither
+ * copy was pinned, which is how a token boundary survived being deleted from both.
+ */
 function hasNoindex(value: string): boolean {
-  return /\bnoindex\b/i.test(value);
+  return directiveNames(value).some((name) => name === "noindex" || name === "none");
 }
 
 export interface StatusCounts {
@@ -244,7 +284,7 @@ function robotsConflicts(pages: AuditPage[]): RobotsConflict[] {
   }
   const conflicts: RobotsConflict[] = [];
   for (const page of pages) {
-    const noindex = page.robotsMeta !== null && /\bnoindex\b/i.test(page.robotsMeta);
+    const noindex = page.robotsMeta !== null && hasNoindex(page.robotsMeta);
     const linkedFrom = inbound.get(page.url) ?? 0;
     if (noindex && linkedFrom > 0) conflicts.push({ url: page.url, linkedFrom });
   }
