@@ -20,7 +20,7 @@
 bir hata) nöbetçisi `make verify`'ın koştuğu şeritte YOK, ve tool'un hiç sınırı/sayfalaması yok
 (18 proje bugün; kardeş iki tool'da 50'lik tavan ve imleç var).
 
-**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #204 + #205 + #206 [CI'da, merge bekliyor]) — iki P1 de kapandı: defect #52'nin nöbetçisi hızlı şeride indi (B-1), şema dışı argüman reddediliyor (B-2, canlı doğrulandı). **Kalan:** B-3 ve B-5 (P2, ikisi de açık).
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #204 + #205 + #206) — iki P1 de kapandı: defect #52'nin nöbetçisi hızlı şeride indi (B-1), şema dışı argüman reddediliyor (B-2, canlı doğrulandı). **Kalan:** B-3 ve B-5 (P2, ikisi de açık).
 
 ## 1. Statik okuma
 
@@ -133,7 +133,7 @@ son iş) ama bugün yalnız metin dönüyor.
 
 | # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
 |---|---|---|---|---|---|
-| B-1 | **P1** | Defect #52'nin nöbetçisi varsayılan kapının dışında: `account_id === null` kontrolü kırıldığında `make verify`'ın koştuğu 156 test yeşil kalıyor. Koruma yalnız `list-projects.db.test.ts` (Docker / `make verify-db`) | M5 (§2) | `readGscStates`'in enjekte edilebilir bir porta çıkarılması (kardeş tool'lardaki `deps.listX` deseni), böylece "null `account_id` = not_connected" kuralı DB'siz de pinlenebilir. Alternatif: kapı kapsam tablosuna "defect #52 yalnız verify-db'de" satırının yazılması | KAPANDI (#206, merge bekliyor) — `account_id === null` ⇒ not connected, hızlı şeritte pinli (defect #52) |
+| B-1 | **P1** | Defect #52'nin nöbetçisi varsayılan kapının dışında: `account_id === null` kontrolü kırıldığında `make verify`'ın koştuğu 156 test yeşil kalıyor. Koruma yalnız `list-projects.db.test.ts` (Docker / `make verify-db`) | M5 (§2) | `readGscStates`'in enjekte edilebilir bir porta çıkarılması (kardeş tool'lardaki `deps.listX` deseni), böylece "null `account_id` = not_connected" kuralı DB'siz de pinlenebilir. Alternatif: kapı kapsam tablosuna "defect #52 yalnız verify-db'de" satırının yazılması | KAPANDI (#206) — `account_id === null` ⇒ not connected, hızlı şeritte pinli (defect #52) |
 | B-2 | P1 | Şemada olmayan `limit` / `filter` / `include_archived` sessizce yutuluyor; 18 satırlık tam liste "5 istedim" diyen çağrıya da dönüyor | canlı §3 | 5 tool'da ortak: ya `.strict()` ya yazılı hoşgörü kararı (bkz. `get_credit_balance.md` B-2) | KAPANDI #204 + canlı ✔ |
 | B-3 | P2 | Tool'un **hiç** sınırı ve sayfalaması yok; kardeş iki liste tool'unda 50'lik tavan + imleç var. Ayrıca `readLastJobs` `jobs` tablosunu **tavansız** okuyor (satır 330 yorumunda bilerek yazılmış) | kaynak satır 318-330; canlı: 18 proje, `jobs` 56 satır | Bugün acil değil (18 × 56). Öneri: bir eşik geçildiğinde (ör. 50 proje) ya sayfalama ya proje-başına-özet sorgusu; kararın **şimdi** yazılması, tablo büyüdüğünde değil | AÇIK — PR'da karşılığı bulunamadı; tavan/sayfalama kararı verilmedi, `readLastJobs` hâlâ tavansız |
 | B-4 | P2 | Docs sayfası `sameSiteNotes` uyarısını hiç anlatmıyor; canlıda ateşleyen tek uyarı o | §1 tutarsızlık 1 + canlı §4 | mdx gövdesine "apex + www aynı site" paragrafı; drift kontrolü gövdeye bakmadığı için elle | KAPANDI #205 — `list-projects.mdx`'e aynı-site (`sameSiteNotes`) paragrafı yazıldı (S5) |

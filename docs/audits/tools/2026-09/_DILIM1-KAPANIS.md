@@ -25,18 +25,18 @@ olmadı** — o PR'ın kapattığı 9 bulgu bugün `main`'de YOKTUR.
 
 | tool | karar (kapanış) | kapatan PR'lar | canlı doğrulama | açık kalemler |
 |---|---|---|---|---|
-| `connect_gsc` | KAPANDI | #203, #206* | CG-2 (tek cümle) | CG-3 (P2, açık) · CG-4 (P2, ölçülemedi) |
+| `connect_gsc` | KAPANDI | #203, #206 | CG-2 (tek cümle) | CG-3 (P2, açık) · CG-4 (P2, ölçülemedi) |
 | `get_credit_balance` | KAPANDI | #204, #205 | B-2 (38/38 strict) | B-4 (P2, trial dalı ölçülemez) |
 | `get_job_status` | KAPANDI | #204, #205 | B-1 `isError` · B-3 next-step · B-6 | yok |
-| `list_credit_activity` | KAPANDI | #205, #206* | B-1 imleç · B-2 ret · B-3 proje kapsamı | B-6 (P2, 0033 satırı yok) |
+| `list_credit_activity` | KAPANDI | #205, #206 | B-1 imleç · B-2 ret · B-3 proje kapsamı | B-6 (P2, 0033 satırı yok) |
 | `list_gsc_properties` | KAPANDI | #198, #203, #204 | LGP-1 sıra (27 mülk) · LGP-2 ipucu · LGP-4 | yok |
-| `list_jobs` | KAPANDI | #198, #204, #205, #206* | B-1 status filtresi + bogus ret | B-3 → **Dilim 2** |
-| `list_projects` | KAPANDI | #204, #205, #206* | B-2 (strict) | B-3 (P2) · B-5 (P2, ölçülemedi) |
-| `setup_project` | KAPANDI | #203, #204, #206* | SP-2 (strict) | yok |
-| `track_gsc_property` | KAPANDI | #198, #203, #206* | TGP-1 hariç **yok**; TGP-5 canlıda ✔ (şef, katrenur sc-domain:, Δ0) | TGP-2 (P2) · TGP-3 (P2) |
-| `track_keywords` | KAPANDI | #198, #203, #204, #206* | F-3 `action:"list"` · F-8 | F-4 · F-5 · F-6 · F-7 · F-9 (beş P2) |
-| `untrack_project` | KAPANDI | #198, #203, #206* | UP-2'nin tek-ses yarısı | UP-2 yarısı **İMZA** · UP-3 (P2) |
-| `whats_next` | KAPANDI | #203, #204, #206* | F-9 (`{confirm:true}` reddi) | F-1 **İMZA** + F-4·F-5·F-6·F-7·F-8·F-10 |
+| `list_jobs` | KAPANDI | #198, #204, #205, #206 | B-1 status filtresi + bogus ret | B-3 → **Dilim 2** |
+| `list_projects` | KAPANDI | #204, #205, #206 | B-2 (strict) | B-3 (P2) · B-5 (P2, ölçülemedi) |
+| `setup_project` | KAPANDI | #203, #204, #206 | SP-2 (strict) | yok |
+| `track_gsc_property` | KAPANDI | #198, #203, #206 | TGP-1 hariç **yok**; TGP-5 canlıda ✔ (şef, katrenur sc-domain:, Δ0) | TGP-2 (P2) · TGP-3 (P2) |
+| `track_keywords` | KAPANDI | #198, #203, #204, #206 | F-3 `action:"list"` · F-8 | F-4 · F-5 · F-6 · F-7 · F-9 (beş P2) |
+| `untrack_project` | KAPANDI | #198, #203, #206 | UP-2'nin tek-ses yarısı | UP-2 yarısı **İMZA** · UP-3 (P2) |
+| `whats_next` | KAPANDI | #203, #204, #206 | F-9 (`{confirm:true}` reddi) | F-1 **İMZA** + F-4·F-5·F-6·F-7·F-8·F-10 |
 
 `*` = #206 CI'da, **merge bekliyor**.
 
@@ -55,7 +55,7 @@ mesajlarında adıyla geçer. **S3, S4, S6, S8, S9 için bu depoda hiçbir tanı
 |---|---|---|
 | **S1** | şema dışı argüman sessizce yutuluyor; canlı 38 tool'un hiçbirinde `additionalProperties:false` yok | **KAPANDI #204 + canlı ✔** — `refuseUnknownKeys` kayıt düzeyinde; ilan ve parse aynı çağrıdan türüyor. Bulgular: GCB B-2, LP B-2, LJ B-1'in yutma yarısı, GJS B-6, SP-2, LGP-4, WN F-9, TK F-8. Yan karar: `confirm` **yalnız** `crawl_site` + `ai_visibility_compare`'de ilan ediliyor (canlı doğrulandı) |
 | **S1-b** | iç içe obje (`ai_visibility_compare.targets[]`) hâlâ katı değil | **ERTELENDİ → Dilim 6** (#204'ün "Ölçülmeyen" bölümü) |
-| **S2** | on kısıt yalnız Docker isteyen `*.db.test.ts` şeridinde pinliydi; `make verify` kördü | **KAPANDI (#206, merge bekliyor)** — LCA B-4, LJ B-2, LP B-1, UP-1, TK F-1, TGP-1, CG-1, SP-1, WN F-2. Sınır: pinler kısıtın **kurulduğunu** kanıtlar, gerçek satırlara karşı **davrandığını** değil |
+| **S2** | on kısıt yalnız Docker isteyen `*.db.test.ts` şeridinde pinliydi; `make verify` kördü | **KAPANDI (#206)** — LCA B-4, LJ B-2, LP B-1, UP-1, TK F-1, TGP-1, CG-1, SP-1, WN F-2. Sınır: pinler kısıtın **kurulduğunu** kanıtlar, gerçek satırlara karşı **davrandığını** değil |
 | **S5** | docs gövdesi gerçek çıktıyı anlatmıyor (drift kontrolü yalnız frontmatter + Input tablosuna bakar) | **KAPANDI #203 + #205** — SP-3, LCA B-5, LP B-4, GJS B-5, WN F-3, LGP/TGP/TK gövdeleri |
 | **S7** | description maliyeti söylemiyor (38'in 3'ü) | **KAPANDI #205 (GCB B-1, GJS B-4) + #203 (`whats_next`)** — üçü de artık " Costs 0 credits." ile bitiyor |
 

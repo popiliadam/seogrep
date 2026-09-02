@@ -20,7 +20,7 @@
 ama "başarısız işlerimi göster" gibi en doğal iki argüman (`status`, `project_id`) şemada yok ve
 verildiğinde sessizce yutulup **filtrelenmemiş** liste dönüyor.
 
-**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #198 + #204 + #205 + #206 [CI'da, merge bekliyor]) — iki P1 de kapandı: `status`/`project_id` gerçek filtre oldu (B-1, canlı doğrulandı), bileşik imleç hızlı şeritte pinlendi (B-2). **Kalan:** B-3 (P2) ERTELENDİ → Dilim 2, 20 kredilik crawl ile.
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #198 + #204 + #205 + #206) — iki P1 de kapandı: `status`/`project_id` gerçek filtre oldu (B-1, canlı doğrulandı), bileşik imleç hızlı şeritte pinlendi (B-2). **Kalan:** B-3 (P2) ERTELENDİ → Dilim 2, 20 kredilik crawl ile.
 
 ## 1. Statik okuma
 
@@ -133,7 +133,7 @@ kanalda yok.
 | # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
 |---|---|---|---|---|---|
 | B-1 | **P1** | `status` ve `project_id` şemada yok, verildiğinde sessizce yutuluyor. "Başarısız işlerimi göster" isteğine 3 `succeeded` satır dönüyor; "şu projenin işleri" isteğine başka projelerin işleri dönüyor. Model filtrelenmiş sandığı bir listeyi müşteriye anlatır | canlı `{"status":"failed"}` ve `{"project_id":"4e0caff0-…"}` (§3) | İki seçenek: (a) `status` (`queued\|running\|succeeded\|failed`) ve `project_id` gerçek filtre olarak eklensin — `jobs` tablosunda ikisi de sütun; (b) en azından `.strict()` ile reddedilsin. Bugünkü sessiz yutma en kötüsü | KAPANDI #205 + #204 + canlı ✔ — filtre yarısı #205 (`status` enum + `project_id`, daraltılmış cevap filtreyi adıyla söylüyor), sessiz yutma yarısı #204; canlı `4349f71`: status filtresi (2 failed iş) + bogus status reddi |
-| B-2 | P1 | Bileşik imlecin nöbetçisi varsayılan kapının dışında: `created_at`-only imlece düşürüldüğünde 156 test yeşil kalıyor | M8 (§2) | `listOwnJobs`'un imleç mantığının saf bir yardımcıya ayrılması (sıralama+imleç karşılaştırması), ya da kapı kapsam tablosuna "bileşik imleç yalnız verify-db'de" satırı | KAPANDI (#206, merge bekliyor) — bileşik imleç `(created_at, id)` ve aynı çiftle sıralama pinli |
+| B-2 | P1 | Bileşik imlecin nöbetçisi varsayılan kapının dışında: `created_at`-only imlece düşürüldüğünde 156 test yeşil kalıyor | M8 (§2) | `listOwnJobs`'un imleç mantığının saf bir yardımcıya ayrılması (sıralama+imleç karşılaştırması), ya da kapı kapsam tablosuna "bileşik imleç yalnız verify-db'de" satırı | KAPANDI (#206) — bileşik imleç `(created_at, id)` ve aynı çiftle sıralama pinli |
 | B-3 | P2 | `queued` / `running` satırları canlıda ölçülemiyor; bu iki durumun tek kanıtı birim testi | §4 | Operatör onaylı tek bir 20 kredilik `crawl_site` ile ölçüm penceresi; ya da bu iki dalın "yalnız birim testinde kanıtlı" olduğunun kayda geçmesi (2026-08-27 turundan **devreden** açık kalem) | ERTELENDİ → Dilim 2 — 20 kredilik `crawl_site` gerekiyor; operatör izin verdi, harness sınıflandırıcısı ücretli çağrıyı reddetti |
 | B-4 | P2 | `plan.mjs` PLAN/EXCLUDED kapsaması canlı sunucudan 19 tool geride; `assertCoverage` bugün canlıya karşı hata fırlatır | `plan.mjs:91` (`EXCLUDED` boş) + 19 planlı ad vs canlı 38 | Sweep'in ya PLAN'ının tamamlanması ya da eksik 19'un **yazılı gerekçeyle** `EXCLUDED`'a alınması. Bu bir depo-geneli kalem; bu turun 5 tool'undan 2'sini (list_jobs, list_credit_activity) doğrudan etkiliyor | KAPANDI #198 — `plan.mjs` PLAN/EXCLUDED kapsaması (taban notu) |
 

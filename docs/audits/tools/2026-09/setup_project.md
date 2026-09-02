@@ -18,7 +18,7 @@
 
 **Karar (ölçüm turu, 2026-09-02):** KAPANDI — beş canlı sözleşme dalının beşi de ölçüldü ve kredi Δ = 0; tek bulgu, `created:` bayrağının hızlı şeritte pinsiz olması (P2, db şeridi pinliyor).
 
-**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #203 + #204 + #206 [CI'da, merge bekliyor]) — üç P2'nin üçü de kapandı. **Kalan:** yok.
+**Karar (kapanış, 2026-09-02):** KAPANDI (dilim 1 düzeltmesi, #203 + #204 + #206) — üç P2'nin üçü de kapandı. **Kalan:** yok.
 
 ## 1. Statik okuma
 
@@ -97,7 +97,7 @@ Canlı payload kartın beklediği alanları taşıyor mu: **hayır, ve taşımas
 
 | # | şiddet (P0/P1/P2) | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, 2026-09-02) |
 |---|---|---|---|---|---|
-| SP-1 | P2 | Makbuzun `created:` bayrağı hızlı şeritte tamamen pinsiz: "already exists" dalını `created: true` demeye zorlayan mutasyon 143 dosya / 3680 testin hiçbirini kırmadı. İddiayı yalnız db şeridi tutuyor ve o şerit Docker istediği için günlük kapıda koşmuyor. | M1 (bu dosya §2); `setup-project.db.test.ts:121` tek pin | Hızlı şeride, enjekte edilmiş `openProject` portuyla üç `outcome` için de makbuz metnini pinleyen bir spec; `created: (true\|false)` regex'iyle, kaynak literaliyle değil (ders 11). | KAPANDI (#206, merge bekliyor) — üç `outcome` için `created:` bayrağı regex'le pinli (ders 11: kaynak literali değil) |
+| SP-1 | P2 | Makbuzun `created:` bayrağı hızlı şeritte tamamen pinsiz: "already exists" dalını `created: true` demeye zorlayan mutasyon 143 dosya / 3680 testin hiçbirini kırmadı. İddiayı yalnız db şeridi tutuyor ve o şerit Docker istediği için günlük kapıda koşmuyor. | M1 (bu dosya §2); `setup-project.db.test.ts:121` tek pin | Hızlı şeride, enjekte edilmiş `openProject` portuyla üç `outcome` için de makbuz metnini pinleyen bir spec; `created: (true\|false)` regex'iyle, kaynak literaliyle değil (ders 11). | KAPANDI (#206) — üç `outcome` için `created:` bayrağı regex'le pinli (ders 11: kaynak literali değil) |
 | SP-2 | P2 | Şema `.strict()` değil: tanımsız anahtarlar sessizce düşüyor. `setup_project` tek alanlı olduğu için bugün zararsız, ama aynı `registry.ts:419` yolu tüm aileyi kapsıyor ve `list_gsc_properties`'te canlı olarak ölçülen bir yanlış-anlama üretiyor (bkz. LGP-2). | `registry.ts:419` `spec.inputSchema.safeParse(rawInput ?? {})`; canlı kanıt `list_gsc_properties` hücresinde | Aile geneli karar: şemalara `.strict()` eklenip tanımsız anahtar reddedilsin mi, yoksa "yok sayılıyor" davranışı description'da yazılsın mı — tek tool'da değil, `defineTool` seviyesinde. | KAPANDI #204 + canlı ✔ — `.strict()` `defineTool` seviyesinde, tek tool'da değil |
 | SP-3 | P2 | Docs sayfası "Returns" tablosunda `project_id` / `domain` / `created` alanlarından **alan** diye söz ediyor; canlı yanıt tek bir düz metin bloğu ve bu üçü yalnız cümlenin içinde geçiyor. Yapısal çıktı yok. | canlı `rawResult` = `{content:[{type:"text",…}]}` (`p5.jsonl`); `setup-project.mdx` "### Returns" | Kart dilimi sırasında `structuredContent` eklenirken docs'un "alan" dili ile gerçek şekil hizalansın; bugün için docs'ta "in one sentence" ifadesi netleştirilebilir. | KAPANDI #203 — `setup-project.mdx`: "One sentence of plain text — not a structured object" |
 
