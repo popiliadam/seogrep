@@ -38,7 +38,7 @@ olmadı** — o PR'ın kapattığı 9 bulgu bugün `main`'de YOKTUR.
 | `untrack_project` | KAPANDI | #198, #203, #206 | UP-2'nin tek-ses yarısı | UP-2 yarısı **İMZA** · UP-3 (P2) |
 | `whats_next` | KAPANDI | #203, #204, #206 | F-9 (`{confirm:true}` reddi) | F-1 **İMZA** + F-4·F-5·F-6·F-7·F-8·F-10 |
 
-`*` = #206 CI'da, **merge bekliyor**.
+`*` = #206 `429a002` ile `main`'de (2026-09-02, verify-db flake sonrası yeniden koşu yeşil).
 
 ## Tekrarlayan sınıflar
 
