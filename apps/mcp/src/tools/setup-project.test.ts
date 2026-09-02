@@ -208,6 +208,31 @@ describe("setup_project — the receipt names the site and points somewhere", ()
     expect(text).not.toContain("(seogrep.com)");
   });
 
+  /**
+   * SP-1 — the receipt's `created:` flag, measured 2026-09-02 as pinned NOWHERE in the fast
+   * lane: forcing the "already exists" branch to print `created: true` left 143 files / 3680
+   * tests green. The only pin was `setup-project.db.test.ts:121`, in a lane `make verify` does
+   * not run (CLAUDE.md command table: "DB şeritleri YOK").
+   *
+   * The flag is the one machine-readable fact in the sentence — it answers "did this call MAKE
+   * something?". A wrong `true` turns "you already had this site" into "I registered it for
+   * you", and a caller that trusts it goes on to treat an old project as new.
+   *
+   * ALL THREE OUTCOMES, each with its own expected value (signed lesson 14, position axis):
+   * pinning only the branch that says `false` would let a mutation that SWAPS the two stay
+   * green. Asserted as a regex on the flag, never as the source literal (lesson 11).
+   */
+  it.each([
+    ["created", "true"],
+    ["existing", "false"],
+    ["restored", "false"],
+  ] as const)("the %s outcome stamps `created: %s`, and never the other value", async (outcome, flag) => {
+    const text = await textOf(outcome, "seogrep.com");
+    expect(text, outcome).toMatch(new RegExp(String.raw`created:\s*${flag}\b`, "i"));
+    const opposite = flag === "true" ? "false" : "true";
+    expect(text, outcome).not.toMatch(new RegExp(String.raw`created:\s*${opposite}\b`, "i"));
+  });
+
   it("points at whats_next on ALL THREE outcomes, not just a fresh project", async () => {
     // The outcome axis is the one that matters here: a customer who re-runs setup_project on a
     // site they already have, or brings one back from the archive, is at exactly the same fork.
