@@ -3197,8 +3197,22 @@ export const DOC_PROSE = {
       "Pass a `project_id` and the keywords you want watched. They are stored trimmed and " +
       "lower-cased, so two spellings that differ only in case or spacing are one tracked " +
       "keyword. Running it again for the same keyword is safe — nothing is duplicated and " +
-      "nothing is re-dated. Set `action` to `untrack` to stop watching one.",
+      "nothing is re-dated. Set `action` to `untrack` to stop watching one, or to `list` to read " +
+      "back everything the project already tracks.",
     preExampleSections: [
+      {
+        heading: "Reading back what a project tracks",
+        body:
+          "`action: \"list\"` answers with every keyword the project is tracking right now, " +
+          "grouped by the location, language and device each one is watched on. It takes no " +
+          "`keywords` — it is a question about the project, not about a list you supply — and it " +
+          "writes nothing.\n\n" +
+          "It is **not** filtered by the `location_name`, `language_code` and `device` of the " +
+          "call: those fields have defaults, and answering only about the defaults would tell a " +
+          "project whose keywords all sit on another locale that it tracks nothing. Archived " +
+          "(untracked) keywords are left out — they are kept, and `keyword_positions` still " +
+          "reads what was measured for them, but the project is no longer watching them.",
+      },
       {
         heading: "The location and the device are part of what is tracked",
         body:
@@ -3235,7 +3249,8 @@ export const DOC_PROSE = {
     returns:
       "What is tracked now for that project on that location, language and device — split into " +
       "newly tracked, tracked again, and already tracked — together with a reminder that " +
-      "tracking records what to watch and measures nothing.",
+      "tracking records what to watch and measures nothing. `action: \"list\"` instead returns " +
+      "every keyword the project currently tracks, grouped by location, language and device.",
   },
 
   serp_snapshot: {
