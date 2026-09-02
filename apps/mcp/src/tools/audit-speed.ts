@@ -4,7 +4,9 @@ import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
+  CORE_VITAL_THRESHOLDS,
   MAX_SPEED_URLS,
+  rateCoreVital,
   resolveDefaultSpeedPort,
   type PageSpeedMeasurement,
   type SpeedOpportunity,
@@ -196,10 +198,40 @@ function scoreOutOf100(score: number): number {
  * `if` in one file is a rule one refactor away from producing that line.
  */
 function renderMetric(metric: PageSpeedMeasurement["metrics"][number]): string | null {
-  if (metric.display !== null) return `  - ${metric.label}: ${metric.display}`;
-  if (metric.numeric === null) return null;
-  const value = metric.unit === "" ? String(metric.numeric) : `${thousands(metric.numeric)} ${metric.unit}`;
-  return `  - ${metric.label}: ${value}`;
+  const value =
+    metric.display !== null
+      ? metric.display
+      : metric.numeric === null
+        ? null
+        : metric.unit === ""
+          ? String(metric.numeric)
+          : `${thousands(metric.numeric)} ${metric.unit}`;
+  if (value === null) return null;
+  return `  - ${metric.label}: ${value}${renderBand(metric)}`;
+}
+
+/**
+ * The Core Web Vitals band for a metric line, or "" when none can honestly be given (B-4).
+ *
+ * WHY IT IS HERE AT ALL. Measured live 2026-09-02: LCP 2.9 s and LCP 2.4 s were printed in exactly
+ * the same voice, so a reader could not tell from the output that one of them was over Google's
+ * 2.5 s line and the other under it. A number with no band is a number the customer has to look up
+ * to use.
+ *
+ * The BOUNDARY IS FORMATTED FROM THE SAME CONSTANT the verdict is computed from, never retyped
+ * beside it: a second copy of "2.5 s" in a sentence is a second thing to update when Google moves
+ * the line (R-1.6 says it moves on an annual cadence), and the copy that is not updated is the one
+ * the customer reads. `rateCoreVital` answers null for every metric with no published threshold —
+ * and for INP, which a lab tool cannot produce — so this appends nothing rather than inventing a
+ * rule.
+ */
+function renderBand(metric: PageSpeedMeasurement["metrics"][number]): string {
+  const rating = rateCoreVital(metric.id, metric.numeric);
+  if (rating === null) return "";
+  const good = CORE_VITAL_THRESHOLDS[metric.id]?.good;
+  if (good === undefined) return "";
+  const bound = metric.unit === "" ? String(good) : `${thousands(good)} ${metric.unit}`;
+  return ` — ${rating} (good is ${bound} or less)`;
 }
 
 /** One opportunity line, with the ESTIMATED saving Lighthouse attached to it. */
@@ -261,11 +293,33 @@ function renderPage(page: PageSpeedMeasurement): string {
  * the page ONCE under simulated throttling; it is not what real visitors experienced, and a report
  * that let the reader assume otherwise would be the same class of claim as calling an estimated
  * traffic figure "traffic".
+ *
+ * It carries three qualifications, and each one was earned by a live measurement on 2026-09-02:
+ *
+ *   DESKTOP (B-9). The vendor's `for_mobile` parameter defaults to false, so every run this tool
+ *   has ever bought was a desktop one — and the output used to say nothing about it, while
+ *   mobile-first indexing (R-3.14) means a mobile-first audience is reading numbers from the wrong
+ *   device. Measuring mobile as well would double the vendor cost per call, and MAX_SPEED_URLS is
+ *   part of the SIGNED price, so that is a price decision (NEVER #6) and not this slice's to make.
+ *   What is this slice's to do is stop the silence.
+ *
+ *   ONE SAMPLE (B-2). The same page, measured twice two minutes apart, came back 74 then 84, with
+ *   Speed Index 3.5 s then 1.6 s and LCP 2.9 s then 2.4 s — a spread that straddles the very 2.5 s
+ *   band the metric lines now print. A single lab run is a diagnostic sample, and a reader given
+ *   bands without that sentence would read a coin flip as a verdict.
+ *
+ *   FIELD DATA IS THE RANKING SIGNAL (R-1.4/R-1.7). Core Web Vitals as Google uses them are field
+ *   data at the 75th percentile of real visits. This tool does not read them and does not claim
+ *   to; saying which measurement is missing is the honest half of printing the one we have.
  */
 export function formatSpeedAudit(pages: readonly PageSpeedMeasurement[]): string {
   const heading =
-    `Page speed — ${pages.length} page(s) measured with Google Lighthouse. These are LAB ` +
-    "measurements: one simulated page load each, not field data from real visitors.";
+    `Page speed — ${pages.length} page(s) measured with Google Lighthouse, as a desktop run: ` +
+    "mobile is not measured. These are LAB measurements: one simulated page load each, not field " +
+    "data from real visitors. Each figure is a single sample and moves between runs — the same " +
+    "page can score tens of points apart minutes apart — so read one run as a signal, not a " +
+    "verdict, and re-run before acting on a borderline number. The Core Web Vitals Google ranks " +
+    "on are field data at the 75th percentile of real visits, which this tool does not read.";
   return [heading, ...pages.map(renderPage)].join("\n\n");
 }
 
