@@ -51,6 +51,43 @@ describe("parseRobots — matching semantics", () => {
     expect(rules.isAllowed("/docs/public/page")).toBe(true);
   });
 
+  /**
+   * THE TIE ITSELF — R-3.5 / RFC 9309 §2.2.2, "the least restrictive rule wins".
+   *
+   * The spec above is TITLED "(tie goes to Allow)" and measures no tie: `/docs` against
+   * `/docs/public` is a longer Allow, not an equal-length one. MEASURED 2026-09-02: flipping
+   * `allow >= disallow` to `allow > disallow` in robots.ts — which hands an exact-length
+   * collision to Disallow — left 164/164 crawler tests green. A site owner's explicit
+   * `Allow: /a` beside `Disallow: /a` would then be silently ignored and the customer would pay
+   * 20 credits for a smaller crawl than the one they permitted.
+   *
+   * BOTH ORDERS are pinned. Allow and Disallow are collected into two independent lists and
+   * compared by LENGTH, so directive order must not matter — and a spec that only ever wrote
+   * Disallow first would leave the other half of that claim unmeasured.
+   */
+  it("resolves an EQUAL-LENGTH Allow/Disallow collision in favour of Allow", () => {
+    const disallowFirst = parseRobots(["User-agent: *", "Disallow: /a", "Allow: /a"].join("\n"));
+    expect(disallowFirst.isAllowed("/a")).toBe(true);
+    expect(disallowFirst.isAllowed("/a/deep")).toBe(true);
+
+    const allowFirst = parseRobots(["User-agent: *", "Allow: /a", "Disallow: /a"].join("\n"));
+    expect(allowFirst.isAllowed("/a")).toBe(true);
+    expect(allowFirst.isAllowed("/a/deep")).toBe(true);
+  });
+
+  /**
+   * The CONTROL for the tie above: "least restrictive" is not "always allow". A strictly LONGER
+   * Disallow still wins, so an implementation that resolved every collision to Allow — the
+   * opposite over-correction — fails here.
+   */
+  it("still lets a strictly LONGER Disallow beat a shorter Allow", () => {
+    const rules = parseRobots(
+      ["User-agent: *", "Allow: /docs", "Disallow: /docs/secret"].join("\n"),
+    );
+    expect(rules.isAllowed("/docs/secret")).toBe(false);
+    expect(rules.isAllowed("/docs/public")).toBe(true);
+  });
+
   it("honours '*' wildcards and '$' end-anchors", () => {
     const txt = ["User-agent: *", "Disallow: /*.pdf$"].join("\n");
     const rules = parseRobots(txt);

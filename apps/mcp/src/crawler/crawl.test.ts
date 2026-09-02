@@ -981,6 +981,130 @@ describe("crawlSite — robots.txt unreachable: honest cause + one automatic ret
   });
 });
 
+// --- robots.txt PARSE CEILING: RFC 9309 §2.5 (R-3.2) ---------------------------
+
+/**
+ * The crawler's robots.txt parse ceiling, declared HERE as a literal rather than imported from
+ * crawl.ts, so a change to it can only happen as a deliberate edit to this spec. RFC 9309 §2.5
+ * lets a crawler stop parsing at >= 500 KiB and ignore the rest; the crawler's own value is
+ * 512 KiB.
+ */
+const ROBOTS_PARSE_CAP_BYTES = 512 * 1024;
+
+/**
+ * A loopback site whose /robots.txt carries a Disallow, then `padBytes` of comment padding, then
+ * a SECOND Disallow. Which of the two rules survives is decided purely by where the parse ceiling
+ * falls, so one fixture expresses both halves of the ceiling's contract.
+ *
+ * Test infrastructure only: binds 127.0.0.1 and makes ZERO outbound requests.
+ */
+interface CappedRobotsSite {
+  readonly origin: string;
+  readonly requested: string[];
+  close(): Promise<void>;
+}
+
+function startPaddedRobotsSite(padBytes: number): Promise<CappedRobotsSite> {
+  const requested: string[] = [];
+  // Comment lines: no colon, so the parser skips them and they contribute nothing but BYTES.
+  const padLine = `# ${"p".repeat(78)}\n`;
+  const padding = padLine.repeat(Math.ceil(padBytes / padLine.length));
+  const robotsBody =
+    `User-agent: *\nDisallow: /early\n${padding}Disallow: /late\n`;
+
+  const server = createServer((req, res) => {
+    const { port } = server.address() as AddressInfo;
+    const path = new URL(req.url ?? "/", `http://127.0.0.1:${port}`).pathname;
+    requested.push(path);
+
+    if (path === "/robots.txt") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(robotsBody);
+      return;
+    }
+    if (path === "/") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<html><head><title>Home</title></head><body><h1>Home</h1><p>one two three</p>" +
+          '<a href="/early">early</a><a href="/late">late</a></body></html>',
+      );
+      return;
+    }
+    if (path === "/early" || path === "/late") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        `<html><head><title>${path}</title></head><body><h1>${path}</h1><p>a b c</p></body></html>`,
+      );
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/html; charset=utf-8" });
+    res.end("<html><body>not found</body></html>");
+  });
+
+  return new Promise<CappedRobotsSite>((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        origin: `http://127.0.0.1:${port}`,
+        requested,
+        close: () => new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      });
+    });
+  });
+}
+
+/**
+ * WHY THIS EXISTS. MEASURED 2026-09-02: dropping MAX_ROBOTS_BYTES from 512 KiB to 64 BYTES left
+ * 171/171 crawler tests green — no spec anywhere looked at the ceiling, in either direction. A
+ * silent collapse of it means every Disallow past the first chunk stops being honoured and the
+ * crawler walks into paths the site owner closed; a silent removal of it means a hostile or merely
+ * broken robots.txt is read into memory without bound on a 512 MB machine.
+ *
+ * The two specs below are the SAME fixture at two padding sizes, which is what makes the CEILING
+ * the variable: only the byte offset of the second rule differs between them. Both directions are
+ * therefore pinned — lowering the ceiling reddens the second spec (the early rule stops being
+ * read too), raising it reddens the first (the late rule starts being honoured).
+ */
+describe("crawlSite — robots.txt is parsed only up to the RFC 9309 ceiling", () => {
+  it("IGNORES a Disallow that sits BEYOND the parse ceiling, and says nothing was skipped for it", async () => {
+    const site = await startPaddedRobotsSite(ROBOTS_PARSE_CAP_BYTES + 64 * 1024);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      const urls = result.pages.map((p) => p.url);
+      // The rule BEFORE the ceiling is read and obeyed.
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/early`));
+      expect(result.skipped).toContainEqual({
+        url: normalizeUrl(`${site.origin}/early`),
+        reason: "blocked by robots.txt",
+      });
+      expect(site.requested).not.toContain("/early");
+      // The rule AFTER it was never parsed, so /late is crawled like any other page.
+      expect(urls).toContain(normalizeUrl(`${site.origin}/late`));
+    } finally {
+      await site.close();
+    }
+  });
+
+  it("obeys BOTH rules when the whole file fits UNDER the ceiling (the fixture is not the reason)", async () => {
+    const site = await startPaddedRobotsSite(1024);
+    try {
+      const result = await crawlSite(site.origin, { crawlDelayCapMs: 0, robotsRetryDelayMs: 0 });
+      const urls = result.pages.map((p) => p.url);
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/early`));
+      expect(urls).not.toContain(normalizeUrl(`${site.origin}/late`));
+      for (const path of ["/early", "/late"]) {
+        expect(result.skipped).toContainEqual({
+          url: normalizeUrl(`${site.origin}${path}`),
+          reason: "blocked by robots.txt",
+        });
+        expect(site.requested).not.toContain(path);
+      }
+    } finally {
+      await site.close();
+    }
+  });
+});
+
 // --- include_paths scoping (T35) -----------------------------------------------
 
 describe("normalizeIncludePaths", () => {
