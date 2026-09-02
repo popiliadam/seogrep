@@ -8,11 +8,10 @@
     "rewriteRelativeImportExtensions": true
   },
   "include": ["src"],
-  // `src/test/**` is test SCAFFOLDING, not a spec: it holds no `it()` and so cannot be named by
-  // the `*.test.ts` exclude, but this same config is the BUILD config
-  // (`tsc -p tsconfig.json --noEmit false --outDir dist`) and the reason that exclude exists is
-  // that fixtures must not ship in the runtime image (see tsconfig.test.json's header). It is
-  // still type-checked: tsconfig.test.json sets `exclude: []` and pulls these files in as
-  // imports of the specs that use them, so `pnpm typecheck` reads them either way.
-  "exclude": ["src/**/*.test.ts", "src/test/**"]
+  // ONE exclude, and it stays one. `apps/web/scripts/dist-freshness.mjs` MIRRORS this line by
+  // hand (`!rel.endsWith(".test.ts")`) to decide which sources must have a compiled counterpart
+  // in `dist`; a second pattern here makes the mirror wrong and verify.sh reports the excluded
+  // file as "never compiled at all" (measured 2026-09-02, on an attempt to keep `src/test/`
+  // scaffolding out of the runtime image). Scaffolding therefore compiles like everything else.
+  "exclude": ["src/**/*.test.ts"]
 }
