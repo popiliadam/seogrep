@@ -5,8 +5,9 @@ import {
   ARCHIVED_PROJECT_MESSAGE,
   loadOwnProject,
   projectNotFoundMessage,
+  type LoadProjectFn,
 } from "./project-target.ts";
-import { defineTool, errorResult, textResult } from "./registry.ts";
+import { defineTool, errorResult, textResult, type RegisteredTool } from "./registry.ts";
 
 /**
  * Copy for a project whose gsc_connections row carries a LIVE mapping — a non-null
@@ -107,6 +108,46 @@ export function gscPropertyPickerUrl(): string {
 }
 
 /**
+ * The `gsc_connections` mapping row this tool reads, under the column names it is stored with —
+ * this port IS the row, and renaming its fields here would put a second vocabulary between the
+ * schema and the one decision made from it.
+ */
+export interface GscMappingRow {
+  readonly account_id: string | null;
+  readonly gsc_property: string | null;
+}
+
+/** Read one project's mapping (tenant-scoped). Null = no row at all. */
+export type LoadConnectionFn = (
+  userId: string,
+  projectId: string,
+) => Promise<GscMappingRow | null>;
+
+export interface ConnectGscDeps {
+  readonly loadProject?: LoadProjectFn;
+  readonly loadConnection?: LoadConnectionFn;
+}
+
+/**
+ * The production mapping read. Same reader shape as pull_gsc_data's loadConnection: the literal
+ * table is needed because forUser's selectOwn narrows filters to the columns common to ALL tenant
+ * tables, which excludes project_id. Tenant scope is the explicit `user_id` filter (NEVER #4) on
+ * an RLS-bypassing client, so another tenant's connection is indistinguishable from none.
+ */
+export const loadOwnGscMapping: LoadConnectionFn = async (userId, projectId) => {
+  const { data, error } = await getServiceClient()
+    .from("gsc_connections")
+    .select("account_id, gsc_property")
+    .eq("user_id", userId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`connect_gsc: connection lookup failed: ${error.message}`);
+  }
+  return (data ?? null) as unknown as GscMappingRow | null;
+};
+
+/**
  * connect_gsc — hand the user a Google sign-in link that connects Search Console to one
  * of their projects. 0 credits. This tool is the "link-out" surface (design D15): OAuth
  * is deliberately the SECOND step, never the first barrier — crawl + audit already work
@@ -117,87 +158,87 @@ export function gscPropertyPickerUrl(): string {
  * to the web app's `/api/gsc/connect`, which runs the actual OAuth redirect + callback
  * (browser session, server-side client_secret, at-rest token seal). The project id is
  * carried in the link; the web route re-verifies ownership against the signed-in user.
+ *
+ * BOTH READS ARE PORTS — the shape every sibling in this family already has (setup / track /
+ * untrack / list), and the reason is measured rather than stylistic. On 2026-09-02 this was the
+ * one tool here without a `make…Tool(deps)` factory, and the fast lane could therefore reach only
+ * its schema and one pure renderer: disabling the ARCHIVE refusal, and separately restoring
+ * defect #52 (reading row existence instead of `account_id !== null`), each left 143 files /
+ * 3680 tests green. The defaults below are the production readers, so nothing about the shipped
+ * behaviour changes — only the seam exists now (CG-1).
  */
-export const connectGscTool = defineTool({
-  name: "connect_gsc",
-  description:
-    "Connect Google Search Console to a project. Returns a secure Google sign-in link that " +
-    "grants SeoGrep read-only access. Optional — your crawl and audit tools work without it. " +
-    "Costs 0 credits.",
-  inputSchema: z.object({
-    project_id: z.uuid().describe("The project to connect (from setup_project / list_projects)."),
-  }),
-  handler: async (ctx, { project_id }) => {
-    // Tenant-scoped ownership gate: a missing project and another tenant's project are
-    // indistinguishable here (the read is filtered to ctx.userId), so nothing leaks. The read is
-    // the SHARED loadOwnProject rather than a second one of its own — a per-tool project read is
-    // a per-tool place for the archive check below to be forgotten.
-    const project = await loadOwnProject(ctx.userId, project_id);
-    if (!project) {
-      // THE SHARED SENTENCE, not a second wording of it. Measured live 2026-09-02 in one run:
-      // this tool answered "Create one with setup_project first." while untrack_project answered
-      // the family's projectNotFoundMessage for the byte-identical state. One question with two
-      // answers teaches a reader that the two refusals mean different things; they do not. The
-      // constant comes from the module this handler ALREADY reads the project through, so
-      // nothing new is shared to say it.
-      return errorResult(projectNotFoundMessage(project_id));
-    }
-    // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
-    // indistinguishable from one that does not exist (see project-target.ts). connect_gsc costs
-    // 0 credits, so the refusal has no ledger to avoid — it avoids handing out a connect link
-    // for a project that is not being tracked.
-    if (project.archivedAt !== null) {
-      return errorResult(ARCHIVED_PROJECT_MESSAGE);
-    }
-    const { domain } = project;
+export function makeConnectGscTool(deps: ConnectGscDeps = {}): RegisteredTool {
+  const loadProject = deps.loadProject ?? loadOwnProject;
+  const loadConnection = deps.loadConnection ?? loadOwnGscMapping;
+  return defineTool({
+    name: "connect_gsc",
+    description:
+      "Connect Google Search Console to a project. Returns a secure Google sign-in link that " +
+      "grants SeoGrep read-only access. Optional — your crawl and audit tools work without it. " +
+      "Costs 0 credits.",
+    inputSchema: z.object({
+      project_id: z.uuid().describe("The project to connect (from setup_project / list_projects)."),
+    }),
+    handler: async (ctx, { project_id }) => {
+      // Tenant-scoped ownership gate: a missing project and another tenant's project are
+      // indistinguishable here (the read is filtered to ctx.userId), so nothing leaks. The read is
+      // the SHARED loadOwnProject rather than a second one of its own — a per-tool project read is
+      // a per-tool place for the archive check below to be forgotten.
+      const project = await loadProject(ctx.userId, project_id);
+      if (!project) {
+        // THE SHARED SENTENCE, not a second wording of it. Measured live 2026-09-02 in one run:
+        // this tool answered "Create one with setup_project first." while untrack_project answered
+        // the family's projectNotFoundMessage for the byte-identical state. One question with two
+        // answers teaches a reader that the two refusals mean different things; they do not. The
+        // constant comes from the module this handler ALREADY reads the project through, so
+        // nothing new is shared to say it.
+        return errorResult(projectNotFoundMessage(project_id));
+      }
+      // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
+      // indistinguishable from one that does not exist (see project-target.ts). connect_gsc costs
+      // 0 credits, so the refusal has no ledger to avoid — it avoids handing out a connect link
+      // for a project that is not being tracked.
+      if (project.archivedAt !== null) {
+        return errorResult(ARCHIVED_PROJECT_MESSAGE);
+      }
+      const { domain } = project;
 
-    // Is it ALREADY connected? The answer sits in gsc_connections and used to go unread, so a
-    // connected project got the same "go connect it" copy as an unconnected one (live product
-    // test 2026-08-07). Same reader shape as pull_gsc_data's loadConnection: the literal table
-    // is needed because forUser's selectOwn narrows filters to the columns common to ALL tenant
-    // tables, which excludes project_id. Tenant scope is the explicit user_id filter (NEVER #4),
-    // so another tenant's connection is indistinguishable from none.
-    //
-    // CONNECTED IS `account_id !== null`, NOT the existence of the row (migration 0021). The
-    // row is a MAPPING now: unmapProject keeps it and nulls both columns, and disconnecting a
-    // Google account nulls `account_id` on every project of that account through `on delete
-    // set null`. Reading row existence answered "already connected — property https://…" for
-    // a project with no credential behind it — the byte-identical sentence measured as defect
-    // #52 — while pull_gsc_data refused the very same state with "run connect_gsc first".
-    const { data: existing, error: connError } = await getServiceClient()
-      .from("gsc_connections")
-      .select("account_id, gsc_property")
-      .eq("user_id", ctx.userId)
-      .eq("project_id", project_id)
-      .maybeSingle();
-    if (connError) {
-      throw new Error(`connect_gsc: connection lookup failed: ${connError.message}`);
-    }
+      // Is it ALREADY connected? The answer sits in gsc_connections and used to go unread, so a
+      // connected project got the same "go connect it" copy as an unconnected one (live product
+      // test 2026-08-07).
+      //
+      // CONNECTED IS `account_id !== null`, NOT the existence of the row (migration 0021). The
+      // row is a MAPPING now: unmapProject keeps it and nulls both columns, and disconnecting a
+      // Google account nulls `account_id` on every project of that account through `on delete
+      // set null`. Reading row existence answered "already connected — property https://…" for
+      // a project with no credential behind it — the byte-identical sentence measured as defect
+      // #52 — while pull_gsc_data refused the very same state with "run connect_gsc first".
+      const mapping = await loadConnection(ctx.userId, project_id);
 
-    const connectUrl = gscConnectUrl(project_id);
-    const mapping = existing as unknown as {
-      account_id: string | null;
-      gsc_property: string | null;
-    } | null;
+      const connectUrl = gscConnectUrl(project_id);
 
-    if (mapping && mapping.account_id !== null) {
-      // `gsc_property` is nullable in the schema (migration 0009) and the null is meaningful,
-      // not a placeholder — see renderAlreadyConnected.
+      if (mapping && mapping.account_id !== null) {
+        // `gsc_property` is nullable in the schema (migration 0009) and the null is meaningful,
+        // not a placeholder — see renderAlreadyConnected.
+        return textResult(
+          renderAlreadyConnected({
+            domain,
+            property: mapping.gsc_property ?? null,
+            connectUrl,
+            pickerUrl: gscPropertyPickerUrl(),
+          }),
+        );
+      }
+
       return textResult(
-        renderAlreadyConnected({
-          domain,
-          property: mapping.gsc_property ?? null,
-          connectUrl,
-          pickerUrl: gscPropertyPickerUrl(),
-        }),
+        `To connect Google Search Console for ${domain}, open this link and approve access:\n` +
+          `${connectUrl}\n\n` +
+          "This is optional — your crawl and audit tools already work without it. SeoGrep " +
+          "requests READ-ONLY Search Console access and never write access to your property.",
       );
-    }
+    },
+  });
+}
 
-    return textResult(
-      `To connect Google Search Console for ${domain}, open this link and approve access:\n` +
-        `${connectUrl}\n\n` +
-        "This is optional — your crawl and audit tools already work without it. SeoGrep " +
-        "requests READ-ONLY Search Console access and never write access to your property.",
-    );
-  },
-});
+/** The production connect_gsc tool (real project + mapping readers). */
+export const connectGscTool = makeConnectGscTool();

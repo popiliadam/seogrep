@@ -10,12 +10,14 @@ import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import { STALE_PULL_DAYS } from "../gsc-data/index.ts";
 import { renderReportHtml } from "../report/html.ts";
 import { buildReportModel, STALE_CRAWL_DAYS } from "../report/model.ts";
+import { createFakeQueryDb } from "../test/fake-query.ts";
 import {
   decideProjectNextStep,
   formatNextStep,
   FRESHNESS_WINDOW_DAYS,
   makeWhatsNextTool,
   priceLabel,
+  readHasAnalysis,
   renderWhatsNext,
   type ProjectSignals,
   type WhatsNextState,
@@ -706,5 +708,52 @@ describe("readHasAnalysis is scoped by construction", () => {
    */
   it("is called with (client, userId, projectId), in that order", () => {
     expect(codeOf(SOURCE)).toMatch(/readHasAnalysis\(\s*client\s*,\s*userId\s*,\s*projectId\s*\)/);
+  });
+});
+
+/**
+ * WN F-2 — the OTHER axis of the same probe, and the one nothing was watching.
+ *
+ * Measured 2026-09-02: mutation M4 (renaming the third table) went red on two independent
+ * gates, while M4b — leaving all three `.from()` calls exactly where they are and dropping only
+ * the `|| exists(content, "audit_content_runs")` TERM from the return — left 143 files / 3680
+ * tests green here AND 30/30 green in apps/web's parity spec. Both of those pin the table NAME;
+ * neither pins what the probe's ANSWER is used for (signed lesson 14: name the axis you varied).
+ * The single pin was `whats-next.db.test.ts:332`, in a lane `make verify` does not run.
+ *
+ * What breaks silently: E-9's guarantee is "a run in ANY ONE of the three is enough". Lose one
+ * term and a customer whose only analysis is an audit_content run is told there is nothing to
+ * report — the report headline disappears and no gate goes red.
+ *
+ * The probe is driven here through the RECORDING FAKE, which filters nothing: the rows it
+ * returns are decided by table name alone, so nothing below is evidence about a tenant filter
+ * (that claim is pinned by construction in the source-scan block above). What IS proven here is
+ * how `readHasAnalysis` USES three answers it was handed.
+ */
+describe("readHasAnalysis — ANY ONE of the three tables answers yes", () => {
+  const USER = "user-analysis";
+  const PROJECT = "project-analysis";
+  const TABLES = ["audit_runs", "gsc_discovery_runs", "audit_content_runs"] as const;
+
+  it.each(TABLES)("a run in %s ALONE is enough", async (table) => {
+    const db = createFakeQueryDb((statement) => ({
+      data: statement.table === table ? [{ id: "run-1" }] : [],
+    }));
+    await expect(readHasAnalysis(db.client, USER, PROJECT)).resolves.toBe(true);
+    // All three are still asked — a probe that stopped reading one would pass the line above
+    // by luck on the two it kept.
+    expect(db.statements.map((statement) => statement.table).sort()).toEqual([...TABLES].sort());
+  });
+
+  it("is false only when none of the three has a row", async () => {
+    const db = createFakeQueryDb(() => ({ data: [] }));
+    await expect(readHasAnalysis(db.client, USER, PROJECT)).resolves.toBe(false);
+  });
+
+  it.each(TABLES)("a read error on %s is raised, never read as 'no analysis'", async (table) => {
+    const db = createFakeQueryDb((statement) =>
+      statement.table === table ? { data: null, error: { message: "boom" } } : { data: [] },
+    );
+    await expect(readHasAnalysis(db.client, USER, PROJECT)).rejects.toThrow(table);
   });
 });
