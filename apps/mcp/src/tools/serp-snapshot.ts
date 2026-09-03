@@ -241,7 +241,16 @@ export function makeSerpSnapshotTool(deps: SerpSnapshotDeps = {}): RegisteredToo
       // guard releases the whole reserve.
       return withCredits(
         { userId: ctx.userId },
-        { tool: "serp_snapshot", units: serpKeywordCount(input) },
+        // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+        // SAME ownership-gated project the measurements below are stored under. It was
+        // written to keyword_position_measurements and NOT to the ledger, so the panel and
+        // the ledger disagreed about one call; undefined on a bare-target call is a REAL
+        // answer ("no project scope"), never a gap (credits/guard.ts).
+        {
+          tool: "serp_snapshot",
+          units: serpKeywordCount(input),
+          projectId: subject.project?.id,
+        },
         async () => {
           const snapshot = await port.fetchSerpSnapshot(query);
           // THE MEASUREMENTS ARE RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT

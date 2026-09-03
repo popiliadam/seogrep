@@ -244,7 +244,12 @@ export function makeAnalyzeBacklinksTool(deps: AnalyzeBacklinksDeps = {}): Regis
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. Any of the three DataForSEO requests failing throws, so withCredits
       // releases and a partial profile is never billed.
-      return withCredits({ userId: ctx.userId }, { tool: "analyze_backlinks" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the same
+      // ownership-gated project the run row below records. charge:"handler" settles its own
+      // credits, so nothing upstream can supply this; undefined on a bare-target call is a REAL
+      // answer ("no project scope"), never a gap (credits/guard.ts).
+      const meta = { tool: "analyze_backlinks", projectId: subject.project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const profile = await port.fetchBacklinkProfile({
           target: subject.domain,
           limit: input.limit,

@@ -643,7 +643,12 @@ export function makeRankedKeywordsTool(deps: RankedKeywordsDeps = {}): Registere
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge).
-      return withCredits({ userId: ctx.userId }, { tool: "ranked_keywords" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined on a bare-target call is a REAL answer
+      // ("no project scope"), never a gap (credits/guard.ts).
+      const meta = { tool: "ranked_keywords", projectId: subject.project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const rendered = await fetchAndRenderRankedKeywords(port, subject, input);
         // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded
         // (migration 0027; dfs/runs.ts states the same contract from the other side). withCredits

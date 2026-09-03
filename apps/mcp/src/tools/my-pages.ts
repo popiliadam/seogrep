@@ -894,7 +894,12 @@ export function makeMyPagesTool(deps: MyPagesDeps = {}): RegisteredTool {
           : await (deps.loadCrawl ?? loadCrawlSide)(ctx.userId, subject.project.id);
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch -> commit
       // as one chain. The vendor request failing throws, so withCredits releases.
-      return withCredits({ userId: ctx.userId }, { tool: "my_pages" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined on a bare-target call is a REAL answer
+      // ("no project scope"), never a gap (credits/guard.ts).
+      const meta = { tool: "my_pages", projectId: subject.project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const result = await port.fetchRelevantPages({
           target: subject.domain,
           limit: input.limit,

@@ -285,7 +285,12 @@ export function makeKeywordGapTool(deps: KeywordGapDeps = {}): RegisteredTool {
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. The DataForSEO request failing throws, so withCredits releases and
       // a failed lookup is never billed.
-      return withCredits({ userId: ctx.userId }, { tool: "keyword_gap" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined on a bare-target call is a REAL answer
+      // ("no project scope"), never a gap (credits/guard.ts).
+      const meta = { tool: "keyword_gap", projectId: subject.project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const gap = await port.fetchKeywordGap({
           target: subject.domain,
           competitor: competitor.domain,
