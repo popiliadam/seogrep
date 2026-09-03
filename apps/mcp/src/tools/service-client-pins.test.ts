@@ -659,3 +659,48 @@ describe("the audit crawl reads carry their whole key (2026-09 audit slice)", ()
     expect(runs.calls).toContainEqual({ method: "eq", args: ["tool", "audit_onpage"] });
   });
 });
+
+/**
+ * FAIL-OPEN MEANS FAIL-OPEN, INCLUDING BEFORE THE AWAIT.
+ *
+ * `findPriorAuditRun`'s own header promises that a lookup which cannot be answered costs the caller
+ * a WARNING and never a REPORT — withCredits releases a handler that throws, so a throw here would
+ * refuse an audit the engine had already produced. The guard was written as a check on PostgREST's
+ * `error` field, which only covers failures that arrive THROUGH the promise. It did not cover the
+ * client itself being unusable, and that is not hypothetical: `audit-schema.test.ts` fakes
+ * `getServiceClient` down to the one method withCredits needs (`rpc`), because the money is all it
+ * is measuring. On 2026-09-03 that made `.from(...)` a synchronous TypeError on the DELIVERED-audit
+ * path and turned a green ledger spec red the moment the two branches met.
+ *
+ * The two shapes are pinned separately because they fail in different places — one inside the
+ * promise, one before it exists — and a `try` that wraps only the `await` catches just the first.
+ */
+describe("findPriorAuditRun degrades to silence, never to a refusal", () => {
+  const TARGET = {
+    userId: USER,
+    projectId: "0e1f2a3b-4c5d-6e7f-8091-a2b3c4d5e6f7",
+    crawlJobId: "53907ab7-1111-4222-8333-444444444444",
+    tool: "audit_onpage",
+  };
+
+  /** The lookup logs its own failure; the spec asserts on the ANSWER, not on the noise. */
+  async function quietly(): Promise<string | null> {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      return await findPriorAuditRun(TARGET);
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("answers null when PostgREST returns an error", async () => {
+    db = createFakeQueryDb(() => ({ error: { message: "connection reset" } }));
+    await expect(quietly()).resolves.toBeNull();
+  });
+
+  it("answers null when the client cannot even open a statement", async () => {
+    // A service client with no `.from` — exactly what a spec that fakes only `rpc` hands over.
+    db = { ...createFakeQueryDb(), client: {} as unknown as FakeQueryDb["client"] };
+    await expect(quietly()).resolves.toBeNull();
+  });
+});

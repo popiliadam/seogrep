@@ -46,28 +46,46 @@ export type PriorAuditRunFinder = (target: AuditRunTarget) => Promise<string | n
  * losing the record of a delivered audit is the failure the table exists to prevent. This read
  * produces a COURTESY SENTENCE, and a throw would send `withCredits` down its release path and
  * refuse an audit the tenant asked for and the engine could have delivered. A warning that cannot
- * be computed is a missing warning, never a missing report — so a transport error is logged and
+ * be computed is a missing warning, never a missing report — so a failed lookup is logged and
  * answered `null`, and the reply is exactly what it was before this note existed.
+ *
+ * THE WHOLE STATEMENT IS INSIDE THE `try`, NOT JUST THE AWAIT, and the difference is a measured
+ * one. A guard that only reads PostgREST's `error` field covers failures arriving THROUGH the
+ * promise and nothing else; building the statement can throw first. It did: `audit-schema.test.ts`
+ * fakes `getServiceClient` down to the single method withCredits needs (`rpc`), because the money
+ * is all that spec measures — so `.from(...)` was a SYNCHRONOUS TypeError on the delivered-audit
+ * path, and a fail-open function that had never been tested against an unusable client took a
+ * green ledger spec red the moment two branches met. A client this function cannot use is the
+ * plainest case of "the question cannot be answered", which is the case it already promised to
+ * survive.
  *
  * Tenant-scoped on the RLS-bypassing service client for the usual reason (NEVER #4): all four key
  * columns are filtered, so it can only ever find the caller's own earlier run.
  */
 export async function findPriorAuditRun(target: AuditRunTarget): Promise<string | null> {
-  const { data, error } = await getServiceClient()
-    .from("audit_runs")
-    .select("created_at")
-    .eq("user_id", target.userId)
-    .eq("project_id", target.projectId)
-    .eq("crawl_job_id", target.crawlJobId)
-    .eq("tool", target.tool)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) {
-    console.error(`${target.tool}: prior audit_runs lookup failed (${error.message})`);
+  try {
+    const { data, error } = await getServiceClient()
+      .from("audit_runs")
+      .select("created_at")
+      .eq("user_id", target.userId)
+      .eq("project_id", target.projectId)
+      .eq("crawl_job_id", target.crawlJobId)
+      .eq("tool", target.tool)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error(`${target.tool}: prior audit_runs lookup failed (${error.message})`);
+      return null;
+    }
+    return data?.created_at ?? null;
+  } catch (cause) {
+    console.error(
+      `${target.tool}: prior audit_runs lookup could not run (${String(cause)}); ` +
+        "the report is unaffected",
+    );
     return null;
   }
-  return data?.created_at ?? null;
 }
 
 type AuditRunInsert = Database["public"]["Tables"]["audit_runs"]["Insert"];
