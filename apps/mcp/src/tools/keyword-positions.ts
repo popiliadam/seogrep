@@ -112,8 +112,10 @@ const DESCRIPTION =
   "Read the SERP positions already measured and stored for a domain's keywords — each reading " +
   "with its own date, location, language and device. It measures nothing and contacts no search " +
   "engine: it reports what was stored, keeps 'not found' and 'not measured' apart, and never " +
-  `draws a trend through days nobody measured. Costs ${TOOL_COSTS.keyword_positions} credits. If ` +
-  "nothing has been measured yet, it says so and charges nothing.";
+  "draws a trend through days nobody measured. These are SERP ranks at one moment (rank #4 = the " +
+  "fourth organic result), not Search Console's average position, which find_quick_wins reports " +
+  `and which is an average over a reporting window. Costs ${TOOL_COSTS.keyword_positions} ` +
+  "credits. If nothing has been measured yet, it says so and charges nothing.";
 
 /**
  * The "nothing has been measured" answer — a refusal, and free.

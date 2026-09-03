@@ -470,6 +470,32 @@ describe("two readings are the same series only if everything they were measured
     );
   });
 
+  /**
+   * F-4 / R-7.11 — TWO DIFFERENT "POSITIONS" IN ONE PRODUCT, and until 2026-09-03 no surface said
+   * so. This tool prints a SERP rank from one moment (`rank_group #4`, an integer); find_quick_wins
+   * prints Search Console's average over the reporting window (`position 12.3`, a decimal). Neither
+   * mentioned the other, so the two numbers could be read side by side as a movement that nobody
+   * measured. The distinction is stated where the numbers are — in the answer itself and in the
+   * description an LLM reads before choosing the tool.
+   */
+  it("says these ranks are not Search Console's average position", () => {
+    const text = formatKeywordPositions("x", "", {
+      windowLimit: 10,
+      windowRowCount: 1,
+      storedMeasurementCount: 1,
+      rows: [reading()],
+    });
+    expect(text).toMatch(/SERP ranks from a snapshot/i);
+    expect(text).toMatch(/rank #4 = the fourth organic result/i);
+    expect(text).toMatch(/not Search Console's average position/i);
+  });
+
+  it("draws the same distinction in the description, where the tool is chosen", () => {
+    const { tool } = makeTool();
+    expect(tool.description).toMatch(/not Search Console's average position/i);
+    expect(tool.description).toMatch(/SERP ranks? (from|at) one moment/i);
+  });
+
   it("says plainly that nothing was measured for this answer", () => {
     const text = formatKeywordPositions("x", "", {
       windowLimit: 10,
