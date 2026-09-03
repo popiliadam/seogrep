@@ -276,8 +276,11 @@ describe("link_gap free pre-reserve gates (no credit machinery)", () => {
 // The review asked for one example source URL per candidate, "the sibling tools already have it".
 // They have it because they read /backlinks/backlinks, whose rows are individual LINKS carrying
 // `url_from` and `url_to`. This tool's ONE paid request is /backlinks/domain_intersection, whose
-// entry carries no page URL of any kind — checked against the vendor's documented field list and
-// against the parser in dfs/link-gap.ts, which throws nothing away. Inventing "https://<domain>"
+// entry carries no page URL of any kind — checked against the vendor's DOCUMENTED field list,
+// which is the only place that claim can rest. (Corrected 2026-09-04, record finding B-2: this
+// note used to add "and against the parser in dfs/link-gap.ts, which throws nothing away". The
+// parser reads a subset of the entry's fields, so it says what this tool renders and nothing
+// about what the vendor sends.) Inventing "https://<domain>"
 // would publish a page nobody fetched, and buying a second request would move what the signed 45
 // credits pay for. So the tool states the limit and names the tool that does have the URLs.
 // =============================================================================================
