@@ -269,8 +269,14 @@ export function domainAddressableTools(allTools) {
 }
 
 export function substituteProseTokens(text, constants) {
-  const { maxRowLimit, lagDays, maxTrackedKeywords, maxSerpKeywords, domainTools } =
-    constants || {};
+  const {
+    maxRowLimit,
+    lagDays,
+    maxTrackedKeywords,
+    maxSerpKeywords,
+    crawlTimeBudgetSeconds,
+    domainTools,
+  } = constants || {};
   const out = String(text)
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
@@ -288,6 +294,16 @@ export function substituteProseTokens(text, constants) {
     // publish a bound the code no longer charges for.
     .replace(/\{\{MAX_SERP_KEYWORDS\}\}/g, () =>
       groupThousands(positiveInteger(maxSerpKeywords, "{{MAX_SERP_KEYWORDS}}", "maxSerpKeywords")),
+    )
+    // The crawl's WALL-CLOCK ceiling in seconds. MEASURED LIVE 2026-09-02: a whole-site crawl
+    // returned 51 of a possible 100 pages because this budget ran out first, and the page cap was
+    // the only bound the page named — so the reader was set up to expect twice what the same flat
+    // price delivers. It comes from the crawler's own constant for the usual reason: a retyped
+    // bound can outlive the one being enforced.
+    .replace(/\{\{CRAWL_TIME_BUDGET\}\}/g, () =>
+      String(
+        positiveInteger(crawlTimeBudgetSeconds, "{{CRAWL_TIME_BUDGET}}", "crawlTimeBudgetSeconds"),
+      ),
     )
     .replace(/\{\{DOMAIN_TOOLS\}\}/g, () => {
       if (typeof domainTools !== "string" || domainTools === "") {
@@ -858,9 +874,14 @@ export const DOC_PROSE = {
       {
         heading: "Large sites, and why the page count is a floor",
         body:
-          "Each crawl covers up to **100 pages**. To crawl a bigger site, target a section with " +
-          "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; this " +
-          "keeps every crawl within the cap and spends predictably.\n\n" +
+          "Each crawl covers up to **100 pages** — and stops at a **{{CRAWL_TIME_BUDGET}}-second " +
+          "time budget**, whichever comes first. On a slow or large site the clock is usually what " +
+          "runs out: one measured whole-site crawl returned 51 pages and stopped on TIME, not at " +
+          "the page limit, for the same flat price. Coverage therefore varies between runs of the " +
+          "same site, and the finish summary says which ceiling stopped that run. To crawl a " +
+          "bigger site — or to cover a section fully rather than partly — target it with " +
+          "`include_paths` — for example `[\"/blog\"]` — and run one focused crawl per section; " +
+          "this keeps every crawl within both ceilings and spends predictably.\n\n" +
           "Before queuing, `crawl_site` runs a quick, **free** size check, and any page count it " +
           "quotes is a **lower bound** — \"at least N pages\", never \"~N\". Both ways of sizing " +
           "a site are floors by construction: reading the sitemap is bounded by how much of it " +
@@ -909,9 +930,16 @@ export const DOC_PROSE = {
       "Ask your MCP client in plain language:\n\n> Crawl my example.com project.\n\nThe tool replies " +
       "with a `job_id`. Poll it until the job is done:\n\n> What's the status of job `<job_id>`?",
     returns:
-      "A `job_id`, a `status` of `queued`, and the `estimated_credits` the crawl will cost — " +
-      "plus, when the free size check sized the site, how many pages it found **at least** and " +
-      "how many of them this one crawl covers. Feed the `job_id` to " +
+      "A `job_id`, a `status` of `queued or already running`, and the `estimated_credits` the " +
+      "crawl will cost — plus, when the free size check sized the site, how many pages it found " +
+      "**at least** and how many of them this one crawl covers. The status says both because a " +
+      "worker usually claims the job within a second: the row is created `queued`, and by the " +
+      "time the `job_id` reaches you it is normally already `running`.\n\n" +
+      "If a crawl of this project is **already in flight**, the call returns that job's `job_id` " +
+      "instead of starting a second one — nothing is queued and nothing is charged. A second " +
+      "crawl of the same project is a second full charge for the same pages, so it is never " +
+      "started on your behalf without you asking again after the first one finishes.\n\n" +
+      "Feed the `job_id` to " +
       "[`get_job_status`](/docs/tools-reference/get-job-status): while the crawl runs it reports " +
       "the pages crawled and skipped so far, so a job that is working and a job that is stuck no " +
       "longer look alike, and when it finishes it carries the summary.",
@@ -3616,6 +3644,9 @@ async function loadRegistry() {
   const pullUrl = new URL("../../mcp/dist/gsc-data/pull.js", import.meta.url);
   const windowsUrl = new URL("../../mcp/dist/gsc-data/windows.js", import.meta.url);
   const trackedUrl = new URL("../../mcp/dist/tools/tracked-keywords-store.js", import.meta.url);
+  // The crawler's own wall-clock budget — the ceiling that usually stops a crawl before its page
+  // cap does. The crawl_site page quotes it through {{CRAWL_TIME_BUDGET}}.
+  const crawlerUrl = new URL("../../mcp/dist/crawler/crawl.js", import.meta.url);
   // The SAME predicate the credit guard calls before every charged tool (credits/guard.ts). The hub
   // page publishes its answer, so a tool moving in or out of the trial gate re-renders the docs and
   // turns --check red — instead of a hand-kept list quietly disagreeing with the runtime.
@@ -3626,6 +3657,7 @@ async function loadRegistry() {
     const pull = await import(pullUrl);
     const windows = await import(windowsUrl);
     const tracked = await import(trackedUrl);
+    const crawler = await import(crawlerUrl);
     const paidBalance = await import(paidBalanceUrl);
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
@@ -3641,6 +3673,7 @@ async function loadRegistry() {
         // EQUAL to the port's MAX_SERP_KEYWORDS), and reading it here keeps this generator's
         // imports to the two modules it already loads — the registry and the prices.
         maxSerpKeywords: costs.CREDIT_UNITS.serp_snapshot.max_units,
+        crawlTimeBudgetSeconds: Math.round(crawler.DEFAULT_TIME_BUDGET_MS / 1000),
         // Derived from the registry itself — see domainAddressableTools for why it is not a list.
         domainTools: domainAddressableTools(tools.ALL_TOOLS),
       },

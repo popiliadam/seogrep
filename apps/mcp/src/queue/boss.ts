@@ -4,6 +4,7 @@ import {
   getServiceClient,
   type Json,
   type JobRow,
+  type JobStatus,
   type JobUpdate,
   type ServiceClient,
 } from "../db.ts";
@@ -190,6 +191,90 @@ export async function getJobForUser(
     throw new Error(`getJobForUser failed: ${error.message}`);
   }
   return data;
+}
+
+/**
+ * The NON-TERMINAL statuses: a job in one of these is IN FLIGHT, and its credit reserve may still
+ * be bound. Exported so the query below, the type beneath it and the specs all read ONE list.
+ */
+export const ACTIVE_JOB_STATUSES = ["queued", "running"] as const;
+
+export type ActiveJobStatus = (typeof ACTIVE_JOB_STATUSES)[number];
+
+/** A job of one tool that has not reached a terminal state yet: still `queued`, or `running`. */
+export interface ActiveJob {
+  readonly jobId: string;
+  readonly status: ActiveJobStatus;
+}
+
+function isActiveStatus(status: JobStatus): status is ActiveJobStatus {
+  return (ACTIVE_JOB_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * One NON-TERMINAL (`queued` or `running`) `tool` job for a project, tenant-scoped
+ * (user_id = the caller AND project_id = the target). Null when that project has nothing in
+ * flight for that tool.
+ *
+ * WHY IT EXISTS (crawl_site, B-1, measured 2026-09-02): enqueueJob INSERTs unconditionally and
+ * carries no dedupe or singleton key, so a second crawl_site call for a project whose first crawl
+ * was still running opened a second job — and the worker bound a second 20-credit reserve to fetch
+ * the same pages. A caller cannot see the first job unless they kept its id, so the duplicate is
+ * the ordinary mistake, not the exotic one.
+ *
+ * The user_id filter is the tenant guard on the RLS-bypassing service client (constitution
+ * NEVER #4). It is a READ ONLY: it decides nothing about credits and writes nothing — the caller
+ * decides what to do with an in-flight job.
+ *
+ * NOT A LOCK, and it must not be mistaken for one. Two requests that arrive close enough together
+ * can both read "nothing in flight" and both enqueue; this closes the ordinary window (a human or
+ * a model re-asking seconds later), not a concurrent race. The DB-level second line of defence — a
+ * partial unique index on (project_id, tool) WHERE status IN ('queued','running') — is a migration
+ * and therefore a human-queued decision; see the crawl_site record's B-1 note.
+ *
+ * THE FILTER IS THE ONLY TRUTH, and the narrowing that used to sit beside it is gone (referee,
+ * 2026-09-02). The query was `… .in(status) .order("created_at", desc) .limit(1) .maybeSingle()`,
+ * and that pairing had a failure mode nothing measured: with a WIDER status filter, the single row
+ * it kept could be a `succeeded` crawl from a minute ago while an OLDER `running` one was still
+ * holding a reserve — the in-flight job would be missed and the customer charged twice. Correctness
+ * must not depend on two things agreeing. Every matching row now comes back and the choice is made
+ * here, where "matching" and "in flight" are the same predicate by construction.
+ *
+ * Dropping `.limit(1)` cannot lose a job to PostgREST's default page: the pathological case needs
+ * EVERY matching row to sit beyond page one, and a non-empty first page already answers the only
+ * question being asked.
+ */
+export async function findActiveJobForProject(
+  client: ServiceClient,
+  params: { projectId: string; userId: string; tool: string },
+): Promise<ActiveJob | null> {
+  const { data, error } = await client
+    .from("jobs")
+    .select("id, status, created_at")
+    .eq("user_id", params.userId)
+    .eq("project_id", params.projectId)
+    .eq("tool", params.tool)
+    .in("status", [...ACTIVE_JOB_STATUSES]);
+  if (error) {
+    throw new Error(`findActiveJobForProject(${params.tool}) failed: ${error.message}`);
+  }
+  // The re-check is not belt-and-braces: it is what makes the RETURNED status a member of
+  // ActiveJobStatus by PROOF rather than by trusting the filter that ran on the server. It is a
+  // flatMap rather than a filter because narrowing `row.status` does not narrow `row` — a
+  // `.filter(...)` here type-checks the predicate and still hands back the wide row type.
+  const inFlight = (data ?? []).flatMap((row) =>
+    isActiveStatus(row.status)
+      ? [{ id: row.id, status: row.status, createdAt: row.created_at }]
+      : [],
+  );
+  if (inFlight.length === 0) return null;
+  // The OLDEST in-flight job: it is the one that will finish first, so it is the one worth
+  // polling — and `id` breaks a tie so two runs of the same query cannot answer differently.
+  const oldest = inFlight.reduce((best, row) => {
+    const delta = Date.parse(row.createdAt) - Date.parse(best.createdAt);
+    return delta < 0 || (delta === 0 && row.id < best.id) ? row : best;
+  });
+  return { jobId: oldest.id, status: oldest.status };
 }
 
 /**
