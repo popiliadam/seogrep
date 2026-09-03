@@ -1,15 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import {
-  analyzeContentDecay,
   cannibalizationReport,
-  contentDecayReport,
   detectCannibalization,
   formatCannibalization,
-  formatContentDecay,
   type PullData,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
+import { renderContentDecay } from "./analyze-content-decay.ts";
 import { renderQuickWins } from "./find-quick-wins.ts";
 // `RenderDiscovery` is declared BESIDE makeDiscoveryTool, not in gsc-data — importing it from
 // gsc-data resolved to nothing, which made `Case.render` an `any` and silently un-typed every
@@ -79,10 +77,10 @@ const CASES: Case[] = [
   },
   {
     name: "analyze_content_decay",
-    render: (pull) => {
-      const decays = analyzeContentDecay(pull);
-      return { report: contentDecayReport(pull, decays), text: formatContentDecay(decays) };
-    },
+    // IMPORTED, like find_quick_wins' above, now that this tool exports its render too: the
+    // header's own note said to do this the day it did. The inline copy this replaces stopped
+    // matching the shipped render the moment B-1 added the update note above the list.
+    render: renderContentDecay,
     finding: /shop\.test\/trail/,
   },
 ];

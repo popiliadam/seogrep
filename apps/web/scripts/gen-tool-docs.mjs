@@ -1218,7 +1218,15 @@ export const DOC_PROSE = {
       "clicks at all is told to verify it is still indexed, reachable and not redirected **before** " +
       "rewriting anything — that is also the shape a truncated pull manufactures. A page that lost " +
       "most of its clicks but not all is told to re-target rather than tweak. A page in the middle " +
-      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nWhen a " +
+      "**published Google update** rolled out inside the period being compared, the reply says so " +
+      "**above** the list and names the update and its date. A core or spam update can move a whole " +
+      "site at once, and ten pages that all fell in the same week may be one event rather than ten " +
+      "content problems — so the note asks you to check whether many pages moved together before " +
+      "rewriting any of them. It says *may*, deliberately: Google publishes when an update rolled " +
+      "out, never what it did to your site. The dates come from Google's own status history and the " +
+      "reply tells you when that list was last checked, once it is old enough to be missing " +
+      "newer ones.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",

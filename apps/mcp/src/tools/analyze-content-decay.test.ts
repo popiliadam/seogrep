@@ -1,0 +1,74 @@
+import { describe, expect, it } from "vitest";
+import { pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
+import { gscRow } from "../gsc-data/fixtures.ts";
+import type { PullData } from "../gsc-data/index.ts";
+import { renderContentDecay } from "./analyze-content-decay.ts";
+
+/**
+ * B-1 AT THE TOOL — measured live 2026-09-03. The reply compared `2026-06-03..2026-08-31` against
+ * `2026-03-05..2026-06-02`, returned ten decaying pages, and told the customer to change every one
+ * of them. Both the March 2026 core update (27 Mar) and the May 2026 one (21 May) landed inside
+ * that baseline window, and the string "core update" did not appear anywhere in the repository.
+ *
+ * These drive `renderContentDecay` — the function `makeAnalyzeContentDecayTool` is actually built
+ * from — rather than rebuilding it out of the engine and the formatter. A spec that reassembles
+ * the expression under test pins its own arithmetic, and this tool could have swapped renderers
+ * under it without a red line (find_quick_wins already paid for that lesson).
+ */
+
+/** Two adjacent windows whose combined span holds no published update (1 Jul → 17 Aug 2026). */
+const QUIET_PULL: PullData = {
+  ...pullData(
+    [gscRow({ query: "q", page: "https://x.test/p", clicks: 2, impressions: 100, position: 9 })],
+    [gscRow({ query: "q", page: "https://x.test/p", clicks: 40, impressions: 900, position: 6 })],
+  ),
+  days: 24,
+  current: {
+    start_date: "2026-07-25",
+    end_date: "2026-08-17",
+    rows: [gscRow({ query: "q", page: "https://x.test/p", clicks: 2, impressions: 100, position: 9 })],
+  },
+  previous: {
+    start_date: "2026-07-01",
+    end_date: "2026-07-24",
+    rows: [gscRow({ query: "q", page: "https://x.test/p", clicks: 40, impressions: 900, position: 6 })],
+  },
+};
+
+describe("analyze_content_decay names an algorithm update the compared period spans (B-1)", () => {
+  it("puts the update note ABOVE the list, not under it", () => {
+    // SAMPLE_PULL compares 2026-01-19..2026-04-18 with 2026-04-19..2026-07-17 — a span holding
+    // both 2026 core updates.
+    const text = renderContentDecay(SAMPLE_PULL).text;
+    const lines = text.split("\n");
+    expect(lines[0]).toContain("March 2026 core update (27 Mar)");
+    expect(lines[0]).toContain("May 2026 core update (21 May)");
+    // The finding itself is still delivered, under it.
+    expect(text).toContain("decaying page");
+    expect(text.indexOf("March 2026 core update")).toBeLessThan(text.indexOf("decaying page"));
+  });
+
+  it("reads the period as previous-window START through current-window END", () => {
+    // A baseline reshaped by an update distorts every loss measured against it, so an overlap
+    // check that looked only at the CURRENT window would miss the live case entirely — both
+    // updates were in the baseline.
+    const text = renderContentDecay(SAMPLE_PULL).text;
+    expect(text).toContain("February 2026 Discover update");
+  });
+
+  /**
+   * THE COUNTERWEIGHT. A renderer that prepended the note unconditionally passes everything above
+   * while telling every customer their drop might be an algorithm update — the same failure as
+   * never mentioning one, pointed the other way.
+   */
+  it("says nothing about updates when the compared period spans none", () => {
+    const text = renderContentDecay(QUIET_PULL).text;
+    expect(text).not.toMatch(/update/i);
+    expect(text).toContain("decaying page");
+  });
+
+  it("keeps the note out of the STORED report — the row holds the measurement", () => {
+    const report = renderContentDecay(SAMPLE_PULL).report;
+    expect(JSON.stringify(report)).not.toMatch(/core update/i);
+  });
+});
