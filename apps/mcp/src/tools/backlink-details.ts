@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { renderOutputLimitNote, renderWithinBudget } from "../format/output-budget.ts";
 import {
   BACKLINK_DETAILS_RANK_MAX,
   DEFAULT_BACKLINK_DETAIL_ROWS,
@@ -276,45 +277,14 @@ export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
 const LINK_LIST_CHAR_BUDGET = 20_000;
 const TARGET_PAGE_LIST_CHAR_BUDGET = 5_000;
 
-/**
- * Render rows until the budget is spent. A row is taken ONLY if it fits whole — a half-printed
- * backlink row is a URL cut in the middle, which reads as a different URL.
- */
-function renderWithinBudget<Row>(
-  rows: readonly Row[],
-  render: (row: Row) => string,
-  budget: number,
-): { readonly block: string; readonly printed: number; readonly omitted: number } {
-  const taken: string[] = [];
-  let used = 0;
-  for (const row of rows) {
-    const line = render(row);
-    const cost = line.length + 1; // + the newline that joins it to the block
-    if (used + cost > budget) break;
-    taken.push(line);
-    used += cost;
-  }
-  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
-}
-
-/**
- * What the reader is told when rows were fetched and not printed. It never says "of": both counts
- * describe the SAME window, and the module header's rule is that two DIFFERENT sets are never
- * joined — keeping the phrasing free of "N of M" also keeps it from being read as the vendor's
- * whole-set total. It states plainly that the missing rows were paid for, because they were.
- */
-export function renderOutputLimitNote(
-  noun: string,
-  printed: number,
-  omitted: number,
-  advice: string,
-): string {
-  return (
-    `Output limit reached — ${thousands(printed)} ${printed === 1 ? noun : `${noun}s`} printed ` +
-    `above, ${thousands(omitted)} more fetched in this same window but not printed: one reply ` +
-    `cannot hold them, and they were charged for either way. ${advice}`
-  );
-}
+// THE MECHANISM ITSELF now lives in format/output-budget.ts (2026-09-04). It moved because the
+// SIBLING at twice the price had no ceiling at all: `analyze_backlinks` renders the same family of
+// lists with a `limit` that defaults to its own maximum of 1,000 (finding AB-1). Writing "your
+// reply was cut" a second time is how one of the two copies stops saying that the unprinted rows
+// were paid for. The NUMBERS above stay here — how a tool splits its ceiling across its own lists
+// is not shareable — and the note is re-exported so the pins that import it from this module and
+// the sibling that imports it from format/ are provably reading ONE sentence.
+export { renderOutputLimitNote };
 
 const LINK_TRUNCATION_ADVICE =
   "Move the window with offset to read the rest — each call is a separate " +
