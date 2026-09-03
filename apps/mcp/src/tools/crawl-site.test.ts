@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   makeCrawlSiteTool,
+  type ActiveCrawlFinder,
+  type CrawlSiteDeps,
   type EnqueueFn,
   type EstimateFn,
   type ProjectResolver,
 } from "./crawl-site.ts";
 import type { RankingSeedFetcher, RankingSeedOutcome } from "./crawl-seeds.ts";
+import { DEFAULT_TIME_BUDGET_MS } from "../crawler/crawl.ts";
 import type { AuthContext } from "../auth.ts";
 
 /**
@@ -22,9 +25,21 @@ const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
 const spyEnqueue = (): ReturnType<typeof vi.fn<EnqueueFn>> =>
   vi.fn<EnqueueFn>(async () => ({ jobId: "job-should-not-happen" }));
 
+/** "Nothing is in flight for this project" — the state every spec assumes unless it says otherwise. */
+const noActiveCrawl: ActiveCrawlFinder = async () => null;
+
+/**
+ * The fast lane's tool factory. It supplies ONE dep the specs below do not otherwise name: the
+ * in-flight-crawl port (B-1), whose real implementation reads the jobs table — and this lane is
+ * DB-free by construction. Every other dep is passed through untouched, and any spec that cares
+ * about the guard passes its own `findActiveCrawl`, which wins over this default.
+ */
+const makeTool = (deps: CrawlSiteDeps = {}) =>
+  makeCrawlSiteTool({ findActiveCrawl: noActiveCrawl, ...deps });
+
 describe("crawl_site input schema (referee: project_id + max_urls + include_paths)", () => {
   it("advertises project_id + max_urls + include_paths + the reserved confirm — never timing knobs", () => {
-    const tool = makeCrawlSiteTool({ enqueue: spyEnqueue() });
+    const tool = makeTool({ enqueue: spyEnqueue() });
     const schema = tool.inputJsonSchema as {
       properties: Record<string, unknown>;
       required?: string[];
@@ -54,12 +69,32 @@ describe("crawl_site input schema (referee: project_id + max_urls + include_path
     expect(schema.properties.max_urls).toMatchObject({ type: "integer", minimum: 1, maximum: 100 });
     expect(schema.properties.include_paths).toMatchObject({ type: "array", items: { type: "string" } });
   });
+
+  /**
+   * BOTH ceilings, not just the flattering one (B-6). MEASURED LIVE 2026-09-02: a whole-site crawl
+   * of a real domain returned 51 pages and 138 skipped — "time budget exhausted after 91s — the
+   * crawl stopped on TIME, not at the 100-page limit". The FINISH sentence says that honestly;
+   * what nothing said BEFOREHAND was that a second ceiling exists at all, so "up to 100 pages" set
+   * an expectation the same 20 credits often does not meet.
+   *
+   * The seconds figure is DERIVED from the crawler's own constant here rather than retyped, so
+   * this asserts the WIRING: moving the budget without moving the sentence turns it red.
+   */
+  it("max_urls names the TIME budget too — the ceiling that usually binds first", () => {
+    const schema = makeTool({ enqueue: spyEnqueue() }).inputJsonSchema as {
+      properties: Record<string, { description?: string }>;
+    };
+    const description = schema.properties.max_urls?.description ?? "";
+    expect(description).toMatch(/1–100/);
+    expect(description).toContain(`${DEFAULT_TIME_BUDGET_MS / 1000}-second`);
+    expect(description).toMatch(/time budget/i);
+  });
 });
 
 describe("crawl_site surface rejects invalid input before enqueuing", () => {
   it("rejects a non-uuid project_id without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const result = await makeCrawlSiteTool({ enqueue }).run(CTX, { project_id: "not-a-uuid" });
+    const result = await makeTool({ enqueue }).run(CTX, { project_id: "not-a-uuid" });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/invalid input/i);
     expect(enqueue).not.toHaveBeenCalled();
@@ -67,14 +102,14 @@ describe("crawl_site surface rejects invalid input before enqueuing", () => {
 
   it("rejects a missing project_id without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const result = await makeCrawlSiteTool({ enqueue }).run(CTX, {});
+    const result = await makeTool({ enqueue }).run(CTX, {});
     expect(result.isError).toBe(true);
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("rejects max_urls out of the 1..100 range without enqueuing", async () => {
     const enqueue = spyEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue });
+    const tool = makeTool({ enqueue });
     const id = randomUUID();
     expect((await tool.run(CTX, { project_id: id, max_urls: 0 })).isError).toBe(true);
     expect((await tool.run(CTX, { project_id: id, max_urls: 101 })).isError).toBe(true);
@@ -125,7 +160,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   it("fires confirmation for a very large site (unconfirmed): NOT enqueued, projection labeled", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     // 1500 pages -> ceil(1500/100)=15 runs -> 300 credits projected (> 200 threshold).
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
     const result = await tool.run(CTX, { project_id: PID });
 
     expect(calls).toHaveLength(0); // NOTHING enqueued, NOTHING charged
@@ -147,7 +182,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   });
 
   it("HONESTY: states the real 20-credit charge and never presents the projection as the charge", async () => {
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject,
       estimate: estimateOf(1500),
@@ -171,7 +206,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
   it("does NOT confirm exactly AT the 200-credit projection boundary (1000 pages)", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     // 1000 pages -> 10 runs -> 200 credits, which is NOT strictly above the threshold.
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1000) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1000) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1); // enqueued, no confirmation
     expect(result.content[0]!.text).toContain("status: queued");
@@ -179,7 +214,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("confirms just above the boundary (1100 pages -> 220 credits projected)", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1100) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1100) });
     const body = JSON.parse((await tool.run(CTX, { project_id: PID })).content[0]!.text) as ConfirmationBody;
     expect(calls).toHaveLength(0);
     expect(body.requires_confirmation).toBe(true);
@@ -188,7 +223,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("confirm:true proceeds: enqueues and carries include_paths in the payload", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(1500) });
     const result = await tool.run(CTX, {
       project_id: PID,
       include_paths: ["/blog"],
@@ -210,7 +245,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 1500, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    const tool = makeTool({ enqueue, resolveProject, estimate: spyEstimate });
     await tool.run(CTX, { project_id: PID, include_paths: ["/blog"], confirm: true });
     expect(estimateCalls).toBe(0); // the ~30s pre-discovery is skipped on the confirmed path
     expect(calls).toHaveLength(1);
@@ -224,7 +259,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 30, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: spyEstimate });
+    const tool = makeTool({ enqueue, resolveProject, estimate: spyEstimate });
     const result = await tool.run(CTX, { project_id: PID, include_paths: [""] });
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toMatch(/invalid input/i);
@@ -232,9 +267,27 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(estimateCalls).toBe(0);
   });
 
+  /**
+   * B-2. This reply used to say `status: queued` flat, and the docs promised the same — a state
+   * the tracking tool can essentially never confirm. MEASURED LIVE 2026-09-02: the jobs row is
+   * INSERTed `queued` and a worker claimed it 562 ms later, while the call itself returned the
+   * job_id after 851 ms (9 032 ms on the unconfirmed path). By the time the caller holds the id,
+   * the job is already `running` — so `get_job_status`'s queued sentence is unreachable through
+   * the documented flow, and a customer comparing the two answers sees a contradiction that is
+   * only ever OUR wording's fault.
+   *
+   * The fix is the sentence, not the state: `queued` is what the row genuinely is at INSERT.
+   */
+  it("does not promise a status the tracker will almost never confirm", async () => {
+    const { fn: enqueue } = captureEnqueue();
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(null) });
+    const text = (await tool.run(CTX, { project_id: PID })).content[0]!.text;
+    expect(text).toContain("status: queued or already running");
+  });
+
   it("a small site enqueues normally with an honest one-liner and no confirmation", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(30) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(30) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     const text = result.content[0]!.text;
@@ -253,7 +306,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const fromSitemap: EstimateFn = async () => ({ pages: 28, source: "sitemap" });
 
     const viaHome = (
-      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
+      await makeTool({ enqueue, resolveProject, estimate: homepageOnly }).run(CTX, {
         project_id: PID,
       })
     ).content[0]!.text;
@@ -262,7 +315,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(viaHome).toMatch(/very likely larger/i);
 
     const viaSitemap = (
-      await makeCrawlSiteTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
+      await makeTool({ enqueue, resolveProject, estimate: fromSitemap }).run(CTX, {
         project_id: PID,
       })
     ).content[0]!.text;
@@ -273,7 +326,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
 
   it("degrades to a normal enqueue (no one-liner) when pre-discovery returns null", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: estimateOf(null) });
+    const tool = makeTool({ enqueue, resolveProject, estimate: estimateOf(null) });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(calls[0]![1].payload).toEqual({ max_urls: 100 }); // no include_paths when unscoped
@@ -285,7 +338,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     const throwing: EstimateFn = async () => {
       throw new Error("pre-discovery boom");
     };
-    const tool = makeCrawlSiteTool({ enqueue, resolveProject, estimate: throwing });
+    const tool = makeTool({ enqueue, resolveProject, estimate: throwing });
     const result = await tool.run(CTX, { project_id: PID });
     expect(calls).toHaveLength(1);
     expect(result.isError).toBeUndefined();
@@ -307,7 +360,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 30, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       estimate,
       resolveProject: async () => ({
@@ -332,7 +385,7 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
       return { pages: 1500, source: "sitemap" };
     };
     const { fn: enqueue, calls } = captureEnqueue();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       estimate,
       resolveProject: async () => null, // missing / another tenant's project
@@ -342,6 +395,165 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     expect(result.content[0]!.text).toMatch(/no project found/i);
     expect(estimateCalled).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+});
+
+// --- One crawl per project at a time (B-1) -------------------------------------------
+//
+// MEASURED 2026-09-02 (docs/audits/tools/2026-09/crawl_site.md, B-1): enqueueJob INSERTs
+// unconditionally and this handler asked nothing before it, so a second crawl_site for a project
+// whose first crawl was still running opened a SECOND job — and the worker bound a second
+// 20-credit reserve for the same pages. The scenario has a named cell in the live sweep plan
+// ("does a second identical crawl charge again", plan.mjs:273) that has never been run.
+//
+// What these specs measure is the SURFACE's decision, with every paid path injected: the enqueue
+// (whose job is what the worker's reserve is keyed to), the free pre-discovery, and the SEPARATELY
+// CHARGED ranking-seed lookup. "Nothing was charged" is asserted as "none of those three was
+// reached", which is the only form of it this lane can honestly prove.
+
+/** An active-crawl finder that reports one in-flight job, and records what it was asked. */
+function activeCrawlSpy(
+  active: { jobId: string; status: "queued" | "running" } | null,
+): { fn: ActiveCrawlFinder; calls: { userId: string; projectId: string }[] } {
+  const calls: { userId: string; projectId: string }[] = [];
+  const fn: ActiveCrawlFinder = async (ctx, projectId) => {
+    calls.push({ userId: ctx.userId, projectId });
+    return active;
+  };
+  return { fn, calls };
+}
+
+describe("crawl_site refuses to queue a SECOND crawl while one is in flight", () => {
+  it("returns the running job instead of opening a new one — no enqueue, no size check, no paid seeding", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const seed = seedSpy();
+    let estimateCalls = 0;
+    const spyEstimate: EstimateFn = async () => {
+      estimateCalls++;
+      return { pages: 30, source: "sitemap" };
+    };
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-1", status: "running" });
+
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: spyEstimate,
+      fetchSeeds: seed.fn,
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID, seed_from_ranking_pages: true });
+
+    // NOTHING was opened and nothing was bought on this call's behalf.
+    expect(calls).toHaveLength(0); // no second jobs row -> no second worker reserve
+    expect(seed.calls).toHaveLength(0); // the separately-charged lookup was never made
+    expect(estimateCalls).toBe(0); // the 8-second free size check was skipped too
+
+    // It is a NORMAL answer, not an error: the caller asked for a crawl and there is one.
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text).toMatch(/already in flight — poll it with get_job_status/);
+    expect(text).toContain("job_id: job-in-flight-1");
+    expect(text).toContain("status: running");
+    expect(text).toMatch(/not charged/i);
+  });
+
+  it("asks for THIS caller's job on THIS project — the finder is tenant-scoped by its arguments", async () => {
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-2", status: "queued" });
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject,
+      estimate: estimateOf(null),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    expect(finder.calls).toEqual([{ userId: CTX.userId, projectId: PID }]);
+  });
+
+  /**
+   * ONE SENTENCE THAT FITS BOTH STATES (referee, 2026-09-02). The lead used to say "is already
+   * running" while the clause beside it printed `status: queued` — a single line disagreeing with
+   * itself about the state B-2 already showed is the hard one. The prose is now status-independent
+   * and the precise status is reported ONCE, in the field built to carry it.
+   */
+  it("reports the QUEUED state as queued, and never calls a queued job 'running'", async () => {
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-3", status: "queued" });
+    const result = await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject,
+      estimate: estimateOf(null),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    const text = result.content[0]!.text;
+    expect(text).toContain("status: queued");
+    expect(text).toContain("job_id: job-in-flight-3");
+    expect(text).toMatch(/already in flight/);
+    // The whole point: no wording anywhere in this reply asserts the job is RUNNING.
+    expect(text).not.toMatch(/running/i);
+  });
+
+  /**
+   * The CONTROL. Without it a guard that refused EVERY crawl would pass every spec above, and
+   * the tool would be broken in the one way nobody would test for.
+   */
+  it("queues normally when nothing is in flight for the project", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const finder = activeCrawlSpy(null);
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(30),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID });
+    expect(calls).toHaveLength(1);
+    expect(result.content[0]!.text).toContain("job_id: job-crawl-1");
+    // Named as the REFUSAL's own sentence: the queued reply legitimately carries the words
+    // "already running" inside its "queued or already running" status clause (B-2), so a looser
+    // negative would fail for the wrong reason — or pass for one.
+    expect(result.content[0]!.text).not.toMatch(/is already in flight — poll it/);
+    expect(result.content[0]!.text).toContain("Crawl queued for");
+  });
+
+  /**
+   * ORDER MATTERS, and this is the half a "does it refuse?" spec cannot see: the in-flight check
+   * must sit BEHIND the ownership and archive gates. A project that is missing or another
+   * tenant's must never reach a query about its jobs — asking would be a read on behalf of a
+   * caller who has not been shown to own the row.
+   */
+  it("never asks about jobs for a project the caller does not own, or an archived one", async () => {
+    const missing = activeCrawlSpy(null);
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => null,
+      findActiveCrawl: missing.fn,
+    }).run(CTX, { project_id: PID });
+    expect(missing.calls).toHaveLength(0);
+
+    const archived = activeCrawlSpy(null);
+    await makeTool({
+      enqueue: captureEnqueue().fn,
+      resolveProject: async () => ({
+        id: PID,
+        domain: "retired.example.com",
+        archivedAt: "2026-08-13T00:00:00Z",
+      }),
+      findActiveCrawl: archived.fn,
+    }).run(CTX, { project_id: PID });
+    expect(archived.calls).toHaveLength(0);
+  });
+
+  /**
+   * `confirm: true` is the flag that SKIPS pre-discovery, and it is exactly the call a caller
+   * makes twice in a row after reading a large-site prompt. It must not skip this gate too.
+   */
+  it("a confirmed re-run does not bypass the in-flight check", async () => {
+    const { fn: enqueue, calls } = captureEnqueue();
+    const finder = activeCrawlSpy({ jobId: "job-in-flight-4", status: "running" });
+    const result = await makeTool({
+      enqueue,
+      resolveProject,
+      estimate: estimateOf(1500),
+      findActiveCrawl: finder.fn,
+    }).run(CTX, { project_id: PID, confirm: true });
+    expect(calls).toHaveLength(0);
+    expect(result.content[0]!.text).toContain("job_id: job-in-flight-4");
   });
 });
 
@@ -375,7 +587,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("DEFAULT OFF: a call that does not ask for seeding never reaches the paid lookup", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -393,7 +605,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("explicit false is the same as saying nothing", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -407,7 +619,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("opting in carries the seeds to the worker and states the separate charge", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -447,7 +659,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
       creditsCharged: 0,
       note: "DataForSEO named no ranking page this crawl could use as a starting point. The crawl was queued without them, and you were not charged for the seeding.",
     });
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(null),
@@ -464,7 +676,7 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
   it("does NOT buy seeds for a call that returns the large-site confirmation instead of queuing", async () => {
     const { fn: enqueue, calls } = captureEnqueue();
     const seed = seedSpy();
-    const tool = makeCrawlSiteTool({
+    const tool = makeTool({
       enqueue,
       resolveProject,
       estimate: estimateOf(1500),
@@ -479,14 +691,14 @@ describe("crawl_site ranking-page seeding is OPT-IN and priced separately", () =
 
   it("does NOT buy seeds for a project that is missing or archived", async () => {
     const seed = seedSpy();
-    const missing = makeCrawlSiteTool({
+    const missing = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject: async () => null,
       fetchSeeds: seed.fn,
     });
     expect((await missing.run(CTX, { project_id: PID, seed_from_ranking_pages: true })).isError).toBe(true);
 
-    const archived = makeCrawlSiteTool({
+    const archived = makeTool({
       enqueue: captureEnqueue().fn,
       resolveProject: async () => ({
         id: PID,

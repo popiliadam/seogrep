@@ -536,6 +536,40 @@ describe("substituteProseTokens — {{GSC_LAG_DAYS}}", () => {
   });
 });
 
+describe("substituteProseTokens — {{CRAWL_TIME_BUDGET}}", () => {
+  /**
+   * The crawl's WALL-CLOCK ceiling. MEASURED LIVE 2026-09-02: a whole-site crawl returned 51 of a
+   * possible 100 pages because the time budget ran out first, while the page cap was the only
+   * bound the docs named. A page that retyped the seconds could go on promising a bound the
+   * crawler no longer enforces, so it comes from the crawler's own constant.
+   */
+  it("renders the wall-clock budget from the constant, not from a hand-typed number", () => {
+    expect(
+      substituteProseTokens("stops after {{CRAWL_TIME_BUDGET}} seconds", {
+        crawlTimeBudgetSeconds: 90,
+      }),
+    ).toBe("stops after 90 seconds");
+    expect(
+      substituteProseTokens("stops after {{CRAWL_TIME_BUDGET}} seconds", {
+        crawlTimeBudgetSeconds: 120,
+      }),
+    ).toBe("stops after 120 seconds");
+  });
+
+  it("throws instead of rendering a page that states a missing or bogus budget", () => {
+    expect(() => substituteProseTokens("{{CRAWL_TIME_BUDGET}}", {})).toThrow(/CRAWL_TIME_BUDGET/);
+    expect(() =>
+      substituteProseTokens("{{CRAWL_TIME_BUDGET}}", { crawlTimeBudgetSeconds: 0 }),
+    ).toThrow();
+    expect(() =>
+      substituteProseTokens("{{CRAWL_TIME_BUDGET}}", { crawlTimeBudgetSeconds: 90.5 }),
+    ).toThrow();
+    expect(() =>
+      substituteProseTokens("{{CRAWL_TIME_BUDGET}}", { crawlTimeBudgetSeconds: "90" }),
+    ).toThrow();
+  });
+});
+
 describe("substituteProseTokens — the leftover-token guard", () => {
   const constants = { maxRowLimit: 15000, lagDays: 3 };
 

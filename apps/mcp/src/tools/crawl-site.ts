@@ -2,8 +2,13 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
-import { estimateSiteSize, type SiteSizeEstimate } from "../crawler/crawl.ts";
-import { enqueueJob } from "../queue/boss.ts";
+import {
+  DEFAULT_TIME_BUDGET_MS,
+  estimateSiteSize,
+  type SiteSizeEstimate,
+} from "../crawler/crawl.ts";
+import { getServiceClient } from "../db.ts";
+import { enqueueJob, findActiveJobForProject, type ActiveJob } from "../queue/boss.ts";
 import {
   fetchRankingSeeds,
   SEED_CHARGE_CREDITS,
@@ -53,6 +58,14 @@ import {
  */
 const PAGE_CAP = 100;
 
+/**
+ * The crawl's OTHER ceiling, in whole seconds, derived from the crawler's own wall-clock budget.
+ * Both bounds are quoted to the caller because — measured live 2026-09-02 — this is the one that
+ * usually binds first: a whole-site run returned 51 pages of a possible 100, "the crawl stopped on
+ * TIME". Naming only the page cap sets an expectation the same flat price often does not meet.
+ */
+const TIME_BUDGET_SECONDS = Math.round(DEFAULT_TIME_BUDGET_MS / 1000);
+
 /** The enqueue port (default: the real enqueueJob) — injected so the surface is testable without pg-boss. */
 export type EnqueueFn = (
   ctx: { userId: string },
@@ -75,10 +88,21 @@ export type EstimateFn = (
  */
 export type ProjectResolver = (ctx: AuthContext, projectId: string) => Promise<ProjectRef | null>;
 
+/**
+ * The in-flight-crawl port (default: the tenant-scoped jobs read). Answers "does this caller
+ * already have a crawl_site job queued or running for this project?" — see the guard in the
+ * handler. Injected so the fast lane can prove the guard's decisions with no database.
+ */
+export type ActiveCrawlFinder = (
+  ctx: AuthContext,
+  projectId: string,
+) => Promise<ActiveJob | null>;
+
 export interface CrawlSiteDeps {
   readonly enqueue?: EnqueueFn;
   readonly estimate?: EstimateFn;
   readonly resolveProject?: ProjectResolver;
+  readonly findActiveCrawl?: ActiveCrawlFinder;
   /**
    * The OPT-IN ranking-page seeding step (default: the real, env-resolved, credit-charging one).
    * Injected so the fast lane can prove the surface's seeding behavior — including that it is
@@ -105,7 +129,13 @@ const inputSchema = z.object({
     .min(1)
     .max(PAGE_CAP)
     .default(PAGE_CAP)
-    .describe("Maximum pages to crawl (1–100, default 100)."),
+    .describe(
+      `Maximum pages to crawl (1–100, default 100). A crawl also stops at a ` +
+        `${TIME_BUDGET_SECONDS}-second time budget, whichever comes first — on a slow or large ` +
+        `site that budget usually binds before the page cap does, so fewer pages than max_urls ` +
+        `are crawled for the same price. Narrow the crawl with include_paths to cover a section ` +
+        `fully.`,
+    ),
   include_paths: z
     .array(z.string().min(1))
     .optional()
@@ -133,6 +163,19 @@ const inputSchema = z.object({
  */
 const defaultResolveProject: ProjectResolver = (ctx, projectId) =>
   loadOwnProject(ctx.userId, projectId);
+
+/**
+ * The tenant-scoped in-flight read. It is deliberately NOT wrapped in a try/catch: it runs on the
+ * same service client that just answered the ownership read a line earlier, so a throw here means
+ * the database is unreachable — in which case the enqueue this guard protects would fail anyway,
+ * and failing before a job exists is the cheaper of the two failures.
+ */
+const defaultFindActiveCrawl: ActiveCrawlFinder = (ctx, projectId) =>
+  findActiveJobForProject(getServiceClient(), {
+    userId: ctx.userId,
+    projectId,
+    tool: "crawl_site",
+  });
 
 /**
  * A full-crawl PROJECTION at the FROZEN rate — it invents no price. `credits` is simply the
@@ -243,6 +286,33 @@ function confirmationResult(
   );
 }
 
+/**
+ * The answer to "crawl this project" when this project is ALREADY being crawled: the job that is
+ * already doing it, in the same machine-readable shape a fresh queue returns (`job_id: … · status:
+ * …`), so a client that parsed one can parse the other.
+ *
+ * It is NOT an error. The caller asked for a crawl of this site and there is one; handing back its
+ * id is the answer to the question they asked. What would be wrong is doing it silently a second
+ * time — the worker binds a fresh {@link TOOL_COSTS.crawl_site}-credit reserve per job, so a
+ * duplicate is a duplicate CHARGE for the same pages.
+ *
+ * "IN FLIGHT", never "running" (referee, 2026-09-02). The lead sentence used to say "is already
+ * running" and the clause right after it then printed `status: queued` — one line contradicting
+ * itself, on exactly the state B-2 already showed is the hard one to reason about. One phrase now
+ * covers both non-terminal statuses, and the precise one is reported ONCE, in the field built to
+ * carry it.
+ */
+function alreadyInFlightResult(domain: string, active: ActiveJob): ToolResult {
+  return textResult(
+    `A crawl of ${domain} is already in flight — poll it with get_job_status ` +
+      `{ "job_id": "${active.jobId}" }. job_id: ${active.jobId} · status: ${active.status}. ` +
+      `No second crawl was queued and you were not charged: a second crawl of the same project ` +
+      `costs another ${TOOL_COSTS.crawl_site} credits to fetch the same pages. ` +
+      `Wait for this one to finish, then re-run — with include_paths if you want a different ` +
+      `section of the site.`,
+  );
+}
+
 /** The queued-crawl message: the unchanged core plus an honest one-liner when the site was sized. */
 function queuedResult(
   domain: string,
@@ -254,8 +324,14 @@ function queuedResult(
   // estimated_credits reads from the human-approved price table — never a literal. It is the
   // CRAWL's cost and stays that: any seeding charge is a separate line under its own tool name,
   // reported in its own sentence rather than folded into this number.
+  // "queued OR ALREADY RUNNING", and the second half is the honest one (B-2). MEASURED LIVE
+  // 2026-09-02: the row is INSERTed `queued` and a worker claimed it 562 ms later, while this call
+  // returned the job_id after 851 ms — 9 032 ms on the unconfirmed path. By the time the caller
+  // holds the id, the job is already `running`, so a flat "status: queued" promised a state
+  // get_job_status would then contradict. `queued` is still what the row IS at insert; what was
+  // wrong was implying the caller would ever see it.
   const base =
-    `Crawl queued for ${domain}. job_id: ${jobId} · status: queued · ` +
+    `Crawl queued for ${domain}. job_id: ${jobId} · status: queued or already running · ` +
     `estimated_credits: ${TOOL_COSTS.crawl_site}. ` +
     `Track it with get_job_status { "job_id": "${jobId}" }.`;
   // The seeding sentence is APPENDED, never merged: it states its own fee outcome (including
@@ -282,6 +358,7 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
   const enqueue = deps.enqueue ?? enqueueJob;
   const estimate = deps.estimate ?? estimateSiteSize;
   const resolveProject = deps.resolveProject ?? defaultResolveProject;
+  const findActiveCrawl = deps.findActiveCrawl ?? defaultFindActiveCrawl;
   const fetchSeeds = deps.fetchSeeds ?? ((request) => fetchRankingSeeds(request));
   return defineTool({
     name: "crawl_site",
@@ -320,6 +397,16 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
       // worker, and no job is created.
       if (project.archivedAt !== null) {
         return errorResult(withNoChargeNote(ARCHIVED_PROJECT_MESSAGE));
+      }
+
+      // ONE CRAWL PER PROJECT AT A TIME (B-1), and this is the FIRST thing asked after ownership.
+      // Everything below it either costs money (the ranking-seed lookup is a separate charge) or
+      // costs the caller eight silent seconds (pre-discovery), and the enqueue at the bottom is
+      // what the worker's second 20-credit reserve would hang off. Placing the check here — behind
+      // the ownership and archive gates, ahead of all three — is what makes the duplicate free.
+      const active = await findActiveCrawl(ctx, project_id);
+      if (active) {
+        return alreadyInFlightResult(project.domain, active);
       }
 
       // Empty/absent include_paths = whole-site (no scope); only a non-empty array scopes.

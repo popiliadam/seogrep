@@ -44,6 +44,8 @@ vi.mock("../db.ts", async (importOriginal) => ({
   getServiceClient: () => db.client,
 }));
 
+import { findActiveJobForProject } from "../queue/boss.ts";
+import { crawlSiteTool } from "./crawl-site.ts";
 import { listOwnCreditActivity, summarizeOwnSpend } from "./list-credit-activity.ts";
 import { listOwnJobs } from "./list-jobs.ts";
 import { listProjectsTool } from "./list-projects.ts";
@@ -468,5 +470,126 @@ describe("the connect_gsc mapping read is scoped to one tenant's one project (CG
     const columns = String(callsTo(await readMapping(), "select")[0]?.args[0] ?? "");
     expect(columns).toContain("account_id");
     expect(columns).toContain("gsc_property");
+  });
+});
+
+/**
+ * B-1 / CS-1, THE SECOND READ THE PORT SEAM CREATED — found by the referee on 2026-09-02, hours
+ * after the guard it protects landed, and it is the CG-1 lesson repeating: a new default port is a
+ * new place with no gate. Deleting `.eq("user_id", …)` from `findActiveJobForProject` left the fast
+ * lane 3812/3812 GREEN **and the db lane 9/9 green** — the db lane cannot see it either, because
+ * migration 0017's composite FK makes a jobs row naming another tenant's project unrepresentable,
+ * so the only rows that lane can stage are ones the project filter already separates. A constraint
+ * no lane can fail is a constraint that is not there.
+ *
+ * The four calls are ONE guarantee. `user_id` is the whole of NEVER #4 on an RLS-bypassing client;
+ * `project_id` is what makes the row THIS project's; `tool` is what stops an unrelated in-flight
+ * job (an audit, a report) from refusing a crawl; and `in(status)` is what makes "matching" mean
+ * "in flight". Losing any one of them either blocks a crawl that should run or — the expensive
+ * direction — lets a duplicate through and charges the customer twice for the same pages.
+ *
+ * Driven through the REAL `crawlSiteTool` (default deps, no injection) so what is measured is the
+ * production wiring: that this tool asks for its OWN name, on the caller's own project.
+ */
+describe("the crawl_site in-flight read is scoped to one tenant, project and tool (B-1)", () => {
+  const PROJECT = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+  const ACTIVE_ROW = {
+    id: "job-in-flight",
+    status: "running",
+    created_at: "2026-09-02T10:00:00.000Z",
+  };
+
+  /** Answers the ownership read with a live project and the jobs read with one in-flight crawl. */
+  async function runGuardedCall(): Promise<RecordedStatement> {
+    db = createFakeQueryDb((statement) =>
+      statement.table === "projects"
+        ? { data: { id: PROJECT, domain: "pinned.example.com", archived_at: null } }
+        : { data: [ACTIVE_ROW], count: 1 },
+    );
+    // Answering with an in-flight job is what keeps this spec hermetic: the handler returns at the
+    // guard, so neither pre-discovery (network) nor enqueueJob (pg-boss env) is ever reached.
+    await crawlSiteTool.run(CTX, { project_id: PROJECT });
+    return db.onlyStatementFor("jobs");
+  }
+
+  it("filters on user_id, project_id, tool = crawl_site, and the non-terminal statuses", async () => {
+    const statement = await runGuardedCall();
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["tool", "crawl_site"] });
+    // EXACT args, not "contains queued": widening the list is the mutation this exists to catch.
+    expect(callsTo(statement, "in")).toEqual([
+      { method: "in", args: ["status", ["queued", "running"]] },
+    ]);
+  });
+
+  /**
+   * THE NARROWING IS GONE, and that is a claim worth pinning rather than a tidy-up. The query used
+   * to end `.order("created_at", desc).limit(1).maybeSingle()`, which made correctness depend on
+   * the filter and the ordering AGREEING: widen the filter by one status and the single kept row
+   * could be a `succeeded` crawl from a minute ago while an OLDER `running` one still held its
+   * reserve. Re-adding either call turns this red.
+   */
+  it("keeps no server-side narrowing beside the filter — every matching row comes back", async () => {
+    const statement = await runGuardedCall();
+    expect(callsTo(statement, "limit")).toEqual([]);
+    expect(callsTo(statement, "maybeSingle")).toEqual([]);
+    expect(callsTo(statement, "single")).toEqual([]);
+  });
+
+  it("projects the columns the answer is built from, created_at included", async () => {
+    const columns = String(callsTo(await runGuardedCall(), "select")[0]?.args[0] ?? "");
+    for (const column of ["id", "status", "created_at"]) expect(columns).toContain(column);
+  });
+});
+
+/**
+ * THE CHOICE AMONG SEVERAL — the one claim above cannot make, and a hole this file's own mutation
+ * run exposed: swapping "oldest" for "newest" left all 53 specs green, because the specs above are
+ * about the STATEMENT and say nothing about which row the caller keeps.
+ *
+ * This is the file's sanctioned exception (see the header): a claim about how the CALLER INTERPRETS
+ * an answer it was handed, not about the query. The rows here are the spec's own fixture and prove
+ * nothing about filtering — which is exactly why the fixture includes a `succeeded` row that the
+ * REAL query would never return. Its only job is to show the in-memory re-check is real: the server
+ * filter is not present in a fake that applies nothing, so if the caller trusted the rows blindly it
+ * would answer with a finished job and let a duplicate crawl through.
+ */
+describe("findActiveJobForProject picks one in-flight job, deterministically (B-1)", () => {
+  const PROJECT = "3c2b1a09-8f7e-4d6c-8b5a-4039281706f5";
+  const ask = (rows: unknown[]): Promise<{ jobId: string; status: string } | null> => {
+    db = createFakeQueryDb(() => ({ data: rows, count: rows.length }));
+    return findActiveJobForProject(db.client, {
+      projectId: PROJECT,
+      userId: USER,
+      tool: "crawl_site",
+    });
+  };
+
+  it("returns the OLDEST in-flight job, whatever order the rows arrive in", async () => {
+    const old = { id: "job-old", status: "running", created_at: "2026-09-02T10:00:00.000Z" };
+    const recent = { id: "job-new", status: "queued", created_at: "2026-09-02T10:05:00.000Z" };
+    await expect(ask([recent, old])).resolves.toEqual({ jobId: "job-old", status: "running" });
+    await expect(ask([old, recent])).resolves.toEqual({ jobId: "job-old", status: "running" });
+  });
+
+  it("breaks an exact tie on id, so two runs of the same query cannot disagree", async () => {
+    const at = "2026-09-02T10:00:00.000Z";
+    const a = { id: "job-aaa", status: "queued", created_at: at };
+    const b = { id: "job-bbb", status: "running", created_at: at };
+    await expect(ask([b, a])).resolves.toEqual({ jobId: "job-aaa", status: "queued" });
+    await expect(ask([a, b])).resolves.toEqual({ jobId: "job-aaa", status: "queued" });
+  });
+
+  it("ignores a terminal row even when it is the only one offered", async () => {
+    const done = { id: "job-done", status: "succeeded", created_at: "2026-09-02T09:00:00.000Z" };
+    await expect(ask([done])).resolves.toBeNull();
+    // And it does not let an OLDER terminal row outrank a live one.
+    const live = { id: "job-live", status: "running", created_at: "2026-09-02T10:00:00.000Z" };
+    await expect(ask([done, live])).resolves.toEqual({ jobId: "job-live", status: "running" });
+  });
+
+  it("no rows at all is 'nothing in flight', not an error", async () => {
+    await expect(ask([])).resolves.toBeNull();
   });
 });
