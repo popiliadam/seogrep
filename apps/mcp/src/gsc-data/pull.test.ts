@@ -230,17 +230,33 @@ describe("runPull pages through startRow until Google, the pages or the bytes ru
   });
 
   /**
-   * THE BUDGET IS MEASURED ON THE ROWS, not assumed from a row count. Two windows land in ONE
-   * jobs.result blob, and the properties that fill a row cap are exactly the ones whose rows are
-   * biggest — so a rule that counted rows alone would be most wrong where it matters most.
+   * THE BUDGET IS A HARD BOUND, AND THE CUT IS INSIDE THE PAGE.
+   *
+   * The first version of this spec asserted `toHaveLength(2000)` — it PINNED the overshoot
+   * (signed lesson 12: a test double more forgiving than the runtime turns a missing constraint
+   * into a passing test). The budget was checked only after a whole page had been appended, so a
+   * 25,000-row page landed intact and a stored pull's real worst case was 50,000 rows / 21.30 MB
+   * against a 12 MB band — a page of pessimistic rows overshot on its own, inside page one.
+   *
+   * So what is asserted now is the BOUND, computed the way the stored blob is: the kept rows must
+   * fit the budget, and the page that would have overshot must come back SHORT.
    */
-  it("stops early when the fetched rows would outgrow the storage budget", async () => {
-    // Rows padded to ~4 KB each: one full page of 2,000 is already over 6 MB.
+  it("cuts the page that would outgrow the storage budget, and never stores past it", async () => {
+    // Rows padded to ~4 KB each: one page of 2,000 is ~8 MB, well over the 6 MB budget.
     const { api, bodies } = pagedApi([2000], 4000);
     const pull = await pullWith(api, 2000);
     expect(bodies.filter((b) => b.startDate === FIXTURE_WINDOWS.current.start_date)).toHaveLength(1);
-    expect(pull.current.rows).toHaveLength(2000);
+
+    const stored = Buffer.byteLength(JSON.stringify(pull.current.rows), "utf8");
+    expect(stored).toBeLessThanOrEqual(PULL_WINDOW_BYTE_BUDGET);
+    // …and it really did have to cut: the page offered 2,000 rows and fewer were kept.
+    expect(pull.current.rows.length).toBeGreaterThan(0);
+    expect(pull.current.rows.length).toBeLessThan(2000);
     expect(pull.current.capped).toBe(true);
+    // BOTH windows are bounded, which is what makes 12 MB the arithmetic maximum for a pull.
+    expect(
+      Buffer.byteLength(JSON.stringify(pull.previous.rows), "utf8"),
+    ).toBeLessThanOrEqual(PULL_WINDOW_BYTE_BUDGET);
   });
 });
 

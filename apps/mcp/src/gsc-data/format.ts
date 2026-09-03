@@ -292,10 +292,15 @@ export function contentDecayAdvice(decay: PageDecay): string {
  * definition is a mean over the whole window: a page that sat 5th for half of it and 16th for the
  * other half reports the same "10.5" as one that never moved, and a band or a drop read as a rank
  * treats those as the same page.
+ *
+ * IT DESCRIBES A ROW, NOT A GRAPH. R-7.11 gives two definitions — the Performance GRAPH shows the
+ * average position of your TOP RESULT, while a TABLE row shows the average for that row's own
+ * dimensions — and this sentence sits under table rows. Saying "your top result" here would import
+ * the graph's definition into a (query, page) line and quietly describe a different number.
  */
 export const AVERAGE_POSITION_NOTE =
-  "Position is Google's AVERAGE over the analyzed window — the mean rank of your top result for " +
-  "that row, not where it sat on any single day.";
+  "Position is Google's AVERAGE over the analyzed window — that page's mean rank for the " +
+  "queries it is listed against here, not where it sat on any single day.";
 
 /** The impressions-and-position half of a decay line: WHY the clicks fell, not just that they did. */
 function decayContext(decay: PageDecay): string {

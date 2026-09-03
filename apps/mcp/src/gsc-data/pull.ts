@@ -48,25 +48,33 @@ export const MAX_PULL_PAGES = 4;
  * Measured, not assumed — one stored row is `{query, page, clicks, impressions, ctr, position}`
  * and its JSON size (UTF-8 bytes) was measured across four row populations:
  *
- *   repo fixtures (short strings, rounded metrics)                    ~119 B
- *   typical live row (32-char query, 72-char URL, FULL float ctr)     ~212 B
- *   typical NON-ASCII row (Turkish long tail, multi-byte chars)       ~253 B
- *   pessimistic row (93-char question query, 160-char faceted URL)    ~360 B
+ * Re-measured 2026-09-03 (probe over `JSON.stringify(row)` + its comma, UTF-8), and these are the
+ * numbers the sentences below are built from — not the earlier estimates they replace:
  *
- * Against a 6 MB per-window budget that is roughly 28,000 typical rows, 23,700 non-ASCII rows,
- * or 16,600 pessimistic ones — so the ceiling MOVES WITH THE DATA instead of being one row count
- * chosen for the worst population and paid for by every other. The pessimistic row is not an
- * outlier: the properties that actually fill a cap are large faceted sites whose URLs are long
- * and whose queries are long-tail, so row count and row size rise together, which is exactly why
- * the budget is measured on the rows themselves rather than counted.
+ *   repo fixture (short strings, rounded metrics)                     130 B → 46,154 rows/window
+ *   typical live row (32-char query, 72-char URL, FULL float ctr)     214 B → 28,037 rows/window
+ *   typical NON-ASCII row (Turkish long tail, multi-byte chars)       220 B → 27,273 rows/window
+ *   pessimistic row (93-char question query, 160-char faceted URL)    363 B → 16,529 rows/window
+ *
+ * So the ceiling MOVES WITH THE DATA instead of being one row count chosen for the worst
+ * population and paid for by every other. The pessimistic row is not an outlier: the properties
+ * that actually fill a cap are large faceted sites whose URLs are long and whose queries are
+ * long-tail, so row count and row size rise together — which is exactly why the budget is measured
+ * on the rows themselves rather than counted.
+ *
+ * IT IS A HARD BOUND, NOT A CHECK BETWEEN PAGES, and that distinction was a real defect for one
+ * commit: testing the budget only AFTER a whole page had been appended let a 25,000-row page land
+ * intact, so the true worst case was 50,000 rows and 21.30 MB per pull — 1.8x the band the
+ * comment claimed to defend — and a pessimistic population blew it inside the FIRST page. The
+ * overflowing page is now CUT to what fits (`takeWithinBudget`), so 2 * PULL_WINDOW_BYTE_BUDGET
+ * = 12 MB is the arithmetic maximum a stored pull can reach, whatever the rows look like.
  *
  * WHAT THIS REPLACED, and the honest trade: the old ceiling was a single page of 15,000 rows per
  * window, chosen for the pessimistic population. On 2026-09-03 the portfolio's largest property
  * filled BOTH windows of a default pull (15000/15000) and three 10-credit analyses were sold on
- * top of the truncated result. Pagination lifts a typical property to ~28,000 rows per window —
- * STORAGE IS UNCHANGED at the top end (the same 12 MB band, now enforced by measurement instead
- * of by a conservative row count), while the number of ROWS a heavy property stores can nearly
- * double because its bytes were previously being over-estimated.
+ * top of the truncated result. Pagination lifts a typical property to ~28,000 rows per window and
+ * a pessimistic one to ~16,500 — STORAGE IS UNCHANGED at the top end (the same 12 MB band, now
+ * enforced by measurement instead of by a conservative row count).
  *
  * Changing either number is a one-line change; the pin tests in pull.test.ts make it a
  * DELIBERATE one.
@@ -116,9 +124,35 @@ function queryBody(range: DateRange, rowLimit: number, startRow: number): Record
   };
 }
 
-/** UTF-8 bytes the parsed rows will occupy in the stored blob (crawl.ts's own measurement). */
-function byteSizeOf(rows: readonly GscRow[]): number {
-  return Buffer.byteLength(JSON.stringify(rows), "utf8");
+/** UTF-8 bytes one row occupies in the stored blob, plus the comma that joins it to the next. */
+function byteSizeOf(row: GscRow): number {
+  return Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
+}
+
+/**
+ * As many of `rows` as fit in `remaining` bytes, with what they cost.
+ *
+ * THE CUT IS INSIDE THE PAGE, and that is the whole point of this function. Checking the budget
+ * only after appending a full page let a 25,000-row page land whole — the stored pull's real
+ * worst case was then 50,000 rows and 21.30 MB, against a 12 MB band, and a page of pessimistic
+ * rows overshot on its own. A budget that is tested after the spend is not a budget.
+ *
+ * Row by row rather than by an average: the populations that reach this are exactly the ones with
+ * outsized rows, so an average would be wrong in the direction that costs.
+ */
+function takeWithinBudget(
+  rows: readonly GscRow[],
+  remaining: number,
+): { kept: GscRow[]; bytes: number } {
+  const kept: GscRow[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const size = byteSizeOf(row);
+    if (bytes + size > remaining) break;
+    kept.push(row);
+    bytes += size;
+  }
+  return { kept, bytes };
 }
 
 /**
@@ -151,8 +185,13 @@ async function fetchWindow(
     const body = queryBody(range, rowLimit, page * rowLimit);
     const response = await api.searchAnalyticsQuery(accessToken, property, body);
     const parsed = parseSearchAnalyticsRows(response);
-    rows.push(...parsed);
-    bytes += byteSizeOf(parsed);
+    // BEFORE the append, never after: what does not fit is never stored, so the page that would
+    // have overshot is cut instead of kept whole.
+    const { kept, bytes: spent } = takeWithinBudget(parsed, PULL_WINDOW_BYTE_BUDGET - bytes);
+    rows.push(...kept);
+    bytes += spent;
+    // Rows were left on the floor — Google had more AND so did this page. Truncated, by us.
+    if (kept.length < parsed.length) return { rows, capped: true };
     if (countSearchAnalyticsRows(response) < rowLimit) return { rows, capped: false };
     if (bytes >= PULL_WINDOW_BYTE_BUDGET) return { rows, capped: true };
   }

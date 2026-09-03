@@ -1055,8 +1055,9 @@ export const DOC_PROSE = {
           "{{GSC_LAG_DAYS}} are not analyzed, so a genuine drop surfaces here up to " +
           "{{GSC_LAG_DAYS}} after it begins.\n" +
           "- Each window is fetched a page at a time until Search Console runs out of rows, four " +
-          "requests have gone out ({{MAX_GSC_ROWS}} rows, the absolute ceiling), or the rows " +
-          "collected would outgrow what one stored pull can hold. That storage budget is measured " +
+          "requests have gone out ({{MAX_GSC_ROWS}} rows, the absolute ceiling), or the rows fill " +
+          "what one stored pull can hold — a page that would overshoot is **cut** to what fits, so " +
+          "the limit is a hard bound rather than a check between pages. That storage budget is measured " +
           "on the rows themselves, so a property with long URLs and long-tail queries stops at " +
           "fewer rows than one with short ones — there is no single row number that is true for " +
           "every site, which is why the reply names the count **your** window was cut at instead " +
