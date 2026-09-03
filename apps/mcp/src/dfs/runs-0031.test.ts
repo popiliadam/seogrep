@@ -352,6 +352,8 @@ function candidate(over: Partial<DisavowCandidate> = {}): DisavowCandidate {
     spam_score: 92,
     window_link_count: 14,
     window_dofollow_link_count: 14,
+    window_link_attributes: [],
+    window_qualified_link_count: 0,
     window_max_backlink_spam_score: 88,
     window_example_url_from: "https://spammy.example/a",
     window_example_url_to: "https://example.com/",

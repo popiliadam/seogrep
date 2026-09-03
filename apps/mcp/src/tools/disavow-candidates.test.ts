@@ -22,11 +22,13 @@ import {
   DISAVOW_FILE_CAPTION,
   NO_SUBMISSION_NOTICE,
   NOFOLLOW_ONLY_MARKER,
+  QUALIFIED_ONLY_MARKER,
   VENDOR_JUDGEMENT_NOTE,
   formatDisavowCandidates,
   makeDisavowCandidatesTool,
   renderCandidateCaption,
   renderCandidateRow,
+  renderFilteredLinkRow,
   renderNetworkRow,
 } from "./disavow-candidates.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
@@ -89,6 +91,8 @@ const SCORED: DisavowCandidate = {
   spam_score: 84,
   window_link_count: 2,
   window_dofollow_link_count: 1,
+  window_link_attributes: [],
+  window_qualified_link_count: 0,
   window_max_backlink_spam_score: 71,
   window_example_url_from: "https://spamfarm.example/links/1",
   window_example_url_to: "https://example.com/pricing",
@@ -100,6 +104,8 @@ const UNSCORED: DisavowCandidate = {
   spam_score: null,
   window_link_count: 1,
   window_dofollow_link_count: 1,
+  window_link_attributes: [],
+  window_qualified_link_count: 0,
   window_max_backlink_spam_score: null,
   window_example_url_from: "https://quiet.example/a",
   window_example_url_to: "https://example.com/",
@@ -321,6 +327,53 @@ describe("NEVER #7 — the vendor's three scores, under the vendor's three names
     // The marking states what was measured, not what the links are.
     expect(row).toMatch(/none of these links is marked dofollow/i);
     expect(row).not.toMatch(/\bare nofollow/i);
+  });
+
+  /**
+   * R-6.2 (finding DC B-6). The link rows and the candidate rows are the two places this tool
+   * shows the vendor's `attributes`, and the candidate row is the one where a domain name is
+   * decided into a disavow file — so a domain whose whole window is `sponsored` / `ugc` says so.
+   */
+  it("prints the vendor's rel attributes on a filtered link row, under the vendor's field name", () => {
+    const row = renderFilteredLinkRow({
+      ...LINK,
+      dofollow: false,
+      attributes: ["sponsored", "noopener"],
+    });
+    expect(row).toContain("nofollow · DataForSEO attributes: sponsored, noopener");
+  });
+
+  it("leaves a link row exactly as it was when the vendor reported no attributes", () => {
+    expect(renderFilteredLinkRow(LINK)).not.toContain("DataForSEO attributes");
+    expect(renderFilteredLinkRow({ ...LINK, attributes: [] })).not.toContain("DataForSEO attributes");
+  });
+
+  it("lists a candidate's rel attributes across the window, and marks one that is ALL qualified", () => {
+    const row = renderCandidateRow({
+      ...SCORED,
+      window_dofollow_link_count: 0,
+      window_link_attributes: ["sponsored", "ugc"],
+      window_qualified_link_count: 2,
+    });
+    expect(row).toContain("DataForSEO attributes: sponsored, ugc");
+    expect(row).toContain(QUALIFIED_ONLY_MARKER);
+    expect(row).toMatch(/may change nothing/i);
+  });
+
+  /** PARTLY qualified is not qualified: one unmarked link is enough to withhold the marking. */
+  it("does not mark a candidate whose window has even one link without a qualifying attribute", () => {
+    const row = renderCandidateRow({
+      ...SCORED,
+      window_link_attributes: ["sponsored"],
+      window_qualified_link_count: 1,
+    });
+    expect(row).toContain("DataForSEO attributes: sponsored");
+    expect(row).not.toContain(QUALIFIED_ONLY_MARKER);
+  });
+
+  it("says nothing about attributes for a candidate whose window carried none", () => {
+    expect(renderCandidateRow(SCORED)).not.toContain("DataForSEO attributes");
+    expect(renderCandidateRow(SCORED)).not.toContain(QUALIFIED_ONLY_MARKER);
   });
 
   it("does not mark a candidate that HAS a vendor-marked dofollow link in the window", () => {

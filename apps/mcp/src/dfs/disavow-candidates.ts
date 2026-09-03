@@ -11,6 +11,7 @@ import {
   type WindowBounds,
 } from "./backlink-details.ts";
 import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import { hasQualifyingRelAttribute } from "../format/rel-attributes.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -276,6 +277,23 @@ export interface DisavowCandidate {
   readonly window_link_count: number;
   /** Of those rows, how many carried the vendor's `dofollow: true`. */
   readonly window_dofollow_link_count: number;
+  /**
+   * Every DISTINCT `rel` value DataForSEO reported on this domain's links in this window, in the
+   * order the vendor first sent each one (reference R-6.2, finding DC B-6).
+   *
+   * It is a WINDOW fact like the counts around it, and it is the vendor's vocabulary, not ours:
+   * `sponsored`, `ugc` and `nofollow` are three different declarations, and this is the row where
+   * a domain's name is decided into a disavow file. An empty list means no row in the window
+   * carried one — which includes rows the vendor said nothing about, so it is never read as "this
+   * domain's links carry no rel attribute".
+   */
+  readonly window_link_attributes: readonly string[];
+  /**
+   * How many rows in the window carried at least one of the THREE values R-6.2 names. Counted
+   * separately from the list above because "which values appeared" and "how many links carried
+   * one" are different questions, and the marking below turns on the second.
+   */
+  readonly window_qualified_link_count: number;
   /** The largest `backlink_spam_score` among those rows; null when none carried one. */
   readonly window_max_backlink_spam_score: number | null;
   /** One linking page from those rows (vendor `url_from`), so the domain can be inspected. */
@@ -536,6 +554,22 @@ function maxOrNull(left: number | null, right: number | null): number | null {
  * The cap is applied AFTER ordering, so trimming to 200 keeps the highest-scored domains rather
  * than whichever ones happened to appear first in the window.
  */
+/**
+ * The vendor's rel values, accumulated across a domain's rows: distinct, in the order the vendor
+ * first sent each. Nothing is added for a row that carried no list — a silence contributes
+ * nothing rather than an empty-string entry or a "none" marker.
+ */
+function mergeAttributes(
+  previous: readonly string[],
+  incoming: readonly string[] | null,
+): readonly string[] {
+  const merged = [...previous];
+  for (const value of incoming ?? []) {
+    if (!merged.includes(value)) merged.push(value);
+  }
+  return merged;
+}
+
 export function buildCandidateSet(
   links: VendorWindow<BacklinkDetailRow>,
   spamScores: ReadonlyMap<string, number | null>,
@@ -551,6 +585,12 @@ export function buildCandidateSet(
       window_link_count: (previous?.window_link_count ?? 0) + 1,
       window_dofollow_link_count:
         (previous?.window_dofollow_link_count ?? 0) + (row.dofollow === true ? 1 : 0),
+      window_link_attributes: mergeAttributes(
+        previous?.window_link_attributes ?? [],
+        row.attributes,
+      ),
+      window_qualified_link_count:
+        (previous?.window_qualified_link_count ?? 0) + (hasQualifyingRelAttribute(row.attributes) ? 1 : 0),
       window_max_backlink_spam_score: maxOrNull(
         previous?.window_max_backlink_spam_score ?? null,
         row.backlink_spam_score,
@@ -636,6 +676,24 @@ function scoreComment(label: string, value: number | null): string {
  */
 export function isNofollowOnlyInWindow(candidate: DisavowCandidate): boolean {
   return candidate.window_link_count > 0 && candidate.window_dofollow_link_count === 0;
+}
+
+/**
+ * EVERY link the vendor showed from this domain carries a rel value R-6.2 names — reference
+ * R-6.2, finding DC B-6.
+ *
+ * A separate question from {@link isNofollowOnlyInWindow}, on a separate vendor field: that one
+ * reads the `dofollow` boolean ("no row is MARKED dofollow", which includes rows the vendor said
+ * nothing about), this one reads the `attributes` list the vendor actually sent. A domain whose
+ * every link is declared `sponsored` or `ugc` is one Google is already told not to count, so a
+ * `domain:` entry naming it may accomplish nothing — and this is the row where that entry is
+ * decided. Marked, never removed: which links are worth naming stays the caller's judgement.
+ */
+export function isQualifiedOnlyInWindow(candidate: DisavowCandidate): boolean {
+  return (
+    candidate.window_link_count > 0 &&
+    candidate.window_qualified_link_count === candidate.window_link_count
+  );
 }
 
 /**
