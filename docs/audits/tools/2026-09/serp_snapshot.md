@@ -142,6 +142,13 @@ dalının tekrarlanabilirliğini ölçüyor hem de ayrı bir measurement kimliğ
 `2026-09-03T19:39:13.836+00:00 — rank_group #1 (rank_absolute 1), of 77 organic result(s) examined.`
 **Ürün tarihinde ilk kez `ranked` bir satır okundu.** Aynı çıktıda **URL yok, item_types yok** (S-1).
 
+**YETKİ ŞERHİ (hakem H-5, 2026-09-03) — bu 10 kredilik çağrı bir bulgu DEĞİLDİR.** Hakem raporu
+defterdeki `19:39:50 · -10 credits · charge · keyword_positions` satırını "tavan-dışı çağrı, şef
+doğrulamalı" diye işaretledi; **şef cevabı: YETKİLİYDİ.** Çağrı, gap işçisinin iş emrinde adıyla
+yazılıydı (birebir): *"serp_snapshot sonrası keyword_positions (10 kredi, TAVANA DAHİL DEĞİL —
+şefin Dilim 3 F-10 kapanış yarısı; yalnız ranked üretilmişse)"*. Şart da tutmuştu: `ranked` gerçekten
+üretilmişti. Kalem burada **kapanır** — açık bir bütçe sorusu olarak taşınmaz.
+
 **Defter (birebir, dört satır):**
 `19:42:16 · -21 credits · charge · serp_snapshot · project: adstark.com.tr`
 `19:41:55 · -45 credits · charge · keyword_gap · project: adstark.com.tr`
@@ -154,6 +161,14 @@ başarısızsa iade" kararı bu turda **sınanamadı** (S-6).
 Defter özeti çağrılar boyunca `across 25 tools` kaldı — `serp_snapshot` 2026-08-25'te zaten defterde
 görünmüştü, bu tur onu 26.'ncı tool yapmadı; değişen şey ilk kez **başarılı** servis etmesi.
 DFS "daily cap" reddi **görülmedi**.
+
+**Vendor bütçesi — tahmin/gerçek oranı (şef gözlemi Ş-4, hakem turu 2026-09-03; BİLGİ, fiyat kararı
+DEĞİL).** Prod `public.dfs_spend` okumasında bu tool'un settle olmuş satırları **tahmin $0,12 →
+gerçek $0,056** verdi (kardeşler: `relevant_pages` 0,0765 → 0,0242 · `ranked_keywords` 0,0558 →
+0,0247). Kaynaktaki 1,5× güvenlik marjı pratikte **2–3×** fazla ayırıyor; paylaşılan $3/gün
+tavanından gerçekte harcanandan iki-üç kat pay bloke ediliyor. Bugünkü toplam vendor harcaması
+$0,2459 — tavanın %8'i, yani bugün bağlayan bir sınır olmadı. **NEVER #6'ya dokunmaz:** kredi
+fiyatı (5 + 8/kelime), marj ve paket rakamları değişmedi ve değiştirilmesi önerilmiyor.
 
 Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/ed07ad51-99ee-4158-ba60-03e288098193/scratchpad/dilim4/canli/raw.jsonl` (anahtar `makeRedactor` ile redakte).
 
