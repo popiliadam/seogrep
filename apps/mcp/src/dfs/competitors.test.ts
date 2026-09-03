@@ -774,21 +774,43 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
     expect(await todaySpendUsd(ledger)).toBeLessThan(DISCOVERY_FIXTURE_COST + RANK_OVERVIEW_FIXTURE_COST);
   });
 
-  /** The open reservation for the flow QUERY runs — what an unsettled failure leaves on the day. */
-  const OPEN_DISCOVERY_RESERVATION = estimateComparisonUsd([], DEFAULT_COMPETITORS_DISCOVERY_LIMIT);
+  /**
+   * The DISCOVERY flow's WHOLE-OPERATION estimate. Measured, not assumed: `reserveSpend` is called
+   * ONCE, above both branches, so N compared rivals still book ONE reservation — and that one is
+   * what the day is charged whether the flow dies on its first request or its fourth.
+   */
+  const DISCOVERY_FLOW_ESTIMATE = estimateComparisonUsd([], DEFAULT_COMPETITORS_DISCOVERY_LIMIT);
 
+  /**
+   * DK-3 — A CONTRACT THAT CHANGED, not a spec bent to fit the code (NEVER #8).
+   *
+   * The four failure blocks below used to assert that a dead lookup "leaves the reservation OPEN",
+   * and they passed for the right reason: that WAS the contract. Production then measured what it
+   * costs — a failed call leaves `status=open · actual null` in `dfs_spend` indefinitely, and
+   * `status=open` is the operator's only signal for a call still in flight.
+   *
+   * THE MONEY HALF OF THE OLD CLAIM IS KEPT AND STILL ASSERTED in every one of them, because it
+   * was the sound half: `todaySpendUsd` is the flow's FULL estimate, never less than the partial
+   * spend that really happened. 0014's counter is `coalesce(actual_usd, estimated_usd)`, so an
+   * open row ALREADY counted as its estimate and closing it at that same number moves the day's
+   * total by nothing. This is hygiene; the $3 cap is untouched to the cent (NEVER #5).
+   */
   it("throws on a non-OK HTTP response instead of reporting an empty comparison", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 402, json: async () => ({}) }));
     await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 402/);
-    // The reservation stays OPEN, so today keeps paying this flow's estimate — the safe side.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(OPEN_DISCOVERY_RESERVATION, 5);
+    // SETTLED at the estimate: never null, never lower, and the day's total does not move.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5);
   });
 
   it("stops at a DEAD DISCOVERY — no fallback request is ever paid for", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     await expect(liveClient(transport, ledger).fetchCompetitorComparison(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(1);
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(OPEN_DISCOVERY_RESERVATION, 5);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5);
   });
 
   it("propagates a failure of the TARGET FALLBACK, keeping the paid discovery on the books", async () => {
@@ -805,11 +827,12 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
       liveClient(transport, ledger).fetchCompetitorComparison({ ...QUERY, target: "absent-target.com" }),
     ).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // discovery + the fallback that died
-    // The reservation is never settled, so the day keeps the full flow estimate: MORE than the
-    // true partial spend, which is the safe direction.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(OPEN_DISCOVERY_RESERVATION, 5);
+    // The reservation settles at the full flow estimate: MORE than the true partial spend (the
+    // paid discovery alone), which is the safe direction and the number the open row already had.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5);
     expect(await todaySpendUsd(ledger)).toBeGreaterThan(DISCOVERY_FIXTURE_COST);
-    expect(ledger.rows()[0]?.actualUsd).toBeNull(); // still open
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 5); // CLOSED, not open
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
   });
 
   it("propagates a MID-FAN-OUT failure on the SUPPLIED flow, which still fans out", async () => {
@@ -827,11 +850,32 @@ describe("createLiveCompetitorsClient (fake transport — never real HTTP)", () 
       liveClient(transport, ledger).fetchCompetitorComparison({ ...QUERY, competitors }),
     ).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // the third was never paid for
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(
-      estimateComparisonUsd(competitors, DEFAULT_COMPETITORS_DISCOVERY_LIMIT),
-      5,
+    const suppliedFlowEstimate = estimateComparisonUsd(
+      competitors,
+      DEFAULT_COMPETITORS_DISCOVERY_LIMIT,
     );
-    expect(ledger.rows()[0]?.actualUsd).toBeNull(); // still open
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(suppliedFlowEstimate, 5);
+    // ONE reservation for the whole fan-out, and it is CLOSED at that one estimate: the row is
+    // never left open midway through a fan-out that already sent (and paid for) two requests.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(suppliedFlowEstimate, 5);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * refuses a second settle of the same row and settleSpend SWALLOWS that refusal, so neither an
+   * exception nor the row count can be the evidence — the settled VALUE is. Turning the catch into
+   * a `finally` settles at the ESTIMATE first, the real cost is then refused and swallowed, and
+   * the row survives carrying the wrong number; `toBeGreaterThan(0)` could not tell those apart.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    await liveClient(fixtureTransport(), ledger).fetchCompetitorComparison(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBe(DISCOVERY_FIXTURE_COST);
+    // …and the pin is not a tautology: the estimate is a DIFFERENT number from the real cost, so
+    // settling at the estimate (what a `finally` would do first) is distinguishable from this.
+    expect(DISCOVERY_FIXTURE_COST).not.toBeCloseTo(DISCOVERY_FLOW_ESTIMATE, 6);
   });
 
   it("falls back to the per-request estimate when a response omits its cost", async () => {

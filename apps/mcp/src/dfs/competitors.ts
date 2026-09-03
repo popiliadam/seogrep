@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -716,8 +722,16 @@ export interface LiveCompetitorsOptions {
  * The real (paid) comparison client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to the
  * flow that is about to run; (2) EITHER one discovery request that answers the whole table, OR one
  * rank-overview request per compared domain when the caller named the rivals; (3) ONE settlement
- * with the real total. A mid-flow failure leaves the reservation open at its full estimate, which
- * is never less than the spend that really happened.
+ * with the real total.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3, 2026-09-04). This used to
+ * say a mid-flow failure "leaves the reservation open at its full estimate". The money argument was
+ * sound and is kept — the row is settled AT THAT FULL ESTIMATE, which is what an open row already
+ * counts as (0014's `coalesce(actual_usd, estimated_usd)`), so the $3 cap sees the identical number
+ * either way and NEVER less than the partial spend that really happened. What changes is that
+ * `status=open` goes back to meaning "in flight" rather than also meaning "died here in July".
+ * Note the fan-out: N compared rivals cost N requests but ONE reservation, so ONE close covers the
+ * whole operation however far into the fan-out it died. See settleFailedSpend.
  */
 export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): CompetitorsPort {
   const transport = opts.transport ?? defaultDfsTransport;
@@ -787,79 +801,93 @@ export function createLiveCompetitorsClient(opts: LiveCompetitorsOptions): Compe
       // (2) The two flows. Discovery answers the ENTIRE table from one response; supplied rivals
       // are not a discovery result, so each compared domain still needs its own rank overview.
       let comparison: CompetitorComparison;
-      if (discovering) {
-        const discovery = await runRequest(
-          tally,
-          DFS_COMPETITORS_DOMAIN_ENDPOINT,
-          {
-            target: query.target,
-            limit: query.limit,
-            language_code: query.language_code,
-            location_code: query.location_code,
-            item_types: ITEM_TYPES_ORGANIC,
-            order_by: ORDER_BY_SHARED_ORGANIC_DESC,
-          },
-          parseCompetitorsDomainResponse,
-          (list) => list.rows.length,
-          estimateDiscoveryUsd(query.limit),
-        );
-        // The target is normally item #1 of its own competitor list, so no second request is sent.
-        // Only when DataForSEO leaves it out does the fallback fire — better one extra request
-        // than telling a caller their own domain has "no organic ranking data on record".
-        const targetRow = findTargetRow(query.target, discovery.rows);
-        // The measurement travels WITH the numbers: the two branches below are two different
-        // DataForSEO endpoints, and which one answered is not recoverable downstream.
-        const targetMetrics: TargetWholeDomainMetrics = targetRow
-          ? { metrics: targetRow.full, source: "competitors_domain" }
-          : {
-              metrics: await fetchRankOverview(tally, query, query.target),
-              source: "domain_rank_overview",
-            };
-        comparison = {
-          target: query.target,
-          discovered: true,
-          discovered_total_count: discovery.total_count,
-          rows: buildDiscoveredRows(
-            query.target,
-            targetMetrics,
-            selectDiscoveredCompetitors(query.target, discovery.rows),
-          ),
-        };
-      } else {
-        // Sequentially on purpose: a failure never pays for the requests that would have followed.
-        // The source is carried on the PLAN rather than re-derived from the domain, so a rival
-        // that happens to equal the target is still labelled by where it came from.
-        const plan: readonly { readonly domain: string; readonly source: ComparedDomainSource }[] = [
-          { domain: query.target, source: "target" },
-          ...supplied.map((domain) => ({ domain, source: "supplied" as const })),
-        ];
-        let rows: readonly ComparisonRow[] = [];
-        for (const entry of plan) {
-          const metrics = await fetchRankOverview(tally, query, entry.domain);
-          rows = [
-            ...rows,
+      // The try covers the REQUESTS AND THE PARSES, which is the whole span between the one
+      // reservation above and the settlement below — a rejected task, a moved response shape and
+      // a dead fan-out midway all throw in here, and all of them used to walk out past the
+      // settlement leaving the row open.
+      try {
+        if (discovering) {
+          const discovery = await runRequest(
+            tally,
+            DFS_COMPETITORS_DOMAIN_ENDPOINT,
             {
-              ...entry,
-              intersections: null,
-              avg_position: null,
-              metrics,
-              // EVERY row of this flow — the target included — is a domain_rank_overview
-              // request; no competitors_domain response is fetched at all.
-              metrics_source: "domain_rank_overview" as const,
-              shared: null,
+              target: query.target,
+              limit: query.limit,
+              language_code: query.language_code,
+              location_code: query.location_code,
+              item_types: ITEM_TYPES_ORGANIC,
+              order_by: ORDER_BY_SHARED_ORGANIC_DESC,
             },
+            parseCompetitorsDomainResponse,
+            (list) => list.rows.length,
+            estimateDiscoveryUsd(query.limit),
+          );
+          // The target is normally item #1 of its own competitor list, so no second request is sent.
+          // Only when DataForSEO leaves it out does the fallback fire — better one extra request
+          // than telling a caller their own domain has "no organic ranking data on record".
+          const targetRow = findTargetRow(query.target, discovery.rows);
+          // The measurement travels WITH the numbers: the two branches below are two different
+          // DataForSEO endpoints, and which one answered is not recoverable downstream.
+          const targetMetrics: TargetWholeDomainMetrics = targetRow
+            ? { metrics: targetRow.full, source: "competitors_domain" }
+            : {
+                metrics: await fetchRankOverview(tally, query, query.target),
+                source: "domain_rank_overview",
+              };
+          comparison = {
+            target: query.target,
+            discovered: true,
+            discovered_total_count: discovery.total_count,
+            rows: buildDiscoveredRows(
+              query.target,
+              targetMetrics,
+              selectDiscoveredCompetitors(query.target, discovery.rows),
+            ),
+          };
+        } else {
+          // Sequentially on purpose: a failure never pays for the requests that would have followed.
+          // The source is carried on the PLAN rather than re-derived from the domain, so a rival
+          // that happens to equal the target is still labelled by where it came from.
+          const plan: readonly { readonly domain: string; readonly source: ComparedDomainSource }[] = [
+            { domain: query.target, source: "target" },
+            ...supplied.map((domain) => ({ domain, source: "supplied" as const })),
           ];
+          let rows: readonly ComparisonRow[] = [];
+          for (const entry of plan) {
+            const metrics = await fetchRankOverview(tally, query, entry.domain);
+            rows = [
+              ...rows,
+              {
+                ...entry,
+                intersections: null,
+                avg_position: null,
+                metrics,
+                // EVERY row of this flow — the target included — is a domain_rank_overview
+                // request; no competitors_domain response is fetched at all.
+                metrics_source: "domain_rank_overview" as const,
+                shared: null,
+              },
+            ];
+          }
+          comparison = {
+            target: query.target,
+            discovered: false,
+            discovered_total_count: null,
+            rows,
+          };
         }
-        comparison = {
-          target: query.target,
-          discovered: false,
-          discovered_total_count: null,
-          rows,
-        };
+      } catch (error) {
+        // Closes the ONE reservation without moving today's total, and never throws, so the
+        // ORIGINAL error is still the one the caller sees. Here rather than in a `finally` on
+        // purpose: a `finally` would also run after the success settlement below and turn every
+        // healthy call into a doomed second settle.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
 
-      // (3) Settle once with the real total; a throw above leaves the reservation open at its full
-      // estimate, which is never less than the partial spend that happened.
+      // (3) Settle once with the real total. A throw above already settled the SAME reservation at
+      // its full estimate (never less than the partial spend that happened) and rethrew, so this
+      // line is unreachable on the failing path and the row is closed exactly once either way.
       await settleSpend(reservation, tally.costUsd, tally.rows, ledger);
       return comparison;
     },

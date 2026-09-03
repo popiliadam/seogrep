@@ -49,6 +49,12 @@ const QUERY = {
 /** The fixtures' real per-request cost, so no spec re-states the number by hand. */
 const FIXTURE_COST = newLostFixture.cost;
 
+/**
+ * QUERY's WHOLE-CALL estimate — ONE reservation covers BOTH requests, so this is what the day is
+ * charged whether the lookup dies on the new/lost request or on the summary one (DK-3).
+ */
+const WHOLE_CALL_ESTIMATE = estimateBacklinkChangesUsd(DEFAULT_BACKLINK_CHANGES_PERIODS);
+
 /** A transport that answers each endpoint with its OWN fixture, in call order. */
 function pairTransport(): ReturnType<typeof vi.fn<DfsTransport>> {
   return vi.fn<DfsTransport>(async (url) => ({
@@ -580,6 +586,16 @@ describe("createLiveBacklinkChangesClient (fake transport — never real HTTP)",
     expect(ledger.rows()).toHaveLength(1);
     expect(await todaySpendUsd(ledger)).toBeCloseTo(FIXTURE_COST * 2, 10);
     expect(ledger.rows()[0]?.rowCount).toBe(6);
+    /**
+     * EXACTLY ONCE, at the REAL cost. The healthy path must not have grown a second settlement out
+     * of the DK-3 repair: the in-memory ledger refuses a second settle of the same row and
+     * settleSpend SWALLOWS that refusal, so neither an exception nor the row count is evidence —
+     * the settled VALUE is. A `finally` instead of the catch settles at the ESTIMATE first, the
+     * real cost is then refused and swallowed, and the row survives carrying the wrong number.
+     * The estimate is a DIFFERENT number from the real total (asserted), so this tells them apart.
+     */
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(FIXTURE_COST * 2, 10);
+    expect(WHOLE_CALL_ESTIMATE).not.toBeCloseTo(FIXTURE_COST * 2, 6);
   });
 
   /**
@@ -641,13 +657,27 @@ describe("createLiveBacklinkChangesClient (fake transport — never real HTTP)",
     }));
     await expect(liveClient(transport, ledger).fetchBacklinkChanges(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(1);
-    // The reservation stays OPEN at its full estimate — never less than what really happened.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(
-      estimateBacklinkChangesUsd(DEFAULT_BACKLINK_CHANGES_PERIODS),
-      10,
-    );
+    // The reservation SETTLES at its full estimate — never less than what really happened, and
+    // exactly what an open row already counted as, so today's total does not move (DK-3).
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(WHOLE_CALL_ESTIMATE, 10);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(WHOLE_CALL_ESTIMATE, 10);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
   });
 
+  /**
+   * THE SECOND-REQUEST FAILURE, WHOSE LEDGER NO TEST IN THIS FILE USED TO READ (B-3).
+   *
+   * This block asserted only that the lookup throws and that two requests went out. What the
+   * failure did to the money was invisible from here — the neighbouring budget assertions all go
+   * through `todaySpendUsd`, which is IDENTICAL open or settled because 0014's counter is
+   * `coalesce(actual_usd, estimated_usd)`.
+   *
+   * THE ASYMMETRY IS THE POINT: the new/lost request really succeeded and really cost
+   * `FIXTURE_COST`, yet the reservation closes at the WHOLE-CALL estimate, not at that partial
+   * spend. Settling at what the first request cost would report a two-request operation at one
+   * request's price and hand the difference to the next caller.
+   */
   it("throws when the SECOND request fails, instead of reporting half a history", async () => {
     const transport = vi.fn<DfsTransport>(async (url) =>
       url === DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT
@@ -656,6 +686,14 @@ describe("createLiveBacklinkChangesClient (fake transport — never real HTTP)",
     );
     await expect(liveClient(transport, ledger).fetchBacklinkChanges(QUERY)).rejects.toThrow(/HTTP 502/);
     expect(transport).toHaveBeenCalledTimes(2);
+    // ONE reservation covers BOTH requests, so there is ONE row — and it is CLOSED.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(WHOLE_CALL_ESTIMATE, 10);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+    // Closed ABOVE the real cost of the request that DID succeed, so a mutation settling at the
+    // partial spend goes red rather than merely swapping which constant happens to match.
+    expect(ledger.rows()[0]?.actualUsd ?? 0).toBeGreaterThan(FIXTURE_COST);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(WHOLE_CALL_ESTIMATE, 10);
   });
 
   it("returns the window DataForSEO echoed, not the one that was requested", async () => {
