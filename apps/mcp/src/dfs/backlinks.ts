@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -22,8 +28,12 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  *     (ESTIMATED_BACKLINK_PROFILE_CALL_USD) — so a near-cap day refuses before spending a cent,
  *     and the fleet-global counter carries that estimate from the instant it is booked;
  *   - each request's REAL cost is accumulated as it returns, and the reservation is settled ONCE
- *     with the total. A run that dies mid-fan-out leaves the reservation OPEN, so the day keeps
- *     paying its full estimate — never less than the partial spend that really happened.
+ *     with the total. A run that dies mid-fan-out SETTLES the reservation AT that full estimate
+ *     (DK-3, 2026-09-04) — never less than the partial spend that really happened, and exactly
+ *     the number an open row already counted as, since 0014's counter is
+ *     `coalesce(actual_usd, estimated_usd)`. The day's total is identical either way; what
+ *     changed is that `status=open` means "in flight" again instead of also meaning "died here
+ *     in July". See settleFailedSpend.
  *
  * The response ENVELOPE is identical across DataForSEO APIs, but the Backlinks payloads are their
  * own shapes (a flat summary object; `items[]` of `backlinks_referring_domain` /
@@ -430,46 +440,68 @@ export function createLiveBacklinksClient(opts: LiveBacklinksOptions): Backlinks
       );
       const tally: Tally = { costUsd: 0, rows: 0 };
 
-      // (2) Sequential so a failure never pays for the requests that would have followed.
-      const summary = await runRequest(
-        tally,
-        DFS_BACKLINKS_SUMMARY_ENDPOINT,
-        {
-          target: query.target,
-          backlinks_status_type: BACKLINKS_STATUS_TYPE,
-          rank_scale: RANK_SCALE,
-        },
-        (raw) => parseBacklinksSummaryResponse(raw, query.target),
-        () => 1,
-      );
-      const referringDomains = await runRequest(
-        tally,
-        DFS_BACKLINKS_REFERRING_DOMAINS_ENDPOINT,
-        {
-          target: query.target,
-          limit: query.limit,
-          backlinks_status_type: BACKLINKS_STATUS_TYPE,
-          rank_scale: RANK_SCALE,
-          order_by: ORDER_BY_BACKLINKS_DESC,
-        },
-        parseReferringDomainsResponse,
-        (list) => list.rows.length,
-      );
-      const anchors = await runRequest(
-        tally,
-        DFS_BACKLINKS_ANCHORS_ENDPOINT,
-        {
-          target: query.target,
-          limit: query.limit,
-          backlinks_status_type: BACKLINKS_STATUS_TYPE,
-          order_by: ORDER_BY_BACKLINKS_DESC,
-        },
-        parseAnchorsResponse,
-        (list) => list.rows.length,
-      );
+      // (2) Sequential so a failure never pays for the requests that would have followed. The try
+      // covers ALL THREE REQUESTS AND THEIR PARSES — the whole span between the one reservation
+      // above and the settlement below. A rejected task, a moved response shape and a death on
+      // request one, two or three all throw in here, and all of them used to walk out past the
+      // settlement leaving the row open. The results are `let` above the try only so the return
+      // below can still see them; nothing else about the sequence changed.
+      let summary: { target: string; summary: BacklinkSummary };
+      let referringDomains: BacklinkList<ReferringDomainRow>;
+      let anchors: BacklinkList<AnchorRow>;
+      try {
+        summary = await runRequest(
+          tally,
+          DFS_BACKLINKS_SUMMARY_ENDPOINT,
+          {
+            target: query.target,
+            backlinks_status_type: BACKLINKS_STATUS_TYPE,
+            rank_scale: RANK_SCALE,
+          },
+          (raw) => parseBacklinksSummaryResponse(raw, query.target),
+          () => 1,
+        );
+        referringDomains = await runRequest(
+          tally,
+          DFS_BACKLINKS_REFERRING_DOMAINS_ENDPOINT,
+          {
+            target: query.target,
+            limit: query.limit,
+            backlinks_status_type: BACKLINKS_STATUS_TYPE,
+            rank_scale: RANK_SCALE,
+            order_by: ORDER_BY_BACKLINKS_DESC,
+          },
+          parseReferringDomainsResponse,
+          (list) => list.rows.length,
+        );
+        anchors = await runRequest(
+          tally,
+          DFS_BACKLINKS_ANCHORS_ENDPOINT,
+          {
+            target: query.target,
+            limit: query.limit,
+            backlinks_status_type: BACKLINKS_STATUS_TYPE,
+            order_by: ORDER_BY_BACKLINKS_DESC,
+          },
+          parseAnchorsResponse,
+          (list) => list.rows.length,
+        );
 
-      // (3) Settle once with the fan-out's real total; a throw above leaves the reservation
-      // open at its full estimate, which is never less than the partial spend that happened.
+      } catch (error) {
+        // Closes the ONE reservation that covers all three requests, at its own estimate, and
+        // NEVER at `tally.costUsd`: the requests that already succeeded are on that tally, and
+        // settling there would report a three-request operation at one request's price and hand
+        // the difference to the next caller. It never throws, so the ORIGINAL error is still the
+        // one the caller sees. Here rather than in a `finally` on purpose: a `finally` would also
+        // run after the success settlement below and turn every healthy call into a doomed second
+        // settle — which settleSpend swallows, leaving the row alive carrying the wrong number.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
+      }
+
+      // (3) Settle once with the fan-out's real total. A throw above already settled the SAME
+      // reservation at its full estimate (never less than the partial spend that happened) and
+      // rethrew, so this line is unreachable on the failing path: one row, one close, either way.
       await settleSpend(reservation, tally.costUsd, tally.rows, ledger);
 
       return {

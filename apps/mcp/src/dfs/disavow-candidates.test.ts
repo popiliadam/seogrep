@@ -82,6 +82,14 @@ const LINKS_COST = linksFixture.cost;
 const SCORES_COST = scoresFixture.cost;
 const NETWORKS_COST = networksFixture.cost;
 
+/**
+ * QUERY's WHOLE-CALL estimate — ONE reservation covers all THREE requests, so this is what the
+ * day is charged whether the lookup dies on the link window, the spam scores or the networks
+ * (DK-3). The skipped-request case is no different: a request that never happened contributes
+ * nothing either way.
+ */
+const WHOLE_CALL_ESTIMATE = estimateDisavowCandidatesUsd(DEFAULT_LINK_ROWS, DEFAULT_NETWORK_ROWS);
+
 const FIXTURES = {
   backlinks: linksFixture,
   bulkSpamScore: scoresFixture,
@@ -1257,6 +1265,16 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
     expect(await todaySpendUsd(ledger)).toBeCloseTo(LINKS_COST + SCORES_COST + NETWORKS_COST, 12);
     // 4 link rows + 3 bulk targets + 3 network rows.
     expect(ledger.rows()[0]?.rowCount).toBe(10);
+    /**
+     * EXACTLY ONCE, at the REAL cost. The healthy path must not have grown a second settlement out
+     * of the DK-3 repair: the in-memory ledger refuses a second settle of the same row and
+     * settleSpend SWALLOWS that refusal, so neither an exception nor the row count is evidence —
+     * the settled VALUE is. A `finally` instead of the catch settles at the ESTIMATE first, the
+     * real cost is then refused and swallowed, and the row survives carrying the wrong number.
+     * The estimate is a DIFFERENT number from the real total (asserted), so this tells them apart.
+     */
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(LINKS_COST + SCORES_COST + NETWORKS_COST, 12);
+    expect(WHOLE_CALL_ESTIMATE).not.toBeCloseTo(LINKS_COST + SCORES_COST + NETWORKS_COST, 6);
   });
 
   /**
@@ -1329,13 +1347,26 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
       /HTTP 500/,
     );
     expect(transport).toHaveBeenCalledTimes(1);
-    // The reservation stays OPEN at its full estimate — never less than what really happened.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(
-      estimateDisavowCandidatesUsd(DEFAULT_LINK_ROWS, DEFAULT_NETWORK_ROWS),
-      12,
-    );
+    // The reservation SETTLES at its full estimate — never less than what really happened, and
+    // exactly what an open row already counted as, so today's total does not move (DK-3).
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
   });
 
+  /**
+   * B-3 — THE LEDGER SIDE OF A MID-SEQUENCE FAILURE, WHICH NOTHING HERE USED TO READ.
+   *
+   * This block and the THIRD-request one below asserted only that the lookup throws and how many
+   * requests went out; the only budget assertions in this file go through `todaySpendUsd`, which
+   * is IDENTICAL open or settled because 0014's counter is `coalesce(actual_usd, estimated_usd)`.
+   *
+   * THE ASYMMETRY IS THE POINT: the link window really succeeded and really cost `LINKS_COST`,
+   * yet the ONE reservation closes at the WHOLE-CALL estimate rather than at that partial spend.
+   * Settling at what the requests that DID land cost would report a three-request operation at
+   * their price and hand the difference to the next caller.
+   */
   it("throws when the SECOND request fails, instead of reporting half an answer", async () => {
     const transport = vi.fn<DfsTransport>(async (url) =>
       url === DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT
@@ -1346,6 +1377,11 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
       /HTTP 502/,
     );
     expect(transport).toHaveBeenCalledTimes(2);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+    expect(ledger.rows()[0]?.actualUsd ?? 0).toBeGreaterThan(LINKS_COST);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
   });
 
   /**
@@ -1363,11 +1399,15 @@ describe("createLiveDisavowCandidatesClient (fake transport — never real HTTP)
     await expect(result).rejects.toThrow(/HTTP 503/);
     await expect(result).rejects.not.toHaveProperty("disavow_txt");
     expect(transport).toHaveBeenCalledTimes(3);
-    // Reservation still open at the full three-request estimate: over-counted, never under.
-    expect(await todaySpendUsd(ledger)).toBeCloseTo(
-      estimateDisavowCandidatesUsd(DEFAULT_LINK_ROWS, DEFAULT_NETWORK_ROWS),
-      12,
-    );
+    // Reservation SETTLED at the full three-request estimate: over-counted, never under.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
+    // Dying on the LAST request is the shape where two requests are already paid for, so the
+    // gap between the partial spend and the estimate is widest — and the row still closes at the
+    // estimate, above BOTH of them.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(WHOLE_CALL_ESTIMATE, 12);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+    expect(ledger.rows()[0]?.actualUsd ?? 0).toBeGreaterThan(LINKS_COST + SCORES_COST);
   });
 
   /** A failed TASK inside a 200 response is a paid failure too, and must not read as "no links". */

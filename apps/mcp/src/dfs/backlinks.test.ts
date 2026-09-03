@@ -363,6 +363,18 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
     await client.fetchBacklinkProfile(QUERY);
     // 0.02003 + 0.06015 + 0.06012 — the three response `cost` fields, summed.
     expect(await todaySpendUsd(ledger)).toBeCloseTo(0.1403, 5);
+    /**
+     * EXACTLY ONCE, and at the REAL cost. The healthy path must not have grown a second
+     * settlement out of the DK-3 repair: the in-memory ledger refuses a second settle of the same
+     * row and settleSpend SWALLOWS that refusal, so neither an exception nor the row count is the
+     * evidence — the settled VALUE is. Turning the catch into a `finally` settles at the ESTIMATE
+     * first, the real cost is then refused and swallowed, and the row survives carrying the wrong
+     * number. The estimate is a DIFFERENT number from the real total (asserted below), so this
+     * pin can actually tell the two apart.
+     */
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.1403, 5);
+    expect(ESTIMATED_BACKLINK_PROFILE_CALL_USD).not.toBeCloseTo(0.1403, 5);
   });
 
   it("throws on a non-OK HTTP response instead of reporting an empty profile", async () => {
@@ -378,9 +390,14 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
       ledger,
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 402/);
-    // A failed lookup leaves its reservation OPEN, so today keeps paying the FULL
-    // whole-operation estimate — never less than what the fleet may actually have spent.
+    // A failed lookup SETTLES its reservation at the FULL whole-operation estimate — never less
+    // than what the fleet may actually have spent, and exactly the number an open row already
+    // counted as (0014: `coalesce(actual_usd, estimated_usd)`), so the day's total is unmoved.
     expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
+    // The DK-3 half the ledger could not see before: the row is CLOSED, not left open.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
   });
 
   it("stops at the FIRST failure — a dead summary never pays for the other two requests", async () => {
@@ -397,6 +414,10 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(1);
+    // Dying on request ONE closes the row just as dying on request three does — the reservation
+    // covers all three, so there is one row and one close whatever killed the sequence.
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
   });
 
   it("propagates a MID-SEQUENCE failure, keeping only the already-spent request on the books", async () => {
@@ -416,14 +437,29 @@ describe("createLiveBacklinksClient (fake transport — never real HTTP)", () =>
     });
     await expect(client.fetchBacklinkProfile(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(transport).toHaveBeenCalledTimes(2); // never reached anchors
-    // DFS charged for the summary ($0.02003). The reservation is never settled, so the day is
-    // charged the full $0.30 estimate instead: MORE than the true partial spend, which is the
-    // safe direction. (The pre-fix file ledger booked exactly $0.02003 and then handed the rest
-    // of the allowance back — cheaper on paper, but it under-counted a fleet that had already
-    // committed to the operation.)
+    // DFS charged for the summary ($0.02003). The reservation settles at the full $0.30 estimate
+    // instead: MORE than the true partial spend, which is the safe direction. (The pre-fix file
+    // ledger booked exactly $0.02003 and then handed the rest of the allowance back — cheaper on
+    // paper, but it under-counted a fleet that had already committed to the operation.)
     expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
     expect(await todaySpendUsd(ledger)).toBeGreaterThan(0.02003);
-    expect(ledger.rows()[0]?.actualUsd).toBeNull(); // still open
+    /**
+     * DK-3 — THE TWO HALVES, PINNED APART, because they are two different decisions.
+     *
+     * (a) THE ROW IS CLOSED, not left open. This is the whole hygiene claim: `status=open` is the
+     *     operator's only signal for a call still in flight.
+     *
+     * (b) IT CLOSES AT THE ESTIMATE, NOT at what the ALREADY-SUCCEEDED request really cost. The
+     *     summary's $0.02003 is on the tally by the time referring_domains dies, and settling
+     *     there would report a three-request operation at one request's price and hand the
+     *     difference to the next caller. Asserted as an inequality against that live tally value
+     *     rather than only as "equals the estimate", so a mutation that swapped in `tally.costUsd`
+     *     goes red instead of merely changing which constant happens to match.
+     */
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_BACKLINK_PROFILE_CALL_USD, 5);
+    expect(ledger.rows()[0]?.actualUsd ?? 0).toBeGreaterThan(0.02003);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
   });
 
   it("falls back to the per-request estimate when a response omits its cost", async () => {

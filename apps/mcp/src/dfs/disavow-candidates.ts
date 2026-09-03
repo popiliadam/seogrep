@@ -10,7 +10,13 @@ import {
   type VendorWindow,
   type WindowBounds,
 } from "./backlink-details.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { hasQualifyingRelAttribute } from "../format/rel-attributes.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
@@ -910,46 +916,71 @@ export function createLiveDisavowCandidatesClient(
         ledger,
       );
 
-      // (1) The filtered link window. Same endpoint AND same parser as backlink-details.ts.
-      const rawLinks = await post(DFS_BACKLINKS_LIST_ENDPOINT, {
-        target: query.target,
-        limit: linkBounds.limit,
-        offset: linkBounds.offset,
-        mode: BACKLINKS_MODE,
-        backlinks_status_type: BACKLINKS_STATUS_TYPE,
-        include_subdomains: INCLUDE_SUBDOMAINS,
-        rank_scale: RANK_SCALE,
-        order_by: ORDER_BY_LINK_SPAM_DESC,
-        filters: buildBacklinkFilters(minSpamScore, query.dofollow_only),
-      });
-      const links = parseBacklinkRowsResponse(rawLinks, linkBounds);
+      // The try covers ALL THREE REQUESTS AND THEIR PARSES, which is the whole span between the
+      // one reservation above and the settlement below — a rejected task, a moved response shape
+      // and a death on request one, two or three all throw in here, and all of them used to walk
+      // out past the settlement leaving the row open. The results are `let` above only so the
+      // settlement and return below can still see them; the requests themselves are untouched.
+      let rawLinks: unknown;
+      let links: ReturnType<typeof parseBacklinkRowsResponse>;
+      let domains: readonly string[];
+      let rawScores: unknown;
+      let spamScores: ReturnType<typeof parseBulkSpamScoreResponse>;
+      let rawNetworks: unknown;
+      let networks: ReturnType<typeof parseReferringNetworksResponse>;
+      try {
+        // (1) The filtered link window. Same endpoint AND same parser as backlink-details.ts.
+        rawLinks = await post(DFS_BACKLINKS_LIST_ENDPOINT, {
+          target: query.target,
+          limit: linkBounds.limit,
+          offset: linkBounds.offset,
+          mode: BACKLINKS_MODE,
+          backlinks_status_type: BACKLINKS_STATUS_TYPE,
+          include_subdomains: INCLUDE_SUBDOMAINS,
+          rank_scale: RANK_SCALE,
+          order_by: ORDER_BY_LINK_SPAM_DESC,
+          filters: buildBacklinkFilters(minSpamScore, query.dofollow_only),
+        });
+        links = parseBacklinkRowsResponse(rawLinks, linkBounds);
 
-      // (2) The vendor's per-domain scores, for the domains request 1 actually named. An empty
-      // `targets` array is a paid request that can answer nothing, so it is not sent at all.
-      const domains = distinctLinkDomains(links).slice(0, MAX_CANDIDATE_DOMAINS);
-      const rawScores =
-        domains.length === 0
-          ? null
-          : await post(DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT, { targets: domains });
-      const spamScores =
-        rawScores === null
-          ? new Map<string, number | null>()
-          : parseBulkSpamScoreResponse(rawScores);
+        // (2) The vendor's per-domain scores, for the domains request 1 actually named. An empty
+        // `targets` array is a paid request that can answer nothing, so it is not sent at all.
+        domains = distinctLinkDomains(links).slice(0, MAX_CANDIDATE_DOMAINS);
+        rawScores =
+          domains.length === 0
+            ? null
+            : await post(DFS_BACKLINKS_BULK_SPAM_SCORE_ENDPOINT, { targets: domains });
+        spamScores =
+          rawScores === null
+            ? new Map<string, number | null>()
+            : parseBulkSpamScoreResponse(rawScores);
 
-      // (3) The network axis. Parameters limited to the ones the vendor's published input schema
-      // names for this endpoint (NEVER #9) — no `backlinks_status_type`, no `rank_scale`.
-      const rawNetworks = await post(DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT, {
-        target: query.target,
-        limit: networkBounds.limit,
-        network_address_type: NETWORK_ADDRESS_TYPE,
-        order_by: ORDER_BY_BACKLINKS_DESC,
-      });
-      const networks = parseReferringNetworksResponse(rawNetworks, networkBounds);
+        // (3) The network axis. Parameters limited to the ones the vendor's published input schema
+        // names for this endpoint (NEVER #9) — no `backlinks_status_type`, no `rank_scale`.
+        rawNetworks = await post(DFS_BACKLINKS_REFERRING_NETWORKS_ENDPOINT, {
+          target: query.target,
+          limit: networkBounds.limit,
+          network_address_type: NETWORK_ADDRESS_TYPE,
+          order_by: ORDER_BY_BACKLINKS_DESC,
+        });
+        networks = parseReferringNetworksResponse(rawNetworks, networkBounds);
+      } catch (error) {
+        // Closes the ONE reservation at its own WHOLE-CALL estimate — NEVER at what the requests
+        // that already landed cost, which would report a three-request operation at their price
+        // and hand the difference to the next caller. It never throws, so the ORIGINAL error is
+        // still the one the caller sees. Here rather than in a `finally` on purpose: a `finally`
+        // would also run after the success settlement below and turn every healthy call into a
+        // doomed second settle, which settleSpend swallows — leaving the row alive carrying the
+        // wrong number.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
+      }
 
       // (4) Settle ONCE with the real costs of the requests that were actually sent. A request
       // the vendor declined to price settles at ITS OWN estimate — never at $0.00 — and a request
       // that was skipped contributes nothing, because it never happened. A throw anywhere above
-      // leaves the reservation OPEN at its full estimate, which is never less than what was spent.
+      // SETTLED the same reservation at its full estimate and rethrew, so this line is
+      // unreachable on the failing path: one row, one close, either way (DK-3).
       const spent =
         (extractDisavowCostUsd(rawLinks) ?? estimateRequestUsd(linkBounds.limit)) +
         (rawScores === null

@@ -365,6 +365,15 @@ describe("createLiveLinkGapClient (fake transport — never real HTTP)", () => {
     expect(ledger.rows()).toHaveLength(1);
     expect(ledger.rows()[0]?.endpoint).toBe(DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT);
     expect(ledger.rows()[0]?.rowCount).toBe(3);
+    /**
+     * EXACTLY ONCE, at the REAL cost. The in-memory ledger refuses a second settle of the same
+     * row and settleSpend SWALLOWS that refusal, so neither an exception nor the row count is
+     * evidence — the settled VALUE is. A `finally` instead of the DK-3 catch settles at the
+     * ESTIMATE first, the real cost is then refused and swallowed, and the row survives carrying
+     * the wrong number. The two numbers differ (asserted), so this pin can tell them apart.
+     */
+    expect(ledger.rows()[0]?.actualUsd).toBe(FIXTURE_COST);
+    expect(FIXTURE_COST).not.toBeCloseTo(estimateLinkGapUsd(QUERY.limit), 6);
   });
 
   /**
@@ -388,5 +397,77 @@ describe("createLiveLinkGapClient (fake transport — never real HTTP)", () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     await expect(liveClient(transport, ledger).fetchLinkGap(QUERY)).rejects.toThrow(/HTTP 500/);
     expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateLinkGapUsd(QUERY.limit), 10);
+  });
+
+  /**
+   * DK-3 — THE LEDGER SIDE OF A FAILED CALL, WHICH NOTHING HERE USED TO READ (measured
+   * 2026-09-04: the whole repair could be applied to this port, and reverted again, without one
+   * test in this file changing colour — the block above only ever looked at `todaySpendUsd`,
+   * which is IDENTICAL open or settled).
+   *
+   * THREE SHAPES, because they throw in three different places and a `try` around the wrong span
+   * would catch only the first: the vendor never answering usefully (HTTP), the vendor answering
+   * with a REJECTED TASK, and our own reader refusing a moved shape (PARSE). The parse case is
+   * the one that proves the try covers more than the request.
+   *
+   * WHAT IS ASSERTED, on every shape: the row is CLOSED (`actualUsd` is not null), it is closed
+   * at ITS OWN ESTIMATE — never lower, never the vendor's reported cost — `rowCount` is 0 because
+   * nothing was delivered to anybody, and `todaySpendUsd` DOES NOT MOVE, since 0014's counter is
+   * `coalesce(actual_usd, estimated_usd)` and an open row already counted as its estimate. That
+   * last assertion is the proof this is hygiene and not a loosening of the $3 cap (NEVER #5).
+   */
+  describe("a failed call SETTLES its reservation at the estimate (DK-3)", () => {
+    const ESTIMATE = estimateLinkGapUsd(QUERY.limit);
+
+    const failures: readonly { readonly name: string; readonly transport: () => DfsTransport }[] = [
+      {
+        name: "the vendor never answers usefully (HTTP)",
+        transport: () =>
+          vi.fn<DfsTransport>(async () => ({ ok: false, status: 500, json: async () => ({}) })),
+      },
+      {
+        name: "the vendor REJECTS the task",
+        transport: () =>
+          // A non-20000 task carrying `cost: 0`. Settling at that reported zero would report a
+          // call the vendor may well have billed as free; the estimate is what is booked instead.
+          vi.fn<DfsTransport>(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              status_code: 20000,
+              cost: 0,
+              tasks: [{ status_code: 40501, status_message: "Invalid Field", cost: 0 }],
+            }),
+          })),
+      },
+      {
+        name: "our own reader refuses the shape (PARSE)",
+        transport: () =>
+          vi.fn<DfsTransport>(async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              status_code: 20000,
+              cost: 0.05,
+              tasks: [{ status_code: 20000, result: [{ items: "not a list at all" }] }],
+            }),
+          })),
+      },
+    ];
+
+    for (const { name, transport } of failures) {
+      it(`closes the row when ${name}`, async () => {
+        await expect(liveClient(transport(), ledger).fetchLinkGap(QUERY)).rejects.toThrow();
+        const row = ledger.rows()[0];
+        expect(ledger.rows()).toHaveLength(1);
+        expect(row?.estimatedUsd).toBeCloseTo(ESTIMATE, 10);
+        expect(row?.actualUsd).toBeCloseTo(ESTIMATE, 10); // CLOSED — never null, never lower
+        expect(row?.rowCount).toBe(0);
+        // The day's total is byte-identical to what the open row contributed: hygiene, not a cap
+        // change. This is also why the assertion is `toBeCloseTo(ESTIMATE)` and not "unchanged
+        // from zero" — the reservation is meant to keep costing exactly this much.
+        expect(await todaySpendUsd(ledger)).toBeCloseTo(ESTIMATE, 10);
+      });
+    }
   });
 });
