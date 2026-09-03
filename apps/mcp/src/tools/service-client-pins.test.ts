@@ -61,6 +61,10 @@ import {
 } from "./tracked-keywords-store.ts";
 import { findPriorAuditRun } from "../audit/runs.ts";
 import { archiveOwnProject } from "./untrack-project.ts";
+import {
+  countStoredMeasurements,
+  loadStoredMeasurements,
+} from "./keyword-positions-store.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
 const tenantFilter = { method: "eq", args: ["user_id", USER] };
@@ -657,6 +661,87 @@ describe("the audit crawl reads carry their whole key (2026-09 audit slice)", ()
     expect(runs.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
     expect(runs.calls).toContainEqual({ method: "eq", args: ["crawl_job_id", CRAWL_JOB] });
     expect(runs.calls).toContainEqual({ method: "eq", args: ["tool", "audit_onpage"] });
+  });
+});
+
+/**
+ * KP F-2 — `keyword-positions-store.ts:104` and `:120`, the TWO reads behind `keyword_positions`.
+ *
+ * Measured 2026-09-03: deleting `.eq("user_id", userId)` from EITHER one — separately, the
+ * position axis of signed lesson 14 — left the whole fast lane green at 147 files / 3914 tests
+ * with `tsc --noEmit` clean. The store's own header states the rule the mutations broke: the
+ * client is service-role and bypasses RLS, so "both statements carry their own
+ * `.eq("user_id", …)`". Only `keyword-positions.db.test.ts` saw it, and `make verify` does not
+ * run that lane.
+ *
+ * They are two different failures, not one shape twice:
+ *   · the COUNT is the honesty gate. It decides whether the call is free or costs 10 credits, so
+ *     an unscoped count lets ANOTHER tenant's measurement of the same domain open a paid call on
+ *     this tenant — and the "N readings match this filter in total" caption then prints a
+ *     cross-tenant number.
+ *   · the WINDOW is the answer itself: unscoped, it prints another tenant's measured positions.
+ *
+ * The whole key is asserted rather than the tenant column alone: a read that kept `user_id` and
+ * lost `target_domain` would answer about every domain the tenant ever measured.
+ */
+describe("the keyword_position_measurements reads are tenant- and subject-scoped (KP F-2)", () => {
+  const DOMAIN = "example.com";
+  const SUBJECT = { method: "eq", args: ["target_domain", DOMAIN] };
+
+  it("the pre-reserve COUNT is scoped to this tenant and this domain", async () => {
+    db = createFakeQueryDb(() => ({ data: null, count: 3 }));
+    await expect(countStoredMeasurements(USER, { targetDomain: DOMAIN })).resolves.toBe(3);
+    const statement = db.onlyStatementFor("keyword_position_measurements");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual(SUBJECT);
+    // `head: true` with an exact count — PostgREST caps a page at 1000 rows with no error, so a
+    // client-side count would silently under-report the total the caption prints.
+    expect(callsTo(statement, "select")[0]?.args[1]).toMatchObject({
+      count: "exact",
+      head: true,
+    });
+  });
+
+  it("the WINDOW read carries the same two filters, and the caller's narrowing beside them", async () => {
+    db = createFakeQueryDb(() => ({ data: [] }));
+    await loadStoredMeasurements(
+      USER,
+      {
+        targetDomain: DOMAIN,
+        keyword: "seo tools",
+        locationName: "United States",
+        languageCode: "en",
+        device: "desktop",
+      },
+      25,
+    );
+    const statement = db.onlyStatementFor("keyword_position_measurements");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual(SUBJECT);
+    for (const [column, value] of [
+      ["keyword", "seo tools"],
+      ["location_name", "United States"],
+      ["language_code", "en"],
+      ["device", "desktop"],
+    ] as const) {
+      expect(statement.calls, column).toContainEqual({ method: "eq", args: [column, value] });
+    }
+  });
+
+  /**
+   * The order is pinned beside the filters because "newest first" is a promise the description
+   * makes, and `fetched_at` is WHEN THE MEASUREMENT WAS TAKEN — ordering by `created_at` would
+   * re-date a row written later than it was measured (migration 0030's three-clocks note) and
+   * hand the caller a window that is newest by the wrong clock.
+   */
+  it("orders the window by the measurement's own clock, newest first, and bounds it", async () => {
+    db = createFakeQueryDb(() => ({ data: [] }));
+    await loadStoredMeasurements(USER, { targetDomain: DOMAIN }, 25);
+    const statement = db.onlyStatementFor("keyword_position_measurements");
+    expect(callsTo(statement, "order").map((call) => call.args)).toEqual([
+      ["fetched_at", { ascending: false }],
+    ]);
+    expect(callsTo(statement, "limit").map((call) => call.args)).toEqual([[25]]);
   });
 });
 

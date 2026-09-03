@@ -115,6 +115,27 @@ describe("refusals cost nothing and read nothing", () => {
     expect(loads).toHaveLength(0);
   });
 
+  /**
+   * F-3 — THE REFUSAL HAS TO NAME THE STEP THAT IS ACTUALLY MISSING. Until 2026-09-03 it named
+   * only `track_keywords`, and the live audit walked the loop that produces: keywords were
+   * registered, the read was run again, and it refused in exactly the same words. The step that
+   * fills this store is `serp_snapshot`, and it is PRICED — a refusal that sends a caller to a
+   * free tool which changes nothing is worse than one that names no tool at all.
+   */
+  it("names serp_snapshot as the missing step, and says it is the priced one", async () => {
+    const { tool } = makeTool({ stored: 0 });
+    const text = textOf(await tool.run(ctx, ask()));
+    expect(text).toMatch(/serp_snapshot is what takes the readings, priced per keyword/i);
+    // track_keywords keeps its place — as the SEPARATE, free step it is, not as the fix.
+    expect(text).toMatch(/track_keywords records which keywords to watch — a separate step, and free/i);
+    // The three tools, in the order a caller has to run them.
+    const order = ["track_keywords", "serp_snapshot", "keyword_positions"].map((tool) =>
+      text.indexOf(tool),
+    );
+    expect(order.every((at) => at >= 0), text).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
   it("says which filter the emptiness is about when one was applied", async () => {
     const { tool } = makeTool({ stored: 0 });
     const plain = textOf(await tool.run(ctx, ask()));
@@ -447,6 +468,32 @@ describe("two readings are the same series only if everything they were measured
     expect(text).toMatch(
       /"seo tools" on example\.com — United States · language en · desktop SERP · google · depth 100 · matched by exact_host_www_stripped/,
     );
+  });
+
+  /**
+   * F-4 / R-7.11 — TWO DIFFERENT "POSITIONS" IN ONE PRODUCT, and until 2026-09-03 no surface said
+   * so. This tool prints a SERP rank from one moment (`rank_group #4`, an integer); find_quick_wins
+   * prints Search Console's average over the reporting window (`position 12.3`, a decimal). Neither
+   * mentioned the other, so the two numbers could be read side by side as a movement that nobody
+   * measured. The distinction is stated where the numbers are — in the answer itself and in the
+   * description an LLM reads before choosing the tool.
+   */
+  it("says these ranks are not Search Console's average position", () => {
+    const text = formatKeywordPositions("x", "", {
+      windowLimit: 10,
+      windowRowCount: 1,
+      storedMeasurementCount: 1,
+      rows: [reading()],
+    });
+    expect(text).toMatch(/SERP ranks from a snapshot/i);
+    expect(text).toMatch(/rank #4 = the fourth organic result/i);
+    expect(text).toMatch(/not Search Console's average position/i);
+  });
+
+  it("draws the same distinction in the description, where the tool is chosen", () => {
+    const { tool } = makeTool();
+    expect(tool.description).toMatch(/not Search Console's average position/i);
+    expect(tool.description).toMatch(/SERP ranks? (from|at) one moment/i);
   });
 
   it("says plainly that nothing was measured for this answer", () => {

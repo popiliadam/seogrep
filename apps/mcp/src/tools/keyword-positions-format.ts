@@ -50,14 +50,26 @@ export const GAP_SENTENCE =
   "Nothing was measured in between, so these are two separate observations and the change " +
   "between them is not a trend.";
 
-/** What this tool bought, said plainly, since it charges for reading storage rather than measuring. */
+/**
+ * What this tool bought, said plainly, since it charges for reading storage rather than measuring.
+ *
+ * THE LAST SENTENCE SEPARATES TWO DIFFERENT "POSITIONS" (R-7.11). SeoGrep prints the word in two
+ * places that mean different things: here it is a SERP rank observed at one moment, an integer
+ * from DataForSEO; in find_quick_wins it is Search Console's average over the reporting window, a
+ * decimal computed by Google over many impressions. Neither surface said so until 2026-09-03, so
+ * a reader could put `#4` next to `12.3` and conclude a movement nobody measured. They are not
+ * comparable and this says which one is on the page.
+ */
 export const STORED_READ_NOTE =
   "Every line above is a measurement that was already taken and stored: no search engine was " +
   "contacted for this answer and no new position was read. Each reading holds only for the " +
   "keyword, location, language and device named on its own heading, on the search engine and to " +
   "the depth stated there — a position is a measurement at a moment, not a property of a site. " +
   "Ranks are DataForSEO's own `rank_group` (organic-only) and `rank_absolute` (all SERP " +
-  "elements); SeoGrep computes no score, no visibility figure and no ranking of its own.";
+  "elements); SeoGrep computes no score, no visibility figure and no ranking of its own. These " +
+  "are SERP ranks from a snapshot (rank #4 = the fourth organic result), not Search Console's " +
+  "average position — find_quick_wins reports that one, it is an average over a reporting window " +
+  "and can be a decimal, and the two numbers are never compared with each other.";
 
 /**
  * WHAT MAKES TWO READINGS THE SAME SERIES. Everything a measurement was taken UNDER, including the

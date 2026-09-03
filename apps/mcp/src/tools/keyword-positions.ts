@@ -112,16 +112,27 @@ const DESCRIPTION =
   "Read the SERP positions already measured and stored for a domain's keywords — each reading " +
   "with its own date, location, language and device. It measures nothing and contacts no search " +
   "engine: it reports what was stored, keeps 'not found' and 'not measured' apart, and never " +
-  `draws a trend through days nobody measured. Costs ${TOOL_COSTS.keyword_positions} credits. If ` +
-  "nothing has been measured yet, it says so and charges nothing.";
+  "draws a trend through days nobody measured. These are SERP ranks at one moment (rank #4 = the " +
+  "fourth organic result), not Search Console's average position, which find_quick_wins reports " +
+  `and which is an average over a reporting window. Costs ${TOOL_COSTS.keyword_positions} ` +
+  "credits. If nothing has been measured yet, it says so and charges nothing.";
 
-/** The "nothing has been measured" answer — a refusal, and free. */
+/**
+ * The "nothing has been measured" answer — a refusal, and free.
+ *
+ * IT NAMES THE STEP THAT IS ACTUALLY MISSING, which is `serp_snapshot`. It used to name only
+ * `track_keywords`, and that sent the caller round a loop measured live on 2026-09-03: registering
+ * keywords is free, changes nothing here, and lands back on this same sentence. Registration is
+ * still named — it IS a prerequisite, and free — but the tool that fills this store is the priced
+ * one, and a refusal that hides the price of the fix is not an honest refusal.
+ */
 export function nothingStoredMessage(subject: string, filtered: boolean): string {
   return (
     `No stored SERP measurement matches this request for ${subject}, so there is nothing to ` +
-    "read and you were not charged. Positions appear here once a SERP snapshot has been taken " +
-    "for these keywords; track_keywords records which keywords to watch, which is a separate " +
-    "step and also free." +
+    "read and you were not charged. The missing step is a measurement: track_keywords records " +
+    "which keywords to watch — a separate step, and free — and then serp_snapshot is what takes " +
+    "the readings, priced per keyword. Once a snapshot has been taken, keyword_positions reads " +
+    "what it stored." +
     (filtered
       ? " This answer is about the keyword, location, language and device you filtered on — " +
         "measurements may exist for this domain under a different one."
@@ -197,19 +208,28 @@ export function makeKeywordPositionsTool(deps: KeywordPositionsDeps = {}): Regis
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> read -> commit
       // as one chain. A read that throws releases the reserve, so a failure costs nothing.
-      return withCredits({ userId: ctx.userId }, { tool: "keyword_positions" }, async () => {
-        const rows = await loadMeasurements(ctx.userId, filter, input.limit);
-        return textResult(
-          formatKeywordPositions(subjectLabel(subject.domain, project), describeFilter(input), {
-            rows,
-            windowLimit: input.limit,
-            windowRowCount: rows.length,
-            // NEVER derived from `rows`: it is the count query's answer about the whole matching
-            // set, taken before the window was read.
-            storedMeasurementCount,
-          }),
-        );
-      });
+      //
+      // The project scope is the RESOLVED project, not the raw argument, and it is passed here
+      // rather than read off the input by the registry: charge:"handler" tools settle themselves,
+      // so they never reach the surface path where declaredProjectId supplies it (migration 0033).
+      // A bare `target` resolves to no project and stays honestly project-less.
+      return withCredits(
+        { userId: ctx.userId },
+        { tool: "keyword_positions", projectId: project?.id },
+        async () => {
+          const rows = await loadMeasurements(ctx.userId, filter, input.limit);
+          return textResult(
+            formatKeywordPositions(subjectLabel(subject.domain, project), describeFilter(input), {
+              rows,
+              windowLimit: input.limit,
+              windowRowCount: rows.length,
+              // NEVER derived from `rows`: it is the count query's answer about the whole
+              // matching set, taken before the window was read.
+              storedMeasurementCount,
+            }),
+          );
+        },
+      );
     },
   });
 }
