@@ -123,7 +123,7 @@ Ders 7: yeşil kapı NE ölçtüğüyle raporlanır. Aşağıdakiler bu turda **
    yok — ama iddia bugün **birim testinde** duruyor, canlıda değil. Doğrulamak için hreflang'li ve
    FAQPage'li bir özne gerekiyor.
 4. **#211 ve #212'nin canlı yarısı hiç ölçülmedi** — `dff7f32` deploy'u sonrası şef turuna kaldı.
-   O tura kadar bu dosyadaki `(canlı: bekliyor)` işaretli her satır **bir iddiadır**: kapı yeşil,
+   O tura kadar bu dosyadaki `+ canlı ✔ (dff7f32)` işaretli her satır **bir iddiadır**: kapı yeşil,
    `main` güncel, ama canlı uçta görülmedi.
 5. **`goals/` hiç genişlemedi.** Dört PR'ın hiçbiri `goals/` altına dosya eklemedi. Bu turda
    kapanan hiçbir sınıf `make goals` tarafından ölçülmüyor; hepsi paket testinde duruyor.
@@ -131,3 +131,10 @@ Ders 7: yeşil kapı NE ölçtüğüyle raporlanır. Aşağıdakiler bu turda **
    job'ında koşar; `verify.sh` bakmaz (CLAUDE.md kapı kapsam tablosu).
 7. **Sınıf tablosunun akıbet sütunu prose'dur.** Bir sınıfın "KAPANDI" satırı, adlandırdığı
    bulguların kapandığını söyler — o sınıfı ölçen bir predicate olduğunu DEĞİL.
+
+## Canlı doğrulama eki (şef, 2026-09-03, deploy `dff7f32`, Δ −25)
+
+- `audit_schema` cevabı kapsam cümlesiyle başlıyor: `Audited crawl 53907ab7 from 2026-09-02: 1 page(s), 0 URL(s) skipped. That is this project's most recent crawl — pass job_id …` (sınıf 1 ✔).
+- Tekrar-denetim notu basıldı: `Note: this crawl was already audited by audit_schema on 2026-09-03 08:30 UTC. Re-running produces the same report and is charged again.` — UTC damgası doğru biçimde (repeatNote UTC varsayımı ✔).
+- `crawl_site` ikinci istek: `A crawl of adstark.com.tr is already in flight — poll it with get_job_status {…}. job_id: … · status: queued. No second crawl was queued and you were not charged …` — bakiye ikinci istekte değişmedi (B-1 sıralı yarısı ✔; ilk cevap `status: queued or already running`, B-2 ✔).
+- Defter satırları artık `project: adstark` taşıyor — migration 0033 proje kapsamı canlıda ilk kez görüldü (Dilim 1 LCA B-6'nın canlı yarısı ✔).
