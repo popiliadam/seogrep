@@ -22,6 +22,13 @@ veriden okuduğu alan kümesi uyuşmuyor: linkin **nitelenip nitelenmediği** (R
 duruyor, ayrıştırıcıda düşürülüyor, ve kaynaktaki yorum ayrıştırıcının "hiçbir şeyi atmadığını"
 söylüyor.
 
+**Hakem kararı (taze Fable, 2026-09-04): PASS.** M-LG4 bağımsız yeniden üretildi (H03: DK-3 onarımı
+→ **YEŞİL**), aynı onarımın kardeş portta kırmızı verdiği de ölçüldü (H05: `compare_competitors`
+→ 2 KIRMIZI), ve vendor girdisinin 16/6 alan sayımı fixture'dan doğrulandı. Kayıt bu turda
+genişletildi: şiddet bandı uygulandı (B-1 P1→P2, B-3 P2→P1), R-6.2'nin kökü (H-4), `plan.mjs`
+bayatlığının gerçek kapsamı (H-5) ve DK-3'ün ölçülmüş şekil haritası (H-2) eklendi. Ölçüm turunun
+metni SİLİNMEDİ.
+
 **Karar (kapanış, YYYY-MM-DD):** düzeltme dalgası bittiğinde KAPATAN tur yazar — ölçüm turunun
 kararı SİLİNMEZ, yanına yazılır (ders 16).
 
@@ -90,6 +97,34 @@ canlı-link kısıtı gerçekten ölçülüyor. **Ölçülmeyen tek eksen bütç
 (M-LG4) — kardeşi `compare_competitors`'ta aynı mutasyon KIRMIZI verir (bkz. o kaydın M-CC4'ü), yani
 bu bir "aile geneli pinsiz" durumu değil, **bu tool'a özgü bir boşluktur**.
 
+**Hakem şerhi — M-LG2 hangi sınıfı ölçtü (hakem turu, 2026-09-04):** M-LG2 "sınıf 2 kapsam
+süpürgesi" diye doğru etiketlenmiş; kardeş kayıtların aynı mutasyona "Sınıf 1 / NEVER#4" demesi
+YANLIŞTIR. **NEVER#4'ün gerçek kiracı okuması** `tools/project-target.ts:48`'dir
+(`forUser(getServiceClient(), userId).selectOwnById`) ve **o zincirin hızlı-şerit pini altı kayıtta
+da ÖLÇÜLMEDİ** — canlı 404 kanıtı var (§3, L-N1), pin kanıtı yok.
+
+**Hakem doğrulaması (H03, 2026-09-04): M-LG4 yeniden üretildi — YEŞİL.** Ayrıca hakem aynı onarımı
+kardeş portta da koştu (H05, `dfs/competitors.ts`) → **2 KIRMIZI**. Yani "bu tool'a özgü boşluk"
+cümlesi ölçülmüş bir karşılaştırmaya dayanıyor, varsayıma değil.
+
+**Hakem eki — DK-3'ün ÖLÇÜLMÜŞ şekil haritası (H-2, hakem turu, 2026-09-04).** Şef gözlemi Ş-3 bu
+sınıfın ÜÇ şekli olduğunu söylüyordu; hakem altı portu da ölçtü ve şekil **İKİ**. **Bu tool,
+haritanın en uç ucudur: hiçbir iddia yok.**
+
+| port | rezervasyonu pinleyen iddia | onarım uygulanınca |
+|---|---|---|
+| `dfs/competitors.ts:780` | `actualUsd toBeNull` ×2 | KIRMIZI (2) |
+| `dfs/backlinks.ts:408` | `actualUsd toBeNull` ×1 (`backlinks.test.ts:380`) | KIRMIZI (1) |
+| **`dfs/link-gap.ts:322` (bu tool)** | **hiçbir şey** | **YEŞİL (H03)** |
+| `dfs/backlink-details.ts:583` | yalnız `todaySpendUsd` (`:768`) | YEŞİL |
+| `dfs/backlink-changes.ts:489` | yalnız `todaySpendUsd` (`:644`) | YEŞİL |
+| `dfs/disavow-candidates.ts:849` | yalnız `todaySpendUsd` (`:1284`, `:1318`) | YEŞİL |
+
+**Tek PR notu:** düzeltme altı porta birlikte girer — `try` isteği VE ayrıştırmayı kapsar (`finally`
+DEĞİL), `catch` → `settleFailedSpend` → yeniden fırlat; ve **HER portta** "satır kapandı,
+`actualUsd === estimatedUsd`, rows 0" iddiası yazılır. İki portta mevcut iddia TAŞINIR
+("leaves OPEN" → "SETTLES at estimate"), dört portta (bu tool dahil) **eklenir**.
+
 Çalışma ağacı sonunda temiz — `git status --short` ve `git diff --stat` çıktısı: **(boş)**.
 Geri alma sonrası kapı yeniden **160 passed (160) / 4130 passed (4130)**, EXIT=0 (`logs/restore.log`).
 
@@ -146,6 +181,19 @@ aynı gerekçeyle devralındı, yeniden ölçülmedi.
   maliyetini kullanıcıya basmıyor (tasarım — kredi fiyatı düz 45). DFS "daily cap" reddi
   **görülmedi**.
 
+**Sınıf 9 (`dfs_spend` tahmin/gerçek) — ŞEF ÖLÇÜMÜ (Ş-1, hakem turu, 2026-09-04).** Şef prod
+`public.dfs_spend`'i Supabase MCP ile okudu (`spend_day = 2026-09-03` UTC, son iki saat = Dilim 5).
+Bu tool'un ucu:
+
+| uç | n | tahmin | gerçek | oran |
+|---|---|---|---|---|
+| `backlinks/domain_intersection/live` | 2 | 0,0776 | 0,0517 | **1,5×** |
+
+`BUDGET_SAFETY_FACTOR = 1.5` bu uçta **tam olarak** gerçekleşen orandır — tahmin, çarpanın kendisi
+dışında hiçbir fazladan marj taşımıyor. **BİLGİ kalemidir; NEVER#6'ya dokunmaz.** Dilim 5 geneli:
+gerçek ≈ $0,47 ↔ tahmin ≈ $0,95, yani günlük $3 vendor tavanı TAHMİNLE sayıldığı için gerçekte
+yarı yarıya harcanıyor.
+
 **Defter (birebir):**
 `2026-09-03T21:54:36 · -45 credits · charge · link_gap · project: adstark.com.tr`
 `2026-09-03T21:54:11 · -45 credits · charge · link_gap · project: adstark.com.tr`
@@ -201,10 +249,10 @@ Canlı payload bir `list` kartının isteyeceği yapıyı taşıyor: satır baş
 
 | # | şiddet (P0/P1/P2) | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, YYYY-MM-DD) |
 |---|---|---|---|---|---|
-| B-1 | **P1** | **Linkin nitelenip nitelenmediği (R-6.2) ödenen yanıtta VAR, ayrıştırıcıda DÜŞÜRÜLÜYOR — ve tool'un ürün vaadi tam da bu ayrımı gerektiriyor.** "The outreach shortlist" diyen bir liste, linklerinin tamamı `nofollow` olan bir domaini takip edilen link veren bir domainden ayırmıyor. Bu, referansın `link_gap` için adlandırdığı riskin birebir kendisidir | Vendor girdisi 16 alan taşıyor (`fixtures/backlinks-domain-intersection.json`), aralarında `referring_domains_nofollow` + `referring_pages_nofollow`; `intersectionEntrySchema` `dfs/link-gap.ts:196-203` **6** alan okuyor. Canlı L-P1'in 100 satırında `nofollow\|sponsored\|ugc\|rel=` **0 eşleşme**. Aile asimetrisi: `dfs/backlinks.ts:89-93` ve `tools/backlink-details.ts:190-192,224` aynı ekseni okuyor ve basıyor | İki alanı `intersectionEntrySchema`'ya ekle ve satıra vendor'ın KENDİ semantiğiyle bas — `analyze_backlinks`'in `dfs/backlinks.ts:89-91`'de zaten yazdığı uyarı ("AT LEAST ONE nofollow link", nofollow-only sayımı DEĞİL) burada birebir geçerlidir ve **uydurulmadan** kopyalanabilir. Ek vendor çağrısı GEREKMEZ (alan aynı yanıtta), fiyat değişmez → NEVER #6 açılmıyor. Sıralama/filtreleme değiştirilmemeli: R-6.2 bir **açıklama** kuralıdır, "bunları eleme" kuralı değil. Şiddet gerekçesi: hakem bandında (H-1) bu bir çıplak açıklama boşluğu DEĞİL — ürün ödediği veriyi taşıyor ve o veriden **eylem tavsiyesi** ("outreach shortlist") üretiyor; nitelik olmadan tavsiye ölçülmemiş bir iddiadır | |
+| B-1 | ~~P1~~ **P2** (hakem turu, 2026-09-04) | **Linkin nitelenip nitelenmediği (R-6.2) ödenen yanıtta VAR, ayrıştırıcıda DÜŞÜRÜLÜYOR — ve tool'un ürün vaadi tam da bu ayrımı gerektiriyor.** "The outreach shortlist" diyen bir liste, linklerinin tamamı `nofollow` olan bir domaini takip edilen link veren bir domainden ayırmıyor. Bu, referansın `link_gap` için adlandırdığı riskin birebir kendisidir | Vendor girdisi 16 alan taşıyor (`fixtures/backlinks-domain-intersection.json`), aralarında `referring_domains_nofollow` + `referring_pages_nofollow`; `intersectionEntrySchema` `dfs/link-gap.ts:196-203` **6** alan okuyor. Canlı L-P1'in 100 satırında `nofollow\|sponsored\|ugc\|rel=` **0 eşleşme**. Aile asimetrisi: `dfs/backlinks.ts:89-93` ve `tools/backlink-details.ts:190-192,224` aynı ekseni okuyor ve basıyor | İki alanı `intersectionEntrySchema`'ya ekle ve satıra vendor'ın KENDİ semantiğiyle bas — `analyze_backlinks`'in `dfs/backlinks.ts:89-91`'de zaten yazdığı uyarı ("AT LEAST ONE nofollow link", nofollow-only sayımı DEĞİL) burada birebir geçerlidir ve **uydurulmadan** kopyalanabilir. Ek vendor çağrısı GEREKMEZ (alan aynı yanıtta), fiyat değişmez → NEVER #6 açılmıyor. Sıralama/filtreleme değiştirilmemeli: R-6.2 bir **açıklama** kuralıdır, "bunları eleme" kuralı değil. Şiddet gerekçesi: hakem bandında (H-1) bu bir çıplak açıklama boşluğu DEĞİL — ürün ödediği veriyi taşıyor ve o veriden **eylem tavsiyesi** ("outreach shortlist") üretiyor; nitelik olmadan tavsiye ölçülmemiş bir iddiadır. **Şiddet bandı (H-1, hakem turu, 2026-09-04): P1 → P2 — işçinin gerekçesi REDDEDİLDİ.** Aynı sınıfın dört üyesi (`analyze_backlinks` AB-2, `backlink_details` BD-3, bu, `disavow_candidates` B-6) **tek defektin dört yüzüdür** ve tek şiddet taşır; satıcının `dofollow=false`'unu "nofollow" diye basmak yanlış değil KABA bir indirgemedir. "Outreach shortlist" ifadesi ürünün kendi vaadidir, tool hiçbir domaini eleme/ekleme tavsiyesi vermiyor — ayrım açıklama düzeyinde kalıyor. **Kök (H-4, hakem turu): üç ayrıştırıcı, dört tool** — `intersectionEntrySchema` (`dfs/link-gap.ts:196`, `referring_*_nofollow`; bu tool) · `backlinkItemSchema` (`dfs/backlink-details.ts:327`) · `summaryResultSchema` (`dfs/backlinks.ts:206`). Tek dalga, satıcı adlarıyla, yokluk icat edilmeden | |
 | B-2 | P2 | **Kaynaktaki kapsam iddiası deponun kendi fixture'ına karşı yanlış: "the parser in dfs/link-gap.ts, which throws nothing away".** Ayrıştırıcı 16 alanın 10'unu atıyor; ayrıca cümle `referring_links_*` diye var olmayan bir alan ailesi adlandırıyor | `tools/link-gap.ts:188-190` ↔ fixture girdi anahtarları (§1'de tam liste) | Cümleyi ölçülene çevir: iddia edilen şey **sayfa URL'i yokluğudur** ve o doğru — "the parser reads six of the entry's fields and no URL is among them" gibi. Bir yorum, kapsamadığı bir eksende garanti veriyormuş gibi okunduğunda B-1'i "kontrol edilmiş" gösterir; bu bulgunun B-1'den ayrı yazılmasının sebebi budur (ders 12: yeşil görünen kontrol). **P2, P1 değil:** bu bir kod yorumudur, kullanıcıya basılan bir iddia değil | |
-| B-3 | P2 | **DK-3 (NEVER #5): port hatasında DFS rezervasyonu açık kalıyor ve bunu pinleyen HİÇBİR test yok.** `reserveSpend` 1 / `settleSpend` 1 / catch-settle **0**; dosyada `try` bloğu yok. Dilim 4'ün onarımı (`settleFailedSpend`) uygulandığında kapı **yeşil kalıyor** — yani ne mevcut davranış ne onarım ölçülüyor | `dfs/link-gap.ts:322` (reserve) ↔ `:351` (settle); `grep -c "settleFailedSpend" dfs/link-gap.ts` → 0. Mutasyon M-LG4: onarım uygulandı → **4130 passed (4130), EXIT=0** (`logs/m-lg4.log`) | Onarımı `keyword-gap.ts:386-391` deseniyle uygula VE onunla birlikte pini yaz — onarım tek başına, bir sonraki refactor'da sessizce geri alınabilir. **Kardeşiyle karşılaştırma önemli:** `compare_competitors`'ta aynı mutasyon KIRMIZI verir (M-CC4), çünkü orada davranış iki testle pinli. Yani DK-3'ün altı portu **tek sınıf değil**: bir kısmı pinli-sızdıran, bir kısmı (bu) pinsiz. Düzeltme dalgası bu ayrımı taşımalı, yoksa `compare_competitors`'ın testleri kırmızı verir ve "onarım yanlış" diye okunur (bkz. o kaydın M-CC4 notu) | |
-| B-4 | P2 | **`plan.mjs:149` EXCLUDED gerekçesi bayat (ders 16).** "Same missing per-site competitor input as keyword_gap" — kardeşinin gerekçesi #223'te tarihlendi ve genişletildi, bu satır güncellenmedi; üstelik aynı blokun "all four ran PAID on 2026-09-03" yorumu artık eksik sayıyor (`link_gap` bu turda ücretli koştu) | `scripts/testing/plan.mjs:126-131` (blok yorumu) ↔ `:143-148` (keyword_gap, güncel) ↔ `:149` (bu satır) | Satırı kardeşiyle aynı biçime getir: bütçe imzasının geldiği, tool'un 2026-09-04'te ücretli koştuğu, ve kalan tek engelin matriste `competitor` kolonu olmadığı yazılsın. Kapı bayat GEREKÇEYİ ölçmez (`tool-sweep.mjs` yalnız PLAN/EXCLUDED üyeliğine bakar) — bu yüzden prose kalır | |
+| B-3 | ~~P2~~ **P1** (hakem turu, 2026-09-04) | **DK-3 (NEVER #5): port hatasında DFS rezervasyonu açık kalıyor ve bunu pinleyen HİÇBİR test yok.** `reserveSpend` 1 / `settleSpend` 1 / catch-settle **0**; dosyada `try` bloğu yok. Dilim 4'ün onarımı (`settleFailedSpend`) uygulandığında kapı **yeşil kalıyor** — yani ne mevcut davranış ne onarım ölçülüyor | `dfs/link-gap.ts:322` (reserve) ↔ `:351` (settle); `grep -c "settleFailedSpend" dfs/link-gap.ts` → 0. Mutasyon M-LG4: onarım uygulandı → **4130 passed (4130), EXIT=0** (`logs/m-lg4.log`) | Onarımı `keyword-gap.ts:386-391` deseniyle uygula VE onunla birlikte pini yaz — onarım tek başına, bir sonraki refactor'da sessizce geri alınabilir. **Kardeşiyle karşılaştırma önemli:** `compare_competitors`'ta aynı mutasyon KIRMIZI verir (M-CC4), çünkü orada davranış iki testle pinli. Yani DK-3'ün altı portu **tek sınıf değil**: bir kısmı pinli-sızdıran, bir kısmı (bu) pinsiz. Düzeltme dalgası bu ayrımı taşımalı, yoksa `compare_competitors`'ın testleri kırmızı verir ve "onarım yanlış" diye okunur (bkz. o kaydın M-CC4 notu). **Şiddet bandı (H-1, hakem turu, 2026-09-04): P2 → P1** — DK-3 doğrudan NEVER#5 (bütçe) eksenidir, kardeşleri `backlink_changes` B-3 ve `disavow_candidates` B-3 zaten P1 yazıyor, ve altı kopya TEK PR'da kapanacağı için tek şiddet taşımalı. **Hakem doğrulaması (H03/H05, 2026-09-04):** işçinin iki yönlü ölçümü de bağımsız olarak tuttu — onarım burada YEŞİL, kardeş portta 2 KIRMIZI. Şekil haritası §2'de (H-2): altı portun ikisinde iddia TAŞINIR, **dördünde (bu tool dahil) EKLENİR** | |
+| B-4 | P2 | **`plan.mjs:149` EXCLUDED gerekçesi bayat (ders 16).** "Same missing per-site competitor input as keyword_gap" — kardeşinin gerekçesi #223'te tarihlendi ve genişletildi, bu satır güncellenmedi; üstelik aynı blokun "all four ran PAID on 2026-09-03" yorumu artık eksik sayıyor (`link_gap` bu turda ücretli koştu) | `scripts/testing/plan.mjs:126-131` (blok yorumu) ↔ `:143-148` (keyword_gap, güncel) ↔ `:149` (bu satır) | Satırı kardeşiyle aynı biçime getir: bütçe imzasının geldiği, tool'un 2026-09-04'te ücretli koştuğu, ve kalan tek engelin matriste `competitor` kolonu olmadığı yazılsın. Kapı bayat GEREKÇEYİ ölçmez (`tool-sweep.mjs` yalnız PLAN/EXCLUDED üyeliğine bakar) — bu yüzden prose kalır. **Hakem eki (H-5, hakem turu, 2026-09-04) — TEK DÜZELTME:** bayatlık `plan.mjs`'te **beş** ardışık satırda duruyor: `:149` (bu tool) · `:150` (`backlink_changes`) · `:151` (`backlink_details`) · `:152` (`disavow_candidates`) · `:153` (`audit_speed`). Dilim 4 sınıf 6'nın "KAPANDI #223" kaydı yalnız DÖRT satır içindi ve o dördün hiçbiri bunlar değil — yani sınıf kapanmadı, **POZİSYON değiştirdi** (ders 14, üçüncü tekrar). Beş satır tek düzeltmede kapanmalı; tool başına kapatmak sonuncuyu unutturur | |
 | B-5 | P2 | **Kesilme cümlesi `limit`'i adlandırmıyor** — `keyword_gap` G-2'nin kardeş yüzeydeki aynısı. `100 of 302` ve `3 of 302` doğru, ama okuyucu 100'ün vendor tavanı mı, tool varsayılanı mı, kendi `limit`'i mi olduğunu ayırt edemiyor | Canlı L-P1 (`limit` yok → `100 of 302`) ↔ L-P2 (`limit:3` → `3 of 302`); `renderLinkGapHeader` `tools/link-gap.ts:107-120` `limit`'i hiç okumuyor | `keyword_gap` G-2 ile **tek düzeltme** olarak kesilmeli: iki tool'un başlık render'ı aynı üç durumu (vendor sessiz / hepsi bu / kesildi) zaten aynı sözlükle anlatıyor, eksik olan yalnız KİM kesti bilgisi. Ayrı ayrı kapatılırsa iki gap tool'u aynı soruyu iki farklı cümleyle cevaplar — Dilim 4 sınıf 3'ün tam olarak kaçındığı ayrışma | |
 
 `durum` sütunu ölçüm turunda BOŞ bırakılır; kapatan tur doldurur (izinli değerler `_SABLON.md`'de).
