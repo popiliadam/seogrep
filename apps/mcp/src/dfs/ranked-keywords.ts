@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import {
   KEYWORD_OVERVIEW_ESTIMATE_MARGIN,
   defaultDfsTransport,
@@ -499,6 +505,14 @@ export interface LiveRankedKeywordsOptions {
  * (item_types) so the credits buy the organic ranking picture the tool advertises, and ORDERED
  * (order_by) so `limit` truncates the top of the set rather than an arbitrary slice of it;
  * (3) parse; (4) settle the reservation with the REAL cost (response `cost`, else the estimate).
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3 class, 2026-09-03). Steps
+ * (2) and (3) both throw — a refused locale pair comes back as a non-20000 task, and the reader
+ * refuses a moved shape — and both used to walk out past step (4), leaving a `dfs_spend` row that
+ * nobody would ever close. The sibling shape was read off production (A-3). Settling AT THE
+ * ESTIMATE keeps the money argument intact: an open row already counts at its estimate through
+ * 0014's `coalesce(actual_usd, estimated_usd)`, so the $3 cap sees the identical number and
+ * `status=open` goes back to meaning "in flight". See settleFailedSpend.
  */
 export function createLiveRankedKeywordsClient(
   opts: LiveRankedKeywordsOptions,
@@ -514,30 +528,41 @@ export function createLiveRankedKeywordsClient(
       const estimate = estimateRankedKeywordsCostUsd(query.limit);
       const reservation = await reserveSpend(estimate, DFS_RANKED_KEYWORDS_ENDPOINT, ledger);
 
-      // (2) POST the query. `order_by` is what makes `limit` mean "the top N": the vendor sorts
-      // the whole ranked set and THEN truncates, so without it a narrow request was an arbitrary
-      // slice the product was describing as the best one.
-      const response = await transport(DFS_RANKED_KEYWORDS_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([
-          {
-            target: query.target,
-            limit: query.limit,
-            order_by: [RANKED_KEYWORDS_SORTS[query.sort]],
-            language_code: query.language_code,
-            location_code: query.location_code,
-            item_types: ["organic"],
-          },
-        ]),
-      });
-      if (!response.ok) {
-        throw new Error(`DataForSEO request failed: HTTP ${response.status}`);
+      // (2) POST the query and (3) parse it, inside ONE try: that span is the whole opening
+      // between the reservation and its settlement, and every throw in it used to leave the
+      // reservation open. Not a `finally` — a `finally` would also run after the settlement in
+      // (4) and turn every healthy call into a doomed second settle.
+      let raw: unknown;
+      let result: ReturnType<typeof parseRankedKeywordsResponse>;
+      try {
+        // `order_by` is what makes `limit` mean "the top N": the vendor sorts the whole ranked set
+        // and THEN truncates, so without it a narrow request was an arbitrary slice the product
+        // was describing as the best one.
+        const response = await transport(DFS_RANKED_KEYWORDS_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([
+            {
+              target: query.target,
+              limit: query.limit,
+              order_by: [RANKED_KEYWORDS_SORTS[query.sort]],
+              language_code: query.language_code,
+              location_code: query.location_code,
+              item_types: ["organic"],
+            },
+          ]),
+        });
+        if (!response.ok) {
+          throw new Error(`DataForSEO request failed: HTTP ${response.status}`);
+        }
+        raw = await response.json();
+        result = parseRankedKeywordsResponse(raw, query.target);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error
+        // stays the one the caller sees.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-
-      // (3) Parse.
-      const raw: unknown = await response.json();
-      const result = parseRankedKeywordsResponse(raw, query.target);
 
       // (4) Settle the reservation at the real cost (falls back to the estimate when the
       // response omits it), so the day's total reflects what was actually billed.
