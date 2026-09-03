@@ -346,6 +346,46 @@ describe("the request body", () => {
     ]);
     expect(ORDER_VENDOR_FIELD).toBe("metrics.organic.count");
   });
+
+  /**
+   * A-3, THE DIAGNOSIS — RECORDED, NOT ENDORSED.
+   *
+   * The live round found that `item_types: ["featured_snippet"]`, a value this tool's own schema
+   * advertises, comes back as `Tool "my_pages" failed unexpectedly … reference 457d2b7d`. The
+   * server log behind that reference was not readable from here, so the CAUSE is measured from the
+   * request we build rather than guessed from the reply we got:
+   *
+   *   the request excludes `organic` and then SORTS BY `metrics.organic.count`.
+   *
+   * DataForSEO's `order_by` names a path inside the metrics it was asked to return, and the path
+   * this body names is not in them. That is the module's OWN documented trap D4, from its header:
+   * "the task comes back non-20000, we throw, and the reservation stays open having spent money for
+   * nothing" — which is exactly the pair of symptoms the live call produced (a rejected task and,
+   * before A-3, an open `dfs_spend` row). `min_organic_etv` / `min_organic_count` carry the same
+   * mismatch into `filters` when a caller combines them with a non-organic item type.
+   *
+   * WHAT IS NOT CLAIMED. Whether the vendor rejects this specific combination, or accepts it and
+   * ignores the sort, was NOT measured — that costs a live paid call, and the day's ceiling was
+   * already spent. This spec therefore pins the MISMATCH, which is a fact about our own code, and
+   * not a prediction about the vendor's answer.
+   *
+   * IT IS A CHARACTERISATION PIN. Repairing this — deriving the sort from the requested item types
+   * — changes what goes on the wire on a PAID endpoint and is signature item A-3; when that is
+   * signed, this spec goes red and is rewritten as the new contract. Narrowing the enum instead is
+   * the other candidate and is likewise a signature question. Neither is decided here.
+   */
+  it("A-3: sorts by an ORGANIC field even when organic was not requested (measured mismatch)", () => {
+    const body = buildRelevantPagesRequestBody(
+      queryFor({ item_types: ["featured_snippet"], min_organic_etv: 1 }),
+    );
+    expect(body.item_types).toEqual(["featured_snippet"]);
+    expect(body.order_by).toEqual(["metrics.organic.count,desc"]);
+    expect(body.filters).toEqual([["metrics.organic.etv", ">=", 1]]);
+    // Said as the relationship rather than as two literals, so the claim survives a rename: the
+    // sort names an item type this request told the vendor not to return.
+    const sortedOn = (body.order_by as string[])[0]?.split(".")[1];
+    expect(body.item_types).not.toContain(sortedOn);
+  });
 });
 
 // =============================================================================================
@@ -915,7 +955,25 @@ describe("budget", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it("leaves the reservation OPEN at its estimate when the request fails", async () => {
+  /**
+   * A-3 — A CONTRACT THAT CHANGED, not a spec bent to fit the code.
+   *
+   * This block used to be titled "leaves the reservation OPEN at its estimate when the request
+   * fails" and it passed for the right reason: that WAS the contract. Production then measured
+   * what the contract costs — `relevant_pages/live · status=open · estimated 0.036 · actual null`,
+   * still open 45 minutes after the call died. `status=open` is the operator's only signal for a
+   * call in flight, and dead reservations are how it stops meaning anything.
+   *
+   * THE MONEY HALF OF THE OLD CLAIM IS KEPT AND STILL ASSERTED, because it was the sound half: the
+   * row settles at its ESTIMATE and never below it. 0014's counter is
+   * `coalesce(actual_usd, estimated_usd)`, so today's total is unchanged to the cent — which is
+   * why this is hygiene rather than a loosening of the $3 cap (NEVER #5).
+   *
+   * Both failure shapes, because they fail in different places and one `try` around the wrong span
+   * would catch only the first: the vendor never answering usefully (HTTP), and the vendor
+   * answering with a REJECTED TASK, which is what the live call actually took.
+   */
+  it("SETTLES the reservation at its estimate when the request fails", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: false,
       status: 502,
@@ -925,8 +983,45 @@ describe("budget", () => {
       liveClient(transport, ledger).fetchRelevantPages(queryFor({ limit: 400 })),
     ).rejects.toThrow(/HTTP 502/);
     const row = ledger.rows()[0];
-    expect(row?.actualUsd).toBeNull();
     expect(row?.estimatedUsd).toBe(estimateRelevantPagesUsd(400));
+    // Closed, at the number an open row already counted as — never null, and never lower.
+    expect(row?.actualUsd).toBe(estimateRelevantPagesUsd(400));
+    expect(row?.rowCount).toBe(0);
+    // The whole point of settling at the estimate rather than at the vendor's reported cost: the
+    // day's total is byte-identical to what the open row contributed.
+    await expect(ledger.todayUsd()).resolves.toBe(estimateRelevantPagesUsd(400));
+  });
+
+  it("settles it when the vendor REJECTS the task, which is the shape that was measured", async () => {
+    // A non-20000 task carrying `cost: 0`. Settling at that reported zero would report a call the
+    // vendor may well have billed as free; the estimate is what is booked instead.
+    const rejected = {
+      status_code: 20000,
+      cost: 0,
+      tasks: [{ status_code: 40501, status_message: "Invalid Field: 'order_by'", cost: 0 }],
+    };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => rejected,
+    }));
+    await expect(
+      liveClient(transport, ledger).fetchRelevantPages(queryFor({ limit: 100 })),
+    ).rejects.toThrow(/task failed \(status 40501\)/);
+    const row = ledger.rows()[0];
+    expect(row?.actualUsd).toBe(estimateRelevantPagesUsd(100));
+    expect(row?.actualUsd).not.toBe(0);
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * rejects a second settle of the same row ("already settled"), and settleSpend swallows that —
+   * so the count of rows, not an exception, is the evidence.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    await liveClient(fixtureTransport(), ledger).fetchRelevantPages(queryFor());
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBe(fixture.cost);
   });
 });
 
