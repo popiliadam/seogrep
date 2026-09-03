@@ -15,20 +15,24 @@ Operatör kararları (2026-09-02): "kredi sınırımız yok, bütün izinleri ve
 | 0 hazırlık | — | KAPANDI (#200) |
 | 1 ücretsiz 12 | hesap/proje/yönlendirme | KAPANDI — ölçüm #202, düzeltme #203 #204 #205 #206, kapanış #207; canlıda doğrulandı |
 | 2 crawl + 5 audit | crawl_site, audit_tech/schema/speed/onpage/content | KAPANDI — ölçüm #208, düzeltme #209 #210 #211 #212, kapanış #213; canlıda doğrulandı |
-| 3 GSC 5 | pull_gsc_data, find_quick_wins, detect_cannibalization, analyze_content_decay, keyword_positions | KAPANDI — ölçüm #214, düzeltme #215 #216 #217 main'de ve canlıda doğrulandı (8/9 P1; F-5 → Dilim 4); kapanış #218 (docs, CI'da — merge edilmediyse merge et) |
-| 4 anahtar kelime 7 | research_keywords, discover_keywords, ranked_keywords, keyword_gap, serp_snapshot, track_keywords(✔ D1), my_pages | BAŞLAMADI |
+| 3 GSC 5 | pull_gsc_data, find_quick_wins, detect_cannibalization, analyze_content_decay, keyword_positions | KAPANDI — ölçüm #214, düzeltme #215 #216 #217 main'de ve canlıda doğrulandı (8/9 P1); **F-5 Dilim 4'te #221 ile TAM kapandı ve canlıda okundu**; kapanış #218 (docs — merge edilmediyse merge et) |
+| 4 anahtar kelime 7 | research_keywords, discover_keywords, ranked_keywords, keyword_gap, serp_snapshot, track_keywords(✔ D1), my_pages | **KAPANDI** — ölçüm #220, düzeltme #222 #221 #223 #224 (dördü de main'de, CI `verify-db` DAHİL yeşil), kapanış `_DILIM4-KAPANIS.md`; A+C+B (`8cc06dd`) canlıda doğrulandı, D (`5a8252f`) canlıda ölçülemez (vendor hata yolu) |
 | 5 backlink 6 | analyze_backlinks, backlink_changes, backlink_details, disavow_candidates, link_gap, compare_competitors | BAŞLAMADI |
 | 6 rapor + AI 4 | generate_report, whats_next(✔ D1), ai_visibility, ai_visibility_compare | BAŞLAMADI — H-01 (AI bütçe tavanı kanıtı) önce |
 
-Kredi: 4519 → 4152 (2026-09-03 19:03). Hepsi ölçüm/doğrulama; defterle eşleşiyor. Fiyat değişmedi.
+Kredi: 4519 → 3532 (2026-09-04). Hepsi ölçüm/doğrulama; defterle eşleşiyor. Fiyat değişmedi (dört PR'ın `credits/costs.ts` diff'i BOŞ). Dilim 4'ün payı 620 = ölçüm 482 + `find_quick_wins` 10 + kapanış canlı turu 128.
 
 ## Bir sonraki oturumun ilk 5 adımı
 
-1. `git fetch origin main:main` (ders: yerel main bayat olabilir) · `gh pr view 218` — docs-only kapanış PR'ı; CI yeşilse merge et (verify-db 502 flake'i ise `gh run rerun <id> --failed`).
-2. Canlı sonda script'i her oturumda yeniden yazılır (`scratchpad` uçar): `scripts/testing/transport.mjs` (`makeHttpTransport`, `initializeSession`, `callTool`) + `redact.mjs` (`makeRedactor`) + `runner.mjs` (`resultText`, `parseBalance`); env `set -a && . ~/.zshrc >/dev/null 2>&1; set +a`; `MCP_SMOKE_URL` yolunda anahtar, ASLA basma; Δ defter satırından (`list_credit_activity`, artık `project:` kapsamlı).
-3. Dilim 3'te kalan tek canlı boşluk: `find_quick_wins` yeni cümleleri (CTR, R-7.11, precondition) canlıda görülmedi — Dilim 4 turunda 10 kredilik tek çağrıyla kapat.
-4. Dilim 4 ölçüm: 3 işçi (research+discover / ranked+my_pages / keyword_gap+serp_snapshot). DFS günlük tavan $3 → vendor'a çıkan çağrılar (research 0.10, ranked 0.20, discover/my_pages Labs) bir güne sığmayabilir; iş emrine tool başına tavan yaz. `serp_snapshot` kaydına Dilim 3 F-5'i (SERP özellikleri yazılıp okunmuyor) taşı.
-5. Her dilimde: hakem raporundaki "kapı ölçmedi" kalemlerini kayıtlara işle; imza kalemlerini operatöre tek listede sor.
+1. `git fetch origin main:main` **dallanmadan ÖNCE** (ders: yerel main bayat olabilir; 2026-09-03'te üç işçi bir PR gerideki tabanda ölçtü). Açık docs PR'ları: #218 (Dilim 3 kapanışı) ve Dilim 4 kapanış PR'ı — CI yeşilse merge et. Kardeş PR **BEHIND** kalırsa `gh pr update-branch <n>`: **auto-merge bu depoda KAPALI** ve çakışan PR'da Actions hiç koşmaz.
+2. Canlı sonda script'i her oturumda yeniden yazılır (`scratchpad` uçar): `scripts/testing/transport.mjs` (`makeHttpTransport`, `initializeSession`, `callTool`) + `redact.mjs` + `runner.mjs`; env `set -a && . ~/.zshrc >/dev/null 2>&1; set +a`; `MCP_SMOKE_URL` yolunda anahtar, ASLA basma; Δ defter satırından (`list_credit_activity`, `project:` kapsamlı).
+3. **Dilim 4'ten kalan iki canlı boşluk:** `ranked_keywords` (65 kr — flat-zero notu + `SEARCH_VOLUME_NOTE` + `MODEL_PRECISION_CLAUSE` kendi yüzeyinde) ve `keyword_gap` (45 kr — hacim şerhi + lokal uyarısı). İkisi de bugün yalnız birim düzeyinde kanıtlı.
+4. **Dilim 5 ölçümü — backlink ailesi 6 tool:** `analyze_backlinks`, `backlink_changes`, `backlink_details`, `disavow_candidates`, `link_gap`, `compare_competitors`. Notlar iş emrine:
+   - **DFS vendor maliyeti yüksek** — `analyze_backlinks` ≈ $0,30, `compare_competitors` ≈ $0,35: günlük **$3 tavanı** iş emrine tool başına yazılır, aile bir güne sığmayabilir.
+   - **DK-3 sınıfı bu ailede AÇIK ve konumlarıyla biliniyor** (#224'ün "Ölçülmeyen"i): `backlink-changes:489 · backlinks:408 · competitors:780 · lighthouse:554 · link-gap:322 · disavow-candidates:849 · backlink-details:583 · llm-mentions:1157+1177` — reserve 1 / settle 1 / **catch-settle 0**. Ölçüm işçisi bunu ölçer, düzeltme işçisi `settleFailedSpend` desenini uygular.
+   - **Sınıf 7 (core update takvimi)** `compare_competitors` ve `backlink_changes`'ta ölçülecek — takvim `gsc-data/google-updates.ts`'te VERİ olarak zaten var.
+   - **Rakip domain hâlâ operatörde yok** → `compare_competitors` keşfiyle doldurulacak; `link_gap` ve `keyword_gap` aynı girdiyi bekliyor.
+5. Her dilimde: hakem raporundaki "kapı ölçmedi" kalemlerini kayıtlara işle; imza kalemlerini operatöre tek listede sor (Dilim 4 sonrası **10 kalem** — `_DILIM4-KAPANIS.md` imza tablosu).
 
 ## Operatörde bekleyen kararlar (hiçbiri bloke etmiyor)
 
@@ -38,11 +42,13 @@ Kredi: 4519 → 4152 (2026-09-03 19:03). Hepsi ölçüm/doğrulama; defterle eş
 4. `audit_speed` mobil ekseni (`for_mobile: true`) vendor maliyetini ×2 yapar.
 5. `find_quick_wins` sıralama politikası (gösterime göre → en düşük CTR'lı başa) — B-1b.
 6. Rakip domain (Dilim 4/5 için).
-7. **Operatör kuyruğu, migration:** `create unique index jobs_one_active_crawl_per_project on public.jobs (project_id) where tool='crawl_site' and status in ('queued','running')` — yarış penceresini kapatır; `enqueueJob` 23505'i yakalayıp mevcut job_id'yi döndürmeli; düz create.
+7. **Dilim 4'ten gelen yeni imza kalemleri (ayrıntı `_DILIM4-KAPANIS.md`):** `discover_keywords` 100.000 hacim tavanı (İKİ ayrı canlı ölçümde de işlevsiz) · `my_pages` `item_types` enum'u + "failed unexpectedly" metni · `my_pages` ADI · `costs.ts:60` gerekçe bloğu (rakam DEĞİŞMEZ) · `serp_snapshot` kısmi başarısızlıkta fiyat · prod'daki bayat `Turkey` serisi · referans şerhleri (şerh mi kalıcı düzeltme mi) · `discover_keywords` deterministik kova-içi sıralama (pinli "does not re-order" vaadiyle çelişir).
+8. **Prod'da açık `relevant_pages` rezervasyonu** (2026-09-03 19:31, `estimated 0.036`): yeni kod eskiyi kapatmaz, reaper sayar; kapanmadıkça günlük $3 tavanından tahminiyle pay yer.
+9. **Operatör kuyruğu, migration:** `create unique index jobs_one_active_crawl_per_project on public.jobs (project_id) where tool='crawl_site' and status in ('queued','running')` — yarış penceresini kapatır; `enqueueJob` 23505'i yakalayıp mevcut job_id'yi döndürmeli; düz create.
 
 ## Devreden teknik kalemler (kayıtlarda adıyla; öncelik sırasıyla)
 
-- **`goals/` hedefleri hiç yazılmadı** (üç dilimde de): NEVER#4 kiracı filtreleri (6+ konum artık hızlı şeritte pinli, goals predicate yok) · audit_schema tip tablosu = R-2.1 galeri · audit_speed eşik+ücret · kök-URL koruması · Google güncelleme takvimi bayatlığı (90 gün) · hreflang ISO tablosu.
+- **`goals/` hedefleri hiç yazılmadı** (DÖRT dilimde de — Dilim 4'te de hiçbir PR `goals/` altına dosya eklemedi; ölçüldü). Dilim 4'ün eklediği iki hedef: `ranked_keywords` B-1 ücret kapsamı süpürgesi · `my_pages` A-1 crawl kiracı zinciri. Önceki üç dilimden: NEVER#4 kiracı filtreleri (6+ konum artık hızlı şeritte pinli, goals predicate yok) · audit_schema tip tablosu = R-2.1 galeri · audit_speed eşik+ücret · kök-URL koruması · Google güncelleme takvimi bayatlığı (90 gün) · hreflang ISO tablosu.
 - `charge:"handler"` ücret adı/tutarı çağrı yerinde: audit_speed + keyword_positions pinli; diğer 14'ü aile taraması yalnız `projectId` anahtarını görüyor, tutarı değil.
 - Registry: zod-issue çok satırlı ret + "You were not charged" birleştirmesi (sınıf 9 kalan yarısı).
 - `format.ts` (schema) "No JSON-LD @type found anywhere on the site" kapsamdan bağımsız (S-B7 ikinci yarısı).
@@ -63,11 +69,17 @@ Kredi: 4519 → 4152 (2026-09-03 19:03). Hepsi ölçüm/doğrulama; defterle eş
 - Mutasyon deneyleri mtime bozar → `make verify` "dist is STALE" (exit 2) → `pnpm --filter @pseo/mcp build`.
 - İşçi/hakem "bölünemedi" ve "PSI/DFS/vendor çağrısı yapar" gibi iddiaları da hipotezdir (ders 13): bu turda audit_speed PSI değil DFS Lighthouse, keyword_positions vendor'a çıkmıyor, 100k satır tavanı depolamayla çelişiyordu.
 - MCP'nin kendi seogrep bağlantısı bu oturumda düştü; canlı çağrı yolu daima `transport.mjs`.
+- **Kardeş PR BEHIND** → `gh pr update-branch <n>`; auto-merge bu depoda KAPALI ve çakışan PR'da Actions hiç koşmaz (Dilim 4'te dört paket üst üste bunu yaşadı).
+- **GitHub API 1 dakikalık kopma** yaşandı (Dilim 4 merge turunda); `gh` hatası ağın kendisi olabilir, PR'ı suçlamadan tekrar dene.
+- **Aday flake'ler (bir kez görüldü, izole tekrarında yeşil):** `server.test.ts > the card is readable cross-origin` (`expected null to be '*'`) — dal CORS'a dokunmuyordu.
+- **`gen-tool-docs.mjs` `dist` bağımlılığı fail-closed:** yetim/eksik `dist` varken gerçek çıkış kodu 1'dir. K-2'nin "reddetmiyor" iddiası 2026-09-02'de YANLIŞ çıktı — ilk okuma `| tail` sonrası `$?` tuzağıydı; kapı çıktısı DOSYADAN okunur.
 
-## Son durum (2026-09-03 19:05)
+## Son durum (2026-09-04, Dilim 4 kapanışı)
 
 - #217 `bbc259d` main'de; deploy başarılı (`uptime` 3090 s'de ölçüldü).
 - GSC canlı sondası (dentnotion, Δ −25, defter üç satırda `project: dentnotion.com`): sayfalama 21.342 / 29.603 satır (eski tavan 15.000) · core-update notu listenin başında · gösterim/pozisyon satırı · ana sayfa fold edilmiyor ("is left out"); hub `/doktorlarimiz/` bilinen açık yarı; `truncated` cümlesi bu mülkte tetiklenmedi.
 - Dilim 3 kapanış PR #218: canlı eki commit'lendi, CI koşuyor; merge edilmediyse taze oturumun ilk işi.
+- **Dilim 4'te 5 PR merge edildi: #220 (ölçüm) · #222 A · #221 C · #223 B · #224 D**; dördünün de CI'ı `verify-db` DAHİL yeşil. Deploy `8cc06dd` (A+C+B) canlıda doğrulandı (Δ −128); `5a8252f` (D) deploy'u kapanış yazılırken koşuyordu ve **canlı doğrulaması yapılamaz** (vendor hata yolu).
+- Dilim 4 hakem turları: 3 ölçüm işçisi + 1 taze Opus hakem (6/6 PASS) + 4 Fable düzeltme hakemi (dördü de PASS). Sapmalar `_DILIM4-KAPANIS.md`'nin hakem tablosunda.
 - Bu oturumda toplam 18 PR merge edildi (#200–#217), 1 açık (#218). Hakem turları: Dilim 1 3 işçi + 1 hakem + 4 Fable; Dilim 2 4 işçi + 1 hakem + 4 Fable (1 FAIL→PASS); Dilim 3 2 işçi + 1 hakem + 3 Fable (1 FAIL→PASS).
 - Açık worktree'ler: `/Users/apple/dev/pseo-wt/{dilim1-*,d1-*,d2-*,d3-*}` (15) + önceki turlardan ~40 — merge edilmiş dallar `git worktree remove` ile temizlenebilir (silme = operatör onayı).
