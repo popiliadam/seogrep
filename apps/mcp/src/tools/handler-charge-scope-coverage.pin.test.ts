@@ -27,22 +27,54 @@ function sourceOf(tool: string): string {
   return readFileSync(`${SOURCE_DIR}/${tool.replaceAll("_", "-")}.ts`, "utf8");
 }
 
+/** How many CODE lines of the meta object are read once the guard call has been found. */
+const META_WINDOW = 8;
+/** How many CODE lines above its guard call a `const meta = …` binding may sit. */
+const BINDING_REACH = 4;
+
+/** Source with comment lines dropped, so a window is a count of CODE and not of prose. */
+function codeLines(tool: string): readonly string[] {
+  return sourceOf(tool)
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+}
+
 /**
- * Does this tool's own `withCredits` meta name a project scope?
+ * The lines of the credit meta THIS tool hands `withCredits`, ANCHORED ON THE GUARD CALL.
  *
- * The window is the `tool: "<name>"` line plus the few that follow, because the meta is written
- * both ways in the tree: on one line for a per-call tool, spread over several where a `units`
- * count shares the object. A whole-file search would pass on any file that mentions `projectId`
- * anywhere — including the run-row writes that were ALREADY correct while the ledger was blank,
- * which is the exact confusion this finding was made of.
+ * The anchor matters more than the window. Anchoring on the first `tool: "<name>"` in the file —
+ * which is what this check did first — reads whichever object happens to come first, and several
+ * of these tools write a RUN ROW carrying the very same `tool:` key and a `projectId` beside it.
+ * Those writes were already correct while the ledger row was blank, so a check anchored on them
+ * reports green for exactly the defect it was written to find.
+ *
+ * Two shapes exist in the tree and both are followed from the call outwards: the meta inline in
+ * the `withCredits(...)` arguments, or bound to `const meta = …` immediately above it. A binding
+ * further away than BINDING_REACH THROWS rather than falling back to a file-wide search — the
+ * fallback is the hole, not the missing match.
  */
-const META_WINDOW = 6;
+function creditMetaLines(tool: string): readonly string[] {
+  const lines = codeLines(tool);
+  const call = lines.findIndex((line) => line.includes("withCredits("));
+  if (call === -1) throw new Error(`no withCredits call found in "${tool}"`);
+  const inline = lines.slice(call, call + META_WINDOW);
+  if (inline.some((line) => line.includes(`tool: "${tool}"`))) return inline;
+  const above = lines.slice(Math.max(0, call - BINDING_REACH), call);
+  for (let i = above.length - 1; i >= 0; i -= 1) {
+    const line = above[i] as string;
+    if (!line.includes("const meta =")) continue;
+    if (!line.includes(`tool: "${tool}"`)) break;
+    return [line];
+  }
+  throw new Error(
+    `the credit meta for "${tool}" is neither inline at its withCredits call nor bound within ` +
+      `${BINDING_REACH} code lines above it — and a window that widens to find it would start ` +
+      "matching run-row writes instead",
+  );
+}
 
 function namesProjectScope(tool: string): boolean {
-  const lines = sourceOf(tool).split("\n");
-  const start = lines.findIndex((line) => line.includes(`tool: "${tool}"`));
-  if (start === -1) throw new Error(`no withCredits meta found for "${tool}"`);
-  return lines.slice(start, start + META_WINDOW).some((line) => line.includes("projectId"));
+  return creditMetaLines(tool).some((line) => line.includes("projectId"));
 }
 
 /**

@@ -33,6 +33,12 @@ export const PROJECT: ProjectRef = { id: PROJECT_ID, domain: "example.com", arch
 /** The bare-subject call names a domain that is nobody's project — the commonest paid call. */
 export const BARE_TARGET = "competitor.com";
 
+/**
+ * A well-formed uuid the loader below does NOT own: another tenant's project, or none at all.
+ * Production cannot tell those two apart and neither can this (project-target.ts).
+ */
+export const FOREIGN_PROJECT_ID = "0d9b7c31-5e42-4f18-9a63-8c05e21d7b4a";
+
 /** Models the real loader: rows are keyed by (userId, projectId), so nobody sees another tenant's. */
 export const loadProject: LoadProjectFn = async (userId, projectId) =>
   userId === CTX.userId && projectId === PROJECT_ID ? PROJECT : null;
@@ -85,6 +91,26 @@ export function describeProjectScope(cases: readonly ProjectScopeCase[]): void {
       const args = await reserveFor(scope.make, scope.bare);
       expect(args?.p_tool).toBe(scope.tool);
       expect(args?.p_project_id).toBeNull();
+    });
+
+    /**
+     * THE SOURCE, not just the value. The two assertions above are equally happy with
+     * `projectId: input.project_id` — the caller's RAW, unchecked string — which would write
+     * another tenant's project id onto this tenant's ledger row and turn `list_credit_activity
+     * project_id=…` into an existence oracle for project ids that are not theirs.
+     *
+     * What separates the two is WHERE the id comes from: the ownership-gated resolver runs BEFORE
+     * the reserve, so a project the caller does not own is refused for free and there is no reserve
+     * at all. Undefined here is therefore the whole claim — it says the gate ran first, which no
+     * assertion about a recorded id can say (signed lesson 12: a spec that would pass on the wrong
+     * mechanism is not measuring the mechanism).
+     */
+    it("opens NO reserve at all for a project id that is not the caller's", async () => {
+      const args = await reserveFor(scope.make, {
+        ...scope.project,
+        project_id: FOREIGN_PROJECT_ID,
+      });
+      expect(args).toBeUndefined();
     });
   });
 }

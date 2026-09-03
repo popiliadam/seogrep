@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { CTX, PROJECT, PROJECT_ID, writeRun } from "../test/project-scope-pin.ts";
+import {
+  CTX,
+  FOREIGN_PROJECT_ID,
+  PROJECT,
+  PROJECT_ID,
+  writeRun,
+} from "../test/project-scope-pin.ts";
 import { currentRecorder, resetRecorder } from "../test/ledger-recorder.ts";
 import type { LoadProjectFn } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
@@ -81,5 +87,17 @@ describe("ai_visibility_compare records which project its spend was for (H-1)", 
     const args = await reserveFor([{ project_id: PROJECT_ID }, { project_id: OTHER_PROJECT_ID }]);
     expect(args?.p_tool).toBe("ai_visibility_compare");
     expect(args?.p_project_id).toBeNull();
+  });
+
+  /**
+   * THE SOURCE, not just the value — the family claim (test/project-scope-pin.ts), on the tool
+   * that resolves its targets one at a time. Every assertion above is equally happy with the
+   * caller's RAW `project_id`; only this one says the ownership gate ran BEFORE the reserve, and
+   * at 90 credits per target that gate is what stops a foreign id from being both charged for and
+   * written onto this tenant's ledger row.
+   */
+  it("opens NO reserve at all when one target names a project that is not the caller's", async () => {
+    const args = await reserveFor([{ project_id: FOREIGN_PROJECT_ID }, { domain: "rival.com" }]);
+    expect(args).toBeUndefined();
   });
 });
