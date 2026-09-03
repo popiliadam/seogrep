@@ -269,7 +269,38 @@ export function contentDecayAdvice(decay: PageDecay): string {
   );
 }
 
-/** Render the decaying pages, each with what to do about it (or a friendly empty message). */
+/**
+ * What `position` MEANS, in one sentence, for every surface that prints one (R-7.11).
+ *
+ * ONE CONSTANT because two tools print this number — find_quick_wins applies a BAND to it
+ * (positions 8–20) and analyze_content_decay prints its MOVE between two windows — and two
+ * hand-written explanations of one figure is how they end up explaining it differently. Google's
+ * definition is a mean over the whole window: a page that sat 5th for half of it and 16th for the
+ * other half reports the same "10.5" as one that never moved, and a band or a drop read as a rank
+ * treats those as the same page.
+ */
+export const AVERAGE_POSITION_NOTE =
+  "Position is Google's AVERAGE over the analyzed window — the mean rank of your top result for " +
+  "that row, not where it sat on any single day.";
+
+/** The impressions-and-position half of a decay line: WHY the clicks fell, not just that they did. */
+function decayContext(decay: PageDecay): string {
+  const to = decay.current_position === null ? "not ranking" : pos(decay.current_position);
+  const from = decay.previous_position === null ? "not ranking" : pos(decay.previous_position);
+  return (
+    `${grouped(decay.previous_impressions)} → ${grouped(decay.current_impressions)} impressions, ` +
+    `position ${from} → ${to}`
+  );
+}
+
+/**
+ * Render the decaying pages, each with what to do about it (or a friendly empty message).
+ *
+ * The impression and position move rides on the SAME line as the click drop (B-2): a reader who
+ * has to hold two numbers to tell a lost ranking from a lost click-through should not have to
+ * find them in two places, and the live measurement that opened this finding had ten pages with
+ * no impression figure anywhere in the reply.
+ */
 export function formatContentDecay(decays: readonly PageDecay[]): string {
   if (decays.length === 0) {
     return "No content decay found: no page lost a meaningful share of its clicks vs the previous window.";
@@ -277,7 +308,11 @@ export function formatContentDecay(decays: readonly PageDecay[]): string {
   const lines = decays.map(
     (d) =>
       `• ${d.page} — ${d.previous_clicks} → ${d.current_clicks} clicks ` +
-      `(lost ${d.clicks_lost}, down ${pct(d.drop_ratio)})\n${contentDecayAdvice(d)}`,
+      `(lost ${d.clicks_lost}, down ${pct(d.drop_ratio)}); ${decayContext(d)}\n` +
+      contentDecayAdvice(d),
   );
-  return `${decays.length} decaying page${decays.length === 1 ? "" : "s"} (biggest loss first):\n${lines.join("\n")}`;
+  return (
+    `${decays.length} decaying page${decays.length === 1 ? "" : "s"} (biggest loss first):\n` +
+    `${lines.join("\n")}\n${AVERAGE_POSITION_NOTE}`
+  );
 }

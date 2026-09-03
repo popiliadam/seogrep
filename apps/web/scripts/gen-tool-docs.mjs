@@ -1185,9 +1185,19 @@ export const DOC_PROSE = {
     example:
       "Ask your MCP client in plain language:\n\n> Which pages on example.com are losing traffic?",
     returns:
-      "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
-      "drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so " +
-      "(and you are still charged for the delivered analysis).\n\nEach page carries **what to do about " +
+      "A list of decaying pages — each with its previous and current clicks, the clicks lost, the " +
+      "drop as a percentage, and the page's **impressions and average position in both windows** — " +
+      "biggest loss first, and not capped. If nothing is decaying, it says so " +
+      "(and you are still charged for the delivered analysis).\n\nThose last two numbers are what " +
+      "separate the two ways a page loses clicks. Impressions down as well means the page lost " +
+      "**ranking**, and the instruction below is the right one. Impressions **held** while clicks fell " +
+      "means the page is still being shown and something on the results page took the click — an AI " +
+      "Overview, a featured snippet, an ad — and rewriting the page is not the answer to that. A page " +
+      "that stopped appearing has no position at all in the current window, and the reply says `not " +
+      "ranking` rather than printing a number.\n\nThe list ends with one line saying what `position` " +
+      "is: Google reports it as an **average over the whole window**, not a rank on any single day, so " +
+      "a page that sat 5th for half the window and 16th for the other half reports the same figure as " +
+      "one that never moved.\n\nEach page carries **what to do about " +
       "it**, and which of three instructions you get depends on how the page fell. A page down to no " +
       "clicks at all is told to verify it is still indexed, reachable and not redirected **before** " +
       "rewriting anything — that is also the shape a truncated pull manufactures. A page that lost " +

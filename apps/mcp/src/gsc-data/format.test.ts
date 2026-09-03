@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AVERAGE_POSITION_NOTE,
   CANNIBAL_CLEAR_LEADER_GAP,
   cannibalizationAdvice,
   contentDecayAdvice,
@@ -681,4 +682,52 @@ describe("contentDecayAdvice differentiates by HOW the page fell", () => {
     expect(formatContentDecay([])).not.toContain("→");
   });
 
+  /**
+   * B-2 AT THE SURFACE. The engine now carries impressions and position; a reader who cannot SEE
+   * them is exactly as unable to tell a lost ranking from a lost click-through as before, so the
+   * finding is only closed once both are on the line. Live 2026-09-03: ten decaying pages, not one
+   * impression figure among them.
+   */
+  it("prints the impression move and the position move beside the click drop", () => {
+    const text = formatContentDecay([
+      decayed(60, 30, "https://x.test/p", {
+        previous_impressions: 640,
+        current_impressions: 600,
+        previous_position: 5.1,
+        current_position: 6.4,
+      }),
+    ]);
+    expect(text).toContain("60 → 30 clicks");
+    expect(text).toContain("640 → 600 impressions");
+    expect(text).toContain("position 5.1 → 6.4");
+  });
+
+  it("says the page is gone from the window rather than inventing a position for it", () => {
+    const text = formatContentDecay([
+      decayed(17, 0, "https://x.test/gone", {
+        previous_impressions: 900,
+        current_impressions: 0,
+        previous_position: 8.2,
+        current_position: null,
+      }),
+    ]);
+    expect(text).toContain("900 → 0 impressions");
+    expect(text).toMatch(/position 8\.2 → not ranking/);
+    // Never 0.0: 0 is the best rank there is, and printing it would read as "pinned at the top".
+    expect(text).not.toContain("→ 0.0");
+  });
+
+  /**
+   * R-7.11 — `position` is Google's AVERAGE over the analyzed window, not a rank on any single
+   * day, and nothing in this tool's output said so. The sentence is a shared constant precisely
+   * because find_quick_wins prints the same kind of number and the two must not drift into two
+   * different explanations of one figure.
+   */
+  it("tells the reader what the position number IS", () => {
+    const text = formatContentDecay([decayed(60, 30)]);
+    expect(text).toContain(AVERAGE_POSITION_NOTE);
+    expect(AVERAGE_POSITION_NOTE).toMatch(/average/i);
+    // …and says nothing at all when there is nothing to explain.
+    expect(formatContentDecay([])).not.toContain(AVERAGE_POSITION_NOTE);
+  });
 });
