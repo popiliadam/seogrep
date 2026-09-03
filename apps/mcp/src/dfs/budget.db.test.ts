@@ -6,6 +6,7 @@ import {
   DAILY_BUDGET_USD,
   createDbSpendLedger,
   reserveSpend,
+  settleFailedSpend,
   todaySpendUsd,
   type SpendLedger,
 } from "./budget.ts";
@@ -104,6 +105,87 @@ describe("the migration-0014 vendor-budget counter", () => {
     // This row is deliberately left settled at its real $0.075: the counter is append-and-settle,
     // never rewind. The cap spec below measures the remaining budget at runtime for that reason.
     opened = [];
+  });
+
+  /**
+   * settleFailedSpend AGAINST THE REAL SQL — the hole the referee named in package A (A-3).
+   *
+   * `settleFailedSpend` is the whole DK-3 repair: five vendor ports now call it from their catch
+   * blocks so a failed call stops leaving `dfs_spend` rows `status=open` forever (measured in
+   * production: `relevant_pages/live · status=open · estimated 0.036 · actual null`, still open 45
+   * minutes after the call died). Every spec proving it ran against the IN-MEMORY ledger, whose
+   * `settle` is a `rows.map`. Lesson 12: a double more tolerant than the runtime turns a missing
+   * constraint into a passing test — and the constraint that matters here lives in PL/pgSQL, not
+   * in TypeScript. `settle_dfs_spend(p_actual_usd, p_row_count)` is what must accept the
+   * estimate-and-zero pair, flip `status` to 'settled', and leave the day's number alone.
+   *
+   * THE DAY'S TOTAL NOT MOVING IS THE POINT, not a side observation. It is the argument that this
+   * is hygiene rather than a loosening of the constitutional $3 cap (NEVER #5), and it rests on
+   * one line of 0014: `dfs_spend_today_usd` sums `coalesce(actual_usd, estimated_usd)`, so an OPEN
+   * row already counted at its estimate. That coalesce is measured here rather than read.
+   *
+   * The estimate is deliberately micro so the spec is re-runnable inside one UTC day: unlike the
+   * self-cleaning specs around it, this row must stay SETTLED at a non-zero cost — settling it
+   * back to $0.00 afterwards would erase the very property being measured.
+   */
+  it("settleFailedSpend CLOSES the row at its estimate, and today's total does not move", async () => {
+    const untyped: SupabaseClient = getServiceClient();
+    const rowFor = async (id: string) => {
+      const { data, error } = await untyped
+        .from("dfs_spend")
+        .select("status, estimated_usd, actual_usd, row_count")
+        .eq("id", id)
+        .single();
+      expect(error).toBeNull();
+      return data as {
+        status: string;
+        estimated_usd: string;
+        actual_usd: string | null;
+        row_count: number | null;
+      };
+    };
+
+    const estimate = 0.000002; // exact in the column's numeric(12,6)
+    const before = await todaySpendUsd(ledger);
+    const reservation = await reserveSpend(estimate, "settle-failed-spec", ledger);
+
+    // OPEN, unpriced — and already counted at its estimate by the coalesce.
+    const open = await rowFor(reservation.id);
+    expect(open.status).toBe("open");
+    expect(open.actual_usd).toBeNull();
+    expect(Number(open.estimated_usd)).toBeCloseTo(estimate, 6);
+    const whileOpen = await todaySpendUsd(ledger);
+    expect(whileOpen).toBeCloseTo(before + estimate, 6);
+
+    await settleFailedSpend(reservation, ledger);
+
+    // SETTLED by the real RPC: at the estimate, never below it, delivering zero rows.
+    const settled = await rowFor(reservation.id);
+    expect(settled.status).toBe("settled");
+    expect(Number(settled.actual_usd)).toBeCloseTo(estimate, 6);
+    expect(Number(settled.actual_usd)).toBe(Number(settled.estimated_usd));
+    expect(settled.row_count).toBe(0);
+
+    // Not one cent moved. Said against BOTH the pre-call figure and the while-open figure, so a
+    // settlement that quietly rebated the difference could not hide in either comparison.
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(whileOpen, 6);
+    expect(await todaySpendUsd(ledger)).toBeCloseTo(before + estimate, 6);
+
+    // Settled once and no more — the same guard the in-memory double asserts, here in PL/pgSQL.
+    // It must not THROW (the caller is holding the original vendor error and that is the one the
+    // user has to see), so the refusal shows up in the operator log instead of on the stack.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(settleFailedSpend(reservation, ledger)).resolves.toBeUndefined();
+      const logged = errorSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+      expect(logged).toMatch(/already settled/i);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    // …and the row the second call could not touch is still the first settlement's.
+    const after = await rowFor(reservation.id);
+    expect(after.row_count).toBe(0);
+    expect(Number(after.actual_usd)).toBeCloseTo(estimate, 6);
   });
 
   it("two CONCURRENT settlements of the same reservation: exactly one wins", async () => {
