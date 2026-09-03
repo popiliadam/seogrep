@@ -331,6 +331,27 @@ function renderList<Row>(list: {
   ];
 }
 
+/**
+ * THE EMPTY LINK WINDOW, SAID OUT LOUD — finding BD-1 (2026-09-04).
+ *
+ * MEASURED: a paid 35-credit call (`limit 5, offset 19000, page_limit 3`) returned 1,164
+ * characters in which the string "Individual backlinks" never appeared and neither did the offset
+ * it was empty for. The reader could not tell "this site has no links" from "the window ran past
+ * the end of the list" from "something went wrong" — three answers separated, in that lookup, by
+ * 42 million rows.
+ *
+ * The honest sentence DID exist (renderNothingFound), but only for the case where BOTH windows
+ * are empty — and the PAGE window is always fetched from offset 0 (dfs/backlink-details.ts never
+ * sends one), so on a domain that has any backlinks at all it never is. The honest answer was
+ * unreachable in production while its test stayed green on a hand-built double: signed lesson 12,
+ * exactly. This note closes the half that could actually happen.
+ */
+export const EMPTY_LINK_WINDOW_NOTE =
+  "No individual backlinks came back in this window, and the pages below are unaffected: the page " +
+  "list is always fetched from the start of its own list, whatever offset the links were asked " +
+  "for. An empty link window usually means the window sits past the end of the list — lower " +
+  "`offset` to move back into it — and the lookup was charged either way.";
+
 /** The "nothing at all" answer — a real, delivered result rather than an error. */
 function renderNothingFound(details: BacklinkDetails, project?: ProjectRef | null): string {
   const subject = subjectLabel(details.target, project);
@@ -354,8 +375,14 @@ export function formatBacklinkDetails(
   const subject = subjectLabel(details.target, project);
   return [
     `Backlinks for ${subject} — the individual links, and the pages of this site they point at:`,
+    // An EMPTY link window states its own bounds through the SAME caption formatter rather than
+    // disappearing (finding BD-1): the caption prints "0 backlinks in this window (offset N,
+    // limit M)" on its own, and the note below says what that means for the half that follows.
     ...(links.length === 0
-      ? []
+      ? [
+          renderWindowCaption("Individual backlinks", "backlink", details.links),
+          EMPTY_LINK_WINDOW_NOTE,
+        ]
       : renderList({
           caption: renderWindowCaption("Individual backlinks", "backlink", details.links),
           rows: links,
