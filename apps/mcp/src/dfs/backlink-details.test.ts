@@ -203,6 +203,10 @@ describe("parseBacklinkRowsResponse (the link rows)", () => {
       anchor: "forbes.com",
       item_type: "anchor",
       dofollow: true,
+      // The vendor sends this row's `attributes` as null. It is carried as null, not as [] —
+      // "DataForSEO reported nothing" and "DataForSEO reported no rel attribute" are two
+      // different statements about a link (R-6.2, finding BD-3).
+      attributes: null,
       rank: 827,
       backlink_spam_score: 0,
       first_seen: "2022-04-01 00:45:19 +00:00",
@@ -210,6 +214,35 @@ describe("parseBacklinkRowsResponse (the link rows)", () => {
       is_broken: false,
       url_to_status_code: 200,
     });
+  });
+
+  /**
+   * R-6.2 (finding BD-3): the vendor's per-link `rel` list. `rel="sponsored"` on a paid link and a
+   * plain `rel="nofollow"` were indistinguishable in the output of the two tools that show links
+   * one at a time — one of which decides what goes into a disavow file.
+   */
+  it("carries the vendor's per-link rel attributes, in the order and spelling they arrived", () => {
+    const window = parseBacklinkRowsResponse(
+      envelope({
+        items: [{ domain_from: "paid.example", attributes: ["sponsored", "noopener"] }],
+      }),
+      BOUNDS,
+    );
+    expect(window.rows[0]?.attributes).toEqual(["sponsored", "noopener"]);
+  });
+
+  /** An EMPTY list is the vendor answering; a MISSING field is the vendor saying nothing. */
+  it("keeps an empty attribute list distinct from an absent one", () => {
+    const empty = parseBacklinkRowsResponse(
+      envelope({ items: [{ domain_from: "a.example", attributes: [] }] }),
+      BOUNDS,
+    );
+    expect(empty.rows[0]?.attributes).toEqual([]);
+    const absent = parseBacklinkRowsResponse(
+      envelope({ items: [{ domain_from: "a.example" }] }),
+      BOUNDS,
+    );
+    expect(absent.rows[0]?.attributes).toBeNull();
   });
 
   /**
@@ -243,6 +276,7 @@ describe("parseBacklinkRowsResponse (the link rows)", () => {
       anchor: "",
       item_type: null,
       dofollow: null,
+      attributes: null,
       rank: null,
       backlink_spam_score: null,
       first_seen: null,

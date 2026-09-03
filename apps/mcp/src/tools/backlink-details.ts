@@ -3,6 +3,7 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import { renderOutputLimitNote, renderWithinBudget } from "../format/output-budget.ts";
+import { REL_ATTRIBUTES_NOTE, relAttributesClause } from "../format/rel-attributes.ts";
 import {
   BACKLINK_DETAILS_RANK_MAX,
   DEFAULT_BACKLINK_DETAIL_ROWS,
@@ -194,6 +195,20 @@ function followClause(dofollow: boolean | null): string {
 }
 
 /**
+ * The follow status AND the vendor's `rel` list, when it sent one (R-6.2, finding BD-3).
+ *
+ * The boolean alone cannot separate a paid link declared `sponsored` from a forum signature
+ * declared `ugc` from a plain `nofollow` — three different statements that Google's spam policies
+ * treat differently, all rendered here as the single word "nofollow" until 2026-09-04. The vendor's
+ * own list is appended verbatim; when the vendor sent none, the row reads exactly as it always did.
+ */
+function followAndAttributesClause(row: BacklinkDetailRow): string {
+  const rel = relAttributesClause(row.attributes);
+  const follow = followClause(row.dofollow);
+  return rel === null ? follow : `${follow} · ${rel}`;
+}
+
+/**
  * The anchor, or WHY there is none. The port renders a missing anchor as "" (the vendor sends
  * null on image links), and `item_type` is the vendor's own explanation — printing it beside the
  * blank keeps "no anchor text" from reading as a defect in the lookup.
@@ -208,7 +223,8 @@ export function renderBacklinkRow(row: BacklinkDetailRow): string {
   const broken = row.is_broken === true ? " · DataForSEO flags this link as broken" : "";
   return (
     `• ${row.domain_from} → ${urlOrUnnamed(row.url_to)}\n` +
-    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ${followClause(row.dofollow)} · ` +
+    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ` +
+    `${followAndAttributesClause(row)} · ` +
     `rank ${metric(row.rank)} of ${thousands(BACKLINK_DETAILS_RANK_MAX)} · ` +
     `vendor spam score ${metric(row.backlink_spam_score)} · ` +
     `linked page status ${metric(row.url_to_status_code)} · ` +
@@ -362,6 +378,13 @@ export function formatBacklinkDetails(
           noun: "page",
           advice: PAGE_TRUNCATION_ADVICE,
         })),
+    // WHAT `sponsored` / `ugc` MEAN — printed only when this window actually carries rel values,
+    // so an answer that shows none does not carry an explanation of words nobody saw. It is keyed
+    // off the FETCHED rows: they are the window the caller paid for, and the output ceiling can
+    // cut a row without making the vendor's declaration on it untrue.
+    ...(links.some((row) => relAttributesClause(row.attributes) !== null)
+      ? [REL_ATTRIBUTES_NOTE]
+      : []),
     VENDOR_SPAM_SCORE_NOTE,
   ].join("\n\n");
 }

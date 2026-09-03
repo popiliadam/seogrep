@@ -210,6 +210,17 @@ export interface BacklinkDetailRow {
   readonly item_type: string | null;
   /** `false` is real data (a nofollow link), NOT an absent field. */
   readonly dofollow: boolean | null;
+  /**
+   * The vendor's own list of the `rel` values it saw on this link, under its own field name.
+   * `["sponsored"]` and `["ugc"]` are two DIFFERENT declarations to Google (reference R-6.2) and
+   * `dofollow: false` alone cannot tell them apart — which is why this field is carried instead of
+   * being folded into the boolean.
+   *
+   * THREE STATES, kept distinct: `null` is the vendor saying nothing about this link, `[]` is the
+   * vendor reporting no rel value, and a populated list is the answer. Collapsing the first two
+   * would publish "this link carries no rel attribute" out of a response that never said it.
+   */
+  readonly attributes: readonly string[] | null;
   /** "backlink rank that the given backlink passes to the target", on the pinned scale. */
   readonly rank: number | null;
   /** The vendor's OWN spam score for this link. Singular `backlink_` — the vendor's spelling. */
@@ -331,6 +342,7 @@ const backlinkItemSchema = z.object({
   anchor: z.string().nullish(),
   item_type: z.string().nullish(),
   dofollow: z.boolean().nullish(),
+  attributes: z.array(z.string()).nullish(),
   rank: z.number().nullish(),
   backlink_spam_score: z.number().nullish(),
   first_seen: z.string().nullish(),
@@ -418,6 +430,9 @@ export function parseBacklinkRowsResponse(
             anchor: item.anchor ?? "",
             item_type: item.item_type ?? null,
             dofollow: item.dofollow ?? null,
+            // `?? null` and NOT `?? []`: an absent list is a vendor silence, and an empty one is
+            // the vendor's own answer. The renderers read the difference.
+            attributes: item.attributes ?? null,
             rank: item.rank ?? null,
             backlink_spam_score: item.backlink_spam_score ?? null,
             first_seen: item.first_seen ?? null,

@@ -64,6 +64,7 @@ const LINK: BacklinkDetailRow = {
   anchor: "cheap seo services",
   item_type: "anchor",
   dofollow: true,
+  attributes: null,
   rank: 12,
   backlink_spam_score: 71,
   first_seen: "2024-02-11 08:12:04 +00:00",

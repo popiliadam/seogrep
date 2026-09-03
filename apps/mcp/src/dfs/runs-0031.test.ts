@@ -185,6 +185,7 @@ function linkRow(over: Partial<BacklinkDetailRow> = {}): BacklinkDetailRow {
     anchor: "example",
     item_type: "anchor",
     dofollow: true,
+    attributes: null,
     rank: 412,
     backlink_spam_score: 8,
     first_seen: "2021-01-01 00:00:00 +00:00",

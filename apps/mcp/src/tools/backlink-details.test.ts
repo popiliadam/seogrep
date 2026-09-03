@@ -11,6 +11,7 @@ import {
   type TargetPageRow,
   type VendorWindow,
 } from "../dfs/backlink-details.ts";
+import { REL_ATTRIBUTES_NOTE } from "../format/rel-attributes.ts";
 import {
   MAX_RENDERED_OUTPUT_CHARS,
   VENDOR_SPAM_SCORE_NOTE,
@@ -48,6 +49,7 @@ const LINK: BacklinkDetailRow = {
   anchor: "Forbes",
   item_type: "anchor",
   dofollow: true,
+  attributes: null,
   rank: 862,
   backlink_spam_score: 0,
   first_seen: "2019-01-15 22:56:46 +00:00",
@@ -289,6 +291,50 @@ describe("formatBacklinkDetails", () => {
     );
     expect(text).toContain("no anchor text (image link)");
     expect(text).not.toContain('anchor ""');
+  });
+
+  /**
+   * R-6.2 (finding BD-3). The vendor sends the `rel` values it saw per link; the row printed only
+   * `dofollow` / `nofollow`, so a PAID link declared `sponsored` and a plain nofollowed link were
+   * the same word — in the tool whose one job is showing links individually.
+   */
+  it("prints the vendor's rel attributes beside the follow status, under the vendor's field name", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_([{ ...LINK, dofollow: false, attributes: ["sponsored", "noopener"] }], 10),
+        window_([], null),
+      ),
+    );
+    expect(text).toContain("nofollow · DataForSEO attributes: sponsored, noopener");
+    expect(text).toContain(REL_ATTRIBUTES_NOTE);
+  });
+
+  it("distinguishes a sponsored link from a ugc link rather than calling both nofollow", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(
+          [
+            { ...LINK, domain_from: "paid.example", dofollow: false, attributes: ["sponsored"] },
+            { ...LINK, domain_from: "forum.example", dofollow: false, attributes: ["ugc"] },
+          ],
+          10,
+        ),
+        window_([], null),
+      ),
+    );
+    expect(text).toContain("DataForSEO attributes: sponsored");
+    expect(text).toContain("DataForSEO attributes: ugc");
+  });
+
+  /** A vendor silence renders EXACTLY as it did before the field was parsed — no invented "none". */
+  it("adds no attribute clause, and no note, when the vendor reported nothing", () => {
+    const text = formatBacklinkDetails(details(window_([LINK], 10), window_([], null)));
+    expect(text).not.toContain("DataForSEO attributes");
+    expect(text).not.toContain(REL_ATTRIBUTES_NOTE);
+    const empty = formatBacklinkDetails(
+      details(window_([{ ...LINK, attributes: [] }], 10), window_([], null)),
+    );
+    expect(empty).not.toContain("DataForSEO attributes");
   });
 
   it("says out loud when DataForSEO named no URL, instead of leaving a gap", () => {
