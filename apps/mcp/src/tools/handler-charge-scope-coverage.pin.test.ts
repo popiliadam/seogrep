@@ -18,6 +18,25 @@ import researchFixture from "../dfs/fixtures/keyword-overview.json";
  * need a port, a fixture and an input per tool, which is exactly the per-tool work that already
  * exists. What is missing at the family level is cheap and structural: does the `withCredits` meta
  * at this tool's own call site mention `projectId` at all?
+ *
+ * =====================================================================================
+ * B-1 (2026-09-03): IT READS THE ARGUMENT, NOT A WINDOW OF LINES
+ * =====================================================================================
+ * This check used to read the 8 CODE lines following the guard call and accept a `projectId`
+ * anywhere in them. MEASURED, by the Dilim 4 referee: deleting `projectId` from
+ * `ranked-keywords.ts`'s `const meta` left this sweep GREEN. The window had walked straight past
+ * the meta — which is bound one line ABOVE the call — into the `writeRun(...)` arguments below it,
+ * and a run row carries `tool:` and `projectId:` too. So the sweep answered about the RUN TABLE
+ * while claiming to answer about the LEDGER, and it did that for exactly the defect it was
+ * written to find. Only `rankings-project-scope.pin.test.ts` went red; the family check, whose
+ * whole purpose is to see the tool nobody wrote a per-tool pin for, saw nothing.
+ *
+ * That is the same shape as the anchor bug recorded below, moved one axis over (signed lesson 14:
+ * a hole closed on the QUOTE axis reopens on the POSITION axis). A window is a guess about
+ * distance. So the distance is gone: the second argument of the `withCredits(...)` call is
+ * extracted by BALANCED SCAN, and when it is an identifier the `const <name> = …` it refers to is
+ * followed. Nothing is read that the guard is not actually handed, and a call site whose meta
+ * cannot be resolved THROWS — a fallback to a wider search is the hole, not the missing match.
  */
 
 const SOURCE_DIR = import.meta.dirname;
@@ -27,54 +46,165 @@ function sourceOf(tool: string): string {
   return readFileSync(`${SOURCE_DIR}/${tool.replaceAll("_", "-")}.ts`, "utf8");
 }
 
-/** How many CODE lines of the meta object are read once the guard call has been found. */
-const META_WINDOW = 8;
-/** How many CODE lines above its guard call a `const meta = …` binding may sit. */
-const BINDING_REACH = 4;
+/**
+ * The same source with every COMMENT and every STRING body blanked to spaces, positions kept.
+ *
+ * Balanced scanning is only sound over code punctuation, and these call sites are full of prose:
+ * two of them (serp_snapshot, ai_visibility_compare) carry a comment BETWEEN the arguments, and
+ * the modules are dense with `(`, `{` and `,` inside sentences and inside message strings. Masking
+ * rather than deleting keeps every index valid, so a span found here slices the REAL source.
+ */
+function maskCommentsAndStrings(source: string): string {
+  const out = source.split("");
+  const blank = (at: number): void => {
+    if (source[at] !== "\n") out[at] = " ";
+  };
+  let i = 0;
+  while (i < source.length) {
+    const here = source[i];
+    const next = source[i + 1];
+    if (here === "/" && next === "/") {
+      while (i < source.length && source[i] !== "\n") blank(i++);
+      continue;
+    }
+    if (here === "/" && next === "*") {
+      blank(i++);
+      while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) blank(i++);
+      if (i < source.length) {
+        blank(i++);
+        blank(i++);
+      }
+      continue;
+    }
+    if (here === '"' || here === "'" || here === "`") {
+      i += 1; // the opening quote stays: it is not a bracket and cannot unbalance anything.
+      while (i < source.length) {
+        if (source[i] === "\\") {
+          blank(i++);
+          blank(i++);
+          continue;
+        }
+        const closing = source[i] === here;
+        blank(i++);
+        if (closing) break;
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return out.join("");
+}
 
-/** Source with comment lines dropped, so a window is a count of CODE and not of prose. */
-function codeLines(tool: string): readonly string[] {
-  return sourceOf(tool)
-    .split("\n")
-    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+/** Spans of the top-level arguments of the call whose `(` sits at `open`, in call order. */
+function argumentSpans(masked: string, open: number): readonly (readonly [number, number])[] {
+  const spans: [number, number][] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open; i < masked.length; i += 1) {
+    const char = masked[i];
+    if (char === "(" || char === "{" || char === "[") depth += 1;
+    else if (char === ")" || char === "}" || char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        spans.push([start, i]);
+        return spans;
+      }
+    } else if (char === "," && depth === 1) {
+      spans.push([start, i]);
+      start = i + 1;
+    }
+  }
+  throw new Error("the withCredits call's argument list is never closed");
 }
 
 /**
- * The lines of the credit meta THIS tool hands `withCredits`, ANCHORED ON THE GUARD CALL.
+ * The SOURCE OF THE OBJECT this tool actually hands `withCredits` as its `meta` — the second
+ * argument, resolved through a `const` binding when that is what the argument names.
  *
- * The anchor matters more than the window. Anchoring on the first `tool: "<name>"` in the file —
- * which is what this check did first — reads whichever object happens to come first, and several
- * of these tools write a RUN ROW carrying the very same `tool:` key and a `projectId` beside it.
- * Those writes were already correct while the ledger row was blank, so a check anchored on them
- * reports green for exactly the defect it was written to find.
- *
- * Two shapes exist in the tree and both are followed from the call outwards: the meta inline in
- * the `withCredits(...)` arguments, or bound to `const meta = …` immediately above it. A binding
- * further away than BINDING_REACH THROWS rather than falling back to a file-wide search — the
- * fallback is the hole, not the missing match.
+ * Two shapes exist in the tree and both end at the same object: the meta written inline in the
+ * argument list, or bound to a `const` immediately above the call. Anything else (a helper call, a
+ * spread, a second binding layer) throws rather than being guessed at.
  */
-function creditMetaLines(tool: string): readonly string[] {
-  const lines = codeLines(tool);
-  const call = lines.findIndex((line) => line.includes("withCredits("));
-  if (call === -1) throw new Error(`no withCredits call found in "${tool}"`);
-  const inline = lines.slice(call, call + META_WINDOW);
-  if (inline.some((line) => line.includes(`tool: "${tool}"`))) return inline;
-  const above = lines.slice(Math.max(0, call - BINDING_REACH), call);
-  for (let i = above.length - 1; i >= 0; i -= 1) {
-    const line = above[i] as string;
-    if (!line.includes("const meta =")) continue;
-    if (!line.includes(`tool: "${tool}"`)) break;
-    return [line];
-  }
-  throw new Error(
-    `the credit meta for "${tool}" is neither inline at its withCredits call nor bound within ` +
-      `${BINDING_REACH} code lines above it — and a window that widens to find it would start ` +
-      "matching run-row writes instead",
-  );
+interface CreditMetaSpan {
+  /** The real slice: quotes and comments intact, so `tool: "<name>"` can be found in it. */
+  readonly source: string;
+  /** The same slice masked, so a KEY is looked for in code and never in prose or a string. */
+  readonly masked: string;
 }
 
+function creditMetaSource(tool: string): CreditMetaSpan {
+  const source = sourceOf(tool);
+  const masked = maskCommentsAndStrings(source);
+  const call = masked.indexOf("withCredits(");
+  if (call === -1) throw new Error(`no withCredits call found in "${tool}"`);
+  // A SECOND guard call would mean this check reads one of them and reports for both.
+  if (masked.indexOf("withCredits(", call + 1) !== -1) {
+    throw new Error(
+      `"${tool}" has more than one withCredits call, so reading the first one would report ` +
+        "about a call site nobody looked at",
+    );
+  }
+  const spans = argumentSpans(masked, call + "withCredits".length);
+  const meta = spans[1];
+  if (!meta) throw new Error(`the withCredits call in "${tool}" has no meta argument`);
+  // The SHAPE is decided on the masked text — two call sites put a comment between the arguments,
+  // and the real slice still carries it — while every returned span slices the real source.
+  const maskedArgument = masked.slice(meta[0], meta[1]);
+  const expression = maskedArgument.trim();
+  if (expression.startsWith("{")) {
+    const at = meta[0] + maskedArgument.indexOf("{");
+    const [, close] = argumentSpans(masked, at).at(-1) as readonly [number, number];
+    return { source: source.slice(at, close + 1), masked: masked.slice(at, close + 1) };
+  }
+  if (!/^[A-Za-z_$][\w$]*$/.test(expression)) {
+    throw new Error(
+      `the credit meta of "${tool}" is neither an object literal nor a plain binding name ` +
+        `(saw \`${expression}\`) — resolving it would be a guess`,
+    );
+  }
+  const binding = new RegExp(`\\bconst\\s+${expression}\\b[^=]*=`).exec(masked);
+  if (!binding) {
+    throw new Error(`the credit meta of "${tool}" names \`${expression}\`, which is not bound here`);
+  }
+  const initializer = binding.index + binding[0].length;
+  const brace = masked.indexOf("{", initializer);
+  if (brace === -1) throw new Error(`the credit meta binding of "${tool}" is not an object`);
+  const [, end] = argumentSpans(masked, brace).at(-1) as readonly [number, number];
+  return { source: source.slice(brace, end + 1), masked: masked.slice(brace, end + 1) };
+}
+
+/**
+ * The resolved meta, PROVEN to be this tool's own before anything is concluded from it.
+ *
+ * Without this the check could resolve some other object and report about it — which is precisely
+ * the failure that produced B-1 and the anchor bug before it. A meta that does not name this tool
+ * is a parse that went wrong, and it fails loudly instead of answering.
+ */
+function checkedMetaSource(tool: string): CreditMetaSpan {
+  const meta = creditMetaSource(tool);
+  // The IDENTITY is read off the real slice: the tool's name lives inside a string literal, which
+  // is precisely what the mask blanks out.
+  if (!meta.source.includes(`tool: "${tool}"`)) {
+    throw new Error(
+      `the object read as "${tool}"'s credit meta does not name it (\`tool: "${tool}"\` is not ` +
+        `in it) — the resolution is wrong, and a wrong one that answers is worse than none:\n` +
+        meta.source,
+    );
+  }
+  return meta;
+}
+
+/**
+ * ON THE MASKED SLICE, and that is not a detail (referee finding, 2026-09-03, P3).
+ *
+ * The resolution walked the masked text and then handed back the REAL one, so this substring test
+ * ran over prose and string bodies as well as code. Measured: `{ tool: "ranked_keywords" /*
+ * projectId *\/ }` left the sweep GREEN — the ledger meta named no project and a COMMENT said the
+ * word. A field named `note: "projectId"` would do it too. The key is a fact about code, so it is
+ * looked for in code only.
+ */
 function namesProjectScope(tool: string): boolean {
-  return creditMetaLines(tool).some((line) => line.includes("projectId"));
+  return checkedMetaSource(tool).masked.includes("projectId");
 }
 
 /**
@@ -106,6 +236,46 @@ describe("every charge:\"handler\" tool accounts for its ledger project scope (H
     for (const tool of Object.keys(NO_SUBJECT_TO_SCOPE)) {
       expect(SELF_SETTLING).toContain(tool);
     }
+  });
+
+  /**
+   * THE CHECK'S OWN READING, MEASURED — because a sweep that reads the wrong object answers
+   * confidently and is never questioned (signed lesson 11).
+   *
+   * `ranked_keywords` is the tool B-1 was found on and it is the hard case in both directions:
+   * its meta is BOUND above the call, and the `writeRun(...)` below the call carries a `tool:` key
+   * and a `projectId:` of its own. The line-window check read that write and reported green while
+   * the ledger meta was blank. So the resolution is asserted both ways round: what it MUST see,
+   * and the neighbouring object it must NOT have wandered into.
+   */
+  it("resolves the LEDGER meta and not the run-row write beside it (B-1)", () => {
+    const meta = checkedMetaSource("ranked_keywords").masked;
+    expect(meta).toContain("projectId: subject.project?.id");
+    // `target:` and `userId:` are writeRun's own keys, and `??` is how it spells its fallback.
+    // Any of them in here means the scan left the guard's argument.
+    for (const foreign of ["target:", "userId:", "??"]) {
+      expect(meta, `resolved meta ran into the run-row write: ${meta}`).not.toContain(foreign);
+    }
+    // The other shape, resolved by the same code: an object literal written inline as the
+    // argument, several lines below the call and with a comment between the two.
+    expect(checkedMetaSource("serp_snapshot").masked).toContain("projectId: subject.project?.id");
+  });
+
+  /**
+   * THE KEY IS COUNTED AS CODE, NEVER AS PROSE (referee P3).
+   *
+   * Both counter-cases were measured against the previous revision of this file, which tested the
+   * real slice: a `projectId` mentioned in a COMMENT inside the meta object, and one spelled as a
+   * STRING VALUE, each left the sweep green while the ledger row carried no scope. Asserted on the
+   * mask itself rather than through a tool file, because the mask is the mechanism `namesProjectScope`
+   * now depends on and a synthetic input is the only way to state both directions.
+   */
+  it("does not count a projectId written in a comment or in a string (P3)", () => {
+    expect(maskCommentsAndStrings(`{ tool: "x" /* projectId */ }`)).not.toContain("projectId");
+    expect(maskCommentsAndStrings(`{ tool: "x", note: "projectId" }`)).not.toContain("projectId");
+    expect(maskCommentsAndStrings(`{ tool: "x" } // projectId`)).not.toContain("projectId");
+    // ...while the real key, which is code, survives the mask untouched.
+    expect(maskCommentsAndStrings(`{ projectId: subject.project?.id }`)).toContain("projectId");
   });
 
   it("names a project at every call site that has one to name", () => {

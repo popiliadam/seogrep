@@ -114,7 +114,9 @@ const DESCRIPTION =
   "engine: it reports what was stored, keeps 'not found' and 'not measured' apart, and never " +
   "draws a trend through days nobody measured. These are SERP ranks at one moment (rank #4 = the " +
   "fourth organic result), not Search Console's average position, which find_quick_wins reports " +
-  `and which is an average over a reporting window. Costs ${TOOL_COSTS.keyword_positions} ` +
+  "and which is an average over a reporting window. Each reading also names the URL that ranked " +
+  "and the SERP features the snapshot recorded on that page, including whether an AI Overview " +
+  `was on it. Costs ${TOOL_COSTS.keyword_positions} ` +
   "credits. If nothing has been measured yet, it says so and charges nothing.";
 
 /**

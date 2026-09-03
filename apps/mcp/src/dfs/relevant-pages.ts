@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import type { VendorWindow, WindowBounds } from "./backlink-details.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -706,8 +712,16 @@ export interface LiveRelevantPagesOptions {
 /**
  * The real (paid) relevant-pages client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to
  * the clamped row cap; (2) ONE request; (3) ONE settlement with the REAL cost. A response that
- * omits `cost` settles at this request's own estimate, never at $0.00. A failure at (2) leaves the
- * reservation open at its full estimate, which is never less than the spend that really happened.
+ * omits `cost` settles at this request's own estimate, never at $0.00.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (A-3, 2026-09-03). This used to
+ * say a failure at (2) "leaves the reservation open at its full estimate", and that was measured in
+ * production: one failed call left `relevant_pages/live · status=open · estimated 0.036 · actual
+ * null` sitting open 45 minutes later. The money argument was sound and is kept — the row is
+ * settled AT ITS ESTIMATE, which is what an open row already counts as (0014's
+ * `coalesce(actual_usd, estimated_usd)`), so the $3 cap sees the identical number either way. What
+ * changes is that `status=open` goes back to meaning "in flight" instead of also meaning "died
+ * here in July". See settleFailedSpend.
  */
 export function createLiveRelevantPagesClient(
   opts: LiveRelevantPagesOptions,
@@ -722,18 +736,32 @@ export function createLiveRelevantPagesClient(
       const bounds = relevantPagesBounds(query);
       const estimate = estimateRelevantPagesUsd(bounds.limit);
       const reservation = await reserveSpend(estimate, DFS_RELEVANT_PAGES_ENDPOINT, ledger);
-      const response = await transport(DFS_RELEVANT_PAGES_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([buildRelevantPagesRequestBody(query)]),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `DataForSEO request failed: HTTP ${response.status} (${DFS_RELEVANT_PAGES_ENDPOINT})`,
-        );
+      // The try covers the REQUEST AND THE PARSE, which is the whole span between the reservation
+      // and its settlement — the vendor rejecting the task and our own reader refusing a moved
+      // shape both throw in here, and both used to walk out past the settlement.
+      let raw: unknown;
+      let window: VendorWindow<RelevantPageRow>;
+      try {
+        const response = await transport(DFS_RELEVANT_PAGES_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([buildRelevantPagesRequestBody(query)]),
+        });
+        if (!response.ok) {
+          throw new Error(
+            `DataForSEO request failed: HTTP ${response.status} (${DFS_RELEVANT_PAGES_ENDPOINT})`,
+          );
+        }
+        raw = await response.json();
+        window = parseRelevantPagesResponse(raw, bounds);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error is
+        // still the one the caller sees. The settlement is here rather than in a `finally` on
+        // purpose: a `finally` would also run after the success settlement below and turn every
+        // healthy call into a doomed second settle.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-      const raw: unknown = await response.json();
-      const window = parseRelevantPagesResponse(raw, bounds);
       // A vendor that declined to price the request settles at OUR estimate — never at $0.00,
       // which would report a paid call as free and quietly widen today's remaining budget.
       await settleSpend(

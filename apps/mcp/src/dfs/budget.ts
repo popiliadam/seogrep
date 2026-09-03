@@ -182,6 +182,40 @@ export async function settleSpend(
   }
 }
 
+/**
+ * Close a reservation whose call FAILED, at the reservation's own estimate (A-3).
+ *
+ * THE MEASURED LEAK. On 2026-09-03 one `my_pages` call failed after its vendor request went out
+ * and left `dfs_spend` holding `relevant_pages/live · status=open · estimated 0.036 · actual null`
+ * — still open 45 minutes later, read straight off production. The failure path simply had no
+ * settlement in it: every port in this family settles only on the way OUT, so a vendor error
+ * leaves a row nobody ever closes. `status=open` is the operator's one signal for a call still in
+ * flight, and a graveyard of dead reservations is how that signal stops meaning anything.
+ *
+ * IT SETTLES AT THE ESTIMATE, DELIBERATELY, and that is the whole safety argument: 0014's counter
+ * is `coalesce(actual_usd, estimated_usd)`, so an OPEN row ALREADY counts at its estimate. Closing
+ * it at that same number moves not one cent of today's budget — the change is hygiene, and it is
+ * provably not a loosening of the $3 cap (constitution NEVER #5).
+ *
+ * NOT the vendor's reported cost, even when the failing response carries one. A task DataForSEO
+ * rejected can report `cost: 0` while the request really was billed, and trusting that number on
+ * the one path where nothing was delivered would settle a paid call as free and hand today's
+ * remaining budget to the next caller. The estimate is never below what was really spent, which is
+ * the direction this module has always chosen. The residual limit is unchanged and named rather
+ * than hidden: a failed call whose REAL cost exceeded its estimate stays under-counted until the
+ * UTC day rolls over.
+ *
+ * Like {@link settleSpend} it never throws — the caller is holding the ORIGINAL error, and that
+ * error is the one the user must see.
+ */
+export async function settleFailedSpend(
+  reservation: SpendReservation,
+  ledger: SpendLedger,
+): Promise<void> {
+  // Row count 0 is the truth rather than a placeholder: this call delivered no rows to anybody.
+  await settleSpend(reservation, reservation.estimatedUsd, 0, ledger);
+}
+
 /** Today's committed DataForSEO spend (USD). Throws if the counter cannot be read. */
 export async function todaySpendUsd(ledger: SpendLedger): Promise<number> {
   return ledger.todayUsd();
