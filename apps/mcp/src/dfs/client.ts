@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 
 /**
  * DataForSEO keyword-research client (mock-first).
@@ -406,8 +412,16 @@ export const defaultDfsTransport = async (
  * The real (paid) DataForSEO client. Each call: (1) RESERVE the batch-sized estimate against
  * the fleet-global counter BEFORE spending — the reservation both refuses at the cap and closes
  * the check-then-spend window; (2) POST the batch with Basic auth; (3) parse; (4) settle the
- * reservation with the REAL cost (response `cost`, else the estimate). A request that throws
- * leaves the reservation OPEN at its estimate — the conservative direction.
+ * reservation with the REAL cost (response `cost`, else the estimate).
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3 class, 2026-09-03). This
+ * used to say a request that throws "leaves the reservation OPEN at its estimate — the
+ * conservative direction". The direction was right; what it also produced was a `dfs_spend` row
+ * nobody closes, measured on the sibling `relevant_pages` port straight off production
+ * (A-3: `status=open · actual null`, still open 45 minutes after the call died). The row now
+ * settles AT ITS ESTIMATE, which is exactly what an open row already counted as through 0014's
+ * `coalesce(actual_usd, estimated_usd)` — the conservative direction is kept to the cent and the
+ * $3 cap is not loosened (NEVER #5). See settleFailedSpend.
  */
 export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
   const transport = opts.transport ?? defaultDfsTransport;
@@ -421,25 +435,35 @@ export function createLiveClient(opts: LiveClientOptions): KeywordResearchPort {
       const estimate = estimateKeywordOverviewCostUsd(query.keywords.length);
       const reservation = await reserveSpend(estimate, DFS_KEYWORD_OVERVIEW_ENDPOINT, ledger);
 
-      // (2) POST the batch.
-      const response = await transport(DFS_KEYWORD_OVERVIEW_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([
-          {
-            keywords: query.keywords,
-            language_code: query.language_code,
-            location_code: query.location_code,
-          },
-        ]),
-      });
-      if (!response.ok) {
-        throw new Error(`DataForSEO request failed: HTTP ${response.status}`);
+      // (2) POST the batch and (3) parse it, inside ONE try: that span is the whole opening
+      // between the reservation and its settlement, and every throw in it used to leave the
+      // reservation open. Not a `finally` — a `finally` would also run after the settlement in
+      // (4) and turn every healthy call into a doomed second settle.
+      let raw: unknown;
+      let rows: KeywordOverviewRow[];
+      try {
+        const response = await transport(DFS_KEYWORD_OVERVIEW_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([
+            {
+              keywords: query.keywords,
+              language_code: query.language_code,
+              location_code: query.location_code,
+            },
+          ]),
+        });
+        if (!response.ok) {
+          throw new Error(`DataForSEO request failed: HTTP ${response.status}`);
+        }
+        raw = await response.json();
+        rows = parseKeywordOverviewResponse(raw);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error
+        // stays the one the caller sees.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-
-      // (3) Parse.
-      const raw: unknown = await response.json();
-      const rows = parseKeywordOverviewResponse(raw);
 
       // (4) Settle the reservation at the real cost (falls back to the estimate when the
       // response omits it), so the day's total reflects what was actually billed.
