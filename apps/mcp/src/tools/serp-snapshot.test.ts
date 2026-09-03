@@ -77,6 +77,40 @@ function rowOf(snapshot: SerpSnapshotResult): SerpKeywordRow {
   return row;
 }
 
+/**
+ * The REAL capture's envelope with one or more result fields replaced.
+ *
+ * Used for the vendor pages this repository has no capture of — an item type nobody has seen yet,
+ * a placement the vendor sent without a `url`. Everything else stays the real payload's, so what
+ * is exercised is the parser and the renderer rather than a hand-built double that is more
+ * permissive than the wire (signed lesson 12).
+ */
+function fixtureWithResult(overrides: Record<string, unknown>): unknown {
+  const base = structuredClone(fixture) as unknown as {
+    tasks: { result: Record<string, unknown>[] }[];
+  };
+  const task = base.tasks[0];
+  const result = task?.result[0];
+  if (task === undefined || result === undefined) throw new Error("the fixture carries no result");
+  task.result[0] = { ...result, ...overrides };
+  return base;
+}
+
+/** The whole answer for one keyword, off an envelope this test built. */
+async function textFor(envelope: unknown, targetDomain = "rival-one-fixture.test"): Promise<string> {
+  const port = createMockSerpSnapshotPort(envelope, CLOCK);
+  return formatSerpSnapshot(
+    `"${targetDomain}"`,
+    await port.fetchSerpSnapshot({
+      target_domain: targetDomain,
+      keywords: ["seo software"],
+      location_name: "United States",
+      language_code: "en",
+      device: "desktop",
+    }),
+  );
+}
+
 /** A vendor envelope that PARSED but carried no result — the port's `not_measured` path. */
 const NO_RESULT_ENVELOPE = {
   status_code: 20000,
@@ -497,6 +531,43 @@ describe("what the answer says (NEVER #7)", () => {
     expect(text).toContain("rank_absolute 2");
     expect(text).not.toMatch(/visibility score|share of voice|winner/i);
     expect(text).toMatch(/computes no score/i);
+  });
+
+  /**
+   * THE RANKING PAGE'S URL, ON THE PLACEMENT LINE — S-2, a pin over EXISTING behaviour rather
+   * than a new claim.
+   *
+   * Measured 2026-09-03 (mutation M-SS7, re-run by the referee): deleting `— ${url}` from
+   * `renderPlacement` left 4016 of 4016 tests green. `keyword_positions` printed no URL either,
+   * so the product's ONLY reading of a paid-for `SerpPlacement.url` sat behind no assertion at
+   * all — signed lesson 12: a green surface is evidence only once it has been broken on purpose
+   * and gone red.
+   *
+   * The assertion is a REGEX over the shortest distinguishing piece — the PATH, which the heading
+   * does not carry — anchored to the rank pair it belongs beside (signed lesson 11), so a URL
+   * printed anywhere else in the answer could not satisfy it.
+   */
+  it("prints the URL of the ranking page beside the ranks it belongs to", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toMatch(
+      /rank_group #1 \(rank_absolute 2\) — https:\/\/rival-one-fixture\.test\/seo-software/,
+    );
+  });
+
+  /**
+   * The other half of that line: a placement the vendor sent WITHOUT a `url` says so, rather than
+   * trailing an empty dash that reads as "no page at all". `toPlacement` carries `url: null` for
+   * any non-string, so the branch is reachable from any payload and is pinned from one.
+   */
+  it("states the absence of a URL instead of trailing an empty dash", async () => {
+    const text = await textFor(
+      fixtureWithResult({
+        items: [
+          { type: "organic", rank_group: 1, rank_absolute: 1, domain: "rival-one-fixture.test" },
+        ],
+      }),
+    );
+    expect(text).toMatch(/rank_group #1 \(rank_absolute 1\) — no URL reported/);
   });
 
   /**
